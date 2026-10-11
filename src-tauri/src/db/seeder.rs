@@ -2494,8 +2494,7 @@ async fn seed_value(
             id: domain_id.to_string(),
         })?
         .try_get("", "domain_key")?;
-    let entity_sync_id =
-        crate::sync::identity::seeded_entity_sync_id("lookup_values", &format!("{domain_key}:{code}"));
+    let entity_sync_id = crate::sync::identity::seeded_entity_sync_id("lookup_values", &format!("{domain_key}:{code}"));
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT OR IGNORE INTO lookup_values

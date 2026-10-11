@@ -101,7 +101,15 @@ pub async fn materialize_inbox(
             break;
         }
         for (n, chunk) in ids.chunks(chunk_len(batch)).enumerate() {
-            let r = materialize_selection(db, Selection::Ids { status: "pending", ids: chunk }, batch).await?;
+            let r = materialize_selection(
+                db,
+                Selection::Ids {
+                    status: "pending",
+                    ids: chunk,
+                },
+                batch,
+            )
+            .await?;
             add(&mut total, r);
             if (n + 1) % PROGRESS_EVERY_CHUNKS == 0 {
                 tracing::info!(
@@ -121,7 +129,15 @@ pub async fn materialize_inbox(
             let ids = ordered_ids(db, "deferred").await?;
             let mut applied = 0;
             for chunk in ids.chunks(chunk_len(batch)) {
-                let r = materialize_selection(db, Selection::Ids { status: "deferred", ids: chunk }, batch).await?;
+                let r = materialize_selection(
+                    db,
+                    Selection::Ids {
+                        status: "deferred",
+                        ids: chunk,
+                    },
+                    batch,
+                )
+                .await?;
                 applied += r.applied + r.skipped;
                 add(&mut total, r);
             }
@@ -250,7 +266,10 @@ async fn materialize_pass(
         a_delete
             .cmp(&b_delete)
             .then_with(|| {
-                let (pa, pb) = (registry::apply_priority(&a.entity_type), registry::apply_priority(&b.entity_type));
+                let (pa, pb) = (
+                    registry::apply_priority(&a.entity_type),
+                    registry::apply_priority(&b.entity_type),
+                );
                 if a_delete {
                     pb.cmp(&pa)
                 } else {
@@ -341,8 +360,13 @@ async fn apply_inbox_row<C: ConnectionTrait + TransactionTrait>(db: &C, item: &I
     let outcome = match evaluated {
         Ok(outcome @ (ApplyOutcome::Applied | ApplyOutcome::Unchanged)) => {
             mark_inbox(&tx, item.id, "applied", None, None).await?;
-            crate::sync::code_clash::close_outdated_clashes(&tx, &item.entity_type, &item.entity_sync_id, item.row_version)
-                .await?;
+            crate::sync::code_clash::close_outdated_clashes(
+                &tx,
+                &item.entity_type,
+                &item.entity_sync_id,
+                item.row_version,
+            )
+            .await?;
             record_synced_state(
                 &tx,
                 &item.entity_type,
@@ -599,8 +623,7 @@ pub(crate) async fn apply_inbound_payload(
     if crate::sync::row_spec::row_spec(entity_type).is_some() {
         let layout = crate::sync::row_layout::layout(conn, entity_type).await?;
         crate::sync::capture::begin_suppression(conn).await?;
-        let applied =
-            crate::sync::row_codec::apply_row(conn, &layout, entity_sync_id, operation, payload_json).await;
+        let applied = crate::sync::row_codec::apply_row(conn, &layout, entity_sync_id, operation, payload_json).await;
         crate::sync::capture::end_suppression(conn).await?;
         return applied;
     }
@@ -609,5 +632,3 @@ pub(crate) async fn apply_inbound_payload(
         "No inbound materializer for '{entity_type}' although the registry declares one."
     )))
 }
-
-

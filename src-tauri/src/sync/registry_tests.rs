@@ -372,7 +372,10 @@ async fn every_row_spec_has_a_valid_layout_and_capture_triggers() {
     let mut problems = Vec::new();
     for spec in super::row_spec::ROW_SPECS {
         if registry::entity(spec.entity_type).is_none() {
-            problems.push(format!("{}: row spec for an unregistered entity type", spec.entity_type));
+            problems.push(format!(
+                "{}: row spec for an unregistered entity type",
+                spec.entity_type
+            ));
             continue;
         }
         if let Err(e) = super::row_layout::layout(&db, spec.entity_type).await {

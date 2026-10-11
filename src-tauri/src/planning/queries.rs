@@ -1097,9 +1097,13 @@ async fn candidate_sync_id(
     source_table: &str,
     source_id: i64,
 ) -> AppResult<Option<String>> {
-    Ok(crate::sync::identity::optional_entity_sync_id(db, source_table, source_id)
-        .await?
-        .map(|source| crate::sync::identity::seeded_entity_sync_id("schedule_candidates", &format!("{source_type}:{source}"))))
+    Ok(
+        crate::sync::identity::optional_entity_sync_id(db, source_table, source_id)
+            .await?
+            .map(|source| {
+                crate::sync::identity::seeded_entity_sync_id("schedule_candidates", &format!("{source_type}:{source}"))
+            }),
+    )
 }
 
 /// Rebuild the scheduling candidates from the open work. Candidates are derived on every device

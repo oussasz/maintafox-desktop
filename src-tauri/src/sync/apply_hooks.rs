@@ -79,7 +79,10 @@ async fn queue_received_media(conn: &impl ConnectionTrait, media_id: i64) -> App
         ))
         .await?
         .ok_or_else(|| hook_err("media_attachments", "media row vanished"))?;
-    let text = |c: &str| row.try_get::<String>("", c).map_err(|e| hook_err("media_attachments", e));
+    let text = |c: &str| {
+        row.try_get::<String>("", c)
+            .map_err(|e| hook_err("media_attachments", e))
+    };
     let relative_path: Option<String> = row
         .try_get("", "relative_path")
         .map_err(|e| hook_err("media_attachments", e))?;
@@ -114,7 +117,10 @@ async fn schedule_next_run(conn: &impl ConnectionTrait, schedule_id: i64) -> App
     conn.execute(Statement::from_sql_and_values(
         DatabaseBackend::Sqlite,
         "UPDATE report_schedules SET next_run_at = ? WHERE id = ?",
-        [crate::reports::scheduler::next_run_rfc3339(&schedule).into(), schedule_id.into()],
+        [
+            crate::reports::scheduler::next_run_rfc3339(&schedule).into(),
+            schedule_id.into(),
+        ],
     ))
     .await?;
     Ok(())
@@ -142,7 +148,10 @@ async fn apply_movement_to_balance(conn: &impl ConnectionTrait, movement_id: i64
         ))
         .await?
         .ok_or_else(|| hook_err("inventory_transactions", "movement vanished"))?;
-    let get_i64 = |c: &str| row.try_get::<i64>("", c).map_err(|e| hook_err("inventory_transactions", e));
+    let get_i64 = |c: &str| {
+        row.try_get::<i64>("", c)
+            .map_err(|e| hook_err("inventory_transactions", e))
+    };
     let movement_type: String = row
         .try_get("", "movement_type")
         .map_err(|e| hook_err("inventory_transactions", e))?;

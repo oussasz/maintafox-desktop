@@ -5,11 +5,11 @@
 use sea_orm::{ConnectionTrait, Database, DatabaseBackend, DatabaseConnection, Statement, TransactionTrait};
 use sea_orm_migration::MigratorTrait;
 
+use super::capture::drain_capture_journal;
 use super::domain::{
     ApplySyncBatchInput, ResolveSyncConflictInput, SyncAckInput, SyncConflictFilter, SyncInboundItemInput,
     SYNC_PROTOCOL_VERSION_V1,
 };
-use super::capture::drain_capture_journal;
 use super::materialize::materialize_inbox_batch;
 use super::queries;
 
@@ -124,11 +124,19 @@ async fn staging_keeps_the_row_identity_and_chains_versions() {
 async fn a_row_created_without_identity_gets_one_at_insert() {
     let db = setup_db().await;
     let team_id = insert_team(&db, None, "T-NOID", "No identity").await;
-    let assigned = scalar_string(&db, "SELECT entity_sync_id FROM teams WHERE id = ?", vec![team_id.into()]).await;
+    let assigned = scalar_string(
+        &db,
+        "SELECT entity_sync_id FROM teams WHERE id = ?",
+        vec![team_id.into()],
+    )
+    .await;
     assert!(uuid::Uuid::parse_str(&assigned).is_ok(), "{assigned}");
     stage(&db).await;
     let staged = scalar_string(&db, "SELECT entity_sync_id FROM sync_outbox", vec![]).await;
-    assert_eq!(staged, assigned, "staging uses the identity given at insert, never a new one");
+    assert_eq!(
+        staged, assigned,
+        "staging uses the identity given at insert, never a new one"
+    );
 }
 
 #[tokio::test]
@@ -534,9 +542,17 @@ async fn an_update_of_device_local_columns_only_is_not_captured() {
         vec![],
     )
     .await;
-    assert_eq!(count(&db, journal, vec![]).await, 0, "a login on this device is not a change to send");
+    assert_eq!(
+        count(&db, journal, vec![]).await,
+        0,
+        "a login on this device is not a change to send"
+    );
     exec(&db, "UPDATE user_accounts SET display_name = 'Administrateur'", vec![]).await;
-    assert_eq!(count(&db, journal, vec![]).await, 1, "a change of a synchronised column is captured");
+    assert_eq!(
+        count(&db, journal, vec![]).await,
+        1,
+        "a change of a synchronised column is captured"
+    );
 }
 
 #[tokio::test]

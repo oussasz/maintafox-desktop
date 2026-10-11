@@ -994,10 +994,9 @@ where
     let entity_sync_id = format!("failure_event:{}", Uuid::new_v4());
     let ts = utc_now_rfc3339();
 
-    txn
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "INSERT OR IGNORE INTO failure_events (
+    txn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT OR IGNORE INTO failure_events (
                 entity_sync_id, source_type, source_id, equipment_id, component_id,
                 detected_at, failed_at, restored_at,
                 downtime_duration_hours, active_repair_hours, waiting_hours,
@@ -1016,30 +1015,30 @@ where
                 ?, ?, ?,
                 1, ?, ?
             )",
-            [
-                entity_sync_id.into(),
-                WO_FAILURE_SOURCE.into(),
-                wo_id.into(),
-                equipment_id.into(),
-                opt_string(t_detect),
-                opt_string(actual_start.clone()),
-                opt_string(closed_at.clone()),
-                downtime_h.into(),
-                labor_h.into(),
-                waiting_h.into(),
-                bool_to_i64(is_planned).into(),
-                opt_i64(failure_mode_id),
-                opt_i64(failure_cause_id),
-                opt_i64(failure_effect_id),
-                bool_to_i64(cause_nd).into(),
-                actor_id.into(),
-                verification_status.into(),
-                eligible_json.into(),
-                ts.clone().into(),
-                ts.into(),
-            ],
-        ))
-        .await?;
+        [
+            entity_sync_id.into(),
+            WO_FAILURE_SOURCE.into(),
+            wo_id.into(),
+            equipment_id.into(),
+            opt_string(t_detect),
+            opt_string(actual_start.clone()),
+            opt_string(closed_at.clone()),
+            downtime_h.into(),
+            labor_h.into(),
+            waiting_h.into(),
+            bool_to_i64(is_planned).into(),
+            opt_i64(failure_mode_id),
+            opt_i64(failure_cause_id),
+            opt_i64(failure_effect_id),
+            bool_to_i64(cause_nd).into(),
+            actor_id.into(),
+            verification_status.into(),
+            eligible_json.into(),
+            ts.clone().into(),
+            ts.into(),
+        ],
+    ))
+    .await?;
     txn.commit().await?;
     Ok(())
 }

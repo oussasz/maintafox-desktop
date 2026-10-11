@@ -25,7 +25,10 @@ pub enum RefTarget {
     /// A row of a replicated entity type, sent by its `entity_sync_id`.
     Entity(&'static str),
     /// A row of a local app catalog (not replicated), sent by the value of `key_column`.
-    Catalog { table: &'static str, key_column: &'static str },
+    Catalog {
+        table: &'static str,
+        key_column: &'static str,
+    },
     /// The entity type is named by `type_column`: `(type value, entity type)`. A row whose type
     /// is not listed must leave the reference NULL, otherwise staging fails visibly.
     Poly {
@@ -366,7 +369,10 @@ pub const ROW_SPECS: &[RowSpec] = &[
     spec("equipment_classes", &[r("parent_id", "equipment_classes")]),
     spec(
         "equipment_hierarchy",
-        &[r("parent_equipment_id", "equipment"), r("child_equipment_id", "equipment")],
+        &[
+            r("parent_equipment_id", "equipment"),
+            r("child_equipment_id", "equipment"),
+        ],
     ),
     spec("equipment_meters", &[r("equipment_id", "equipment")]),
     spec(
@@ -614,7 +620,10 @@ pub const ROW_SPECS: &[RowSpec] = &[
         &[poly(
             "source_record_id",
             "source_record_kind",
-            &[("budget_actual", "budget_actuals"), ("budget_forecast", "budget_forecasts")],
+            &[
+                ("budget_actual", "budget_actuals"),
+                ("budget_forecast", "budget_forecasts"),
+            ],
         )],
     ),
     // ── Personnel and qualification ─────────────────────────────────────────────────────────
@@ -636,7 +645,11 @@ pub const ROW_SPECS: &[RowSpec] = &[
     spec("certification_types", &[]),
     spec("personnel_certifications", &[]),
     RowSpec {
-        json_refs: &[json_ref("required_certification_type_ids_json", "[*]", "certification_types")],
+        json_refs: &[json_ref(
+            "required_certification_type_ids_json",
+            "[*]",
+            "certification_types",
+        )],
         ..spec("qualification_requirement_profiles", &[])
     },
     spec("qualification_profile_skills", &[]),
@@ -1065,7 +1078,10 @@ pub const ROW_SPECS: &[RowSpec] = &[
         ],
     ),
     spec("procurement_requisition_lines", &[unmapped("demand_source_line_id")]),
-    spec("purchase_orders", &[r("ordered_by_id", USER), r("approved_by_id", USER)]),
+    spec(
+        "purchase_orders",
+        &[r("ordered_by_id", USER), r("approved_by_id", USER)],
+    ),
     spec(
         "purchase_order_lines",
         &[

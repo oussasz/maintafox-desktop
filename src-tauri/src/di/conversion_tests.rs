@@ -621,7 +621,9 @@ mod tests {
         .await
         .expect("second conversion");
 
-        let dev = crate::sync::device_code::this_device_code(&db).await.expect("device code");
+        let dev = crate::sync::device_code::this_device_code(&db)
+            .await
+            .expect("device code");
         assert_eq!(r1.wo_code, format!("OT-{dev}-0001"), "first WO code of this device");
         assert_eq!(r2.wo_code, format!("OT-{dev}-0002"), "second WO code of this device");
     }

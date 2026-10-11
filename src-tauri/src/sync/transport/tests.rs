@@ -1138,9 +1138,18 @@ async fn received_media_is_downloaded_verified_and_retried() {
     let key_for_stub = object_key.clone();
     // Object storage answers: not uploaded yet, then wrong bytes, then the file.
     let answers = Arc::new(Mutex::new(vec![
-        Reply::Bytes { status: 200, body: bytes.clone() },
-        Reply::Bytes { status: 200, body: b"%PDF REPORT from device A".to_vec() },
-        Reply::Bytes { status: 404, body: b"<Error><Code>NoSuchKey</Code></Error>".to_vec() },
+        Reply::Bytes {
+            status: 200,
+            body: bytes.clone(),
+        },
+        Reply::Bytes {
+            status: 200,
+            body: b"%PDF REPORT from device A".to_vec(),
+        },
+        Reply::Bytes {
+            status: 404,
+            body: b"<Error><Code>NoSuchKey</Code></Error>".to_vec(),
+        },
     ]));
     let stub = start_stub_on(listener, move |req| match req.path.as_str() {
         "/api/v1/sync/media/presign-get" => ok(json!({
@@ -1181,7 +1190,11 @@ async fn received_media_is_downloaded_verified_and_retried() {
     assert_eq!(outcome, CycleOutcome::Synced { more_work: false });
     let state = file_state(db.clone(), root.clone(), relative.clone()).await;
     assert_eq!(state.state, "pending");
-    assert!(state.last_error.as_deref().unwrap_or_default().contains("not on the server yet"));
+    assert!(state
+        .last_error
+        .as_deref()
+        .unwrap_or_default()
+        .contains("not on the server yet"));
     let next: Option<String> = scalar(
         &db,
         "SELECT next_attempt_at FROM sync_media_downloads WHERE entity_sync_id = 'media-in-1'",
@@ -1205,7 +1218,11 @@ async fn received_media_is_downloaded_verified_and_retried() {
     worker.cycle_once().await;
     let state = file_state(db.clone(), root.clone(), relative.clone()).await;
     assert_eq!(state.state, "pending");
-    assert!(state.last_error.as_deref().unwrap_or_default().contains("content hash mismatch"));
+    assert!(state
+        .last_error
+        .as_deref()
+        .unwrap_or_default()
+        .contains("content hash mismatch"));
     let leftovers = std::fs::read_dir(root.join("wo_attachments/7")).expect("dir").count();
     assert_eq!(leftovers, 0, "a refused download leaves no file");
 
@@ -1223,7 +1240,9 @@ async fn received_media_is_downloaded_verified_and_retried() {
 
     // 4. A failed download can be queued again by a person.
     assert_eq!(
-        crate::sync::media::retry_media_download(&db, "maintafox.db").await.expect("retry"),
+        crate::sync::media::retry_media_download(&db, "maintafox.db")
+            .await
+            .expect("retry"),
         1
     );
     let again: String = scalar(
@@ -1270,7 +1289,11 @@ async fn a_rate_limited_snapshot_continues_from_the_stored_page() {
         "{outcome:?}"
     );
     assert_eq!(
-        store::load_snapshot_progress(&db).await.expect("progress").map(|(_, t)| t).as_deref(),
+        store::load_snapshot_progress(&db)
+            .await
+            .expect("progress")
+            .map(|(_, t)| t)
+            .as_deref(),
         Some("page-2"),
         "the position of the snapshot is kept"
     );

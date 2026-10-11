@@ -6,8 +6,8 @@ use sea_orm::DatabaseConnection;
 use super::registry::{self, ConflictPolicy, SyncScope};
 use super::row_layout;
 use super::test_support::{
-    created_row, current_payload, editable_text_column, exec, scalar_i64, started_db, CreatedRow, ExchangeReport, RowFactory,
-    TestServer,
+    created_row, current_payload, editable_text_column, exec, scalar_i64, started_db, CreatedRow, ExchangeReport,
+    RowFactory, TestServer,
 };
 
 /// Identity, access, organisation, assets and reference catalogs.
@@ -281,7 +281,11 @@ async fn personal_links_not_received(
     for column in &layout.columns {
         let row_layout::Role::Ref {
             key,
-            target: row_layout::Target::Entity { entity_type: target, table },
+            target:
+                row_layout::Target::Entity {
+                    entity_type: target,
+                    table,
+                },
             soft: true,
             ..
         } = &column.role
@@ -289,7 +293,8 @@ async fn personal_links_not_received(
             continue;
         };
         let personal = registry::entity(target).is_some_and(|d| d.scope == SyncScope::User);
-        let (Some(serde_json::Value::String(sync_id)), Some(serde_json::Value::Null)) = (pa.get(key), pb.get(key)) else {
+        let (Some(serde_json::Value::String(sync_id)), Some(serde_json::Value::Null)) = (pa.get(key), pb.get(key))
+        else {
             continue;
         };
         let present = scalar_i64(
@@ -390,7 +395,12 @@ pub(crate) async fn round_trip(entity_types: &[&str]) {
             .await;
             *row = created_row(&a, row.entity_type, rowid).await.expect("personal row");
         } else {
-            exec(&a, &format!("UPDATE \"{}\" SET \"{owner}\" = ({admin})", def.table), vec![]).await;
+            exec(
+                &a,
+                &format!("UPDATE \"{}\" SET \"{owner}\" = ({admin})", def.table),
+                vec![],
+            )
+            .await;
             *row = created_row(&a, row.entity_type, row.rowid).await.expect("personal row");
         }
     }
@@ -446,7 +456,12 @@ pub(crate) async fn round_trip(entity_types: &[&str]) {
         .collect();
     for row in created.iter().rev() {
         let table = row_layout::layout(&a, row.entity_type).await.expect("layout").table();
-        exec(&a, &format!("DELETE FROM \"{table}\" WHERE rowid = ?"), vec![row.rowid.into()]).await;
+        exec(
+            &a,
+            &format!("DELETE FROM \"{table}\" WHERE rowid = ?"),
+            vec![row.rowid.into()],
+        )
+        .await;
     }
     let pushed = server.exchange("A", &a).await;
     check_exchange(&pushed, "delete/push", &mut problems);
@@ -588,7 +603,11 @@ async fn received_stock_movements_update_stock_balances() {
     let pushed = server.exchange("A", &a).await;
     assert_eq!(pushed.conflicts, 0);
     let received = server.exchange("B", &b).await;
-    assert!(received.materialized.errors.is_empty(), "{:?}", received.materialized.errors);
+    assert!(
+        received.materialized.errors.is_empty(),
+        "{:?}",
+        received.materialized.errors
+    );
     assert_eq!(received.materialized.conflicts, 0);
     assert_eq!(received.materialized.deferred, 0);
 
@@ -624,9 +643,19 @@ async fn every_registered_type_round_trips() {
         .map(|e| e.entity_type)
         .filter(|t| !listed.contains(t))
         .collect();
-    assert!(unlisted.is_empty(), "registered types in no domain round trip: {unlisted:?}");
-    let unregistered: Vec<&str> = listed.iter().copied().filter(|t| registry::entity(t).is_none()).collect();
-    assert!(unregistered.is_empty(), "round-trip types that are not registered: {unregistered:?}");
+    assert!(
+        unlisted.is_empty(),
+        "registered types in no domain round trip: {unlisted:?}"
+    );
+    let unregistered: Vec<&str> = listed
+        .iter()
+        .copied()
+        .filter(|t| registry::entity(t).is_none())
+        .collect();
+    assert!(
+        unregistered.is_empty(),
+        "round-trip types that are not registered: {unregistered:?}"
+    );
     let all: Vec<&str> = registry::SYNC_ENTITIES.iter().map(|e| e.entity_type).collect();
     round_trip(&all).await;
 }

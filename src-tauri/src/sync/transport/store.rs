@@ -144,7 +144,11 @@ pub async fn load_snapshot_progress(db: &impl ConnectionTrait) -> AppResult<Opti
     })
 }
 
-pub async fn save_snapshot_progress(db: &impl ConnectionTrait, snapshot_id: &str, next_page_token: &str) -> AppResult<()> {
+pub async fn save_snapshot_progress(
+    db: &impl ConnectionTrait,
+    snapshot_id: &str,
+    next_page_token: &str,
+) -> AppResult<()> {
     update(
         db,
         "snapshot_id = ?, snapshot_page_token = ?",

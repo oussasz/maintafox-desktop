@@ -123,7 +123,12 @@ async fn read_cells(
             "real" => Cell::Real(row.try_get::<f64>("", &v).map_err(read)?),
             "text" => Cell::Text(row.try_get::<String>("", &v).map_err(read)?),
             "blob" => Cell::Blob(row.try_get::<Vec<u8>>("", &v).map_err(read)?),
-            other => return Err(codec_err(table, format!("{}: unexpected storage class {other}", c.name))),
+            other => {
+                return Err(codec_err(
+                    table,
+                    format!("{}: unexpected storage class {other}", c.name),
+                ))
+            }
         };
         cells.push(cell);
     }
@@ -251,7 +256,9 @@ async fn outbound_ref(
                 ),
             ))
         }
-        Target::Entity { table: target_table, .. } => (
+        Target::Entity {
+            table: target_table, ..
+        } => (
             format!("SELECT entity_sync_id AS v FROM \"{target_table}\" WHERE id = ?"),
             (*target_table).to_string(),
         ),
@@ -389,7 +396,12 @@ fn join_url(path: &str, pairs: &[(String, String)]) -> String {
 
 /// Replace the local ids in the query of a URL column by sync ids (outbound). A link to a row
 /// that no longer exists loses that parameter: it opens the list instead of another record.
-async fn translate_url_out(conn: &impl ConnectionTrait, table: &str, column: &LayoutColumn, url: &str) -> AppResult<Value> {
+async fn translate_url_out(
+    conn: &impl ConnectionTrait,
+    table: &str,
+    column: &LayoutColumn,
+    url: &str,
+) -> AppResult<Value> {
     let (path, pairs) = split_url(url);
     let mut out = Vec::with_capacity(pairs.len());
     for (name, value) in pairs {
@@ -397,10 +409,12 @@ async fn translate_url_out(conn: &impl ConnectionTrait, table: &str, column: &La
             out.push((name, value));
             continue;
         };
-        let local_id = value
-            .trim()
-            .parse::<i64>()
-            .map_err(|_| codec_err(table, format!("{}: parameter {name}='{value}' is not a local id", column.name)))?;
+        let local_id = value.trim().parse::<i64>().map_err(|_| {
+            codec_err(
+                table,
+                format!("{}: parameter {name}='{value}' is not a local id", column.name),
+            )
+        })?;
         let sync_id = scalar_text(
             conn,
             &format!("SELECT entity_sync_id AS v FROM \"{}\" WHERE id = ?", r.table),
@@ -466,7 +480,9 @@ async fn translate_json_out(
         let mut pointers = Vec::new();
         json_ref_pointers(&doc, &r.path, String::new(), &mut pointers);
         for pointer in pointers {
-            let Some(slot) = doc.pointer_mut(&pointer) else { continue };
+            let Some(slot) = doc.pointer_mut(&pointer) else {
+                continue;
+            };
             let local_id = match slot {
                 Value::Null => continue,
                 Value::Number(n) => n.as_i64(),
@@ -488,7 +504,10 @@ async fn translate_json_out(
                 None => {
                     return Err(codec_err(
                         table,
-                        format!("{}{pointer} points to {} row {local_id}, which does not exist", column.name, r.table),
+                        format!(
+                            "{}{pointer} points to {} row {local_id}, which does not exist",
+                            column.name, r.table
+                        ),
                     ))
                 }
             };
@@ -518,7 +537,9 @@ async fn translate_json_in(
         let mut pointers = Vec::new();
         json_ref_pointers(&doc, &r.path, String::new(), &mut pointers);
         for pointer in pointers {
-            let Some(slot) = doc.pointer_mut(&pointer) else { continue };
+            let Some(slot) = doc.pointer_mut(&pointer) else {
+                continue;
+            };
             let sync_id = match slot {
                 Value::Null => continue,
                 Value::String(s) => s.clone(),
@@ -565,7 +586,10 @@ pub(crate) fn natural_key_string(layout: &EntityLayout, payload: &Map<String, Va
 
 /// Identity of a natural-key row.
 pub(crate) fn natural_entity_sync_id(layout: &EntityLayout, payload: &Map<String, Value>) -> AppResult<String> {
-    Ok(seeded_entity_sync_id(layout.def.entity_type, &natural_key_string(layout, payload)?))
+    Ok(seeded_entity_sync_id(
+        layout.def.entity_type,
+        &natural_key_string(layout, payload)?,
+    ))
 }
 
 /// Payload of the current local row, or `None` when the row does not exist here (or is outside
@@ -609,7 +633,10 @@ pub(crate) async fn load_row_payload(
             }
         }
     }
-    payload.insert(PAYLOAD_FORMAT_KEY.to_string(), Value::String(PAYLOAD_FORMAT.to_string()));
+    payload.insert(
+        PAYLOAD_FORMAT_KEY.to_string(),
+        Value::String(PAYLOAD_FORMAT.to_string()),
+    );
     let payload: Map<String, Value> = payload.into_iter().collect();
     let entity_sync_id = match identity {
         Some(id) => id,
@@ -644,7 +671,10 @@ pub(crate) fn delete_payload(layout: &EntityLayout, natural_key: Option<&Map<Str
             }
         }
     }
-    payload.insert(PAYLOAD_FORMAT_KEY.to_string(), Value::String(PAYLOAD_FORMAT.to_string()));
+    payload.insert(
+        PAYLOAD_FORMAT_KEY.to_string(),
+        Value::String(PAYLOAD_FORMAT.to_string()),
+    );
     payload
 }
 
@@ -652,7 +682,10 @@ pub(crate) fn delete_payload(layout: &EntityLayout, natural_key: Option<&Map<Str
 enum Resolved {
     Local(SqlValue),
     /// Target not here yet.
-    Missing { target_entity: &'static str, sync_id: String },
+    Missing {
+        target_entity: &'static str,
+        sync_id: String,
+    },
 }
 
 fn null_for(column: &LayoutColumn) -> SqlValue {
@@ -675,7 +708,12 @@ async fn inbound_ref(
     let key = match value {
         Value::Null => return Ok(Resolved::Local(null_for(column))),
         Value::String(s) if !s.trim().is_empty() => s.clone(),
-        _ => return Err(codec_err(table, format!("{}: reference must be a sync id string", column.name))),
+        _ => {
+            return Err(codec_err(
+                table,
+                format!("{}: reference must be a sync id string", column.name),
+            ))
+        }
     };
     let (sql, target_entity, target_table) = match target {
         Target::Unmapped => {
@@ -702,7 +740,10 @@ async fn inbound_ref(
             let Some((_, entity, target_table)) = poly_target(targets, type_value) else {
                 return Err(codec_err(
                     table,
-                    format!("{}: {type_column} {type_value:?} is not a mapped reference type", column.name),
+                    format!(
+                        "{}: {type_column} {type_value:?} is not a mapped reference type",
+                        column.name
+                    ),
                 ));
             };
             if *target_table == crate::sync::row_spec::NOT_A_ROW {
@@ -712,7 +753,10 @@ async fn inbound_ref(
             if *target_table == crate::sync::row_spec::LOCAL_ROW {
                 return Err(codec_err(
                     table,
-                    format!("{}: {type_column} {type_value:?} points to rows that are not synchronised", column.name),
+                    format!(
+                        "{}: {type_column} {type_value:?} points to rows that are not synchronised",
+                        column.name
+                    ),
                 ));
             }
             (
@@ -757,7 +801,10 @@ fn inbound_value(table: &str, column: &LayoutColumn, value: &Value) -> AppResult
         ))),
         Value::String(s) => SqlValue::String(Some(Box::new(s.clone()))),
         Value::Array(_) | Value::Object(_) => {
-            return Err(codec_err(table, format!("{}: payload values must be scalars", column.name)))
+            return Err(codec_err(
+                table,
+                format!("{}: payload values must be scalars", column.name),
+            ))
         }
     })
 }
@@ -836,7 +883,10 @@ pub(crate) async fn apply_row(
 
     let locator = if layout.natural_pk.is_some() {
         if natural_entity_sync_id(layout, &payload)? != entity_sync_id {
-            return Err(codec_err(table, "entity_sync_id does not match the natural key of the payload"));
+            return Err(codec_err(
+                table,
+                "entity_sync_id does not match the natural key of the payload",
+            ));
         }
         natural_locator(conn, layout, &payload).await?
     } else {
@@ -889,17 +939,11 @@ pub(crate) async fn apply_row(
                         }
                         assignments.push((column.name.clone(), local));
                     }
-                    Resolved::Missing {
-                        target_entity,
-                        sync_id,
-                    } if *soft => {
+                    Resolved::Missing { target_entity, sync_id } if *soft => {
                         unresolved_soft.push((column.name.clone(), target_entity, sync_id));
                         assignments.push((column.name.clone(), null_for(column)));
                     }
-                    Resolved::Missing {
-                        target_entity,
-                        sync_id,
-                    } => {
+                    Resolved::Missing { target_entity, sync_id } => {
                         return Ok(ApplyOutcome::Deferred {
                             code: DEFER_MISSING_PARENT.into(),
                             message: format!("{} needs {target_entity} {sync_id}, not received yet", column.name),

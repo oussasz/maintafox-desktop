@@ -74,7 +74,9 @@ impl MigrationTrait for Migration {
             .ok_or_else(|| DbErr::Custom("integrity_check returned nothing".into()))?
             .try_get_by_index(0)?;
         if integrity != "ok" {
-            return Err(DbErr::Custom(format!("integrity check after migration 164: {integrity}")));
+            return Err(DbErr::Custom(format!(
+                "integrity check after migration 164: {integrity}"
+            )));
         }
         Ok(())
     }

@@ -253,7 +253,11 @@ async fn assert_same(a: &Device, b: &Device, row: &CreatedRow, stage: &str) {
     let on_a = a.payload(row).await;
     let on_b = b.payload(row).await;
     assert!(on_a.is_some(), "{stage}: {} missing on {}", row.entity_type, a.name);
-    assert_eq!(on_a, on_b, "{stage}: {} differs between {} and {}", row.entity_type, a.name, b.name);
+    assert_eq!(
+        on_a, on_b,
+        "{stage}: {} differs between {} and {}",
+        row.entity_type, a.name, b.name
+    );
 }
 
 /// A local proxy to the API that lets the first exchange reach the server, waits for the server's
@@ -346,8 +350,7 @@ async fn unreachable_url() -> String {
 #[tokio::test]
 #[ignore = "needs the control API and Postgres: run `pnpm sync:harness`"]
 async fn multi_device_harness() {
-    let path =
-        std::env::var(CONFIG_ENV).unwrap_or_else(|_| panic!("{CONFIG_ENV} is not set: run `pnpm sync:harness`"));
+    let path = std::env::var(CONFIG_ENV).unwrap_or_else(|_| panic!("{CONFIG_ENV} is not set: run `pnpm sync:harness`"));
     let config: HarnessConfig =
         serde_json::from_str(&std::fs::read_to_string(&path).expect("harness config")).expect("harness config JSON");
     require_local(&config.api_base_url);
@@ -357,9 +360,14 @@ async fn multi_device_harness() {
     for (index, d) in (1_i64..).zip(config.devices) {
         let db = started_db().await;
         // Activated for the harness tenant, as after a real activation (tenant-scoped media keys).
-        crate::commands::product_license::record_activation_claim_for_tests(&db, &config.tenant_id, &d.fingerprint, &d.token)
-            .await
-            .expect("activation claim");
+        crate::commands::product_license::record_activation_claim_for_tests(
+            &db,
+            &config.tenant_id,
+            &d.fingerprint,
+            &d.token,
+        )
+        .await
+        .expect("activation claim");
         let media_root = std::env::temp_dir().join(format!("mfx-sync-harness-{}-{}", d.name, uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&media_root).expect("media root");
         devices.push(Device {
@@ -371,9 +379,7 @@ async fn multi_device_harness() {
             media_root,
         });
     }
-    let [mut a, mut b, mut c]: [Device; 3] = devices
-        .try_into()
-        .unwrap_or_else(|_| panic!("three devices expected"));
+    let [mut a, mut b, mut c]: [Device; 3] = devices.try_into().unwrap_or_else(|_| panic!("three devices expected"));
 
     // 1. First sync; a row created on A reaches B.
     a.synced(api).await;
@@ -427,7 +433,10 @@ async fn multi_device_harness() {
         matches!(outcome, CycleOutcome::Offline { .. } | CycleOutcome::Retry { .. }),
         "an unreachable API is offline, not an error: {outcome:?}"
     );
-    assert!(a.payload(&made_offline).await.is_none(), "nothing travelled while B was offline");
+    assert!(
+        a.payload(&made_offline).await.is_none(),
+        "nothing travelled while B was offline"
+    );
     b.synced(api).await;
     a.synced(api).await;
     assert_same(&a, &b, &made_offline, "3. reconnect").await;
@@ -487,17 +496,28 @@ async fn multi_device_harness() {
         "the device never saw the answer: {outcome:?}"
     );
     assert!(
-        store::load_state(&a.db).await.expect("transport state").pending.is_some(),
+        store::load_state(&a.db)
+            .await
+            .expect("transport state")
+            .pending
+            .is_some(),
         "the unanswered exchange is kept to be sent again"
     );
     b.synced(api).await;
     assert_same(&a, &b, &crash_row, "7. committed before the answer was lost").await;
     a.synced(api).await;
     assert!(
-        store::load_state(&a.db).await.expect("transport state").pending.is_none(),
+        store::load_state(&a.db)
+            .await
+            .expect("transport state")
+            .pending
+            .is_none(),
         "the resent exchange was answered"
     );
-    assert!(a.conflicts_of(&crash_row).await.is_empty(), "the resent exchange is not a conflict");
+    assert!(
+        a.conflicts_of(&crash_row).await.is_empty(),
+        "the resent exchange is not a conflict"
+    );
     b.synced(api).await;
     let copies = scalar_i64(
         &b.db,
@@ -532,7 +552,9 @@ async fn multi_device_harness() {
         "without a reset, the server never sends a device its own change back"
     );
     // What startup does after swapping a restored backup in (`startup::run_startup_sequence`).
-    store::forget_server_position(&b.db).await.expect("forget server position");
+    store::forget_server_position(&b.db)
+        .await
+        .expect("forget server position");
     b.synced(api).await;
     a.synced(api).await;
     assert_same(&a, &b, &after_backup, "8. after restore").await;
@@ -597,7 +619,11 @@ async fn multi_device_harness() {
     b.synced(api).await;
     let clash = b.open_conflict(&wo_a).await;
     assert_eq!(clash.conflict_type, crate::sync::code_clash::CODE_CLASH);
-    assert_eq!(b.text(&wo_b, "code").await.as_deref(), Some("OT-0500"), "nothing renamed silently");
+    assert_eq!(
+        b.text(&wo_b, "code").await.as_deref(),
+        Some("OT-0500"),
+        "nothing renamed silently"
+    );
     b.resolve(&clash, "renumber_local").await;
     let renumbered = b.text(&wo_b, "code").await.expect("number of B's work order");
     assert_ne!(renumbered, "OT-0500");
@@ -711,9 +737,14 @@ async fn large_tenant() {
         } else {
             started_db().await
         };
-        crate::commands::product_license::record_activation_claim_for_tests(&db, &config.tenant_id, &d.fingerprint, &d.token)
-            .await
-            .expect("activation claim");
+        crate::commands::product_license::record_activation_claim_for_tests(
+            &db,
+            &config.tenant_id,
+            &d.fingerprint,
+            &d.token,
+        )
+        .await
+        .expect("activation claim");
         devices.push(Device {
             name: d.name,
             fingerprint: d.fingerprint,
@@ -723,9 +754,7 @@ async fn large_tenant() {
             media_root,
         });
     }
-    let [mut a, _b, c]: [Device; 3] = devices
-        .try_into()
-        .unwrap_or_else(|_| panic!("three devices expected"));
+    let [mut a, _b, c]: [Device; 3] = devices.try_into().unwrap_or_else(|_| panic!("three devices expected"));
 
     // Templates: one work order and its related rows (shared parents: equipment, people, ...).
     a.synced(api).await;
@@ -833,9 +862,8 @@ async fn large_tenant() {
         peak.load(Ordering::SeqCst) / 1_000_000,
     );
     if waiting > 0 {
-        let rows = c
-            .db
-            .query_all(sea_orm::Statement::from_string(
+        let rows =
+            c.db.query_all(sea_orm::Statement::from_string(
                 sea_orm::DatabaseBackend::Sqlite,
                 "SELECT entity_type, apply_status, COALESCE(rejection_code, '') AS code, COUNT(*) AS n,
                         MIN(COALESCE(rejection_message, '')) AS message
@@ -856,7 +884,10 @@ async fn large_tenant() {
             );
         }
     }
-    assert!(work_orders > i64::from(copies), "every cloned work order reached the new device");
+    assert!(
+        work_orders > i64::from(copies),
+        "every cloned work order reached the new device"
+    );
     assert_eq!(conflicts, 0, "a bootstrap raises no conflict");
     assert_eq!(waiting, 0, "every received row was applied");
 
@@ -868,6 +899,9 @@ async fn large_tenant() {
     let started = std::time::Instant::now();
     c.synced(api).await;
     let pull = started.elapsed();
-    assert!(c.payload(&change).await.is_some(), "the change reached the large device");
+    assert!(
+        c.payload(&change).await.is_some(),
+        "the change reached the large device"
+    );
     println!("[large] steady state: A pushed one change in {push:?}; C (large database) received it in {pull:?}");
 }

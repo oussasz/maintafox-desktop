@@ -1046,7 +1046,9 @@ mod tests {
     #[tokio::test]
     async fn generate_personnel_code_first_is_per_0001() {
         let db = setup_migrated_db().await;
-        let dev = crate::sync::device_code::this_device_code(&db).await.expect("device code");
+        let dev = crate::sync::device_code::this_device_code(&db)
+            .await
+            .expect("device code");
         let code = generate_personnel_code(&db).await.expect("code gen");
         assert_eq!(code, format!("PER-{dev}-0001"));
         let code2 = generate_personnel_code(&db).await.expect("code gen 2");
@@ -1057,7 +1059,9 @@ mod tests {
     async fn generate_personnel_code_increments_after_insert() {
         let db = setup_migrated_db().await;
 
-        let dev = crate::sync::device_code::this_device_code(&db).await.expect("device code");
+        let dev = crate::sync::device_code::this_device_code(&db)
+            .await
+            .expect("device code");
         db.execute_unprepared(&format!(
             "INSERT INTO personnel (entity_sync_id, employee_code, full_name, employment_type, availability_status, row_version) \
              VALUES ('test-personnel-per-0001', 'PER-{dev}-0001', 'Test User', 'employee', 'available', 1)"

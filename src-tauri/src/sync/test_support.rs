@@ -26,7 +26,9 @@ use super::row_layout::{self, Role, Target};
 /// A database as the startup leaves it: migrations, every startup seeder, capture installed.
 pub(crate) async fn started_db() -> DatabaseConnection {
     let db = Database::connect("sqlite::memory:").await.expect("in-memory sqlite");
-    db.execute_unprepared("PRAGMA foreign_keys = ON").await.expect("foreign keys");
+    db.execute_unprepared("PRAGMA foreign_keys = ON")
+        .await
+        .expect("foreign keys");
     prepare_started(db).await
 }
 
@@ -205,13 +207,15 @@ impl TestServer {
             .state
             .iter()
             .filter(|(_, r)| r.seq > cursor && r.origin_device != device)
-            .filter(|((entity_type, _), r)| match registry::entity(entity_type).map(|e| e.scope) {
-                Some(SyncScope::User) => r
-                    .owner_user_sync_id
-                    .as_ref()
-                    .is_some_and(|o| push.current_user_sync_ids.contains(o)),
-                _ => true,
-            })
+            .filter(
+                |((entity_type, _), r)| match registry::entity(entity_type).map(|e| e.scope) {
+                    Some(SyncScope::User) => r
+                        .owner_user_sync_id
+                        .as_ref()
+                        .is_some_and(|o| push.current_user_sync_ids.contains(o)),
+                    _ => true,
+                },
+            )
             .collect();
         changed.sort_by_key(|(_, r)| r.seq);
         let inbound: Vec<SyncInboundItemInput> = changed
@@ -219,7 +223,11 @@ impl TestServer {
             .map(|((entity_type, entity_sync_id), r)| SyncInboundItemInput {
                 entity_type: entity_type.clone(),
                 entity_sync_id: entity_sync_id.clone(),
-                operation: if r.deleted { "delete".into() } else { r.operation.clone() },
+                operation: if r.deleted {
+                    "delete".into()
+                } else {
+                    r.operation.clone()
+                },
                 row_version: r.row_version,
                 payload_json: r.payload_json.clone(),
                 server_seq: Some(r.seq),
@@ -457,14 +465,16 @@ impl RowFactory {
                         // An optional link to an entity type not on the generic engine yet would
                         // never arrive on the other device: left empty.
                         let not_generic = super::row_spec::row_spec(target).is_none();
-                        if (*target == entity_type && depth > 0)
-                            || (!raw_col.notnull && (depth >= 6 || not_generic))
-                        {
+                        if (*target == entity_type && depth > 0) || (!raw_col.notnull && (depth >= 6 || not_generic)) {
                             None
                         } else {
                             let ordinal = *ordinals.entry(*target).and_modify(|o| *o += 1).or_insert(0);
                             let id = self.parent(db, target, ordinal, depth + 1).await?;
-                            Some(if column.is_text { id.to_string().into() } else { id.into() })
+                            Some(if column.is_text {
+                                id.to_string().into()
+                            } else {
+                                id.into()
+                            })
                         }
                     }
                     FactoryKind::Poly { target, .. }
@@ -480,7 +490,11 @@ impl RowFactory {
                         forced_types.insert(type_column.clone(), type_value);
                         let ordinal = *ordinals.entry(*target).and_modify(|o| *o += 1).or_insert(0);
                         let id = self.parent(db, target, ordinal, depth + 1).await?;
-                        Some(if column.is_text { id.to_string().into() } else { id.into() })
+                        Some(if column.is_text {
+                            id.to_string().into()
+                        } else {
+                            id.into()
+                        })
                     }
                 };
                 if let Some(v) = value {
@@ -494,7 +508,11 @@ impl RowFactory {
             let cols: Vec<String> = assigned.iter().map(|(c, _, _)| format!("\"{c}\"")).collect();
             let exprs: Vec<String> = assigned.iter().map(|(_, e, _)| e.clone()).collect();
             let values: Vec<SqlValue> = assigned.into_iter().filter_map(|(_, _, v)| v).collect();
-            let sql = format!("INSERT INTO \"{table}\" ({}) VALUES ({})", cols.join(", "), exprs.join(", "));
+            let sql = format!(
+                "INSERT INTO \"{table}\" ({}) VALUES ({})",
+                cols.join(", "),
+                exprs.join(", ")
+            );
             db.execute(Statement::from_sql_and_values(DatabaseBackend::Sqlite, &sql, values))
                 .await
                 .map_err(|e| format!("{table}: {e}\n  {sql}"))?;
@@ -643,12 +661,22 @@ fn value_for(column: &RawColumn, checks: &HashMap<String, String>, n: i64, posit
             // Usually unique per parent (one default location per warehouse).
             return 0_i64.into();
         }
-        if name.starts_with("is_") || name.starts_with("has_") || name.starts_with("can_") || name.starts_with("requires_") {
+        if name.starts_with("is_")
+            || name.starts_with("has_")
+            || name.starts_with("can_")
+            || name.starts_with("requires_")
+        {
             return 1_i64.into();
         }
         return n.into();
     }
-    if t.contains("REAL") || t.contains("FLOA") || t.contains("DOUB") || t.contains("NUM") || t.contains("DEC") || t == "D" {
+    if t.contains("REAL")
+        || t.contains("FLOA")
+        || t.contains("DOUB")
+        || t.contains("NUM")
+        || t.contains("DEC")
+        || t == "D"
+    {
         #[allow(clippy::cast_precision_loss)]
         return (n as f64 + 0.5).into();
     }
@@ -785,7 +813,9 @@ pub(crate) async fn editable_text_column(db: &DatabaseConnection, entity_type: &
                 && c.is_text
                 && !pk.contains(i)
                 && !checks.contains_key(&c.name.to_ascii_lowercase())
-                && !VALUE_OVERRIDES.iter().any(|(e, col, _)| *e == entity_type && *col == c.name)
+                && !VALUE_OVERRIDES
+                    .iter()
+                    .any(|(e, col, _)| *e == entity_type && *col == c.name)
                 && !unique_cols.contains(&c.name)
                 && !looks_like_time(&c.name)
                 && !c.name.ends_with("_json")

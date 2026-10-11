@@ -211,8 +211,12 @@ pub async fn backfill_library_document_media(
             row.try_get::<String>("", c)
                 .map_err(|e| AppError::SyncError(format!("library_documents.{c}: {e}")))
         };
-        let (entity_sync_id, file_name, relative_path, mime_type) =
-            (text("entity_sync_id")?, text("file_name")?, text("relative_path")?, text("mime_type")?);
+        let (entity_sync_id, file_name, relative_path, mime_type) = (
+            text("entity_sync_id")?,
+            text("file_name")?,
+            text("relative_path")?,
+            text("mime_type")?,
+        );
         let Some(path) = media_storage_path(&relative_path) else {
             tracing::warn!(target: "maintafox::sync", relative_path, "library document path is not inside the media directories; its file is not synchronised");
             continue;
@@ -248,7 +252,8 @@ pub async fn backfill_library_document_media(
 /// Directories under the app data directory where synchronised files live (first component of
 /// every `relative_path` the attachment commands write). A received file is only ever written
 /// inside one of them, so a row from another device cannot point at the database or settings.
-pub const MEDIA_STORAGE_DIRECTORIES: &[&str] = &["wo_attachments", "di_attachments", "asset_photos", "library_documents"];
+pub const MEDIA_STORAGE_DIRECTORIES: &[&str] =
+    &["wo_attachments", "di_attachments", "asset_photos", "library_documents"];
 
 /// `relative_path` as a path inside one of [`MEDIA_STORAGE_DIRECTORIES`] (plain components only,
 /// at least a directory and a file name); `None` otherwise.

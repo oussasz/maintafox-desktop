@@ -94,8 +94,11 @@ pub async fn install_capture(db: &DatabaseConnection) -> AppResult<CaptureInstal
 pub async fn install_capture_in(conn: &impl ConnectionTrait) -> AppResult<CaptureInstallReport> {
     suspend_capture(conn).await?;
     // Rows the migrations and startup seeders created without identity get their seeded one.
-    crate::sync::seeded_identity::assign_seeded_identities(conn, crate::sync::seeded_identity::SeededScope::MissingIdentity)
-        .await?;
+    crate::sync::seeded_identity::assign_seeded_identities(
+        conn,
+        crate::sync::seeded_identity::SeededScope::MissingIdentity,
+    )
+    .await?;
     let mut specs: Vec<_> = ROW_SPECS.iter().collect();
     specs.sort_by_key(|s| registry::apply_priority(s.entity_type));
     let mut report = CaptureInstallReport::default();
@@ -144,7 +147,10 @@ fn natural_key_sql(layout: &EntityLayout, alias: &str) -> AppResult<String> {
                 key,
                 target: Target::Entity { table, .. },
                 ..
-            } => (key, format!("(SELECT entity_sync_id FROM {} WHERE id = {col})", quote(table))),
+            } => (
+                key,
+                format!("(SELECT entity_sync_id FROM {} WHERE id = {col})", quote(table)),
+            ),
             Role::Ref {
                 key,
                 target: Target::Catalog { table, key_column },
@@ -402,10 +408,16 @@ pub(crate) async fn capture_row_change(conn: &impl ConnectionTrait, entity_type:
             .await?
             .is_some();
         if !exists {
-            return Err(AppError::SyncError(format!("{entity_type} row {local_id} does not exist.")));
+            return Err(AppError::SyncError(format!(
+                "{entity_type} row {local_id} does not exist."
+            )));
         }
         // A row without identity only exists where capture is not installed: nothing to send.
-        tracing::debug!(entity_type, local_id, "sync capture not installed: explicit capture skipped");
+        tracing::debug!(
+            entity_type,
+            local_id,
+            "sync capture not installed: explicit capture skipped"
+        );
     }
     Ok(())
 }

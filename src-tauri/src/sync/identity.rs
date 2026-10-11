@@ -89,7 +89,11 @@ pub async fn user_keyed_entity_sync_id(
 
 /// Sync id of a row when it has one. Rows always have one once sync capture is installed (the
 /// insert trigger gives one); a database without capture (tests, tools) may hold rows without.
-pub async fn optional_entity_sync_id(conn: &impl ConnectionTrait, table: &str, local_id: i64) -> AppResult<Option<String>> {
+pub async fn optional_entity_sync_id(
+    conn: &impl ConnectionTrait,
+    table: &str,
+    local_id: i64,
+) -> AppResult<Option<String>> {
     // Table names are internal constants, never input.
     let sql = format!("SELECT entity_sync_id FROM {table} WHERE id = ? LIMIT 1");
     Ok(conn

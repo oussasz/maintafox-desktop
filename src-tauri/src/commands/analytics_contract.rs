@@ -6,8 +6,7 @@ use tauri::State;
 use uuid::Uuid;
 
 use crate::analytics_contract::{
-    get_contract_version_by_id, insert_contract_version, list_contract_versions,
-    AnalyticsContractVersionRow,
+    get_contract_version_by_id, insert_contract_version, list_contract_versions, AnalyticsContractVersionRow,
 };
 use crate::auth::rbac::PermissionScope;
 use crate::errors::AppResult;

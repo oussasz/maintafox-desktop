@@ -810,7 +810,9 @@ async fn occurrence_sync_id(
     let plan = optional_entity_sync_id(db, "pm_plans", pm_plan_id).await?;
     let version = optional_entity_sync_id(db, "pm_plan_versions", plan_version_id).await?;
     Ok(match (plan, version) {
-        (Some(plan), Some(version)) => seeded_entity_sync_id("pm_occurrences", &format!("{plan}|{version}|{due_basis}")),
+        (Some(plan), Some(version)) => {
+            seeded_entity_sync_id("pm_occurrences", &format!("{plan}|{version}|{due_basis}"))
+        }
         _ => new_entity_sync_id(),
     })
 }
@@ -2086,7 +2088,10 @@ fn bounded_period(input_from: Option<&str>, input_to: Option<&str>) -> AppResult
         to.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
     ))
 }
-async fn load_pm_routing_context(db: &impl ConnectionTrait, occurrence_id: i64) -> AppResult<(Option<i64>, Option<i64>)> {
+async fn load_pm_routing_context(
+    db: &impl ConnectionTrait,
+    occurrence_id: i64,
+) -> AppResult<(Option<i64>, Option<i64>)> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -2190,25 +2195,25 @@ async fn emit_pm_notification(
     });
 
     let input = NotificationEventInput {
-            source_module: "pm".to_string(),
-            source_record_id: Some(occurrence.id.to_string()),
-            event_code: event_code.to_string(),
-            category_code: category_code.to_string(),
-            severity: severity.to_string(),
-            dedupe_key,
-            payload_json: Some(payload.to_string()),
-            title: format!("PM {}", event_code),
-            body: Some(format!(
-                "PM occurrence {} for plan {} is {}.",
-                occurrence.id,
-                occurrence
-                    .plan_code
-                    .clone()
-                    .unwrap_or_else(|| occurrence.pm_plan_id.to_string()),
-                occurrence.status
-            )),
-            action_url: Some(format!("/pm?occurrence={}", occurrence.id)),
-        };
+        source_module: "pm".to_string(),
+        source_record_id: Some(occurrence.id.to_string()),
+        event_code: event_code.to_string(),
+        category_code: category_code.to_string(),
+        severity: severity.to_string(),
+        dedupe_key,
+        payload_json: Some(payload.to_string()),
+        title: format!("PM {}", event_code),
+        body: Some(format!(
+            "PM occurrence {} for plan {} is {}.",
+            occurrence.id,
+            occurrence
+                .plan_code
+                .clone()
+                .unwrap_or_else(|| occurrence.pm_plan_id.to_string()),
+            occurrence.status
+        )),
+        action_url: Some(format!("/pm?occurrence={}", occurrence.id)),
+    };
     match origin {
         PmEventOrigin::EachDevice(identity) => emit_device_event(db, input, identity.as_deref()).await?,
         PmEventOrigin::Person => emit_notification_event(db, input).await?,

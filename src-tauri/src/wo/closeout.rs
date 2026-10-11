@@ -1397,8 +1397,6 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
     )
     .await?;
 
-
-
     txn.commit().await?;
 
     crate::pm::generation_control::on_work_order_closed_for_pm(db, input.wo_id, Some(input.actor_id)).await;

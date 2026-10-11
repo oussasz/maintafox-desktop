@@ -339,7 +339,9 @@ mod tests {
         let db = setup().await;
 
         let code = generate_di_code(&db).await.expect("code generation should succeed");
-        let dev = crate::sync::device_code::this_device_code(&db).await.expect("device code");
+        let dev = crate::sync::device_code::this_device_code(&db)
+            .await
+            .expect("device code");
 
         assert_eq!(code, format!("DI-{dev}-0001"), "first DI code of this device");
     }
@@ -352,7 +354,9 @@ mod tests {
         // We need prerequisite rows for FK constraints.
         seed_minimal_fk_data(&db).await;
 
-        let dev = crate::sync::device_code::this_device_code(&db).await.expect("device code");
+        let dev = crate::sync::device_code::this_device_code(&db)
+            .await
+            .expect("device code");
         let code1 = generate_di_code(&db).await.expect("first code gen");
         assert_eq!(code1, format!("DI-{dev}-0001"));
 
@@ -379,7 +383,9 @@ mod tests {
         let db = setup().await;
         seed_minimal_fk_data(&db).await;
 
-        let dev = crate::sync::device_code::this_device_code(&db).await.expect("device code");
+        let dev = crate::sync::device_code::this_device_code(&db)
+            .await
+            .expect("device code");
         insert_stub_di(&db, &format!("DI-{dev}-0001")).await;
         // A gap (import or manual), and numbers of before device codes and of another device,
         // which never feed this device's sequence.

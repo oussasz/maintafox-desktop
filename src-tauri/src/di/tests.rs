@@ -313,7 +313,9 @@ mod tests {
             .await
             .expect("create DI #3");
 
-        let dev = crate::sync::device_code::this_device_code(&db).await.expect("device code");
+        let dev = crate::sync::device_code::this_device_code(&db)
+            .await
+            .expect("device code");
         assert_eq!(di1.code, format!("DI-{dev}-0001"));
         assert_eq!(di2.code, format!("DI-{dev}-0002"));
         assert_eq!(di3.code, format!("DI-{dev}-0003"));

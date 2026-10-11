@@ -49,7 +49,9 @@ pub(crate) enum Role {
     /// Describes this device only; never sent, never overwritten.
     DeviceLocal,
     /// Recomputed on this device after a row is applied; `initial` (SQL literal) on insert.
-    Derived { initial: &'static str },
+    Derived {
+        initial: &'static str,
+    },
     Value {
         key: String,
     },
@@ -392,7 +394,10 @@ async fn build_layout(conn: &impl ConnectionTrait, entity_type: &str) -> AppResu
             let target = registry::require_entity(j.entity)?;
             let path = parse_json_path(j.path)?;
             let is_url = matches!(path.as_slice(), [JsonSeg::Query(_)]);
-            if json_refs.iter().any(|r: &JsonRef| matches!(r.path.as_slice(), [JsonSeg::Query(_)]) != is_url) {
+            if json_refs
+                .iter()
+                .any(|r: &JsonRef| matches!(r.path.as_slice(), [JsonSeg::Query(_)]) != is_url)
+            {
                 return Err(AppError::SyncError(format!(
                     "{table}.{name}: a column holds either JSON or a URL, not both"
                 )));

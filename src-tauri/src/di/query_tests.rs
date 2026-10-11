@@ -188,7 +188,9 @@ mod tests {
         .await
         .expect("create_di should succeed");
 
-        let dev = crate::sync::device_code::this_device_code(&db).await.expect("device code");
+        let dev = crate::sync::device_code::this_device_code(&db)
+            .await
+            .expect("device code");
         assert_eq!(di.code, format!("DI-{dev}-0001"));
         assert_eq!(di.status, "submitted");
         assert_eq!(di.title, "Pump vibration alert");
