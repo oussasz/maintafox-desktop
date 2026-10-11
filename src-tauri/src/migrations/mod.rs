@@ -155,6 +155,7 @@ mod m20261011_000164_legacy_users_fk_to_user_accounts;
 mod m20261011_000165_sync_media_downloads;
 mod m20261011_000166_sync_code_clash_conflicts;
 mod m20261011_000167_sync_history_ids;
+mod m20261011_000168_sync_inbox_scale;
 mod m20261101_000036_activity_audit_log;
 mod m20261201_000037_observability_permissions;
 mod m_test;
@@ -322,6 +323,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261011_000165_sync_media_downloads::Migration),
             Box::new(m20261011_000166_sync_code_clash_conflicts::Migration),
             Box::new(m20261011_000167_sync_history_ids::Migration),
+            Box::new(m20261011_000168_sync_inbox_scale::Migration),
             Box::new(m_test::Migration),
         ]
     }

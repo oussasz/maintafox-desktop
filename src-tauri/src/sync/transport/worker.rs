@@ -43,7 +43,7 @@ use super::wire::{
 };
 use crate::errors::{AppError, AppResult};
 use crate::sync::domain::{SyncMediaManifestItem, SYNC_PROTOCOL_VERSION_V2};
-use crate::sync::materialize::materialize_inbox_batch;
+use crate::sync::materialize::materialize_inbox;
 use crate::sync::queries::{self, hash_payload, OUTBOX_MAX_DELIVERY_ATTEMPTS};
 
 /// Background task id in `BackgroundTaskSupervisor`.
@@ -78,13 +78,13 @@ pub const SYNC_MEDIA_TRANSFER_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 /// Outbox items per exchange (the server accepts up to 1000).
 pub const SYNC_OUTBOX_BATCH_SIZE: i64 = 200;
-/// Snapshot page size (the server accepts 1..1000).
-pub const SYNC_SNAPSHOT_PAGE_SIZE: u32 = 500;
+/// Snapshot page size: the server's maximum (1..1000), so a large tenant needs as few requests as
+/// possible under the per-device request limit.
+pub const SYNC_SNAPSHOT_PAGE_SIZE: u32 = 1000;
 /// Exchanges in one cycle before the worker yields (it starts the next cycle at once).
 pub const SYNC_MAX_EXCHANGES_PER_CYCLE: usize = 50;
-/// Inbox rows materialized per pass, and passes per materialization.
+/// Inbox rows materialized per pass (passes continue until nothing more can be applied).
 pub const SYNC_MATERIALIZE_BATCH: i64 = 500;
-pub const SYNC_MAX_MATERIALIZE_PASSES: usize = 20;
 /// A snapshot whose page token the server refuses restarts from page 1 at most this many times.
 pub const SYNC_MAX_SNAPSHOT_RESTARTS: u32 = 3;
 /// Media uploads tried per exchange.
@@ -818,9 +818,22 @@ impl SyncWorker {
         users: &[String],
     ) -> AppResult<Result<(), TransportError>> {
         let mut restarts = 0;
+        // Only a scope `all` snapshot can be long; it continues where an interrupted one stopped
+        // (429 from the per-device request limit, restart, crash): its pages are in the inbox.
+        let resumable = scope == SNAPSHOT_SCOPE_ALL;
+        let mut resume = if resumable {
+            store::load_snapshot_progress(&self.db).await?
+        } else {
+            None
+        };
         'snapshot: loop {
-            let snapshot_id = format!("snapshot-{scope}-{}", uuid::Uuid::new_v4());
-            let mut page_token: Option<String> = None;
+            let (snapshot_id, mut page_token) = match resume.take() {
+                Some((id, token)) => {
+                    info!(target: "maintafox::sync", scope, "continuing an interrupted snapshot");
+                    (id, Some(token))
+                }
+                None => (format!("snapshot-{scope}-{}", uuid::Uuid::new_v4()), None),
+            };
             let mut pages = 0_u32;
             loop {
                 let request = SnapshotRequest {
@@ -834,12 +847,18 @@ impl SyncWorker {
                     Ok(page) => page,
                     Err(e) if e.code() == "invalid_page_token" && restarts < SYNC_MAX_SNAPSHOT_RESTARTS => {
                         restarts += 1;
+                        if resumable {
+                            store::clear_snapshot_progress(&self.db).await?;
+                        }
                         warn!(target: "maintafox::sync", scope, restarts, "snapshot page token refused; restarting the snapshot");
                         continue 'snapshot;
                     }
                     Err(e) => return Ok(Err(e)),
                 };
                 pages += 1;
+                if pages % 50 == 0 {
+                    info!(target: "maintafox::sync", scope, pages, "snapshot pages received");
+                }
                 let last = !page.has_more;
                 let checkpoint = if scope == SNAPSHOT_SCOPE_ALL && last {
                     match page.checkpoint_token.as_deref().filter(|t| !t.trim().is_empty()) {
@@ -854,13 +873,24 @@ impl SyncWorker {
                     None
                 };
                 queries::apply_snapshot_page(&self.db, &snapshot_id, &page.items, checkpoint).await?;
-                self.materialize().await?;
                 if last {
+                    // Applied once every page is stored: all rows parents first, each tried once
+                    // (pages come in entity type order, so applying page by page made most
+                    // children wait for a later page and be tried again).
+                    self.materialize(true).await?;
+                    if resumable {
+                        store::clear_snapshot_progress(&self.db).await?;
+                    }
                     info!(target: "maintafox::sync", scope, pages, "snapshot complete");
                     return Ok(Ok(()));
                 }
                 page_token = match page.next_page_token.filter(|t| !t.trim().is_empty()) {
-                    Some(next) => Some(next),
+                    Some(next) => {
+                        if resumable {
+                            store::save_snapshot_progress(&self.db, &snapshot_id, &next).await?;
+                        }
+                        Some(next)
+                    }
                     None => {
                         return Ok(Err(TransportError::Contract(
                             "a snapshot page has has_more without next_page_token".to_string(),
@@ -871,12 +901,19 @@ impl SyncWorker {
         }
     }
 
-    async fn materialize(&self) -> AppResult<()> {
-        for _ in 0..SYNC_MAX_MATERIALIZE_PASSES {
-            let result = materialize_inbox_batch(&self.db, Some(SYNC_MATERIALIZE_BATCH)).await?;
-            if result.processed < SYNC_MATERIALIZE_BATCH || result.applied == 0 {
-                break;
-            }
+    /// Apply every received row: pending rows parents first, then (`retry_deferred`) the rows that
+    /// waited for a parent, until nothing more can be applied.
+    async fn materialize(&self, retry_deferred: bool) -> AppResult<()> {
+        let result = materialize_inbox(&self.db, SYNC_MATERIALIZE_BATCH, retry_deferred).await?;
+        if result.processed > 0 {
+            info!(
+                target: "maintafox::sync",
+                processed = result.processed,
+                applied = result.applied,
+                conflicts = result.conflicts,
+                deferred = result.deferred,
+                "inbox materialized"
+            );
         }
         Ok(())
     }
@@ -954,7 +991,7 @@ impl SyncWorker {
             has_more,
             "sync exchange applied"
         );
-        self.materialize().await?;
+        self.materialize(true).await?;
 
         if !users_to_snapshot.is_empty() {
             // Contract §4.1: the snapshot must list the same users as the exchange.
@@ -1024,6 +1061,8 @@ impl SyncWorker {
                 queries::return_unsent_outbox_items(&self.db, ids).await?;
                 store::clear_pending(&self.db).await?;
                 queries::clear_sync_checkpoint(&self.db).await?;
+                // The server's state no longer matches this device: a snapshot starts from page 1.
+                store::clear_snapshot_progress(&self.db).await?;
                 if *snapshot_done {
                     // Refused right after a fresh snapshot: something is wrong on the server side.
                     CycleOutcome::Failed { error }

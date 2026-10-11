@@ -157,6 +157,31 @@ async fn scalar_text(conn: &impl ConnectionTrait, sql: &str, values: Vec<SqlValu
     }
 }
 
+tokio::task_local! {
+    /// Local ids found by sync id during one materialization pass (`materialize`): received rows
+    /// share their parents (equipment, people, statuses), so each is looked up once per pass, not
+    /// once per row. Only found ids are kept; a delete or a rolled-back row clears it.
+    pub(crate) static REF_CACHE: std::cell::RefCell<std::collections::HashMap<(String, String), i64>>;
+}
+
+/// Forget the cached reference lookups of the current pass (no-op outside a pass).
+pub(crate) fn clear_ref_cache() {
+    let _ = REF_CACHE.try_with(|c| c.borrow_mut().clear());
+}
+
+/// [`scalar_id`] for a reference lookup `sql` by one key, through the pass cache.
+async fn cached_ref_id(conn: &impl ConnectionTrait, sql: &str, key: &str) -> AppResult<Option<i64>> {
+    let cache_key = (sql.to_string(), key.to_string());
+    if let Ok(Some(id)) = REF_CACHE.try_with(|c| c.borrow().get(&cache_key).copied()) {
+        return Ok(Some(id));
+    }
+    let found = scalar_id(conn, sql, vec![key.into()]).await?;
+    if let Some(id) = found {
+        let _ = REF_CACHE.try_with(|c| c.borrow_mut().insert(cache_key, id));
+    }
+    Ok(found)
+}
+
 pub(crate) async fn scalar_id(conn: &impl ConnectionTrait, sql: &str, values: Vec<SqlValue>) -> AppResult<Option<i64>> {
     let row = conn
         .query_one(Statement::from_sql_and_values(DatabaseBackend::Sqlite, sql, values))
@@ -697,7 +722,7 @@ async fn inbound_ref(
             )
         }
     };
-    match (scalar_id(conn, &sql, vec![key.clone().into()]).await?, target_entity) {
+    match (cached_ref_id(conn, &sql, &key).await?, target_entity) {
         (Some(id), _) if column.is_text => Ok(Resolved::Local(id.to_string().into())),
         (Some(id), _) => Ok(Resolved::Local(id.into())),
         (None, Some(target_entity)) => Ok(Resolved::Missing {
@@ -830,6 +855,7 @@ pub(crate) async fn apply_row(
         if result.rows_affected() == 0 {
             return Ok(ApplyOutcome::Unchanged);
         }
+        clear_ref_cache();
         crate::sync::apply_hooks::after_delete(conn, layout, entity_sync_id).await?;
         return Ok(ApplyOutcome::Applied);
     }

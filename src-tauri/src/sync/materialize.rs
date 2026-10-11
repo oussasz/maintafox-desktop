@@ -51,23 +51,176 @@ fn decode(field: &str, e: impl std::fmt::Display) -> AppError {
     AppError::SyncError(format!("inbox {field}: {e}"))
 }
 
-/// Apply pending inbox rows, plus deferred rows whose entity type can now be applied.
+/// Which inbox rows one materialization pass takes.
+#[derive(Debug, Clone, Copy)]
+enum Selection<'a> {
+    /// These rows, if still in the given status (`pending`: never tried; `deferred`: waiting for
+    /// a parent). Callers order the ids parents first and pass them in chunks, so the order is
+    /// computed once per call and rows that cannot be applied never hide the ones that can.
+    Ids { status: &'static str, ids: &'a [i64] },
+    /// Both, pending first (the older one-call behaviour, used by the replay tools and tests).
+    Any,
+}
+
+/// Apply pending inbox rows, plus deferred rows whose entity type can now be applied (one pass of
+/// at most `limit` rows, pending rows first).
 pub async fn materialize_inbox_batch(db: &DatabaseConnection, limit: Option<i64>) -> AppResult<MaterializeInboxResult> {
-    let lim = limit.unwrap_or(200).clamp(1, 2000);
+    materialize_selection(db, Selection::Any, limit.unwrap_or(200)).await
+}
+
+/// Apply every pending inbox row (passes of `batch` rows, parents first). With `retry_deferred`,
+/// then sweep the deferred rows until a sweep applies nothing more. A snapshot applies each page
+/// without the sweep (rows whose parent comes in a later page are deferred once) and sweeps after
+/// its last page, so the deferred rows are not re-read after every page.
+pub async fn materialize_inbox(
+    db: &DatabaseConnection,
+    batch: i64,
+    retry_deferred: bool,
+) -> AppResult<MaterializeInboxResult> {
+    let mut total = MaterializeInboxResult {
+        processed: 0,
+        applied: 0,
+        conflicts: 0,
+        skipped: 0,
+        deferred: 0,
+        errors: Vec::new(),
+    };
+    let add = |total: &mut MaterializeInboxResult, r: MaterializeInboxResult| {
+        total.processed += r.processed;
+        total.applied += r.applied;
+        total.conflicts += r.conflicts;
+        total.skipped += r.skipped;
+        total.errors.extend(r.errors);
+    };
+    // Rows arriving while this runs are taken by the next round; every round moves its rows out
+    // of `pending`, so this ends.
+    let started = std::time::Instant::now();
+    loop {
+        let ids = ordered_ids(db, "pending").await?;
+        if ids.is_empty() {
+            break;
+        }
+        for (n, chunk) in ids.chunks(chunk_len(batch)).enumerate() {
+            let r = materialize_selection(db, Selection::Ids { status: "pending", ids: chunk }, batch).await?;
+            add(&mut total, r);
+            if (n + 1) % PROGRESS_EVERY_CHUNKS == 0 {
+                tracing::info!(
+                    target: "maintafox::sync",
+                    done = (n + 1) * chunk_len(batch),
+                    of = ids.len(),
+                    elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                    "applying received rows"
+                );
+            }
+        }
+    }
+    if retry_deferred {
+        // Parents first, so one sweep usually applies a whole waiting chain; a sweep that applies
+        // nothing leaves only rows that cannot be applied yet.
+        loop {
+            let ids = ordered_ids(db, "deferred").await?;
+            let mut applied = 0;
+            for chunk in ids.chunks(chunk_len(batch)) {
+                let r = materialize_selection(db, Selection::Ids { status: "deferred", ids: chunk }, batch).await?;
+                applied += r.applied + r.skipped;
+                add(&mut total, r);
+            }
+            if applied == 0 {
+                break;
+            }
+        }
+    }
+    total.deferred = db
+        .query_one(Statement::from_string(
+            DatabaseBackend::Sqlite,
+            "SELECT COUNT(*) AS n FROM sync_inbox WHERE apply_status = 'deferred'".to_string(),
+        ))
+        .await?
+        .map(|r| r.try_get::<i64>("", "n"))
+        .transpose()
+        .map_err(|e| decode("deferred count", e))?
+        .unwrap_or(0);
+    Ok(total)
+}
+
+/// One pass over the selected rows, with its own reference-lookup cache.
+/// A progress line every this many chunks of a long materialization (a bootstrap).
+const PROGRESS_EVERY_CHUNKS: usize = 40;
+
+fn chunk_len(batch: i64) -> usize {
+    usize::try_from(batch.clamp(1, 2000)).unwrap_or(500)
+}
+
+/// Inbox rows in `status` that this version can apply, parents first (`registry::apply_priority`),
+/// then by arrival.
+async fn ordered_ids(db: &DatabaseConnection, status: &str) -> AppResult<Vec<i64>> {
     let materializable = serde_json::to_string(&registry::materializable_entity_types())?;
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
-            "SELECT id, server_batch_id, checkpoint_token, entity_type, entity_sync_id, operation,
-                    row_version, payload_json, payload_hash
-             FROM sync_inbox
-             WHERE apply_status = 'pending'
-                OR (apply_status = 'deferred' AND entity_type IN (SELECT value FROM json_each(?)))
-             ORDER BY id ASC
-             LIMIT ?",
-            [materializable.into(), lim.into()],
+            "SELECT id, entity_type FROM sync_inbox
+             WHERE apply_status = ? AND entity_type IN (SELECT value FROM json_each(?))",
+            [status.into(), materializable.into()],
         ))
         .await?;
+    let mut ordered = Vec::with_capacity(rows.len());
+    for r in &rows {
+        let id: i64 = r.try_get("", "id").map_err(|e| decode("id", e))?;
+        let entity_type: String = r.try_get("", "entity_type").map_err(|e| decode("entity_type", e))?;
+        ordered.push((registry::apply_priority(&entity_type), id));
+    }
+    ordered.sort_unstable();
+    Ok(ordered.into_iter().map(|(_, id)| id).collect())
+}
+
+async fn materialize_selection(
+    db: &DatabaseConnection,
+    selection: Selection<'_>,
+    limit: i64,
+) -> AppResult<MaterializeInboxResult> {
+    crate::sync::row_codec::REF_CACHE
+        .scope(Default::default(), materialize_pass(db, selection, limit))
+        .await
+}
+
+async fn materialize_pass(
+    db: &DatabaseConnection,
+    selection: Selection<'_>,
+    limit: i64,
+) -> AppResult<MaterializeInboxResult> {
+    let lim = limit.clamp(1, 2000);
+    let materializable = serde_json::to_string(&registry::materializable_entity_types())?;
+    let columns = "id, server_batch_id, checkpoint_token, entity_type, entity_sync_id, operation,
+                   row_version, payload_json, payload_hash";
+    let statement = match selection {
+        Selection::Ids { status, ids } => Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            format!(
+                // Driven by the id list (primary key lookups), not by a scan of every row in
+                // that status: the inbox of a large bootstrap holds hundreds of thousands.
+                "SELECT {} FROM json_each(?) AS j CROSS JOIN sync_inbox ON sync_inbox.id = j.value
+                 WHERE sync_inbox.apply_status = ?",
+                columns
+                    .split(',')
+                    .map(|c| format!("sync_inbox.{}", c.trim()))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            [serde_json::to_string(ids)?.into(), status.into()],
+        ),
+        Selection::Any => Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            format!(
+                "SELECT {columns} FROM sync_inbox
+                 WHERE apply_status = 'pending'
+                    OR (apply_status = 'deferred' AND entity_type IN (SELECT value FROM json_each(?)))
+                 ORDER BY CASE apply_status WHEN 'pending' THEN 0 ELSE 1 END, id ASC
+                 LIMIT ?"
+            ),
+            [materializable.into(), lim.into()],
+        ),
+    };
+    let rows = db.query_all(statement).await?;
 
     let mut items = Vec::with_capacity(rows.len());
     for row in &rows {
@@ -116,6 +269,9 @@ pub async fn materialize_inbox_batch(db: &DatabaseConnection, limit: Option<i64>
         errors: Vec::new(),
     };
 
+    // One transaction per pass (one disk commit for up to `limit` rows instead of one per row);
+    // each row still runs in its own savepoint, so a row that fails leaves nothing behind.
+    let pass = db.begin().await?;
     // Rows waiting for a parent are retried in the same run as long as other rows were applied,
     // so a child that arrived before its parent in the same run does not wait for the next one.
     let mut queue = items;
@@ -123,7 +279,7 @@ pub async fn materialize_inbox_batch(db: &DatabaseConnection, limit: Option<i64>
         let mut waiting_for_parent = Vec::new();
         let mut progressed = false;
         for item in queue {
-            match apply_inbox_row(db, &item).await? {
+            match apply_inbox_row(&pass, &item).await? {
                 ApplyOutcome::Applied => {
                     result.applied += 1;
                     progressed = true;
@@ -155,6 +311,7 @@ pub async fn materialize_inbox_batch(db: &DatabaseConnection, limit: Option<i64>
         }
         queue = waiting_for_parent;
     }
+    pass.commit().await?;
 
     Ok(result)
 }
@@ -176,7 +333,7 @@ fn is_delete_operation(operation: &str) -> bool {
 }
 
 /// Apply one inbox row in its own transaction and record the outcome.
-async fn apply_inbox_row(db: &DatabaseConnection, item: &InboxRow) -> AppResult<ApplyOutcome> {
+async fn apply_inbox_row<C: ConnectionTrait + TransactionTrait>(db: &C, item: &InboxRow) -> AppResult<ApplyOutcome> {
     let tx = db.begin().await?;
     // Local changes captured since the last drain must be in the outbox before the conflict check.
     crate::sync::capture::drain_capture_journal(&tx).await?;
@@ -200,10 +357,12 @@ async fn apply_inbox_row(db: &DatabaseConnection, item: &InboxRow) -> AppResult<
         }
         Ok(other) => {
             tx.rollback().await?;
+            crate::sync::row_codec::clear_ref_cache();
             other
         }
         Err(e) => {
             tx.rollback().await?;
+            crate::sync::row_codec::clear_ref_cache();
             ApplyOutcome::Conflict {
                 code: "MATERIALIZE_ERROR".into(),
                 message: e.to_string(),
@@ -450,4 +609,5 @@ pub(crate) async fn apply_inbound_payload(
         "No inbound materializer for '{entity_type}' although the registry declares one."
     )))
 }
+
 

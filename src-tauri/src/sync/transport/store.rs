@@ -124,7 +124,37 @@ pub async fn forget_server_position(db: &impl ConnectionTrait) -> AppResult<()> 
         "UPDATE sync_checkpoint SET checkpoint_token = NULL WHERE id = 1".to_string(),
     ))
     .await?;
+    clear_snapshot_progress(db).await?;
     clear_pending(db).await
+}
+
+/// A scope `all` snapshot in progress: its inbox batch id and the next page to ask for.
+pub async fn load_snapshot_progress(db: &impl ConnectionTrait) -> AppResult<Option<(String, String)>> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT snapshot_id, snapshot_page_token FROM sync_transport_state WHERE id = 1",
+            [],
+        ))
+        .await?;
+    let Some(row) = row else { return Ok(None) };
+    Ok(match (opt(&row, "snapshot_id")?, opt(&row, "snapshot_page_token")?) {
+        (Some(id), Some(token)) => Some((id, token)),
+        _ => None,
+    })
+}
+
+pub async fn save_snapshot_progress(db: &impl ConnectionTrait, snapshot_id: &str, next_page_token: &str) -> AppResult<()> {
+    update(
+        db,
+        "snapshot_id = ?, snapshot_page_token = ?",
+        vec![snapshot_id.into(), next_page_token.into()],
+    )
+    .await
+}
+
+pub async fn clear_snapshot_progress(db: &impl ConnectionTrait) -> AppResult<()> {
+    update(db, "snapshot_id = NULL, snapshot_page_token = NULL", vec![]).await
 }
 
 pub async fn clear_pending(db: &impl ConnectionTrait) -> AppResult<()> {

@@ -538,3 +538,51 @@ async fn an_update_of_device_local_columns_only_is_not_captured() {
     exec(&db, "UPDATE user_accounts SET display_name = 'Administrateur'", vec![]).await;
     assert_eq!(count(&db, journal, vec![]).await, 1, "a change of a synchronised column is captured");
 }
+
+#[tokio::test]
+async fn many_children_received_before_their_parents_are_applied_parents_first_in_one_call() {
+    let db = setup_db().await;
+    // More waiting children than one pass takes, stored before their parents (as snapshot pages
+    // in entity type order deliver them): the older loop re-read the same waiting rows forever.
+    let mut items = Vec::new();
+    for i in 0..30 {
+        items.push(inbound(
+            "stock_locations",
+            &format!("loc-{i}"),
+            1,
+            serde_json::json!({
+                "_sync_format": FORMAT, "warehouse_sync_id": format!("wh-{i}"), "code": format!("LOC-{i}"),
+                "name": format!("Bin {i}"), "is_default": 0, "is_active": 1,
+                "created_at": "2026-10-10T00:00:00Z", "updated_at": "2026-10-10T00:00:00Z"
+            }),
+        ));
+    }
+    for i in 0..30 {
+        items.push(inbound(
+            "warehouses",
+            &format!("wh-{i}"),
+            1,
+            serde_json::json!({
+                "_sync_format": FORMAT, "code": format!("WH-{i}"), "name": format!("Warehouse {i}"), "is_active": 1,
+                "created_at": "2026-10-10T00:00:00Z", "updated_at": "2026-10-10T00:00:00Z"
+            }),
+        ));
+    }
+    queries::apply_sync_batch(&db, batch("srv-many", "ckpt-many", items))
+        .await
+        .expect("ingest");
+    let result = super::materialize::materialize_inbox(&db, 10, true)
+        .await
+        .expect("materialize");
+    assert_eq!(result.applied, 60, "{result:?}");
+    assert_eq!(result.processed, 60, "each row tried once: parents are taken first");
+    assert_eq!(result.deferred, 0);
+    let linked = scalar_i64(
+        &db,
+        "SELECT COUNT(*) FROM stock_locations l JOIN warehouses w ON w.id = l.warehouse_id
+         WHERE substr(l.entity_sync_id, 5) = substr(w.entity_sync_id, 4)",
+        vec![],
+    )
+    .await;
+    assert_eq!(linked, 30);
+}

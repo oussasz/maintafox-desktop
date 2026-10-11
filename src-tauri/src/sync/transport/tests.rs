@@ -1234,3 +1234,65 @@ async fn received_media_is_downloaded_verified_and_retried() {
     .await;
     assert_eq!(again, "pending");
 }
+
+#[tokio::test]
+async fn a_rate_limited_snapshot_continues_from_the_stored_page() {
+    let db = setup_db().await;
+    let refused_once = Arc::new(Mutex::new(false));
+    let refused = refused_once.clone();
+    let stub = start_stub(move |req| match req.path.as_str() {
+        "/api/v1/sync/snapshot" => match req.json()["page_token"].as_str() {
+            None => ok(snapshot_page(vec![inbound("w-0", 1)], Some("page-2"), None)),
+            Some("page-2") => {
+                let mut refused = refused.lock().expect("flag");
+                if *refused {
+                    ok(snapshot_page(vec![inbound("w-1", 2)], None, Some("v2.cp.sig")))
+                } else {
+                    *refused = true;
+                    Reply::Json {
+                        status: 429,
+                        body: json!({ "error": "rate_limited", "message": "Too many requests; retry later." }),
+                        headers: vec![("Retry-After", "1".to_string())],
+                    }
+                }
+            }
+            Some(other) => status(400, json!({ "error": "invalid_page_token", "message": other })),
+        },
+        "/api/v1/sync/exchange" => ok(exchange_answer("v2.cp2.sig", vec![], vec![], false)),
+        _ => status(404, json!({ "error": "not_found" })),
+    })
+    .await;
+    let (worker, _handle) = make_worker(&db, &stub.base_url, FixedAccess::new(TOKEN), test_timing());
+
+    let (outcome, _) = worker.cycle_once().await;
+    assert!(
+        matches!(outcome, CycleOutcome::Retry { retry_after: Some(d), .. } if d == Duration::from_secs(1)),
+        "{outcome:?}"
+    );
+    assert_eq!(
+        store::load_snapshot_progress(&db).await.expect("progress").map(|(_, t)| t).as_deref(),
+        Some("page-2"),
+        "the position of the snapshot is kept"
+    );
+
+    let (outcome, _) = worker.cycle_once().await;
+    assert_eq!(outcome, CycleOutcome::Synced { more_work: false });
+    let tokens: Vec<Value> = stub
+        .requests_to("/api/v1/sync/snapshot")
+        .iter()
+        .map(|r| r.json()["page_token"].clone())
+        .collect();
+    assert_eq!(
+        tokens,
+        vec![Value::Null, json!("page-2"), json!("page-2")],
+        "the second cycle continues with page 2, not from the first page"
+    );
+    assert_eq!(store::load_snapshot_progress(&db).await.expect("progress"), None);
+    let received: i64 = scalar(
+        &db,
+        "SELECT COUNT(*) FROM sync_inbox WHERE entity_sync_id IN ('w-0', 'w-1')",
+        vec![],
+    )
+    .await;
+    assert_eq!(received, 2, "the rows of both pages are kept");
+}

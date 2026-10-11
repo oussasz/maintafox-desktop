@@ -134,9 +134,9 @@ One cycle:
    `sync` capability, when the activation is not active, or when the server refused this activation
    token (its SHA-256 is stored, never the token; a new token, e.g. after the licence check
    re-claims, resumes sync).
-2. No v2 checkpoint → scope `all` snapshot (pages of `SYNC_SNAPSHOT_PAGE_SIZE`; each page goes to the
-   inbox and is materialized; the last page's checkpoint is stored with the last page). A refused
-   page token restarts the snapshot (bounded).
+2. No v2 checkpoint → scope `all` snapshot (pages of `SYNC_SNAPSHOT_PAGE_SIZE`; each page is stored
+   in the inbox; the last page's checkpoint is stored with the last page; then the whole inbox is
+   materialized once, parents first). A refused page token restarts the snapshot (bounded).
 3. Exchange loop. A new request is built from `get_sync_push_payload` (≤ `SYNC_OUTBOX_BATCH_SIZE`
    items), `current_user_sync_ids`, `device_class: "desktop"`, `tenant_config` and the media
    manifest (entries outside the activated tenant are left out: the server would refuse the whole
@@ -196,7 +196,10 @@ a person's conflict decision).
 ### Ingest vs apply
 
 1. Exchange inserts inbound items into `sync_inbox` with `apply_status = 'pending'`
-2. `materialize_inbox_batch` applies them in registry order and sets:
+2. `materialize_inbox` applies them and sets (pending rows are ordered parents first by
+   `registry::apply_priority` once per call and applied in chunks of `SYNC_MATERIALIZE_BATCH`, one
+   transaction per chunk with a savepoint per row; deferred rows are then swept the same way until
+   a sweep applies nothing; reference lookups are cached for the chunk):
    - `applied`: written, or already current (own change echoed back, same version and content);
    - `deferred`: unknown entity type (another app version) or a parent not received yet
      (`MISSING_PARENT`, also for ids inside JSON/URL columns); deferred rows are retried on every run
@@ -268,6 +271,58 @@ Resolution acts on data in the same transaction that closes the conflict:
   presigned PUT/GET; it checks the SigV4 query fields, the access key and the expiry, but does not
   recompute the signature). Real MinIO is used only on the server.
 
+## 6a. Record numbers across devices (Phase 2 leftover 2)
+
+Work orders (`OT-…`), intervention requests (`DI-…`), personnel (`PER-…`) and permits (`PTW-…`)
+are numbered on the device that creates them, offline. New numbers carry a 4-character device
+code: `OT-7KQ2-0001`, `DI-7KQ2-0001`, `PER-7KQ2-0001`, `PTW-2026-7KQ2-000001` (`sync/device_code.rs`).
+
+- Device code: first 20 bits of the SHA-256 of the database's replica id
+  (`sync_replica_identity`) in Crockford base 32 (no I, L, O, U). Stable for the life of the
+  database, no network needed. A reset of local data makes a new replica, hence a new code.
+- The sequence of a device counts only numbers with its own prefix, so two devices with different
+  codes never produce the same number. About 1 chance in 2 400 that two of 30 devices share a code
+  (then the clash check below catches it).
+- Numbers made before this version keep their form (`OT-0012`): printed sheets and QR codes stay
+  valid. Codes typed by a person (personnel) are not changed.
+- **Clash check** (`sync/code_clash.rs`): before an inbound create/update of a numbered table is
+  applied, its number is looked up locally. Used by another record → `CODE_CLASH` conflict (nothing
+  renamed). Sync Center (FR/EN) explains it and offers one action, "renumber the record on this
+  device" (`resolve_sync_conflict` action `renumber_local`): the local holder gets a new number of
+  this device (sent as a normal edit, recorded in `audit_events` as `sync.code_clash.renumbered`),
+  then the received record is applied with its own number. If the received record's newer version
+  (already renumbered on its device) arrives, the older clash closes itself; nothing else is
+  decided automatically.
+- Migration 166 re-types the unique-number failures already recorded as `MATERIALIZE_ERROR` into
+  `CODE_CLASH`.
+
+## 6b. Ids inside history rows (Phase 2 leftover 3)
+
+History rows (audit, activity, admin changes, request changes, schedule changes, notification
+events) hold local ids in text and JSON columns. Since migration 167 those ids travel as sync ids
+through the row rules and each device stores its own local id, so the entries read correctly
+everywhere:
+
+- `audit_events.target_id` by `target_type` (user, role assignment, work order; device, licence,
+  activation, export, repair, import and sync-conflict targets stay on their device and are sent
+  empty); `details_json` `.detail.role_id`, `.detail.assignment_id`, `.filter.actor_id`.
+- `activity_events.summary_json` (role, assignment, break-in, commitment, assignee, team, PM
+  occurrence and plan, linked work order); `correlation_id` of new PM and break-in events uses the
+  record's sync id (grouping no longer mixes devices).
+- `admin_change_events.scope_reference` by `scope_type`; `diff_json` `.role_id`, `.assignment_id`.
+- `di_change_events.details_json.wo_id`; `schedule_change_log.details_json` ids;
+  `notification_events.payload_json` ids; `notification_events.dedupe_key` is device-local (it is
+  built from local ids and would suppress unrelated events on another device).
+- `inventory_state_events` of articles (`ARTICLE`) were not sendable at all (unmapped type): fixed.
+- **Old rows:** rows received from another device before this version keep that device's ids,
+  which cannot be mapped back. They are listed in `sync_history_foreign_rows` and the audit log,
+  activity feed and admin history show "from another device" instead of a wrong reference.
+  Unsent old-format history changes are superseded and requeued in the new format.
+- **Not translatable (free text):** ids written inside sentences (some summaries, notification
+  bodies, schedule `old_value`/`new_value`), `wo_action_events` payloads (two writers store plain
+  text), `data_integrity_repair_actions` snapshots and `org_change_events` before/after (nested,
+  polymorphic), `budget_alert_events.dedupe_key`. None of these is used as a link.
+
 ## 7. Coverage (Phase 2.4)
 
 Every table in the registry syncs; the rules are in `row_spec.rs`, in this order:
@@ -332,3 +387,51 @@ and the unanswered request are dropped, so the worker bootstraps from a full sna
 the rows this device wrote after the backup (the server never echoes a device's own changes).
 Unsent changes of the backup stay queued; the server acknowledges the ones it already has as
 duplicates. Harness scenario 8 checks it.
+
+## 12. Large tenants (Phase 2 leftover 4)
+
+Measured with `pnpm sync:harness --large N` (`sync::harness_tests::large_tenant`), on the
+development PC (Windows 11, local embedded PostgreSQL 16, control API on 127.0.0.1): device A
+creates one work order with its request, tasks, labour, part and history (20 rows with their
+shared parents' children), the harness clones them N times in the server's current state (new
+sync ids and numbers), then a new device C — an encrypted database file opened like the app opens
+it — bootstraps from the snapshot. "Rows" are rows of the cloned types; parents (equipment,
+people, catalogs) are shared.
+
+**Before** (the code at the start of this work):
+
+| Tenant | Result |
+|---|---|
+| 1 206 work orders, 4 234 rows | Snapshot received, but 4 202 rows were never applied: rows waiting for a parent kept the first 500 places of the inbox queue and every pass re-read them, so later rows (their parents included) were never reached. |
+| > 60 000 rows | The snapshot could never finish: past ~120 pages the server's per-device limit (120 requests/min) answers 429 and the next cycle restarted the snapshot from page 1. |
+| 1 206 work orders, page by page fixed but applied per page | 61.8 s (each row tried about 3 times: pages come in entity-type order, children before parents). |
+
+**After:**
+
+| Tenant | Rows | Bootstrap | Of which 429 waits | Received | Peak memory | Device DB file | Conflicts / rows left |
+|---|---|---|---|---|---|---|---|
+| 1 206 WO | 4 234 | 10.1 s | 0 | 8 MB | 120 MB | 29 MB | 0 / 0 |
+| 12 006 WO | 40 234 | 91 s | 0 | 80 MB | 134 MB | 187 MB | 0 / 0 |
+| 48 006 WO | 160 234 | 7.0 min | 21 s | 322 MB | 144 MB | 712 MB | 0 / 0 |
+| **100 008 WO** | **333 574** | **15.5 min** | 47 s | 671 MB | 202 MB | 1 473 MB | 0 / 0 |
+
+- **Server:** building the 333 574-row tenant: 97 s (bulk insert); current-state table 914 MB
+  (530 MB of payloads). Snapshot page query (`listSnapshotPage`, 1 000 rows): 6.5 ms first page,
+  6.1 ms middle page (primary-key range scan; 0.5–1 ms at 40 000 rows). No server change needed.
+- **Steady state** on the 100 008-WO database: one change pushed by A in 49 ms, received and
+  applied by C in 35 ms (25–70 ms at every size).
+- **What changed:** snapshot pages are stored first and applied once after the last page, parents
+  first, each row tried once; pending and waiting rows are ordered once per call and read by id
+  chunks (no inbox scans); one transaction per 500-row chunk with a savepoint per row; reference
+  lookups cached per chunk; indexes on `sync_inbox(apply_status, id)` and
+  `sync_pending_refs(target_entity_type, target_sync_id)` (each applied row looked for waiting
+  links by a full table read); the number-clash bookkeeping reads its (usually empty) conflicts
+  first; snapshot pages of 1 000 rows (server maximum); the position of an unfinished snapshot is
+  kept (`sync_transport_state.snapshot_*`, migration 168), so a 429, a restart or a crash
+  continues from the next page.
+- **Not improved here:** the received copy of every applied row stays in `sync_inbox`, which
+  roughly doubles the device database during a bootstrap (1.47 GB for 100 000 work orders).
+  Compacting applied inbox rows is a follow-up. Apply rate is ~400 rows/s on this PC with
+  SQLCipher; a slower field PC will take proportionally longer (the worker runs in the
+  background and the app stays usable).
+

@@ -22,6 +22,16 @@
  *      named by `MAINTAFOX_SYNC_HARNESS_CONFIG`;
  *   6. stops the API and the database and exits with the test result.
  *
+ * Large-tenant measurement (Phase 2 leftover 4):
+ *
+ *   pnpm sync:harness --large 100000      (work orders; about 10 synchronised rows each)
+ *
+ * runs `sync::harness_tests::large_tenant` instead of the scenarios: device A creates one work
+ * order with its request, tasks, labour, part and history, syncs it, then the control endpoint
+ * clones those rows N times in the server's current-state table (new sync ids and numbers, the
+ * same shared parents), and a fresh device bootstraps from the snapshot while time, bytes,
+ * memory and the server's query time are measured.
+ *
  * Nothing leaves this machine: the API, the database and the control endpoint listen on
  * 127.0.0.1, and the Rust side refuses any other API host.
  */
@@ -32,6 +42,7 @@ import { createServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -40,6 +51,11 @@ const vendorRoot = resolve(
 );
 const apiDir = join(vendorRoot, "api");
 const skipApiBuild = process.argv.includes("--skip-api-build");
+const largeIndex = process.argv.indexOf("--large");
+const largeCopies = largeIndex >= 0 ? Number(process.argv[largeIndex + 1]) : 0;
+if (largeIndex >= 0 && !(Number.isInteger(largeCopies) && largeCopies > 0)) {
+  throw new Error("--large needs a positive number of work orders, e.g. --large 100000");
+}
 
 const ADMIN_EMAIL = "admin@maintafox.systems";
 const S3_ACCESS_KEY = "harness-access-key";
@@ -281,10 +297,117 @@ async function main() {
     }
     log(`tenant ${tenant.id}: devices ${devices.map((d) => d.name).join(", ")} activated`);
 
+    // Large-tenant measurement: direct access to the throw-away database.
+    const { Pool } = createRequire(join(apiDir, "package.json"))("pg");
+    const pool = new Pool({ connectionString: databaseUrl, max: 2 });
+    cleanups.push(() => pool.end());
+
+    async function bulkClone(entityTypes, copies) {
+      const started = Date.now();
+      const { rows: templates } = await pool.query(
+        "SELECT entity_type, entity_sync_id, payload_raw FROM sync_entity_state WHERE tenant_id = $1 AND entity_type = ANY($2::text[]) AND NOT deleted",
+        [tenant.id, entityTypes],
+      );
+      if (templates.length === 0) throw new Error("no template rows to clone");
+      // Every template sync id and every unique number is replaced per copy.
+      let expr = "s.payload_raw";
+      const params = [tenant.id, entityTypes, copies];
+      for (const t of templates) {
+        params.push(t.entity_sync_id);
+        const i = params.length;
+        expr = `replace(${expr}, $${i}::text, md5($${i}::text || ':' || n)::uuid::text)`;
+        const payload = JSON.parse(t.payload_raw);
+        for (const key of ["code", "employee_code"]) {
+          if (typeof payload[key] === "string" && ["work_orders", "intervention_requests"].includes(t.entity_type)) {
+            params.push(`"${key}":${JSON.stringify(payload[key])}`);
+            const j = params.length;
+            expr = `replace(${expr}, $${j}::text, left($${j}::text, -1) || '-' || n || '"')`;
+          }
+        }
+      }
+      const { rowCount } = await pool.query(
+        `INSERT INTO sync_entity_state (tenant_id, entity_type, entity_sync_id, row_version, operation, payload_raw,
+                                        payload_json, payload_hash, deleted, owner_user_sync_id,
+                                        origin_machine_fingerprint, last_ingress_id, updated_at)
+         SELECT s.tenant_id, s.entity_type, md5(s.entity_sync_id || ':' || n)::uuid::text, s.row_version, s.operation,
+                c.raw, mfx_try_jsonb(c.raw), encode(sha256(convert_to(c.raw, 'UTF8')), 'hex'), false,
+                s.owner_user_sync_id, s.origin_machine_fingerprint, s.last_ingress_id, s.updated_at
+         FROM sync_entity_state s
+         CROSS JOIN generate_series(1, $3::int) AS n
+         CROSS JOIN LATERAL (SELECT ${expr} AS raw) c
+         WHERE s.tenant_id = $1 AND s.entity_type = ANY($2::text[]) AND NOT s.deleted`,
+        params,
+      );
+      await pool.query("ANALYZE sync_entity_state");
+      const { rows: size } = await pool.query(
+        "SELECT count(*)::bigint AS rows, coalesce(sum(length(payload_raw)), 0)::bigint AS payload_bytes, pg_total_relation_size('sync_entity_state')::bigint AS table_bytes FROM sync_entity_state WHERE tenant_id = $1",
+        [tenant.id],
+      );
+      return {
+        templates: templates.length,
+        inserted: rowCount,
+        ms: Date.now() - started,
+        tenant_rows: Number(size[0].rows),
+        tenant_payload_bytes: Number(size[0].payload_bytes),
+        table_bytes: Number(size[0].table_bytes),
+      };
+    }
+
+    /** Server time of the snapshot page query (same SQL as `listSnapshotPage`), first and middle page. */
+    async function explainSnapshot(pageSize) {
+      const { rows: hw } = await pool.query(
+        "SELECT max(last_ingress_id) AS hw, count(*)::bigint AS n FROM sync_entity_state WHERE tenant_id = $1",
+        [tenant.id],
+      );
+      const { rows: middle } = await pool.query(
+        "SELECT entity_type, entity_sync_id FROM sync_entity_state WHERE tenant_id = $1 ORDER BY entity_type, entity_sync_id OFFSET $2 LIMIT 1",
+        [tenant.id, Math.floor(Number(hw[0].n) / 2)],
+      );
+      const sql = `EXPLAIN (ANALYZE, FORMAT JSON) SELECT last_ingress_id, entity_type, entity_sync_id, operation, row_version,
+                     payload_raw, payload_hash, owner_user_sync_id, deleted
+                   FROM sync_entity_state
+                   WHERE tenant_id = $1 AND NOT deleted AND last_ingress_id <= $2
+                     AND (owner_user_sync_id IS NULL OR owner_user_sync_id = ANY($3::text[]))
+                     AND (entity_type, entity_sync_id) > ($4, $5)
+                   ORDER BY entity_type ASC, entity_sync_id ASC LIMIT $6`;
+      const timing = async (after) => {
+        const { rows } = await pool.query(sql, [tenant.id, hw[0].hw, [], after[0], after[1], pageSize + 1]);
+        const plan = rows[0]["QUERY PLAN"][0];
+        return { ms: plan["Execution Time"], node: plan.Plan["Node Type"] };
+      };
+      return {
+        first_page: await timing(["", ""]),
+        middle_page: await timing([middle[0].entity_type, middle[0].entity_sync_id]),
+      };
+    }
+
     // Operator actions the scenarios need (POST /machines/<fingerprint>/revoke) and object store
     // switches (POST /object-store/block-puts | allow-puts).
     let opCounter = 0;
     const control = createServer(async (req, res) => {
+      if (req.method === "POST" && (req.url ?? "").startsWith("/bulk-clone")) {
+        try {
+          const chunks = [];
+          for await (const c of req) chunks.push(c);
+          const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+          const result = await bulkClone(body.entity_types, body.copies);
+          log(`bulk clone: ${JSON.stringify(result)}`);
+          res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(result));
+        } catch (e) {
+          res.writeHead(500, { "Content-Type": "text/plain" }).end(String(e?.stack ?? e));
+        }
+        return;
+      }
+      if (req.method === "POST" && (req.url ?? "").startsWith("/explain-snapshot")) {
+        try {
+          const pageSize = Number(new URL(req.url, "http://x").searchParams.get("page_size") ?? "500");
+          const result = await explainSnapshot(pageSize);
+          res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(result));
+        } catch (e) {
+          res.writeHead(500, { "Content-Type": "text/plain" }).end(String(e?.stack ?? e));
+        }
+        return;
+      }
       const storeSwitch = /^\/object-store\/(block|allow)-puts$/.exec(req.url ?? "");
       if (req.method === "POST" && storeSwitch) {
         store.state.blockPuts = storeSwitch[1] === "block";
@@ -331,16 +454,18 @@ async function main() {
           control_url: `http://127.0.0.1:${controlPort}`,
           tenant_id: tenant.id,
           devices,
+          large_copies: largeCopies || null,
         },
         null,
         2,
       ),
     );
 
-    log("running the Rust scenarios (cargo test --lib -- --ignored sync::harness_tests)");
+    const testFilter = largeCopies ? "sync::harness_tests::large_tenant" : "sync::harness_tests::multi_device_harness";
+    log(`running the Rust scenarios (cargo test --lib -- --ignored ${testFilter})`);
     const code = await run(
       "cargo",
-      ["test", "--lib", "--", "--ignored", "sync::harness_tests", "--test-threads=1", "--nocapture"],
+      ["test", "--lib", "--", "--ignored", testFilter, "--exact", "--test-threads=1", "--nocapture"],
       {
         cwd: join(desktopRoot, "src-tauri"),
         env: { ...process.env, MAINTAFOX_SYNC_HARNESS_CONFIG: configPath },

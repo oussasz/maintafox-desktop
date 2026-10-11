@@ -27,6 +27,30 @@ use super::row_layout::{self, Role, Target};
 pub(crate) async fn started_db() -> DatabaseConnection {
     let db = Database::connect("sqlite::memory:").await.expect("in-memory sqlite");
     db.execute_unprepared("PRAGMA foreign_keys = ON").await.expect("foreign keys");
+    prepare_started(db).await
+}
+
+/// Like [`started_db`], but an encrypted database file opened like the app opens it
+/// (`db::connect_sqlcipher` with a fresh key, then the pragmas of `db::init_db`): disk writes and
+/// encryption cost what they cost on a device. Used by measurements.
+pub(crate) async fn started_file_db(path: &std::path::Path) -> DatabaseConnection {
+    let key = crate::db::encryption::DatabaseKey::generate();
+    let db = crate::db::connect_sqlcipher(path, Some(&key), true)
+        .await
+        .expect("encrypted database file");
+    for pragma in [
+        "PRAGMA journal_mode=WAL;",
+        "PRAGMA foreign_keys=ON;",
+        "PRAGMA busy_timeout=5000;",
+        "PRAGMA cache_size=-20000;",
+        "PRAGMA temp_store=MEMORY;",
+    ] {
+        db.execute_unprepared(pragma).await.expect("pragma");
+    }
+    prepare_started(db).await
+}
+
+async fn prepare_started(db: DatabaseConnection) -> DatabaseConnection {
     crate::migrations::Migrator::up(&db, None).await.expect("migrations");
     crate::db::seeder::seed_system_data(&db).await.expect("system seed");
     crate::wo::types::ensure_required_work_order_types(&db)
