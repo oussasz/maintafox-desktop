@@ -417,7 +417,11 @@ fn row_spec_references_are_registry_parents() {
             }
             let targets: Vec<&str> = match r.target {
                 super::row_spec::RefTarget::Entity(t) => vec![t],
-                super::row_spec::RefTarget::Poly { targets, .. } => targets.iter().map(|(_, t)| *t).collect(),
+                super::row_spec::RefTarget::Poly { targets, .. } => targets
+                    .iter()
+                    .map(|(_, t)| *t)
+                    .filter(|t| *t != super::row_spec::NOT_A_ROW)
+                    .collect(),
                 _ => vec![],
             };
             for t in targets {

@@ -11,5 +11,4 @@ pub mod queries;
 mod queries_tests;
 pub mod ram_review;
 pub mod readiness;
-mod sync_stage;
 pub mod weibull_fit;

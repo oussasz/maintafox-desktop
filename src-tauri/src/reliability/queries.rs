@@ -17,10 +17,6 @@ use crate::reliability::domain::{
     WoMissingFailureModeRow,
 };
 use crate::reliability::exposure_inference::infer_exposure_hours;
-use crate::reliability::sync_stage::{
-    stage_failure_code, stage_failure_event, stage_failure_hierarchy, stage_reliability_kpi_snapshot,
-    stage_runtime_exposure_log, stage_user_dismissal,
-};
 use crate::sync::identity::new_entity_sync_id;
 
 const FAILURE_MODES_DOMAIN_CODE: &str = "WORK.FAILURE_MODES";
@@ -256,7 +252,6 @@ pub async fn upsert_failure_hierarchy(
     .ok_or_else(|| AppError::SyncError("failure_hierarchies row missing after upsert.".into()))?;
 
     let mapped = map_hierarchy(&row)?;
-    stage_failure_hierarchy(&txn, &mapped).await?;
     txn.commit().await?;
     Ok(mapped)
 }
@@ -446,7 +441,6 @@ pub async fn upsert_failure_code(db: &DatabaseConnection, input: FailureCodeUpse
     .ok_or_else(|| AppError::SyncError("reference_values row missing after failure mode upsert.".into()))?;
 
     let mapped = map_code(&row)?;
-    stage_failure_code(&txn, &mapped).await?;
     txn.commit().await?;
     Ok(mapped)
 }
@@ -550,7 +544,6 @@ pub async fn deactivate_failure_code(
         .await?
         .ok_or_else(|| AppError::SyncError("reference failure mode missing after deactivate.".into()))?;
     let mapped = map_code(&updated)?;
-    stage_failure_code(&txn, &mapped).await?;
     txn.commit().await?;
     Ok(mapped)
 }
@@ -843,7 +836,6 @@ pub async fn upsert_failure_event(db: &DatabaseConnection, input: UpsertFailureE
     .ok_or_else(|| AppError::SyncError("failure_events row missing after upsert.".into()))?;
 
     let mapped = map_failure_event(&row)?;
-    stage_failure_event(&txn, &mapped).await?;
     txn.commit().await?;
     Ok(mapped)
 }
@@ -1002,7 +994,7 @@ where
     let entity_sync_id = format!("failure_event:{}", Uuid::new_v4());
     let ts = utc_now_rfc3339();
 
-    let ins = txn
+    txn
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT OR IGNORE INTO failure_events (
@@ -1048,29 +1040,6 @@ where
             ],
         ))
         .await?;
-    if ins.rows_affected() == 0 {
-        txn.commit().await?;
-        return Ok(());
-    }
-
-    let row = txn
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT id, entity_sync_id, source_type, source_id, equipment_id, component_id,
-                    detected_at, failed_at, restored_at,
-                    downtime_duration_hours, active_repair_hours, waiting_hours,
-                    is_planned, failure_class_id, failure_mode_id, failure_cause_id, failure_effect_id, failure_mechanism_id,
-                    cause_not_determined, production_impact_level, safety_impact_level,
-                    recorded_by_id, verification_status, eligible_flags_json,
-                    row_version, created_at, updated_at
-             FROM failure_events WHERE source_type = ? AND source_id = ?",
-            [WO_FAILURE_SOURCE.into(), wo_id.into()],
-        ))
-        .await?
-        .ok_or_else(|| AppError::SyncError("failure_events row missing after ingest.".into()))?;
-
-    let mapped = map_failure_event(&row)?;
-    stage_failure_event(&txn, &mapped).await?;
     txn.commit().await?;
     Ok(())
 }
@@ -1288,7 +1257,6 @@ pub async fn upsert_runtime_exposure_log(
     .ok_or_else(|| AppError::SyncError("runtime_exposure_logs row missing after upsert.".into()))?;
 
     let mapped = map_runtime_exposure_log(&row)?;
-    stage_runtime_exposure_log(&txn, &mapped).await?;
     txn.commit().await?;
     Ok(mapped)
 }
@@ -1680,7 +1648,6 @@ pub async fn refresh_reliability_kpi_snapshot(
     .ok_or_else(|| AppError::SyncError("reliability_kpi_snapshots row missing after refresh.".into()))?;
 
     let mapped = map_kpi_snapshot(&out)?;
-    stage_reliability_kpi_snapshot(&txn, &mapped).await?;
     txn.commit().await?;
     Ok(mapped)
 }
@@ -1732,6 +1699,25 @@ pub async fn get_reliability_kpi_snapshot(db: &DatabaseConnection, id: i64) -> A
             id: id.to_string(),
         })?;
     map_kpi_snapshot(&row)
+}
+
+/// Identity of a dismissal: the same person dismissing the same issue on the same equipment from
+/// two devices gives the same id (one row everywhere, not two that collide on the scope key).
+async fn dismissal_sync_id(
+    txn: &impl ConnectionTrait,
+    user_id: i32,
+    issue_code: &str,
+    equipment_id: i64,
+) -> AppResult<String> {
+    use crate::sync::identity::{new_entity_sync_id, optional_entity_sync_id, seeded_entity_sync_id};
+    let user = optional_entity_sync_id(txn, "user_accounts", i64::from(user_id)).await?;
+    let equipment = optional_entity_sync_id(txn, "equipment", equipment_id).await?;
+    Ok(match (user, equipment) {
+        (Some(user), Some(equipment)) => {
+            seeded_entity_sync_id("user_dismissals", &format!("{user}|{issue_code}|{equipment}"))
+        }
+        _ => new_entity_sync_id(),
+    })
 }
 
 fn ram_scope_key(issue_code: &str, equipment_id: i64) -> String {
@@ -2002,9 +1988,9 @@ pub async fn dismiss_ram_data_quality_issue(
         return Err(AppError::ValidationFailed(vec!["issue_code required.".into()]));
     }
     let scope_key = ram_scope_key(issue_code, input.equipment_id);
-    let eid = format!("user_dismissal:{}", Uuid::new_v4());
     let ts = utc_now_rfc3339();
     let txn = db.begin().await?;
+    let eid = dismissal_sync_id(&txn, user_id, issue_code, input.equipment_id).await?;
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO user_dismissals (entity_sync_id, user_id, equipment_id, issue_code, scope_key, dismissed_at, row_version)
@@ -2032,7 +2018,6 @@ pub async fn dismiss_ram_data_quality_issue(
         .await?
         .ok_or_else(|| AppError::SyncError("user_dismissals row missing after upsert.".into()))?;
     let mapped = map_user_dismissal_row(&row)?;
-    stage_user_dismissal(&txn, &mapped).await?;
     txn.commit().await?;
     Ok(mapped)
 }

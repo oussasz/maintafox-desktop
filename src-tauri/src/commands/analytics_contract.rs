@@ -6,7 +6,7 @@ use tauri::State;
 use uuid::Uuid;
 
 use crate::analytics_contract::{
-    get_contract_version_by_id, insert_contract_version, list_contract_versions, stage_analytics_contract_version_sync,
+    get_contract_version_by_id, insert_contract_version, list_contract_versions,
     AnalyticsContractVersionRow,
 };
 use crate::auth::rbac::PermissionScope;
@@ -75,7 +75,6 @@ pub async fn register_analytics_contract_version(
     let row = get_contract_version_by_id(&txn, id)
         .await?
         .ok_or_else(|| crate::errors::AppError::Internal(anyhow::anyhow!("contract version row")))?;
-    stage_analytics_contract_version_sync(&txn, &row).await?;
     txn.commit().await?;
     Ok(row)
 }

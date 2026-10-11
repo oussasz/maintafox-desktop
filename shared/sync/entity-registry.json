@@ -30,7 +30,7 @@
       "conflict_policy": "operator_review",
       "apply_priority": 0,
       "parents": [],
-      "sync_status": "staged_only"
+      "sync_status": "synced"
     },
     {
       "entity_type": "app_settings",
@@ -328,22 +328,25 @@
       "entity_type": "data_integrity_findings",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 1,
+      "apply_priority": 12,
       "parents": [
-        "user_accounts"
+        "user_accounts",
+        "work_order_failure_details",
+        "work_order_downtime_segments",
+        "work_orders"
       ],
-      "sync_status": "staged_only"
+      "sync_status": "synced"
     },
     {
       "entity_type": "data_integrity_repair_actions",
       "scope": "tenant",
       "conflict_policy": "append_only",
-      "apply_priority": 2,
+      "apply_priority": 13,
       "parents": [
         "user_accounts",
         "data_integrity_findings"
       ],
-      "sync_status": "staged_only"
+      "sync_status": "synced"
     },
     {
       "entity_type": "delay_reason_codes",
@@ -483,9 +486,10 @@
       "conflict_policy": "operator_review",
       "apply_priority": 5,
       "parents": [
-        "equipment"
+        "equipment",
+        "user_accounts"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "external_companies",
@@ -513,18 +517,20 @@
       "parents": [
         "failure_hierarchies"
       ],
-      "sync_status": "staged_only"
+      "sync_status": "synced"
     },
     {
       "entity_type": "failure_events",
       "scope": "tenant",
-      "conflict_policy": "append_only",
-      "apply_priority": 5,
+      "conflict_policy": "operator_review",
+      "apply_priority": 11,
       "parents": [
         "failure_codes",
-        "equipment"
+        "equipment",
+        "work_orders",
+        "user_accounts"
       ],
-      "sync_status": "staged_only"
+      "sync_status": "synced"
     },
     {
       "entity_type": "failure_hierarchies",
@@ -532,7 +538,7 @@
       "conflict_policy": "operator_review",
       "apply_priority": 0,
       "parents": [],
-      "sync_status": "staged_only"
+      "sync_status": "synced"
     },
     {
       "entity_type": "fmeca_analyses",
@@ -540,9 +546,10 @@
       "conflict_policy": "operator_review",
       "apply_priority": 5,
       "parents": [
-        "equipment"
+        "equipment",
+        "user_accounts"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "fmeca_item_parts",
@@ -553,7 +560,7 @@
         "articles",
         "fmeca_items"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "fmeca_items",
@@ -567,7 +574,7 @@
         "reference_values",
         "fmeca_analyses"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "fta_models",
@@ -575,9 +582,10 @@
       "conflict_policy": "operator_review",
       "apply_priority": 5,
       "parents": [
-        "equipment"
+        "equipment",
+        "user_accounts"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "goods_receipt_lines",
@@ -937,9 +945,10 @@
       "conflict_policy": "operator_review",
       "apply_priority": 5,
       "parents": [
-        "equipment"
+        "equipment",
+        "user_accounts"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "mc_models",
@@ -947,9 +956,10 @@
       "conflict_policy": "operator_review",
       "apply_priority": 5,
       "parents": [
-        "equipment"
+        "equipment",
+        "user_accounts"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "media_attachments",
@@ -1452,7 +1462,7 @@
       "conflict_policy": "operator_review",
       "apply_priority": 0,
       "parents": [],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "ram_expert_sign_offs",
@@ -1460,9 +1470,10 @@
       "conflict_policy": "operator_review",
       "apply_priority": 5,
       "parents": [
-        "equipment"
+        "equipment",
+        "user_accounts"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "ram_ishikawa_diagrams",
@@ -1472,7 +1483,7 @@
       "parents": [
         "equipment"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "rbac_settings",
@@ -1488,9 +1499,10 @@
       "conflict_policy": "operator_review",
       "apply_priority": 5,
       "parents": [
-        "equipment"
+        "equipment",
+        "user_accounts"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "rcm_decisions",
@@ -1502,7 +1514,7 @@
         "reference_values",
         "rcm_studies"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "rcm_studies",
@@ -1510,9 +1522,10 @@
       "conflict_policy": "operator_review",
       "apply_priority": 5,
       "parents": [
-        "equipment"
+        "equipment",
+        "user_accounts"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "reference_aliases",
@@ -1579,7 +1592,7 @@
       "conflict_policy": "operator_review",
       "apply_priority": 0,
       "parents": [],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "reliability_dashboard_policies",
@@ -1587,17 +1600,7 @@
       "conflict_policy": "operator_review",
       "apply_priority": 0,
       "parents": [],
-      "sync_status": "not_staged"
-    },
-    {
-      "entity_type": "reliability_kpi_snapshots",
-      "scope": "tenant",
-      "conflict_policy": "append_only",
-      "apply_priority": 5,
-      "parents": [
-        "equipment"
-      ],
-      "sync_status": "staged_only"
+      "sync_status": "synced"
     },
     {
       "entity_type": "repairable_orders",
@@ -1672,12 +1675,12 @@
     {
       "entity_type": "runtime_exposure_logs",
       "scope": "tenant",
-      "conflict_policy": "append_only",
+      "conflict_policy": "operator_review",
       "apply_priority": 5,
       "parents": [
         "equipment"
       ],
-      "sync_status": "staged_only"
+      "sync_status": "synced"
     },
     {
       "entity_type": "saved_activity_filters",
@@ -1892,7 +1895,7 @@
         "equipment",
         "user_accounts"
       ],
-      "sync_status": "staged_only"
+      "sync_status": "synced"
     },
     {
       "entity_type": "user_scope_assignments",
@@ -1921,9 +1924,10 @@
       "conflict_policy": "operator_review",
       "apply_priority": 5,
       "parents": [
-        "equipment"
+        "equipment",
+        "user_accounts"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "wo_action_events",
@@ -2148,6 +2152,7 @@
     "pm_generation_runs": "job_queue",
     "reference_import_batches": "import_staging",
     "reference_import_rows": "import_staging",
+    "reliability_kpi_snapshots": "derived_projection",
     "report_artifacts": "job_queue",
     "report_runs": "job_queue",
     "scheduling_conflicts": "derived_projection",

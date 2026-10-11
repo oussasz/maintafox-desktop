@@ -389,8 +389,12 @@ impl RowFactory {
                     assigned.push((column.name.clone(), (*literal).to_string(), None));
                     continue;
                 }
+                if let FactoryKind::Derived(initial) = &column.kind {
+                    assigned.push((column.name.clone(), (*initial).to_string(), None));
+                    continue;
+                }
                 let value: Option<SqlValue> = match &column.kind {
-                    FactoryKind::Skip => None,
+                    FactoryKind::Skip | FactoryKind::Derived(_) => None,
                     FactoryKind::Identity if raw_col.notnull && !raw_col.has_default => {
                         Some(uuid::Uuid::new_v4().to_string().into())
                     }
@@ -454,6 +458,8 @@ impl RowFactory {
 #[derive(Debug, Clone)]
 enum FactoryKind {
     Skip,
+    /// Required derived column: the SQL initial value the materializer would write.
+    Derived(&'static str),
     Identity,
     Value,
     Entity(&'static str),
@@ -488,6 +494,9 @@ async fn factory_columns(
                 let raw_col = raw.iter().find(|r| r.name == c.name);
                 let kind = match &c.role {
                     Role::Identity => FactoryKind::Identity,
+                    Role::Derived { initial } if raw_col.is_some_and(|r| r.notnull && !r.has_default) => {
+                        FactoryKind::Derived(initial)
+                    }
                     Role::LocalKey | Role::LocalVersion | Role::Derived { .. } => FactoryKind::Skip,
                     Role::DeviceLocal if raw_col.is_some_and(|r| !r.notnull || r.has_default) => FactoryKind::Skip,
                     Role::DeviceLocal | Role::Value { .. } => FactoryKind::Value,
@@ -499,7 +508,8 @@ async fn factory_columns(
                             // Prefer a target on the generic engine, so the parent travels too.
                             let (type_value, target, _) = targets
                                 .iter()
-                                .find(|(_, t, _)| super::row_spec::row_spec(t).is_some())
+                                .find(|(_, t, _)| !t.is_empty() && super::row_spec::row_spec(t).is_some())
+                                .or_else(|| targets.iter().find(|(_, t, _)| !t.is_empty()))
                                 .unwrap_or(&targets[0]);
                             FactoryKind::Poly {
                                 type_column: (*type_column).to_string(),

@@ -5,7 +5,8 @@
 //! - `inventory_transactions`: a received movement changes `stock_balances` of its location
 //!   (`inventory::ledger`);
 //! - `org_nodes`: `ancestor_path` / `depth` (paths of local ids) are recomputed for the node and
-//!   its subtree.
+//!   its subtree;
+//! - `user_dismissals`: `scope_key` (`<issue_code>:<local equipment id>`) is rebuilt.
 
 use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
 
@@ -36,6 +37,18 @@ pub(crate) async fn after_upsert(
                 .await?
                 .ok_or_else(|| hook_err(layout.table(), "node not found after apply"))?;
             recompute_org_paths(conn, id).await
+        }
+        "user_dismissals" => {
+            let id = located_row_id(conn, layout, row)
+                .await?
+                .ok_or_else(|| hook_err(layout.table(), "dismissal not found after apply"))?;
+            conn.execute(Statement::from_sql_and_values(
+                DatabaseBackend::Sqlite,
+                "UPDATE user_dismissals SET scope_key = issue_code || ':' || CAST(equipment_id AS TEXT) WHERE id = ?",
+                [id.into()],
+            ))
+            .await?;
+            Ok(())
         }
         _ => Ok(()),
     }

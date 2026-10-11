@@ -67,6 +67,8 @@ pub(crate) enum Role {
 pub(crate) enum JsonSeg {
     Each,
     Key(String),
+    /// `?name`: the column holds a URL (`/path?a=1&b=2`); the id is query parameter `name`.
+    Query(String),
 }
 
 /// Local ids inside a JSON text column (`RowSpec::json_refs`).
@@ -78,6 +80,12 @@ pub(crate) struct JsonRef {
 }
 
 fn parse_json_path(path: &str) -> AppResult<Vec<JsonSeg>> {
+    if let Some(param) = path.strip_prefix('?') {
+        if param.is_empty() || param.contains(['&', '=', '?']) {
+            return Err(AppError::SyncError(format!("invalid URL reference path '{path}'")));
+        }
+        return Ok(vec![JsonSeg::Query(param.to_string())]);
+    }
     let mut rest = path.strip_prefix('$').unwrap_or(path);
     let mut segs = Vec::new();
     while !rest.is_empty() {
@@ -317,6 +325,10 @@ async fn build_layout(conn: &impl ConnectionTrait, entity_type: &str) -> AppResu
                     }
                     let mut resolved = Vec::with_capacity(targets.len());
                     for (type_value, entity) in targets {
+                        if *entity == super::row_spec::NOT_A_ROW {
+                            resolved.push((*type_value, "", ""));
+                            continue;
+                        }
                         let def = registry::require_entity(entity)?;
                         resolved.push((*type_value, def.entity_type, def.table));
                     }
@@ -376,8 +388,15 @@ async fn build_layout(conn: &impl ConnectionTrait, entity_type: &str) -> AppResu
                 )));
             }
             let target = registry::require_entity(j.entity)?;
+            let path = parse_json_path(j.path)?;
+            let is_url = matches!(path.as_slice(), [JsonSeg::Query(_)]);
+            if json_refs.iter().any(|r: &JsonRef| matches!(r.path.as_slice(), [JsonSeg::Query(_)]) != is_url) {
+                return Err(AppError::SyncError(format!(
+                    "{table}.{name}: a column holds either JSON or a URL, not both"
+                )));
+            }
             json_refs.push(JsonRef {
-                path: parse_json_path(j.path)?,
+                path,
                 entity_type: target.entity_type,
                 table: target.table,
             });

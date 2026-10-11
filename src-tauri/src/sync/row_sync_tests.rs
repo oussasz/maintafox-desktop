@@ -3,10 +3,10 @@
 
 use sea_orm::DatabaseConnection;
 
-use super::registry::{self, ConflictPolicy};
+use super::registry::{self, ConflictPolicy, SyncScope};
 use super::row_layout;
 use super::test_support::{
-    current_payload, editable_text_column, exec, scalar_i64, started_db, CreatedRow, ExchangeReport, RowFactory,
+    created_row, current_payload, editable_text_column, exec, scalar_i64, started_db, CreatedRow, ExchangeReport, RowFactory,
     TestServer,
 };
 
@@ -184,6 +184,34 @@ pub(crate) const INSPECTION_PERMIT_TYPES: &[&str] = &[
     "loto_card_print_jobs",
 ];
 
+/// Reliability models, failure data, data integrity and the analytics contract.
+pub(crate) const RELIABILITY_TYPES: &[&str] = &[
+    "failure_hierarchies",
+    "failure_codes",
+    "failure_events",
+    "runtime_exposure_logs",
+    "ram_advanced_guardrails",
+    "reliability_beta_benchmarks",
+    "reliability_dashboard_policies",
+    "fmeca_analyses",
+    "fmeca_items",
+    "fmeca_item_parts",
+    "rcm_studies",
+    "rcm_decisions",
+    "fta_models",
+    "rbd_models",
+    "event_tree_models",
+    "markov_models",
+    "mc_models",
+    "weibull_fit_results",
+    "ram_expert_sign_offs",
+    "ram_ishikawa_diagrams",
+    "user_dismissals",
+    "data_integrity_findings",
+    "data_integrity_repair_actions",
+    "analytics_contract_versions",
+];
+
 async fn compare(
     a: &DatabaseConnection,
     b: &DatabaseConnection,
@@ -238,6 +266,10 @@ async fn stage_errors(db: &DatabaseConnection) -> Vec<String> {
 
 /// Create, update and delete one row of every listed entity type on A; after each step A and B
 /// hold the same rows.
+/// Tables that hold exactly one row (`CHECK (id = 1)`), seeded on every device with the same
+/// identity: the round trip edits the seeded row instead of creating and deleting one.
+pub(crate) const SINGLETON_TYPES: &[&str] = &["ram_advanced_guardrails"];
+
 pub(crate) async fn round_trip(entity_types: &[&str]) {
     let a = started_db().await;
     let b = started_db().await;
@@ -247,17 +279,54 @@ pub(crate) async fn round_trip(entity_types: &[&str]) {
 
     let mut created = Vec::new();
     for entity_type in entity_types {
+        if SINGLETON_TYPES.contains(entity_type) {
+            let table = row_layout::layout(&a, entity_type).await.expect("layout").table();
+            let rowid = scalar_i64(&a, &format!("SELECT rowid FROM \"{table}\""), vec![]).await;
+            match created_row(&a, entity_type, rowid).await {
+                Ok(row) => created.push(row),
+                Err(e) => problems.push(format!("seeded {entity_type}: {e}")),
+            }
+            continue;
+        }
         match factory.create(&a, entity_type).await {
             Ok(row) => created.push(row),
             Err(e) => problems.push(format!("create {entity_type}: {e}")),
         }
+    }
+    // Personal rows travel only to devices where their owner is signed in or trusted: they are
+    // given to the seeded administrator (same identity on A and B), who is trusted on B.
+    let admin = "SELECT id FROM user_accounts ORDER BY id LIMIT 1";
+    let mut personal = false;
+    for row in &created {
+        let def = registry::entity(row.entity_type).expect("registered");
+        if let (SyncScope::User, Some(owner)) = (def.scope, def.owner_user_column) {
+            personal = true;
+            exec(
+                &a,
+                &format!("UPDATE \"{}\" SET \"{owner}\" = ({admin}) WHERE rowid = ?", def.table),
+                vec![row.rowid.into()],
+            )
+            .await;
+        }
+    }
+    if personal {
+        exec(
+            &b,
+            &format!(
+                "INSERT INTO trusted_devices (id, device_fingerprint, user_id, trusted_at, is_revoked)
+                 VALUES ('round-trip', 'round-trip-b', ({admin}), '2026-10-11T00:00:00Z', 0)"
+            ),
+            vec![],
+        )
+        .await;
     }
     let pushed = server.exchange("A", &a).await;
     check_exchange(&pushed, "create/push", &mut problems);
     problems.extend(stage_errors(&a).await.into_iter().map(|e| format!("stage: {e}")));
     let received = server.exchange("B", &b).await;
     check_exchange(&received, "create/receive", &mut problems);
-    for row in &created {
+    // A seeded singleton is not sent until it changes: each device keeps its own seeding time.
+    for row in created.iter().filter(|row| !SINGLETON_TYPES.contains(&row.entity_type)) {
         compare(&a, &b, row, "after create", &mut problems).await;
     }
 
@@ -286,6 +355,10 @@ pub(crate) async fn round_trip(entity_types: &[&str]) {
         compare(&a, &b, row, "after update", &mut problems).await;
     }
 
+    let created: Vec<_> = created
+        .into_iter()
+        .filter(|row| !SINGLETON_TYPES.contains(&row.entity_type))
+        .collect();
     for row in created.iter().rev() {
         let table = row_layout::layout(&a, row.entity_type).await.expect("layout").table();
         exec(&a, &format!("DELETE FROM \"{table}\" WHERE rowid = ?"), vec![row.rowid.into()]).await;
@@ -332,6 +405,11 @@ async fn personnel_and_qualification_round_trip() {
 #[tokio::test]
 async fn inspections_and_permits_round_trip() {
     round_trip(INSPECTION_PERMIT_TYPES).await;
+}
+
+#[tokio::test]
+async fn reliability_round_trip() {
+    round_trip(RELIABILITY_TYPES).await;
 }
 
 #[tokio::test]

@@ -187,6 +187,10 @@ const fn json_ref(column: &'static str, path: &'static str, entity: &'static str
 
 const USER: &str = "user_accounts";
 
+/// Polymorphic target of a type whose value is not a row id (for example a role name): the value
+/// is sent unchanged.
+pub(crate) const NOT_A_ROW: &str = "";
+
 /// RBAC scope references: the org node (or team) a role assignment is limited to, stored as the
 /// local id in text form.
 const SCOPE_TARGETS: &[(&str, &str)] = &[
@@ -665,6 +669,57 @@ pub const ROW_SPECS: &[RowSpec] = &[
             r("printed_by_id", USER),
         ],
     ),
+    // ── Reliability (RAMS) ──────────────────────────────────────────────────────────────────
+    spec("failure_hierarchies", &[]),
+    spec("failure_codes", &[]),
+    spec(
+        "failure_events",
+        &[
+            poly("source_id", "source_type", &[("work_order", "work_orders")]),
+            r("recorded_by_id", USER),
+            // No command writes the failed component yet: synchronised only while empty.
+            unmapped("component_id"),
+        ],
+    ),
+    spec("runtime_exposure_logs", &[]),
+    // Every device seeds the default guardrail flags (seeded identity).
+    spec("ram_advanced_guardrails", &[]),
+    spec("reliability_beta_benchmarks", &[]),
+    spec("reliability_dashboard_policies", &[]),
+    spec("fmeca_analyses", &[r("created_by_id", USER)]),
+    spec("fmeca_items", &[unmapped("component_id")]),
+    spec("fmeca_item_parts", &[]),
+    spec("rcm_studies", &[r("created_by_id", USER)]),
+    spec("rcm_decisions", &[]),
+    spec("fta_models", &[r("created_by_id", USER)]),
+    spec("rbd_models", &[r("created_by_id", USER)]),
+    spec("event_tree_models", &[r("created_by_id", USER)]),
+    spec("markov_models", &[r("created_by_id", USER)]),
+    spec("mc_models", &[r("created_by_id", USER)]),
+    spec("weibull_fit_results", &[r("created_by_id", USER)]),
+    spec("ram_expert_sign_offs", &[r("created_by_id", USER)]),
+    spec("ram_ishikawa_diagrams", &[]),
+    // Per user: issues a person dismissed in the reliability views. `scope_key` embeds the local
+    // equipment id: rebuilt on apply (`apply_hooks`), unique placeholder until then.
+    RowSpec {
+        derived: &[("scope_key", "('pending:' || lower(hex(randomblob(16))))")],
+        ..spec("user_dismissals", &[])
+    },
+    // ── Data integrity and analytics contract ───────────────────────────────────────────────
+    spec(
+        "data_integrity_findings",
+        &[poly(
+            "record_id",
+            "record_class",
+            &[
+                ("wo_failure_details", "work_order_failure_details"),
+                ("work_order_downtime_segments", "work_order_downtime_segments"),
+                ("work_orders", "work_orders"),
+            ],
+        )],
+    ),
+    spec("data_integrity_repair_actions", &[]),
+    spec("analytics_contract_versions", &[]),
     // ── Inventory and procurement ───────────────────────────────────────────────────────────
     spec("article_families", &[]),
     spec("articles", &[]),

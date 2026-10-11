@@ -5,8 +5,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use super::queries::{get_finding, last_insert_rowid, DataIntegrityFindingRow};
-use super::sync_stage::{stage_finding_sync, stage_repair_action_sync};
+use super::queries::{get_finding, DataIntegrityFindingRow};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct WaiveDataIntegrityFindingInput {
@@ -78,25 +77,11 @@ async fn update_finding_repaired(txn: &impl ConnectionTrait, id: i64, expected_r
     Ok(())
 }
 
-async fn reload_and_stage_finding(txn: &impl ConnectionTrait, id: i64) -> AppResult<DataIntegrityFindingRow> {
+async fn reload_finding(txn: &impl ConnectionTrait, id: i64) -> AppResult<DataIntegrityFindingRow> {
     let f = get_finding(txn, id).await?.ok_or_else(|| AppError::NotFound {
         entity: "data_integrity_findings".into(),
         id: id.to_string(),
     })?;
-    stage_finding_sync(
-        txn,
-        f.id,
-        &f.entity_sync_id,
-        f.row_version,
-        &f.severity,
-        &f.domain,
-        &f.record_class,
-        f.record_id,
-        &f.finding_code,
-        &f.details_json,
-        &f.status,
-    )
-    .await?;
     Ok(f)
 }
 
@@ -126,19 +111,7 @@ async fn insert_repair_audit(
         ],
     ))
     .await?;
-    let rid = last_insert_rowid(txn).await?;
-    stage_repair_action_sync(
-        txn,
-        rid,
-        &esid,
-        1,
-        finding_id,
-        action,
-        actor_id,
-        before_json,
-        after_json,
-    )
-    .await
+    Ok(())
 }
 
 pub async fn waive_data_integrity_finding(
@@ -189,7 +162,7 @@ pub async fn waive_data_integrity_finding(
     )
     .await?;
 
-    let f1 = reload_and_stage_finding(&txn, input.finding_id).await?;
+    let f1 = reload_finding(&txn, input.finding_id).await?;
     let after_json = json!({ "finding": serde_json::to_value(&f1)? }).to_string();
 
     insert_repair_audit(&txn, input.finding_id, "waive", actor_id, &before_json, &after_json).await?;
@@ -414,7 +387,7 @@ pub async fn apply_data_integrity_repair(
 
     update_finding_repaired(&txn, input.finding_id, input.expected_row_version).await?;
 
-    let f1 = reload_and_stage_finding(&txn, input.finding_id).await?;
+    let f1 = reload_finding(&txn, input.finding_id).await?;
     let after_json = json!({
         "finding": serde_json::to_value(&f1)?,
         "target": after_extra,

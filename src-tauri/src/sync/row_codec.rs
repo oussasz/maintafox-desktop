@@ -22,7 +22,9 @@ use crate::errors::{AppError, AppResult};
 use crate::sync::identity::seeded_entity_sync_id;
 use crate::sync::materialize::{ApplyOutcome, DEFER_MISSING_PARENT};
 use crate::sync::registry::ConflictPolicy;
-use crate::sync::row_layout::{EntityLayout, LayoutColumn, Role, Target, PAYLOAD_FORMAT, PAYLOAD_FORMAT_KEY};
+use crate::sync::row_layout::{
+    EntityLayout, JsonRef, JsonSeg, LayoutColumn, Role, Target, PAYLOAD_FORMAT, PAYLOAD_FORMAT_KEY,
+};
 
 fn codec_err(table: &str, msg: impl std::fmt::Display) -> AppError {
     AppError::SyncError(format!("{table}: {msg}"))
@@ -183,6 +185,19 @@ fn cell_text(cell: Option<&Cell>) -> Option<String> {
     }
 }
 
+/// Value of a polymorphic reference whose type does not point to a row (`row_spec::NOT_A_ROW`).
+fn verbatim_poly_value(layout: &EntityLayout, target: &Target, cell: &Cell, cells: &[Cell]) -> Option<Value> {
+    let Target::Poly { type_column, targets } = target else {
+        return None;
+    };
+    let type_index = layout.columns.iter().position(|c| c.name == *type_column)?;
+    let (_, _, target_table) = poly_target(targets, cell_text(cells.get(type_index)).as_deref())?;
+    if !target_table.is_empty() {
+        return None;
+    }
+    Some(cell_text(Some(cell)).map_or(Value::Null, Value::String))
+}
+
 /// Sync id (or catalog key) of the row a reference cell points to.
 async fn outbound_ref(
     conn: &impl ConnectionTrait,
@@ -194,6 +209,9 @@ async fn outbound_ref(
     cells: &[Cell],
 ) -> AppResult<Value> {
     let table = layout.table();
+    if let Some(verbatim) = verbatim_poly_value(layout, target, cell, cells) {
+        return Ok(verbatim);
+    }
     let Some(local_id) = local_ref_id(table, column, cell)? else {
         return Ok(Value::Null);
     };
@@ -279,8 +297,7 @@ fn payload_key(layout: &EntityLayout, index: usize) -> AppResult<&str> {
 }
 
 /// JSON pointers of the values a reference path selects.
-fn json_ref_pointers(value: &Value, path: &[crate::sync::row_layout::JsonSeg], base: String, out: &mut Vec<String>) {
-    use crate::sync::row_layout::JsonSeg;
+fn json_ref_pointers(value: &Value, path: &[JsonSeg], base: String, out: &mut Vec<String>) {
     match path.split_first() {
         None => out.push(base),
         Some((JsonSeg::Each, rest)) => {
@@ -296,6 +313,8 @@ fn json_ref_pointers(value: &Value, path: &[crate::sync::row_layout::JsonSeg], b
                 json_ref_pointers(inner, rest, format!("{base}/{escaped}"), out);
             }
         }
+        // URL references are translated by `translate_url_out` / `translate_url_in`.
+        Some((JsonSeg::Query(_), _)) => {}
     }
 }
 
@@ -310,6 +329,97 @@ fn parse_json_text(table: &str, column: &LayoutColumn, text: &Value) -> AppResul
     }
 }
 
+/// Query parameter a URL reference reads (`JsonSeg::Query`), if the column holds a URL.
+fn url_param(r: &JsonRef) -> Option<&str> {
+    match r.path.as_slice() {
+        [JsonSeg::Query(param)] => Some(param),
+        _ => None,
+    }
+}
+
+/// `/path?a=1&b=2` as its path and its `(name, value)` pairs.
+fn split_url(url: &str) -> (&str, Vec<(String, String)>) {
+    let Some((path, query)) = url.split_once('?') else {
+        return (url, Vec::new());
+    };
+    let pairs = query
+        .split('&')
+        .filter(|p| !p.is_empty())
+        .map(|p| match p.split_once('=') {
+            Some((k, v)) => (k.to_string(), v.to_string()),
+            None => (p.to_string(), String::new()),
+        })
+        .collect();
+    (path, pairs)
+}
+
+fn join_url(path: &str, pairs: &[(String, String)]) -> String {
+    if pairs.is_empty() {
+        return path.to_string();
+    }
+    let query: Vec<String> = pairs.iter().map(|(k, v)| format!("{k}={v}")).collect();
+    format!("{path}?{}", query.join("&"))
+}
+
+/// Replace the local ids in the query of a URL column by sync ids (outbound). A link to a row
+/// that no longer exists loses that parameter: it opens the list instead of another record.
+async fn translate_url_out(conn: &impl ConnectionTrait, table: &str, column: &LayoutColumn, url: &str) -> AppResult<Value> {
+    let (path, pairs) = split_url(url);
+    let mut out = Vec::with_capacity(pairs.len());
+    for (name, value) in pairs {
+        let Some(r) = column.json_refs.iter().find(|r| url_param(r) == Some(name.as_str())) else {
+            out.push((name, value));
+            continue;
+        };
+        let local_id = value
+            .trim()
+            .parse::<i64>()
+            .map_err(|_| codec_err(table, format!("{}: parameter {name}='{value}' is not a local id", column.name)))?;
+        let sync_id = scalar_text(
+            conn,
+            &format!("SELECT entity_sync_id AS v FROM \"{}\" WHERE id = ?", r.table),
+            vec![local_id.into()],
+        )
+        .await?
+        .filter(|v| !v.trim().is_empty());
+        if let Some(sync_id) = sync_id {
+            out.push((name, sync_id));
+        }
+    }
+    Ok(Value::String(join_url(path, &out)))
+}
+
+/// Replace the sync ids in the query of a URL column by local ids (inbound); a target not
+/// received yet defers the row.
+async fn translate_url_in(
+    conn: &impl ConnectionTrait,
+    column: &LayoutColumn,
+    url: &str,
+) -> AppResult<Result<Value, ApplyOutcome>> {
+    let (path, mut pairs) = split_url(url);
+    for (name, value) in pairs.iter_mut() {
+        let Some(r) = column.json_refs.iter().find(|r| url_param(r) == Some(name.as_str())) else {
+            continue;
+        };
+        match scalar_id(
+            conn,
+            &format!("SELECT id AS v FROM \"{}\" WHERE entity_sync_id = ?", r.table),
+            vec![value.clone().into()],
+        )
+        .await?
+        {
+            Some(id) => *value = id.to_string(),
+            None => {
+                return Ok(Err(ApplyOutcome::Deferred {
+                    code: DEFER_MISSING_PARENT.into(),
+                    message: format!("{} needs {} {value}, not received yet", column.name, r.entity_type),
+                }))
+            }
+        }
+    }
+    Ok(Ok(Value::String(join_url(path, &pairs))))
+}
+
 /// Replace the local ids inside a JSON column by sync ids (outbound).
 async fn translate_json_out(
     conn: &impl ConnectionTrait,
@@ -317,6 +427,12 @@ async fn translate_json_out(
     column: &LayoutColumn,
     text: Value,
 ) -> AppResult<Value> {
+    if column.json_refs.iter().any(|r| url_param(r).is_some()) {
+        return match &text {
+            Value::String(url) => translate_url_out(conn, table, column, url).await,
+            _ => Ok(text),
+        };
+    }
     let Some(mut doc) = parse_json_text(table, column, &text)? else {
         return Ok(text);
     };
@@ -359,6 +475,12 @@ async fn translate_json_in(
     column: &LayoutColumn,
     text: &Value,
 ) -> AppResult<Result<Value, ApplyOutcome>> {
+    if column.json_refs.iter().any(|r| url_param(r).is_some()) {
+        return match text {
+            Value::String(url) => translate_url_in(conn, column, url).await,
+            _ => Ok(Ok(text.clone())),
+        };
+    }
     let Some(mut doc) = parse_json_text(table, column, text)? else {
         return Ok(Ok(text.clone()));
     };
@@ -553,6 +675,10 @@ async fn inbound_ref(
                     format!("{}: {type_column} {type_value:?} is not a mapped reference type", column.name),
                 ));
             };
+            if target_table.is_empty() {
+                // Not a row reference: stored as sent.
+                return Ok(Resolved::Local(key.into()));
+            }
             (
                 format!("SELECT id AS v FROM \"{target_table}\" WHERE entity_sync_id = ?"),
                 Some(*entity),

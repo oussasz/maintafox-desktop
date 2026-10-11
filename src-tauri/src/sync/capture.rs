@@ -290,7 +290,12 @@ async fn baseline(conn: &impl ConnectionTrait, layout: &EntityLayout) -> AppResu
                  SELECT '{et}', r.entity_sync_id, NULL, 'upsert', {owner}
                    FROM {table} r
                   WHERE r.entity_sync_id IS NOT NULL
-                    AND substr(r.entity_sync_id, 15, 1) <> '8'
+                    -- Seeded identities (UUID v8, `seeded_entity_sync_id`) exist on every device.
+                    -- Older modules prefix their ids (`failure_event:<uuid>`): only a bare UUID
+                    -- can be a seeded one.
+                    AND NOT (length(r.entity_sync_id) = 36
+                             AND substr(r.entity_sync_id, 9, 1) = '-'
+                             AND substr(r.entity_sync_id, 15, 1) = '8')
                     AND {filter}
                     AND NOT EXISTS (SELECT 1 FROM sync_entity_state s
                                      WHERE s.entity_type = '{et}' AND s.entity_sync_id = r.entity_sync_id)

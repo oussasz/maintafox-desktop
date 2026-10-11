@@ -2,10 +2,9 @@ use crate::errors::AppResult;
 use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use serde_json::json;
-use uuid::Uuid;
 
-use super::queries::last_insert_rowid;
-use super::sync_stage::stage_finding_sync;
+use crate::sync::capture::{begin_suppression, end_suppression};
+use crate::sync::identity::{new_entity_sync_id, optional_entity_sync_id, seeded_entity_sync_id};
 
 const EPS_HOURS: f64 = 0.25;
 
@@ -20,49 +19,71 @@ async fn insert_finding(
     record_class: &str,
     record_id: i64,
     finding_code: &str,
+    other_record_id: Option<i64>,
     details: serde_json::Value,
 ) -> AppResult<()> {
-    let esid = Uuid::new_v4().to_string();
+    let esid = finding_sync_id(db, finding_code, record_class, record_id, other_record_id).await?;
     let details_json = details.to_string();
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO data_integrity_findings (entity_sync_id, row_version, severity, domain, \
          record_class, record_id, finding_code, details_json, detected_at, status) \
-         VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, 'open')",
+         VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, 'open')          ON CONFLICT(entity_sync_id) DO NOTHING",
         [
-            esid.clone().into(),
+            esid.into(),
             severity.into(),
             domain.into(),
             record_class.into(),
             record_id.into(),
             finding_code.into(),
-            details_json.clone().into(),
+            details_json.into(),
             now.into(),
         ],
     ))
     .await?;
-    let id = last_insert_rowid(db).await?;
-    stage_finding_sync(
-        db,
-        id,
-        &esid,
-        1,
-        severity,
-        domain,
-        record_class,
-        record_id,
-        finding_code,
-        &details_json,
-        "open",
-    )
-    .await?;
     Ok(())
+}
+
+/// Table holding the records a finding of `record_class` points at.
+fn record_table(record_class: &str) -> &str {
+    match record_class {
+        "wo_failure_details" => "work_order_failure_details",
+        other => other,
+    }
+}
+
+/// Identity of a finding: the same check on the same records gives the same id on every device,
+/// so a finding a person waived or repaired on one device is not detected again as a new one on
+/// another. A record without a sync identity (capture not installed) gets a random id.
+async fn finding_sync_id(
+    db: &impl ConnectionTrait,
+    finding_code: &str,
+    record_class: &str,
+    record_id: i64,
+    other_record_id: Option<i64>,
+) -> AppResult<String> {
+    let table = record_table(record_class);
+    let mut subjects = Vec::new();
+    for id in std::iter::once(record_id).chain(other_record_id) {
+        match optional_entity_sync_id(db, table, id).await? {
+            Some(esid) => subjects.push(esid),
+            None => return Ok(new_entity_sync_id()),
+        }
+    }
+    subjects.sort();
+    Ok(seeded_entity_sync_id(
+        "data_integrity_findings",
+        &format!("{finding_code}|{record_class}|{}", subjects.join("|")),
+    ))
 }
 
 /// Clears prior open findings for detector domains, then re-runs checks.
 pub async fn run_data_integrity_detectors(db: &DatabaseConnection) -> AppResult<i64> {
     let txn = db.begin().await?;
+    // Findings are recomputed on every device that runs the checks: the run itself is not sent.
+    // A person's waiver or repair of a finding is captured (and sent) like any other change.
+    begin_suppression(&txn).await?;
     txn.execute(Statement::from_string(
         DbBackend::Sqlite,
         "DELETE FROM data_integrity_findings WHERE status = 'open' \
@@ -99,6 +120,7 @@ pub async fn run_data_integrity_detectors(db: &DatabaseConnection) -> AppResult<
             "wo_failure_details",
             fd_id,
             "FK_ORPHAN_FAILURE_MODE",
+            None,
             json!({"work_order_id": wo_id, "failure_mode_id": fmid}),
         )
         .await?;
@@ -126,6 +148,7 @@ pub async fn run_data_integrity_detectors(db: &DatabaseConnection) -> AppResult<
             "work_order_downtime_segments",
             sid,
             "WO_DOWNTIME_NEGATIVE_DURATION",
+            None,
             json!({"work_order_id": wo_id, "segment_id": sid}),
         )
         .await?;
@@ -150,6 +173,7 @@ pub async fn run_data_integrity_detectors(db: &DatabaseConnection) -> AppResult<
             "work_order_downtime_segments",
             sid,
             "WO_DOWNTIME_UNCLOSED",
+            None,
             json!({"work_order_id": wo_id, "segment_id": sid}),
         )
         .await?;
@@ -200,6 +224,7 @@ pub async fn run_data_integrity_detectors(db: &DatabaseConnection) -> AppResult<
                 "work_orders",
                 wo_id,
                 "WO_DOWNTIME_SUM_EXCEEDS_WINDOW",
+                None,
                 json!({
                     "work_order_id": wo_id,
                     "segment_sum_hours": seg_sum,
@@ -235,12 +260,14 @@ pub async fn run_data_integrity_detectors(db: &DatabaseConnection) -> AppResult<
             "work_order_downtime_segments",
             a_id,
             "WO_DOWNTIME_OVERLAP",
+            Some(b_id),
             json!({"work_order_id": wo_id, "segment_id_a": a_id, "segment_id_b": b_id}),
         )
         .await?;
         n += 1;
     }
 
+    end_suppression(&txn).await?;
     txn.commit().await?;
     Ok(n)
 }
