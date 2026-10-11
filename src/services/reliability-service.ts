@@ -3,6 +3,9 @@ import { z } from "zod";
 import { invoke } from "@/lib/ipc-invoke";
 import type {
   ApplyRcmLogicInput,
+  ExportedBinaryDocument,
+  FailureModePareto,
+  FailureModeParetoInput,
   FmecaCriticality,
   FmecaCriticalityEvidence,
   FmecaCriticalityInput,
@@ -1190,4 +1193,45 @@ export async function signRamExpertReview(
 
 export async function deleteRamExpertSignOff(id: number): Promise<void> {
   await invoke("delete_ram_expert_sign_off", { id });
+}
+
+const FailureModeParetoSchema = z.object({
+  metric: z.enum(["count", "cost", "downtime"]),
+  total: z.number(),
+  rows: z.array(
+    z.object({
+      failure_mode_id: z.number().nullable(),
+      mode_code: z.string().nullable(),
+      mode_label: z.string().nullable(),
+      failure_count: z.number(),
+      total_cost: z.number(),
+      downtime_hours: z.number(),
+      value: z.number(),
+      share: z.number(),
+      cumulative_share: z.number(),
+    }),
+  ),
+});
+
+/** Unplanned failures grouped by failure mode, ranked by count, cost or downtime. */
+export async function getFailureModePareto(
+  input: FailureModeParetoInput,
+): Promise<FailureModePareto> {
+  const raw = await invoke<unknown>("get_failure_mode_pareto", { input });
+  return FailureModeParetoSchema.parse(raw);
+}
+
+/** Reliability report of one equipment (KPIs, Weibull, FMECA, Pareto) as PDF or Excel. */
+export async function exportReliabilityReport(
+  equipmentId: number,
+  exportFormat: "pdf" | "xlsx",
+): Promise<ExportedBinaryDocument> {
+  const raw = await invoke<unknown>("export_reliability_report", { equipmentId, exportFormat });
+  return z
+    .object({
+      file_name: z.string(),
+      mime_type: z.string(),
+      bytes: z.array(z.number().int().min(0).max(255)),
+    })
+    .parse(raw);
 }

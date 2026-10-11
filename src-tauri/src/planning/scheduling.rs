@@ -2077,81 +2077,6 @@ pub async fn get_planning_gantt_snapshot(
     })
 }
 
-fn pdf_escape(input: &str) -> String {
-    input.replace('\\', "\\\\").replace('(', "\\(").replace(')', "\\)")
-}
-
-fn build_simple_pdf(lines: &[String], paper_size: &str) -> Vec<u8> {
-    let (w, h) = if paper_size.eq_ignore_ascii_case("A3") {
-        (1191, 842)
-    } else {
-        (842, 595)
-    };
-    let mut content = String::from("BT /F1 11 Tf 40 ");
-    content.push_str(&(h - 50).to_string());
-    content.push_str(" Td ");
-    for (idx, line) in lines.iter().enumerate() {
-        if idx > 0 {
-            content.push_str("T* ");
-        }
-        content.push('(');
-        content.push_str(&pdf_escape(line));
-        content.push_str(") Tj ");
-    }
-    content.push_str("ET");
-    let stream = content.into_bytes();
-
-    let mut out = Vec::<u8>::new();
-    out.extend_from_slice(b"%PDF-1.4\n");
-    let mut offsets = vec![0_usize];
-    let push_obj = |buf: &mut Vec<u8>, offsets: &mut Vec<usize>, body: &[u8]| {
-        offsets.push(buf.len());
-        buf.extend_from_slice(body);
-        buf.extend_from_slice(b"\n");
-    };
-
-    push_obj(
-        &mut out,
-        &mut offsets,
-        b"1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj",
-    );
-    push_obj(
-        &mut out,
-        &mut offsets,
-        b"2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj",
-    );
-    let page_obj = format!(
-        "3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 {w} {h}] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >> endobj"
-    );
-    push_obj(&mut out, &mut offsets, page_obj.as_bytes());
-    let stream_head = format!("4 0 obj << /Length {} >> stream\n", stream.len());
-    offsets.push(out.len());
-    out.extend_from_slice(stream_head.as_bytes());
-    out.extend_from_slice(&stream);
-    out.extend_from_slice(b"\nendstream endobj\n");
-    push_obj(
-        &mut out,
-        &mut offsets,
-        b"5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj",
-    );
-
-    let xref_pos = out.len();
-    let object_count = offsets.len();
-    out.extend_from_slice(format!("xref\n0 {}\n", object_count).as_bytes());
-    out.extend_from_slice(b"0000000000 65535 f \n");
-    for off in offsets.iter().skip(1) {
-        out.extend_from_slice(format!("{off:010} 00000 n \n").as_bytes());
-    }
-    out.extend_from_slice(
-        format!(
-            "trailer << /Size {} /Root 1 0 R >>\nstartxref\n{}\n%%EOF\n",
-            object_count, xref_pos
-        )
-        .as_bytes(),
-    );
-    out
-}
-
 pub async fn export_planning_gantt_pdf(
     db: &DatabaseConnection,
     input: ExportPlanningGanttPdfInput,
@@ -2165,28 +2090,40 @@ pub async fn export_planning_gantt_pdf(
         },
     )
     .await?;
-    let mut lines = vec![
-        "Maintafox - Planning Gantt Export".to_string(),
-        format!("Period: {} -> {}", snapshot.period_start, snapshot.period_end),
-        format!("Commitments: {}", snapshot.commitments.len()),
-    ];
-    for commitment in snapshot.commitments.iter().take(40) {
-        lines.push(format!(
-            "#{} {}:{} {} -> {} team={} personnel={}",
-            commitment.id,
-            commitment.source_type,
-            commitment.source_id,
-            commitment.committed_start,
-            commitment.committed_end,
-            commitment.assigned_team_id,
-            commitment
-                .assigned_personnel_id
-                .map(|v| v.to_string())
-                .unwrap_or_else(|| "-".to_string())
-        ));
-    }
     let paper_size = input.paper_size.unwrap_or_else(|| "A4".to_string());
-    let bytes = build_simple_pdf(&lines, &paper_size);
+    let font = crate::reports::pdf::load_system_font()?;
+    let mut doc = crate::reports::pdf::PdfDocument::new(
+        &font,
+        crate::reports::pdf::PaperSize::from_code(&paper_size, true),
+        "Maintafox — Planning",
+    )?;
+    doc.heading("Planning — Gantt");
+    doc.paragraph(&format!(
+        "{} → {} · {} commitment(s)",
+        snapshot.period_start,
+        snapshot.period_end,
+        snapshot.commitments.len()
+    ));
+    let rows: Vec<Vec<String>> = snapshot
+        .commitments
+        .iter()
+        .map(|c| {
+            vec![
+                c.source_code.clone().unwrap_or_else(|| c.source_type.clone()),
+                c.source_title.clone().unwrap_or_default(),
+                c.committed_start.clone(),
+                c.committed_end.clone(),
+                c.assigned_team_label.clone().unwrap_or_default(),
+                c.assigned_personnel_name.clone().unwrap_or_else(|| "—".to_string()),
+            ]
+        })
+        .collect();
+    doc.table(
+        &["Ref.", "Title", "Start", "End", "Crew", "Assignee"],
+        &rows,
+        &[1.2, 3.0, 1.6, 1.6, 1.5, 1.6],
+    );
+    let bytes = doc.finish()?;
     Ok(ExportedBinaryDocument {
         file_name: format!("planning-gantt-{}-{}.pdf", snapshot.period_start, snapshot.period_end),
         mime_type: "application/pdf".to_string(),

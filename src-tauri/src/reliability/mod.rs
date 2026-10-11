@@ -6,6 +6,7 @@ pub mod exposure_inference;
 pub mod fleet;
 pub mod fta_rbd_eta;
 pub mod markov_mc;
+pub mod pareto;
 pub mod plot_payload;
 pub mod queries;
 #[cfg(test)]

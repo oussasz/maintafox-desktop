@@ -306,5 +306,36 @@
     "compute": "Calculer",
     "cm": "Criticité du mode Cm = {{cm}} — total de l'analyse Cr = {{cr}}",
     "invalidNumber": "Saisissez un nombre."
+  },
+  "pareto": {
+    "title": "Pareto des modes de défaillance",
+    "metricLabel": "Classer par",
+    "metric": {
+      "count": "Nombre de défaillances",
+      "cost": "Coût de maintenance",
+      "downtime": "Temps d'arrêt (h)"
+    },
+    "from": "Du",
+    "to": "Au",
+    "allTime": "Toutes les défaillances enregistrées (sans filtre de période)",
+    "loading": "Chargement…",
+    "empty": "Aucune défaillance non planifiée enregistrée pour cet équipement sur la période.",
+    "loadFailed": "Impossible de charger le Pareto : {{message}}",
+    "vitalFew": "{{count}} mode(s) de défaillance sur {{total}} représentent 80 % du total.",
+    "cumulative": "% cumulé",
+    "unclassified": "(sans mode de défaillance)",
+    "col": {
+      "mode": "Mode de défaillance",
+      "failures": "Défaillances",
+      "cost": "Coût",
+      "downtime": "Arrêt (h)",
+      "cumulative": "Cumulé"
+    },
+    "export": {
+      "pdf": "Rapport de fiabilité (PDF)",
+      "xlsx": "Rapport de fiabilité (Excel)"
+    },
+    "exporting": "Export en cours…",
+    "exportFailed": "Échec de l'export : {{message}}"
   }
 }

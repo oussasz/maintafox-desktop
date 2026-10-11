@@ -871,6 +871,8 @@ pub fn run() {
             commands::advanced_rams::create_pm_revision_from_rams_source,
             commands::advanced_rams::get_fmeca_criticality_evidence,
             commands::advanced_rams::compute_fmeca_criticality,
+            commands::advanced_rams::get_failure_mode_pareto,
+            commands::advanced_rams::export_reliability_report,
             commands::advanced_rams::create_wo_from_rams_source,
             commands::advanced_rams::delete_rcm_decision,
             commands::advanced_rams::get_fmeca_severity_occurrence_matrix,

@@ -65,6 +65,8 @@ toml = "0.8"
 # no native-tls/OpenSSL, no aws-lc. The ring provider is installed in `sync::transport::client`.
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider", "system-proxy"] }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
+pdf-writer = "0.12"
+ttf-parser = "0.25"
 
 [[bin]]
 name = "rams-readiness-eval"

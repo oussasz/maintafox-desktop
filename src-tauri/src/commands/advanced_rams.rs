@@ -483,3 +483,42 @@ pub async fn preview_rcm_recommendation(
     );
     Ok(crate::reliability::rcm_loop::recommend_tactic(&answers))
 }
+
+/// Pareto of unplanned failures by failure mode, ranked by count, cost or downtime.
+#[tauri::command]
+pub async fn get_failure_mode_pareto(
+    input: crate::reliability::pareto::FailureModeParetoInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::reliability::pareto::FailureModePareto> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::RAM_VIEW,
+        PermissionScope::Global
+    );
+    crate::reliability::pareto::get_failure_mode_pareto(&state.db, input).await
+}
+
+/// Reliability report of one equipment (KPIs, Weibull, FMECA, Pareto) as PDF or Excel.
+#[tauri::command]
+pub async fn export_reliability_report(
+    equipment_id: i64,
+    export_format: String,
+    state: State<'_, AppState>,
+) -> AppResult<crate::planning::domain::ExportedBinaryDocument> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::RAM_VIEW,
+        PermissionScope::Global
+    );
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::REP_EXPORT,
+        PermissionScope::Global
+    );
+    crate::reports::reliability_export::export_reliability_report(&state.db, equipment_id, &export_format).await
+}

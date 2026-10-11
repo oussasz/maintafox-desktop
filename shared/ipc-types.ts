@@ -7119,6 +7119,35 @@ export interface FmecaCriticalityEvidence {
   kpi_period_end: string | null;
 }
 
+/** Ranking metric of the failure-mode Pareto. */
+export type FailureModeParetoMetric = "count" | "cost" | "downtime";
+
+export interface FailureModeParetoInput {
+  metric: FailureModeParetoMetric;
+  period_start?: string | null;
+  period_end?: string | null;
+  equipment_id?: number | null;
+}
+
+export interface FailureModeParetoRow {
+  /** null for failures recorded without a failure mode. */
+  failure_mode_id: number | null;
+  mode_code: string | null;
+  mode_label: string | null;
+  failure_count: number;
+  total_cost: number;
+  downtime_hours: number;
+  value: number;
+  share: number;
+  cumulative_share: number;
+}
+
+export interface FailureModePareto {
+  metric: FailureModeParetoMetric;
+  total: number;
+  rows: FailureModeParetoRow[];
+}
+
 export interface FmecaCriticalityInput {
   item_id: number;
   expected_row_version: number;

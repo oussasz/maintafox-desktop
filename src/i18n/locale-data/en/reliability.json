@@ -306,5 +306,36 @@
     "compute": "Compute",
     "cm": "Mode criticality Cm = {{cm}} — analysis total Cr = {{cr}}",
     "invalidNumber": "Enter a number."
+  },
+  "pareto": {
+    "title": "Pareto of failure modes",
+    "metricLabel": "Rank by",
+    "metric": {
+      "count": "Number of failures",
+      "cost": "Maintenance cost",
+      "downtime": "Downtime (h)"
+    },
+    "from": "From",
+    "to": "To",
+    "allTime": "All recorded failures (no period filter)",
+    "loading": "Loading…",
+    "empty": "No unplanned failure recorded for this equipment in the period.",
+    "loadFailed": "Could not load the Pareto: {{message}}",
+    "vitalFew": "{{count}} of {{total}} failure modes account for 80 % of the total.",
+    "cumulative": "Cumulative %",
+    "unclassified": "(no failure mode)",
+    "col": {
+      "mode": "Failure mode",
+      "failures": "Failures",
+      "cost": "Cost",
+      "downtime": "Downtime (h)",
+      "cumulative": "Cumulative"
+    },
+    "export": {
+      "pdf": "Reliability report (PDF)",
+      "xlsx": "Reliability report (Excel)"
+    },
+    "exporting": "Exporting…",
+    "exportFailed": "Export failed: {{message}}"
   }
 }

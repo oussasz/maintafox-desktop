@@ -16,6 +16,7 @@ import {
   YAxis,
 } from "recharts";
 
+import { FailureModeParetoPanel } from "@/components/reliability/FailureModeParetoPanel";
 import { mfCard, mfChart } from "@/design-system/tokens";
 import { usePermissions } from "@/hooks/use-permissions";
 import { cn } from "@/lib/utils";
@@ -727,6 +728,8 @@ export function ReliabilityDashboardPage() {
           )}
         </section>
       </div>
+
+      <FailureModeParetoPanel equipmentId={equipmentId} />
     </div>
   );
 }
