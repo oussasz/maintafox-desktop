@@ -113,6 +113,20 @@ pub async fn save_pending(db: &impl ConnectionTrait, pending: &PendingExchange) 
     .await
 }
 
+/// After a backup was restored: the database's sync position (checkpoint and unanswered
+/// exchange) is older than the server's, and the server never sends a device its own changes
+/// back, so rows this device wrote after the backup would never return. Forgetting the position
+/// makes the worker bootstrap from a full snapshot. Unsent changes of the backup stay queued and
+/// are sent again (the server acknowledges the ones it already has as duplicates).
+pub async fn forget_server_position(db: &impl ConnectionTrait) -> AppResult<()> {
+    db.execute(Statement::from_string(
+        DatabaseBackend::Sqlite,
+        "UPDATE sync_checkpoint SET checkpoint_token = NULL WHERE id = 1".to_string(),
+    ))
+    .await?;
+    clear_pending(db).await
+}
+
 pub async fn clear_pending(db: &impl ConnectionTrait) -> AppResult<()> {
     update(
         db,

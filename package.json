@@ -27,6 +27,7 @@
     "test:rust": "cd src-tauri && cargo test",
     "clean": "rimraf dist src-tauri/target node_modules/.cache",
     "clean:cache": "node scripts/clean-build-cache.mjs",
+    "sync:harness": "node scripts/sync-harness.mjs",
     "db:seed": "pnpm tsx scripts/dev-db-seed.ts",
     "db:reset": "pnpm tsx scripts/dev-db-reset.ts",
     "db:reset:ci": "pnpm tsx scripts/dev-db-reset.ts --yes",

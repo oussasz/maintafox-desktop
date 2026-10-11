@@ -22,6 +22,8 @@ mod convergence_tests;
 #[cfg(test)]
 mod foundation_tests;
 #[cfg(test)]
+mod harness_tests;
+#[cfg(test)]
 mod registry_tests;
 #[cfg(test)]
 mod row_sync_tests;

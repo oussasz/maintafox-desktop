@@ -1,6 +1,6 @@
 # Sync Strategy & Schema Standard
 
-**Status:** Phase 1 foundation (multi-desktop + VPS domain sync)  
+**Status:** every registered table syncs through the generic engine (Phase 2.4, 2026-10-11); proven by the multi-device harness (Phase 2.5)  
 **PRD:** §8 Sync Layer — Hybrid Cloud  
 **Agent rule:** `.cursor/rules/universal-entity-sync.mdc`
 
@@ -16,22 +16,83 @@ Every primary domain entity MUST carry:
 
 | Column | Type | Rules |
 |---|---|---|
-| `entity_sync_id` | TEXT UUID | UNIQUE, never reused, merge key across machines. **Set in the INSERT that creates the row** (`sync::identity::new_entity_sync_id()`, or `seeded_entity_sync_id(entity_type, natural_key)` for rows every device seeds itself). Stagers never invent or derive it. |
+| `entity_sync_id` | TEXT UUID | UNIQUE, never reused, merge key across machines. Given at insert: by the code (`sync::identity::new_entity_sync_id()`; `seeded_entity_sync_id(entity_type, key)` for rows every device creates itself, see §2.2) or, when the INSERT has none, by the capture trigger (random UUID v4). Never derived later. |
 | `row_version` | INTEGER | Monotonic; increment on every durable mutation (local optimistic concurrency) |
 | `updated_at` | TEXT RFC3339 UTC | Always set on mutation |
 
-Every durable mutation MUST stage its change **inside the same database transaction** (pass the
-transaction to the stager). A failed stage fails the write; there is no post-commit or
-"best effort" staging.
+Changes are captured **by SQLite triggers inside the business transaction** (§2.1): a write that
+commits is captured, a write that rolls back leaves nothing to send. Business code calls no stager.
 
-No domain may ship without:
+No table may ship without:
 
 1. An entry in the sync entity registry (`src-tauri/src/sync/registry.rs`): table, scope
-   (`tenant` | `user` with owner column), stager, materializer, conflict policy, parents. A table
-   that must not replicate is listed in `LOCAL_ONLY_TABLES` with a category. The CI test
+   (`tenant` | `user` with owner column), conflict policy, parents. A table that must not
+   replicate is listed in `LOCAL_ONLY_TABLES` with a category. The CI test
    `registry_covers_every_table` fails on any table in neither list.
-2. Versioned payload with **`entity_sync_id` FKs only** (never local `i64`)
-3. Inbox materialization handler that upserts the real domain table
+2. A row spec in `src-tauri/src/sync/row_spec.rs` (§2.1). The test
+   `registry_flags_match_stager_and_materializer_dispatch` fails for a registered type without one,
+   and `every_row_spec_has_a_valid_layout_and_capture_triggers` fails for an INTEGER `*_id` column
+   (or a foreign key to a local-only table) that has no rule.
+3. A place in a domain round trip (`sync/row_sync_tests.rs`); `every_registered_type_round_trips`
+   fails for a registered type in none.
+
+### 2.1 Generic capture and apply (Phase 2.4)
+
+- **Capture** (`sync/capture.rs`): `install_capture` (startup, before the worker; after migrations
+  and seeders, which run with capture suspended) creates `sync_cap_<table>_ai|_au|_ad` triggers
+  that write `sync_capture_journal` rows in the business transaction. An update is captured only
+  when a synchronised column changed (device-local, derived and `row_version`-only updates stay
+  local). The journal is drained into the outbox before every push, inside every inbound apply and
+  before a conflict decision; a group that cannot be staged stays in the journal and becomes a
+  `STAGE_ERROR` conflict. `sync_capture_suppression` (one row, set inside a transaction only)
+  switches capture off for inbound apply and for data each device generates itself.
+- **Payload `row.v1`** (`row_codec.rs`): every column as a sorted JSON object plus
+  `_sync_format: "row.v1"`. References travel as `<column without _id>_sync_id`, app catalog
+  references as `<column>_key`, BLOBs as base64. Not sent: `id`, `entity_sync_id` (in the
+  envelope), `row_version` (bumped locally on apply), device-local and derived columns.
+- **Rules per table** (`RowSpec`): `r` (reference), `soft` (cycle back edge, or a link to another
+  person's row: written empty and completed when the target arrives, `sync_pending_refs`), `hist`
+  (history: empty if the target was deleted), `poly` / `poly_hist` / `poly_soft` (target chosen by a
+  type column; `NOT_A_ROW` = value sent as is, e.g. a role name; `LOCAL_ROW` = target that stays on
+  each device, sent empty), `catalog` (local app catalog, sent by natural key), `unmapped` (must
+  stay empty), `value_columns`, `device_local`, `derived` (column + SQL initial value, recomputed by
+  `apply_hooks.rs`), `row_filter` (only matching rows sync, e.g. tenant settings), `skip_baseline`,
+  `json_refs` (`json_ref(column, path, entity)`, paths `$`, `[*]`, `[*].field`, `.field`, and
+  `?param` for a URL query parameter; `json_ref_hist` sends a deleted target empty).
+- **Apply** (`row_codec::apply_row`): a missing parent defers the row (`MISSING_PARENT`, retried on
+  every run); a missing required column fails the insert (`MATERIALIZE_ERROR` conflict); an
+  append-only row that already exists is unchanged; deletes run after upserts, children first.
+  Local consequences run in the same transaction (`apply_hooks.rs`): stock balances of a received
+  movement, org paths, a dismissal's scope key, a report schedule's next run.
+- **Baseline:** once per entity type, existing rows with a random identity, no
+  `sync_entity_state` and no live outbox entry are queued (`sync_capture_baseline`).
+
+### 2.2 Rows every device creates itself
+
+- **Seeded rows** (catalogs, settings, roles, the admin account, the bootstrap org):
+  `sync/seeded_identity.rs` gives them `seeded_entity_sync_id(entity_type, natural key)` (UUID v8),
+  the same on every device (migration 162 for existing rows, `install_capture` for new ones). They
+  are never baselined; an edit is sent like any change.
+- **Generated per device, kept local** (generators run with capture suppressed; deterministic ids
+  from sync ids, so a person's later action on one device applies to the same row elsewhere): PM
+  occurrences, schedule candidates, data-integrity findings, notifications of PM due / DI SLA
+  breach / escalations, un-snooze and expiry of notifications.
+- **Local-only projections:** `scheduling_conflicts`, `personnel_readiness_snapshots`,
+  `training_expiry_alert_events`, `inspection_reliability_signals`, `reliability_kpi_snapshots`.
+- **Per user, one row per person and name:** notification preferences, saved activity filters and
+  RAMS dismissals get a seeded id from the user's sync id and the name
+  (`identity::user_keyed_entity_sync_id`), so the same choice made on two devices is one row.
+
+### 2.3 Adding a table
+
+1. Migration: `entity_sync_id TEXT` + unique index (or a natural primary key).
+2. Registry entry (scope, owner column, conflict policy, parents) and a `RowSpec` with a rule for
+   every local id (columns, JSON paths, URLs).
+3. Add the type to a list in `row_sync_tests.rs`; run
+   `cargo test --lib -- sync::registry_tests sync::row_sync_tests` with `MAINTAFOX_WRITE_SYNC_REGISTRY=1`.
+4. `node scripts/sync-allowlist-append.mjs` (appends to the vendor console registry and refreshes
+   `shared/sync/server-entity-allowlist.v2.json`), then the vendor test
+   `pnpm --filter maintafox-control-api run test:sync-v2`.
 
 The registry is exported to `shared/sync/entity-registry.json` (test
 `registry_export_matches_shared_file`; regenerate with `MAINTAFOX_WRITE_SYNC_REGISTRY=1`). The
@@ -133,8 +194,9 @@ a person's conflict decision).
 1. Exchange inserts inbound items into `sync_inbox` with `apply_status = 'pending'`
 2. `materialize_inbox_batch` applies them in registry order and sets:
    - `applied`: written, or already current (own change echoed back, same version and content);
-   - `deferred`: unknown entity type, entity without materializer yet, or parent not received yet;
-     deferred rows are retried on every run and applied once possible;
+   - `deferred`: unknown entity type (another app version) or a parent not received yet
+     (`MISSING_PARENT`, also for ids inside JSON/URL columns); deferred rows are retried on every run
+     and applied once possible;
    - `conflict`: concurrent edit, stale or divergent version, or materializer error; a
      `sync_conflicts` record is written in the same transaction.
 3. Never mark `applied` on insert alone, and never for a row that was not applied.
@@ -161,7 +223,7 @@ Resolution acts on data in the same transaction that closes the conflict:
   superseded, and the current local row is staged again (`base_row_version` = server version).
 - **Take theirs** (`accept_remote`): unsent local changes are superseded and the server payload is
   applied through the materializer. Not available when the conflict carries no server payload
-  (v1 rejections) or the entity has no materializer yet.
+  (v1 rejections).
 - `dismiss`, `retry_later`, `escalate` only change the conflict status.
 
 ## 6. Media
@@ -172,31 +234,34 @@ Resolution acts on data in the same transaction that closes the conflict:
 - JSON outbox MUST NOT carry file bytes
 - Desktop stores files under app data; the worker uploads them through the presigned flow
   (`sync_media_uploads` tracks pending / uploaded / failed). Download of media received from other
-  devices (`presign-get`) is not implemented yet (Phase 2.4).
+  devices (`presign-get`) is not implemented yet: another device receives the attachment row
+  (metadata) but not the file. Open after Phase 2.5.
 
-## 7. Phase 1 entity coverage
+## 7. Coverage (Phase 2.4)
 
-| Domain | Sync entity key(s) | Notes |
+Every table in the registry syncs; the rules are in `row_spec.rs`, in this order:
+
+| Domain | Types (examples) | Notes |
 |---|---|---|
-| Equipment | `equipment`, `equipment_meters` | Rename `sync_id` |
-| Users / RBAC | `user_accounts`, `roles`, `user_role_assignments`, `user_scope_assignments` | Password hashes travel (secret); PIN stays device-local |
-| Org | `org_nodes`, `org_structure_models`, `org_node_types` | Required for routing |
-| Personnel | `personnel`, `teams`, `personnel_team_assignments` | |
-| DI | `intervention_requests`, `di_attachments` (via media) | Full payload |
-| WO | `work_orders`, `work_order_tasks`, `work_order_interveners`, `work_order_attachments` (media) | Full graph |
-| PM | `pm_plans`, `pm_plan_versions`, `pm_occurrences` | |
-| Inventory | `articles`, `warehouses`, `stock_locations`, `stock_movements`, `stock_reservations` | Movements append-only |
-| Media | `media_attachments` | Metadata + object store |
-| Reference | `reference_values` (or domain codes) | Stable by code |
-| Existing | permits, inspections, budget, reliability, … | Keep staging; add materializers |
+| Foundation | org model/nodes, users, roles, permissions, scopes, personnel, teams, equipment, reference catalogs, media metadata | Seeded rows share identities; password hashes travel, PIN/lockout/login times stay device-local |
+| Inventory / procurement | articles, warehouses, locations, movements, reservations, requisitions, POs, receipts, repairables, counts | A received movement updates `stock_balances` on apply |
+| Work orders / requests | DI, WO and their tasks, parts, labour, delays, downtime, closeout, attachments | SLA "notified" stamps device-local |
+| PM / planning | plans, versions, occurrences, executions, findings, schedule commitments, break-ins | Occurrences and candidates generated per device (deterministic ids) |
+| Finance | cost centers, budgets, actuals, forecasts, alerts, exports | Alert → notification link is soft |
+| Personnel / qualification | availability, skills, certifications, qualification profiles | Readiness snapshots and expiry alerts local-only |
+| Inspections / permits | rounds, checkpoints, results, anomalies, permits, isolations | Checkpoint packages translate asset ids |
+| RAMS | failure hierarchies/codes/events, runtime exposure, FMECA, RCM, FTA, RBD, event trees, Markov, Monte Carlo, Weibull, sign-offs, Ishikawa, guardrails, benchmarks, dashboard policies, data integrity findings and repairs, analytics contract | KPI snapshots local-only; findings recomputed per device |
+| Settings / history / notifications / reports | tenant app settings, policy snapshots, retention policies, activity/audit/admin/settings events, notification categories, rules, escalation, events, notifications, acknowledgements, report templates and schedules | Device settings stay local; notifications per recipient |
+| Personal items | notification preferences, saved activity filters, dashboard layouts, RAMS dismissals | Only to the devices where the owner is signed in or trusted |
 
-## 8. Non-sync (not primary entities)
+## 8. Non-sync (local-only)
 
-- Sync-control tables (`sync_outbox`, `sync_inbox`, `sync_checkpoint`, …)
-- Device-local: `trusted_devices`, PIN hashes, OS keyring secrets, session tokens
-- Derived: computation jobs, plot caches, dashboard layouts (unless explicitly promoted)
-- High-churn UX: notification read state, activity feed (Phase 1 defer)
-- Vendor/admin control-plane only data
+`LOCAL_ONLY_TABLES` in `registry.rs`, by category: sync machinery and the capture tables; sessions,
+trusted devices, device configuration; backups; licence and entitlement state; secrets and
+connection profiles; import staging; job queues, report runs and artifacts, notification
+deliveries; derived projections (§2.2); app catalogs; legacy stubs; archives and library files
+(`archive_*`, `library_documents`, `event_links`: no transfer path for archived snapshots and
+files yet).
 
 ## 9. Client vs VPS ownership
 
@@ -212,34 +277,27 @@ See also: [`VPS_SYNC_EXCHANGE.md`](./VPS_SYNC_EXCHANGE.md) for the frozen Fastif
 
 ## 10. Verification
 
-- Two-DB convergence tests: outbox on A → exchange fixture → materialize on B → domain row present (`src-tauri/src/sync/convergence_tests.rs`)
+- Round trips per domain and for the whole registry (`sync/row_sync_tests.rs`, in-process server
+  with the v2 rules in `sync/test_support.rs`): `cargo test --lib -- sync::row_sync_tests`.
+- Registry, layouts, triggers, seeded identities, allowlist: `cargo test --lib -- sync::registry_tests`.
+- **Multi-device harness (Phase 2.5):** `pnpm sync:harness`. It builds the control API of
+  `../maintafox-vendor-console`, starts embedded PostgreSQL 16 and the API on 127.0.0.1, activates
+  three machines, and runs `sync::harness_tests` (three desktop databases, real worker, real HTTP):
+  create, concurrent edit resolved both ways, offline then reconnect, per-user rows, delete,
+  snapshot bootstrap of a new device, lost answer then resend applied once, backup restore then
+  snapshot, revoked device. A few minutes with a warm Rust build (`--skip-api-build` reuses the API
+  build).
 - Golden fixtures: `src-tauri/src/sync/fixtures/exchange_request_v1.json`, `exchange_response_v1.json`
 - `cargo check`, `pnpm typecheck`, `cargo test --lib sync::` / `vps::`
 - Transport: `cargo test --lib -- sync::transport` (worker against an in-process HTTP stub: push/pull,
   paging, crash resend, 409, checkpoint refusal → snapshot, conflicts, 429/5xx backoff, offline →
   resume, refused activation, dead letter, per-user fields, pause, media upload)
 
-## 11. Staging coverage matrix (Phase 1)
+## 11. Backup restore
 
-Since Phase 2.2 staging runs inside the business transaction and a failed stage fails the write
-(the old post-commit `warn_stage` helpers are removed). The authoritative coverage per entity is
-`sync_status` in `shared/sync/entity-registry.json` (`synced`, `staged_only`, `not_staged`).
-
-| Entity | Stage helper | Primary mutation entry points | Materializer |
-|---|---|---|---|
-| `equipment` | `wo::sync_stage` / asset paths | asset create/update/photos | `upsert_equipment` |
-| `org_nodes` | `stage_org_node_sync` | create / move / deactivate | `upsert_org_node` |
-| `user_accounts` / `roles` | `stage_user_account_sync` / `stage_role_sync` | admin user/role create/update | `upsert_user_account` / `upsert_role` |
-| `personnel` / `teams` | `stage_personnel_sync` / `stage_team_sync` | personnel/team create/update/deactivate | `upsert_personnel` / `upsert_team` |
-| `reference_values` | `stage_reference_value_sync` | reference create/update | `upsert_reference_value` |
-| `intervention_requests` | `ops_stage::stage_intervention_request_sync` | DI create/update/review/triage/convert | `upsert_intervention_request` |
-| `work_orders` | `wo::sync_stage::stage_work_order_by_id` | create/update/cancel/workflow/execution/closeout/planning sync | `upsert_work_order` |
-| `work_order_tasks` | `stage_work_order_task_sync` | `wo/tasks.rs` | `upsert_work_order_task` |
-| `work_order_interveners` | `stage_work_order_intervener_sync` | `wo/labor.rs` | `upsert_work_order_intervener` |
-| `articles` / `warehouses` / `stock_locations` | `stage_*_sync` | inventory CRUD | matching upserts |
-| `inventory_transactions` | `stage_stock_movement_sync` | adjust/reserve/issue/return/transfer/procurement/controls | `upsert_stock_movement` (append-only) |
-| `stock_reservations` | `stage_stock_reservation_sync` | reservation create/release | `upsert_stock_reservation` |
-| `pm_plans` / versions / occurrences | `stage_pm_plan_sync` / `stage_pm_plan_version_sync` / `stage_pm_occurrence_sync` | PM lifecycle in `pm/queries.rs` | matching upserts |
-| `media_attachments` | `sync::media::stage_media_bytes` (+ delete op) | DI/WO/asset photo save/delete | `upsert_media_attachment` |
-
-**Explicitly out of Phase-1 staging (follow-on):** availability blocks, suppliers/procurement graphs beyond stock events, finance/reliability materializer backlog, activity feed, PIN/device secrets.
+A restored database is older than the server. After swapping a restore in, startup
+(`startup::run_startup_sequence`) calls `transport::store::forget_server_position`: the checkpoint
+and the unanswered request are dropped, so the worker bootstraps from a full snapshot and gets back
+the rows this device wrote after the backup (the server never echoes a device's own changes).
+Unsent changes of the backup stay queued; the server acknowledges the ones it already has as
+duplicates. Harness scenario 8 checks it.

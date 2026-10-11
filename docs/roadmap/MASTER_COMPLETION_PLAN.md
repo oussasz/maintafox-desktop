@@ -550,6 +550,67 @@ Work is on branch `phase0/security-hardening` in both repos. Each side has a bas
   checkpoint, so rows written after the backup are not re-sent by the server (2.5: force a snapshot
   after restore).
 
+### Phase 2.4 — Coverage of every domain (2026-10-11)
+
+- **One generic engine instead of hand-written stagers and materializers**
+  (`src-tauri/src/sync/`: `capture.rs`, `row_spec.rs`, `row_layout.rs`, `row_codec.rs`,
+  `apply_hooks.rs`, `seeded_identity.rs`). SQLite triggers capture every change inside the
+  business transaction; a rule per table (`RowSpec`) says how each local id travels (as the
+  target's sync id, as a catalog key, through JSON paths or URL parameters, or not at all);
+  inbound rows are applied by one materializer that defers a row whose parent has not arrived.
+  Migrations 162 (capture tables, `entity_sync_id` on 111 tables, seeded identities), 163 (PM meter
+  due basis by sync id), 164 (last foreign keys on the legacy `users` stub moved to
+  `user_accounts`; planning/PM writes with real user ids failed before).
+- **Coverage:** every table in the registry syncs (test `registry_flags_match_stager_and_materializer_dispatch`):
+  foundation, inventory/procurement (a received movement updates stock balances), WO and DI, PM and
+  planning, finance, personnel and qualification, inspections and permits, RAMS, data integrity,
+  analytics contract, settings, history logs, notifications, reports, and per-user items
+  (notification preferences, saved filters, dashboard layouts, RAMS dismissals, notification read
+  state) delivered only to the devices where their owner is signed in. Domain commits: 97a6ebf9,
+  72af1028, 78a015d0, cdb82568, 0b6a500b, ada22034.
+- **Data each device makes for itself** (PM occurrences, schedule candidates, data-integrity
+  findings, automatic notifications, escalation) is generated with capture off and with ids built
+  from sync ids, so a person's action on it (waive, read, acknowledge) reaches the same row on the
+  other devices. Projections recomputed per device are local-only (scheduling conflicts,
+  readiness snapshots, training expiry alerts, inspection signals, reliability KPI snapshots), as
+  are archives, event links and library documents (no transfer path for their files yet).
+- **Server allowlist:** 133 types appended to `maintafox-vendor-console/shared/sync-entity-registry.v2.json`
+  (vendor commits 4a95b48, 19178ef, add7d5e, 38ac625); `test:sync-v2` passes. **To deploy** with the
+  API. Server entries the desktop no longer sends: `user_role_assignments` (no desktop table),
+  `reliability_kpi_snapshots`, `personnel_readiness_snapshots`, `training_expiry_alert_events`,
+  `inspection_reliability_signals` (left in place: the registry file is append-only from this side).
+- **Fixed on the way:** an update of device-local columns only (login time, SLA "notified" stamp)
+  was sent, so every device's SLA poller pushed the same request (false conflicts); the baseline
+  skipped 1 in 16 rows whose id had a prefix (`failure_event:<uuid>`); `PO_GR` movements pointed to a
+  goods receipt or a PO line depending on the path (now always the receipt).
+- **Known limits:** local ids remain inside some history texts (audit `target_id`, activity and
+  change event summaries, notification event payload fields other than the routing ids); WO/DI
+  code numbering is per device and can collide; media files received from another device are not
+  downloaded; the same notification read on two devices before they sync is a conflict for the
+  person (no silent last-write-wins); a user's report schedule runs on each of that user's devices.
+
+### Phase 2.5 — Proof (2026-10-11)
+
+- **Registry-wide round trip:** `every_registered_type_round_trips` (`sync/row_sync_tests.rs`)
+  takes every type from the registry, fails if one is in no domain round trip, and sends all of them
+  between two devices (create, edit, delete). Passes (19 s).
+- **Multi-device harness:** `pnpm sync:harness` (`scripts/sync-harness.mjs`,
+  `src-tauri/src/sync/harness_tests.rs`). The real control API from `../maintafox-vendor-console`
+  on embedded PostgreSQL 16, three desktop databases syncing through the real Rust worker over
+  HTTP, everything on 127.0.0.1. Nine scenarios pass: create; concurrent edit shown as a conflict
+  and resolved keeping mine and taking theirs; offline then reconnect; per-user rows only where the
+  owner is signed in; delete (tombstone); snapshot bootstrap of a new device; answer lost after the
+  server committed, resent once and applied once; backup restore; revoked device refused.
+- **Backup restore (2.3 gap closed):** after a restore is swapped in, startup drops the sync
+  checkpoint and unanswered request (`transport::store::forget_server_position`), so the worker
+  re-bootstraps from a snapshot and gets back the rows this device wrote after the backup.
+- **Tests:** full `cargo test --lib`: 1013 passed, 0 failed, 1 ignored (the harness, which needs
+  the API; run through `pnpm sync:harness`), 88 min. `cargo clippy --lib -- -D warnings` clean,
+  `pnpm typecheck` clean, vendor `test:sync-v2` passes.
+- **Not verified here:** the harness runs the API on this machine, not on the VPS; nothing was
+  deployed. Media download, two people editing at once through the real UI, and very large
+  tenants (snapshot size, time) are not covered by the harness.
+
 ## 6. Risks and open points
 
 - **D2 departs from the PRD.** The server would use a generic current-state table instead of typed per-entity tables, so the PRD needs an update if you approve it.

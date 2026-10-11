@@ -596,3 +596,36 @@ async fn received_stock_movements_update_stock_balances() {
     assert_eq!(on_a, vec![7000, 1000, 6000], "A: 10 in, 4 reserved, 3 issued");
     assert_eq!(on_b, on_a, "B must hold the same balance as A");
 }
+
+/// Every domain list above, in domain order.
+const DOMAIN_TYPES: &[&[&str]] = &[
+    FOUNDATION_TYPES,
+    INVENTORY_TYPES,
+    WORK_ORDER_TYPES,
+    PM_PLANNING_TYPES,
+    FINANCE_TYPES,
+    PERSONNEL_TYPES,
+    INSPECTION_PERMIT_TYPES,
+    RELIABILITY_TYPES,
+    CONFIG_NOTIFICATION_TYPES,
+    PERSONAL_TYPES,
+];
+
+/// Phase 2.5: generated from the registry. Every synchronised type is in a domain round trip (a
+/// new type cannot be registered without one), and all of them travel together between two
+/// devices: created, edited and deleted on A, identical on B. A type without capture rules or
+/// without a materializer fails here (`row_spec`, `registry_flags_match_stager_and_materializer_dispatch`).
+#[tokio::test]
+async fn every_registered_type_round_trips() {
+    let listed: std::collections::HashSet<&str> = DOMAIN_TYPES.iter().flat_map(|d| d.iter().copied()).collect();
+    let unlisted: Vec<&str> = registry::SYNC_ENTITIES
+        .iter()
+        .map(|e| e.entity_type)
+        .filter(|t| !listed.contains(t))
+        .collect();
+    assert!(unlisted.is_empty(), "registered types in no domain round trip: {unlisted:?}");
+    let unregistered: Vec<&str> = listed.iter().copied().filter(|t| registry::entity(t).is_none()).collect();
+    assert!(unregistered.is_empty(), "round-trip types that are not registered: {unregistered:?}");
+    let all: Vec<&str> = registry::SYNC_ENTITIES.iter().map(|e| e.entity_type).collect();
+    round_trip(&all).await;
+}

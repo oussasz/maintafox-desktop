@@ -323,6 +323,15 @@ impl RowFactory {
         Self::default()
     }
 
+    /// A factory for one of several devices that sync together: its generated values (codes,
+    /// names) never repeat those of the other devices' factories, as distinct people's would not.
+    pub fn for_device(device_index: i64) -> Self {
+        Self {
+            counter: device_index * 1_000_000,
+            ..Self::default()
+        }
+    }
+
     /// Create a new row of `entity_type` with every replicated column filled (references point to
     /// shared parent rows created on demand). Capture must be installed on `db`.
     pub async fn create(&mut self, db: &DatabaseConnection, entity_type: &str) -> Result<CreatedRow, String> {

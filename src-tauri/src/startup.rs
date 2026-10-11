@@ -109,13 +109,16 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
     info!("startup: initialising database");
     let db_path = resolve_db_path(&app)?;
     // A restore staged by `restore_from_backup` is swapped in before the database is opened.
-    if let Err(e) = crate::backup::restore::apply_pending_restore(std::path::Path::new(&db_path)) {
-        let reason = format!("Restore from backup failed: {e}");
-        error!("{reason}");
-        emit_event(&app, StartupEvent::Failed { reason });
-        window.show().ok();
-        return Err(e);
-    }
+    let restored = match crate::backup::restore::apply_pending_restore(std::path::Path::new(&db_path)) {
+        Ok(restored) => restored,
+        Err(e) => {
+            let reason = format!("Restore from backup failed: {e}");
+            error!("{reason}");
+            emit_event(&app, StartupEvent::Failed { reason });
+            window.show().ok();
+            return Err(e);
+        }
+    };
     match crate::db::init_db(&db_path).await {
         Ok(conn) => {
             let state = crate::state::AppState::new(conn);
@@ -166,6 +169,18 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
             window.show().ok();
             return Err(e);
         }
+    }
+
+    if restored {
+        // The restored database resumes sync from a full snapshot (`forget_server_position`).
+        if let Err(e) = crate::sync::transport::store::forget_server_position(&app_state.db).await {
+            let reason = format!("Sync position could not be reset after the restore: {e}");
+            error!("{reason}");
+            emit_event(&app, StartupEvent::Failed { reason });
+            window.show().ok();
+            return Err(e);
+        }
+        info!("startup: restored backup will resynchronise from a snapshot");
     }
 
     // Phase 3: seed system data (idempotent — INSERT OR IGNORE)
