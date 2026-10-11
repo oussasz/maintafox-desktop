@@ -750,7 +750,14 @@ pub const ROW_SPECS: &[RowSpec] = &[
     spec("event_tree_models", &[r("created_by_id", USER)]),
     spec("markov_models", &[r("created_by_id", USER)]),
     spec("mc_models", &[r("created_by_id", USER)]),
-    spec("weibull_fit_results", &[r("created_by_id", USER)]),
+    spec(
+        "weibull_fit_results",
+        &[
+            r("created_by_id", USER),
+            // Optional failure-mode filter of the fit (migration 170, column without FK).
+            r("failure_mode_id", "failure_codes"),
+        ],
+    ),
     spec("ram_expert_sign_offs", &[r("created_by_id", USER)]),
     spec("ram_ishikawa_diagrams", &[]),
     // Per user: issues a person dismissed in the reliability views. `scope_key` embeds the local

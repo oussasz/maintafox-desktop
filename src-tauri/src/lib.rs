@@ -844,6 +844,7 @@ pub fn run() {
             commands::reliability::list_wos_missing_failure_mode,
             commands::reliability::list_equipment_missing_exposure_90d,
             commands::reliability::get_ram_equipment_quality_badge,
+            commands::reliability::get_reliability_readiness,
             commands::reliability::dismiss_ram_data_quality_issue,
             commands::reliability::iso_14224_failure_dataset_completeness,
             commands::advanced_rams::run_weibull_fit,

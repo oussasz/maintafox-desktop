@@ -1892,6 +1892,7 @@
       "apply_priority": 5,
       "parents": [
         "equipment",
+        "failure_codes",
         "user_accounts"
       ],
       "sync_status": "synced"
