@@ -11,7 +11,11 @@ use super::domain::{
     PublishInspectionTemplateVersionInput, ScheduleInspectionRoundInput,
 };
 
-const CHECK_TYPES: &[&str] = &["numeric", "boolean", "observation", "pass_fail"];
+pub(crate) const CHECK_TYPES: &[&str] = &["numeric", "boolean", "observation", "pass_fail"];
+
+pub(crate) const CHECKPOINT_COLUMNS: &str = "id, entity_sync_id, template_version_id, sequence_order, asset_id,      component_id, checkpoint_code, description, check_type, measurement_unit, normal_min, normal_max, warning_min,      warning_max, requires_photo, requires_comment_on_exception, row_version";
+
+pub(crate) const ROUND_COLUMNS: &str = "id, entity_sync_id, template_id, template_version_id, scheduled_at,      assigned_to_id, status, started_at, completed_at, reviewed_at, reviewed_by_id, review_note,      completion_percentage, row_version";
 
 fn decode_err(field: &str, err: impl std::fmt::Display) -> AppError {
     AppError::SyncError(format!("Failed to decode inspection field '{field}': {err}"))
@@ -42,6 +46,7 @@ struct CheckpointPackageEntry {
     asset_id: Option<i64>,
     component_id: Option<i64>,
     checkpoint_code: String,
+    description: Option<String>,
     check_type: String,
     measurement_unit: Option<String>,
     normal_min: Option<f64>,
@@ -60,6 +65,7 @@ fn package_json_from_drafts(drafts: &[InspectionCheckpointDraft]) -> AppResult<S
             asset_id: d.asset_id,
             component_id: d.component_id,
             checkpoint_code: d.checkpoint_code.clone(),
+            description: trimmed(d.description.as_deref()),
             check_type: d.check_type.clone(),
             measurement_unit: d.measurement_unit.clone(),
             normal_min: d.normal_min,
@@ -97,8 +103,92 @@ fn validate_drafts(drafts: &[InspectionCheckpointDraft]) -> AppResult<()> {
             return Err(AppError::ValidationFailed(vec!["checkpoint_code required.".into()]));
         }
         validate_check_type(&d.check_type)?;
+        validate_limits(d)?;
     }
     Ok(())
+}
+
+/// Numeric limits: each band is ordered and the warning band contains the normal band, so a
+/// reading is classified the same way whatever side of the range it falls on.
+fn validate_limits(d: &InspectionCheckpointDraft) -> AppResult<()> {
+    let code = d.checkpoint_code.trim();
+    let limits = [d.normal_min, d.normal_max, d.warning_min, d.warning_max];
+    if d.check_type != "numeric" {
+        if limits.iter().any(Option::is_some) {
+            return Err(AppError::ValidationFailed(vec![format!(
+                "{code}: limits are only allowed on numeric checkpoints."
+            )]));
+        }
+        return Ok(());
+    }
+    if limits.into_iter().flatten().any(|v| !v.is_finite()) {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "{code}: limits must be finite numbers."
+        )]));
+    }
+    let ordered = |lo: Option<f64>, hi: Option<f64>| lo.zip(hi).is_none_or(|(l, h)| l <= h);
+    if !ordered(d.normal_min, d.normal_max) || !ordered(d.warning_min, d.warning_max) {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "{code}: a minimum is greater than its maximum."
+        )]));
+    }
+    let wider_low = d.warning_min.is_none_or(|w| d.normal_min.is_some_and(|n| w <= n));
+    let wider_high = d.warning_max.is_none_or(|w| d.normal_max.is_some_and(|n| w >= n));
+    if !wider_low || !wider_high {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "{code}: the warning band must contain the normal band."
+        )]));
+    }
+    Ok(())
+}
+
+/// Inserts the checkpoints of a template version (create and publish share it).
+async fn insert_checkpoints(
+    txn: &impl ConnectionTrait,
+    version_id: i64,
+    drafts: &[InspectionCheckpointDraft],
+) -> AppResult<Vec<InspectionCheckpoint>> {
+    let mut out = Vec::with_capacity(drafts.len());
+    for d in drafts {
+        txn.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO inspection_checkpoints (entity_sync_id, template_version_id, sequence_order, asset_id, \
+             component_id, checkpoint_code, description, check_type, measurement_unit, normal_min, normal_max, \
+             warning_min, warning_max, requires_photo, requires_comment_on_exception, row_version) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
+            [
+                Uuid::new_v4().to_string().into(),
+                version_id.into(),
+                d.sequence_order.into(),
+                opt_i64(d.asset_id),
+                opt_i64(d.component_id),
+                d.checkpoint_code.trim().into(),
+                opt_string(trimmed(d.description.as_deref())),
+                d.check_type.clone().into(),
+                opt_string(trimmed(d.measurement_unit.as_deref())),
+                opt_f64(d.normal_min),
+                opt_f64(d.normal_max),
+                opt_f64(d.warning_min),
+                opt_f64(d.warning_max),
+                i64::from(d.requires_photo.unwrap_or(false)).into(),
+                i64::from(d.requires_comment_on_exception.unwrap_or(false)).into(),
+            ],
+        ))
+        .await?;
+        let row = txn
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                format!("SELECT {CHECKPOINT_COLUMNS} FROM inspection_checkpoints WHERE id = last_insert_rowid()"),
+            ))
+            .await?
+            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("inserted checkpoint not found")))?;
+        out.push(map_checkpoint(&row)?);
+    }
+    Ok(out)
+}
+
+fn trimmed(v: Option<&str>) -> Option<String> {
+    v.map(str::trim).filter(|t| !t.is_empty()).map(str::to_string)
 }
 
 fn map_template(row: &sea_orm::QueryResult) -> AppResult<InspectionTemplate> {
@@ -110,11 +200,19 @@ fn map_template(row: &sea_orm::QueryResult) -> AppResult<InspectionTemplate> {
             .map_err(|e| decode_err("entity_sync_id", e))?,
         code: row.try_get("", "code").map_err(|e| decode_err("code", e))?,
         name: row.try_get("", "name").map_err(|e| decode_err("name", e))?,
-        org_scope_id: row.try_get("", "org_scope_id").ok(),
-        route_scope: row.try_get("", "route_scope").ok(),
-        estimated_duration_minutes: row.try_get("", "estimated_duration_minutes").ok(),
+        org_scope_id: row
+            .try_get("", "org_scope_id")
+            .map_err(|e| decode_err("org_scope_id", e))?,
+        route_scope: row
+            .try_get("", "route_scope")
+            .map_err(|e| decode_err("route_scope", e))?,
+        estimated_duration_minutes: row
+            .try_get("", "estimated_duration_minutes")
+            .map_err(|e| decode_err("estimated_duration_minutes", e))?,
         is_active: is_active_i != 0,
-        current_version_id: row.try_get("", "current_version_id").ok(),
+        current_version_id: row
+            .try_get("", "current_version_id")
+            .map_err(|e| decode_err("current_version_id", e))?,
         row_version: row
             .try_get("", "row_version")
             .map_err(|e| decode_err("row_version", e))?,
@@ -134,12 +232,18 @@ fn map_version(row: &sea_orm::QueryResult) -> AppResult<InspectionTemplateVersio
             .try_get("", "template_id")
             .map_err(|e| decode_err("template_id", e))?,
         version_no: row.try_get("", "version_no").map_err(|e| decode_err("version_no", e))?,
-        effective_from: row.try_get("", "effective_from").ok(),
+        effective_from: row
+            .try_get("", "effective_from")
+            .map_err(|e| decode_err("effective_from", e))?,
         checkpoint_package_json: row
             .try_get("", "checkpoint_package_json")
             .map_err(|e| decode_err("checkpoint_package_json", e))?,
-        tolerance_rules_json: row.try_get("", "tolerance_rules_json").ok(),
-        escalation_rules_json: row.try_get("", "escalation_rules_json").ok(),
+        tolerance_rules_json: row
+            .try_get("", "tolerance_rules_json")
+            .map_err(|e| decode_err("tolerance_rules_json", e))?,
+        escalation_rules_json: row
+            .try_get("", "escalation_rules_json")
+            .map_err(|e| decode_err("escalation_rules_json", e))?,
         requires_review: rr != 0,
         row_version: row
             .try_get("", "row_version")
@@ -165,17 +269,28 @@ fn map_checkpoint(row: &sea_orm::QueryResult) -> AppResult<InspectionCheckpoint>
         sequence_order: row
             .try_get("", "sequence_order")
             .map_err(|e| decode_err("sequence_order", e))?,
-        asset_id: row.try_get("", "asset_id").ok(),
-        component_id: row.try_get("", "component_id").ok(),
+        asset_id: row.try_get("", "asset_id").map_err(|e| decode_err("asset_id", e))?,
+        component_id: row
+            .try_get("", "component_id")
+            .map_err(|e| decode_err("component_id", e))?,
         checkpoint_code: row
             .try_get("", "checkpoint_code")
             .map_err(|e| decode_err("checkpoint_code", e))?,
+        description: row
+            .try_get("", "description")
+            .map_err(|e| decode_err("description", e))?,
         check_type: row.try_get("", "check_type").map_err(|e| decode_err("check_type", e))?,
-        measurement_unit: row.try_get("", "measurement_unit").ok(),
-        normal_min: row.try_get("", "normal_min").ok(),
-        normal_max: row.try_get("", "normal_max").ok(),
-        warning_min: row.try_get("", "warning_min").ok(),
-        warning_max: row.try_get("", "warning_max").ok(),
+        measurement_unit: row
+            .try_get("", "measurement_unit")
+            .map_err(|e| decode_err("measurement_unit", e))?,
+        normal_min: row.try_get("", "normal_min").map_err(|e| decode_err("normal_min", e))?,
+        normal_max: row.try_get("", "normal_max").map_err(|e| decode_err("normal_max", e))?,
+        warning_min: row
+            .try_get("", "warning_min")
+            .map_err(|e| decode_err("warning_min", e))?,
+        warning_max: row
+            .try_get("", "warning_max")
+            .map_err(|e| decode_err("warning_max", e))?,
         requires_photo: rp != 0,
         requires_comment_on_exception: rc != 0,
         row_version: row
@@ -184,7 +299,7 @@ fn map_checkpoint(row: &sea_orm::QueryResult) -> AppResult<InspectionCheckpoint>
     })
 }
 
-fn map_round(row: &sea_orm::QueryResult) -> AppResult<InspectionRound> {
+pub(crate) fn map_round(row: &sea_orm::QueryResult) -> AppResult<InspectionRound> {
     Ok(InspectionRound {
         id: row.try_get("", "id").map_err(|e| decode_err("id", e))?,
         entity_sync_id: row
@@ -196,9 +311,29 @@ fn map_round(row: &sea_orm::QueryResult) -> AppResult<InspectionRound> {
         template_version_id: row
             .try_get("", "template_version_id")
             .map_err(|e| decode_err("template_version_id", e))?,
-        scheduled_at: row.try_get("", "scheduled_at").ok(),
-        assigned_to_id: row.try_get("", "assigned_to_id").ok(),
+        scheduled_at: row
+            .try_get("", "scheduled_at")
+            .map_err(|e| decode_err("scheduled_at", e))?,
+        assigned_to_id: row
+            .try_get("", "assigned_to_id")
+            .map_err(|e| decode_err("assigned_to_id", e))?,
         status: row.try_get("", "status").map_err(|e| decode_err("status", e))?,
+        started_at: row.try_get("", "started_at").map_err(|e| decode_err("started_at", e))?,
+        completed_at: row
+            .try_get("", "completed_at")
+            .map_err(|e| decode_err("completed_at", e))?,
+        reviewed_at: row
+            .try_get("", "reviewed_at")
+            .map_err(|e| decode_err("reviewed_at", e))?,
+        reviewed_by_id: row
+            .try_get("", "reviewed_by_id")
+            .map_err(|e| decode_err("reviewed_by_id", e))?,
+        review_note: row
+            .try_get("", "review_note")
+            .map_err(|e| decode_err("review_note", e))?,
+        completion_percentage: row
+            .try_get("", "completion_percentage")
+            .map_err(|e| decode_err("completion_percentage", e))?,
         row_version: row
             .try_get("", "row_version")
             .map_err(|e| decode_err("row_version", e))?,
@@ -254,7 +389,7 @@ pub async fn list_inspection_template_versions(
 }
 
 pub async fn list_inspection_checkpoints(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     filter: InspectionCheckpointsFilter,
 ) -> AppResult<Vec<InspectionCheckpoint>> {
     let tid = filter.template_version_id.ok_or_else(|| {
@@ -263,10 +398,7 @@ pub async fn list_inspection_checkpoints(
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, entity_sync_id, template_version_id, sequence_order, asset_id, component_id, \
-             checkpoint_code, check_type, measurement_unit, normal_min, normal_max, warning_min, warning_max, \
-             requires_photo, requires_comment_on_exception, row_version \
-             FROM inspection_checkpoints WHERE template_version_id = ? ORDER BY sequence_order ASC",
+            format!("SELECT {CHECKPOINT_COLUMNS} FROM inspection_checkpoints WHERE template_version_id = ? ORDER BY sequence_order ASC"),
             [tid.into()],
         ))
         .await?;
@@ -281,9 +413,7 @@ pub async fn list_inspection_rounds(db: &DatabaseConnection) -> AppResult<Vec<In
     let rows = db
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT id, entity_sync_id, template_id, template_version_id, scheduled_at, assigned_to_id, status, \
-             row_version FROM inspection_rounds ORDER BY id DESC LIMIT 500"
-                .to_string(),
+            format!("SELECT {ROUND_COLUMNS} FROM inspection_rounds ORDER BY id DESC LIMIT 500"),
         ))
         .await?;
     let mut out = Vec::with_capacity(rows.len());
@@ -369,61 +499,7 @@ pub async fn create_inspection_template(
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
     let version_id: i64 = vid_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
 
-    let mut checkpoints_out = Vec::new();
-    for d in &input.checkpoints {
-        let cs = Uuid::new_v4().to_string();
-        let rp = if d.requires_photo.unwrap_or(false) { 1 } else { 0 };
-        let rc = if d.requires_comment_on_exception.unwrap_or(false) {
-            1
-        } else {
-            0
-        };
-        let _: ExecResult = txn
-            .execute(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "INSERT INTO inspection_checkpoints (entity_sync_id, template_version_id, sequence_order, asset_id, \
-             component_id, checkpoint_code, check_type, measurement_unit, normal_min, normal_max, warning_min, \
-             warning_max, requires_photo, requires_comment_on_exception, row_version) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
-                [
-                    cs.into(),
-                    version_id.into(),
-                    d.sequence_order.into(),
-                    opt_i64(d.asset_id),
-                    opt_i64(d.component_id),
-                    d.checkpoint_code.trim().into(),
-                    d.check_type.clone().into(),
-                    opt_string(d.measurement_unit.clone()),
-                    opt_f64(d.normal_min),
-                    opt_f64(d.normal_max),
-                    opt_f64(d.warning_min),
-                    opt_f64(d.warning_max),
-                    rp.into(),
-                    rc.into(),
-                ],
-            ))
-            .await?;
-        let cid_row: QueryResult = txn
-            .query_one(Statement::from_string(
-                DbBackend::Sqlite,
-                "SELECT last_insert_rowid() AS id".to_string(),
-            ))
-            .await?
-            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
-        let cid: i64 = cid_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
-        let row: QueryResult = txn
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT id, entity_sync_id, template_version_id, sequence_order, asset_id, component_id, \
-                 checkpoint_code, check_type, measurement_unit, normal_min, normal_max, warning_min, warning_max, \
-                 requires_photo, requires_comment_on_exception, row_version \
-                 FROM inspection_checkpoints WHERE id = ?",
-                [cid.into()],
-            ))
-            .await?
-            .expect("row");
-        checkpoints_out.push(map_checkpoint(&row)?);
-    }
+    let checkpoints_out = insert_checkpoints(&txn, version_id, &input.checkpoints).await?;
 
     let _: ExecResult = txn
         .execute(Statement::from_sql_and_values(
@@ -454,6 +530,7 @@ pub async fn publish_inspection_template_version(
     input: PublishInspectionTemplateVersionInput,
 ) -> AppResult<(InspectionTemplate, InspectionTemplateVersion, Vec<InspectionCheckpoint>)> {
     validate_drafts(&input.checkpoints)?;
+    super::results::parse_escalation(input.escalation_rules_json.as_deref())?;
     let pkg = package_json_from_drafts(&input.checkpoints)?;
     let current = get_template(db, input.template_id)
         .await?
@@ -509,61 +586,7 @@ pub async fn publish_inspection_template_version(
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
     let version_id: i64 = vid_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
 
-    let mut checkpoints_out = Vec::new();
-    for d in &input.checkpoints {
-        let cs = Uuid::new_v4().to_string();
-        let rp = if d.requires_photo.unwrap_or(false) { 1 } else { 0 };
-        let rc = if d.requires_comment_on_exception.unwrap_or(false) {
-            1
-        } else {
-            0
-        };
-        let _: ExecResult = txn
-            .execute(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "INSERT INTO inspection_checkpoints (entity_sync_id, template_version_id, sequence_order, asset_id, \
-             component_id, checkpoint_code, check_type, measurement_unit, normal_min, normal_max, warning_min, \
-             warning_max, requires_photo, requires_comment_on_exception, row_version) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
-                [
-                    cs.into(),
-                    version_id.into(),
-                    d.sequence_order.into(),
-                    opt_i64(d.asset_id),
-                    opt_i64(d.component_id),
-                    d.checkpoint_code.trim().into(),
-                    d.check_type.clone().into(),
-                    opt_string(d.measurement_unit.clone()),
-                    opt_f64(d.normal_min),
-                    opt_f64(d.normal_max),
-                    opt_f64(d.warning_min),
-                    opt_f64(d.warning_max),
-                    rp.into(),
-                    rc.into(),
-                ],
-            ))
-            .await?;
-        let cid_row: QueryResult = txn
-            .query_one(Statement::from_string(
-                DbBackend::Sqlite,
-                "SELECT last_insert_rowid() AS id".to_string(),
-            ))
-            .await?
-            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
-        let cid: i64 = cid_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
-        let row: QueryResult = txn
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT id, entity_sync_id, template_version_id, sequence_order, asset_id, component_id, \
-                 checkpoint_code, check_type, measurement_unit, normal_min, normal_max, warning_min, warning_max, \
-                 requires_photo, requires_comment_on_exception, row_version \
-                 FROM inspection_checkpoints WHERE id = ?",
-                [cid.into()],
-            ))
-            .await?
-            .expect("row");
-        checkpoints_out.push(map_checkpoint(&row)?);
-    }
+    let checkpoints_out = insert_checkpoints(&txn, version_id, &input.checkpoints).await?;
 
     let upd: ExecResult = txn
         .execute(Statement::from_sql_and_values(
@@ -603,6 +626,15 @@ pub async fn schedule_inspection_round(
     db: &DatabaseConnection,
     input: ScheduleInspectionRoundInput,
 ) -> AppResult<InspectionRound> {
+    let scheduled_at = match trimmed(input.scheduled_at.as_deref()) {
+        Some(raw) => Some(
+            chrono::DateTime::parse_from_rfc3339(&raw)
+                .map_err(|_| AppError::ValidationFailed(vec!["scheduled_at must be an RFC 3339 timestamp.".into()]))?
+                .with_timezone(&Utc)
+                .to_rfc3339(),
+        ),
+        None => None,
+    };
     let txn = db.begin().await?;
     let tpl = get_template(&txn, input.template_id)
         .await?
@@ -638,7 +670,7 @@ pub async fn schedule_inspection_round(
             rs.into(),
             input.template_id.into(),
             version_id.into(),
-            opt_string(input.scheduled_at.clone()),
+            opt_string(scheduled_at),
             opt_i64(input.assigned_to_id),
         ],
     ))
@@ -654,8 +686,7 @@ pub async fn schedule_inspection_round(
     let out_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, entity_sync_id, template_id, template_version_id, scheduled_at, assigned_to_id, status, \
-             row_version FROM inspection_rounds WHERE id = ?",
+            format!("SELECT {ROUND_COLUMNS} FROM inspection_rounds WHERE id = ?"),
             [rid.into()],
         ))
         .await?
@@ -669,8 +700,7 @@ pub async fn get_inspection_round_by_id(db: &impl ConnectionTrait, id: i64) -> A
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, entity_sync_id, template_id, template_version_id, scheduled_at, assigned_to_id, status, \
-             row_version FROM inspection_rounds WHERE id = ?",
+            format!("SELECT {ROUND_COLUMNS} FROM inspection_rounds WHERE id = ?"),
             [id.into()],
         ))
         .await?;
@@ -684,10 +714,7 @@ pub async fn get_inspection_checkpoint_by_id(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, entity_sync_id, template_version_id, sequence_order, asset_id, component_id, \
-             checkpoint_code, check_type, measurement_unit, normal_min, normal_max, warning_min, warning_max, \
-             requires_photo, requires_comment_on_exception, row_version \
-             FROM inspection_checkpoints WHERE id = ?",
+            format!("SELECT {CHECKPOINT_COLUMNS} FROM inspection_checkpoints WHERE id = ?"),
             [id.into()],
         ))
         .await?;

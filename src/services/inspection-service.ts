@@ -3,16 +3,19 @@ import { z } from "zod";
 import { invoke } from "@/lib/ipc-invoke";
 import type {
   AddInspectionEvidenceInput,
+  AddInspectionPhotoInput,
+  InspectionRoundActionInput,
+  InspectionRoundRunner,
+  InspectionRoundSummary,
+  InspectionRoundSummaryFilter,
   CreateInspectionTemplateInput,
   DeferInspectionAnomalyInput,
-  EnqueueInspectionOfflineInput,
   InspectionAnomaliesFilter,
   InspectionAnomaly,
   InspectionCheckpoint,
   InspectionCheckpointsFilter,
   InspectionEvidence,
   InspectionEvidenceFilter,
-  InspectionOfflineQueueItem,
   InspectionReliabilitySignal,
   InspectionReliabilitySignalsFilter,
   InspectionResult,
@@ -64,6 +67,7 @@ const InspectionCheckpointSchema = z.object({
   asset_id: z.number().nullable(),
   component_id: z.number().nullable(),
   checkpoint_code: z.string(),
+  description: z.string().nullable(),
   check_type: z.string(),
   measurement_unit: z.string().nullable(),
   normal_min: z.number().nullable(),
@@ -83,6 +87,12 @@ const InspectionRoundSchema = z.object({
   scheduled_at: z.string().nullable(),
   assigned_to_id: z.number().nullable(),
   status: z.string(),
+  started_at: z.string().nullable(),
+  completed_at: z.string().nullable(),
+  reviewed_at: z.string().nullable(),
+  reviewed_by_id: z.number().nullable(),
+  review_note: z.string().nullable(),
+  completion_percentage: z.number().nullable(),
   row_version: z.number(),
 });
 
@@ -182,12 +192,76 @@ const InspectionAnomalySchema = z.object({
   row_version: z.number(),
 });
 
-const InspectionOfflineQueueItemSchema = z.object({
-  id: z.number(),
-  payload_json: z.string(),
-  local_temp_id: z.string(),
-  sync_status: z.string(),
+const InspectionRoundSummarySchema = z.object({
+  round: InspectionRoundSchema,
+  template_code: z.string(),
+  template_name: z.string(),
+  version_no: z.number(),
+  requires_review: z.boolean(),
+  assigned_to_name: z.string().nullable(),
+  reviewed_by_name: z.string().nullable(),
+  checkpoint_count: z.number(),
+  recorded_count: z.number(),
+  exception_count: z.number(),
+  open_anomaly_count: z.number(),
+  pending_sync_count: z.number(),
 });
+
+const InspectionRunnerCheckpointSchema = z.object({
+  checkpoint: InspectionCheckpointSchema,
+  asset_code: z.string().nullable(),
+  asset_name: z.string().nullable(),
+  result: InspectionResultSchema.nullable(),
+  evidence: z.array(InspectionEvidenceSchema),
+  open_anomalies: z.array(InspectionAnomalySchema),
+  sync_state: z.enum(["not_recorded", "waiting", "synced", "error", "conflict"]),
+  missing: z.array(z.string()),
+});
+
+const InspectionRoundRunnerSchema = z.object({
+  summary: InspectionRoundSummarySchema,
+  checkpoints: z.array(InspectionRunnerCheckpointSchema),
+});
+
+export async function listInspectionRoundSummaries(
+  filter: InspectionRoundSummaryFilter,
+): Promise<InspectionRoundSummary[]> {
+  const raw = await invoke<unknown>("list_inspection_round_summaries", { filter });
+  return z.array(InspectionRoundSummarySchema).parse(raw);
+}
+
+export async function getInspectionRoundRunner(roundId: number): Promise<InspectionRoundRunner> {
+  const raw = await invoke<unknown>("get_inspection_round_runner", { roundId });
+  return InspectionRoundRunnerSchema.parse(raw);
+}
+
+export async function startInspectionRound(
+  input: InspectionRoundActionInput,
+): Promise<InspectionRoundSummary> {
+  const raw = await invoke<unknown>("start_inspection_round", { input });
+  return InspectionRoundSummarySchema.parse(raw);
+}
+
+export async function completeInspectionRound(
+  input: InspectionRoundActionInput,
+): Promise<InspectionRoundSummary> {
+  const raw = await invoke<unknown>("complete_inspection_round", { input });
+  return InspectionRoundSummarySchema.parse(raw);
+}
+
+export async function reviewInspectionRound(
+  input: InspectionRoundActionInput,
+): Promise<InspectionRoundSummary> {
+  const raw = await invoke<unknown>("review_inspection_round", { input });
+  return InspectionRoundSummarySchema.parse(raw);
+}
+
+export async function addInspectionPhotoEvidence(
+  input: AddInspectionPhotoInput,
+): Promise<InspectionEvidence> {
+  const raw = await invoke<unknown>("add_inspection_photo_evidence", { input });
+  return InspectionEvidenceSchema.parse(raw);
+}
 
 export async function listInspectionResults(
   filter: InspectionResultsFilter,
@@ -231,22 +305,6 @@ export async function updateInspectionAnomaly(
   return InspectionAnomalySchema.parse(raw);
 }
 
-export async function enqueueInspectionOffline(
-  input: EnqueueInspectionOfflineInput,
-): Promise<number> {
-  const raw = await invoke<unknown>("enqueue_inspection_offline", { input });
-  return z.number().parse(raw);
-}
-
-export async function listInspectionOfflineQueue(): Promise<InspectionOfflineQueueItem[]> {
-  const raw = await invoke<unknown>("list_inspection_offline_queue");
-  return z.array(InspectionOfflineQueueItemSchema).parse(raw);
-}
-
-export async function markInspectionOfflineSynced(queueId: number): Promise<void> {
-  await invoke("mark_inspection_offline_synced", { queueId });
-}
-
 export async function routeInspectionAnomalyToDi(
   input: RouteInspectionAnomalyToDiInput,
 ): Promise<[unknown, InspectionAnomaly]> {
@@ -279,6 +337,8 @@ const InspectionReliabilitySignalSchema = z.object({
   anomaly_open_count: z.number(),
   checkpoint_coverage_ratio: z.number(),
   row_version: z.number(),
+  asset_code: z.string().nullable(),
+  asset_name: z.string().nullable(),
 });
 
 export async function listInspectionReliabilitySignals(

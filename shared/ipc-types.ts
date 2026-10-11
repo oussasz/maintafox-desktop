@@ -7372,6 +7372,8 @@ export interface InspectionCheckpoint {
   asset_id: number | null;
   component_id: number | null;
   checkpoint_code: string;
+  /** Instruction shown to the technician in the field. */
+  description: string | null;
   check_type: string;
   measurement_unit: string | null;
   normal_min: number | null;
@@ -7391,6 +7393,12 @@ export interface InspectionRound {
   scheduled_at: string | null;
   assigned_to_id: number | null;
   status: string;
+  started_at: string | null;
+  completed_at: string | null;
+  reviewed_at: string | null;
+  reviewed_by_id: number | null;
+  review_note: string | null;
+  completion_percentage: number | null;
   row_version: number;
 }
 
@@ -7399,6 +7407,7 @@ export interface InspectionCheckpointDraft {
   asset_id?: number | null;
   component_id?: number | null;
   checkpoint_code: string;
+  description?: string | null;
   check_type: string;
   measurement_unit?: string | null;
   normal_min?: number | null;
@@ -7504,13 +7513,6 @@ export interface DeferInspectionAnomalyInput {
   expected_row_version: number;
 }
 
-export interface InspectionOfflineQueueItem {
-  id: number;
-  payload_json: string;
-  local_temp_id: string;
-  sync_status: string;
-}
-
 export interface RecordInspectionResultInput {
   round_id: number;
   checkpoint_id: number;
@@ -7551,9 +7553,60 @@ export interface InspectionAnomaliesFilter {
   round_id?: number | null;
 }
 
-export interface EnqueueInspectionOfflineInput {
-  payload_json: string;
-  local_temp_id: string;
+/** Per-row sync state shown in the field runner (the visible offline queue). */
+export type InspectionRowSyncState = "not_recorded" | "waiting" | "synced" | "error" | "conflict";
+
+/** A round as listed for people: labels resolved, never raw ids. */
+export interface InspectionRoundSummary {
+  round: InspectionRound;
+  template_code: string;
+  template_name: string;
+  version_no: number;
+  /** The version asks for a supervisor review even after a clean round. */
+  requires_review: boolean;
+  assigned_to_name: string | null;
+  reviewed_by_name: string | null;
+  checkpoint_count: number;
+  recorded_count: number;
+  exception_count: number;
+  open_anomaly_count: number;
+  /** Rows of this round saved on this device and not yet accepted by the server. */
+  pending_sync_count: number;
+}
+
+export interface InspectionRoundSummaryFilter {
+  statuses?: string[] | null;
+  limit?: number | null;
+}
+
+export interface InspectionRunnerCheckpoint {
+  checkpoint: InspectionCheckpoint;
+  asset_code: string | null;
+  asset_name: string | null;
+  result: InspectionResult | null;
+  evidence: InspectionEvidence[];
+  open_anomalies: InspectionAnomaly[];
+  sync_state: InspectionRowSyncState;
+  /** What is still required before the round can be completed: result, photo, comment. */
+  missing: string[];
+}
+
+export interface InspectionRoundRunner {
+  summary: InspectionRoundSummary;
+  checkpoints: InspectionRunnerCheckpoint[];
+}
+
+export interface InspectionRoundActionInput {
+  round_id: number;
+  expected_row_version: number;
+  note?: string | null;
+}
+
+export interface AddInspectionPhotoInput {
+  result_id: number;
+  file_name: string;
+  mime_type: string;
+  file_bytes: number[];
 }
 
 export interface InspectionReliabilitySignal {
@@ -7567,6 +7620,8 @@ export interface InspectionReliabilitySignal {
   anomaly_open_count: number;
   checkpoint_coverage_ratio: number;
   row_version: number;
+  asset_code: string | null;
+  asset_name: string | null;
 }
 
 export interface InspectionReliabilitySignalsFilter {

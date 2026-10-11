@@ -38,8 +38,15 @@ fn map_signal(row: &sea_orm::QueryResult) -> AppResult<InspectionReliabilitySign
         row_version: row
             .try_get("", "row_version")
             .map_err(|e| decode_err("row_version", e))?,
+        asset_code: row.try_get("", "asset_code").map_err(|e| decode_err("asset_code", e))?,
+        asset_name: row.try_get("", "asset_name").map_err(|e| decode_err("asset_name", e))?,
     })
 }
+
+const SIGNAL_SELECT: &str = "SELECT s.id, s.entity_sync_id, s.equipment_id, s.period_start, s.period_end, \
+     s.warning_count, s.fail_count, s.anomaly_open_count, s.checkpoint_coverage_ratio, s.row_version, \
+     e.asset_id_code AS asset_code, e.name AS asset_name \
+     FROM inspection_reliability_signals s LEFT JOIN equipment e ON e.id = s.equipment_id";
 
 async fn count_i64(db: &impl ConnectionTrait, sql: &str, binds: Vec<sea_orm::Value>) -> AppResult<i64> {
     let row = db
@@ -192,9 +199,7 @@ pub async fn refresh_inspection_reliability_signals(
         let row = txn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT id, entity_sync_id, equipment_id, period_start, period_end, \
-                 warning_count, fail_count, anomaly_open_count, checkpoint_coverage_ratio, row_version \
-                 FROM inspection_reliability_signals WHERE id = ?",
+                format!("{SIGNAL_SELECT} WHERE s.id = ?"),
                 [id.into()],
             ))
             .await?
@@ -214,19 +219,14 @@ pub async fn list_inspection_reliability_signals(
     let rows = if let Some(eid) = filter.equipment_id {
         db.query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, entity_sync_id, equipment_id, period_start, period_end, \
-             warning_count, fail_count, anomaly_open_count, checkpoint_coverage_ratio, row_version \
-             FROM inspection_reliability_signals WHERE equipment_id = ? ORDER BY period_end DESC, equipment_id ASC",
+            format!("{SIGNAL_SELECT} WHERE s.equipment_id = ? ORDER BY s.period_end DESC, s.equipment_id ASC"),
             [eid.into()],
         ))
         .await?
     } else {
         db.query_all(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT id, entity_sync_id, equipment_id, period_start, period_end, \
-             warning_count, fail_count, anomaly_open_count, checkpoint_coverage_ratio, row_version \
-             FROM inspection_reliability_signals ORDER BY period_end DESC, equipment_id ASC"
-                .to_string(),
+            format!("{SIGNAL_SELECT} ORDER BY s.period_end DESC, s.equipment_id ASC"),
         ))
         .await?
     };

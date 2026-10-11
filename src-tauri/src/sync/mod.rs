@@ -16,6 +16,7 @@ pub mod registry;
 pub(crate) mod row_codec;
 pub(crate) mod row_layout;
 pub mod row_spec;
+pub mod row_state;
 pub mod seeded_identity;
 pub mod transport;
 

@@ -108,7 +108,7 @@ export function PermitCreateDialog({
         .then(setAssetResults)
         .catch((err: unknown) => {
           setAssetResults([]);
-          setSearchError(err instanceof Error ? err.message : String(err));
+          setSearchError(toErrorMessage(err));
         })
         .finally(() => setSearching(false));
     }, 250);

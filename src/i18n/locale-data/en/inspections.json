@@ -1,1 +1,205 @@
-{}
+{
+  "page": {
+    "title": "Inspection rounds",
+    "description": "Field checklists: schedule rounds, record readings, follow up on findings."
+  },
+  "tabs": {
+    "rounds": "Rounds",
+    "templates": "Templates",
+    "signals": "Reliability signals"
+  },
+  "status": {
+    "scheduled": "Scheduled",
+    "released": "Released",
+    "in_progress": "In progress",
+    "completed": "Completed",
+    "completed_with_findings": "Completed with findings",
+    "reviewed": "Reviewed",
+    "missed": "Missed",
+    "cancelled": "Cancelled"
+  },
+  "filters": {
+    "todo": "To do",
+    "toReview": "To review",
+    "done": "Done",
+    "all": "All"
+  },
+  "rounds": {
+    "empty": "No round in this list.",
+    "schedule": "Schedule a round",
+    "start": "Start",
+    "continue": "Continue",
+    "open": "Open",
+    "review": "Review",
+    "scheduledFor": "Planned {{date}}",
+    "notScheduled": "No date",
+    "assignedTo": "Assigned to {{name}}",
+    "unassigned": "Not assigned",
+    "progress": "{{done}} / {{total}} checks",
+    "exceptions_one": "{{count}} exception",
+    "exceptions_other": "{{count}} exceptions",
+    "openAnomalies_one": "{{count}} open anomaly",
+    "openAnomalies_other": "{{count}} open anomalies",
+    "pendingSync_one": "{{count}} change waiting to sync",
+    "pendingSync_other": "{{count}} changes waiting to sync"
+  },
+  "schedule": {
+    "title": "Schedule a round",
+    "template": "Checklist",
+    "templatePlaceholder": "Choose a checklist",
+    "when": "Planned for",
+    "assignee": "Technician",
+    "assigneeSearch": "Search a person (name or code)",
+    "assigneeNone": "Nobody found.",
+    "assigneeSearchError": "Search failed: {{message}}",
+    "clearAssignee": "Remove",
+    "submit": "Schedule",
+    "noTemplate": "Create a checklist first (Templates tab)."
+  },
+  "runner": {
+    "back": "Back to rounds",
+    "checkOf": "Check {{index}} of {{total}}",
+    "previous": "Previous",
+    "next": "Next",
+    "save": "Save",
+    "saveAndNext": "Save and next",
+    "saved": "Saved",
+    "complete": "Complete the round",
+    "completeHint": "Every check needs an answer and its required photo or comment.",
+    "readOnly": "This round is {{status}}: results can no longer be changed.",
+    "asset": "Equipment",
+    "limits": "Limits",
+    "normal": "Normal",
+    "warning": "Warning",
+    "below": "≤ {{value}}",
+    "above": "≥ {{value}}",
+    "between": "{{min}} – {{max}}",
+    "reading": "Reading",
+    "readingPlaceholder": "Enter the value",
+    "predicted": "This reading will be recorded as: {{status}}",
+    "invalidNumber": "Enter a number.",
+    "observation": "Observation",
+    "comment": "Comment",
+    "commentRequired": "A comment is required for this answer.",
+    "commentPlaceholder": "What did you see?",
+    "reason": "Reason (required)",
+    "photo": "Add a photo",
+    "photoRequired": "A photo is mandatory for this check.",
+    "photos_one": "{{count}} photo",
+    "photos_other": "{{count}} photos",
+    "photoTooLarge": "The photo is larger than {{mb}} MB.",
+    "photoAdded": "Photo saved",
+    "recordFirst": "Save an answer before adding a photo.",
+    "missing": {
+      "result": "Not answered",
+      "photo": "Photo missing",
+      "comment": "Comment missing"
+    },
+    "answers": {
+      "pass": "OK",
+      "fail": "Not OK",
+      "warning": "To watch",
+      "yes": "Yes",
+      "no": "No",
+      "not_accessible": "Not accessible",
+      "not_done": "Not done"
+    },
+    "anomalyOpen": "Anomaly to follow up: {{description}}"
+  },
+  "result": {
+    "pass": "OK",
+    "warning": "Warning",
+    "fail": "Fail",
+    "not_accessible": "Not accessible",
+    "not_done": "Not done"
+  },
+  "sync": {
+    "title": "Offline queue",
+    "allSynced": "Everything recorded here has reached the server.",
+    "waiting_one": "{{count}} result saved on this device, waiting to sync.",
+    "waiting_other": "{{count}} results saved on this device, waiting to sync.",
+    "errors_one": "{{count}} result was refused by the server: see the Sync Center.",
+    "errors_other": "{{count}} results were refused by the server: see the Sync Center.",
+    "state": {
+      "not_recorded": "Not recorded",
+      "waiting": "Saved here, waiting to sync",
+      "synced": "Synced",
+      "error": "Sync error",
+      "conflict": "Sync conflict"
+    }
+  },
+  "review": {
+    "title": "Findings to follow up",
+    "none": "No open anomaly.",
+    "toDi": "Create a request",
+    "toWo": "Create a work order",
+    "woType": "Work order type",
+    "defer": "Defer",
+    "note": "Review note",
+    "notePlaceholder": "Decisions, follow-up…",
+    "submit": "Mark as reviewed",
+    "severity": "Severity {{level}}",
+    "reviewedBy": "Reviewed by {{name}} on {{date}}",
+    "anomalyType": {
+      "threshold_breach": "Out of tolerance",
+      "missing_mandatory_photo": "Mandatory photo missing"
+    }
+  },
+  "templates": {
+    "empty": "No checklist yet.",
+    "new": "New checklist",
+    "newVersion": "New version",
+    "version": "Version {{no}}",
+    "checkpoints_one": "{{count}} check",
+    "checkpoints_other": "{{count}} checks",
+    "inactive": "Inactive",
+    "builderTitle": "Checklist",
+    "builderVersionTitle": "New version of {{name}}",
+    "code": "Code",
+    "name": "Name",
+    "duration": "Estimated duration (min)",
+    "requiresReview": "Rounds always need a supervisor review",
+    "checks": "Checks",
+    "addCheck": "Add a check",
+    "remove": "Remove",
+    "moveUp": "Move up",
+    "moveDown": "Move down",
+    "checkCode": "Check code",
+    "checkDescription": "Instruction for the technician",
+    "checkType": "Answer type",
+    "unit": "Unit",
+    "normalMin": "Normal min",
+    "normalMax": "Normal max",
+    "warningMin": "Warning min",
+    "warningMax": "Warning max",
+    "requiresPhoto": "Photo mandatory",
+    "commentOnException": "Comment required when not OK",
+    "save": "Save checklist",
+    "publish": "Publish the version",
+    "needOneCheck": "Add at least one check.",
+    "invalidNumber": "Not a number",
+    "types": {
+      "pass_fail": "OK / Not OK",
+      "boolean": "Yes / No",
+      "numeric": "Measurement",
+      "observation": "Observation"
+    },
+    "required": "Required"
+  },
+  "signals": {
+    "description": "Per equipment, over a rolling window: warnings and failures recorded, open anomalies and checklist coverage.",
+    "window": "Window (days)",
+    "refresh": "Recalculate",
+    "empty": "No signal calculated yet.",
+    "equipment": "Equipment",
+    "period": "Period",
+    "warnings": "Warnings",
+    "fails": "Failures",
+    "openAnomalies": "Open anomalies",
+    "coverage": "Coverage",
+    "invalidWindow": "Enter a number of days (1 or more)."
+  },
+  "errors": {
+    "load": "Could not load: {{message}}"
+  }
+}

@@ -10,6 +10,7 @@ import {
   type WorkPermitRecord,
   getPermitForWorkOrder,
 } from "@/services/permit-service";
+import { toErrorMessage } from "@/utils/errors";
 
 import { PERMIT_QUERY_CREATE_FOR_WO, PERMIT_QUERY_SELECT } from "./permit-rules";
 
@@ -42,7 +43,7 @@ export function WoPermitGateCard({ workOrderId, refreshKey }: WoPermitGateCardPr
       .catch((err: unknown) => {
         if (!cancelled) {
           setPermit(null);
-          setLoadError(err instanceof Error ? err.message : String(err));
+          setLoadError(toErrorMessage(err));
         }
       })
       .finally(() => {

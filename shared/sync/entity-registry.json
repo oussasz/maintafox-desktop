@@ -625,7 +625,8 @@
       "parents": [
         "personnel",
         "inspection_template_versions",
-        "inspection_templates"
+        "inspection_templates",
+        "user_accounts"
       ],
       "sync_status": "synced"
     },
