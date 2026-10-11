@@ -9273,3 +9273,97 @@ export interface RegisterAnalyticsContractVersionInput {
   version_semver: string;
   content_sha256: string;
 }
+
+// ── Work permits / LOTO (PRD §6.23, WP-04) ─────────────────────────────────
+// Actors (applier, verifier, suspender, reinstater, printer) are always the
+// session user on the backend; they are never sent from the UI.
+
+export interface PermitTypeUpsertInput {
+  id: number | null;
+  code: string;
+  name: string;
+  description: string | null;
+  requires_hse_approval: boolean;
+  requires_operations_approval: boolean;
+  requires_atmospheric_test: boolean;
+  max_duration_hours: number | null;
+  mandatory_ppe_ids_json: string | null;
+  mandatory_control_rules_json: string | null;
+}
+
+export interface WorkPermitCreateInput {
+  permit_type_id: number;
+  /** Omit when `linked_work_order_id` is set: the WO equipment is used. */
+  asset_id: number | null;
+  /** Omit to derive from the WO entity or the asset installation node. */
+  entity_id: number | null;
+  linked_work_order_id: number | null;
+  /** RFC 3339, must be in the future. */
+  expires_at: string | null;
+}
+
+export interface WorkPermitUpdateInput {
+  id: number;
+  linked_work_order_id: number | null;
+  asset_id: number | null;
+  entity_id: number | null;
+  expires_at: string | null;
+  expected_row_version: number;
+}
+
+export type WorkPermitStatus =
+  | "draft"
+  | "pending_review"
+  | "approved"
+  | "issued"
+  | "active"
+  | "suspended"
+  | "revalidation_required"
+  | "closed"
+  | "handed_back"
+  | "cancelled"
+  | "expired";
+
+export interface WorkPermitStatusInput {
+  id: number;
+  status: WorkPermitStatus;
+  expected_row_version: number;
+}
+
+export interface PermitSuspendInput {
+  permit_id: number;
+  expected_row_version: number;
+  reason: string;
+  reactivation_conditions: string | null;
+}
+
+export interface PermitHandoverLogInput {
+  permit_id: number;
+  handed_from_role: string;
+  handed_to_role: string;
+  confirmation_note: string;
+}
+
+export interface PermitIsolationUpsertInput {
+  id: number | null;
+  permit_id: number;
+  isolation_point: string;
+  energy_type: string;
+  isolation_method: string;
+  lock_number: string | null;
+}
+
+export interface PermitIsolationActionInput {
+  isolation_id: number;
+  expected_row_version: number;
+  /** Only used by apply: lock number fitted at application time. */
+  lock_number: string | null;
+}
+
+export interface WorkPermitListFilter {
+  status?: string;
+  permit_type_id?: number;
+  asset_id?: number;
+  linked_work_order_id?: number;
+  limit?: number;
+}

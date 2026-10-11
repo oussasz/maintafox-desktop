@@ -704,6 +704,7 @@ pub const ROW_SPECS: &[RowSpec] = &[
             r("permit_id", "work_permits"),
             r("applied_by_id", USER),
             r("verified_by_id", USER),
+            r("removal_verified_by_id", USER),
         ],
     ),
     spec(
