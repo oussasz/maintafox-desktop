@@ -689,6 +689,13 @@ Branch `claude/phase6-modules-0aceae`, PR #21 into `phase0/security-hardening`. 
   includes `src/stores` with thresholds raised 31/24/80/31 → 62/55/93/62; 45 Rust tests for
   analytics, jobs and data integrity (one analytics bug fixed); dead code removed; e2e plan in
   `docs/engineering/E2E_SMOKE_SUITE.md` (not built).
+- **Tests:** full `cargo test --lib`: 1183 passed, 2 failed, 3 ignored (119 min); the two
+  failures (seeder settings count; audit events with a target type sync does not map could not
+  be written once chained) were fixed in `77599b0a` and their tests rerun green with the audit
+  suite (12 passed). `pnpm sync:harness`: 11 scenarios pass. `cargo clippy --lib -- -D
+  warnings` clean, `cargo fmt --check` clean, `pnpm typecheck` clean, vitest 98 files / 1027
+  tests pass (5 skipped = documented bugs), coverage 62.51 / 93.27 / 55.24 / 62.51
+  (lines / branches / functions / statements); i18n parity 24 namespaces, 0 mismatches.
 - **Server side to do:** add `{"entity_type":"unit_conversions","scope":"tenant"}` to
   `maintafox-vendor-console/shared/sync-entity-registry.v2.json` (desktop copy already updated;
   `scripts/sync-allowlist-append.mjs`); implement `POST /api/v1/notifications/email` and then
