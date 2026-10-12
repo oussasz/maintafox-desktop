@@ -26,7 +26,7 @@ export function MarkovAdvancedPanel({ equipmentId }: MarkovAdvancedPanelProps) {
 
   const [rows, setRows] = useState<MarkovModel[]>([]);
   const [selected, setSelected] = useState<MarkovModel | null>(null);
-  const [title, setTitle] = useState("Modèle Markov équipement");
+  const [title, setTitle] = useState<string>(() => t("markovPanel.defaultTitle"));
   const [graphJson, setGraphJson] = useState(DEFAULT_MARKOV_GRAPH);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -59,7 +59,7 @@ export function MarkovAdvancedPanel({ equipmentId }: MarkovAdvancedPanelProps) {
       JSON.parse(graphJson);
       await createMarkovModel({
         equipment_id: equipmentId,
-        title: title.trim() || "Modèle Markov",
+        title: title.trim() || t("markovPanel.fallbackTitle"),
         graph_json: graphJson,
         status: "draft",
       });
@@ -188,7 +188,7 @@ export function MarkovAdvancedPanel({ equipmentId }: MarkovAdvancedPanelProps) {
         <table className="w-full text-left text-[11px]">
           <thead className="bg-surface-2 text-text-muted">
             <tr>
-              <th className="px-2 py-1">ID</th>
+              <th className="px-2 py-1">{t("markovPanel.colId")}</th>
               <th className="px-2 py-1">{t("advanced.markovColTitle")}</th>
               <th className="px-2 py-1">{t("advanced.markovColStatus")}</th>
             </tr>

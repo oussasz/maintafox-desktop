@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import type { WoBacklogDay, WoBacklogHeatmap as Heatmap } from "@shared/ipc-types";
+import type { WoBacklogHeatmap as Heatmap, WoBacklogDay } from "@shared/ipc-types";
 
 import { WoBacklogHeatmap, loadLevel } from "../WoBacklogHeatmap";
 

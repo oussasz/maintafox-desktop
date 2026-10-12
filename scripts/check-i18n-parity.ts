@@ -68,7 +68,8 @@ function readJson(filePath: string): JsonObject | null {
   }
   try {
     const raw = fs.readFileSync(filePath, "utf-8");
-    return JSON.parse(raw) as JsonObject;
+    // A UTF-8 BOM is not valid JSON; tolerate it rather than report a parse error.
+    return JSON.parse(raw.replace(/^﻿/, "")) as JsonObject;
   } catch (err) {
     console.error(`  ✗ Invalid JSON: ${path.relative(ROOT, filePath)}`);
     console.error(`    ${String(err)}`);

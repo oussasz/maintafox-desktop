@@ -9,8 +9,8 @@ import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
-  listPendingOsToasts,
   type OsToastCandidate,
+  listPendingOsToasts,
   showOsToast,
 } from "@/services/notification-service";
 

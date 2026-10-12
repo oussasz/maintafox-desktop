@@ -117,6 +117,7 @@ type AnalysisInputSpecParsed = {
 };
 
 function KpiAnalysisInputGates({ evalRow }: { evalRow: ReliabilityAnalysisInputEvaluation }) {
+  const { t } = useTranslation("reliability");
   let spec: AnalysisInputSpecParsed = {};
   try {
     spec = JSON.parse(evalRow.analysis_input_spec_json) as AnalysisInputSpecParsed;
@@ -131,22 +132,32 @@ function KpiAnalysisInputGates({ evalRow }: { evalRow: ReliabilityAnalysisInputE
         ready ? "border-green-600/40 bg-green-950/20" : "border-amber-600/50 bg-amber-950/20"
       }`}
     >
-      <p className="mb-1 font-medium text-fg-1">Qualification des entrées (avant analyse KPI)</p>
+      <p className="mb-1 font-medium text-fg-1">{t("page.inputGates.title")}</p>
       <ul className="mb-1 list-inside list-disc text-fg-2">
         <li>
-          Exposition (h) sur la période : {evalRow.exposure_hours.toFixed(2)} —{" "}
-          {g?.exposure_hours_positive ? "OK" : "insuffisant ou nul"}
+          {t("page.inputGates.exposure", {
+            hours: evalRow.exposure_hours.toFixed(2),
+            status: g?.exposure_hours_positive
+              ? t("page.inputGates.ok")
+              : t("page.inputGates.exposureInsufficient"),
+          })}
         </li>
         <li>
-          Événements éligibles : {evalRow.eligible_event_count} (seuil min. {evalRow.min_sample_n})
-          — {g?.min_eligible_events_met ? "OK" : "non atteint"}
+          {t("page.inputGates.events", {
+            eligible: evalRow.eligible_event_count,
+            min: evalRow.min_sample_n,
+            status: g?.min_eligible_events_met
+              ? t("page.inputGates.ok")
+              : t("page.inputGates.eventsNotMet"),
+          })}
         </li>
         <li>
-          Jeu de données prêt pour analyse : <strong>{ready ? "oui" : "non"}</strong>
+          {t("page.inputGates.ready")}{" "}
+          <strong>{ready ? t("page.common.yes") : t("page.common.no")}</strong>
         </li>
       </ul>
       <p className="font-mono text-[10px] text-fg-2">
-        SHA-256 (canonical) : {evalRow.analysis_dataset_hash_sha256}
+        {t("page.inputGates.hash", { hash: evalRow.analysis_dataset_hash_sha256 })}
       </p>
     </div>
   );
@@ -165,6 +176,7 @@ function KpiSnapshotPlotDetail({
   snapshot: ReliabilityKpiSnapshot;
   onReopenFilters: () => void;
 }) {
+  const { t } = useTranslation("reliability");
   const chartRef = useRef<HTMLDivElement>(null);
   const parsed = useMemo((): PlotPayloadParsed | null => {
     try {
@@ -211,8 +223,12 @@ function KpiSnapshotPlotDetail({
     <div className="mt-4 rounded border border-border-1 bg-bg-0 p-3">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs font-medium text-fg-1">
-          Instantané #{snapshot.id}
-          {snapshot.equipment_id != null ? ` — équip. ${snapshot.equipment_id}` : ""}
+          {snapshot.equipment_id != null
+            ? t("page.snapshotPlot.titleWithEquip", {
+                id: snapshot.id,
+                equipment: snapshot.equipment_id,
+              })
+            : t("page.snapshotPlot.title", { id: snapshot.id })}
         </p>
         <div className="flex flex-wrap gap-2">
           <button
@@ -220,7 +236,7 @@ function KpiSnapshotPlotDetail({
             className="rounded border border-border-1 px-2 py-1 text-xs text-fg-2 hover:text-fg-1"
             onClick={onReopenFilters}
           >
-            Reprendre les filtres
+            {t("page.snapshotPlot.reopenFilters")}
           </button>
           <button
             type="button"
@@ -228,7 +244,7 @@ function KpiSnapshotPlotDetail({
             disabled={data.length === 0}
             onClick={() => void onExportPng()}
           >
-            Export PNG
+            {t("page.snapshotPlot.exportPng")}
           </button>
           <button
             type="button"
@@ -236,12 +252,14 @@ function KpiSnapshotPlotDetail({
             disabled={data.length === 0}
             onClick={() => void onExportSvg()}
           >
-            Export SVG
+            {t("page.snapshotPlot.exportSvg")}
           </button>
         </div>
       </div>
       <p className="mb-2 font-mono text-[10px] text-fg-2">
-        SHA-256 (plot) : {parsed?.dataset_hash_sha256 ?? snapshot.analysis_dataset_hash_sha256}
+        {t("page.snapshotPlot.hash", {
+          hash: parsed?.dataset_hash_sha256 ?? snapshot.analysis_dataset_hash_sha256,
+        })}
       </p>
       <div
         ref={chartRef}
@@ -249,9 +267,7 @@ function KpiSnapshotPlotDetail({
         style={{ minHeight: 240 }}
       >
         {data.length === 0 ? (
-          <p className="py-8 text-center text-xs text-fg-2">
-            Aucune donnée graphique dans ce snapshot (recalculez le KPI pour générer le payload).
-          </p>
+          <p className="py-8 text-center text-xs text-fg-2">{t("page.snapshotPlot.empty")}</p>
         ) : (
           <ResponsiveContainer width="100%" height={240}>
             <BarChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 4 }}>
@@ -671,7 +687,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
     const eq = Number.parseInt(reEquipId.trim(), 10);
     const val = Number.parseFloat(reValue);
     if (Number.isNaN(eq) || Number.isNaN(val)) {
-      setError("Équipement et valeur numériques requis.");
+      setError(t("page.errors.runtimeNumeric"));
       return;
     }
     try {
@@ -711,7 +727,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
     setError(null);
     const eq = Number.parseInt(kpiEquip.trim(), 10);
     if (Number.isNaN(eq)) {
-      setError("Équipement KPI requis.");
+      setError(t("page.errors.kpiEquipRequired"));
       return;
     }
     try {
@@ -732,7 +748,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
     setError(null);
     const eq = Number.parseInt(kpiEquip.trim(), 10);
     if (Number.isNaN(eq)) {
-      setError("Équipement KPI requis.");
+      setError(t("page.errors.kpiEquipRequired"));
       return;
     }
     try {
@@ -1105,7 +1121,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
     setError(null);
     const eq = Number.parseInt(wbEquip.trim(), 10);
     if (Number.isNaN(eq)) {
-      setError("Équipement Weibull requis.");
+      setError(t("page.errors.weibullEquipRequired"));
       return;
     }
     const ps = wbStart.trim() || null;
@@ -1125,7 +1141,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
   const onCreateFmeca = async () => {
     const eq = Number.parseInt(fmNewEquip.trim(), 10);
     if (Number.isNaN(eq) || fmNewTitle.trim() === "") {
-      setError("FMECA : équipement et titre requis.");
+      setError(t("page.errors.fmecaRequired"));
       return;
     }
     setError(null);
@@ -1165,18 +1181,18 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
     const o = Number.parseInt(fmO, 10);
     const d = Number.parseInt(fmD, 10);
     if ([s, o, d].some((x) => Number.isNaN(x))) {
-      setError("S, O, D doivent être des entiers.");
+      setError(t("page.errors.sodIntegers"));
       return;
     }
     if (s < 1 || s > 10 || o < 1 || o > 10 || d < 1 || d > 10) {
-      setError("S, O, D doivent être entre 1 et 10.");
+      setError(t("page.errors.sodRange"));
       return;
     }
     let failure_mode_id: number | null = null;
     if (fmFmId.trim() !== "") {
       const n = Number.parseInt(fmFmId, 10);
       if (Number.isNaN(n)) {
-        setError("Mode de défaillance (id) invalide.");
+        setError(t("page.errors.failureModeIdInvalid"));
         return;
       }
       failure_mode_id = n;
@@ -1185,7 +1201,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
     if (fmPmId.trim() !== "") {
       const n = Number.parseInt(fmPmId, 10);
       if (Number.isNaN(n)) {
-        setError("Plan PM invalide.");
+        setError(t("page.errors.pmPlanInvalid"));
         return;
       }
       linked_pm_plan_id = n;
@@ -1194,7 +1210,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
     if (fmRevRpn.trim() !== "") {
       const n = Number.parseInt(fmRevRpn, 10);
       if (Number.isNaN(n)) {
-        setError("RPN révisé invalide.");
+        setError(t("page.errors.revisedRpnInvalid"));
         return;
       }
       revised_rpn = n;
@@ -1251,7 +1267,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
   const onCreateRcm = async () => {
     const eq = Number.parseInt(rcmNewEquip.trim(), 10);
     if (Number.isNaN(eq) || rcmNewTitle.trim() === "") {
-      setError("RCM : équipement et titre requis.");
+      setError(t("page.errors.rcmRequired"));
       return;
     }
     setError(null);
@@ -1289,7 +1305,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
     if (rcmFmId.trim() !== "") {
       const n = Number.parseInt(rcmFmId, 10);
       if (Number.isNaN(n)) {
-        setError("Mode de défaillance (id) invalide.");
+        setError(t("page.errors.failureModeIdInvalid"));
         return;
       }
       failure_mode_id = n;
@@ -1298,7 +1314,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
     if (rcmPmId.trim() !== "") {
       const n = Number.parseInt(rcmPmId, 10);
       if (Number.isNaN(n)) {
-        setError("Plan PM invalide.");
+        setError(t("page.errors.pmPlanInvalid"));
         return;
       }
       linked_pm_plan_id = n;
@@ -1352,7 +1368,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
   const onCreateGfFta = async () => {
     const eq = Number.parseInt(gfFtaEq.trim(), 10);
     if (Number.isNaN(eq) || gfFtaTitle.trim() === "") {
-      setError("FTA : équipement et titre requis.");
+      setError(t("page.errors.ftaRequired"));
       return;
     }
     setError(null);
@@ -1420,7 +1436,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
   const onCreateGfRbd = async () => {
     const eq = Number.parseInt(gfRbdEq.trim(), 10);
     if (Number.isNaN(eq) || gfRbdTitle.trim() === "") {
-      setError("RBD : équipement et titre requis.");
+      setError(t("page.errors.rbdRequired"));
       return;
     }
     setError(null);
@@ -1488,7 +1504,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
   const onCreateGfEta = async () => {
     const eq = Number.parseInt(gfEtaEq.trim(), 10);
     if (Number.isNaN(eq) || gfEtaTitle.trim() === "") {
-      setError("ETA : équipement et titre requis.");
+      setError(t("page.errors.etaRequired"));
       return;
     }
     setError(null);
@@ -1559,7 +1575,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
       const mcTrialsN = Number.parseInt(grMcMaxTrials.trim(), 10);
       const mkStatesN = Number.parseInt(grMkMaxStates.trim(), 10);
       if (Number.isNaN(mcTrialsN) || Number.isNaN(mkStatesN)) {
-        setError("Garde-fous : nombres invalides.");
+        setError(t("page.errors.guardrailsInvalid"));
         return;
       }
       const payload: RamAdvancedGuardrailFlags = {
@@ -1579,13 +1595,13 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
     const eq = Number.parseInt(mcEq.trim(), 10);
     const tr = Number.parseInt(mcTrials.trim(), 10);
     if (Number.isNaN(eq) || mcTitle.trim() === "" || Number.isNaN(tr)) {
-      setError("MC : équipement, titre et essais requis.");
+      setError(t("page.errors.mcRequired"));
       return;
     }
     const seedValue = mcSeed.trim();
     const sd = seedValue === "" ? null : Number.parseInt(seedValue, 10);
     if (seedValue !== "" && (sd === null || Number.isNaN(sd))) {
-      setError("Graine MC invalide.");
+      setError(t("page.errors.mcSeedInvalid"));
       return;
     }
     setError(null);
@@ -1611,7 +1627,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
     const tr = Number.parseInt(mcTrials.trim(), 10);
     const sd = mcSeed.trim() === "" ? null : Number.parseInt(mcSeed.trim(), 10);
     if (Number.isNaN(tr) || (mcSeed.trim() !== "" && sd != null && Number.isNaN(sd))) {
-      setError("Essais / graine MC invalides.");
+      setError(t("page.errors.mcTrialsSeedInvalid"));
       return;
     }
     setError(null);
@@ -1665,7 +1681,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
   const onCreateMk = async () => {
     const eq = Number.parseInt(mkEq.trim(), 10);
     if (Number.isNaN(eq) || mkTitle.trim() === "") {
-      setError("Markov : équipement et titre requis.");
+      setError(t("page.errors.markovRequired"));
       return;
     }
     setError(null);
@@ -1733,7 +1749,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
   const onCreateSo = async () => {
     const eq = Number.parseInt(soEq.trim(), 10);
     if (Number.isNaN(eq) || soTitle.trim() === "") {
-      setError("Revue : équipement et titre requis.");
+      setError(t("page.errors.signOffRequired"));
       return;
     }
     setError(null);
@@ -1755,7 +1771,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
 
   const onSignSo = async () => {
     if (soSel == null || soSignName.trim() === "") {
-      setError("Nom du signataire requis pour la signature.");
+      setError(t("page.errors.signerRequired"));
       return;
     }
     setError(null);
@@ -1795,10 +1811,10 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
       <div className="mb-4 flex flex-wrap gap-1 border-b border-border-1 pb-3">
         {(
           [
-            ["kpis", "KPI & analyses"],
-            ["quality", "Qualité données"],
-            ["failures", "Défaillances & fondations"],
-            ["models", "Modèles RAM"],
+            ["kpis", t("page.tabs.kpis")],
+            ["quality", t("page.tabs.quality")],
+            ["failures", t("page.tabs.failures")],
+            ["models", t("page.tabs.models")],
           ] as const
         ).map(([id, label]) => (
           <button
@@ -1822,14 +1838,12 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
           <RamMethodAssumptions />
 
           <section className="mb-6 rounded border border-border-1 bg-bg-1 p-3">
-            <h2 className="mb-2 font-medium">Revue expert — signalement</h2>
-            <p className="mb-2 text-xs text-fg-2">
-              Enregistrement local signé (ram.manage / ram.view).
-            </p>
+            <h2 className="mb-2 font-medium">{t("page.signOff.title")}</h2>
+            <p className="mb-2 text-xs text-fg-2">{t("page.signOff.hint")}</p>
             <div className="mb-2 flex flex-wrap gap-2">
               <input
                 className="w-24 rounded border border-border-1 bg-bg-0 px-2 py-1 font-mono text-xs"
-                placeholder="filtrer équip."
+                placeholder={t("page.common.filterEquipShort")}
                 value={soFilter}
                 onChange={(e) => setSoFilter(e.target.value)}
               />
@@ -1838,7 +1852,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 className="rounded border border-border-1 px-2 py-1 text-xs"
                 onClick={() => void loadSoList()}
               >
-                Actualiser
+                {t("page.common.refresh")}
               </button>
             </div>
             <div className="mb-2 flex flex-wrap gap-2">
@@ -1851,7 +1865,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 className="min-w-[8rem] flex-1 rounded border border-border-1 bg-bg-0 px-2 py-1 text-xs"
                 value={soTitle}
                 onChange={(e) => setSoTitle(e.target.value)}
-                placeholder="titre"
+                placeholder={t("page.common.titlePlaceholder")}
               />
               <select
                 className="rounded border border-border-1 bg-bg-0 px-2 py-1 text-xs"
@@ -1872,31 +1886,31 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 className="w-24 rounded border border-border-1 bg-bg-0 px-2 py-1 font-mono text-[10px]"
                 value={soTarget}
                 onChange={(e) => setSoTarget(e.target.value)}
-                placeholder="cible ref"
+                placeholder={t("page.signOff.targetRef")}
               />
               <input
                 className="w-28 rounded border border-border-1 bg-bg-0 px-2 py-1 text-xs"
                 value={soReviewer}
                 onChange={(e) => setSoReviewer(e.target.value)}
-                placeholder="reviseur"
+                placeholder={t("page.signOff.reviewer")}
               />
               <input
                 className="w-28 rounded border border-border-1 bg-bg-0 px-2 py-1 text-xs"
                 value={soRole}
                 onChange={(e) => setSoRole(e.target.value)}
-                placeholder="rôle"
+                placeholder={t("page.signOff.role")}
               />
               <button
                 type="button"
                 className="rounded bg-accent px-2 py-1 text-xs text-bg-0"
                 onClick={() => void onCreateSo()}
               >
-                Créer fiche
+                {t("page.signOff.create")}
               </button>
             </div>
             <textarea
               className="mb-2 h-16 w-full rounded border border-border-1 bg-bg-0 p-2 text-xs"
-              placeholder="notes"
+              placeholder={t("page.signOff.notes")}
               value={soNotes}
               onChange={(e) => setSoNotes(e.target.value)}
             />
@@ -1904,10 +1918,10 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
               <thead>
                 <tr className="border-b border-border-1">
                   <th className="py-1 pr-2">id</th>
-                  <th className="py-1 pr-2">méthode</th>
-                  <th className="py-1 pr-2">statut</th>
-                  <th className="py-1 pr-2">titre</th>
-                  <th className="py-1 pr-2">signé</th>
+                  <th className="py-1 pr-2">{t("page.col.method")}</th>
+                  <th className="py-1 pr-2">{t("page.col.status")}</th>
+                  <th className="py-1 pr-2">{t("page.col.title")}</th>
+                  <th className="py-1 pr-2">{t("page.col.signed")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -1934,7 +1948,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
               <div className="flex flex-wrap items-end gap-2 border-t border-border-1 pt-2">
                 <input
                   className="min-w-[12rem] flex-1 rounded border border-border-1 bg-bg-0 px-2 py-1 text-xs"
-                  placeholder="Nom complet signataire"
+                  placeholder={t("page.signOff.signerName")}
                   value={soSignName}
                   onChange={(e) => setSoSignName(e.target.value)}
                 />
@@ -1943,14 +1957,14 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                   className="rounded bg-accent px-2 py-1 text-xs text-bg-0"
                   onClick={() => void onSignSo()}
                 >
-                  Signer
+                  {t("page.signOff.sign")}
                 </button>
                 <button
                   type="button"
                   className="rounded border border-red-600/50 px-2 py-1 text-xs text-red-600"
                   onClick={() => void onDeleteSo()}
                 >
-                  Supprimer fiche
+                  {t("page.signOff.delete")}
                 </button>
               </div>
             ) : null}
@@ -1961,7 +1975,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
       {ramHubTab === "failures" ? (
         <>
           <section className="mb-6 rounded border border-border-1 bg-bg-1 p-3">
-            <h2 className="mb-2 font-medium">Hiérarchies</h2>
+            <h2 className="mb-2 font-medium">{t("page.hierarchies.title")}</h2>
             <ul className="mb-2 max-h-32 overflow-y-auto">
               {hierarchies.map((h) => (
                 <li key={h.id}>
@@ -1972,7 +1986,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                     }
                     onClick={() => setSelectedHid(h.id)}
                   >
-                    {h.name} (v{h.version_no}) {h.is_active ? "" : "[inactive]"}
+                    {h.name} (v{h.version_no}) {h.is_active ? "" : t("page.hierarchies.inactive")}
                   </button>
                 </li>
               ))}
@@ -1980,7 +1994,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
             <div className="flex flex-wrap gap-2">
               <input
                 className="rounded border border-border-1 bg-bg-0 px-2 py-1"
-                placeholder="Nom"
+                placeholder={t("page.hierarchies.name")}
                 value={hName}
                 onChange={(e) => setHName(e.target.value)}
               />
@@ -1992,7 +2006,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
               />
               <input
                 className="w-20 rounded border border-border-1 bg-bg-0 px-2 py-1"
-                placeholder="ver"
+                placeholder={t("page.hierarchies.version")}
                 value={hVer}
                 onChange={(e) => setHVer(e.target.value)}
               />
@@ -2001,17 +2015,17 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 className="rounded bg-accent px-3 py-1 text-bg-0"
                 onClick={() => void onAddHierarchy()}
               >
-                Ajouter hiérarchie
+                {t("page.hierarchies.add")}
               </button>
             </div>
           </section>
 
           <section className="mb-6 rounded border border-border-1 bg-bg-1 p-3">
-            <h2 className="mb-2 font-medium">Événements de défaillance (WO fermés)</h2>
+            <h2 className="mb-2 font-medium">{t("page.failureEvents.title")}</h2>
             <div className="mb-2 flex flex-wrap items-center gap-2">
               <input
                 className="w-40 rounded border border-border-1 bg-bg-0 px-2 py-1 font-mono text-xs"
-                placeholder="filtrer équipement id"
+                placeholder={t("page.common.filterEquipId")}
                 value={feEquipFilter}
                 onChange={(e) => setFeEquipFilter(e.target.value)}
               />
@@ -2020,18 +2034,18 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 className="rounded border border-border-1 px-2 py-1 text-fg-2 hover:text-fg-1"
                 onClick={() => void loadFailureEvents()}
               >
-                Actualiser
+                {t("page.common.refresh")}
               </button>
             </div>
             <table className="w-full border-collapse text-left text-xs">
               <thead>
                 <tr className="border-b border-border-1">
                   <th className="py-1 pr-2">id</th>
-                  <th className="py-1 pr-2">source</th>
-                  <th className="py-1 pr-2">équip.</th>
-                  <th className="py-1 pr-2">arrêt (h)</th>
-                  <th className="py-1 pr-2">vérif.</th>
-                  <th className="py-1 pr-2">éligibilité (JSON)</th>
+                  <th className="py-1 pr-2">{t("page.col.source")}</th>
+                  <th className="py-1 pr-2">{t("page.col.equip")}</th>
+                  <th className="py-1 pr-2">{t("page.failureEvents.colDowntime")}</th>
+                  <th className="py-1 pr-2">{t("page.failureEvents.colVerification")}</th>
+                  <th className="py-1 pr-2">{t("page.failureEvents.colEligibility")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -2057,14 +2071,15 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
           </section>
 
           <section className="mb-6 rounded border border-border-1 bg-bg-1 p-3">
-            <h2 className="mb-2 font-medium">Journal d'exposition runtime (h)</h2>
+            <h2 className="mb-2 font-medium">{t("page.runtime.title")}</h2>
             <p className="mb-2 text-fg-2">
-              PRD §6.10.2 — dénominateur T<sub>exp</sub> (somme des entrées `hours` sur la période).
+              {t("page.runtime.hintPrefix")}
+              <sub>exp</sub> {t("page.runtime.hintSuffix")}
             </p>
             <div className="mb-2 flex flex-wrap items-end gap-2">
               <input
                 className="w-36 rounded border border-border-1 bg-bg-0 px-2 py-1 font-mono text-xs"
-                placeholder="filtrer équip. id"
+                placeholder={t("page.common.filterEquipIdShort")}
                 value={reEquipFilter}
                 onChange={(e) => setReEquipFilter(e.target.value)}
               />
@@ -2073,7 +2088,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 className="rounded border border-border-1 px-2 py-1 text-fg-2 hover:text-fg-1"
                 onClick={() => void loadRuntimeLogs()}
               >
-                Actualiser
+                {t("page.common.refresh")}
               </button>
             </div>
             <div className="mb-3 flex flex-wrap gap-2 border-b border-border-1 pb-3">
@@ -2085,7 +2100,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
               />
               <input
                 className="w-24 rounded border border-border-1 bg-bg-0 px-2 py-1 font-mono"
-                title="value (hours)"
+                title={t("page.runtime.valueHours")}
                 value={reValue}
                 onChange={(e) => setReValue(e.target.value)}
               />
@@ -2118,18 +2133,18 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 className="rounded bg-accent px-3 py-1 text-bg-0"
                 onClick={() => void onAddRuntimeExposure()}
               >
-                Enregistrer
+                {t("page.common.save")}
               </button>
             </div>
             <table className="w-full border-collapse text-left text-xs">
               <thead>
                 <tr className="border-b border-border-1">
                   <th className="py-1 pr-2">id</th>
-                  <th className="py-1 pr-2">équip.</th>
-                  <th className="py-1 pr-2">type</th>
-                  <th className="py-1 pr-2">valeur</th>
-                  <th className="py-1 pr-2">source</th>
-                  <th className="py-1 pr-2">enregistré</th>
+                  <th className="py-1 pr-2">{t("page.col.equip")}</th>
+                  <th className="py-1 pr-2">{t("page.col.type")}</th>
+                  <th className="py-1 pr-2">{t("page.col.value")}</th>
+                  <th className="py-1 pr-2">{t("page.col.source")}</th>
+                  <th className="py-1 pr-2">{t("page.runtime.colRecorded")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -2152,22 +2167,17 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
       {ramHubTab === "kpis" ? (
         <>
           <section className="mb-6 rounded border border-border-1 bg-bg-1 p-3">
-            <h2 className="mb-2 font-medium">Instantanés KPI fiabilité</h2>
-            <p className="mb-2 text-fg-2">
-              MTBF, MTTR, disponibilité, taux de défaillance, répétition — événements éligibles +
-              exposition.
-            </p>
+            <h2 className="mb-2 font-medium">{t("page.kpi.title")}</h2>
+            <p className="mb-2 text-fg-2">{t("page.kpi.hint")}</p>
             {kpiInputEval ? (
               <KpiAnalysisInputGates evalRow={kpiInputEval} />
             ) : (
-              <p className="mb-2 text-xs text-fg-2">
-                Sélectionnez un équipement et une période pour qualifier les entrées d'analyse.
-              </p>
+              <p className="mb-2 text-xs text-fg-2">{t("page.kpi.selectPrompt")}</p>
             )}
             <div className="mb-2 flex flex-wrap items-end gap-2">
               <input
                 className="w-36 rounded border border-border-1 bg-bg-0 px-2 py-1 font-mono text-xs"
-                placeholder="filtrer équip. id"
+                placeholder={t("page.common.filterEquipIdShort")}
                 value={kpiEquipFilter}
                 onChange={(e) => setKpiEquipFilter(e.target.value)}
               />
@@ -2176,7 +2186,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 className="rounded border border-border-1 px-2 py-1 text-fg-2 hover:text-fg-1"
                 onClick={() => void loadKpiSnapshots()}
               >
-                Actualiser liste
+                {t("page.kpi.refreshList")}
               </button>
             </div>
             <div className="mb-3 flex flex-wrap gap-2 border-b border-border-1 pb-3">
@@ -2203,14 +2213,14 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 className="rounded bg-accent px-3 py-1 text-bg-0"
                 onClick={() => void onRefreshKpi()}
               >
-                Calculer / mettre à jour
+                {t("page.kpi.compute")}
               </button>
               <button
                 type="button"
                 className="rounded border border-border-1 px-3 py-1 text-fg-2 hover:text-fg-1"
                 onClick={() => void onKpiBackgroundJob()}
               >
-                Job async (Rust)
+                {t("page.kpi.asyncJob")}
               </button>
               {kpiBgJobId != null ? (
                 <button
@@ -2218,30 +2228,33 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                   className="rounded border border-red-600/60 px-2 py-1 text-xs text-red-600"
                   onClick={() => void onCancelKpiJob()}
                 >
-                  Annuler job #{kpiBgJobId}
+                  {t("page.kpi.cancelJob", { id: kpiBgJobId })}
                 </button>
               ) : null}
             </div>
             {kpiJobProgress != null ? (
               <p className="mb-2 font-mono text-[10px] text-fg-2">
-                Job {kpiJobProgress.job_id} — {kpiJobProgress.status} —{" "}
-                {kpiJobProgress.progress_pct.toFixed(0)}%
+                {t("page.kpi.jobProgress", {
+                  id: kpiJobProgress.job_id,
+                  status: kpiJobProgress.status,
+                  pct: kpiJobProgress.progress_pct.toFixed(0),
+                })}
               </p>
             ) : null}
             <table className="w-full border-collapse text-left text-xs">
               <thead>
                 <tr className="border-b border-border-1">
                   <th className="py-1 pr-2">id</th>
-                  <th className="py-1 pr-2">équip.</th>
-                  <th className="py-1 pr-2">période</th>
+                  <th className="py-1 pr-2">{t("page.col.equip")}</th>
+                  <th className="py-1 pr-2">{t("page.col.period")}</th>
                   <th className="py-1 pr-2">MTBF</th>
                   <th className="py-1 pr-2">MTTR</th>
                   <th className="py-1 pr-2">A</th>
                   <th className="py-1 pr-2">λ</th>
-                  <th className="py-1 pr-2">rép.</th>
+                  <th className="py-1 pr-2">{t("page.kpi.colRepeat")}</th>
                   <th className="py-1 pr-2">n</th>
-                  <th className="py-1 pr-2">qualité</th>
-                  <th className="py-1 pr-2">empreinte</th>
+                  <th className="py-1 pr-2">{t("page.kpi.colQuality")}</th>
+                  <th className="py-1 pr-2">{t("page.kpi.colFingerprint")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -2281,21 +2294,19 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 onReopenFilters={onReopenKpiFilters}
               />
             ) : (
-              <p className="mt-3 text-xs text-fg-2">
-                Cliquez une ligne pour recharger le snapshot et afficher le graphique.
-              </p>
+              <p className="mt-3 text-xs text-fg-2">{t("page.kpi.clickRowHint")}</p>
             )}
           </section>
 
           <section className="mb-6 rounded border border-border-1 bg-bg-1 p-3">
-            <h2 className="mb-2 font-medium">Weibull — ajustement (inter-arrivées)</h2>
+            <h2 className="mb-2 font-medium">{t("page.weibull.title")}</h2>
             <p className="mb-2 text-xs text-fg-2">
-              PRD 6.10.4 — MLE 2 paramètres ; intervalles asymptotiques si échantillon suffisant.
-              Nécessite <code className="font-mono">ram.analyze</code>.
+              {t("page.weibull.hint")} {t("page.common.requires")}{" "}
+              <code className="font-mono">ram.analyze</code>.
             </p>
             <div className="mb-3 flex flex-wrap items-end gap-2">
               <label className="flex flex-col text-xs text-fg-2">
-                équip.
+                {t("page.col.equip")}
                 <input
                   className="mt-0.5 w-20 rounded border border-border-1 bg-bg-0 px-2 py-1 font-mono"
                   value={wbEquip}
@@ -2303,7 +2314,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 />
               </label>
               <label className="flex min-w-[10rem] flex-1 flex-col text-xs text-fg-2">
-                période début (optionnel)
+                {t("page.weibull.periodStart")}
                 <input
                   className="mt-0.5 rounded border border-border-1 bg-bg-0 px-2 py-1 font-mono text-[10px]"
                   value={wbStart}
@@ -2311,7 +2322,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 />
               </label>
               <label className="flex min-w-[10rem] flex-1 flex-col text-xs text-fg-2">
-                période fin (optionnel)
+                {t("page.weibull.periodEnd")}
                 <input
                   className="mt-0.5 rounded border border-border-1 bg-bg-0 px-2 py-1 font-mono text-[10px]"
                   value={wbEnd}
@@ -2323,30 +2334,31 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 className="rounded bg-accent px-3 py-1 text-bg-0"
                 onClick={() => void onRunWeibull()}
               >
-                Lancer l'ajustement
+                {t("page.weibull.run")}
               </button>
             </div>
             {wbResult != null ? (
               <div className="rounded border border-border-1/60 bg-bg-0 p-2 text-xs">
                 <p className="mb-1 font-mono text-[10px] text-fg-2">
-                  n={wbResult.n_points} — adéquat : {wbResult.adequate_sample ? "oui" : "non"} —{" "}
-                  {wbResult.message}
+                  {t("page.weibull.summary", {
+                    n: wbResult.n_points,
+                    adequate: wbResult.adequate_sample ? t("page.common.yes") : t("page.common.no"),
+                    message: wbResult.message,
+                  })}
                 </p>
                 <p className="mb-1">
-                  β (shape) : {wbResult.beta != null ? wbResult.beta.toFixed(4) : "—"} [
-                  {wbResult.beta_ci_low != null ? wbResult.beta_ci_low.toFixed(4) : "—"} ;{" "}
+                  {t("page.weibull.beta")} {wbResult.beta != null ? wbResult.beta.toFixed(4) : "—"}{" "}
+                  [{wbResult.beta_ci_low != null ? wbResult.beta_ci_low.toFixed(4) : "—"} ;{" "}
                   {wbResult.beta_ci_high != null ? wbResult.beta_ci_high.toFixed(4) : "—"}]
                 </p>
                 <p>
-                  η (scale h) : {wbResult.eta != null ? wbResult.eta.toFixed(2) : "—"} [
+                  {t("page.weibull.eta")} {wbResult.eta != null ? wbResult.eta.toFixed(2) : "—"} [
                   {wbResult.eta_ci_low != null ? wbResult.eta_ci_low.toFixed(2) : "—"} ;{" "}
                   {wbResult.eta_ci_high != null ? wbResult.eta_ci_high.toFixed(2) : "—"}]
                 </p>
               </div>
             ) : (
-              <p className="text-xs text-fg-2">
-                Aucun résultat — lancez un ajustement sur des événements de défaillance.
-              </p>
+              <p className="text-xs text-fg-2">{t("page.weibull.empty")}</p>
             )}
           </section>
         </>
@@ -2355,15 +2367,14 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
       {ramHubTab === "models" ? (
         <>
           <section className="mb-6 rounded border border-border-1 bg-bg-1 p-3">
-            <h2 className="mb-2 font-medium">FMECA — analyses et matrice RPN</h2>
+            <h2 className="mb-2 font-medium">{t("page.fmeca.title")}</h2>
             <p className="mb-2 text-xs text-fg-2">
-              PRD 6.10.5 — CRUD analyses et lignes ; RPN = S×O×D (1–10). Écriture :{" "}
-              <code className="font-mono">ram.manage</code>.
+              {t("page.fmeca.hint")} <code className="font-mono">ram.manage</code>.
             </p>
             <div className="mb-3 flex flex-wrap items-end gap-2 border-b border-border-1 pb-3">
               <input
                 className="w-28 rounded border border-border-1 bg-bg-0 px-2 py-1 font-mono text-xs"
-                placeholder="filtrer équip."
+                placeholder={t("page.common.filterEquipShort")}
                 value={fmEquipFilter}
                 onChange={(e) => setFmEquipFilter(e.target.value)}
               />
@@ -2372,7 +2383,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 className="rounded border border-border-1 px-2 py-1 text-fg-2 hover:text-fg-1"
                 onClick={() => void loadFmecaAnalysesList()}
               >
-                Actualiser analyses
+                {t("page.fmeca.refreshAnalyses")}
               </button>
             </div>
             <div className="mb-3 flex flex-wrap items-end gap-2">
@@ -2384,13 +2395,13 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
               />
               <input
                 className="min-w-[8rem] flex-1 rounded border border-border-1 bg-bg-0 px-2 py-1 text-xs"
-                placeholder="titre analyse"
+                placeholder={t("page.fmeca.analysisTitle")}
                 value={fmNewTitle}
                 onChange={(e) => setFmNewTitle(e.target.value)}
               />
               <input
                 className="min-w-[12rem] flex-[2] rounded border border-border-1 bg-bg-0 px-2 py-1 text-xs"
-                placeholder="frontière / périmètre"
+                placeholder={t("page.fmeca.boundary")}
                 value={fmNewBoundary}
                 onChange={(e) => setFmNewBoundary(e.target.value)}
               />
@@ -2399,17 +2410,17 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 className="rounded bg-accent px-3 py-1 text-bg-0"
                 onClick={() => void onCreateFmeca()}
               >
-                Créer analyse
+                {t("page.fmeca.createAnalysis")}
               </button>
             </div>
             <table className="mb-4 w-full border-collapse text-left text-xs">
               <thead>
                 <tr className="border-b border-border-1">
                   <th className="py-1 pr-2">id</th>
-                  <th className="py-1 pr-2">équip.</th>
-                  <th className="py-1 pr-2">titre</th>
-                  <th className="py-1 pr-2">statut</th>
-                  <th className="py-1 pr-2">actions</th>
+                  <th className="py-1 pr-2">{t("page.col.equip")}</th>
+                  <th className="py-1 pr-2">{t("page.col.title")}</th>
+                  <th className="py-1 pr-2">{t("page.col.status")}</th>
+                  <th className="py-1 pr-2">{t("page.col.actions")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -2434,7 +2445,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                           void onDeleteFmeca(a.id);
                         }}
                       >
-                        supprimer
+                        {t("page.common.deleteLower")}
                       </button>
                     </td>
                   </tr>
@@ -2444,23 +2455,25 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
 
             {fmSelectedId != null ? (
               <>
-                <h3 className="mb-1 font-medium">Lignes FMECA (analyse #{fmSelectedId})</h3>
+                <h3 className="mb-1 font-medium">
+                  {t("page.fmeca.itemsTitle", { id: fmSelectedId })}
+                </h3>
                 <div className="mb-3 grid max-w-4xl grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
                   <input
                     className="rounded border border-border-1 bg-bg-0 px-2 py-1 text-xs"
-                    placeholder="défaillance fonctionnelle"
+                    placeholder={t("page.fmeca.functionalFailure")}
                     value={fmFf}
                     onChange={(e) => setFmFf(e.target.value)}
                   />
                   <input
                     className="rounded border border-border-1 bg-bg-0 px-2 py-1 text-xs"
-                    placeholder="effet"
+                    placeholder={t("page.fmeca.effect")}
                     value={fmFe}
                     onChange={(e) => setFmFe(e.target.value)}
                   />
                   <input
                     className="rounded border border-border-1 bg-bg-0 px-2 py-1 font-mono text-xs"
-                    placeholder="mode ISO (id)"
+                    placeholder={t("page.fmeca.isoModeId")}
                     value={fmFmId}
                     onChange={(e) => setFmFmId(e.target.value)}
                   />
@@ -2483,24 +2496,24 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                     onChange={(e) => setFmD(e.target.value)}
                   />
                   <p className="text-xs text-fg-2 sm:col-span-3">
-                    RPN (aperçu S×O×D) :{" "}
+                    {t("page.fmeca.rpnPreview")}{" "}
                     <strong>{fmPreviewRpn != null ? fmPreviewRpn : "—"}</strong>
-                    {fmItemId != null ? ` — édition ligne #${fmItemId}` : null}
+                    {fmItemId != null ? t("page.fmeca.editingRow", { id: fmItemId }) : null}
                   </p>
                   <input
                     className="sm:col-span-2 rounded border border-border-1 bg-bg-0 px-2 py-1 text-xs"
-                    placeholder="action recommandée"
+                    placeholder={t("page.fmeca.recommendedAction")}
                     value={fmRa}
                     onChange={(e) => setFmRa(e.target.value)}
                   />
                   <input
                     className="rounded border border-border-1 bg-bg-0 px-2 py-1 text-xs"
-                    placeholder="contrôle courant"
+                    placeholder={t("page.fmeca.currentControl")}
                     value={fmCc}
                     onChange={(e) => setFmCc(e.target.value)}
                   />
                   <label className="flex flex-col text-xs text-fg-2 sm:col-span-2">
-                    Lier plan PM (optionnel)
+                    {t("page.common.linkPmPlan")}
                     <select
                       className="mt-0.5 rounded border border-border-1 bg-bg-0 px-2 py-1 text-xs text-fg-1"
                       value={fmPmId}
@@ -2516,7 +2529,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                   </label>
                   <input
                     className="rounded border border-border-1 bg-bg-0 px-2 py-1 font-mono text-xs"
-                    placeholder="RPN révisé (optionnel)"
+                    placeholder={t("page.fmeca.revisedRpn")}
                     value={fmRevRpn}
                     onChange={(e) => setFmRevRpn(e.target.value)}
                   />
@@ -2527,7 +2540,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                     className="rounded bg-accent px-3 py-1 text-bg-0"
                     onClick={() => void onSaveFmecaItem()}
                   >
-                    {fmItemId != null ? "Enregistrer ligne" : "Ajouter ligne"}
+                    {fmItemId != null ? t("page.fmeca.saveRow") : t("page.fmeca.addRow")}
                   </button>
                   <button
                     type="button"
@@ -2547,7 +2560,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                       setFmRevRpn("");
                     }}
                   >
-                    Nouvelle ligne
+                    {t("page.fmeca.newRow")}
                   </button>
                 </div>
                 <table className="w-full border-collapse text-left text-xs">
@@ -2558,8 +2571,8 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                       <th className="py-1 pr-2">O</th>
                       <th className="py-1 pr-2">D</th>
                       <th className="py-1 pr-2">RPN</th>
-                      <th className="py-1 pr-2">défaillance f.</th>
-                      <th className="py-1 pr-2">effet</th>
+                      <th className="py-1 pr-2">{t("page.fmeca.colFunctionalFailure")}</th>
+                      <th className="py-1 pr-2">{t("page.fmeca.colEffect")}</th>
                       <th className="py-1 pr-2">PM</th>
                       <th className="py-1 pr-2" />
                     </tr>
@@ -2612,14 +2625,14 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                               setFmRevRpn(it.revised_rpn != null ? String(it.revised_rpn) : "");
                             }}
                           >
-                            éditer
+                            {t("page.common.editLower")}
                           </button>
                           <button
                             type="button"
                             className="text-fg-2 underline hover:text-fg-1"
                             onClick={() => void onDeleteFmecaItemRow(it)}
                           >
-                            suppr.
+                            {t("page.common.deleteShortLower")}
                           </button>
                         </td>
                       </tr>
@@ -2628,22 +2641,20 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 </table>
               </>
             ) : (
-              <p className="text-xs text-fg-2">
-                Sélectionnez une analyse dans le tableau pour éditer les lignes.
-              </p>
+              <p className="text-xs text-fg-2">{t("page.fmeca.selectPrompt")}</p>
             )}
           </section>
 
           <section className="mb-6 rounded border border-border-1 bg-bg-1 p-3">
-            <h2 className="mb-2 font-medium">RCM — décisions liées au PM</h2>
+            <h2 className="mb-2 font-medium">{t("page.rcm.title")}</h2>
             <p className="mb-2 text-xs text-fg-2">
-              PRD 6.10.6 — tactique (liste blanche) et{" "}
-              <code className="font-mono">linked_pm_plan_id</code> optionnel.
+              {t("page.rcm.hintPrefix")} <code className="font-mono">linked_pm_plan_id</code>{" "}
+              {t("page.rcm.hintSuffix")}
             </p>
             <div className="mb-3 flex flex-wrap items-end gap-2 border-b border-border-1 pb-3">
               <input
                 className="w-28 rounded border border-border-1 bg-bg-0 px-2 py-1 font-mono text-xs"
-                placeholder="filtrer équip."
+                placeholder={t("page.common.filterEquipShort")}
                 value={rcmEquipFilter}
                 onChange={(e) => setRcmEquipFilter(e.target.value)}
               />
@@ -2652,7 +2663,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 className="rounded border border-border-1 px-2 py-1 text-fg-2 hover:text-fg-1"
                 onClick={() => void loadRcmStudiesList()}
               >
-                Actualiser études
+                {t("page.rcm.refreshStudies")}
               </button>
             </div>
             <div className="mb-3 flex flex-wrap items-end gap-2">
@@ -2663,7 +2674,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
               />
               <input
                 className="min-w-[12rem] flex-1 rounded border border-border-1 bg-bg-0 px-2 py-1 text-xs"
-                placeholder="titre étude RCM"
+                placeholder={t("page.rcm.studyTitle")}
                 value={rcmNewTitle}
                 onChange={(e) => setRcmNewTitle(e.target.value)}
               />
@@ -2672,17 +2683,17 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 className="rounded bg-accent px-3 py-1 text-bg-0"
                 onClick={() => void onCreateRcm()}
               >
-                Créer étude
+                {t("page.rcm.createStudy")}
               </button>
             </div>
             <table className="mb-4 w-full border-collapse text-left text-xs">
               <thead>
                 <tr className="border-b border-border-1">
                   <th className="py-1 pr-2">id</th>
-                  <th className="py-1 pr-2">équip.</th>
-                  <th className="py-1 pr-2">titre</th>
-                  <th className="py-1 pr-2">statut</th>
-                  <th className="py-1 pr-2">actions</th>
+                  <th className="py-1 pr-2">{t("page.col.equip")}</th>
+                  <th className="py-1 pr-2">{t("page.col.title")}</th>
+                  <th className="py-1 pr-2">{t("page.col.status")}</th>
+                  <th className="py-1 pr-2">{t("page.col.actions")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -2707,7 +2718,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                           void onDeleteRcm(s.id);
                         }}
                       >
-                        supprimer
+                        {t("page.common.deleteLower")}
                       </button>
                     </td>
                   </tr>
@@ -2717,34 +2728,36 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
 
             {rcmSelectedId != null ? (
               <>
-                <h3 className="mb-1 font-medium">Décisions (étude #{rcmSelectedId})</h3>
+                <h3 className="mb-1 font-medium">
+                  {t("page.rcm.decisionsTitle", { id: rcmSelectedId })}
+                </h3>
                 <div className="mb-3 grid max-w-4xl grid-cols-1 gap-2 sm:grid-cols-2">
                   <input
                     className="rounded border border-border-1 bg-bg-0 px-2 py-1 text-xs"
-                    placeholder="fonction / fonctionnement"
+                    placeholder={t("page.rcm.functionDesc")}
                     value={rcmFnDesc}
                     onChange={(e) => setRcmFnDesc(e.target.value)}
                   />
                   <input
                     className="rounded border border-border-1 bg-bg-0 px-2 py-1 text-xs"
-                    placeholder="défaillance fonctionnelle"
+                    placeholder={t("page.fmeca.functionalFailure")}
                     value={rcmFf}
                     onChange={(e) => setRcmFf(e.target.value)}
                   />
                   <input
                     className="rounded border border-border-1 bg-bg-0 px-2 py-1 font-mono text-xs"
-                    placeholder="mode ISO (id)"
+                    placeholder={t("page.fmeca.isoModeId")}
                     value={rcmFmId}
                     onChange={(e) => setRcmFmId(e.target.value)}
                   />
                   <input
                     className="rounded border border-border-1 bg-bg-0 px-2 py-1 text-xs"
-                    placeholder="catégorie de conséquence"
+                    placeholder={t("page.rcm.consequenceCategory")}
                     value={rcmCc}
                     onChange={(e) => setRcmCc(e.target.value)}
                   />
                   <label className="flex flex-col text-xs text-fg-2">
-                    Tactique RCM
+                    {t("page.rcm.tactic")}
                     <select
                       className="mt-0.5 rounded border border-border-1 bg-bg-0 px-2 py-1 text-xs text-fg-1"
                       value={rcmTactic}
@@ -2758,7 +2771,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                     </select>
                   </label>
                   <label className="flex flex-col text-xs text-fg-2">
-                    Lier plan PM (optionnel)
+                    {t("page.common.linkPmPlan")}
                     <select
                       className="mt-0.5 rounded border border-border-1 bg-bg-0 px-2 py-1 text-xs text-fg-1"
                       value={rcmPmId}
@@ -2774,19 +2787,21 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                   </label>
                   <input
                     className="sm:col-span-2 rounded border border-border-1 bg-bg-0 px-2 py-1 text-xs"
-                    placeholder="justification"
+                    placeholder={t("page.rcm.justification")}
                     value={rcmJust}
                     onChange={(e) => setRcmJust(e.target.value)}
                   />
                   <input
                     className="sm:col-span-2 rounded border border-border-1 bg-bg-0 px-2 py-1 font-mono text-[10px]"
-                    placeholder="revue due (ISO datetime, optionnel)"
+                    placeholder={t("page.rcm.reviewDue")}
                     value={rcmReview}
                     onChange={(e) => setRcmReview(e.target.value)}
                   />
                 </div>
                 <p className="mb-2 text-xs text-fg-2">
-                  {rcmDecId != null ? `Édition décision #${rcmDecId}` : "Nouvelle décision"}
+                  {rcmDecId != null
+                    ? t("page.rcm.editingDecision", { id: rcmDecId })
+                    : t("page.rcm.newDecision")}
                 </p>
                 <div className="mb-3 flex flex-wrap gap-2">
                   <button
@@ -2794,7 +2809,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                     className="rounded bg-accent px-3 py-1 text-bg-0"
                     onClick={() => void onSaveRcmDecision()}
                   >
-                    {rcmDecId != null ? "Enregistrer décision" : "Ajouter décision"}
+                    {rcmDecId != null ? t("page.rcm.saveDecision") : t("page.rcm.addDecision")}
                   </button>
                   <button
                     type="button"
@@ -2812,17 +2827,17 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                       setRcmFmId("");
                     }}
                   >
-                    Nouvelle décision
+                    {t("page.rcm.newDecision")}
                   </button>
                 </div>
                 <table className="w-full border-collapse text-left text-xs">
                   <thead>
                     <tr className="border-b border-border-1">
                       <th className="py-1 pr-2">id</th>
-                      <th className="py-1 pr-2">tactique</th>
+                      <th className="py-1 pr-2">{t("page.rcm.colTactic")}</th>
                       <th className="py-1 pr-2">PM</th>
-                      <th className="py-1 pr-2">fonction</th>
-                      <th className="py-1 pr-2">défaillance f.</th>
+                      <th className="py-1 pr-2">{t("page.rcm.colFunction")}</th>
+                      <th className="py-1 pr-2">{t("page.fmeca.colFunctionalFailure")}</th>
                       <th className="py-1 pr-2" />
                     </tr>
                   </thead>
@@ -2872,14 +2887,14 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                               );
                             }}
                           >
-                            éditer
+                            {t("page.common.editLower")}
                           </button>
                           <button
                             type="button"
                             className="text-fg-2 underline hover:text-fg-1"
                             onClick={() => void onDeleteRcmDecisionRow(d)}
                           >
-                            suppr.
+                            {t("page.common.deleteShortLower")}
                           </button>
                         </td>
                       </tr>
@@ -2888,27 +2903,25 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 </table>
               </>
             ) : (
-              <p className="text-xs text-fg-2">
-                Sélectionnez une étude pour gérer les décisions RCM.
-              </p>
+              <p className="text-xs text-fg-2">{t("page.rcm.selectPrompt")}</p>
             )}
           </section>
 
           <section className="mb-6 rounded border border-border-1 bg-bg-1 p-3">
-            <h2 className="mb-2 font-medium">FTA / RBD / arbre d'événements (PRD 6.10)</h2>
+            <h2 className="mb-2 font-medium">{t("page.graphModels.title")}</h2>
             <p className="mb-2 text-xs text-fg-2">
-              Modèles graphe locaux — FTA (ET/OU + prob. top), RBD (série/parallèle), ETA
-              (séquence). Évaluer : <code className="font-mono">ram.analyze</code> ; CRUD :{" "}
+              {t("page.graphModels.hint")} {t("page.graphModels.evaluateLabel")}{" "}
+              <code className="font-mono">ram.analyze</code> {t("page.graphModels.crudLabel")}{" "}
               <code className="font-mono">ram.manage</code>.
             </p>
             <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-border-1/60 pb-2">
               <Link
                 to="/analytics/reliability/lab"
                 className="inline-flex items-center gap-1.5 rounded border border-border-1 bg-bg-0 px-2 py-1 text-[11px] text-fg-1 hover:bg-bg-1"
-                title="Éditeur schématique FTA / RBD"
+                title={t("page.graphModels.labTooltip")}
               >
                 <FlaskConical className="h-3.5 w-3.5 shrink-0" />
-                Ouvrir le laboratoire visuel (FTA/RBD)
+                {t("page.graphModels.openLab")}
               </Link>
             </div>
 
@@ -2916,7 +2929,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
             <div className="mb-2 flex flex-wrap gap-2">
               <input
                 className="w-24 rounded border border-border-1 bg-bg-0 px-2 py-1 font-mono text-xs"
-                placeholder="filtrer équip."
+                placeholder={t("page.common.filterEquipShort")}
                 value={gfFtaFilter}
                 onChange={(e) => setGfFtaFilter(e.target.value)}
               />
@@ -2925,7 +2938,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 className="rounded border border-border-1 px-2 py-1 text-xs"
                 onClick={() => void loadGfFta()}
               >
-                Actualiser
+                {t("page.common.refresh")}
               </button>
             </div>
             <div className="mb-2 flex flex-wrap gap-2">
@@ -2944,7 +2957,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 className="rounded bg-accent px-2 py-1 text-xs text-bg-0"
                 onClick={() => void onCreateGfFta()}
               >
-                Créer
+                {t("page.common.create")}
               </button>
               <button
                 type="button"
@@ -2952,7 +2965,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 disabled={gfFtaSel == null}
                 onClick={() => void onUpdateGfFta()}
               >
-                Enregistrer JSON
+                {t("page.common.saveJson")}
               </button>
               <button
                 type="button"
@@ -2960,7 +2973,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 disabled={gfFtaSel == null}
                 onClick={() => void onEvalGfFta()}
               >
-                Évaluer
+                {t("page.common.evaluate")}
               </button>
               <button
                 type="button"
@@ -2968,14 +2981,14 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 disabled={gfFtaSel == null}
                 onClick={() => void onDeleteGfFta()}
               >
-                Suppr.
+                {t("page.common.deleteShort")}
               </button>
             </div>
             <table className="mb-2 w-full border-collapse text-left text-[10px]">
               <thead>
                 <tr className="border-b border-border-1">
                   <th className="py-1 pr-2">id</th>
-                  <th className="py-1 pr-2">titre</th>
+                  <th className="py-1 pr-2">{t("page.col.title")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -2995,7 +3008,9 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
               </tbody>
             </table>
             <details className="mb-2 text-xs text-fg-2">
-              <summary className="cursor-pointer select-none text-fg-1">Graphe JSON (FTA)</summary>
+              <summary className="cursor-pointer select-none text-fg-1">
+                {t("page.graphModels.graphJson", { kind: "FTA" })}
+              </summary>
               <textarea
                 className="mt-1 h-28 w-full rounded border border-border-1 bg-bg-0 p-2 font-mono text-[10px] text-fg-1"
                 value={gfFtaJson}
@@ -3020,7 +3035,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 className="rounded border border-border-1 px-2 py-1 text-xs"
                 onClick={() => void loadGfRbd()}
               >
-                Actualiser
+                {t("page.common.refresh")}
               </button>
             </div>
             <div className="mb-2 flex flex-wrap gap-2">
@@ -3039,7 +3054,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 className="rounded bg-accent px-2 py-1 text-xs text-bg-0"
                 onClick={() => void onCreateGfRbd()}
               >
-                Créer
+                {t("page.common.create")}
               </button>
               <button
                 type="button"
@@ -3047,7 +3062,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 disabled={gfRbdSel == null}
                 onClick={() => void onUpdateGfRbd()}
               >
-                Enregistrer JSON
+                {t("page.common.saveJson")}
               </button>
               <button
                 type="button"
@@ -3055,7 +3070,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 disabled={gfRbdSel == null}
                 onClick={() => void onEvalGfRbd()}
               >
-                Évaluer
+                {t("page.common.evaluate")}
               </button>
               <button
                 type="button"
@@ -3063,14 +3078,14 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 disabled={gfRbdSel == null}
                 onClick={() => void onDeleteGfRbd()}
               >
-                Suppr.
+                {t("page.common.deleteShort")}
               </button>
             </div>
             <table className="mb-2 w-full border-collapse text-left text-[10px]">
               <thead>
                 <tr className="border-b border-border-1">
                   <th className="py-1 pr-2">id</th>
-                  <th className="py-1 pr-2">titre</th>
+                  <th className="py-1 pr-2">{t("page.col.title")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -3090,7 +3105,9 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
               </tbody>
             </table>
             <details className="mb-2 text-xs text-fg-2">
-              <summary className="cursor-pointer select-none text-fg-1">Graphe JSON (RBD)</summary>
+              <summary className="cursor-pointer select-none text-fg-1">
+                {t("page.graphModels.graphJson", { kind: "RBD" })}
+              </summary>
               <textarea
                 className="mt-1 h-28 w-full rounded border border-border-1 bg-bg-0 p-2 font-mono text-[10px] text-fg-1"
                 value={gfRbdJson}
@@ -3103,7 +3120,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
               </pre>
             ) : null}
 
-            <h3 className="mb-1 mt-4 font-medium">Arbre d'événements</h3>
+            <h3 className="mb-1 mt-4 font-medium">{t("page.graphModels.eventTree")}</h3>
             <div className="mb-2 flex flex-wrap gap-2">
               <input
                 className="w-24 rounded border border-border-1 bg-bg-0 px-2 py-1 font-mono text-xs"
@@ -3115,7 +3132,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 className="rounded border border-border-1 px-2 py-1 text-xs"
                 onClick={() => void loadGfEta()}
               >
-                Actualiser
+                {t("page.common.refresh")}
               </button>
             </div>
             <div className="mb-2 flex flex-wrap gap-2">
@@ -3134,7 +3151,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 className="rounded bg-accent px-2 py-1 text-xs text-bg-0"
                 onClick={() => void onCreateGfEta()}
               >
-                Créer
+                {t("page.common.create")}
               </button>
               <button
                 type="button"
@@ -3142,7 +3159,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 disabled={gfEtaSel == null}
                 onClick={() => void onUpdateGfEta()}
               >
-                Enregistrer JSON
+                {t("page.common.saveJson")}
               </button>
               <button
                 type="button"
@@ -3150,7 +3167,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 disabled={gfEtaSel == null}
                 onClick={() => void onEvalGfEta()}
               >
-                Évaluer
+                {t("page.common.evaluate")}
               </button>
               <button
                 type="button"
@@ -3158,14 +3175,14 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 disabled={gfEtaSel == null}
                 onClick={() => void onDeleteGfEta()}
               >
-                Suppr.
+                {t("page.common.deleteShort")}
               </button>
             </div>
             <table className="mb-2 w-full border-collapse text-left text-[10px]">
               <thead>
                 <tr className="border-b border-border-1">
                   <th className="py-1 pr-2">id</th>
-                  <th className="py-1 pr-2">titre</th>
+                  <th className="py-1 pr-2">{t("page.col.title")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -3185,7 +3202,9 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
               </tbody>
             </table>
             <details className="mb-2 text-xs text-fg-2">
-              <summary className="cursor-pointer select-none text-fg-1">Graphe JSON (ETA)</summary>
+              <summary className="cursor-pointer select-none text-fg-1">
+                {t("page.graphModels.graphJson", { kind: "ETA" })}
+              </summary>
               <textarea
                 className="mt-1 h-28 w-full rounded border border-border-1 bg-bg-0 p-2 font-mono text-[10px] text-fg-1"
                 value={gfEtaJson}
@@ -3200,12 +3219,9 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
           </section>
 
           <section className="mb-6 rounded border border-border-1 bg-bg-1 p-3">
-            <h2 className="mb-2 font-medium">Monte Carlo, Markov, garde-fous</h2>
-            <p className="mb-2 text-xs text-fg-2">
-              MC : essais + graine reproductible ; Markov : CMTH discrète (puissances). Garde-fous :
-              limites et activation des méthodes.
-            </p>
-            <h3 className="mb-1 font-medium">Garde-fous (ram.manage)</h3>
+            <h2 className="mb-2 font-medium">{t("page.advancedModels.title")}</h2>
+            <p className="mb-2 text-xs text-fg-2">{t("page.advancedModels.hint")}</p>
+            <h3 className="mb-1 font-medium">{t("page.advancedModels.guardrailsTitle")}</h3>
             <div className="mb-3 grid max-w-xl grid-cols-1 gap-2 rounded border border-border-1/60 bg-bg-0 p-2 sm:grid-cols-2">
               <label className="flex items-center gap-2 text-xs text-fg-2">
                 <input
@@ -3213,7 +3229,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                   checked={grMcEnabled}
                   onChange={(e) => setGrMcEnabled(e.target.checked)}
                 />
-                Monte Carlo activé
+                {t("page.advancedModels.mcEnabled")}
               </label>
               <label className="flex items-center gap-2 text-xs text-fg-2">
                 <input
@@ -3221,10 +3237,10 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                   checked={grMkEnabled}
                   onChange={(e) => setGrMkEnabled(e.target.checked)}
                 />
-                Markov activé
+                {t("page.advancedModels.markovEnabled")}
               </label>
               <label className="flex flex-col gap-0.5 text-xs text-fg-2">
-                MC — essais max
+                {t("page.advancedModels.mcMaxTrials")}
                 <input
                   className="rounded border border-border-1 bg-bg-1 px-2 py-1 font-mono text-[11px]"
                   value={grMcMaxTrials}
@@ -3232,7 +3248,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 />
               </label>
               <label className="flex flex-col gap-0.5 text-xs text-fg-2">
-                Markov — états max
+                {t("page.advancedModels.markovMaxStates")}
                 <input
                   className="rounded border border-border-1 bg-bg-1 px-2 py-1 font-mono text-[11px]"
                   value={grMkMaxStates}
@@ -3245,7 +3261,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
               className="mb-4 rounded bg-accent px-2 py-1 text-xs text-bg-0"
               onClick={() => void onSaveGr()}
             >
-              Enregistrer garde-fous
+              {t("page.advancedModels.saveGuardrails")}
             </button>
 
             <h3 className="mb-1 font-medium">Monte Carlo</h3>
@@ -3260,7 +3276,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 className="rounded border border-border-1 px-2 py-1 text-xs"
                 onClick={() => void loadMcList()}
               >
-                Actualiser
+                {t("page.common.refresh")}
               </button>
             </div>
             <div className="mb-2 flex flex-wrap gap-2">
@@ -3276,13 +3292,13 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
               />
               <input
                 className="w-20 rounded border border-border-1 bg-bg-0 px-2 py-1 font-mono text-xs"
-                title="essais"
+                title={t("page.mc.trials")}
                 value={mcTrials}
                 onChange={(e) => setMcTrials(e.target.value)}
               />
               <input
                 className="w-20 rounded border border-border-1 bg-bg-0 px-2 py-1 font-mono text-xs"
-                title="graine"
+                title={t("page.mc.seed")}
                 value={mcSeed}
                 onChange={(e) => setMcSeed(e.target.value)}
               />
@@ -3291,7 +3307,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 className="rounded bg-accent px-2 py-1 text-xs text-bg-0"
                 onClick={() => void onCreateMc()}
               >
-                Créer
+                {t("page.common.create")}
               </button>
               <button
                 type="button"
@@ -3299,7 +3315,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 disabled={mcSel == null}
                 onClick={() => void onUpdateMc()}
               >
-                Enregistrer
+                {t("page.common.save")}
               </button>
               <button
                 type="button"
@@ -3307,7 +3323,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 disabled={mcSel == null}
                 onClick={() => void onEvalMc()}
               >
-                Évaluer
+                {t("page.common.evaluate")}
               </button>
               <button
                 type="button"
@@ -3315,15 +3331,15 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 disabled={mcSel == null}
                 onClick={() => void onDeleteMc()}
               >
-                Suppr.
+                {t("page.common.deleteShort")}
               </button>
             </div>
             <table className="mb-2 w-full border-collapse text-left text-[10px]">
               <thead>
                 <tr className="border-b border-border-1">
                   <th className="py-1 pr-2">id</th>
-                  <th className="py-1 pr-2">essais</th>
-                  <th className="py-1 pr-2">titre</th>
+                  <th className="py-1 pr-2">{t("page.mc.trials")}</th>
+                  <th className="py-1 pr-2">{t("page.col.title")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -3346,10 +3362,10 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
               </tbody>
             </table>
             <div className="mb-2 rounded border border-border-1/60 bg-bg-0 p-2">
-              <p className="mb-2 text-[11px] text-fg-2">Échantillonnage uniforme (graph_json)</p>
+              <p className="mb-2 text-[11px] text-fg-2">{t("page.mc.uniformTitle")}</p>
               <div className="flex flex-wrap gap-2">
                 <label className="flex flex-col text-xs text-fg-2">
-                  min
+                  {t("page.mc.min")}
                   <input
                     className="mt-0.5 w-24 rounded border border-border-1 bg-bg-1 px-2 py-1 font-mono"
                     value={mcUniformLow}
@@ -3357,7 +3373,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                   />
                 </label>
                 <label className="flex flex-col text-xs text-fg-2">
-                  max
+                  {t("page.mc.max")}
                   <input
                     className="mt-0.5 w-24 rounded border border-border-1 bg-bg-1 px-2 py-1 font-mono"
                     value={mcUniformHigh}
@@ -3367,7 +3383,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
               </div>
               <details className="mt-2 text-xs text-fg-2">
                 <summary className="cursor-pointer select-none text-fg-2">
-                  JSON brut (avancé)
+                  {t("page.common.rawJson")}
                 </summary>
                 <textarea
                   className="mt-1 h-20 w-full rounded border border-border-1 bg-bg-1 p-2 font-mono text-[10px]"
@@ -3394,7 +3410,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 className="rounded border border-border-1 px-2 py-1 text-xs"
                 onClick={() => void loadMkList()}
               >
-                Actualiser
+                {t("page.common.refresh")}
               </button>
             </div>
             <div className="mb-2 flex flex-wrap gap-2">
@@ -3413,7 +3429,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 className="rounded bg-accent px-2 py-1 text-xs text-bg-0"
                 onClick={() => void onCreateMk()}
               >
-                Créer
+                {t("page.common.create")}
               </button>
               <button
                 type="button"
@@ -3421,7 +3437,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 disabled={mkSel == null}
                 onClick={() => void onUpdateMk()}
               >
-                Enregistrer
+                {t("page.common.save")}
               </button>
               <button
                 type="button"
@@ -3429,7 +3445,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 disabled={mkSel == null}
                 onClick={() => void onEvalMk()}
               >
-                Évaluer
+                {t("page.common.evaluate")}
               </button>
               <button
                 type="button"
@@ -3437,14 +3453,14 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 disabled={mkSel == null}
                 onClick={() => void onDeleteMk()}
               >
-                Suppr.
+                {t("page.common.deleteShort")}
               </button>
             </div>
             <table className="mb-2 w-full border-collapse text-left text-[10px]">
               <thead>
                 <tr className="border-b border-border-1">
                   <th className="py-1 pr-2">id</th>
-                  <th className="py-1 pr-2">titre</th>
+                  <th className="py-1 pr-2">{t("page.col.title")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -3464,10 +3480,10 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
               </tbody>
             </table>
             <div className="mb-2 rounded border border-border-1/60 bg-bg-0 p-2">
-              <p className="mb-2 text-[11px] text-fg-2">Chaîne de Markov discrète (2×2)</p>
+              <p className="mb-2 text-[11px] text-fg-2">{t("page.markov.discreteTitle")}</p>
               <div className="mb-2 flex flex-wrap gap-2">
                 <label className="flex flex-col text-xs text-fg-2">
-                  État 1
+                  {t("page.markov.state", { n: 1 })}
                   <input
                     className="mt-0.5 w-20 rounded border border-border-1 bg-bg-1 px-2 py-1 font-mono"
                     value={mkS0}
@@ -3484,7 +3500,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                   />
                 </label>
                 <label className="flex flex-col text-xs text-fg-2">
-                  État 2
+                  {t("page.markov.state", { n: 2 })}
                   <input
                     className="mt-0.5 w-20 rounded border border-border-1 bg-bg-1 px-2 py-1 font-mono"
                     value={mkS1}
@@ -3566,7 +3582,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
               </div>
               <details className="mt-2 text-xs text-fg-2">
                 <summary className="cursor-pointer select-none text-fg-2">
-                  JSON brut (avancé)
+                  {t("page.common.rawJson")}
                 </summary>
                 <textarea
                   className="mt-1 h-20 w-full rounded border border-border-1 bg-bg-1 p-2 font-mono text-[10px]"
@@ -3589,18 +3605,13 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
           id="ram-data-quality"
           className="mb-6 scroll-mt-4 rounded border border-border-1 bg-bg-1 p-3"
         >
-          <h2 className="mb-2 font-medium">Qualité des données RAM</h2>
-          <p className="mb-2 text-fg-2">
-            Badges (vert si score ≥ 0,85 et aucun code bloquant). Drill-through : OT sans mode de
-            défaillance, équipements sans exposition 90j.
-          </p>
-          <p className="mb-3 text-fg-2 text-xs">
-            Intervalle de confiance (Wilson, taux de répétition) : phase 2 (placeholder).
-          </p>
+          <h2 className="mb-2 font-medium">{t("page.dataQuality.title")}</h2>
+          <p className="mb-2 text-fg-2">{t("page.dataQuality.hint")}</p>
+          <p className="mb-3 text-fg-2 text-xs">{t("page.dataQuality.ciNote")}</p>
           <div className="mb-3 flex flex-wrap items-end gap-2 border-b border-border-1 pb-3">
             <input
               className="w-36 rounded border border-border-1 bg-bg-0 px-2 py-1 font-mono text-xs"
-              placeholder="filtrer équip. id"
+              placeholder={t("page.common.filterEquipIdShort")}
               value={dqEquipFilter}
               onChange={(e) => setDqEquipFilter(e.target.value)}
             />
@@ -3609,18 +3620,18 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
               className="rounded border border-border-1 px-2 py-1 text-fg-2 hover:text-fg-1"
               onClick={() => void loadDqIssues()}
             >
-              Actualiser issues
+              {t("page.dataQuality.refreshIssues")}
             </button>
             <button
               type="button"
               className="rounded border border-border-1 px-2 py-1 text-fg-2 hover:text-fg-1"
               onClick={() => void loadDqDrill()}
             >
-              Charger drill-through
+              {t("page.dataQuality.loadDrill")}
             </button>
           </div>
           <div className="mb-3 flex flex-wrap items-center gap-2">
-            <span className="text-fg-2">Badge équipement</span>
+            <span className="text-fg-2">{t("page.dataQuality.equipmentBadge")}</span>
             <input
               className="w-24 rounded border border-border-1 bg-bg-0 px-2 py-1 font-mono"
               value={dqBadgeEquip}
@@ -3631,7 +3642,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
               className="rounded border border-border-1 px-2 py-1 text-fg-2 hover:text-fg-1"
               onClick={() => void loadDqBadge()}
             >
-              Actualiser badge
+              {t("page.dataQuality.refreshBadge")}
             </button>
             {dqBadge ? (
               <span
@@ -3643,10 +3654,17 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                       : "font-medium text-amber-600"
                 }
               >
-                {dqBadge.badge.toUpperCase()} — score KPI:{" "}
-                {dqBadge.data_quality_score != null ? dqBadge.data_quality_score.toFixed(2) : "—"}
+                {t("page.dataQuality.badgeScore", {
+                  badge: dqBadge.badge.toUpperCase(),
+                  score:
+                    dqBadge.data_quality_score != null
+                      ? dqBadge.data_quality_score.toFixed(2)
+                      : "—",
+                })}
                 {dqBadge.blocking_issue_codes.length > 0
-                  ? ` — bloquants: ${dqBadge.blocking_issue_codes.join(", ")}`
+                  ? t("page.dataQuality.blocking", {
+                      codes: dqBadge.blocking_issue_codes.join(", "),
+                    })
                   : ""}
               </span>
             ) : null}
@@ -3654,11 +3672,11 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
           <table className="mb-4 w-full border-collapse text-left text-xs">
             <thead>
               <tr className="border-b border-border-1">
-                <th className="py-1 pr-2">équip.</th>
-                <th className="py-1 pr-2">code</th>
-                <th className="py-1 pr-2">gravité</th>
-                <th className="py-1 pr-2">lien</th>
-                <th className="py-1 pr-2">masquer</th>
+                <th className="py-1 pr-2">{t("page.col.equip")}</th>
+                <th className="py-1 pr-2">{t("page.col.code")}</th>
+                <th className="py-1 pr-2">{t("page.dataQuality.colSeverity")}</th>
+                <th className="py-1 pr-2">{t("page.dataQuality.colLink")}</th>
+                <th className="py-1 pr-2">{t("page.dataQuality.dismiss")}</th>
               </tr>
             </thead>
             <tbody>
@@ -3682,21 +3700,21 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                       className="text-fg-2 underline hover:text-fg-1"
                       onClick={() => void onDismissDq(d)}
                     >
-                      masquer
+                      {t("page.dataQuality.dismiss")}
                     </button>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-          <h3 className="mb-1 font-medium">OT fermés sans mode ISO (drill)</h3>
+          <h3 className="mb-1 font-medium">{t("page.dataQuality.wosTitle")}</h3>
           <table className="mb-4 w-full border-collapse text-left text-xs">
             <thead>
               <tr className="border-b border-border-1">
-                <th className="py-1 pr-2">WO</th>
-                <th className="py-1 pr-2">équip.</th>
-                <th className="py-1 pr-2">type</th>
-                <th className="py-1 pr-2">fermé</th>
+                <th className="py-1 pr-2">{t("page.dataQuality.colWo")}</th>
+                <th className="py-1 pr-2">{t("page.col.equip")}</th>
+                <th className="py-1 pr-2">{t("page.col.type")}</th>
+                <th className="py-1 pr-2">{t("page.dataQuality.colClosed")}</th>
               </tr>
             </thead>
             <tbody>
@@ -3710,12 +3728,12 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
               ))}
             </tbody>
           </table>
-          <h3 className="mb-1 font-medium">Équipements sans exposition runtime (90 jours)</h3>
+          <h3 className="mb-1 font-medium">{t("page.dataQuality.noExposureTitle")}</h3>
           <table className="w-full border-collapse text-left text-xs">
             <thead>
               <tr className="border-b border-border-1">
                 <th className="py-1 pr-2">id</th>
-                <th className="py-1 pr-2">nom</th>
+                <th className="py-1 pr-2">{t("page.col.name")}</th>
               </tr>
             </thead>
             <tbody>
@@ -3732,17 +3750,19 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
 
       {ramHubTab === "failures" ? (
         <section className="rounded border border-border-1 bg-bg-1 p-3">
-          <h2 className="mb-2 font-medium">Codes ({selectedHid ?? "—"})</h2>
+          <h2 className="mb-2 font-medium">
+            {t("page.codes.title", { hierarchy: selectedHid ?? "—" })}
+          </h2>
           <div className="mb-2 flex flex-wrap gap-2">
             <input
               className="rounded border border-border-1 bg-bg-0 px-2 py-1 font-mono"
-              placeholder="code"
+              placeholder={t("page.col.code")}
               value={cCode}
               onChange={(e) => setCCode(e.target.value)}
             />
             <input
               className="rounded border border-border-1 bg-bg-0 px-2 py-1"
-              placeholder="libellé"
+              placeholder={t("page.col.label")}
               value={cLabel}
               onChange={(e) => setCLabel(e.target.value)}
             />
@@ -3764,16 +3784,16 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
               disabled={selectedHid == null}
               onClick={() => void onAddCode()}
             >
-              Ajouter code
+              {t("page.codes.add")}
             </button>
           </div>
           <table className="w-full border-collapse text-left text-xs">
             <thead>
               <tr className="border-b border-border-1">
-                <th className="py-1 pr-2">code</th>
-                <th className="py-1 pr-2">type</th>
-                <th className="py-1 pr-2">libellé</th>
-                <th className="py-1 pr-2">actif</th>
+                <th className="py-1 pr-2">{t("page.col.code")}</th>
+                <th className="py-1 pr-2">{t("page.col.type")}</th>
+                <th className="py-1 pr-2">{t("page.col.label")}</th>
+                <th className="py-1 pr-2">{t("page.codes.colActive")}</th>
                 <th className="py-1" />
               </tr>
             </thead>
@@ -3783,7 +3803,9 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                   <td className="py-1 pr-2 font-mono">{c.code}</td>
                   <td className="py-1 pr-2">{c.code_type}</td>
                   <td className="py-1 pr-2">{c.label}</td>
-                  <td className="py-1 pr-2">{c.is_active ? "oui" : "non"}</td>
+                  <td className="py-1 pr-2">
+                    {c.is_active ? t("page.common.yes") : t("page.common.no")}
+                  </td>
                   <td className="py-1">
                     {c.is_active ? (
                       <button
@@ -3791,7 +3813,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                         className="text-fg-2 underline hover:text-fg-1"
                         onClick={() => void onDeactivate(c)}
                       >
-                        désactiver
+                        {t("page.codes.deactivate")}
                       </button>
                     ) : null}
                   </td>
@@ -3811,8 +3833,8 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
   return (
     <ModulePageShell
       icon={LineChart}
-      title="Fiabilité (RAMS) — taxonomie défaillance"
-      description="PRD 6.10.1 — hiérarchies et codes ISO 14224 (aperçu local)."
+      title={t("page.shell.title")}
+      description={t("page.shell.description")}
       bodyClassName="p-4 text-sm text-fg-1"
     >
       {workspace}

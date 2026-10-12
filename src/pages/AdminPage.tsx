@@ -149,14 +149,9 @@ export function AdminPage() {
             <Lock className="h-8 w-8 text-status-danger" />
           </div>
           <h1 className="text-xl font-semibold text-text-primary">
-            {t("auth:unauthorized.title", "Accès non autorisé")}
+            {t("auth:unauthorized.title")}
           </h1>
-          <p className="mt-2 text-sm text-text-secondary">
-            {t(
-              "auth:unauthorized.message",
-              "Vous n'avez pas les permissions nécessaires pour accéder à cette page.",
-            )}
-          </p>
+          <p className="mt-2 text-sm text-text-secondary">{t("auth:unauthorized.message")}</p>
         </div>
       </div>
     );
@@ -172,10 +167,8 @@ export function AdminPage() {
         <div className={mfLayout.moduleTitleRow}>
           <Shield className={mfLayout.moduleHeaderIcon} />
           <div>
-            <h1 className={mfLayout.moduleTitle}>{t("admin:page.title", "Administration")}</h1>
-            <p className="text-sm text-text-secondary">
-              {t("admin:page.subtitle", "Gestion des utilisateurs, rôles et permissions")}
-            </p>
+            <h1 className={mfLayout.moduleTitle}>{t("admin:page.title")}</h1>
+            <p className="text-sm text-text-secondary">{t("admin:page.subtitle")}</p>
           </div>
         </div>
       </div>

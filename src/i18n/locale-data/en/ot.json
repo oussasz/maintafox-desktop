@@ -60,7 +60,8 @@
       "placeholder": "Detailed instructions for the technician"
     },
     "type": {
-      "label": "Type"
+      "label": "Type",
+      "loading": "Loading..."
     },
     "urgency": {
       "label": "Urgency",
@@ -99,7 +100,8 @@
       "titleRequired": "Title is required",
       "typeRequired": "Work order type is required.",
       "urgencyRequired": "Priority is required.",
-      "urgencyInvalid": "The selected priority is no longer valid."
+      "urgencyInvalid": "The selected priority is no longer valid.",
+      "equipmentRequired": "Equipment is required."
     }
   },
   "status": {

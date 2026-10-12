@@ -26,24 +26,24 @@ import { usePermissions } from "@/hooks/use-permissions";
 import { useStepUp } from "@/hooks/use-step-up";
 import { useToast } from "@/hooks/use-toast";
 import {
-  listRoles,
-  getRole,
   createRole,
-  updateRole,
   deleteRole,
-  listRoleTemplates,
+  getRole,
   listPermissions,
+  listRoleTemplates,
+  listRoles,
   simulateAccess,
+  updateRole,
   validateRolePermissions,
 } from "@/services/rbac-service";
 import type { RoleValidationResult } from "@shared/ipc-types";
 import type {
-  RoleWithPermissions,
+  CreateRoleInput,
   RoleDetail,
   RoleTemplate,
+  RoleWithPermissions,
   SimulateAccessInput,
   SimulateAccessResult,
-  CreateRoleInput,
   UpdateRoleInput,
 } from "@shared/ipc-types";
 import { P, ROLE_TEMPLATES } from "@shared/rbac/permissions.generated";
@@ -76,7 +76,7 @@ function DomainChips({
       <span
         className={`inline-flex items-center rounded-full px-2 py-0.5 text-[9px] ${mfChip.fullAccess}`}
       >
-        {t("roles.fullAccess", "Accès complet")}
+        {t("roles.fullAccess")}
       </span>
     );
   }
@@ -223,7 +223,7 @@ function CreateRoleDialog({
         permission_names: permissionNames,
       };
       await withStepUp(() => createRole(input));
-      toast({ title: t("roles.created", "Rôle créé"), variant: "success" });
+      toast({ title: t("roles.created"), variant: "success" });
       onCreated();
       onClose();
       setName("");
@@ -233,7 +233,7 @@ function CreateRoleDialog({
       const msg = err instanceof Error ? err.message : String(err);
       if (!msg.includes("cancelled")) {
         toast({
-          title: msg || t("roles.errors.createFailed", "Erreur de création"),
+          title: msg || t("roles.errors.createFailed"),
           variant: "destructive",
         });
       }
@@ -246,44 +246,35 @@ function CreateRoleDialog({
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{t("roles.create.title", "Créer un rôle")}</DialogTitle>
-          <DialogDescription>
-            {t(
-              "roles.create.description",
-              "Définissez un nom et sélectionnez éventuellement un modèle.",
-            )}
-          </DialogDescription>
+          <DialogTitle>{t("roles.create.title")}</DialogTitle>
+          <DialogDescription>{t("roles.create.description")}</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-2">
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">{t("roles.fields.name", "Nom")}</label>
+            <label className="text-sm font-medium">{t("roles.fields.name")}</label>
             <Input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Technicien terrain"
+              placeholder={t("roles.create.namePlaceholder")}
             />
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">
-              {t("roles.fields.description", "Description")}
-            </label>
+            <label className="text-sm font-medium">{t("roles.fields.description")}</label>
             <Input value={description} onChange={(e) => setDescription(e.target.value)} />
           </div>
           {templates.length > 0 && (
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">{t("roles.create.template", "Modèle")}</label>
+              <label className="text-sm font-medium">{t("roles.create.template")}</label>
               <Select
                 value={templateId || "__none__"}
                 onValueChange={(v) => setTemplateId(v === "__none__" ? "" : v)}
               >
                 <SelectTrigger>
-                  <SelectValue placeholder={t("roles.create.noTemplate", "Sans modèle")} />
+                  <SelectValue placeholder={t("roles.create.noTemplate")} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="__none__">
-                    {t("roles.create.noTemplate", "Sans modèle")}
-                  </SelectItem>
+                  <SelectItem value="__none__">{t("roles.create.noTemplate")}</SelectItem>
                   {templates.map((tmpl) => (
                     <SelectItem key={tmpl.id} value={String(tmpl.id)}>
                       {tmpl.name}
@@ -297,10 +288,10 @@ function CreateRoleDialog({
 
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
-            {t("common.cancel", "Annuler")}
+            {t("common.cancel")}
           </Button>
           <Button onClick={handleCreate} disabled={!name.trim() || submitting}>
-            {t("roles.create.confirm", "Créer")}
+            {t("roles.create.confirm")}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -341,20 +332,13 @@ function SimulateDialog({ open, onClose }: { open: boolean; onClose: () => void 
     >
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{t("roles.simulate.title", "Simuler l'accès")}</DialogTitle>
-          <DialogDescription>
-            {t(
-              "roles.simulate.description",
-              "Visualisez les permissions effectives d'un utilisateur dans un périmètre donné.",
-            )}
-          </DialogDescription>
+          <DialogTitle>{t("roles.simulate.title")}</DialogTitle>
+          <DialogDescription>{t("roles.simulate.description")}</DialogDescription>
         </DialogHeader>
 
         <div className="flex items-end gap-3 py-2">
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">
-              {t("roles.simulate.userId", "ID utilisateur")}
-            </label>
+            <label className="text-sm font-medium">{t("roles.simulate.userId")}</label>
             <Input
               value={userId}
               onChange={(e) => setUserId(e.target.value)}
@@ -363,20 +347,20 @@ function SimulateDialog({ open, onClose }: { open: boolean; onClose: () => void 
             />
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">{t("roles.simulate.scope", "Périmètre")}</label>
+            <label className="text-sm font-medium">{t("roles.simulate.scope")}</label>
             <Select value={scopeType} onValueChange={setScopeType}>
               <SelectTrigger className="w-36">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="global">{t("scope.global", "Global")}</SelectItem>
-                <SelectItem value="site">{t("scope.site", "Site")}</SelectItem>
-                <SelectItem value="department">{t("scope.department", "Département")}</SelectItem>
+                <SelectItem value="global">{t("scope.global")}</SelectItem>
+                <SelectItem value="site">{t("scope.site")}</SelectItem>
+                <SelectItem value="department">{t("scope.department")}</SelectItem>
               </SelectContent>
             </Select>
           </div>
           <Button onClick={handleSimulate} disabled={!userId || loading}>
-            {t("roles.simulate.run", "Simuler")}
+            {t("roles.simulate.run")}
           </Button>
         </div>
 
@@ -386,7 +370,7 @@ function SimulateDialog({ open, onClose }: { open: boolean; onClose: () => void 
               <div className="space-y-1">
                 <h4 className="flex items-center gap-1 font-medium text-orange-600">
                   <AlertTriangle className="h-4 w-4" />
-                  {t("roles.simulate.warnings", "Avertissements de dépendance")}
+                  {t("roles.simulate.warnings")}
                 </h4>
                 <ul className="list-inside list-disc text-xs text-orange-600">
                   {result.dependency_warnings.map((w) => (
@@ -399,7 +383,7 @@ function SimulateDialog({ open, onClose }: { open: boolean; onClose: () => void 
               <div className="space-y-1">
                 <h4 className="flex items-center gap-1 font-medium text-red-600">
                   <Lock className="h-4 w-4" />
-                  {t("roles.simulate.blocked", "Bloqué par")}
+                  {t("roles.simulate.blocked")}
                 </h4>
                 <ul className="list-inside list-disc text-xs text-red-600">
                   {result.blocked_by.map((b) => (
@@ -426,7 +410,7 @@ function SimulateDialog({ open, onClose }: { open: boolean; onClose: () => void 
               setResult(null);
             }}
           >
-            {t("common.close", "Fermer")}
+            {t("common.close")}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -478,7 +462,7 @@ export function RoleEditorPanel() {
       setAllPermissions([...perms.map((p) => p.name)].sort());
     } catch {
       toast({
-        title: t("roles.errors.loadFailed", "Erreur de chargement des rôles"),
+        title: t("roles.errors.loadFailed"),
         variant: "destructive",
       });
     } finally {
@@ -504,7 +488,7 @@ export function RoleEditorPanel() {
       .catch((err) => {
         console.error("getRole failed:", err);
         toast({
-          title: t("roles.errors.loadDetailFailed", "Impossible de charger le rôle"),
+          title: t("roles.errors.loadDetailFailed"),
           description: err instanceof Error ? err.message : String(err),
           variant: "destructive",
         });
@@ -587,7 +571,7 @@ export function RoleEditorPanel() {
         remove_permissions: [...pendingRemove],
       };
       await withStepUp(() => updateRole(input));
-      toast({ title: t("roles.saved", "Rôle mis à jour"), variant: "success" });
+      toast({ title: t("roles.saved"), variant: "success" });
       setPendingAdd(new Set());
       setPendingRemove(new Set());
       // Refresh detail + list
@@ -595,7 +579,7 @@ export function RoleEditorPanel() {
       setRoleDetail(detail);
     } catch {
       toast({
-        title: t("roles.errors.saveFailed", "Erreur de sauvegarde"),
+        title: t("roles.errors.saveFailed"),
         variant: "destructive",
       });
     }
@@ -604,13 +588,13 @@ export function RoleEditorPanel() {
   const handleDelete = async (roleId: number) => {
     try {
       await withStepUp(() => deleteRole(roleId));
-      toast({ title: t("roles.deleted", "Rôle supprimé"), variant: "success" });
+      toast({ title: t("roles.deleted"), variant: "success" });
       setSelectedRoleId(null);
       void fetchRoles();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       toast({
-        title: t("roles.errors.deleteFailed", "Impossible de supprimer ce rôle"),
+        title: t("roles.errors.deleteFailed"),
         description: msg,
         variant: "destructive",
       });
@@ -622,7 +606,7 @@ export function RoleEditorPanel() {
       {/* Left: Role list */}
       <div className="w-72 shrink-0 space-y-3">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-text-primary">{t("roles.list", "Rôles")}</h3>
+          <h3 className="text-sm font-semibold text-text-primary">{t("roles.list")}</h3>
           <div className="flex gap-1">
             {can(P.ADM_ROLES) && (
               <Button variant="ghost" size="sm" onClick={() => setShowCreate(true)}>
@@ -637,9 +621,7 @@ export function RoleEditorPanel() {
           </div>
         </div>
 
-        {loading && (
-          <p className="text-xs text-text-secondary">{t("common.loading", "Chargement…")}</p>
-        )}
+        {loading && <p className="text-xs text-text-secondary">{t("common.loading")}</p>}
 
         <div className="space-y-1">
           {roles.map((role) => (
@@ -678,14 +660,10 @@ export function RoleEditorPanel() {
       {/* Right: Permission editor */}
       <div className="min-w-0 flex-1 rounded-lg border border-surface-border bg-surface-1 p-4">
         {!roleDetail && !detailLoading && (
-          <p className="text-sm text-text-secondary">
-            {t("roles.selectRole", "Sélectionnez un rôle pour voir et modifier ses permissions.")}
-          </p>
+          <p className="text-sm text-text-secondary">{t("roles.selectRole")}</p>
         )}
 
-        {detailLoading && (
-          <p className="text-sm text-text-secondary">{t("common.loading", "Chargement…")}</p>
-        )}
+        {detailLoading && <p className="text-sm text-text-secondary">{t("common.loading")}</p>}
 
         {roleDetail && !detailLoading && (
           <div className="space-y-4">
@@ -698,9 +676,7 @@ export function RoleEditorPanel() {
                 )}
                 <div className="mt-1 flex items-center gap-2">
                   <Badge variant={roleDetail.role.is_system ? "outline" : "secondary"}>
-                    {roleDetail.role.is_system
-                      ? t("roles.system", "Système")
-                      : t("roles.custom", "Personnalisé")}
+                    {roleDetail.role.is_system ? t("roles.system") : t("roles.custom")}
                   </Badge>
                   <Badge variant="outline">{roleDetail.role.status}</Badge>
                 </div>
@@ -709,7 +685,7 @@ export function RoleEditorPanel() {
               <div className="flex gap-2">
                 {can(P.ADM_ROLES) && hasPendingChanges && (
                   <Button size="sm" onClick={handleSave} disabled={hasHardDepErrors || validating}>
-                    {t("roles.save", "Enregistrer")}
+                    {t("roles.save")}
                   </Button>
                 )}
                 {can(P.ADM_ROLES) && !roleDetail.role.is_system && (
@@ -719,7 +695,7 @@ export function RoleEditorPanel() {
                     onClick={() => handleDelete(roleDetail.role.id)}
                   >
                     <Trash2 className="mr-1.5 h-3.5 w-3.5" />
-                    {t("roles.delete", "Supprimer")}
+                    {t("roles.delete")}
                   </Button>
                 )}
               </div>
@@ -730,15 +706,12 @@ export function RoleEditorPanel() {
               <div className="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
                 <h4 className="flex items-center gap-1.5 font-medium">
                   <AlertTriangle className="h-4 w-4" />
-                  {t(
-                    "roles.hardDepErrors",
-                    "Dépendances obligatoires manquantes — sauvegarde bloquée",
-                  )}
+                  {t("roles.hardDepErrors")}
                 </h4>
                 <ul className="mt-1 list-inside list-disc text-xs">
                   {validationResult.missing_hard_deps.map((d) => (
                     <li key={`${d.permission_name}-${d.required_permission_name}`}>
-                      <strong>{d.permission_name}</strong> {t("roles.requires", "requiert")}{" "}
+                      <strong>{d.permission_name}</strong> {t("roles.requires")}{" "}
                       <strong>{d.required_permission_name}</strong>
                     </li>
                   ))}
@@ -751,12 +724,12 @@ export function RoleEditorPanel() {
               <div className="rounded-md border border-orange-200 bg-orange-50 p-3 text-sm text-orange-800 dark:border-orange-900 dark:bg-orange-950 dark:text-orange-200">
                 <h4 className="flex items-center gap-1.5 font-medium">
                   <AlertTriangle className="h-4 w-4" />
-                  {t("roles.warnDeps", "Dépendances recommandées manquantes")}
+                  {t("roles.warnDeps")}
                 </h4>
                 <ul className="mt-1 list-inside list-disc text-xs">
                   {validationResult.warn_deps.map((d) => (
                     <li key={`${d.permission_name}-${d.required_permission_name}`}>
-                      <strong>{d.permission_name}</strong> {t("roles.suggests", "suggère")}{" "}
+                      <strong>{d.permission_name}</strong> {t("roles.suggests")}{" "}
                       <strong>{d.required_permission_name}</strong>
                     </li>
                   ))}
@@ -769,7 +742,7 @@ export function RoleEditorPanel() {
               <div className="rounded-md border border-orange-200 bg-orange-50 p-3 text-sm text-orange-800 dark:border-orange-900 dark:bg-orange-950 dark:text-orange-200">
                 <h4 className="flex items-center gap-1.5 font-medium">
                   <AlertTriangle className="h-4 w-4" />
-                  {t("roles.dependencyWarnings", "Avertissements de dépendance")}
+                  {t("roles.dependencyWarnings")}
                 </h4>
                 <ul className="mt-1 list-inside list-disc text-xs">
                   {roleDetail.dependency_warnings.map((w) => (

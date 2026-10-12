@@ -19,16 +19,9 @@ export function UnauthorizedPage() {
           <Lock className="h-8 w-8 text-status-danger" />
         </div>
 
-        <h1 className="text-xl font-semibold text-text-primary">
-          {t("unauthorized.title", "Accès non autorisé")}
-        </h1>
+        <h1 className="text-xl font-semibold text-text-primary">{t("unauthorized.title")}</h1>
 
-        <p className="mt-2 text-sm text-text-secondary">
-          {t(
-            "unauthorized.message",
-            "Vous n'avez pas les permissions nécessaires pour accéder à cette page.",
-          )}
-        </p>
+        <p className="mt-2 text-sm text-text-secondary">{t("unauthorized.message")}</p>
 
         <Link
           to="/"
@@ -36,7 +29,7 @@ export function UnauthorizedPage() {
                      px-4 py-2 text-sm font-medium text-white
                      hover:bg-primary/90 transition-colors"
         >
-          {t("unauthorized.backToDashboard", "Retour au tableau de bord")}
+          {t("unauthorized.backToDashboard")}
         </Link>
       </div>
     </div>
