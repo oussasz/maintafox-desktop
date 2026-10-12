@@ -65,9 +65,89 @@ pub struct WoAnalyticsSnapshot {
     // Planning quality
     pub was_planned: bool,
     pub parts_actuals_confirmed: bool,
-    // Module integration stubs
+    // Links to other modules
+    /// PM occurrence that generated this WO (`pm_occurrences.linked_work_order_id`).
     pub pm_occurrence_id: Option<i64>,
+    pub pm_plan_code: Option<String>,
+    pub pm_plan_title: Option<String>,
+    pub pm_due_at: Option<String>,
+    /// Work permits linked to this WO, newest first.
     pub permit_ids: Vec<i64>,
+    pub permits: Vec<WoLinkedPermit>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WoLinkedPermit {
+    pub id: i64,
+    pub code: String,
+    pub status: String,
+    pub permit_type_code: Option<String>,
+}
+
+struct PmLink {
+    occurrence_id: i64,
+    plan_code: String,
+    plan_title: String,
+    due_at: Option<String>,
+}
+
+async fn load_pm_link(db: &impl ConnectionTrait, wo_id: i64) -> AppResult<Option<PmLink>> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT o.id, o.due_at, p.code, p.title FROM pm_occurrences o \
+             JOIN pm_plans p ON p.id = o.pm_plan_id \
+             WHERE o.linked_work_order_id = ? ORDER BY o.id DESC LIMIT 1",
+            [wo_id.into()],
+        ))
+        .await?;
+    let Some(r) = row else {
+        return Ok(None);
+    };
+    Ok(Some(PmLink {
+        occurrence_id: r
+            .try_get::<i64>("", "id")
+            .map_err(|e| decode_err("pm_occurrence.id", e))?,
+        plan_code: r
+            .try_get::<String>("", "code")
+            .map_err(|e| decode_err("pm_plans.code", e))?,
+        plan_title: r
+            .try_get::<String>("", "title")
+            .map_err(|e| decode_err("pm_plans.title", e))?,
+        due_at: r
+            .try_get::<Option<String>>("", "due_at")
+            .map_err(|e| decode_err("pm_occurrence.due_at", e))?,
+    }))
+}
+
+pub(crate) async fn load_permit_links(db: &impl ConnectionTrait, wo_id: i64) -> AppResult<Vec<WoLinkedPermit>> {
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT wp.id, wp.code, wp.status, pt.code AS permit_type_code FROM work_permits wp \
+             LEFT JOIN permit_types pt ON pt.id = wp.permit_type_id \
+             WHERE wp.linked_work_order_id = ? ORDER BY wp.id DESC",
+            [wo_id.into()],
+        ))
+        .await?;
+    rows.iter()
+        .map(|r| {
+            Ok(WoLinkedPermit {
+                id: r
+                    .try_get::<i64>("", "id")
+                    .map_err(|e| decode_err("work_permits.id", e))?,
+                code: r
+                    .try_get::<String>("", "code")
+                    .map_err(|e| decode_err("work_permits.code", e))?,
+                status: r
+                    .try_get::<String>("", "status")
+                    .map_err(|e| decode_err("work_permits.status", e))?,
+                permit_type_code: r
+                    .try_get::<Option<String>>("", "permit_type_code")
+                    .map_err(|e| decode_err("permit_types.code", e))?,
+            })
+        })
+        .collect()
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -217,6 +297,9 @@ pub async fn get_wo_analytics_snapshot(db: &impl ConnectionTrait, wo_id: i64) ->
         .map_err(|e| decode_err("parts_actuals_confirmed", e))?;
 
     // ── Assemble snapshot ─────────────────────────────────────────────────
+    let pm = load_pm_link(db, wo_id).await?;
+    let permits = load_permit_links(db, wo_id).await?;
+
     Ok(WoAnalyticsSnapshot {
         wo_id: row.try_get::<i64>("", "wo_id").map_err(|e| decode_err("wo_id", e))?,
         wo_code: row
@@ -322,8 +405,11 @@ pub async fn get_wo_analytics_snapshot(db: &impl ConnectionTrait, wo_id: i64) ->
             .map_err(|e| decode_err("downtime_cnt", e))?,
         was_planned,
         parts_actuals_confirmed: pac != 0,
-        // Module integration stubs — populated by future SPs
-        pm_occurrence_id: None,
-        permit_ids: vec![],
+        pm_occurrence_id: pm.as_ref().map(|p| p.occurrence_id),
+        pm_plan_code: pm.as_ref().map(|p| p.plan_code.clone()),
+        pm_plan_title: pm.as_ref().map(|p| p.plan_title.clone()),
+        pm_due_at: pm.and_then(|p| p.due_at),
+        permit_ids: permits.iter().map(|p| p.id).collect(),
+        permits,
     })
 }

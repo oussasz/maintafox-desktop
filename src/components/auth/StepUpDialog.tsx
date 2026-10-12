@@ -86,12 +86,12 @@ export function StepUpDialog({
         if (newAttempts >= MAX_ATTEMPTS) {
           setLockedUntil(Date.now() + LOCKOUT_SECONDS * 1000);
           setError(
-            t("stepUp.locked", "Trop de tentatives. Réessayez dans {{seconds}} secondes.", {
-              seconds: LOCKOUT_SECONDS,
+            t("stepUp.locked", {
+              count: LOCKOUT_SECONDS,
             }),
           );
         } else {
-          setError(t("stepUp.error", "Mot de passe incorrect. Veuillez réessayer."));
+          setError(t("stepUp.error"));
         }
       } finally {
         setLoading(false);
@@ -118,15 +118,9 @@ export function StepUpDialog({
               <Lock className="h-5 w-5 text-amber-700" />
             </div>
             <div>
-              <DialogTitle className="text-base">
-                {title ?? t("stepUp.title", "Confirmation d'identité requise")}
-              </DialogTitle>
+              <DialogTitle className="text-base">{title ?? t("stepUp.title")}</DialogTitle>
               <DialogDescription className="text-sm">
-                {description ??
-                  t(
-                    "stepUp.message",
-                    "Cette action est sensible. Saisissez votre mot de passe pour confirmer.",
-                  )}
+                {description ?? t("stepUp.message")}
               </DialogDescription>
             </div>
           </div>
@@ -135,7 +129,7 @@ export function StepUpDialog({
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label htmlFor="step-up-password" className="sr-only">
-              {t("stepUp.passwordLabel", "Mot de passe")}
+              {t("stepUp.passwordLabel")}
             </label>
             <Input
               ref={inputRef}
@@ -144,7 +138,7 @@ export function StepUpDialog({
               autoComplete="current-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder={t("stepUp.passwordLabel", "Mot de passe")}
+              placeholder={t("stepUp.passwordLabel")}
               disabled={isLocked || loading}
               required
             />
@@ -159,18 +153,14 @@ export function StepUpDialog({
             </div>
           )}
 
-          <p className="text-xs text-muted-foreground">
-            {t("stepUp.windowNote", "Fenêtre de vérification : 120 secondes")}
-          </p>
+          <p className="text-xs text-muted-foreground">{t("stepUp.windowNote")}</p>
 
           <DialogFooter>
             <Button type="button" variant="outline" size="sm" onClick={onCancel}>
-              {t("stepUp.cancel", "Annuler")}
+              {t("stepUp.cancel")}
             </Button>
             <Button type="submit" size="sm" disabled={isLocked || loading}>
-              {loading
-                ? t("stepUp.submitting", "Vérification...")
-                : t("stepUp.submit", "Confirmer l'identité")}
+              {loading ? t("stepUp.submitting") : t("stepUp.submit")}
             </Button>
           </DialogFooter>
         </form>

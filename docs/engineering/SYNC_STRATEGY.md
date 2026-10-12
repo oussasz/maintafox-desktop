@@ -435,3 +435,32 @@ people, catalogs) are shared.
   SQLCipher; a slower field PC will take proportionally longer (the worker runs in the
   background and the app stays usable).
 
+
+## 13. Work-order lifecycle: 8 stored phases, 12 derived states (Phase 6.4)
+
+PRD §6.5 describes 12 work-order **statuses**. The desktop deliberately stores 8 phases
+(`draft`, `planning`, `ready`, `in_progress`, `on_hold`, `completed`, `closed`, `cancelled`;
+migration 130, "Option B") and derives the PRD's 12 states from facts. This deviates from the
+PRD wording on purpose:
+
+- One stored status per phase keeps the state machine, permissions and sync payloads simple; the
+  finer PRD states are facts of the work order (approval, schedule, assignee, verification, kind
+  of hold), and storing them twice would let the two disagree after an offline edit.
+- The derived state depends **only on the work order's own row and its delay segments** — never on
+  tenant settings or other modules (inventory, permits…). It therefore only changes when that
+  work order is edited, and it never causes synchronised writes by itself.
+- Nothing derived is synchronised: `wo::lifecycle::derive` (Rust) computes it on read; the SQL
+  mirror (`SQL_CASE`, list filters and dashboard counts) and the TypeScript mirror
+  (`src/utils/wo-lifecycle.ts`) are checked against it for all 768 fact combinations
+  (`shared/wo/lifecycle-cases.json`). The transition log keeps the state reached at each
+  transition as history (`wo_state_transition_log.lifecycle_state`, a snapshot, never re-derived).
+
+Facts added by migration 175 (synchronised with their tables):
+
+- `work_orders.planning_approval_required`: copied from the tenant setting
+  `wo_planning_approval_required` when the work order enters planning. Changing the setting later
+  only affects work orders that enter planning afterwards (intended: no mass re-derivation).
+- `work_order_delay_segments.hold_kind` (`pause` | `prerequisite`, never NULL): written by the
+  pause and hold actions. The materializer refuses any other value (conflict `INVALID_VALUE`) and
+  defers a row without it (`MISSING_FIELD`: sent by an older app version) rather than guessing,
+  because the kind decides between "paused" and "waiting for prerequisite".

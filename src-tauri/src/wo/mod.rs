@@ -1,6 +1,7 @@
 pub mod analytics;
 pub mod attachments;
 pub mod audit;
+pub mod backlog;
 pub mod closeout;
 pub mod costs;
 pub mod delay;
@@ -8,6 +9,7 @@ pub mod domain;
 pub mod execution;
 pub mod execution_log;
 pub mod labor;
+pub mod lifecycle;
 pub mod parts;
 pub mod permissions;
 pub mod plan_adherence;
@@ -25,6 +27,8 @@ pub mod workflow;
 mod analytics_tests;
 #[cfg(test)]
 mod audit_tests;
+#[cfg(test)]
+mod backlog_tests;
 #[cfg(test)]
 mod closeout_tests;
 #[cfg(test)]

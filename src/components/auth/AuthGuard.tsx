@@ -1,4 +1,5 @@
 import { useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import { Link, Navigate, Outlet } from "react-router-dom";
 
 import { PermissionProvider } from "@/contexts/PermissionContext";
@@ -24,6 +25,7 @@ import { useAuthInterceptorStore } from "@/store/auth-interceptor-store";
  * it and wipe in-memory permissions.
  */
 export function AuthGuard() {
+  const { t } = useTranslation("auth");
   const session = useSession();
   const isBootstrapping = session.isLoading && session.info === null;
   const isAuthLockOpen = useAuthInterceptorStore((s) => s.isLockOpen);
@@ -108,14 +110,12 @@ export function AuthGuard() {
         {showPasswordWarning && (
           <div className="sticky top-0 z-40 border-b border-amber-300 bg-amber-50 px-4 py-2 text-amber-900">
             <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 text-sm">
-              <p>
-                Votre mot de passe expire dans {warnDays} {warnDays <= 1 ? "jour" : "jours"}.
-              </p>
+              <p>{t("passwordExpiry.banner", { count: warnDays })}</p>
               <Link
                 to="/settings?tab=profile"
                 className="font-semibold underline decoration-amber-700 underline-offset-2"
               >
-                Changer maintenant
+                {t("passwordExpiry.changeNow")}
               </Link>
             </div>
           </div>

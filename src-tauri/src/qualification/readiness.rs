@@ -32,34 +32,54 @@ fn cert_acceptable_for_requirement(pc: &PersonnelCertification) -> bool {
     }
     match &pc.expires_at {
         None => true,
-        Some(exp) => parse_day(exp).map(|d| d >= today_naive()).unwrap_or(true),
+        // An unreadable expiry never qualifies anyone (fail closed).
+        Some(exp) => parse_day(exp).is_some_and(|d| d >= today_naive()),
     }
 }
 
-fn required_cert_type_ids_for_permit(profiles: &[QualificationRequirementProfile], permit_type_code: &str) -> Vec<i64> {
+/// A malformed stored profile is an error: reading it as "no requirement" would qualify everyone.
+fn profile_codes(p: &QualificationRequirementProfile) -> AppResult<Vec<String>> {
+    serde_json::from_str(&p.applies_to_permit_type_codes_json).map_err(|e| {
+        AppError::ValidationFailed(vec![format!(
+            "Qualification profile '{}' has unreadable permit type codes: {e}",
+            p.profile_name
+        )])
+    })
+}
+
+fn profile_required_ids(p: &QualificationRequirementProfile) -> AppResult<Vec<i64>> {
+    serde_json::from_str(&p.required_certification_type_ids_json).map_err(|e| {
+        AppError::ValidationFailed(vec![format!(
+            "Qualification profile '{}' has unreadable certification types: {e}",
+            p.profile_name
+        )])
+    })
+}
+
+fn required_cert_type_ids_for_permit(
+    profiles: &[QualificationRequirementProfile],
+    permit_type_code: &str,
+) -> AppResult<Vec<i64>> {
     let mut out: Vec<i64> = Vec::new();
     for p in profiles {
-        let codes: Vec<String> = serde_json::from_str(&p.applies_to_permit_type_codes_json).unwrap_or_default();
-        if !codes.iter().any(|c| c == permit_type_code) {
+        if !profile_codes(p)?.iter().any(|c| c == permit_type_code) {
             continue;
         }
-        let req: Vec<i64> = serde_json::from_str(&p.required_certification_type_ids_json).unwrap_or_default();
-        out.extend(req);
+        out.extend(profile_required_ids(p)?);
     }
     out.sort_unstable();
     out.dedup();
-    out
+    Ok(out)
 }
 
-fn distinct_permit_codes_from_profiles(profiles: &[QualificationRequirementProfile]) -> Vec<String> {
+fn distinct_permit_codes_from_profiles(profiles: &[QualificationRequirementProfile]) -> AppResult<Vec<String>> {
     let mut codes: Vec<String> = Vec::new();
     for p in profiles {
-        let c: Vec<String> = serde_json::from_str(&p.applies_to_permit_type_codes_json).unwrap_or_default();
-        codes.extend(c);
+        codes.extend(profile_codes(p)?);
     }
     codes.sort();
     codes.dedup();
-    codes
+    Ok(codes)
 }
 
 fn evaluate_readiness(
@@ -67,16 +87,16 @@ fn evaluate_readiness(
     certs: &[PersonnelCertification],
     personnel_id: i64,
     permit_type_code: &str,
-) -> PersonnelReadinessRow {
-    let required = required_cert_type_ids_for_permit(profiles, permit_type_code);
+) -> AppResult<PersonnelReadinessRow> {
+    let required = required_cert_type_ids_for_permit(profiles, permit_type_code)?;
     if required.is_empty() {
-        return PersonnelReadinessRow {
+        return Ok(PersonnelReadinessRow {
             personnel_id,
             permit_type_code: permit_type_code.to_string(),
             is_qualified: true,
             blocking_reason: None,
             expires_at: None,
-        };
+        });
     }
 
     let mut missing: Vec<i64> = Vec::new();
@@ -110,13 +130,13 @@ fn evaluate_readiness(
         (true, None)
     };
 
-    PersonnelReadinessRow {
+    Ok(PersonnelReadinessRow {
         personnel_id,
         permit_type_code: permit_type_code.to_string(),
         is_qualified,
         blocking_reason: reason,
         expires_at: earliest,
-    }
+    })
 }
 
 async fn permit_type_code_by_id(db: &DatabaseConnection, permit_type_id: i64) -> AppResult<Option<String>> {
@@ -127,7 +147,9 @@ async fn permit_type_code_by_id(db: &DatabaseConnection, permit_type_id: i64) ->
             [permit_type_id.into()],
         ))
         .await?;
-    Ok(row.and_then(|r| r.try_get("", "code").ok()))
+    row.map(|r| r.try_get::<String>("", "code"))
+        .transpose()
+        .map_err(|e| decode_err("code", e))
 }
 
 async fn load_certs_for_personnel(
@@ -156,14 +178,14 @@ pub async fn list_personnel_readiness(
     match (filter.personnel_id, filter.permit_type_code.clone()) {
         (Some(pid), Some(code)) => {
             let certs = load_certs_for_personnel(db, pid).await?;
-            Ok(vec![evaluate_readiness(&profiles, &certs, pid, &code)])
+            Ok(vec![evaluate_readiness(&profiles, &certs, pid, &code)?])
         }
         (Some(pid), None) => {
             let certs = load_certs_for_personnel(db, pid).await?;
-            let codes = distinct_permit_codes_from_profiles(&profiles);
+            let codes = distinct_permit_codes_from_profiles(&profiles)?;
             let mut rows = Vec::with_capacity(codes.len());
             for code in codes {
-                rows.push(evaluate_readiness(&profiles, &certs, pid, &code));
+                rows.push(evaluate_readiness(&profiles, &certs, pid, &code)?);
             }
             Ok(rows)
         }
@@ -212,12 +234,12 @@ pub async fn evaluate_crew_permit_skill_gaps(
     };
 
     let profiles = list_qualification_requirement_profiles(db).await?;
-    let required = required_cert_type_ids_for_permit(&profiles, &permit_code);
+    let required = required_cert_type_ids_for_permit(&profiles, &permit_code)?;
 
     let mut rows: Vec<CrewPermitSkillGapRow> = Vec::new();
     for pid in &input.personnel_ids {
         let certs = load_certs_for_personnel(db, *pid).await?;
-        let row = evaluate_readiness(&profiles, &certs, *pid, &permit_code);
+        let row = evaluate_readiness(&profiles, &certs, *pid, &permit_code)?;
         let missing: Vec<i64> = if row.is_qualified {
             vec![]
         } else {
@@ -375,7 +397,7 @@ pub async fn refresh_personnel_readiness_snapshot_payload(
     period: String,
 ) -> AppResult<PersonnelReadinessSnapshot> {
     let profiles = list_qualification_requirement_profiles(db).await?;
-    let codes = distinct_permit_codes_from_profiles(&profiles);
+    let codes = distinct_permit_codes_from_profiles(&profiles)?;
     let personnel_rows = db
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
@@ -388,7 +410,7 @@ pub async fn refresh_personnel_readiness_snapshot_payload(
         let pid: i64 = pr.try_get("", "id").map_err(|e| decode_err("id", e))?;
         let certs = load_certs_for_personnel(db, pid).await?;
         for code in &codes {
-            let row = evaluate_readiness(&profiles, &certs, pid, code);
+            let row = evaluate_readiness(&profiles, &certs, pid, code)?;
             matrix.push(serde_json::to_value(&row)?);
         }
     }

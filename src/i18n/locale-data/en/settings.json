@@ -17,7 +17,8 @@
     "system": "System",
     "backup": "Backup",
     "reliability": "Reliability",
-    "documents": "Documents & Branding"
+    "documents": "Documents & Branding",
+    "work_orders": "Work orders"
   },
   "table": {
     "key": "Key",
@@ -69,7 +70,8 @@
     "backup.retention_monthly": "Monthly Retention (months)",
     "diagnostics.log_retention_days": "Log Retention (days)",
     "ram.fmeca_rpn_critical_threshold": "FMECA RPN critical threshold",
-    "documents.default_header": "Default document header"
+    "documents.default_header": "Default document header",
+    "wo.reopen_window_days": "Reopen window after closure (days)"
   },
   "documentHeader": {
     "title": "Documents & Branding",

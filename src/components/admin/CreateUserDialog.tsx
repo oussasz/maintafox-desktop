@@ -50,10 +50,10 @@ function computeStrength(password: string): PasswordStrength {
   return "weak";
 }
 
-const STRENGTH_STYLES: Record<PasswordStrength, { bar: string; label: string }> = {
-  weak: { bar: "bg-red-500 w-1/3", label: "Faible" },
-  medium: { bar: "bg-amber-500 w-2/3", label: "Moyen" },
-  strong: { bar: "bg-emerald-500 w-full", label: "Fort" },
+const STRENGTH_STYLES: Record<PasswordStrength, { bar: string }> = {
+  weak: { bar: "bg-red-500 w-1/3" },
+  medium: { bar: "bg-amber-500 w-2/3" },
+  strong: { bar: "bg-emerald-500 w-full" },
 };
 
 function PasswordStrengthBar({ password }: { password: string }) {
@@ -66,9 +66,7 @@ function PasswordStrengthBar({ password }: { password: string }) {
       <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-2">
         <div className={`h-full rounded-full transition-all ${style.bar}`} />
       </div>
-      <p className="text-[10px] text-text-secondary">
-        {t(`users.create.strength.${strength}`, style.label)}
-      </p>
+      <p className="text-[10px] text-text-secondary">{t(`users.create.strength.${strength}`)}</p>
     </div>
   );
 }
@@ -120,7 +118,7 @@ export function CreateUserDialog({
       setAssignableRoles(list);
     } catch {
       setAssignableRoles([]);
-      const msg = t("users.create.rolesLoadError", "Could not load roles from the server.");
+      const msg = t("users.create.rolesLoadError");
       setRolesLoadError(msg);
       toast({ title: msg, variant: "destructive" });
     } finally {
@@ -161,7 +159,7 @@ export function CreateUserDialog({
         if (!cancelled) {
           setPersonnelItems([]);
           toast({
-            title: t("users.create.personnelLoadError", "Could not load personnel list"),
+            title: t("users.create.personnelLoadError"),
             variant: "destructive",
           });
         }
@@ -179,24 +177,19 @@ export function CreateUserDialog({
 
   const passwordError = useMemo(() => {
     if (!password && !passwordRequired) return null;
-    if (password.length > 0 && password.length < 8)
-      return t("users.create.passwordTooShort", "8 caractères minimum");
-    if (password && !/[A-Z]/.test(password))
-      return t("users.create.passwordNeedUpper", "Une majuscule requise");
-    if (password && !/[a-z]/.test(password))
-      return t("users.create.passwordNeedLower", "Une minuscule requise");
-    if (password && !/\d/.test(password))
-      return t("users.create.passwordNeedDigit", "Un chiffre requis");
+    if (password.length > 0 && password.length < 8) return t("users.create.passwordTooShort");
+    if (password && !/[A-Z]/.test(password)) return t("users.create.passwordNeedUpper");
+    if (password && !/[a-z]/.test(password)) return t("users.create.passwordNeedLower");
+    if (password && !/\d/.test(password)) return t("users.create.passwordNeedDigit");
     return null;
   }, [password, passwordRequired, t]);
 
   const confirmError = useMemo(() => {
-    if (confirmPassword && password !== confirmPassword)
-      return t("users.create.passwordMismatch", "Les mots de passe ne correspondent pas");
+    if (confirmPassword && password !== confirmPassword) return t("users.create.passwordMismatch");
     return null;
   }, [password, confirmPassword, t]);
 
-  const roleIdParsed = roleIdStr ? Number.parseInt(roleIdStr, 10) : NaN;
+  const roleIdParsed = roleIdStr ? Number.parseInt(roleIdStr, 10) : Number.NaN;
   const roleSelectionValid =
     roleIdStr.length > 0 &&
     Number.isFinite(roleIdParsed) &&
@@ -219,7 +212,7 @@ export function CreateUserDialog({
     const rid = Number.parseInt(roleIdStr, 10);
     if (!Number.isFinite(rid) || rid <= 0 || !assignableRoles.some((r) => r.id === rid)) {
       toast({
-        title: t("users.create.roleRequired", "Select a role for this user."),
+        title: t("users.create.roleRequired"),
         variant: "destructive",
       });
       return;
@@ -236,7 +229,7 @@ export function CreateUserDialog({
           : {}),
       };
       await createUser(input);
-      toast({ title: t("users.create.success", "Utilisateur créé"), variant: "success" });
+      toast({ title: t("users.create.success"), variant: "success" });
       onCreated();
       onClose();
       setUsername("");
@@ -249,7 +242,7 @@ export function CreateUserDialog({
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       toast({
-        title: msg || t("users.create.error", "Erreur lors de la création"),
+        title: msg || t("users.create.error"),
         variant: "destructive",
       });
     } finally {
@@ -261,25 +254,18 @@ export function CreateUserDialog({
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{t("users.create.title", "Nouvel utilisateur")}</DialogTitle>
-          <DialogDescription>
-            {t(
-              "users.create.description",
-              "Créez un compte utilisateur et définissez son mode d'authentification.",
-            )}
-          </DialogDescription>
+          <DialogTitle>{t("users.create.title")}</DialogTitle>
+          <DialogDescription>{t("users.create.description")}</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-2">
           {/* Username */}
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">
-              {t("users.fields.username", "Identifiant")} *
-            </label>
+            <label className="text-sm font-medium">{t("users.fields.username")} *</label>
             <Input
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              placeholder="jean.dupont"
+              placeholder={t("users.create.usernamePlaceholder")}
               autoComplete="off"
             />
           </div>
@@ -288,7 +274,7 @@ export function CreateUserDialog({
           <div className="space-y-1.5">
             <div className="flex items-center justify-between gap-2">
               <label className="text-sm font-medium" htmlFor="create-user-role">
-                {t("users.create.roleLabel", "Initial role")} *
+                {t("users.create.roleLabel")} *
               </label>
               {rolesLoadError ? (
                 <Button
@@ -299,33 +285,25 @@ export function CreateUserDialog({
                   disabled={rolesLoading}
                   onClick={() => void loadAssignableRoles()}
                 >
-                  {t("users.create.rolesRetry", "Retry")}
+                  {t("users.create.rolesRetry")}
                 </Button>
               ) : null}
             </div>
-            <p className="text-xs text-text-secondary">
-              {t(
-                "users.create.roleHint",
-                "This role is assigned at tenant scope for the active organization. It defines the user's permissions.",
-              )}
-            </p>
+            <p className="text-xs text-text-secondary">{t("users.create.roleHint")}</p>
             {rolesLoading ? (
-              <p className="text-xs text-text-secondary">{t("common.loading", "Chargement…")}</p>
+              <p className="text-xs text-text-secondary">{t("common.loading")}</p>
             ) : rolesLoadError ? (
               <p className="text-xs text-red-600" role="alert">
                 {rolesLoadError}
               </p>
             ) : assignableRoles.length === 0 ? (
               <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-100">
-                {t(
-                  "users.create.noRolesAvailable",
-                  "No roles are available (none defined, or all are retired). Create or restore a role before adding users.",
-                )}
+                {t("users.create.noRolesAvailable")}
               </p>
             ) : (
               <Select value={roleIdStr} onValueChange={setRoleIdStr} disabled={submitting}>
                 <SelectTrigger id="create-user-role" className="w-full">
-                  <SelectValue placeholder={t("users.create.rolePlaceholder", "Choose a role…")} />
+                  <SelectValue placeholder={t("users.create.rolePlaceholder")} />
                 </SelectTrigger>
                 <SelectContent>
                   {assignableRoles.map((r) => (
@@ -335,9 +313,7 @@ export function CreateUserDialog({
                       title={r.description ?? undefined}
                       textValue={r.name}
                     >
-                      {r.is_system
-                        ? `${r.name} (${t("users.create.roleSystemBadge", "system")})`
-                        : r.name}
+                      {r.is_system ? `${r.name} (${t("users.create.roleSystemBadge")})` : r.name}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -347,53 +323,38 @@ export function CreateUserDialog({
 
           {/* Optional link to personnel */}
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">
-              {t("users.create.linkPersonnel", "Link to existing personnel")}
-            </label>
-            <p className="text-xs text-text-secondary">
-              {t(
-                "users.create.linkPersonnelHint",
-                "Optional. Recommended so the account matches profile, skills, and assignments for that person.",
-              )}
-            </p>
+            <label className="text-sm font-medium">{t("users.create.linkPersonnel")}</label>
+            <p className="text-xs text-text-secondary">{t("users.create.linkPersonnelHint")}</p>
             {lockPersonnel ? (
               <p className="rounded-md border bg-surface-2 px-3 py-2 text-xs text-text-secondary">
                 {personnelId != null
-                  ? t("users.create.personnelLocked", "Linked to personnel ID {{id}}", {
+                  ? t("users.create.personnelLocked", {
                       id: personnelId,
                     })
-                  : t("users.create.personnelNone", "No personnel linked")}
+                  : t("users.create.personnelNone")}
               </p>
             ) : canViewPersonnel ? (
               personnelLoading ? (
-                <p className="text-xs text-text-secondary">{t("common.loading", "Chargement…")}</p>
+                <p className="text-xs text-text-secondary">{t("common.loading")}</p>
               ) : (
                 <PersonnelPickerCombobox
                   items={personnelItems}
                   value={personnelId}
                   onChange={setPersonnelId}
                   disabled={submitting}
-                  placeholder={t(
-                    "users.create.personnelSearchPlaceholder",
-                    "Search by name or employee code…",
-                  )}
+                  placeholder={t("users.create.personnelSearchPlaceholder")}
                 />
               )
             ) : (
               <p className="text-xs text-amber-800 dark:text-amber-200">
-                {t(
-                  "users.create.noPersonnelPermission",
-                  "Listing personnel requires the « per.view » permission. You can create the account without a link and associate it later.",
-                )}
+                {t("users.create.noPersonnelPermission")}
               </p>
             )}
           </div>
 
           {/* Identity mode */}
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">
-              {t("users.fields.identityMode", "Mode d'authentification")}
-            </label>
+            <label className="text-sm font-medium">{t("users.fields.identityMode")}</label>
             <Select
               value={identityMode}
               onValueChange={(v) => {
@@ -406,9 +367,9 @@ export function CreateUserDialog({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="local">{t("users.filter.local", "Local")}</SelectItem>
-                <SelectItem value="sso">{t("users.filter.sso", "SSO")}</SelectItem>
-                <SelectItem value="hybrid">{t("users.filter.hybrid", "Hybride")}</SelectItem>
+                <SelectItem value="local">{t("users.filter.local")}</SelectItem>
+                <SelectItem value="sso">{t("users.filter.sso")}</SelectItem>
+                <SelectItem value="hybrid">{t("users.filter.hybrid")}</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -418,7 +379,7 @@ export function CreateUserDialog({
             <>
               <div className="space-y-1.5">
                 <label className="text-sm font-medium">
-                  {t("users.create.password", "Mot de passe")}
+                  {t("users.create.password")}
                   {passwordRequired && " *"}
                 </label>
                 <div className="relative">
@@ -442,9 +403,7 @@ export function CreateUserDialog({
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-sm font-medium">
-                  {t("users.create.confirmPassword", "Confirmer le mot de passe")}
-                </label>
+                <label className="text-sm font-medium">{t("users.create.confirmPassword")}</label>
                 <Input
                   type="password"
                   value={confirmPassword}
@@ -461,7 +420,7 @@ export function CreateUserDialog({
                   onCheckedChange={(checked) => setForceChange(checked === true)}
                 />
                 <label htmlFor="force-change" className="text-sm">
-                  {t("users.create.forceChange", "Forcer le changement au premier login")}
+                  {t("users.create.forceChange")}
                 </label>
               </div>
             </>
@@ -470,10 +429,10 @@ export function CreateUserDialog({
 
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
-            {t("common.cancel", "Annuler")}
+            {t("common.cancel")}
           </Button>
           <Button onClick={() => void handleSubmit()} disabled={!canSubmit}>
-            {t("users.create.confirm", "Créer")}
+            {t("users.create.confirm")}
           </Button>
         </DialogFooter>
       </DialogContent>

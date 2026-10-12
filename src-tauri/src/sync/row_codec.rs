@@ -910,6 +910,10 @@ pub(crate) async fn apply_row(
         return Ok(ApplyOutcome::Applied);
     }
 
+    if let Some(outcome) = crate::sync::apply_hooks::before_upsert(layout, &payload) {
+        return Ok(outcome);
+    }
+
     let mut assignments: Vec<(String, SqlValue)> = Vec::new();
     let mut unresolved_soft: Vec<(String, &'static str, String)> = Vec::new();
     let mut resolved_soft: Vec<String> = Vec::new();

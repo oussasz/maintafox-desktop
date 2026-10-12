@@ -12,7 +12,7 @@ import {
   reconcileOrgDraftLineage,
   validateOrgModelForPublish,
 } from "@/services/org-governance-service";
-import { formatOrgIpcError } from "@/utils/errors";
+import { formatOrgIpcError, isStepUpRequiredError } from "@/utils/errors";
 import type { OrgChangeEvent, OrgPublishValidationResult } from "@shared/ipc-types";
 
 interface OrgGovernanceStoreState {
@@ -75,13 +75,7 @@ export const useOrgGovernanceStore = create<OrgGovernanceStoreState>()((set, get
       set({ publishValidation });
     } catch (err) {
       // Step-up must bubble to `withStepUp` — do not treat it as a validation failure.
-      const errStr =
-        typeof err === "object" && err !== null
-          ? JSON.stringify(err)
-          : err instanceof Error
-            ? err.message
-            : String(err);
-      if (errStr.includes("STEP_UP_REQUIRED") || errStr.includes("StepUpRequired")) {
+      if (isStepUpRequiredError(err)) {
         set({ validationLoading: false });
         throw err;
       }

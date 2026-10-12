@@ -39,6 +39,6 @@ pub async fn assert_in_progress_permit_gate(db: &DatabaseConnection, wo_id: i64)
             p.status
         )]));
     }
-    activation_ready(db, p.id, p.permit_type_id).await?;
+    activation_ready(db, &p).await?;
     Ok(())
 }

@@ -157,7 +157,8 @@ async fn resolve_status_id(txn: &impl ConnectionTrait, code: &str) -> AppResult<
     row.try_get::<i64>("", "id").map_err(|e| decode_err("status id", e))
 }
 
-/// Write an entry to the append-only state transition log.
+/// Write an entry to the append-only state transition log (the shared writer also records the
+/// derived lifecycle state and the planning-approval fact).
 async fn log_transition(
     txn: &impl ConnectionTrait,
     wo_id: i64,
@@ -169,28 +170,18 @@ async fn log_transition(
     notes: Option<&str>,
     acted_at: &str,
 ) -> AppResult<()> {
-    txn.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO wo_state_transition_log \
-         (wo_id, from_status, to_status, action, actor_id, reason_code, notes, acted_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        [
-            wo_id.into(),
-            from_status.into(),
-            to_status.into(),
-            action.into(),
-            actor_id.into(),
-            reason_code
-                .map(sea_orm::Value::from)
-                .unwrap_or(sea_orm::Value::from(None::<String>)),
-            notes
-                .map(sea_orm::Value::from)
-                .unwrap_or(sea_orm::Value::from(None::<String>)),
-            acted_at.into(),
-        ],
-    ))
-    .await?;
-    Ok(())
+    crate::wo::workflow::transition::log_transition(
+        txn,
+        wo_id,
+        from_status,
+        to_status,
+        action,
+        actor_id,
+        reason_code,
+        notes,
+        acted_at,
+    )
+    .await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -347,6 +338,17 @@ pub async fn start_wo(db: &DatabaseConnection, input: WoStartInput) -> AppResult
 // ═══════════════════════════════════════════════════════════════════════════════
 
 pub async fn pause_wo(db: &DatabaseConnection, input: WoPauseInput) -> AppResult<WorkOrder> {
+    hold_wo(db, input, crate::wo::lifecycle::HoldKind::Pause).await
+}
+
+/// in_progress → on_hold, opening a delay segment of the given kind (a pause, or waiting for a
+/// prerequisite: parts, permit, access…). The kind decides the PRD lifecycle state
+/// (`paused` / `waiting_for_prerequisite`, `wo::lifecycle`).
+async fn hold_wo(
+    db: &DatabaseConnection,
+    input: WoPauseInput,
+    hold_kind: crate::wo::lifecycle::HoldKind,
+) -> AppResult<WorkOrder> {
     let txn = db.begin().await?;
 
     let (from_code, current_status, _rv) = load_wo_status(&txn, input.wo_id).await?;
@@ -387,8 +389,8 @@ pub async fn pause_wo(db: &DatabaseConnection, input: WoPauseInput) -> AppResult
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO work_order_delay_segments \
-         (work_order_id, started_at, ended_at, delay_reason_id, comment, entered_by_id) \
-         VALUES (?, ?, NULL, ?, ?, ?)",
+         (work_order_id, started_at, ended_at, delay_reason_id, comment, entered_by_id, hold_kind) \
+         VALUES (?, ?, NULL, ?, ?, ?, ?)",
         [
             input.wo_id.into(),
             now.clone().into(),
@@ -399,6 +401,7 @@ pub async fn pause_wo(db: &DatabaseConnection, input: WoPauseInput) -> AppResult
                 .map(sea_orm::Value::from)
                 .unwrap_or(sea_orm::Value::from(None::<String>)),
             input.actor_id.into(),
+            hold_kind.as_str().into(),
         ],
     ))
     .await?;
@@ -567,8 +570,8 @@ pub async fn resume_wo(db: &DatabaseConnection, input: WoResumeInput) -> AppResu
 // ═══════════════════════════════════════════════════════════════════════════════
 
 pub async fn set_waiting_for_prerequisite(db: &DatabaseConnection, input: WoHoldInput) -> AppResult<WorkOrder> {
-    // Alias of pause/hold under Option B (single On Hold status).
-    pause_wo(
+    // Same On Hold phase as a pause; the segment records that the WO waits for a prerequisite.
+    hold_wo(
         db,
         WoPauseInput {
             wo_id: input.wo_id,
@@ -577,6 +580,7 @@ pub async fn set_waiting_for_prerequisite(db: &DatabaseConnection, input: WoHold
             delay_reason_id: input.delay_reason_id,
             comment: input.comment,
         },
+        crate::wo::lifecycle::HoldKind::Prerequisite,
     )
     .await
 }

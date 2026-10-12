@@ -530,11 +530,12 @@
       "conflict_policy": "operator_review",
       "apply_priority": 11,
       "parents": [
-        "ram_ishikawa_diagrams",
-        "work_orders",
+        "fmeca_analyses",
+        "pm_plan_versions",
         "pm_plans",
+        "ram_ishikawa_diagrams",
         "reference_values",
-        "fmeca_analyses"
+        "work_orders"
       ],
       "sync_status": "synced"
     },
@@ -625,7 +626,8 @@
       "parents": [
         "personnel",
         "inspection_template_versions",
-        "inspection_templates"
+        "inspection_templates",
+        "user_accounts"
       ],
       "sync_status": "synced"
     },
@@ -1475,11 +1477,13 @@
       "entity_type": "rcm_decisions",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 6,
+      "apply_priority": 11,
       "parents": [
+        "pm_plan_versions",
         "pm_plans",
+        "rcm_studies",
         "reference_values",
-        "rcm_studies"
+        "work_orders"
       ],
       "sync_status": "synced"
     },
@@ -1818,6 +1822,18 @@
       "sync_status": "synced"
     },
     {
+      "entity_type": "unit_conversions",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 4,
+      "parents": [
+        "lookup_values",
+        "articles",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
       "entity_type": "urgency_levels",
       "scope": "tenant",
       "conflict_policy": "operator_review",
@@ -1892,6 +1908,7 @@
       "apply_priority": 5,
       "parents": [
         "equipment",
+        "failure_codes",
         "user_accounts"
       ],
       "sync_status": "synced"

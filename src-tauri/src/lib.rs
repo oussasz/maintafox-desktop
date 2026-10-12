@@ -89,6 +89,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         // Single-instance: focus existing window on second launch
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -247,6 +248,9 @@ pub fn run() {
             // Ã¢â€â‚¬Ã¢â€â‚¬ Notifications Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
             commands::notifications::list_notifications,
             commands::notifications::get_unread_count,
+            commands::notifications::list_pending_os_toasts,
+            commands::notifications::show_os_toast,
+            commands::notifications::get_notification_channel_status,
             commands::notifications::mark_notification_read,
             commands::notifications::acknowledge_notification,
             commands::notifications::snooze_notification,
@@ -271,6 +275,7 @@ pub fn run() {
             commands::activity_feed::list_saved_activity_filters,
             commands::activity_feed::get_event_chain,
             commands::audit_log::list_audit_events,
+            commands::audit_log::verify_audit_chain,
             commands::audit_log::get_audit_event,
             commands::audit_log::export_audit_log,
             // Ã¢â€â‚¬Ã¢â€â‚¬ Lookup Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
@@ -334,7 +339,6 @@ pub fn run() {
             commands::org::get_active_org_structure_model,
             commands::org::create_org_structure_model,
             commands::org::fork_org_draft_from_published,
-            commands::org::publish_org_structure_model,
             commands::org::archive_org_structure_model,
             commands::org::list_org_node_types,
             commands::org::create_org_node_type,
@@ -506,6 +510,11 @@ pub fn run() {
             commands::finance::export_budget_report_pack,
             // Ã¢â€â‚¬Ã¢â€â‚¬ Inventory (PRD Ã‚Â§6.8) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
             commands::inventory::list_inventory_article_families,
+            commands::inventory::list_unit_conversions,
+            commands::inventory::create_unit_conversion,
+            commands::inventory::update_unit_conversion,
+            commands::inventory::deactivate_unit_conversion,
+            commands::inventory::convert_unit_quantity,
             commands::inventory::create_inventory_article_family,
             commands::inventory::update_inventory_article_family,
             commands::inventory::deactivate_inventory_article_family,
@@ -786,6 +795,7 @@ pub fn run() {
             commands::wo::get_cost_posting_hook,
             // Ã¢â€â‚¬Ã¢â€â‚¬ WO Analytics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
             commands::wo::get_wo_analytics_snapshot,
+            commands::wo::get_wo_backlog_heatmap,
             // Ã¢â€â‚¬Ã¢â€â‚¬ WO Stats (Dashboard) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
             commands::wo::get_wo_stats,
             // Ã¢â€â‚¬Ã¢â€â‚¬ WO Audit Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
@@ -816,6 +826,9 @@ pub fn run() {
             commands::permit::set_work_permit_status,
             commands::permit::list_permit_isolations,
             commands::permit::upsert_permit_isolation,
+            commands::permit::apply_permit_isolation,
+            commands::permit::verify_permit_isolation,
+            commands::permit::verify_permit_isolation_removal,
             commands::permit::suspend_work_permit,
             commands::permit::append_permit_handover_log,
             commands::permit::list_permit_suspensions,
@@ -842,6 +855,7 @@ pub fn run() {
             commands::reliability::list_wos_missing_failure_mode,
             commands::reliability::list_equipment_missing_exposure_90d,
             commands::reliability::get_ram_equipment_quality_badge,
+            commands::reliability::get_reliability_readiness,
             commands::reliability::dismiss_ram_data_quality_issue,
             commands::reliability::iso_14224_failure_dataset_completeness,
             commands::advanced_rams::run_weibull_fit,
@@ -861,6 +875,15 @@ pub fn run() {
             commands::advanced_rams::delete_rcm_study,
             commands::advanced_rams::list_rcm_decisions,
             commands::advanced_rams::upsert_rcm_decision,
+            commands::advanced_rams::apply_rcm_decision_logic,
+            commands::advanced_rams::preview_rcm_recommendation,
+            commands::advanced_rams::list_rcm_decision_logic,
+            commands::advanced_rams::create_pm_revision_from_rams_source,
+            commands::advanced_rams::get_fmeca_criticality_evidence,
+            commands::advanced_rams::compute_fmeca_criticality,
+            commands::advanced_rams::get_failure_mode_pareto,
+            commands::advanced_rams::export_reliability_report,
+            commands::advanced_rams::create_wo_from_rams_source,
             commands::advanced_rams::delete_rcm_decision,
             commands::advanced_rams::get_fmeca_severity_occurrence_matrix,
             commands::advanced_rams::list_fmeca_items_for_equipment,
@@ -940,9 +963,12 @@ pub fn run() {
             commands::inspection::record_inspection_result,
             commands::inspection::add_inspection_evidence,
             commands::inspection::update_inspection_anomaly,
-            commands::inspection::enqueue_inspection_offline,
-            commands::inspection::list_inspection_offline_queue,
-            commands::inspection::mark_inspection_offline_synced,
+            commands::inspection::list_inspection_round_summaries,
+            commands::inspection::get_inspection_round_runner,
+            commands::inspection::start_inspection_round,
+            commands::inspection::complete_inspection_round,
+            commands::inspection::review_inspection_round,
+            commands::inspection::add_inspection_photo_evidence,
             commands::inspection::route_inspection_anomaly_to_di,
             commands::inspection::route_inspection_anomaly_to_wo,
             commands::inspection::defer_inspection_anomaly,

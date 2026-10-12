@@ -43,6 +43,14 @@ pub struct ReferencePublishReadiness {
     pub impact_preview_available: bool,
 }
 
+/// Records of one column that use a changed value.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ImpactTable {
+    pub table: String,
+    pub column: String,
+    pub count: i64,
+}
+
 /// Impact summary for a single downstream module dimension.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModuleImpact {
@@ -50,6 +58,9 @@ pub struct ModuleImpact {
     pub status: String, // "available" | "unavailable" | "no_impact"
     pub affected_count: i64,
     pub details: Option<String>,
+    /// Where the affected records are (empty when none).
+    #[serde(default)]
+    pub tables: Vec<ImpactTable>,
 }
 
 /// Full impact analysis result.
@@ -58,6 +69,12 @@ pub struct ReferenceImpactSummary {
     pub set_id: i64,
     pub domain_id: i64,
     pub domain_code: String,
+    /// Codes of the published set that the candidate removes.
+    #[serde(default)]
+    pub removed_codes: Vec<String>,
+    /// Codes that the candidate deactivates.
+    #[serde(default)]
+    pub deactivated_codes: Vec<String>,
     pub total_affected: i64,
     pub dimensions: Vec<ModuleImpact>,
     pub computed_at: String,
@@ -104,14 +121,8 @@ pub fn clear_impact_cache() {
 
 // ─── Module dimension constants ───────────────────────────────────────────────
 
-const IMPACT_DIMENSIONS: &[&str] = &[
-    "assets",
-    "work_orders",
-    "pm_plans",
-    "inventory",
-    "reliability_events",
-    "external_integrations",
-];
+/// Dimensions not computed on the desktop (reported as `unavailable`).
+const UNAVAILABLE_DIMENSIONS: &[&str] = &["external_integrations"];
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
@@ -212,16 +223,54 @@ pub async fn preview_publish_impact(db: &DatabaseConnection, set_id: i64) -> App
     let set = sets::get_reference_set(db, set_id).await?;
     let domain = domains::get_reference_domain(db, set.domain_id).await?;
 
-    // Collect changed value codes (deactivated values in this set).
-    let changed_codes = collect_changed_codes(db, set_id).await?;
+    let published_set_id = find_published_set_id(db, set.domain_id, set_id).await?;
+    let changes = super::impact::value_changes(db, published_set_id, set_id).await?;
+    let codes = changes.codes();
+    let usage = super::impact::usage_of_changes(db, &domain.code, published_set_id, set_id, &codes).await?;
+    let skill_plans = if domain.code.eq_ignore_ascii_case("PERSONNEL.SKILLS") {
+        count_pm_plans_requiring_skills(db, &codes).await?
+    } else {
+        0
+    };
 
     let mut dimensions: Vec<ModuleImpact> = Vec::new();
     let mut total_affected: i64 = 0;
-
-    for &dim in IMPACT_DIMENSIONS {
-        let impact = probe_dimension(db, dim, &domain.code, &changed_codes).await;
-        total_affected += impact.affected_count;
-        dimensions.push(impact);
+    for &dim in super::impact::DIMENSIONS {
+        let mut tables: Vec<ImpactTable> = usage
+            .iter()
+            .filter(|u| super::impact::module_of(&u.table) == dim)
+            .map(|u| ImpactTable {
+                table: u.table.clone(),
+                column: u.column.clone(),
+                count: u.count,
+            })
+            .collect();
+        if dim == "pm_plans" && skill_plans > 0 {
+            // Skills are stored as code lists in JSON, not as foreign keys.
+            tables.push(ImpactTable {
+                table: "pm_plan_versions".into(),
+                column: "required_skills_json".into(),
+                count: skill_plans,
+            });
+        }
+        let affected_count: i64 = tables.iter().map(|t| t.count).sum();
+        total_affected += affected_count;
+        dimensions.push(ModuleImpact {
+            module: dim.to_string(),
+            status: if codes.is_empty() { "no_impact" } else { "available" }.into(),
+            affected_count,
+            details: None,
+            tables,
+        });
+    }
+    for &dim in UNAVAILABLE_DIMENSIONS {
+        dimensions.push(ModuleImpact {
+            module: dim.to_string(),
+            status: "unavailable".into(),
+            affected_count: 0,
+            details: None,
+            tables: Vec::new(),
+        });
     }
 
     let now = Utc::now().to_rfc3339();
@@ -233,6 +282,8 @@ pub async fn preview_publish_impact(db: &DatabaseConnection, set_id: i64) -> App
         set_id,
         domain_id: set.domain_id,
         domain_code: domain.code,
+        removed_codes: changes.removed,
+        deactivated_codes: changes.deactivated,
         total_affected,
         dimensions,
         computed_at: now,
@@ -355,193 +406,27 @@ async fn find_published_set_id(
     }
 }
 
-/// Collect codes of deactivated values in a set (candidates for impact).
-async fn collect_changed_codes(db: &impl ConnectionTrait, set_id: i64) -> AppResult<Vec<String>> {
-    let rows = db
-        .query_all(Statement::from_sql_and_values(
+/// PM plans whose current requirements list one of the skill codes (stored as JSON code lists).
+async fn count_pm_plans_requiring_skills(
+    db: &impl ConnectionTrait,
+    codes: &std::collections::BTreeSet<String>,
+) -> AppResult<i64> {
+    if codes.is_empty() {
+        return Ok(0);
+    }
+    let conditions = vec!["pv.required_skills_json LIKE ?"; codes.len()].join(" OR ");
+    let values: Vec<sea_orm::Value> = codes.iter().map(|c| format!("%\"{c}\"%").into()).collect();
+    let row = db
+        .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT code FROM reference_values WHERE set_id = ? AND is_active = 0",
-            [set_id.into()],
+            format!(
+                "SELECT COUNT(DISTINCT pv.pm_plan_id) AS cnt FROM pm_plan_versions pv                  WHERE pv.required_skills_json IS NOT NULL AND ({conditions})"
+            ),
+            values,
         ))
         .await?;
-
-    let mut codes = Vec::new();
-    for r in &rows {
-        if let Ok(code) = r.try_get::<String>("", "code") {
-            codes.push(code);
-        }
-    }
-    Ok(codes)
-}
-
-/// Probe a single impact dimension. Returns explicit status for each module.
-async fn probe_dimension(
-    db: &impl ConnectionTrait,
-    dimension: &str,
-    domain_code: &str,
-    changed_codes: &[String],
-) -> ModuleImpact {
-    match dimension {
-        "assets" => {
-            if changed_codes.is_empty() {
-                return ModuleImpact {
-                    module: dimension.to_string(),
-                    status: "no_impact".into(),
-                    affected_count: 0,
-                    details: Some("Aucune valeur modifiee dans ce jeu.".into()),
-                };
-            }
-            probe_assets(db, domain_code, changed_codes).await
-        }
-        "work_orders" => unavailable_module("work_orders"),
-        "pm_plans" => {
-            if changed_codes.is_empty() {
-                return ModuleImpact {
-                    module: dimension.to_string(),
-                    status: "no_impact".into(),
-                    affected_count: 0,
-                    details: Some("Aucune valeur modifiee dans ce jeu.".into()),
-                };
-            }
-            probe_pm_plans(db, domain_code, changed_codes).await
-        }
-        "inventory" => unavailable_module("inventory"),
-        "reliability_events" => unavailable_module("reliability_events"),
-        "external_integrations" => unavailable_module("external_integrations"),
-        _ => unavailable_module(dimension),
-    }
-}
-
-/// Probe asset dimension: check equipment_classes and equipment tables.
-async fn probe_assets(db: &impl ConnectionTrait, domain_code: &str, changed_codes: &[String]) -> ModuleImpact {
-    let mut total: i64 = 0;
-
-    // Check equipment_classes for matching codes.
-    for code in changed_codes {
-        if let Ok(Some(row)) = db
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT COUNT(*) AS cnt FROM equipment_classes \
-                 WHERE code = ? AND deleted_at IS NULL AND is_active = 1",
-                [code.clone().into()],
-            ))
-            .await
-        {
-            if let Ok(cnt) = row.try_get::<i64>("", "cnt") {
-                total += cnt;
-            }
-        }
-    }
-
-    // Check equipment table for criticality-related domains.
-    let is_criticality = domain_code.to_ascii_uppercase().contains("CRITICALITY");
-    if is_criticality {
-        for code in changed_codes {
-            if let Ok(Some(row)) = db
-                .query_one(Statement::from_sql_and_values(
-                    DbBackend::Sqlite,
-                    "SELECT COUNT(*) AS cnt FROM equipment e \
-                     JOIN lookup_values lv ON lv.id = e.criticality_id \
-                     WHERE lv.code = ? AND lv.is_active = 1 AND e.deleted_at IS NULL",
-                    [code.clone().into()],
-                ))
-                .await
-            {
-                if let Ok(cnt) = row.try_get::<i64>("", "cnt") {
-                    total += cnt;
-                }
-            }
-        }
-    }
-
-    if total > 0 {
-        ModuleImpact {
-            module: "assets".into(),
-            status: "available".into(),
-            affected_count: total,
-            details: Some(format!("{total} reference(s) d'equipement impactee(s).")),
-        }
-    } else {
-        ModuleImpact {
-            module: "assets".into(),
-            status: "available".into(),
-            affected_count: 0,
-            details: Some("Aucun equipement impacte.".into()),
-        }
-    }
-}
-
-/// Probe PM strategy dimension: checks plan criticality and required skill mappings.
-async fn probe_pm_plans(db: &impl ConnectionTrait, domain_code: &str, changed_codes: &[String]) -> ModuleImpact {
-    let mut total: i64 = 0;
-
-    // Criticality-driven impact on PM plans.
-    let is_criticality = domain_code.to_ascii_uppercase().contains("CRITICALITY");
-    if is_criticality {
-        for code in changed_codes {
-            if let Ok(Some(row)) = db
-                .query_one(Statement::from_sql_and_values(
-                    DbBackend::Sqlite,
-                    "SELECT COUNT(*) AS cnt FROM pm_plans p
-                     JOIN lookup_values lv ON lv.id = p.criticality_value_id
-                     WHERE lv.code = ? AND lv.is_active = 1",
-                    [code.clone().into()],
-                ))
-                .await
-            {
-                if let Ok(cnt) = row.try_get::<i64>("", "cnt") {
-                    total += cnt;
-                }
-            }
-        }
-    }
-
-    // Skill-code impact on PM plan versions where required_skills_json stores code arrays.
-    let is_skills = domain_code.eq_ignore_ascii_case("PERSONNEL.SKILLS");
-    if is_skills {
-        for code in changed_codes {
-            let like_pattern = format!("%\"{code}\"%");
-            if let Ok(Some(row)) = db
-                .query_one(Statement::from_sql_and_values(
-                    DbBackend::Sqlite,
-                    "SELECT COUNT(DISTINCT pv.pm_plan_id) AS cnt
-                     FROM pm_plan_versions pv
-                     WHERE pv.required_skills_json IS NOT NULL
-                       AND pv.required_skills_json LIKE ?",
-                    [like_pattern.into()],
-                ))
-                .await
-            {
-                if let Ok(cnt) = row.try_get::<i64>("", "cnt") {
-                    total += cnt;
-                }
-            }
-        }
-    }
-
-    if total > 0 {
-        ModuleImpact {
-            module: "pm_plans".into(),
-            status: "available".into(),
-            affected_count: total,
-            details: Some(format!("{total} plan(s) PM impacte(s).")),
-        }
-    } else {
-        ModuleImpact {
-            module: "pm_plans".into(),
-            status: "available".into(),
-            affected_count: 0,
-            details: Some("Aucun plan PM impacte.".into()),
-        }
-    }
-}
-
-/// Return an explicit unavailable status for modules not yet wired.
-fn unavailable_module(module: &str) -> ModuleImpact {
-    ModuleImpact {
-        module: module.to_string(),
-        status: "unavailable".into(),
-        affected_count: 0,
-        details: Some("Module non disponible dans cette version.".into()),
-    }
+    row.map(|r| r.try_get::<i64>("", "cnt"))
+        .transpose()
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("decode cnt: {e}")))
+        .map(|n| n.unwrap_or(0))
 }

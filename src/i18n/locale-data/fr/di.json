@@ -372,7 +372,17 @@
   "woConversion": {
     "checkAsset": "Actif confirmé",
     "checkClassif": "Classification définie",
-    "checkUrgency": "Urgence validée"
+    "checkUrgency": "Urgence validée",
+    "title": "Convertir en ordre de travail",
+    "description": "La DI <bold>{{code}}</bold> sera convertie en ordre de travail. Cette action est irréversible.",
+    "prerequisites": "Prérequis de conversion",
+    "stepUpLabel": "Code de confirmation (step-up)",
+    "stepUpPlaceholder": "Saisir votre code PIN",
+    "notesLabel": "Notes de conversion (optionnel)",
+    "notesPlaceholder": "Commentaires pour la conversion…",
+    "cancel": "Annuler",
+    "converting": "Conversion…",
+    "confirm": "Convertir en OT"
   },
   "print": {
     "htmlLang": "fr",

@@ -42,6 +42,8 @@ import type {
   WorkOrderStatusOption,
   WorkOrderTypeOption,
   WorkOrder,
+  WoBacklogHeatmap,
+  WoBacklogHeatmapInput,
 } from "@shared/ipc-types";
 
 // â”€â”€ Zod schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -144,6 +146,7 @@ export const WorkOrderSchema = z.object({
   assigned_team_label: z.string().nullable().optional(),
   schedule_commitment_id: z.number().nullable().optional(),
   schedule_frozen: z.boolean().nullable().optional(),
+  lifecycle_state: z.string().nullable().optional(),
 });
 
 export const WoTransitionRowSchema = z.object({
@@ -156,6 +159,7 @@ export const WoTransitionRowSchema = z.object({
   reason_code: z.string().nullable(),
   notes: z.string().nullable(),
   acted_at: z.string(),
+  lifecycle_state: z.string().nullable().optional(),
 });
 
 const WoListPageSchema = z.object({
@@ -529,10 +533,42 @@ const WoStatsSchema = z.object({
   completed: z.number(),
   overdue: z.number(),
   by_status: z.array(z.object({ status: z.string(), count: z.number() })),
+  by_lifecycle: z.array(z.object({ status: z.string(), count: z.number() })),
   by_urgency: z.array(z.object({ urgency: z.string(), count: z.number() })),
   daily_completed: z.array(z.object({ date: z.string(), count: z.number() })),
   by_entity: z.array(z.object({ entity: z.string(), count: z.number() })),
 });
+
+const WoBacklogBucketSchema = z.object({
+  wo_count: z.number(),
+  estimated_hours: z.number(),
+  unestimated_count: z.number(),
+});
+
+const WoBacklogHeatmapSchema = z.object({
+  start_date: z.string(),
+  days: z.array(
+    z.object({
+      date: z.string(),
+      planned_hours: z.number(),
+      wo_count: z.number(),
+      unestimated_count: z.number(),
+      capacity_hours: z.number().nullable(),
+      overloaded: z.boolean(),
+    }),
+  ),
+  capacity_configured: z.boolean(),
+  unscheduled: WoBacklogBucketSchema,
+  overdue: WoBacklogBucketSchema,
+  blocked: z.array(
+    z.object({ category: z.string(), wo_count: z.number(), waiting_hours: z.number() }),
+  ),
+});
+
+export async function getWoBacklogHeatmap(input: WoBacklogHeatmapInput): Promise<WoBacklogHeatmap> {
+  const raw = await invoke<unknown>("get_wo_backlog_heatmap", { input });
+  return WoBacklogHeatmapSchema.parse(raw);
+}
 
 export async function getWoStats(): Promise<WoStatsPayload> {
   const raw = await invoke<unknown>("get_wo_stats", {});

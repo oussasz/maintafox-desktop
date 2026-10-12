@@ -292,11 +292,16 @@ pub async fn validate_backup_file(
     let checksum_match = stored_checksum.as_deref().is_some_and(|s| s == computed_checksum);
 
     // Copy to a temp path for isolated read-only integrity check.
-    // This ensures the live database is never touched.
-    let temp_dir = std::env::temp_dir();
-    let temp_name = format!("maintafox_restore_test_{}.db", chrono::Utc::now().timestamp());
-    let temp_path = temp_dir.join(&temp_name);
-    fs::copy(path, &temp_path)?;
+    // This ensures the live database is never touched. Each check gets its own directory: two
+    // checks in the same second (parallel tests, or two restores in a row) must never open,
+    // overwrite or delete each other's copy, and SQLite's side files go away with the directory.
+    let temp_dir = std::env::temp_dir().join(format!("maintafox_restore_check_{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&temp_dir)?;
+    let temp_path = temp_dir.join("backup.db");
+    if let Err(e) = fs::copy(path, &temp_path) {
+        let _ = fs::remove_dir_all(&temp_dir);
+        return Err(e.into());
+    }
 
     // Open an isolated read-only sea_orm connection to the temp copy
     let integrity_output = {
@@ -329,8 +334,8 @@ pub async fn validate_backup_file(
         }
     };
 
-    // Clean up temp file (non-fatal if removal fails)
-    let _ = fs::remove_file(&temp_path);
+    // Clean up the temp copy and its side files (non-fatal if removal fails)
+    let _ = fs::remove_dir_all(&temp_dir);
 
     let integrity_ok = integrity_output.trim() == "ok";
 

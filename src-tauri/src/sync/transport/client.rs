@@ -10,7 +10,8 @@ use serde::de::DeserializeOwned;
 
 use super::wire::{
     DiagnosticBundleCompleted, DiagnosticBundleCreateRequest, DiagnosticBundleCreated, ErrorBody, ExchangeResponse,
-    PresignGetRequest, PresignPutRequest, PresignResponse, SnapshotRequest, SnapshotResponse,
+    NotificationEmailAccepted, NotificationEmailRequest, PresignGetRequest, PresignPutRequest, PresignResponse,
+    SnapshotRequest, SnapshotResponse,
 };
 use crate::sync::domain::SYNC_PROTOCOL_VERSION_V2;
 
@@ -238,6 +239,16 @@ impl ControlPlaneClient {
     ) -> Result<PresignResponse, TransportError> {
         let body = serde_json::to_string(request).map_err(|e| TransportError::Contract(e.to_string()))?;
         self.post_json("/api/v1/sync/media/presign-put", token, body).await
+    }
+
+    /// `POST /api/v1/notifications/email` (contract in `notifications::email`).
+    pub async fn send_notification_email(
+        &self,
+        token: &str,
+        request: &NotificationEmailRequest,
+    ) -> Result<NotificationEmailAccepted, TransportError> {
+        let body = serde_json::to_string(request).map_err(|e| TransportError::Contract(e.to_string()))?;
+        self.post_json("/api/v1/notifications/email", token, body).await
     }
 
     /// `POST /api/v1/sync/media/presign-get`.

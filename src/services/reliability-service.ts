@@ -2,6 +2,19 @@ import { z } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
 import type {
+  ApplyRcmLogicInput,
+  ExportedBinaryDocument,
+  FailureModePareto,
+  FailureModeParetoInput,
+  FmecaCriticality,
+  FmecaCriticalityEvidence,
+  FmecaCriticalityInput,
+  PmRevisionFromSourceInput,
+  RamsSourceAction,
+  RcmAnswers,
+  RcmDecisionLogic,
+  RcmRecommendation,
+  WoFromSourceInput,
   CostOfFailureFilter,
   CostOfFailureRow,
   DeactivateFailureCodeInput,
@@ -45,6 +58,8 @@ import type {
   Iso14224DatasetCompleteness,
   RamIshikawaDiagram,
   RamIshikawaDiagramsFilter,
+  ReliabilityReadinessGate,
+  ReliabilityReadinessInput,
   ReliabilityRulIndicator,
   UpsertFmecaItemInput,
   UpsertRamIshikawaDiagramInput,
@@ -231,6 +246,14 @@ const ReliabilityKpiSnapshotSchema = z.object({
   analysis_input_spec_json: z.string(),
   plot_payload_json: z.string(),
   row_version: z.number(),
+  algorithm_version: z.string().nullable(),
+  exposure_hours: z.number().nullable(),
+  repair_event_count: z.number().nullable(),
+  active_repair_hours_total: z.number().nullable(),
+  downtime_hours_total: z.number().nullable(),
+  availability_inherent: z.number().nullable(),
+  availability_operational: z.number().nullable(),
+  mttf: z.number().nullable(),
 });
 
 const ReliabilityAnalysisInputEvaluationSchema = z.object({
@@ -357,6 +380,30 @@ const RamEquipmentQualityBadgeSchema = z.object({
   blocking_issue_codes: z.array(z.string()),
 });
 
+const ReliabilityReadinessGateSchema = z.object({
+  equipment_id: z.number(),
+  period_start: z.string(),
+  period_end: z.string(),
+  decision: z.enum(["ALLOW", "DENY"]),
+  blocking_reasons: z.array(z.string()),
+  warnings: z.array(z.string()),
+  eligible_event_count: z.number(),
+  min_sample_n: z.number(),
+  exposure_hours: z.number(),
+  exposure_source: z.string().nullable(),
+  data_quality_score: z.number(),
+  completeness_percent: z.number(),
+  badge: z.string(),
+});
+
+/** StrictRam readiness gate (ALLOW / DENY + blocking reasons) for one equipment. */
+export async function getReliabilityReadiness(
+  input: ReliabilityReadinessInput,
+): Promise<ReliabilityReadinessGate> {
+  const raw = await invoke<unknown>("get_reliability_readiness", { input });
+  return ReliabilityReadinessGateSchema.parse(raw);
+}
+
 export async function getRamEquipmentQualityBadge(
   equipment_id: number,
 ): Promise<RamEquipmentQualityBadge> {
@@ -422,6 +469,14 @@ const WeibullFitRecordSchema = z.object({
   row_version: z.number(),
   created_at: z.string(),
   created_by_id: z.number().nullable(),
+  algorithm_version: z.string().nullable(),
+  dataset_hash_sha256: z.string().nullable(),
+  time_base: z.string().nullable(),
+  failure_mode_id: z.number().nullable(),
+  n_failures: z.number().nullable(),
+  n_censored: z.number().nullable(),
+  observations_json: z.string().nullable(),
+  exposure_source: z.string().nullable(),
 });
 
 const WeibullCurvePointSchema = z.object({
@@ -454,6 +509,8 @@ const WeibullDashboardPayloadSchema = z.object({
   rul_live_hours: z.number().nullable(),
   danger_threshold_r: z.number(),
   pm_threshold_r: z.number(),
+  readiness_decision: z.enum(["ALLOW", "DENY"]),
+  blocking_reasons: z.array(z.string()),
 });
 
 export async function runWeibullFit(input: WeibullFitRunInput): Promise<WeibullFitRecord> {
@@ -617,6 +674,8 @@ const ReliabilityRulIndicatorSchema = z.object({
   predicted_rul_hours: z.number().nullable(),
   t_hours: z.number().nullable(),
   message: z.string(),
+  readiness_decision: z.enum(["ALLOW", "DENY"]),
+  blocking_reasons: z.array(z.string()),
 });
 
 export async function getReliabilityRulIndicator(
@@ -730,6 +789,112 @@ export async function listRcmDecisions(studyId: number): Promise<RcmDecision[]> 
 export async function upsertRcmDecision(input: UpsertRcmDecisionInput): Promise<RcmDecision> {
   const raw = await invoke<unknown>("upsert_rcm_decision", { input });
   return RcmDecisionSchema.parse(raw);
+}
+
+const RcmAnswersSchema = z.object({
+  failure_evident: z.boolean(),
+  safety_or_environmental: z.boolean(),
+  operational_impact: z.boolean(),
+  multiple_failure_affects_safety: z.boolean(),
+  on_condition_feasible: z.boolean(),
+  scheduled_restoration_feasible: z.boolean(),
+  scheduled_discard_feasible: z.boolean(),
+  failure_finding_feasible: z.boolean(),
+  combination_feasible: z.boolean(),
+  weibull_beta: z.number().nullable(),
+});
+
+const RcmDecisionLogicSchema = z.object({
+  decision_id: z.number(),
+  row_version: z.number(),
+  selected_tactic: z.string(),
+  consequence_category: z.string(),
+  justification: z.string(),
+  recommended_tactic: z.string().nullable(),
+  answers: RcmAnswersSchema.nullable(),
+  path: z.array(z.string()),
+  linked_pm_plan_id: z.number().nullable(),
+  linked_pm_plan_version_id: z.number().nullable(),
+  pm_plan_code: z.string().nullable(),
+  pm_version_no: z.number().nullable(),
+  linked_work_order_id: z.number().nullable(),
+  work_order_code: z.string().nullable(),
+});
+
+const RamsSourceActionSchema = z.object({
+  source_type: z.enum(["fmeca_item", "rcm_decision"]),
+  source_id: z.number(),
+  pm_plan_version_id: z.number().nullable(),
+  pm_version_no: z.number().nullable(),
+  work_order_id: z.number().nullable(),
+  work_order_code: z.string().nullable(),
+});
+
+export async function previewRcmRecommendation(answers: RcmAnswers): Promise<RcmRecommendation> {
+  const raw = await invoke<unknown>("preview_rcm_recommendation", { answers });
+  return z
+    .object({
+      consequence_category: z.string(),
+      recommended_tactic: z.string(),
+      redesign_compulsory: z.boolean(),
+      path: z.array(z.string()),
+    })
+    .parse(raw);
+}
+
+export async function applyRcmDecisionLogic(input: ApplyRcmLogicInput): Promise<RcmDecisionLogic> {
+  const raw = await invoke<unknown>("apply_rcm_decision_logic", { input });
+  return RcmDecisionLogicSchema.parse(raw);
+}
+
+export async function listRcmDecisionLogic(studyId: number): Promise<RcmDecisionLogic[]> {
+  const raw = await invoke<unknown>("list_rcm_decision_logic", { studyId });
+  return z.array(RcmDecisionLogicSchema).parse(raw);
+}
+
+export async function createPmRevisionFromRamsSource(
+  input: PmRevisionFromSourceInput,
+): Promise<RamsSourceAction> {
+  const raw = await invoke<unknown>("create_pm_revision_from_rams_source", { input });
+  return RamsSourceActionSchema.parse(raw);
+}
+
+export async function createWoFromRamsSource(input: WoFromSourceInput): Promise<RamsSourceAction> {
+  const raw = await invoke<unknown>("create_wo_from_rams_source", { input });
+  return RamsSourceActionSchema.parse(raw);
+}
+
+export async function getFmecaCriticalityEvidence(
+  itemId: number,
+): Promise<FmecaCriticalityEvidence> {
+  const raw = await invoke<unknown>("get_fmeca_criticality_evidence", { itemId });
+  return z
+    .object({
+      mode_failures: z.number(),
+      total_failures: z.number(),
+      mode_ratio: z.number().nullable(),
+      failure_rate_per_hour: z.number().nullable(),
+      kpi_period_end: z.string().nullable(),
+    })
+    .parse(raw);
+}
+
+export async function computeFmecaCriticality(
+  input: FmecaCriticalityInput,
+): Promise<FmecaCriticality> {
+  const raw = await invoke<unknown>("compute_fmeca_criticality", { input });
+  return z
+    .object({
+      item_id: z.number(),
+      row_version: z.number(),
+      effect_probability: z.number(),
+      mode_ratio: z.number(),
+      failure_rate_per_hour: z.number(),
+      operating_hours: z.number(),
+      criticality_number: z.number(),
+      analysis_criticality: z.number(),
+    })
+    .parse(raw);
 }
 
 export async function deleteRcmDecision(id: number): Promise<void> {
@@ -1028,4 +1193,45 @@ export async function signRamExpertReview(
 
 export async function deleteRamExpertSignOff(id: number): Promise<void> {
   await invoke("delete_ram_expert_sign_off", { id });
+}
+
+const FailureModeParetoSchema = z.object({
+  metric: z.enum(["count", "cost", "downtime"]),
+  total: z.number(),
+  rows: z.array(
+    z.object({
+      failure_mode_id: z.number().nullable(),
+      mode_code: z.string().nullable(),
+      mode_label: z.string().nullable(),
+      failure_count: z.number(),
+      total_cost: z.number(),
+      downtime_hours: z.number(),
+      value: z.number(),
+      share: z.number(),
+      cumulative_share: z.number(),
+    }),
+  ),
+});
+
+/** Unplanned failures grouped by failure mode, ranked by count, cost or downtime. */
+export async function getFailureModePareto(
+  input: FailureModeParetoInput,
+): Promise<FailureModePareto> {
+  const raw = await invoke<unknown>("get_failure_mode_pareto", { input });
+  return FailureModeParetoSchema.parse(raw);
+}
+
+/** Reliability report of one equipment (KPIs, Weibull, FMECA, Pareto) as PDF or Excel. */
+export async function exportReliabilityReport(
+  equipmentId: number,
+  exportFormat: "pdf" | "xlsx",
+): Promise<ExportedBinaryDocument> {
+  const raw = await invoke<unknown>("export_reliability_report", { equipmentId, exportFormat });
+  return z
+    .object({
+      file_name: z.string(),
+      mime_type: z.string(),
+      bytes: z.array(z.number().int().min(0).max(255)),
+    })
+    .parse(raw);
 }

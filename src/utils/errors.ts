@@ -88,6 +88,27 @@ export function extractIpcErrorCode(err: unknown): string | null {
 }
 
 /**
+ * True when a failure asks for step-up re-authentication (`STEP_UP_REQUIRED` code, or a
+ * `StepUpRequired` marker), whatever its shape: a plain IPC reject object, an `Error`, or a string.
+ */
+export function isStepUpRequiredError(err: unknown): boolean {
+  if (extractIpcErrorCode(err) === "STEP_UP_REQUIRED") return true;
+  let text: string;
+  if (err instanceof Error) {
+    text = err.message;
+  } else if (typeof err === "object" && err !== null) {
+    try {
+      text = JSON.stringify(err);
+    } catch {
+      text = String(err);
+    }
+  } else {
+    text = String(err);
+  }
+  return text.includes("STEP_UP_REQUIRED") || text.includes("StepUpRequired");
+}
+
+/**
  * True when an IPC/API failure means there is no authenticated session yet.
  * Must not be confused with "entitlement envelope is missing".
  */

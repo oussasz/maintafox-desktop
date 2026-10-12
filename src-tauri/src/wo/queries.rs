@@ -73,6 +73,9 @@ async fn ensure_default_closeout_validation_policy_id(db: &DatabaseConnection) -
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct WoListFilter {
     pub status_codes: Option<Vec<String>>,
+    /// PRD lifecycle states (`wo::lifecycle`), derived per row.
+    #[serde(default)]
+    pub lifecycle_states: Option<Vec<String>>,
     pub type_codes: Option<Vec<String>>,
     pub equipment_id: Option<i64>,
     pub entity_id: Option<i64>,
@@ -154,6 +157,9 @@ const WO_JOIN_COLS: &str = "\
       ORDER BY sc.id DESC LIMIT 1) IS NOT NULL THEN 1 ELSE 0 END AS schedule_frozen";
 
 /// JOIN clause used by list and get queries.
+/// Derived lifecycle state (`wo::lifecycle::SQL_CASE`).
+const LIFECYCLE: &str = crate::wo::lifecycle::SQL_CASE;
+
 const WO_JOINS: &str = "\
     LEFT JOIN work_order_statuses wos ON wos.id = wo.status_id \
     LEFT JOIN work_order_types    wot ON wot.id = wo.type_id \
@@ -179,6 +185,24 @@ pub async fn list_work_orders(db: &DatabaseConnection, filter: WoListFilter) -> 
             where_clauses.push(format!("wos.code IN ({placeholders})"));
             for c in codes {
                 binds.push(c.clone().into());
+            }
+        }
+    }
+
+    // ── Lifecycle filter (derived PRD states) ────────────────────────────
+    if let Some(ref states) = filter.lifecycle_states {
+        if !states.is_empty() {
+            for st in states {
+                if crate::wo::lifecycle::LifecycleState::try_from_str(st).is_none() {
+                    return Err(AppError::ValidationFailed(vec![format!(
+                        "Unknown lifecycle state '{st}'."
+                    )]));
+                }
+            }
+            let placeholders = vec!["?"; states.len()].join(", ");
+            where_clauses.push(format!("{LIFECYCLE} IN ({placeholders})"));
+            for st in states {
+                binds.push(st.clone().into());
             }
         }
     }
@@ -270,7 +294,7 @@ pub async fn list_work_orders(db: &DatabaseConnection, filter: WoListFilter) -> 
     let offset = filter.offset.max(0);
 
     let data_sql = format!(
-        "SELECT {WO_COLS}, {WO_JOIN_COLS} \
+        "SELECT {WO_COLS}, {WO_JOIN_COLS}, {LIFECYCLE} AS lifecycle_state \
          FROM work_orders wo \
          {WO_JOINS} \
          WHERE {where_sql} \
@@ -292,7 +316,7 @@ pub async fn list_work_orders(db: &DatabaseConnection, filter: WoListFilter) -> 
 
 pub async fn get_work_order(db: &impl ConnectionTrait, id: i64) -> AppResult<Option<WorkOrder>> {
     let sql = format!(
-        "SELECT {WO_COLS}, {WO_JOIN_COLS} \
+        "SELECT {WO_COLS}, {WO_JOIN_COLS}, {LIFECYCLE} AS lifecycle_state \
          FROM work_orders wo \
          {WO_JOINS} \
          WHERE wo.id = ?"
@@ -315,7 +339,7 @@ pub async fn get_wo_transition_log(db: &DatabaseConnection, wo_id: i64) -> AppRe
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, wo_id, from_status, to_status, action, actor_id, reason_code, notes, acted_at \
+            "SELECT id, wo_id, from_status, to_status, action, actor_id, reason_code, notes, acted_at, lifecycle_state \
              FROM wo_state_transition_log \
              WHERE wo_id = ? \
              ORDER BY acted_at ASC",
@@ -654,13 +678,17 @@ pub async fn create_work_order(db: &DatabaseConnection, input: WoCreateInput) ->
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to re-read WO after insert: code={code}")))?;
 
     // Write initial transition log entry
-    txn.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO wo_state_transition_log \
-         (wo_id, from_status, to_status, action, actor_id, acted_at) \
-         VALUES (?, 'none', 'draft', 'create', ?, ?)",
-        [wo.id.into(), input.creator_id.into(), now.into()],
-    ))
+    crate::wo::workflow::transition::log_transition(
+        &txn,
+        wo.id,
+        "none",
+        "draft",
+        "create",
+        input.creator_id,
+        None,
+        None,
+        &now,
+    )
     .await?;
 
     txn.commit().await?;
@@ -863,19 +891,17 @@ pub async fn cancel_work_order(db: &DatabaseConnection, input: super::domain::Wo
     }
 
     // 5. Write transition log
-    txn.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO wo_state_transition_log \
-         (wo_id, from_status, to_status, action, actor_id, reason_code, notes, acted_at) \
-         VALUES (?, ?, 'cancelled', 'cancel', ?, NULL, ?, ?)",
-        [
-            input.id.into(),
-            from_code.to_string().into(),
-            input.actor_id.into(),
-            input.cancel_reason.into(),
-            now.into(),
-        ],
-    ))
+    crate::wo::workflow::transition::log_transition(
+        &txn,
+        input.id,
+        from_code,
+        "cancelled",
+        "cancel",
+        input.actor_id,
+        None,
+        Some(input.cancel_reason.as_str()),
+        &now,
+    )
     .await?;
 
     // 6. Re-fetch and return

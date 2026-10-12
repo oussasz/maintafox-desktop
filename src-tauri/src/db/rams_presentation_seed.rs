@@ -308,7 +308,8 @@ async fn finalize_analytics(
             equipment_id,
             period_start: None,
             period_end: None,
-            include_censored: Some(false),
+            include_censored: Some(true),
+            failure_mode_id: None,
         },
     )
     .await

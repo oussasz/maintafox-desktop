@@ -358,11 +358,7 @@ pub async fn update_notification_preference(
     }
 
     if let Some(mode) = payload.digest_mode.as_deref() {
-        if !matches!(mode, "instant" | "daily_digest" | "off") {
-            return Err(AppError::ValidationFailed(vec![
-                "digest_mode must be one of: instant, daily_digest, off".to_string(),
-            ]));
-        }
+        crate::notifications::digest::validate_digest_mode(&payload.category_code, mode)?;
     }
 
     let existing = state
@@ -627,4 +623,71 @@ pub async fn list_notification_categories(state: State<'_, AppState>) -> AppResu
     }
 
     Ok(categories)
+}
+
+/// Notifications to toast for the signed-in user (see `notifications::os_toast`). Without
+/// `since_id` (window just opened): the watermark to pass on the next calls, nothing to show.
+#[tauri::command]
+pub async fn list_pending_os_toasts(
+    since_id: Option<i64>,
+    state: State<'_, AppState>,
+) -> AppResult<crate::notifications::os_toast::OsToastBatch> {
+    let user = require_session!(state);
+    crate::notifications::os_toast::pending_os_toasts(&state.db, i64::from(user.user_id), since_id).await
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ShowOsToastInput {
+    pub notification_ids: Vec<i64>,
+    pub title: String,
+    pub body: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ShowOsToastResult {
+    pub shown: bool,
+    pub error: Option<String>,
+}
+
+/// Shows one OS toast covering `notification_ids` (worded by the window) and records the outcome
+/// for each of them.
+#[tauri::command]
+pub async fn show_os_toast(
+    input: ShowOsToastInput,
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> AppResult<ShowOsToastResult> {
+    use tauri_plugin_notification::NotificationExt;
+
+    let user = require_session!(state);
+    crate::notifications::os_toast::ensure_owned(&state.db, i64::from(user.user_id), &input.notification_ids).await?;
+    if input.title.trim().is_empty() {
+        return Err(AppError::ValidationFailed(vec!["title is required.".into()]));
+    }
+    let outcome = app
+        .notification()
+        .builder()
+        .title(input.title.trim())
+        .body(input.body.trim())
+        .show()
+        .map_err(|e| e.to_string());
+    crate::notifications::os_toast::record_os_toasts(&state.db, &input.notification_ids, &outcome).await?;
+    Ok(ShowOsToastResult {
+        shown: outcome.is_ok(),
+        error: outcome.err(),
+    })
+}
+
+#[derive(Debug, Serialize)]
+pub struct NotificationChannelStatus {
+    pub email: crate::notifications::email::ChannelAvailability,
+}
+
+/// Whether the email channel can be used on this device (`notifications::email`).
+#[tauri::command]
+pub async fn get_notification_channel_status(state: State<'_, AppState>) -> AppResult<NotificationChannelStatus> {
+    let _user = require_session!(state);
+    Ok(NotificationChannelStatus {
+        email: crate::notifications::email::email_channel_status(&state.db).await?,
+    })
 }

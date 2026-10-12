@@ -79,6 +79,19 @@ async fn finding_sync_id(
 }
 
 /// Clears prior open findings for detector domains, then re-runs checks.
+/// SQL condition: `id_expr` is a value of the governed failure-mode list `WORK.FAILURE_MODES`, in
+/// any version of the list (a value of a superseded or deactivated version is still the valid
+/// coding of the records saved against it). Since migration 114 `failure_mode_id` holds these
+/// reference values (close-out checks the same domain), not `failure_codes` ids.
+pub(crate) fn governed_failure_mode_sql(id_expr: &str) -> String {
+    format!(
+        "EXISTS (SELECT 1 FROM reference_values rv \
+         JOIN reference_sets rs ON rs.id = rv.set_id \
+         JOIN reference_domains rd ON rd.id = rs.domain_id \
+         WHERE rv.id = {id_expr} AND UPPER(TRIM(rd.code)) = 'WORK.FAILURE_MODES')"
+    )
+}
+
 pub async fn run_data_integrity_detectors(db: &DatabaseConnection) -> AppResult<i64> {
     let txn = db.begin().await?;
     // Findings are recomputed on every device that runs the checks: the run itself is not sent.
@@ -97,12 +110,12 @@ pub async fn run_data_integrity_detectors(db: &DatabaseConnection) -> AppResult<
     let rows = txn
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT fd.id AS fd_id, fd.work_order_id, fd.failure_mode_id \
-             FROM work_order_failure_details fd \
-             LEFT JOIN failure_codes fc ON fc.id = fd.failure_mode_id \
-             WHERE fd.failure_mode_id IS NOT NULL \
-               AND (fc.id IS NULL OR fc.is_active = 0 OR fc.code_type != 'mode')"
-                .to_string(),
+            format!(
+                "SELECT fd.id AS fd_id, fd.work_order_id, fd.failure_mode_id \
+                 FROM work_order_failure_details fd \
+                 WHERE fd.failure_mode_id IS NOT NULL AND NOT {}",
+                governed_failure_mode_sql("fd.failure_mode_id")
+            ),
         ))
         .await?;
     for row in &rows {

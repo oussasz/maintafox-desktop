@@ -349,31 +349,27 @@ pub async fn fetch_dashboard_summary_pairs(db: &DatabaseConnection) -> AppResult
     )
     .await;
     let assets = count_scalar(db, "SELECT COUNT(*) AS cnt FROM equipment WHERE deleted_at IS NULL").await;
-    let row = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            r"SELECT COUNT(*) AS snapshot_count,
-                     AVG(data_quality_score) AS avg_dq,
-                     AVG(CASE WHEN mtbf IS NOT NULL AND mtbf > 0 THEN mtbf END) AS avg_mtbf
-              FROM reliability_kpi_snapshots
-              WHERE datetime(period_end) >= datetime('now', '-365 days')"
-                .to_string(),
-        ))
-        .await?;
-    let (snap_n, dq, mtbf) = if let Some(r) = row {
-        let n: i64 = i64::try_get(&r, "", "snapshot_count").unwrap_or(0);
-        let dq: Option<f64> = f64::try_get(&r, "", "avg_dq").ok();
-        let m: Option<f64> = f64::try_get(&r, "", "avg_mtbf").ok();
-        (n, dq, m)
-    } else {
-        (0, None, None)
-    };
+    // Pooled fleet ratios over the latest snapshot per equipment (never mean of ratios).
+    let fleet = crate::reliability::fleet::pooled_fleet_kpis(
+        db,
+        crate::reliability::fleet::FleetWindow {
+            since_days: 365,
+            until_days: None,
+        },
+        None,
+        crate::reliability::readiness::DQ_GREEN_THRESHOLD,
+    )
+    .await?;
+    let (snap_n, dq, mtbf) = (fleet.equipment_count, fleet.mean_data_quality_score, fleet.mtbf_hours);
 
     let mut out = vec![
         ("Open DIs".to_string(), format!("{open_di}")),
         ("Open WOs".to_string(), format!("{open_wo}")),
         ("Assets".to_string(), format!("{assets}")),
-        ("Reliability snapshots (365d)".to_string(), format!("{snap_n}")),
+        (
+            "Assets with reliability snapshots (365d)".to_string(),
+            format!("{snap_n}"),
+        ),
     ];
     if let Some(v) = dq {
         out.push(("Avg data quality (365d)".to_string(), format!("{v:.4}")));
@@ -381,9 +377,9 @@ pub async fn fetch_dashboard_summary_pairs(db: &DatabaseConnection) -> AppResult
         out.push(("Avg data quality (365d)".to_string(), "—".to_string()));
     }
     if let Some(v) = mtbf {
-        out.push(("Avg MTBF hours (365d)".to_string(), format!("{v:.2}")));
+        out.push(("Fleet MTBF hours, pooled (365d)".to_string(), format!("{v:.2}")));
     } else {
-        out.push(("Avg MTBF hours (365d)".to_string(), "—".to_string()));
+        out.push(("Fleet MTBF hours, pooled (365d)".to_string(), "—".to_string()));
     }
     Ok(out)
 }

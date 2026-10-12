@@ -46,6 +46,12 @@ pub async fn load_wo_status(txn: &impl ConnectionTrait, wo_id: i64) -> AppResult
     Ok((code, status, row_version))
 }
 
+/// Writes a transition to the append-only log, after the WO row was updated (same transaction).
+///
+/// Entering `planning` records whether this WO needs planning approval, from the tenant setting
+/// at this moment (`wo::lifecycle`: the lifecycle depends only on the WO's own facts, so a later
+/// change of the setting only affects WOs that enter planning afterwards). The log row carries
+/// the derived lifecycle state the WO is in after the transition.
 pub async fn log_transition(
     txn: &impl ConnectionTrait,
     wo_id: i64,
@@ -57,11 +63,21 @@ pub async fn log_transition(
     notes: Option<&str>,
     acted_at: &str,
 ) -> AppResult<()> {
+    if to_status == WoStatus::Planning.as_str() {
+        let required = crate::wo::workflow::readiness::load_approval_policy(txn).await?;
+        txn.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE work_orders SET planning_approval_required = ? WHERE id = ?",
+            [i64::from(required).into(), wo_id.into()],
+        ))
+        .await?;
+    }
+    let lifecycle = crate::wo::lifecycle::lifecycle_of(txn, wo_id).await?;
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO wo_state_transition_log \
-         (wo_id, from_status, to_status, action, actor_id, reason_code, notes, acted_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+         (wo_id, from_status, to_status, action, actor_id, reason_code, notes, acted_at, lifecycle_state) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             wo_id.into(),
             from_status.into(),
@@ -75,6 +91,7 @@ pub async fn log_transition(
                 .map(sea_orm::Value::from)
                 .unwrap_or(sea_orm::Value::from(None::<String>)),
             acted_at.into(),
+            lifecycle.as_str().into(),
         ],
     ))
     .await?;

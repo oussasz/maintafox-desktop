@@ -63,6 +63,7 @@ pub fn evaluate_asset(input: &EvaluateAssetInput) -> AssetReadinessReport {
         t_exp_hours: input.exposure_hours.max(0.0),
         repeat_lookback_days: 30,
         min_sample_n: min_n,
+        repairable: true,
         events: kpi_events,
     });
 

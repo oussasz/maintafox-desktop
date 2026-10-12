@@ -8,6 +8,9 @@
 //!   its subtree;
 //! - `user_dismissals`: `scope_key` (`<issue_code>:<local equipment id>`) is rebuilt;
 //! - `report_schedules`: the next run of this device is computed from the cron expression;
+//! - `work_order_delay_segments`: before the apply, `hold_kind` must be `pause` or `prerequisite`
+//!   (anything else is refused as a conflict) and present (a row from an older app version without
+//!   it is deferred, never written with a guessed kind: it decides the PRD lifecycle state);
 //! - `media_attachments`: the file is queued for download from object storage
 //!   (`sync_media_downloads`, worked by the sync worker); a deleted row drops a pending download.
 
@@ -16,6 +19,28 @@ use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
 use crate::errors::{AppError, AppResult};
 use crate::sync::row_codec::{located_row_id, RowLocator};
 use crate::sync::row_layout::EntityLayout;
+
+/// Checks an inbound row before it is written; `Some` stops the apply with that outcome.
+pub(crate) fn before_upsert(
+    layout: &EntityLayout,
+    payload: &serde_json::Map<String, serde_json::Value>,
+) -> Option<crate::sync::materialize::ApplyOutcome> {
+    use crate::sync::materialize::{ApplyOutcome, DEFER_MISSING_FIELD};
+    match layout.def.entity_type {
+        "work_order_delay_segments" => match payload.get("hold_kind") {
+            None | Some(serde_json::Value::Null) => Some(ApplyOutcome::Deferred {
+                code: DEFER_MISSING_FIELD.into(),
+                message: "hold_kind missing: sent by an older app version; waiting for an update of that device".into(),
+            }),
+            Some(serde_json::Value::String(k)) if crate::wo::lifecycle::HoldKind::try_from_str(k).is_some() => None,
+            Some(other) => Some(ApplyOutcome::Conflict {
+                code: "INVALID_VALUE".into(),
+                message: format!("hold_kind must be 'pause' or 'prerequisite', got {other}"),
+            }),
+        },
+        _ => None,
+    }
+}
 
 fn hook_err(table: &str, e: impl std::fmt::Display) -> AppError {
     AppError::SyncError(format!("{table} apply hook: {e}"))

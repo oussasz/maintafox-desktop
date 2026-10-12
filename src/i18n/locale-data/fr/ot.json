@@ -44,6 +44,7 @@
       "closedAt": "Date clôture"
     },
     "filters": {
+      "lifecycle": "Cycle de vie",
       "status": "Statut",
       "type": "Type",
       "priority": "Priorité",
@@ -60,7 +61,8 @@
       "placeholder": "Instructions détaillées pour l'exécutant"
     },
     "type": {
-      "label": "Type"
+      "label": "Type",
+      "loading": "Chargement..."
     },
     "urgency": {
       "label": "Urgence",
@@ -99,7 +101,8 @@
       "titleRequired": "Le titre est requis",
       "typeRequired": "Le type d'ordre de travail est obligatoire.",
       "urgencyRequired": "La priorité est obligatoire.",
-      "urgencyInvalid": "La priorité sélectionnée n'est plus valide."
+      "urgencyInvalid": "La priorité sélectionnée n'est plus valide.",
+      "equipmentRequired": "Équipement obligatoire."
     }
   },
   "status": {
@@ -591,7 +594,12 @@
     "reopenReason": "Motif de réouverture",
     "reopenReasonPlaceholder": "Expliquez pourquoi cet OT doit être rouvert…",
     "reopenReasonRequired": "Un motif de réouverture est obligatoire.",
-    "reopenSubmit": "Rouvrir l'OT"
+    "reopenSubmit": "Rouvrir l'OT",
+    "reopenClosedHint": "Cet ordre de travail a été clôturé il y a moins de {{days}} jour(s) : il peut encore être rouvert. Les éléments de clôture et de vérification sont conservés. Un motif est obligatoire.",
+    "reopenWindowPassed": "Clôturé il y a plus de {{days}} jour(s) (délai de réouverture) : créez un nouvel ordre de travail.",
+    "reopenWindowMissing": "Le paramètre de délai de réouverture est absent ou invalide (Paramètres › Ordres de travail).",
+    "linkedPm": "Généré par le plan préventif {{code}} — {{title}}",
+    "linkedPermits": "Permis de travail : {{list}}"
   },
   "audit": {
     "created": "Créé le",
@@ -683,10 +691,40 @@
     "inProgress": "En cours",
     "completed": "Terminés",
     "overdue": "En retard",
+    "lifecycleDistribution": "Répartition par cycle de vie",
     "statusDistribution": "Répartition par statut",
     "urgencyDistribution": "Répartition par urgence",
     "completionTrend": "Tendance de clôture",
-    "backlogByEntity": "Arriéré par entité"
+    "backlogByEntity": "Arriéré par entité",
+    "backlogHeatmap": {
+      "title": "Carte de charge du carnet",
+      "subtitle": "Travail planifié par jour face à la capacité des équipes ({{weeks}} prochaines semaines).",
+      "noCapacity": "Aucune règle de capacité d'équipe n'est définie (Planification) : les heures planifiées sont affichées sans contrôle de surcharge.",
+      "hours": "{{hours}} h planifiées",
+      "capacity": "capacité {{hours}} h",
+      "overloaded": "Surchargé",
+      "orders_one": "{{count}} ordre",
+      "orders_other": "{{count}} ordres",
+      "unestimated_one": "{{count}} sans estimation",
+      "unestimated_other": "{{count}} sans estimation",
+      "unscheduled": "Non planifiés",
+      "overdue": "En retard",
+      "blocked": "Travail bloqué par motif",
+      "noBlocked": "Aucun travail en attente.",
+      "waiting": "{{hours}} h d'attente",
+      "weeks": "Semaines",
+      "category": {
+        "parts": "Pièces de rechange",
+        "permit": "Permis",
+        "shutdown": "Fenêtre d'arrêt",
+        "vendor": "Fournisseur / sous-traitant",
+        "labor": "Main-d'œuvre",
+        "access": "Accès",
+        "diagnosis": "Diagnostic",
+        "other": "Autre",
+        "unknown": "Aucun motif saisi"
+      }
+    }
   },
   "contextMenu": {
     "viewDetail": "Voir détail",
@@ -768,6 +806,8 @@
   "print": {
     "pageTitle": "Fiche OT",
     "heading": "Fiche d'Ordre de Travail",
+    "failed": "Impossible de préparer la fiche d'impression : {{message}}",
+    "qrHint": "Scanner pour retrouver cet ordre de travail",
     "confidential": "Document confidentiel",
     "reference": "Référence",
     "issueDate": "Date d'émission",
@@ -821,5 +861,20 @@
     "partsCost": "Pièces",
     "serviceCost": "Services",
     "totalCost": "Total"
+  },
+  "lifecycle": {
+    "title": "État du cycle de vie PRD (déduit des faits de l'OT)",
+    "draft": "Brouillon",
+    "awaiting_approval": "En attente d'approbation",
+    "planned": "Planifié",
+    "ready_to_schedule": "Prêt à ordonnancer",
+    "assigned": "Affecté",
+    "waiting_for_prerequisite": "En attente de prérequis",
+    "in_progress": "En cours",
+    "paused": "En pause",
+    "mechanically_complete": "Terminé mécaniquement",
+    "technically_verified": "Vérifié techniquement",
+    "closed": "Clôturé",
+    "cancelled": "Annulé"
   }
 }

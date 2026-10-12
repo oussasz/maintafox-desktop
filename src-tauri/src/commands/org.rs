@@ -113,18 +113,6 @@ pub async fn fork_org_draft_from_published(
     Ok(result)
 }
 
-/// Deprecated: use `publish_org_model` instead.
-///
-/// The legacy path called `structure_model::publish_model` without node/FK remapping
-/// and must not be used once model-scoped draft trees are in production.
-#[tauri::command]
-pub async fn publish_org_structure_model(_model_id: i32, _state: State<'_, AppState>) -> AppResult<OrgStructureModel> {
-    Err(fail(
-        "ORG_LEGACY_PUBLISH_REMOVED",
-        "This publish action is no longer available. Use the current Publish action, which checks the draft and updates live links safely.",
-    ))
-}
-
 #[tauri::command]
 pub async fn archive_org_structure_model(model_id: i32, state: State<'_, AppState>) -> AppResult<OrgStructureModel> {
     let user = require_session!(state);

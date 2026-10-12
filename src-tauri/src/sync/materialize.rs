@@ -31,6 +31,8 @@ pub struct MaterializeInboxResult {
 pub(crate) const DEFER_MISSING_PARENT: &str = "MISSING_PARENT";
 /// Deferral code for an entity type that is staged by other devices but not applied here yet.
 pub(crate) const DEFER_NO_MATERIALIZER: &str = "NO_MATERIALIZER";
+/// Deferral code for a row without a field this version requires (sent by an older app version).
+pub(crate) const DEFER_MISSING_FIELD: &str = "MISSING_FIELD";
 /// Deferral code for an entity type this version of the app does not know.
 pub(crate) const DEFER_UNKNOWN_ENTITY_TYPE: &str = "UNKNOWN_ENTITY_TYPE";
 

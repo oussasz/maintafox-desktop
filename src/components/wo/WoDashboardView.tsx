@@ -10,7 +10,9 @@ import { AlertTriangle, CheckCircle2, ClipboardList, PlayCircle, RefreshCw } fro
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { WoBacklogHeatmap } from "@/components/wo/WoBacklogHeatmap";
 import { getWoStats } from "@/services/wo-service";
+import { isWoLifecycleState } from "@/utils/wo-lifecycle";
 import type { WoStatsPayload } from "@shared/ipc-types";
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -121,6 +123,29 @@ export function WoDashboardView() {
           </div>
         </div>
 
+        {/* PRD lifecycle distribution (derived states) */}
+        <div className="rounded-lg border border-surface-border p-4">
+          <h3 className="text-sm font-semibold text-text-primary mb-3">
+            {t("dashboard.lifecycleDistribution")}
+          </h3>
+          <div className="space-y-2">
+            {stats.by_lifecycle.map((d) => {
+              const pct = stats.total > 0 ? (d.count / stats.total) * 100 : 0;
+              return (
+                <div key={d.status} className="flex items-center gap-2 text-xs">
+                  <span className="w-40 truncate text-text-muted">
+                    {isWoLifecycleState(d.status) ? t(`lifecycle.${d.status}`) : d.status}
+                  </span>
+                  <div className="flex-1 h-2 rounded bg-surface-1">
+                    <div className="h-2 rounded bg-brand-primary" style={{ width: `${pct}%` }} />
+                  </div>
+                  <span className="w-8 text-right font-mono">{d.count}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
         {/* Urgency Distribution (Horizontal bar) */}
         <div className="rounded-lg border border-surface-border p-4">
           <h3 className="text-sm font-semibold text-text-primary mb-3">
@@ -170,6 +195,8 @@ export function WoDashboardView() {
           </div>
         )}
       </div>
+
+      <WoBacklogHeatmap />
 
       {/* ── Row 4: Backlog by Entity ──────────────────────────────── */}
       <div className="rounded-lg border border-surface-border p-4">

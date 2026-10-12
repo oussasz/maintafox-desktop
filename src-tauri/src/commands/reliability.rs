@@ -14,6 +14,9 @@ use crate::reliability::domain::{
     WoMissingFailureModeRow,
 };
 use crate::reliability::queries;
+use crate::reliability::readiness_gate::{
+    evaluate_equipment_readiness, ReliabilityReadinessGate, ReliabilityReadinessInput,
+};
 use crate::state::AppState;
 use crate::{require_permission, require_session};
 
@@ -274,6 +277,23 @@ pub async fn get_ram_equipment_quality_badge(
         PermissionScope::Global
     );
     queries::get_ram_equipment_quality_badge(&state.db, equipment_id, user.user_id).await
+}
+
+/// StrictRam readiness gate (ALLOW / DENY + blocking reasons) for one equipment — the same rule set
+/// that guards Weibull fits, R(t) and RUL.
+#[tauri::command]
+pub async fn get_reliability_readiness(
+    input: ReliabilityReadinessInput,
+    state: State<'_, AppState>,
+) -> AppResult<ReliabilityReadinessGate> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::RAM_VIEW,
+        PermissionScope::Global
+    );
+    evaluate_equipment_readiness(&state.db, input).await
 }
 
 #[tauri::command]

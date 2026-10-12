@@ -7,6 +7,8 @@
  * Phase 2 – Sub-phase 05 – File 03 – Sprint S4.
  */
 
+import QRCode from "qrcode";
+
 import {
   DOCUMENT_HEADER_PRINT_CSS,
   loadDocumentHeaderHtml,
@@ -71,6 +73,7 @@ function buildHtml(
   t: TFn,
   locale: string,
   letterheadHtml: string,
+  qrSvg: string,
 ): string {
   const now = new Date().toLocaleDateString(locale);
   const letterhead = wrapDocumentHeaderBlock(letterheadHtml);
@@ -110,7 +113,9 @@ function buildHtml(
     .header { text-align: center; margin-bottom: 16px; }
     .header .company { font-size: 14px; font-weight: bold; }
     .header .subtitle { color: #666; font-size: 10px; }
-    .ref-strip { display: flex; justify-content: space-between; padding: 6px 10px; background: #f0f0f0; border: 1px solid #ccc; margin-bottom: 12px; font-size: 11px; }
+    .ref-strip { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 6px 10px; background: #f0f0f0; border: 1px solid #ccc; margin-bottom: 12px; font-size: 11px; }
+    .ref-qr { display: flex; align-items: center; gap: 6px; font-size: 9px; color: #555; }
+    .ref-qr svg { width: 72px; height: 72px; }
     .section { margin-bottom: 12px; }
     .section h2 { font-size: 12px; background: #e8e8e8; padding: 4px 8px; margin: 0 0 6px; border-left: 3px solid #555; }
     table { width: 100%; border-collapse: collapse; margin-bottom: 6px; }
@@ -135,6 +140,7 @@ function buildHtml(
   <div class="ref-strip">
     <span>${esc(t("print.reference"))} : <strong>${esc(wo.code)}</strong></span>
     <span>${esc(t("print.issueDate"))} : ${now}</span>
+    <span class="ref-qr">${qrSvg}<span>${esc(t("print.qrHint"))}</span></span>
   </div>
 
   <div class="section">
@@ -304,24 +310,27 @@ export async function printWoFiche(
   t: TFn = DEFAULT_T,
   locale = "fr",
 ): Promise<void> {
-  const [tasks, labor, parts, snapshot, letterheadHtml] = await Promise.all([
-    listTasks(wo.id).catch(() => [] as WoExecTask[]),
-    listLabor(wo.id).catch(() => [] as WoIntervener[]),
-    listParts(wo.id).catch(() => [] as WoExecPart[]),
-    getWoAnalyticsSnapshot(wo.id).catch(() => null),
+  // A sheet missing its tasks or parts would mislead the technician: any load failure stops the
+  // print and is reported by the caller.
+  const [tasks, labor, parts, snapshot, letterheadHtml, qrSvg] = await Promise.all([
+    listTasks(wo.id),
+    listLabor(wo.id),
+    listParts(wo.id),
+    getWoAnalyticsSnapshot(wo.id),
     loadDocumentHeaderHtml(),
+    // The WO number is unique across devices (device code, SYNC_STRATEGY §6a) and is what the
+    // work-order search finds: scanning it on any device leads to the same order.
+    QRCode.toString(wo.code, { type: "svg", margin: 0, errorCorrectionLevel: "M" }),
   ]);
 
-  const failureDetails = snapshot?.failure_details ?? [];
-  const verifications = snapshot?.verifications ?? [];
-  const costTotals = snapshot
-    ? {
-        labor_cost: snapshot.labor_cost,
-        parts_cost: snapshot.parts_cost,
-        service_cost: snapshot.service_cost,
-        total_cost: snapshot.total_cost,
-      }
-    : null;
+  const failureDetails = snapshot.failure_details;
+  const verifications = snapshot.verifications;
+  const costTotals = {
+    labor_cost: snapshot.labor_cost,
+    parts_cost: snapshot.parts_cost,
+    service_cost: snapshot.service_cost,
+    total_cost: snapshot.total_cost,
+  };
 
   const html = buildHtml(
     wo,
@@ -334,6 +343,7 @@ export async function printWoFiche(
     t,
     locale,
     letterheadHtml,
+    qrSvg,
   );
 
   // Tauri/webview can block popup windows depending on platform settings.

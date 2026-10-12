@@ -6,5 +6,25 @@
   "tabs": {
     "activity": "Fil d'activité",
     "audit": "Journal d'audit"
+  },
+  "chain": {
+    "help": "Chaque appareil chaîne les événements d'audit qu'il écrit ; un événement modifié, supprimé ou inséré rompt la chaîne.",
+    "verify": "Vérifier l'intégrité",
+    "running": "Vérification…",
+    "failed": "Échec de la vérification : {{message}}",
+    "intact": "Toutes les chaînes d'audit sont intactes.",
+    "broken": "Une chaîne d'audit est rompue.",
+    "thisDevice": "Cet appareil ({{code}})",
+    "otherDevice": "Appareil {{code}}",
+    "events_one": "{{count}} événement",
+    "events_other": "{{count}} événements",
+    "none": "Aucun événement d'audit chaîné pour l'instant.",
+    "unchained_one": "{{count}} événement plus ancien a été écrit avant le chaînage et n'est pas couvert.",
+    "unchained_other": "{{count}} événements plus anciens ont été écrits avant le chaînage et ne sont pas couverts.",
+    "problem": {
+      "hash_mismatch": "l'événement n°{{id}} (position {{seq}}) a été modifié",
+      "prev_mismatch": "la chaîne est rattachée autrement à la position {{seq}} (événement n°{{id}}) : un événement précédent a été supprimé ou remplacé",
+      "missing_positions": "des positions avant {{seq}} manquent (événement n°{{id}}) : supprimées, ou pas encore reçues de cet appareil"
+    }
   }
 }

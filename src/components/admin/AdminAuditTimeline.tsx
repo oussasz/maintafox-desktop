@@ -140,7 +140,7 @@ export function AdminAuditTimeline({ filter }: AdminAuditTimelineProps) {
         ];
         if (evt.step_up_used) {
           badges.push({
-            label: t("audit.stepUp", "Step-up"),
+            label: t("audit.stepUp"),
             tone: "success" as TimelineTone,
           });
         }
@@ -149,9 +149,11 @@ export function AdminAuditTimeline({ filter }: AdminAuditTimelineProps) {
         if (target) subtitleParts.push(`→ ${target}`);
         if (evt.scope_type) {
           subtitleParts.push(
-            `${t("audit.scope", "Scope")}: ${evt.scope_type}${
-              evt.scope_reference && !evt.from_other_device ? ` / ${evt.scope_reference}` : ""
-            }`,
+            t("audit.scopeValue", {
+              scope: `${evt.scope_type}${
+                evt.scope_reference && !evt.from_other_device ? ` / ${evt.scope_reference}` : ""
+              }`,
+            }),
           );
         }
         if (evt.from_other_device) {
@@ -168,7 +170,7 @@ export function AdminAuditTimeline({ filter }: AdminAuditTimelineProps) {
             ? evt.actor_username
             : evt.actor_id != null
               ? t("audit.user", { id: evt.actor_id })
-              : t("audit.system", "Système"),
+              : t("audit.system"),
           icon: actionIcon(evt.action),
           badges,
           tone: isBlocked ? ("danger" as TimelineTone) : undefined,
@@ -179,7 +181,7 @@ export function AdminAuditTimeline({ filter }: AdminAuditTimelineProps) {
           ) : undefined,
           detailsExpanded: expandedDiffs.has(evt.id),
           onDetailsToggle: () => toggleDiff(evt.id),
-          detailsLabel: t("audit.viewDiff", "Voir le diff"),
+          detailsLabel: t("audit.viewDiff"),
         };
       }),
     [events, expandedDiffs, t, tShell],
@@ -190,15 +192,13 @@ export function AdminAuditTimeline({ filter }: AdminAuditTimelineProps) {
       items={entries}
       loading={loading}
       locale={i18n.language}
-      aria-label={t("audit.title", { defaultValue: "Admin audit timeline" })}
-      empty={t("audit.empty", "Aucun événement d'audit enregistré.")}
+      aria-label={t("audit.title")}
+      empty={t("audit.empty")}
       error={
         error ? (
           <div className="flex items-start gap-2 rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-            <span>
-              {t("audit.loadError", "Impossible de charger l'historique d'audit.")} {error}
-            </span>
+            <span>{t("audit.loadError", { error })}</span>
           </div>
         ) : null
       }

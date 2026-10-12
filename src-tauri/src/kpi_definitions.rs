@@ -15,7 +15,12 @@ pub mod quality_badge {
 pub mod reliability_snapshot {
     pub const MTBF: &str = "mtbf";
     pub const MTTR: &str = "mttr";
+    /// KPI-035 operational availability A_o (alias of `availability_operational`).
     pub const AVAILABILITY: &str = "availability";
+    pub const AVAILABILITY_OPERATIONAL: &str = "availability_operational";
+    pub const AVAILABILITY_INHERENT: &str = "availability_inherent";
+    /// Non-repairable equipment only (`equipment.rams_is_repairable = 0`).
+    pub const MTTF: &str = "mttf";
     pub const FAILURE_RATE: &str = "failure_rate";
     pub const REPEAT_FAILURE_RATE: &str = "repeat_failure_rate";
     pub const EVENT_COUNT: &str = "event_count";

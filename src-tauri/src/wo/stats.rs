@@ -45,6 +45,8 @@ pub struct WoStatsPayload {
     pub completed: i64,
     pub overdue: i64,
     pub by_status: Vec<StatusCount>,
+    /// Counts per PRD lifecycle state (`wo::lifecycle`, derived), in the PRD order.
+    pub by_lifecycle: Vec<StatusCount>,
     pub by_urgency: Vec<UrgencyCount>,
     pub daily_completed: Vec<DateCount>,
     pub by_entity: Vec<EntityCount>,
@@ -104,6 +106,25 @@ pub async fn get_wo_stats(db: &DatabaseConnection) -> AppResult<WoStatsPayload> 
         map_rows(&rows, |label, count| StatusCount { status: label, count })?
     };
 
+    // ── By lifecycle state (derived) ──────────────────────────────────────
+    let by_lifecycle = {
+        let rows = db
+            .query_all(Statement::from_string(
+                DbBackend::Sqlite,
+                format!(
+                    "SELECT {} AS label, COUNT(*) AS cnt FROM work_orders wo \
+                     JOIN work_order_statuses wos ON wos.id = wo.status_id GROUP BY label",
+                    crate::wo::lifecycle::SQL_CASE
+                ),
+            ))
+            .await?;
+        let counted = map_rows(&rows, |label, count| StatusCount { status: label, count })?;
+        crate::wo::lifecycle::LifecycleState::ALL
+            .iter()
+            .filter_map(|st| counted.iter().find(|c| c.status == st.as_str()).cloned())
+            .collect::<Vec<_>>()
+    };
+
     // ── By urgency ────────────────────────────────────────────────────────
     let by_urgency = {
         let rows = db
@@ -111,7 +132,7 @@ pub async fn get_wo_stats(db: &DatabaseConnection) -> AppResult<WoStatsPayload> 
                 DbBackend::Sqlite,
                 "SELECT COALESCE(u.label, 'N/A') AS label, COUNT(*) AS cnt \
                  FROM work_orders wo \
-                 LEFT JOIN work_order_urgencies u ON u.id = wo.urgency_id \
+                 LEFT JOIN urgency_levels u ON u.id = wo.urgency_id \
                  GROUP BY label ORDER BY cnt DESC"
                     .to_owned(),
             ))
@@ -140,7 +161,7 @@ pub async fn get_wo_stats(db: &DatabaseConnection) -> AppResult<WoStatsPayload> 
         let rows = db
             .query_all(Statement::from_string(
                 DbBackend::Sqlite,
-                "SELECT COALESCE(n.label, 'Non assigné') AS label, COUNT(*) AS cnt \
+                "SELECT COALESCE(n.name, 'Non assigné') AS label, COUNT(*) AS cnt \
                  FROM work_orders wo \
                  LEFT JOIN org_nodes n ON n.id = wo.entity_id \
                  WHERE wo.entity_id IS NOT NULL \
@@ -157,6 +178,7 @@ pub async fn get_wo_stats(db: &DatabaseConnection) -> AppResult<WoStatsPayload> 
         completed,
         overdue,
         by_status,
+        by_lifecycle,
         by_urgency,
         daily_completed,
         by_entity,

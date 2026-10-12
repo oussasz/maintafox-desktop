@@ -649,6 +649,65 @@ Work is on branch `phase0/security-hardening` in both repos. Each side has a bas
   S3-compatible stand-in that checks the presigned query but not the signature); the new UI states
   in the running app (covered by component tests only); timings on a field PC.
 
+### Phase 6 — Desktop module completion (2026-10-11/12)
+
+Branch `claude/phase6-modules-0aceae`, PR #21 into `phase0/security-hardening`. Migrations 169–175.
+
+- **6.1 Permits / LOTO** (`35f53838`): merged from `claude/clever-bouman-6fae8e` and adapted to
+  the sync rules (writes in one transaction, device-coded `PTW-…` numbers, isolation removal
+  verifier, lock removal blocked while the linked WO is in progress). 22 Rust tests.
+- **6.3 Reliability** (`66503804`, `25b929e5`): merged from `claude/musing-mclaren-862f78`
+  (right-censored Weibull checked against SciPy, availability, readiness gate, failure ingest in
+  the close-out transaction, minimum-sample floor); FTA evaluated through minimal cut sets.
+- **6.2 Inspections** (`b9991933`): round runner with pickers (no raw ids), large touch targets,
+  photo evidence, round start/complete/review, visible offline queue (sync outbox state);
+  qualification checks fail closed. Rust + component tests.
+- **6.4 Work orders** (`cf47df91`, `9df91c38`): reopen within a configurable window keeping the
+  verification evidence; backlog heatmap; QR on the print sheet; real PM/permit links in the
+  analytics feed. PRD 12-state lifecycle **derived** from the WO's own facts (option B, see
+  SYNC_STRATEGY §13; deliberate deviation from "12 stored statuses"): 8 phases stay stored,
+  migration 175 adds `planning_approval_required`, `hold_kind`, and a lifecycle snapshot in the
+  transition log; SQL and TypeScript mirrors checked on all 768 fact combinations. WO dashboard
+  stats, which always failed (wrong table/column), fixed.
+- **6.5 RCM / FMECA → PM** (`64ea1563`): RCM II decision logic with recommended tactic and
+  decision path; FMECA/RCM actions create a PM plan revision or a WO linked back; MIL-STD-1629A
+  criticality number.
+- **6.6 Analytics / exports** (`42536d94`): real PDF engine (embedded system TrueType font,
+  multi-page, Unicode, tables, charts) for planning, report and reliability exports; failure-mode
+  Pareto by count, cost or downtime; reliability report (KPIs, Weibull, FMECA, Pareto) as PDF or
+  Excel.
+- **6.7 Notifications / audit** (`8c9dd75b`, `dc698138`): hash-chained audit trail per device
+  with an integrity check that other devices can run on received chains; OS toasts (Rust plugin,
+  webview permissions unchanged); email through `POST /api/v1/notifications/email` (contract in
+  `notifications/email.rs`, never SMTP), shown as not available until the entitlement capability
+  `notifications.email` is explicitly enabled.
+- **6.8 Reference data** (`67d1f2eb`): publish impact counted through every foreign key to
+  `reference_values`/`lookup_values`, per module (work orders, inventory, reliability, …);
+  `unit_conversions` (new synced type, tenant).
+- **6.9 Quality** (`e962ca1d`, `d8ac5a67`): i18n sweep (hardcoded strings 258 → 3 flagged lines,
+  all justified), locale BOMs removed, store tests for all 21 zustand stores, vitest coverage now
+  includes `src/stores` with thresholds raised 31/24/80/31 → 62/55/93/62; 45 Rust tests for
+  analytics, jobs and data integrity (one analytics bug fixed); dead code removed; e2e plan in
+  `docs/engineering/E2E_SMOKE_SUITE.md` (not built).
+- **Tests:** full `cargo test --lib`: 1183 passed, 2 failed, 3 ignored (119 min); the two
+  failures (seeder settings count; audit events with a target type sync does not map could not
+  be written once chained) were fixed in `77599b0a` and their tests rerun green with the audit
+  suite (12 passed). `pnpm sync:harness`: 11 scenarios pass. `cargo clippy --lib -- -D
+  warnings` clean, `cargo fmt --check` clean, `pnpm typecheck` clean, vitest 98 files / 1027
+  tests pass (5 skipped = documented bugs), coverage 62.51 / 93.27 / 55.24 / 62.51
+  (lines / branches / functions / statements); i18n parity 24 namespaces, 0 mismatches.
+- **Server side to do:** add `{"entity_type":"unit_conversions","scope":"tenant"}` to
+  `maintafox-vendor-console/shared/sync-entity-registry.v2.json` (desktop copy already updated;
+  `scripts/sync-allowlist-append.mjs`); implement `POST /api/v1/notifications/email` and then
+  grant the `notifications.email` capability; store and forward the new columns unchanged
+  (`audit_events.chain_*`, `work_orders.planning_approval_required`,
+  `work_order_delay_segments.hold_kind`, `wo_state_transition_log.lifecycle_state`).
+- **Leftovers fixed:** `d6f17e2d` `FK_ORPHAN_FAILURE_MODE` checks the governed list
+  `WORK.FAILURE_MODES`, and its repair re-checks and refuses unless the value is provably
+  dangling; `21b23884` latest-request guard in the WO, reference search, org designer and sync
+  stores, plus step-up detection; `3be6f03e` daily digest (background task
+  `notification_digest`, migration 176). **Open:** WebDriver e2e not built.
+
 ### Phase 3 — Control plane hardening (2026-10-12)
 
 Vendor console commits (branch phase0/security-hardening): f8bc541 3.5, 66309f5 3.6, 11eea48 3.1,

@@ -88,3 +88,54 @@ export async function updateNotificationPreference(
 ): Promise<void> {
   await invoke<void>("update_notification_preference", { payload });
 }
+
+const OsToastBatchSchema = z.object({
+  watermark: z.number(),
+  items: z.array(
+    z.object({
+      notification_id: z.number(),
+      title: z.string(),
+      body: z.string().nullable(),
+      severity: z.string(),
+      category_code: z.string(),
+    }),
+  ),
+});
+
+export type OsToastBatch = z.infer<typeof OsToastBatchSchema>;
+export type OsToastCandidate = OsToastBatch["items"][number];
+
+/**
+ * Notifications to show as an OS toast. Without `sinceId` (window just opened) it returns the
+ * watermark to pass on later calls and nothing to show, so signing in does not replay the inbox.
+ */
+export async function listPendingOsToasts(sinceId: number | null): Promise<OsToastBatch> {
+  const raw = await invokeSilent<unknown>("list_pending_os_toasts", { sinceId });
+  return OsToastBatchSchema.parse(raw);
+}
+
+const ShowOsToastResultSchema = z.object({ shown: z.boolean(), error: z.string().nullable() });
+
+/** Shows one OS toast for these notifications; the backend records the outcome for each. */
+export async function showOsToast(input: {
+  notification_ids: number[];
+  title: string;
+  body: string;
+}): Promise<z.infer<typeof ShowOsToastResultSchema>> {
+  const raw = await invokeSilent<unknown>("show_os_toast", { input });
+  return ShowOsToastResultSchema.parse(raw);
+}
+
+const ChannelAvailabilitySchema = z.object({
+  available: z.boolean(),
+  reason: z.string().nullable(),
+});
+const NotificationChannelStatusSchema = z.object({ email: ChannelAvailabilitySchema });
+
+export type NotificationChannelStatus = z.infer<typeof NotificationChannelStatusSchema>;
+
+/** Whether the email channel can be used on this device (server endpoint, licence, activation). */
+export async function getNotificationChannelStatus(): Promise<NotificationChannelStatus> {
+  const raw = await invoke<unknown>("get_notification_channel_status");
+  return NotificationChannelStatusSchema.parse(raw);
+}

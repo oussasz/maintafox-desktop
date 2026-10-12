@@ -6,6 +6,7 @@ pub mod ledger;
 pub mod procurement;
 pub mod queries;
 pub mod suppliers;
+pub mod unit_conversions;
 pub mod valuation;
 
 #[cfg(test)]

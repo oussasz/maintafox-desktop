@@ -7,6 +7,7 @@ import { type UnlistenFn, listen } from "@tauri-apps/api/event";
 import { create } from "zustand";
 
 import { i18n } from "@/i18n/config";
+import { createLatestRequestGuard } from "@/lib/latest-request";
 import { requestLicenseRecheck } from "@/services/product-license-service";
 import {
   SYNC_WORKER_STATUS_EVENT,
@@ -126,6 +127,8 @@ interface SyncOrchestratorState {
 
 let unlistenStatus: UnlistenFn | null = null;
 let removeNetworkListeners: (() => void) | null = null;
+/** One "session" per initialize; shutdown makes the running one stale. */
+const sessions = createLatestRequestGuard();
 
 function applyWorkerStatus(next: SyncWorkerStatus) {
   const previous = useSyncOrchestratorStore.getState().worker;
@@ -161,6 +164,9 @@ export const useSyncOrchestratorStore = create<SyncOrchestratorState>()((set, ge
 
   initialize: () => {
     if (get().initialized) return;
+    // StrictMode runs initialize → shutdown → initialize back to back: a subscription that
+    // resolves after its own session ended is released at once instead of being kept.
+    const isCurrent = sessions.begin();
     set({ initialized: true });
     void (async () => {
       try {
@@ -168,7 +174,7 @@ export const useSyncOrchestratorStore = create<SyncOrchestratorState>()((set, ge
           const parsed = SyncWorkerStatusSchema.safeParse(event.payload);
           if (parsed.success) applyWorkerStatus(parsed.data as SyncWorkerStatus);
         });
-        if (get().initialized) {
+        if (isCurrent()) {
           unlistenStatus = unlisten;
         } else {
           unlisten();
@@ -177,7 +183,8 @@ export const useSyncOrchestratorStore = create<SyncOrchestratorState>()((set, ge
         // Outside Tauri (tests) there is no event bus; the store stays empty.
       }
       try {
-        applyWorkerStatus(await getSyncWorkerStatus());
+        const status = await getSyncWorkerStatus();
+        if (isCurrent()) applyWorkerStatus(status);
       } catch {
         // No session yet: the next status event fills the store.
       }
@@ -198,6 +205,7 @@ export const useSyncOrchestratorStore = create<SyncOrchestratorState>()((set, ge
   },
 
   shutdown: () => {
+    sessions.invalidate();
     unlistenStatus?.();
     unlistenStatus = null;
     removeNetworkListeners?.();

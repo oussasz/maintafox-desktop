@@ -33,6 +33,17 @@ pub struct WorkPermit {
     pub closed_at: Option<String>,
     pub handed_back_at: Option<String>,
     pub row_version: i64,
+    /// Display labels resolved by JOIN (never render the FKs above in the UI).
+    #[serde(default)]
+    pub permit_type_code: Option<String>,
+    #[serde(default)]
+    pub permit_type_name: Option<String>,
+    #[serde(default)]
+    pub asset_code: Option<String>,
+    #[serde(default)]
+    pub asset_label: Option<String>,
+    #[serde(default)]
+    pub linked_work_order_code: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,6 +58,10 @@ pub struct PermitSuspension {
     pub reinstated_at: Option<String>,
     pub reactivation_conditions: String,
     pub row_version: i64,
+    #[serde(default)]
+    pub suspended_by_name: Option<String>,
+    #[serde(default)]
+    pub reinstated_by_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,7 +90,14 @@ pub struct PermitIsolation {
     pub applied_at: Option<String>,
     pub verified_at: Option<String>,
     pub removal_verified_at: Option<String>,
+    pub removal_verified_by_id: Option<i64>,
     pub row_version: i64,
+    #[serde(default)]
+    pub applied_by_name: Option<String>,
+    #[serde(default)]
+    pub verified_by_name: Option<String>,
+    #[serde(default)]
+    pub removal_verified_by_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -83,6 +105,8 @@ pub struct WorkPermitListFilter {
     pub status: Option<String>,
     pub permit_type_id: Option<i64>,
     pub asset_id: Option<i64>,
+    #[serde(default)]
+    pub linked_work_order_id: Option<i64>,
     pub limit: Option<i64>,
 }
 
@@ -103,9 +127,14 @@ pub struct PermitTypeUpsertInput {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkPermitCreateInput {
     pub permit_type_id: i64,
-    pub asset_id: i64,
-    pub entity_id: i64,
+    /// Required unless `linked_work_order_id` is set (then the WO equipment is used).
+    #[serde(default)]
+    pub asset_id: Option<i64>,
+    /// Defaults to the linked WO entity, then to the asset's installation node.
+    #[serde(default)]
+    pub entity_id: Option<i64>,
     pub linked_work_order_id: Option<i64>,
+    /// RFC 3339; must be in the future.
     pub expires_at: Option<String>,
 }
 
@@ -120,16 +149,12 @@ pub struct WorkPermitUpdateInput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Lifecycle timestamps are stamped by the server; the actor (e.g. the person
+/// reinstating a suspended permit) is always the session user.
 pub struct WorkPermitStatusInput {
     pub id: i64,
     pub status: String,
     pub expected_row_version: i64,
-    pub issued_at: Option<String>,
-    pub activated_at: Option<String>,
-    pub closed_at: Option<String>,
-    pub handed_back_at: Option<String>,
-    /// When leaving `revalidation_required` or `suspended` to `active`, closes the open suspension.
-    pub reinstated_by_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -137,7 +162,6 @@ pub struct PermitSuspendInput {
     pub permit_id: i64,
     pub expected_row_version: i64,
     pub reason: String,
-    pub suspended_by_id: i64,
     pub reactivation_conditions: Option<String>,
 }
 
@@ -147,9 +171,11 @@ pub struct PermitHandoverLogInput {
     pub handed_from_role: String,
     pub handed_to_role: String,
     pub confirmation_note: String,
-    pub signed_at: Option<String>,
 }
 
+/// Defines (or edits, before application) an isolation point. Application,
+/// verification and removal verification go through dedicated actions so the
+/// actor is always the session user.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PermitIsolationUpsertInput {
     pub id: Option<i64>,
@@ -159,11 +185,15 @@ pub struct PermitIsolationUpsertInput {
     pub isolation_method: String,
     #[serde(default)]
     pub lock_number: Option<String>,
-    pub applied_by_id: Option<i64>,
-    pub verified_by_id: Option<i64>,
-    pub applied_at: Option<String>,
-    pub verified_at: Option<String>,
-    pub removal_verified_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PermitIsolationActionInput {
+    pub isolation_id: i64,
+    pub expected_row_version: i64,
+    /// Only for `apply`: lock number fitted at application time.
+    #[serde(default)]
+    pub lock_number: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -200,5 +230,4 @@ pub struct PermitComplianceKpi30d {
 pub struct LotoCardPrintInput {
     pub permit_id: i64,
     pub isolation_id: i64,
-    pub printed_by_id: i64,
 }

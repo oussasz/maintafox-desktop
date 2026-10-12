@@ -86,10 +86,18 @@ const NUMBER_SETTINGS = new Set([
   "backup.retention_monthly",
   "diagnostics.log_retention_days",
   "ram.fmeca_rpn_critical_threshold",
+  "wo.reopen_window_days",
 ]);
 
 /** Preferred General-tab category order. */
-const CATEGORY_ORDER = ["localization", "appearance", "system", "reliability", "backup"] as const;
+const CATEGORY_ORDER = [
+  "localization",
+  "appearance",
+  "system",
+  "work_orders",
+  "reliability",
+  "backup",
+] as const;
 
 /** Complex JSON settings rendered by dedicated panels — never as scalar rows. */
 const COMPLEX_SETTING_KEYS = new Set(["documents.default_header"]);

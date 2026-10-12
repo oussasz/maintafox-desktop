@@ -3,3 +3,6 @@ pub mod expiry_alerts;
 pub mod queries;
 pub mod readiness;
 pub mod training;
+
+#[cfg(test)]
+mod tests;

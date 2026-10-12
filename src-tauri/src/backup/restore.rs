@@ -300,6 +300,33 @@ mod tests {
         db.close().await.unwrap();
     }
 
+    /// Two checks started together (same second) used to share one temp copy named after the
+    /// timestamp: one overwrote or deleted the other's file (CI on Linux).
+    #[tokio::test]
+    async fn concurrent_backup_checks_do_not_share_their_temp_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = DatabaseKey::generate();
+        let db = migrated_encrypted_db(&dir.path().join("maintafox.db"), &key).await;
+        let a = dir.path().join("a.db");
+        let b = dir.path().join("b.db");
+        for p in [&a, &b] {
+            crate::backup::run_manual_backup(&db, &p.to_string_lossy(), crate::backup::TRIGGER_MANUAL, None)
+                .await
+                .unwrap();
+        }
+        let (a, b) = (a.to_string_lossy().to_string(), b.to_string_lossy().to_string());
+        for _ in 0..3 {
+            let (ra, rb) = tokio::join!(
+                crate::backup::validate_backup_file(&db, &a, Some(&key)),
+                crate::backup::validate_backup_file(&db, &b, Some(&key)),
+            );
+            let (ra, rb) = (ra.unwrap(), rb.unwrap());
+            assert!(ra.integrity_ok, "{}", ra.integrity_check_output);
+            assert!(rb.integrity_ok, "{}", rb.integrity_check_output);
+        }
+        db.close().await.unwrap();
+    }
+
     #[test]
     fn no_pending_file_is_a_no_op() {
         let dir = tempfile::tempdir().unwrap();

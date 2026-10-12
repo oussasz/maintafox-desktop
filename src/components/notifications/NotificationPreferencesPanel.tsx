@@ -1,5 +1,6 @@
 import { Lock } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { Badge } from "@/components/ui/badge";
 import {
@@ -19,14 +20,23 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
+  getNotificationChannelStatus,
   getNotificationPreferences,
+  type NotificationChannelStatus,
   updateNotificationPreference,
   type UserPreferenceRow,
 } from "@/services/notification-service";
 import { toErrorMessage } from "@/utils/errors";
 
+const EMAIL_REASONS = ["server_endpoint_not_enabled", "licence_blocked", "device_not_activated"];
+
+/** Category of the daily digest notification itself: always delivered instantly. */
+const DIGEST_CATEGORY = "daily_digest";
+
 export function NotificationPreferencesPanel() {
+  const { t } = useTranslation("notifications");
   const [rows, setRows] = useState<UserPreferenceRow[]>([]);
+  const [channels, setChannels] = useState<NotificationChannelStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -34,7 +44,12 @@ export function NotificationPreferencesPanel() {
     setLoading(true);
     setError(null);
     try {
-      setRows(await getNotificationPreferences());
+      const [prefs, status] = await Promise.all([
+        getNotificationPreferences(),
+        getNotificationChannelStatus(),
+      ]);
+      setRows(prefs);
+      setChannels(status);
     } catch (err) {
       setError(toErrorMessage(err));
     } finally {
@@ -80,28 +95,44 @@ export function NotificationPreferencesPanel() {
   );
 
   if (loading) {
-    return <div className="text-sm text-muted-foreground">Loading preferences...</div>;
+    return <div className="text-sm text-muted-foreground">{t("preferences.loading")}</div>;
   }
+
+  const emailAvailable = channels?.email.available === true;
+  const emailReason = channels?.email.reason ?? null;
+  const emailUnavailableText =
+    channels == null || emailAvailable
+      ? null
+      : emailReason != null && EMAIL_REASONS.includes(emailReason)
+        ? t(`preferences.emailUnavailable.${emailReason}`)
+        : t("preferences.emailUnavailable.unknown", { message: emailReason ?? "" });
 
   return (
     <div className="space-y-3 rounded-lg border p-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold">Notification Preferences</h3>
-        <Badge variant="outline">{rows.length} categories</Badge>
+        <h3 className="text-sm font-semibold">{t("preferences.title")}</h3>
+        <Badge variant="outline">{t("preferences.categories", { count: rows.length })}</Badge>
       </div>
 
       {error && <div className="text-sm text-destructive">{error}</div>}
+      {emailUnavailableText && (
+        <div role="status" className="text-xs text-muted-foreground">
+          {emailUnavailableText}
+        </div>
+      )}
+      <div className="text-xs text-muted-foreground">{t("preferences.smsUnavailable")}</div>
+      <div className="text-xs text-muted-foreground">{t("preferences.digestHelp")}</div>
 
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>Category</TableHead>
-            <TableHead>In-app</TableHead>
-            <TableHead>OS</TableHead>
-            <TableHead>Email</TableHead>
-            <TableHead>SMS</TableHead>
-            <TableHead>Digest</TableHead>
-            <TableHead>Mute until</TableHead>
+            <TableHead>{t("preferences.col.category")}</TableHead>
+            <TableHead>{t("preferences.col.inApp")}</TableHead>
+            <TableHead>{t("preferences.col.os")}</TableHead>
+            <TableHead>{t("preferences.col.email")}</TableHead>
+            <TableHead>{t("preferences.col.sms")}</TableHead>
+            <TableHead>{t("preferences.col.digest")}</TableHead>
+            <TableHead>{t("preferences.col.muteUntil")}</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -116,7 +147,7 @@ export function NotificationPreferencesPanel() {
                   <div className="flex items-center gap-2">
                     <span>{row.label}</span>
                     {disabled && (
-                      <span title="System-managed">
+                      <span title={t("preferences.systemManaged")}>
                         <Lock className="h-3.5 w-3.5" />
                       </span>
                     )}
@@ -139,30 +170,39 @@ export function NotificationPreferencesPanel() {
                 <TableCell>
                   <Switch
                     checked={row.email_enabled}
-                    disabled={disabled}
+                    disabled={disabled || !emailAvailable}
+                    aria-label={t("preferences.col.email")}
+                    title={emailUnavailableText ?? undefined}
                     onCheckedChange={(v) => void patchRow(row, { email_enabled: v })}
                   />
                 </TableCell>
                 <TableCell>
                   <Switch
                     checked={row.sms_enabled}
-                    disabled={disabled}
+                    disabled
+                    aria-label={t("preferences.col.sms")}
+                    title={t("preferences.smsUnavailable")}
                     onCheckedChange={(v) => void patchRow(row, { sms_enabled: v })}
                   />
                 </TableCell>
                 <TableCell>
                   <Select
                     value={row.digest_mode}
-                    disabled={disabled}
+                    disabled={disabled || row.category_code === DIGEST_CATEGORY}
                     onValueChange={(v) => void patchRow(row, { digest_mode: v })}
                   >
-                    <SelectTrigger className="w-36">
+                    <SelectTrigger
+                      className="w-36"
+                      aria-label={`${t("preferences.col.digest")} ${row.label}`}
+                    >
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="instant">instant</SelectItem>
-                      <SelectItem value="daily_digest">daily_digest</SelectItem>
-                      <SelectItem value="off">off</SelectItem>
+                      <SelectItem value="instant">{t("preferences.digest.instant")}</SelectItem>
+                      <SelectItem value="daily_digest">
+                        {t("preferences.digest.daily_digest")}
+                      </SelectItem>
+                      <SelectItem value="off">{t("preferences.digest.off")}</SelectItem>
                     </SelectContent>
                   </Select>
                 </TableCell>

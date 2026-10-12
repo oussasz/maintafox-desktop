@@ -1360,6 +1360,18 @@ pub async fn get_cost_posting_hook(wo_id: i64, state: State<'_, AppState>) -> Ap
 // AJ) get_wo_analytics_snapshot — ot.view
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/// Backlog heatmap (PRD §6.5): planned load per day vs crew capacity, unscheduled, overdue and
+/// blocked work by delay category.
+#[tauri::command]
+pub async fn get_wo_backlog_heatmap(
+    input: crate::wo::backlog::WoBacklogHeatmapInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::wo::backlog::WoBacklogHeatmap> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
+    crate::wo::backlog::get_wo_backlog_heatmap(&state.db, input).await
+}
+
 #[tauri::command]
 pub async fn get_wo_analytics_snapshot(
     wo_id: i64,
