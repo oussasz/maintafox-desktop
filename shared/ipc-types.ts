@@ -4632,6 +4632,8 @@ export interface WorkOrder {
   /** Latest Planning commitment for this WO (source_type=work_order). */
   schedule_commitment_id?: number | null;
   schedule_frozen?: boolean | null;
+  /** PRD §6.5 lifecycle state derived from the WO's facts (Rust `wo::lifecycle`). */
+  lifecycle_state?: string | null;
 }
 
 export interface WoTransitionRow {
@@ -4644,6 +4646,8 @@ export interface WoTransitionRow {
   reason_code: string | null;
   notes: string | null;
   acted_at: string;
+  /** Lifecycle state right after the transition (null before Phase 6.4). */
+  lifecycle_state?: string | null;
 }
 
 export interface WorkOrderTypeOption {
@@ -4744,6 +4748,8 @@ export interface WoDraftUpdateInput {
 
 export interface WoListFilter {
   status_codes?: string[] | null;
+  /** Derived PRD lifecycle states (see `src/utils/wo-lifecycle.ts`). */
+  lifecycle_states?: string[] | null;
   type_codes?: string[] | null;
   equipment_id?: number | null;
   entity_id?: number | null;
@@ -5193,6 +5199,8 @@ export interface WoStatsPayload {
   completed: number;
   overdue: number;
   by_status: { status: string; count: number }[];
+  /** Counts per derived PRD lifecycle state, in PRD order. */
+  by_lifecycle: { status: string; count: number }[];
   by_urgency: { urgency: string; count: number }[];
   daily_completed: { date: string; count: number }[];
   by_entity: { entity: string; count: number }[];

@@ -44,6 +44,7 @@
       "closedAt": "Date clôture"
     },
     "filters": {
+      "lifecycle": "Cycle de vie",
       "status": "Statut",
       "type": "Type",
       "priority": "Priorité",
@@ -690,6 +691,7 @@
     "inProgress": "En cours",
     "completed": "Terminés",
     "overdue": "En retard",
+    "lifecycleDistribution": "Répartition par cycle de vie",
     "statusDistribution": "Répartition par statut",
     "urgencyDistribution": "Répartition par urgence",
     "completionTrend": "Tendance de clôture",
@@ -859,5 +861,20 @@
     "partsCost": "Pièces",
     "serviceCost": "Services",
     "totalCost": "Total"
+  },
+  "lifecycle": {
+    "title": "État du cycle de vie PRD (déduit des faits de l'OT)",
+    "draft": "Brouillon",
+    "awaiting_approval": "En attente d'approbation",
+    "planned": "Planifié",
+    "ready_to_schedule": "Prêt à ordonnancer",
+    "assigned": "Affecté",
+    "waiting_for_prerequisite": "En attente de prérequis",
+    "in_progress": "En cours",
+    "paused": "En pause",
+    "mechanically_complete": "Terminé mécaniquement",
+    "technically_verified": "Vérifié techniquement",
+    "closed": "Clôturé",
+    "cancelled": "Annulé"
   }
 }

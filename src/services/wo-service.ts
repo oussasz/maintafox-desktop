@@ -146,6 +146,7 @@ export const WorkOrderSchema = z.object({
   assigned_team_label: z.string().nullable().optional(),
   schedule_commitment_id: z.number().nullable().optional(),
   schedule_frozen: z.boolean().nullable().optional(),
+  lifecycle_state: z.string().nullable().optional(),
 });
 
 export const WoTransitionRowSchema = z.object({
@@ -158,6 +159,7 @@ export const WoTransitionRowSchema = z.object({
   reason_code: z.string().nullable(),
   notes: z.string().nullable(),
   acted_at: z.string(),
+  lifecycle_state: z.string().nullable().optional(),
 });
 
 const WoListPageSchema = z.object({
@@ -531,6 +533,7 @@ const WoStatsSchema = z.object({
   completed: z.number(),
   overdue: z.number(),
   by_status: z.array(z.object({ status: z.string(), count: z.number() })),
+  by_lifecycle: z.array(z.object({ status: z.string(), count: z.number() })),
   by_urgency: z.array(z.object({ urgency: z.string(), count: z.number() })),
   daily_completed: z.array(z.object({ date: z.string(), count: z.number() })),
   by_entity: z.array(z.object({ entity: z.string(), count: z.number() })),

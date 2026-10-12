@@ -44,6 +44,7 @@
       "closedAt": "Closed on"
     },
     "filters": {
+      "lifecycle": "Lifecycle",
       "status": "Status",
       "type": "Type",
       "priority": "Priority",
@@ -690,6 +691,7 @@
     "inProgress": "In Progress",
     "completed": "Completed",
     "overdue": "Overdue",
+    "lifecycleDistribution": "Lifecycle Distribution",
     "statusDistribution": "Status Distribution",
     "urgencyDistribution": "Urgency Breakdown",
     "completionTrend": "Completion Trend",
@@ -859,5 +861,20 @@
     "partsCost": "Parts",
     "serviceCost": "Services",
     "totalCost": "Total"
+  },
+  "lifecycle": {
+    "title": "PRD lifecycle state (derived from the work order's facts)",
+    "draft": "Draft",
+    "awaiting_approval": "Awaiting approval",
+    "planned": "Planned",
+    "ready_to_schedule": "Ready to schedule",
+    "assigned": "Assigned",
+    "waiting_for_prerequisite": "Waiting for prerequisite",
+    "in_progress": "In progress",
+    "paused": "Paused",
+    "mechanically_complete": "Mechanically complete",
+    "technically_verified": "Technically verified",
+    "closed": "Closed",
+    "cancelled": "Cancelled"
   }
 }

@@ -62,6 +62,7 @@ import { pushAppToast } from "@/store/app-toast-store";
 import { useWoStore } from "@/stores/wo-store";
 import { toErrorMessage } from "@/utils/errors";
 import { formatDate } from "@/utils/format-date";
+import { isWoLifecycleState } from "@/utils/wo-lifecycle";
 import { statusToI18nKey, STATUS_STYLE, URGENCY_STYLE } from "@/utils/wo-status";
 import type { WoCompletionGate, WoStatus, WorkOrder } from "@shared/ipc-types";
 import { P, type PermissionName } from "@shared/rbac/permissions.generated";
@@ -229,6 +230,16 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
                 >
                   {t(`status.${statusKey}` as const)}
                 </Badge>
+                {isWoLifecycleState(wo.lifecycle_state) ? (
+                  <Badge
+                    variant="outline"
+                    className="text-xs"
+                    title={t("lifecycle.title")}
+                    data-testid="wo-lifecycle-badge"
+                  >
+                    {t(`lifecycle.${wo.lifecycle_state}`)}
+                  </Badge>
+                ) : null}
                 {wo.urgency_id != null && (
                   <Badge
                     variant="outline"

@@ -137,6 +137,9 @@ pub struct WorkOrder {
     // Join fields (populated by queries, not stored in DB)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status_code: Option<String>,
+    /// PRD §6.5 lifecycle state derived from the WO's facts (`wo::lifecycle`); not stored.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lifecycle_state: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status_label: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -196,6 +199,8 @@ pub struct WoTransitionRow {
     pub reason_code: Option<String>,
     pub notes: Option<String>,
     pub acted_at: String,
+    /// Lifecycle state right after the transition (NULL for transitions logged before 6.4).
+    pub lifecycle_state: Option<String>,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -456,6 +461,9 @@ pub fn map_work_order(row: &QueryResult) -> AppResult<WorkOrder> {
             .map_err(|e| decode_err("updated_at", e))?,
         // Join fields — optional, depend on query shape
         status_code: row.try_get::<Option<String>>("", "status_code").unwrap_or(None),
+        lifecycle_state: row
+            .try_get::<Option<String>>("", "lifecycle_state")
+            .map_err(|e| decode_err("lifecycle_state", e))?,
         status_label: row.try_get::<Option<String>>("", "status_label").unwrap_or(None),
         status_color: row.try_get::<Option<String>>("", "status_color").unwrap_or(None),
         type_code: row.try_get::<Option<String>>("", "type_code").unwrap_or(None),
@@ -517,6 +525,9 @@ pub fn map_wo_transition_row(row: &QueryResult) -> AppResult<WoTransitionRow> {
         acted_at: row
             .try_get::<String>("", "acted_at")
             .map_err(|e| decode_err("acted_at", e))?,
+        lifecycle_state: row
+            .try_get::<Option<String>>("", "lifecycle_state")
+            .map_err(|e| decode_err("lifecycle_state", e))?,
     })
 }
 

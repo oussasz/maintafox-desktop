@@ -8,9 +8,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { closeWo } from "@/services/wo-closeout-service";
 import {
+  CompletionBlockedError,
   assignWo,
   cancelWo,
-  CompletionBlockedError,
   completeWoMechanically,
   createWo,
   getWo,

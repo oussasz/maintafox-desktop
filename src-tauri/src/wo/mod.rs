@@ -9,6 +9,7 @@ pub mod domain;
 pub mod execution;
 pub mod execution_log;
 pub mod labor;
+pub mod lifecycle;
 pub mod parts;
 pub mod permissions;
 pub mod plan_adherence;

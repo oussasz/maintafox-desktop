@@ -46,6 +46,7 @@ import { useWorkOrderPrioritiesCatalog } from "@/stores/work-order-priorities-ca
 import { useWorkOrderTypesCatalog } from "@/stores/work-order-types-catalog-store";
 import { toErrorMessage } from "@/utils/errors";
 import { formatDate } from "@/utils/format-date";
+import { isWoLifecycleState, WO_LIFECYCLE_STATES } from "@/utils/wo-lifecycle";
 import { STATUS_STYLE, statusToI18nKey } from "@/utils/wo-status";
 import type { WorkOrder } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
@@ -134,6 +135,7 @@ export function WorkOrdersPage() {
   );
 
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
+  const [lifecycleFilter, setLifecycleFilter] = useState<string | null>(null);
   const [printError, setPrintError] = useState<string | null>(null);
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
   const [priorityFilter, setPriorityFilter] = useState<string | null>(null);
@@ -153,6 +155,20 @@ export function WorkOrdersPage() {
       void loadWos();
     },
     [setFilter, loadWos],
+  );
+
+  const handleLifecycleFilter = useCallback(
+    (val: string | null) => {
+      setLifecycleFilter(val);
+      setFilter({ lifecycle_states: val ? [val] : null });
+      void loadWos();
+    },
+    [setFilter, loadWos],
+  );
+
+  const LIFECYCLE_OPTIONS = useMemo(
+    () => WO_LIFECYCLE_STATES.map((code) => ({ value: code, label: t(`lifecycle.${code}`) })),
+    [t],
   );
 
   const handleTypeFilter = useCallback(
@@ -176,11 +192,13 @@ export function WorkOrdersPage() {
   const resetFilters = useCallback(() => {
     setSearchInput("");
     setStatusFilter(null);
+    setLifecycleFilter(null);
     setTypeFilter(null);
     setPriorityFilter(null);
     setFilter({
       search: null,
       status_codes: null,
+      lifecycle_states: null,
       type_codes: null,
       urgency_level: null,
     });
@@ -196,6 +214,14 @@ export function WorkOrdersPage() {
         options: STATUS_OPTIONS,
         value: statusFilter,
         onChange: handleStatusFilter,
+      },
+      {
+        id: "lifecycle",
+        kind: "select",
+        label: t("list.filters.lifecycle"),
+        options: LIFECYCLE_OPTIONS,
+        value: lifecycleFilter,
+        onChange: handleLifecycleFilter,
       },
       {
         id: "type",
@@ -217,12 +243,15 @@ export function WorkOrdersPage() {
     [
       t,
       STATUS_OPTIONS,
+      LIFECYCLE_OPTIONS,
       TYPE_OPTIONS,
       PRIORITY_OPTIONS,
       statusFilter,
+      lifecycleFilter,
       typeFilter,
       priorityFilter,
       handleStatusFilter,
+      handleLifecycleFilter,
       handleTypeFilter,
       handlePriorityFilter,
     ],
@@ -288,13 +317,19 @@ export function WorkOrdersPage() {
         header: t("list.columns.status"),
         cell: ({ row }) => {
           const s = row.original.status_code ?? "draft";
+          const lc = row.original.lifecycle_state;
           return (
-            <Badge
-              variant="outline"
-              className={`text-[10px] border-0 ${STATUS_STYLE[s] ?? "bg-gray-100 text-gray-600"}`}
-            >
-              {t(`status.${statusToI18nKey(s)}`)}
-            </Badge>
+            <div className="flex flex-col items-start gap-0.5">
+              <Badge
+                variant="outline"
+                className={`text-[10px] border-0 ${STATUS_STYLE[s] ?? "bg-gray-100 text-gray-600"}`}
+              >
+                {t(`status.${statusToI18nKey(s)}`)}
+              </Badge>
+              {isWoLifecycleState(lc) ? (
+                <span className="text-[10px] text-text-muted">{t(`lifecycle.${lc}`)}</span>
+              ) : null}
+            </div>
           );
         },
       },

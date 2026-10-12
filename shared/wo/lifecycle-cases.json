@@ -1,0 +1,7682 @@
+[
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "draft",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "draft",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "draft",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "planned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "planned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "planned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "awaiting_approval",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "awaiting_approval",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "awaiting_approval",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "planned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "planned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "planned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "awaiting_approval",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "awaiting_approval",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "awaiting_approval",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "planned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "planned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "planned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "awaiting_approval",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "awaiting_approval",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "awaiting_approval",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "planned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "planned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "planned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "awaiting_approval",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "awaiting_approval",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "awaiting_approval",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "planned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "planned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "planned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "awaiting_approval",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "awaiting_approval",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "awaiting_approval",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "planned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "planned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "planned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "awaiting_approval",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "awaiting_approval",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "awaiting_approval",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "planned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "planned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "planned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "awaiting_approval",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "awaiting_approval",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "awaiting_approval",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "planned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "planned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "planned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "awaiting_approval",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "awaiting_approval",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "awaiting_approval",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "planning",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "planning",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "planned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "ready_to_schedule",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "ready_to_schedule",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "ready_to_schedule",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "ready_to_schedule",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "ready_to_schedule",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "ready_to_schedule",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "ready_to_schedule",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "ready_to_schedule",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "ready_to_schedule",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "ready_to_schedule",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "ready_to_schedule",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "ready_to_schedule",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "ready_to_schedule",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "ready_to_schedule",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "ready_to_schedule",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "ready_to_schedule",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "ready_to_schedule",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "ready_to_schedule",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "ready_to_schedule",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "ready_to_schedule",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "ready_to_schedule",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "ready_to_schedule",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "ready_to_schedule",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "ready_to_schedule",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "ready_to_schedule",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "ready_to_schedule",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "ready_to_schedule",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "ready_to_schedule",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "ready_to_schedule",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "ready_to_schedule",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "ready_to_schedule",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "ready_to_schedule",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "ready_to_schedule",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "ready_to_schedule",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "ready_to_schedule",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "ready_to_schedule",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "assigned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "assigned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "assigned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "assigned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "assigned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "assigned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "assigned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "assigned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "assigned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "assigned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "assigned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "assigned",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "ready_to_schedule",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "ready_to_schedule",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "ready_to_schedule",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "ready_to_schedule",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "ready_to_schedule",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "ready_to_schedule",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "ready_to_schedule",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "ready_to_schedule",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "ready_to_schedule",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "ready_to_schedule",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "ready_to_schedule",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "ready_to_schedule",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "ready_to_schedule",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "ready_to_schedule",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "ready_to_schedule",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "ready_to_schedule",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "ready_to_schedule",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "ready_to_schedule",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "ready_to_schedule",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "ready_to_schedule",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "ready_to_schedule",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "ready_to_schedule",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "ready_to_schedule",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "ready_to_schedule",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "ready_to_schedule",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "ready_to_schedule",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "ready_to_schedule",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "ready_to_schedule",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "ready_to_schedule",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "ready_to_schedule",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "ready_to_schedule",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "ready_to_schedule",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "ready_to_schedule",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "ready_to_schedule",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "ready_to_schedule",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "ready_to_schedule",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "assigned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "assigned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "assigned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "assigned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "assigned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "assigned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "assigned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "assigned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "ready",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "assigned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "assigned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "assigned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "ready",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "assigned",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "in_progress",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "in_progress",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "in_progress",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "paused",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "paused",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "waiting_for_prerequisite",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "paused",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "paused",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "waiting_for_prerequisite",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "paused",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "paused",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "waiting_for_prerequisite",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "paused",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "paused",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "waiting_for_prerequisite",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "paused",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "paused",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "waiting_for_prerequisite",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "paused",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "paused",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "waiting_for_prerequisite",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "paused",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "paused",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "waiting_for_prerequisite",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "paused",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "paused",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "waiting_for_prerequisite",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "paused",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "paused",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "waiting_for_prerequisite",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "paused",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "paused",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "waiting_for_prerequisite",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "paused",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "paused",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "waiting_for_prerequisite",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "paused",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "paused",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "waiting_for_prerequisite",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "paused",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "paused",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "waiting_for_prerequisite",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "paused",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "paused",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "waiting_for_prerequisite",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "paused",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "paused",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "waiting_for_prerequisite",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "paused",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "paused",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "waiting_for_prerequisite",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "paused",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "paused",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "waiting_for_prerequisite",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "paused",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "paused",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "waiting_for_prerequisite",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "paused",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "paused",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "waiting_for_prerequisite",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "paused",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "paused",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "waiting_for_prerequisite",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "paused",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "paused",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "waiting_for_prerequisite",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "paused",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "paused",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "waiting_for_prerequisite",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "paused",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "paused",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "waiting_for_prerequisite",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "paused",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "paused",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "waiting_for_prerequisite",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "paused",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "paused",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "waiting_for_prerequisite",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "paused",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "paused",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "waiting_for_prerequisite",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "paused",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "paused",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "waiting_for_prerequisite",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "paused",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "paused",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "waiting_for_prerequisite",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "paused",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "paused",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "waiting_for_prerequisite",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "paused",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "paused",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "waiting_for_prerequisite",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "paused",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "paused",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "on_hold",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "waiting_for_prerequisite",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "paused",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "paused",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "on_hold",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "waiting_for_prerequisite",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "mechanically_complete",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "completed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "completed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "technically_verified",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "closed",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "closed",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "closed",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": false
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": false,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": null,
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "pause",
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": false,
+    "open_hold": "prerequisite",
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": false,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "cancelled",
+    "planning_approval_required": false,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": null,
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "pause",
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": true
+  },
+  {
+    "has_assignee": true,
+    "has_schedule": true,
+    "open_hold": "prerequisite",
+    "phase": "cancelled",
+    "planning_approval_required": true,
+    "planning_approved": true,
+    "state": "cancelled",
+    "technically_verified": true
+  }
+]

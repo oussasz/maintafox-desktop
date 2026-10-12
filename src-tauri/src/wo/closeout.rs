@@ -378,7 +378,8 @@ async fn resolve_status_id(txn: &impl ConnectionTrait, code: &str) -> AppResult<
     row.try_get::<i64>("", "id").map_err(|e| decode_err("status id", e))
 }
 
-/// Write an entry to the append-only state transition log.
+/// Write an entry to the append-only state transition log (the shared writer also records the
+/// derived lifecycle state and the planning-approval fact).
 async fn log_transition(
     txn: &impl ConnectionTrait,
     wo_id: i64,
@@ -390,28 +391,18 @@ async fn log_transition(
     notes: Option<&str>,
     acted_at: &str,
 ) -> AppResult<()> {
-    txn.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO wo_state_transition_log \
-         (wo_id, from_status, to_status, action, actor_id, reason_code, notes, acted_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        [
-            wo_id.into(),
-            from_status.into(),
-            to_status.into(),
-            action.into(),
-            actor_id.into(),
-            reason_code
-                .map(sea_orm::Value::from)
-                .unwrap_or(sea_orm::Value::from(None::<String>)),
-            notes
-                .map(sea_orm::Value::from)
-                .unwrap_or(sea_orm::Value::from(None::<String>)),
-            acted_at.into(),
-        ],
-    ))
-    .await?;
-    Ok(())
+    crate::wo::workflow::transition::log_transition(
+        txn,
+        wo_id,
+        from_status,
+        to_status,
+        action,
+        actor_id,
+        reason_code,
+        notes,
+        acted_at,
+    )
+    .await
 }
 
 /// Load the WO type code (e.g. "corrective", "preventive").
