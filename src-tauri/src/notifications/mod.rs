@@ -1,4 +1,5 @@
 pub mod delivery;
+pub mod digest;
 pub mod email;
 pub mod emitter;
 pub mod os_toast;

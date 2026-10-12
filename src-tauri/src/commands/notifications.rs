@@ -358,11 +358,7 @@ pub async fn update_notification_preference(
     }
 
     if let Some(mode) = payload.digest_mode.as_deref() {
-        if !matches!(mode, "instant" | "daily_digest" | "off") {
-            return Err(AppError::ValidationFailed(vec![
-                "digest_mode must be one of: instant, daily_digest, off".to_string(),
-            ]));
-        }
+        crate::notifications::digest::validate_digest_mode(&payload.category_code, mode)?;
     }
 
     let existing = state

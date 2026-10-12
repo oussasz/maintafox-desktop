@@ -306,6 +306,18 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
         info!("startup: notification email dispatcher started");
     }
 
+    // Daily digest of notifications (`notifications::digest`), supervised background task.
+    {
+        let digest_db = app_state.db.clone();
+        app_state
+            .tasks
+            .spawn("notification_digest", move |cancel| {
+                crate::notifications::digest::run_digest_job(digest_db, cancel)
+            })
+            .await;
+        info!("startup: notification daily digest started");
+    }
+
     // Phase 5b: DI SLA breach poller (non-fatal)
     {
         let sla_db = app_state.db.clone();

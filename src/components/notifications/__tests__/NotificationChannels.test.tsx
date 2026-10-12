@@ -105,4 +105,20 @@ describe("NotificationPreferencesPanel channels", () => {
     expect(isDisabled(email)).toBe(false);
     expect(screen.queryByRole("status")).toBeNull();
   });
+
+  it("explains the delivery modes and keeps the daily digest itself instant", async () => {
+    svc.getNotificationPreferences.mockResolvedValue([
+      row,
+      { ...row, category_code: "daily_digest", label: "Daily Digest" },
+    ]);
+    svc.getNotificationChannelStatus.mockResolvedValue({
+      email: { available: true, reason: null },
+    });
+    render(<NotificationPreferencesPanel />);
+    expect(await screen.findByText("preferences.digestHelp")).toBeTruthy();
+    const ownRow = screen.getByRole("combobox", { name: "preferences.col.digest Daily Digest" });
+    const otherRow = screen.getByRole("combobox", { name: "preferences.col.digest WO Assigned" });
+    expect(isDisabled(ownRow)).toBe(true);
+    expect(isDisabled(otherRow)).toBe(false);
+  });
 });

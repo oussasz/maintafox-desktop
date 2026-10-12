@@ -30,6 +30,9 @@ import { toErrorMessage } from "@/utils/errors";
 
 const EMAIL_REASONS = ["server_endpoint_not_enabled", "licence_blocked", "device_not_activated"];
 
+/** Category of the daily digest notification itself: always delivered instantly. */
+const DIGEST_CATEGORY = "daily_digest";
+
 export function NotificationPreferencesPanel() {
   const { t } = useTranslation("notifications");
   const [rows, setRows] = useState<UserPreferenceRow[]>([]);
@@ -118,6 +121,7 @@ export function NotificationPreferencesPanel() {
         </div>
       )}
       <div className="text-xs text-muted-foreground">{t("preferences.smsUnavailable")}</div>
+      <div className="text-xs text-muted-foreground">{t("preferences.digestHelp")}</div>
 
       <Table>
         <TableHeader>
@@ -184,10 +188,13 @@ export function NotificationPreferencesPanel() {
                 <TableCell>
                   <Select
                     value={row.digest_mode}
-                    disabled={disabled}
+                    disabled={disabled || row.category_code === DIGEST_CATEGORY}
                     onValueChange={(v) => void patchRow(row, { digest_mode: v })}
                   >
-                    <SelectTrigger className="w-36">
+                    <SelectTrigger
+                      className="w-36"
+                      aria-label={`${t("preferences.col.digest")} ${row.label}`}
+                    >
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>

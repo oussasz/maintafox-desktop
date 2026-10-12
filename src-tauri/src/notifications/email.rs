@@ -115,21 +115,26 @@ pub async fn email_channel_status(db: &DatabaseConnection) -> AppResult<ChannelA
 }
 
 /// Queues the email of a new notification when its recipient enabled email for the category
-/// (and has not muted it). Same transaction as the notification.
+/// (and has not muted it, and receives the category instantly rather than in the daily digest or
+/// in-app only, `notifications::digest`). Same transaction as the notification.
 pub async fn enqueue_email(conn: &impl ConnectionTrait, notification_id: i64) -> AppResult<bool> {
     let res = conn
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "INSERT INTO notification_deliveries (notification_id, channel, attempt_no, delivery_status) \
-             SELECT n.id, 'email', 0, 'queued' FROM notifications n \
-             JOIN notification_events e ON e.id = n.notification_event_id \
-             LEFT JOIN notification_preferences p \
-                    ON p.user_id = n.recipient_user_id AND p.category_code = e.category_code \
-             WHERE n.id = ? AND n.recipient_user_id IS NOT NULL \
-               AND COALESCE(p.email_enabled, 0) = 1 \
-               AND (p.muted_until IS NULL OR p.muted_until <= strftime('%Y-%m-%dT%H:%M:%SZ','now')) \
-               AND NOT EXISTS (SELECT 1 FROM notification_deliveries d \
-                               WHERE d.notification_id = n.id AND d.channel = 'email')",
+            format!(
+                "INSERT INTO notification_deliveries (notification_id, channel, attempt_no, delivery_status) \
+                 SELECT n.id, 'email', 0, 'queued' FROM notifications n \
+                 JOIN notification_events e ON e.id = n.notification_event_id \
+                 LEFT JOIN notification_preferences p \
+                        ON p.user_id = n.recipient_user_id AND p.category_code = e.category_code \
+                 WHERE n.id = ? AND n.recipient_user_id IS NOT NULL \
+                   AND COALESCE(p.email_enabled, 0) = 1 \
+                   AND {} \
+                   AND (p.muted_until IS NULL OR p.muted_until <= strftime('%Y-%m-%dT%H:%M:%SZ','now')) \
+                   AND NOT EXISTS (SELECT 1 FROM notification_deliveries d \
+                                   WHERE d.notification_id = n.id AND d.channel = 'email')",
+                crate::notifications::digest::INSTANT_DELIVERY_SQL
+            ),
             [notification_id.into()],
         ))
         .await?;

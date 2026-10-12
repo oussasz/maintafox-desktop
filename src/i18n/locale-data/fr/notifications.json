@@ -28,8 +28,9 @@
     "digest": {
       "instant": "Immédiat",
       "daily_digest": "Résumé quotidien",
-      "off": "Désactivé"
+      "off": "Dans l'application uniquement"
     },
+    "digestHelp": "Immédiat : affiché et envoyé dès que l'événement se produit. Résumé quotidien : conservé dans la boîte de réception, puis un résumé des notifications non lues de la journée le lendemain (affiché et envoyé par e-mail comme la catégorie « Daily Digest »). Dans l'application uniquement : conservé dans la boîte de réception, sans alerte, e-mail ni résumé. Les journées suivent le fuseau horaire de cet ordinateur.",
     "emailUnavailable": {
       "server_endpoint_not_enabled": "L'e-mail n'est pas encore disponible : le serveur Maintafox n'a pas activé l'envoi d'e-mails pour votre organisation.",
       "licence_blocked": "L'e-mail n'est pas disponible : votre licence ne l'autorise pas dans son état actuel.",
