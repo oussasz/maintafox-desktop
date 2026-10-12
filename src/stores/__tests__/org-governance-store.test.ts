@@ -270,13 +270,7 @@ describe("org-governance-store", () => {
       );
     });
 
-    // BUG: the store serialises object errors with JSON.stringify before checking for
-    // "STEP_UP_REQUIRED". An Error instance is an object, so it is stringified to "{}"
-    // and the `err instanceof Error ? err.message` branch is unreachable. A step-up
-    // failure thrown as `new Error("STEP_UP_REQUIRED")` is therefore swallowed as an
-    // ordinary publish failure instead of bubbling to `withStepUp`. Raw Tauri rejects are
-    // plain `{ code, message }` objects (handled correctly), so this is latent today.
-    it.skip("BUG: rethrows an Error instance whose message is STEP_UP_REQUIRED", async () => {
+    it("rethrows an Error instance whose message is STEP_UP_REQUIRED", async () => {
       const stepUp = new Error("STEP_UP_REQUIRED");
       mockPublish.mockRejectedValueOnce(stepUp);
       mockValidate.mockResolvedValueOnce(makeValidation());

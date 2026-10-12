@@ -152,12 +152,35 @@ describe("reference-search-store — runSearch", () => {
     expect(useReferenceSearchStore.getState().error).toBe("boom");
   });
 
-  // BUG: concurrent searches are not sequenced. When the user types quickly
-  // (setQuery("p") then setQuery("po")), a slower response for the older query
-  // overwrites the newer one, and the first search to finish flips loading to
-  // false while the newer one is still running. The store has no request token
-  // / latest-query check to discard stale responses.
-  it.skip("BUG: a stale (older) search response overwrites results of a newer query", async () => {
+  it("keeps loading while the newer search runs, even if an older one finishes first", async () => {
+    const first = deferred<ReferenceSearchHit[]>();
+    const second = deferred<ReferenceSearchHit[]>();
+    mockSearch.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    useReferenceSearchStore.setState({ domain: "D" });
+
+    const p1 = useReferenceSearchStore.getState().setQuery("p");
+    const p2 = useReferenceSearchStore.getState().setQuery("po");
+    first.resolve([makeHit({ value_id: 1, code: "P" })]);
+    await p1;
+    expect(useReferenceSearchStore.getState().loading).toBe(true);
+    expect(useReferenceSearchStore.getState().results).toEqual([]);
+    second.resolve([makeHit({ value_id: 2, code: "POMPE" })]);
+    await p2;
+    expect(useReferenceSearchStore.getState().loading).toBe(false);
+  });
+
+  it("drops a late result after the query was cleared", async () => {
+    const first = deferred<ReferenceSearchHit[]>();
+    mockSearch.mockReturnValueOnce(first.promise);
+    useReferenceSearchStore.setState({ domain: "D" });
+    const p1 = useReferenceSearchStore.getState().setQuery("p");
+    await useReferenceSearchStore.getState().setQuery("");
+    first.resolve([makeHit()]);
+    await p1;
+    expect(useReferenceSearchStore.getState().results).toEqual([]);
+  });
+
+  it("a stale (older) search response never overwrites results of a newer query", async () => {
     const first = deferred<ReferenceSearchHit[]>();
     const second = deferred<ReferenceSearchHit[]>();
     mockSearch.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);

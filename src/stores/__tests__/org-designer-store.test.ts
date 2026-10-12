@@ -377,12 +377,20 @@ describe("org-designer-store", () => {
       expect(s.previewOpen).toBe(false);
     });
 
-    // BUG: openPreview has no stale-response guard. If the user opens a preview
-    // for node A, then (before it resolves) opens one for node B, and A's request
-    // resolves last, the drawer shows A's impact under B's payload. The same
-    // happens after closePreview: a late response repopulates `preview` while the
-    // drawer is closed. A request token (or comparing previewPayload) would fix it.
-    it.skip("BUG: a late response for an earlier preview overwrites the newer one", async () => {
+    it("a late preview response after the drawer was closed does not refill it", async () => {
+      const first = deferred<OrgImpactPreview>();
+      mockPreview.mockReturnValueOnce(first.promise);
+      const p = useOrgDesignerStore.getState().openPreview(makePayload({ node_id: 5 }));
+      useOrgDesignerStore.getState().closePreview();
+      first.resolve(makePreview({ subject_node_id: 5 }));
+      await p;
+      const s = useOrgDesignerStore.getState();
+      expect(s.preview).toBeNull();
+      expect(s.previewOpen).toBe(false);
+      expect(s.previewLoading).toBe(false);
+    });
+
+    it("a late response for an earlier preview never overwrites the newer one", async () => {
       const first = deferred<OrgImpactPreview>();
       const second = deferred<OrgImpactPreview>();
       mockPreview.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);

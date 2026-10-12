@@ -4,10 +4,10 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
-  deriveWoLifecycle,
-  isWoLifecycleState,
   WO_LIFECYCLE_STATES,
   type WoLifecycleFacts,
+  deriveWoLifecycle,
+  isWoLifecycleState,
 } from "../wo-lifecycle";
 
 interface Case extends WoLifecycleFacts {

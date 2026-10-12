@@ -300,6 +300,25 @@ describe("wo-store", () => {
       expect(s.total).toBe(1);
       expect(s.loading).toBe(false);
     });
+
+    it("keeps the list of the latest filter when an older list answers last", async () => {
+      const older = deferred<WoListPage>();
+      const newer = deferred<WoListPage>();
+      vi.mocked(listWos).mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
+
+      const p1 = useWoStore.getState().loadWos();
+      useWoStore.getState().setFilter({ search: "pump" });
+      const p2 = useWoStore.getState().loadWos();
+      newer.resolve({ items: [makeWo({ id: 2 })], total: 1 });
+      await p2;
+      expect(useWoStore.getState().loading).toBe(false);
+      older.resolve({ items: [makeWo({ id: 1 }), makeWo({ id: 3 })], total: 2 });
+      await p1;
+
+      const s = useWoStore.getState();
+      expect(s.items.map((w) => w.id)).toEqual([2]);
+      expect(s.total).toBe(1);
+    });
   });
 
   // ── Detail ────────────────────────────────────────────────────────────────
@@ -365,11 +384,7 @@ describe("wo-store", () => {
       expect(useWoStore.getState().error).toBe("timeout");
     });
 
-    // BUG: openWo has no stale-response guard. If the user opens WO 1 and then
-    // WO 2 before the first request resolves, a late response for WO 1 overwrites
-    // the WO 2 detail (and clears openingWoId/detailLoading while WO 2 is still
-    // loading). The store tracks `openingWoId` but never compares it on resolve.
-    it.skip("BUG: a slow openWo response for an earlier WO overwrites the later selection", async () => {
+    it("a slow openWo response for an earlier WO never overwrites the later selection", async () => {
       const first = deferred<WoGetResponse>();
       const second = deferred<WoGetResponse>();
       vi.mocked(getWo).mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
@@ -381,7 +396,34 @@ describe("wo-store", () => {
       first.resolve(detail(makeWo({ id: 1 })));
       await p1;
 
+      const s = useWoStore.getState();
+      expect(s.activeWo?.wo.id).toBe(2);
+      expect(s.detailLoading).toBe(false);
+    });
+
+    it("a late failure of an earlier openWo does not clobber the later detail", async () => {
+      const first = deferred<WoGetResponse>();
+      vi.mocked(getWo)
+        .mockReturnValueOnce(first.promise)
+        .mockResolvedValueOnce(detail(makeWo({ id: 2 })));
+
+      const p1 = useWoStore.getState().openWo(1);
+      await useWoStore.getState().openWo(2);
+      first.reject(new Error("timeout"));
+      await p1;
+
       expect(useWoStore.getState().activeWo?.wo.id).toBe(2);
+      expect(useWoStore.getState().error).toBeNull();
+    });
+
+    it("a detail that arrives after the dialog was closed is dropped", async () => {
+      const first = deferred<WoGetResponse>();
+      vi.mocked(getWo).mockReturnValueOnce(first.promise);
+      const p = useWoStore.getState().openWo(1);
+      useWoStore.getState().closeActiveWo();
+      first.resolve(detail(makeWo({ id: 1 })));
+      await p;
+      expect(useWoStore.getState().activeWo).toBeNull();
     });
   });
 

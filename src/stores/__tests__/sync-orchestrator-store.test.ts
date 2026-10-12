@@ -332,11 +332,9 @@ describe("initialize", () => {
     expect(useSyncOrchestratorStore.getState().initialized).toBe(false);
   });
 
-  // BUG: React StrictMode (main.tsx) runs AppShell's effect as initialize → shutdown → initialize
-  // synchronously. Both pending `listen` calls then resolve while `initialized` is true again, so
-  // the second overwrites `unlistenStatus` and the first subscription is never released: the
-  // status handler stays registered twice and the final shutdown only removes one of them.
-  it.skip("BUG: initialize → shutdown → initialize leaks the first status listener", async () => {
+  // React StrictMode runs AppShell's effect as initialize → shutdown → initialize synchronously:
+  // the first subscription must be released, not kept next to the second.
+  it("initialize → shutdown → initialize releases the first status listener", async () => {
     const unlistenA = vi.fn();
     const unlistenB = vi.fn();
     let resolveA: (fn: () => void) => void = () => {};
