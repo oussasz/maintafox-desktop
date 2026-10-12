@@ -131,3 +131,44 @@ pub async fn generate_support_bundle(
     let _user = crate::require_session!(state);
     Ok(crate::diagnostics::generate_support_bundle(&app, &state.db).await)
 }
+
+/// Send the support bundle to Maintafox support (vendor control API): the same sanitized bundle as
+/// `generate_support_bundle`, uploaded to object storage through a presigned URL and verified by
+/// the server (size + SHA-256). With a note, the server also opens a support ticket.
+/// Requires a session and an activated device; the activation token never reaches the webview.
+#[tauri::command]
+pub async fn upload_support_bundle(
+    note: Option<String>,
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> AppResult<crate::sync::transport::wire::DiagnosticBundleCompleted> {
+    let _user = crate::require_session!(state);
+    let ticket = crate::diagnostics::upload::ticket_from_note(note.as_deref())
+        .map_err(|m| crate::errors::AppError::ValidationFailed(vec![m]))?;
+    let token = product_license::sync_activation_bearer_token(&state.db)
+        .await?
+        .filter(|t| !t.trim().is_empty())
+        .ok_or_else(|| {
+            crate::errors::AppError::ValidationFailed(vec![
+                "This device is not activated: the support bundle cannot be sent.".to_string(),
+            ])
+        })?;
+    let bundle = crate::diagnostics::generate_support_bundle(&app, &state.db).await;
+    let bytes = serde_json::to_vec_pretty(&bundle)?;
+    let client = crate::sync::transport::client::ControlPlaneClient::new(
+        env!("MAINTAFOX_CONTROL_PLANE_API_BASE_URL"),
+        crate::sync::transport::SyncTiming::production().timeouts,
+    )
+    .map_err(crate::errors::AppError::SyncError)?;
+    let completed = crate::diagnostics::upload::upload_bundle_bytes(
+        &client,
+        &token,
+        bytes,
+        &app.package_info().version.to_string(),
+        ticket,
+    )
+    .await
+    .map_err(|e| crate::errors::AppError::SyncError(format!("Support bundle upload failed: {}", e.message())))?;
+    tracing::info!(bundle_id = %completed.bundle_id, ticket = ?completed.ticket_id, "support bundle sent");
+    Ok(completed)
+}

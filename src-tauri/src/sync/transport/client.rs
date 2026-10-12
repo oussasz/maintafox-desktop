@@ -9,8 +9,9 @@ use reqwest::header::{HeaderMap, ACCEPT, CONTENT_TYPE, RETRY_AFTER, USER_AGENT};
 use serde::de::DeserializeOwned;
 
 use super::wire::{
-    ErrorBody, ExchangeResponse, NotificationEmailAccepted, NotificationEmailRequest, PresignGetRequest,
-    PresignPutRequest, PresignResponse, SnapshotRequest, SnapshotResponse,
+    DiagnosticBundleCompleted, DiagnosticBundleCreateRequest, DiagnosticBundleCreated, ErrorBody, ExchangeResponse,
+    NotificationEmailAccepted, NotificationEmailRequest, PresignGetRequest, PresignPutRequest, PresignResponse,
+    SnapshotRequest, SnapshotResponse,
 };
 use crate::sync::domain::SYNC_PROTOCOL_VERSION_V2;
 
@@ -258,6 +259,38 @@ impl ControlPlaneClient {
     ) -> Result<PresignResponse, TransportError> {
         let body = serde_json::to_string(request).map_err(|e| TransportError::Contract(e.to_string()))?;
         self.post_json("/api/v1/sync/media/presign-get", token, body).await
+    }
+
+    /// `POST /api/v1/sync/diagnostic-bundles`: declare a support bundle, get its upload URL.
+    pub async fn create_diagnostic_bundle(
+        &self,
+        token: &str,
+        request: &DiagnosticBundleCreateRequest<'_>,
+    ) -> Result<DiagnosticBundleCreated, TransportError> {
+        let body = serde_json::to_string(request).map_err(|e| TransportError::Contract(e.to_string()))?;
+        self.post_json("/api/v1/sync/diagnostic-bundles", token, body).await
+    }
+
+    /// `POST /api/v1/sync/diagnostic-bundles/{id}/complete`: the server reads the upload back and
+    /// verifies its size and SHA-256.
+    pub async fn complete_diagnostic_bundle(
+        &self,
+        token: &str,
+        bundle_id: &str,
+    ) -> Result<DiagnosticBundleCompleted, TransportError> {
+        if bundle_id.is_empty()
+            || !bundle_id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        {
+            return Err(TransportError::Contract(format!("invalid bundle id '{bundle_id}'")));
+        }
+        self.post_json(
+            &format!("/api/v1/sync/diagnostic-bundles/{bundle_id}/complete"),
+            token,
+            "{}".to_string(),
+        )
+        .await
     }
 
     /// Start a download from a presigned object storage URL (no bearer token: the URL is the

@@ -13,5 +13,12 @@
   "copyToClipboard": "Copier dans le presse-papier",
   "copied": "Copié !",
   "copyFailed": "Échec de la copie dans le presse-papier.",
-  "close": "Fermer"
+  "close": "Fermer",
+  "sendTitle": "Envoyer au support Maintafox",
+  "sendHint": "Le paquet (journaux nettoyés, version, système) est envoyé au support. Avec une note, un ticket est ouvert.",
+  "notePlaceholder": "Décrivez le problème (facultatif)",
+  "send": "Envoyer au support",
+  "sending": "Envoi…",
+  "sent": "Paquet envoyé ({{bundle}}).",
+  "sentWithTicket": "Paquet envoyé ({{bundle}}), ticket {{ticket}} ouvert."
 }

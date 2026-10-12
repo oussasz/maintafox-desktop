@@ -143,6 +143,49 @@ pub struct PresignResponse {
     pub object_key: String,
 }
 
+/// One file of a diagnostic bundle (`POST /api/v1/sync/diagnostic-bundles`).
+#[derive(Debug, Serialize)]
+pub struct DiagnosticArtifactRef<'a> {
+    pub logical_path: &'a str,
+    pub sha256: String,
+    pub kind: &'a str,
+}
+
+/// Support ticket the server opens once the bundle is verified.
+#[derive(Debug, Clone, Serialize)]
+pub struct DiagnosticTicketRequest {
+    pub summary: String,
+    pub affected_module: String,
+    /// `info` | `warn` | `critical`.
+    pub severity: String,
+}
+
+/// Declares a diagnostic bundle: the server answers with a presigned upload URL.
+#[derive(Debug, Serialize)]
+pub struct DiagnosticBundleCreateRequest<'a> {
+    pub content_sha256: String,
+    pub byte_size: u64,
+    pub redaction_profile: &'a str,
+    pub app_version: &'a str,
+    pub artifacts: Vec<DiagnosticArtifactRef<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ticket: Option<DiagnosticTicketRequest>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DiagnosticBundleCreated {
+    pub bundle_id: String,
+    pub upload: PresignResponse,
+}
+
+/// Answer of `POST /api/v1/sync/diagnostic-bundles/{id}/complete` (the server verified the upload).
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct DiagnosticBundleCompleted {
+    pub bundle_id: String,
+    pub status: String,
+    pub ticket_id: Option<String>,
+}
+
 /// Control API error body: `{ "error": code, "message"?: text, "details"?: any }`.
 #[derive(Debug, Deserialize)]
 pub struct ErrorBody {

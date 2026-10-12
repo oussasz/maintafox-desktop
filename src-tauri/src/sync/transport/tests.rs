@@ -1319,3 +1319,81 @@ async fn a_rate_limited_snapshot_continues_from_the_stored_page() {
     .await;
     assert_eq!(received, 2, "the rows of both pages are kept");
 }
+
+// ── Support bundle upload (diagnostics::upload) ─────────────────────────────────────────────
+
+#[tokio::test]
+async fn support_bundle_is_declared_uploaded_and_completed() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let base = format!("http://{}", listener.local_addr().expect("addr"));
+    let upload_url = format!("{base}/object-storage/bundle-1");
+    let stub = start_stub_on(listener, move |req| match req.path.as_str() {
+        "/api/v1/sync/diagnostic-bundles" => ok(json!({
+            "bundle_id": "bundle_1",
+            "upload": { "url": upload_url, "method": "PUT", "bucket": "media", "object_key": "k", "expires_in_seconds": 900 },
+        })),
+        "/object-storage/bundle-1" => ok(json!({})),
+        "/api/v1/sync/diagnostic-bundles/bundle_1/complete" => ok(json!({
+            "bundle_id": "bundle_1", "status": "uploaded", "ticket_id": "sup_1",
+        })),
+        _ => status(404, json!({ "error": "not_found" })),
+    })
+    .await;
+    let client = super::client::ControlPlaneClient::new(&stub.base_url, test_timing().timeouts).expect("client");
+    let bytes = br#"{"log_lines":["a","b"]}"#.to_vec();
+    let ticket = crate::diagnostics::upload::ticket_from_note(Some("Sync fails")).expect("note");
+    let done = crate::diagnostics::upload::upload_bundle_bytes(&client, TOKEN, bytes.clone(), "1.2.3", ticket)
+        .await
+        .expect("upload");
+    assert_eq!(done.bundle_id, "bundle_1");
+    assert_eq!(done.ticket_id.as_deref(), Some("sup_1"));
+
+    let declared = stub.requests_to("/api/v1/sync/diagnostic-bundles");
+    assert_eq!(declared.len(), 1);
+    let body = declared[0].json();
+    let sha = crate::diagnostics::upload::sha256_hex(&bytes);
+    assert_eq!(body["content_sha256"], sha.as_str());
+    assert_eq!(body["byte_size"], bytes.len());
+    assert_eq!(body["redaction_profile"], "desktop_log_sanitizer_v1");
+    assert_eq!(body["artifacts"][0]["sha256"], sha.as_str());
+    assert_eq!(body["ticket"]["summary"], "Sync fails");
+    assert_eq!(
+        declared[0].header("authorization"),
+        Some(format!("Bearer {TOKEN}").as_str())
+    );
+    let put = stub.requests_to("/object-storage/bundle-1");
+    assert_eq!(put.len(), 1);
+    assert_eq!(put[0].method, "PUT");
+    assert_eq!(put[0].body.as_bytes(), bytes.as_slice());
+    assert_eq!(
+        stub.requests_to("/api/v1/sync/diagnostic-bundles/bundle_1/complete")
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn support_bundle_upload_reports_a_refused_verification() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let base = format!("http://{}", listener.local_addr().expect("addr"));
+    let upload_url = format!("{base}/object-storage/bundle-2");
+    let stub = start_stub_on(listener, move |req| match req.path.as_str() {
+        "/api/v1/sync/diagnostic-bundles" => ok(json!({
+            "bundle_id": "bundle_2",
+            "upload": { "url": upload_url, "method": "PUT", "bucket": "media", "object_key": "k", "expires_in_seconds": 900 },
+        })),
+        "/object-storage/bundle-2" => ok(json!({})),
+        _ => status(422, json!({ "error": "bundle_verification_failed", "message": "size differs" })),
+    })
+    .await;
+    let client = super::client::ControlPlaneClient::new(&stub.base_url, test_timing().timeouts).expect("client");
+    let err = crate::diagnostics::upload::upload_bundle_bytes(&client, TOKEN, b"x".to_vec(), "1.2.3", None)
+        .await
+        .expect_err("refused");
+    assert_eq!(err.http_status(), Some(422));
+    assert_eq!(err.code(), "bundle_verification_failed");
+    assert!(stub.requests_to("/api/v1/sync/diagnostic-bundles")[0]
+        .json()
+        .get("ticket")
+        .is_none());
+}
