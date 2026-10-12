@@ -320,7 +320,11 @@ mod tests {
             .expect("impact preview");
 
         assert_eq!(impact.set_id, set_id);
-        assert_eq!(impact.dimensions.len(), 6, "all 6 dimensions should be present");
+        assert_eq!(
+            impact.dimensions.len(),
+            crate::reference::impact::DIMENSIONS.len() + 1,
+            "every module dimension plus external integrations"
+        );
 
         // After preview, readiness should pass.
         let readiness2 = publish::compute_publish_readiness(&db, set_id)
@@ -352,28 +356,32 @@ mod tests {
 
         let impact = publish::preview_publish_impact(&db, set_id).await.expect("impact");
 
-        assert_eq!(impact.dimensions.len(), 6);
+        assert_eq!(impact.dimensions.len(), crate::reference::impact::DIMENSIONS.len() + 1);
 
         let dim_names: Vec<&str> = impact.dimensions.iter().map(|d| d.module.as_str()).collect();
-        assert!(dim_names.contains(&"assets"));
-        assert!(dim_names.contains(&"work_orders"));
-        assert!(dim_names.contains(&"pm_plans"));
-        assert!(dim_names.contains(&"inventory"));
-        assert!(dim_names.contains(&"reliability_events"));
-        assert!(dim_names.contains(&"external_integrations"));
+        for name in [
+            "assets",
+            "work_orders",
+            "pm_plans",
+            "inventory",
+            "reliability_events",
+            "external_integrations",
+        ] {
+            assert!(dim_names.contains(&name), "missing dimension {name}");
+        }
 
-        // Assets and PM plans are wired. Depending on changed codes they can
-        // report either "available" (impacts evaluated) or "no_impact".
+        // Every module is computed from the schema's foreign keys; only external integrations
+        // are not held on the desktop.
         for dim in &impact.dimensions {
-            if dim.module == "assets" || dim.module == "pm_plans" {
+            if dim.module == "external_integrations" {
+                assert_eq!(dim.status, "unavailable");
+            } else {
                 assert!(
                     dim.status == "available" || dim.status == "no_impact",
                     "module {} should be available or no_impact, got {}",
                     dim.module,
                     dim.status
                 );
-            } else {
-                assert_eq!(dim.status, "unavailable", "module {} should be unavailable", dim.module);
             }
         }
     }

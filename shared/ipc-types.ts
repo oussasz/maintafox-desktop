@@ -1963,17 +1963,29 @@ export interface ReferencePublishReadiness {
   impact_preview_available: boolean;
 }
 
+export interface ImpactTable {
+  table: string;
+  column: string;
+  count: number;
+}
+
 export interface ModuleImpact {
   module: string;
   status: string;
   affected_count: number;
   details: string | null;
+  /** Where the affected records are (table and column that use a changed value). */
+  tables: ImpactTable[];
 }
 
 export interface ReferenceImpactSummary {
   set_id: number;
   domain_id: number;
   domain_code: string;
+  /** Codes of the published set that the candidate removes. */
+  removed_codes: string[];
+  /** Codes that the candidate deactivates. */
+  deactivated_codes: string[];
   total_affected: number;
   dimensions: ModuleImpact[];
   computed_at: string;

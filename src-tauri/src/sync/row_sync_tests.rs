@@ -57,6 +57,7 @@ pub(crate) const FOUNDATION_TYPES: &[&str] = &[
 pub(crate) const INVENTORY_TYPES: &[&str] = &[
     "article_families",
     "articles",
+    "unit_conversions",
     "article_cost_profiles",
     "warehouses",
     "stock_locations",

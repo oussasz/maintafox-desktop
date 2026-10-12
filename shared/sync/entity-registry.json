@@ -1822,6 +1822,18 @@
       "sync_status": "synced"
     },
     {
+      "entity_type": "unit_conversions",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 4,
+      "parents": [
+        "lookup_values",
+        "articles",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
       "entity_type": "urgency_levels",
       "scope": "tenant",
       "conflict_policy": "operator_review",

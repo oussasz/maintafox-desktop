@@ -889,5 +889,28 @@
       "addLocation": "Ajouter un emplacement",
       "saveLocation": "Enregistrer l'emplacement"
     }
+  },
+  "unitConversions": {
+    "tab": "Unités et conversions",
+    "help": "1 unité de gauche = facteur × unité de droite. Le sens inverse est calculé ; une conversion propre à un article prime sur la conversion générale.",
+    "from": "Unité de départ",
+    "to": "Unité d'arrivée",
+    "factor": "Facteur",
+    "article": "Article",
+    "allArticles": "Tous les articles",
+    "notes": "Notes",
+    "add": "Ajouter la conversion",
+    "preview": "1 {{from}} = {{factor}} {{to}}",
+    "quantity": "Quantité",
+    "convert": "Convertir",
+    "result": "= {{quantity}} {{unit}} ({{path}})",
+    "path": {
+      "identity": "même unité",
+      "direct": "conversion directe",
+      "inverse": "inverse d'une conversion"
+    },
+    "rule": "Conversion",
+    "empty": "Aucune conversion définie pour l'instant.",
+    "deactivate": "Désactiver"
   }
 }

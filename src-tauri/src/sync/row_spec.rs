@@ -996,6 +996,7 @@ pub const ROW_SPECS: &[RowSpec] = &[
     // ── Inventory and procurement ───────────────────────────────────────────────────────────
     spec("article_families", &[]),
     spec("articles", &[]),
+    spec("unit_conversions", &[]),
     spec("article_cost_profiles", &[]),
     spec("warehouses", &[]),
     spec("stock_locations", &[]),
