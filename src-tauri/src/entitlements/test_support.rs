@@ -8,8 +8,7 @@
 use ring::signature::{Ed25519KeyPair, KeyPair};
 use sha2::{Digest, Sha256};
 
-use crate::entitlements::domain::{EntitlementEnvelopeInput, ENTITLEMENT_SIGNATURE_ALG};
-use crate::entitlements::trusted_keys::{ENTITLEMENT_ISSUER, TEST_ENTITLEMENT_KEY_ID};
+use crate::entitlements::domain::EntitlementEnvelopeInput;
 
 const TEST_SEED_LABEL: &[u8] = b"maintafox-entitlement-TEST-ONLY-seed-v1";
 
@@ -32,13 +31,4 @@ pub(crate) fn now_rfc3339() -> String {
 pub(crate) fn sign_envelope(input: &EntitlementEnvelopeInput) -> String {
     let message = crate::entitlements::queries::canonical_payload(input);
     hex::encode(test_key_pair().sign(message.as_bytes()).as_ref())
-}
-
-/// Sets issuer/key/alg for the test key and signs the envelope.
-pub(crate) fn sign_with_test_key(mut input: EntitlementEnvelopeInput) -> EntitlementEnvelopeInput {
-    input.issuer = ENTITLEMENT_ISSUER.to_string();
-    input.key_id = TEST_ENTITLEMENT_KEY_ID.to_string();
-    input.signature_alg = ENTITLEMENT_SIGNATURE_ALG.to_string();
-    input.signature = sign_envelope(&input);
-    input
 }

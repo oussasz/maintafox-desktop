@@ -155,7 +155,7 @@ fn set_activation_binding_secret(raw: &[u8]) -> AppResult<()> {
 fn get_or_initialize_activation_binding_secret() -> AppResult<Vec<u8>> {
     #[cfg(test)]
     {
-        return Ok(vec![0x2A; 32]);
+        Ok(vec![0x2A; 32])
     }
 
     #[cfg(not(test))]

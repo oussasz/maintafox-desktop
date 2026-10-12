@@ -24,6 +24,9 @@ fn make_input(n: usize) -> ReliabilityKpiComputeInput {
         t_exp_hours: 1_000_000.0,
         repeat_lookback_days: 30,
         min_sample_n: 5,
+        // Events carry active repair hours and feed the repeat-failure lookback: a repairable
+        // item, so this exercises the MTBF path (same as tests/reliability_perf_budget.rs).
+        repairable: true,
         events,
     }
 }

@@ -11,7 +11,6 @@ mod tests {
     use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
     use sea_orm_migration::MigratorTrait;
 
-    use crate::di::domain::InterventionRequest;
     use crate::di::queries::{
         create_intervention_request, get_di_transition_log, get_intervention_request, get_recent_similar_dis,
         list_intervention_requests, update_di_draft_fields, DiCreateInput, DiDraftUpdateInput, DiListFilter,

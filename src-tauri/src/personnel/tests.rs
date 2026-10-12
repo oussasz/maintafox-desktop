@@ -5,6 +5,4 @@
 //! across all test targets.
 
 #[test]
-fn personnel_tests_module_compiles() {
-    assert!(true);
-}
+fn personnel_tests_module_compiles() {}

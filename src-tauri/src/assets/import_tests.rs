@@ -17,12 +17,10 @@ mod tests {
     use crate::assets::identity::{self, CreateAssetPayload};
     use crate::assets::import;
     use crate::auth::rbac::{self, PermissionScope};
-    use crate::auth::session_manager::AuthenticatedUser;
     use crate::org::node_types::{self, CreateNodeTypePayload};
     use crate::org::nodes::{self, CreateOrgNodePayload};
     use crate::org::relationship_rules::{self, CreateRelationshipRulePayload};
     use crate::org::structure_model::{self, CreateStructureModelPayload};
-    use crate::state::AppState;
 
     /// In-memory SQLite with all migrations + seed data.
     async fn setup() -> sea_orm::DatabaseConnection {

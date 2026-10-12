@@ -320,7 +320,10 @@ fn check_exchange(report: &ExchangeReport, stage: &str, problems: &mut Vec<Strin
         ));
     }
     if report.conflicts > 0 {
-        problems.push(format!("{stage}: {} server conflicts", report.conflicts));
+        problems.push(format!(
+            "{stage}: {} server conflicts (sent={} acknowledged={} received={})",
+            report.conflicts, report.sent, report.acknowledged, report.received
+        ));
     }
 }
 

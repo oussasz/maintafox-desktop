@@ -214,7 +214,7 @@ async fn di_create_input(db: &sea_orm::DatabaseConnection, submitter_id: i64) ->
 }
 
 async fn advance_di_to_approved(db: &DatabaseConnection, user_id: i64) -> (i64, i64) {
-    let di = create_intervention_request(db, di_create_input(&db, user_id).await)
+    let di = create_intervention_request(db, di_create_input(db, user_id).await)
         .await
         .expect("create DI");
 
@@ -348,7 +348,7 @@ async fn close_wo_all_gates(db: &DatabaseConnection, actor: i64) -> crate::wo::d
         db,
         WoCreateInput {
             type_code: "corrective".into(),
-            equipment_id: Some(obs_equipment_id(&db).await),
+            equipment_id: Some(obs_equipment_id(db).await),
             location_id: None,
             source_di_id: None,
             source_inspection_anomaly_id: None,

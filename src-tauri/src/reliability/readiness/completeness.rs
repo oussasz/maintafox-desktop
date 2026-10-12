@@ -52,7 +52,7 @@ mod tests {
     use crate::reliability::readiness::event::ReadinessEvent;
     use chrono::TimeZone;
 
-    fn ts(s: &str) -> chrono::DateTime<chrono::Utc> {
+    fn ts() -> chrono::DateTime<chrono::Utc> {
         chrono::Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap()
     }
 
@@ -69,7 +69,7 @@ mod tests {
             id: 1,
             asset_key: "a".into(),
             university_id: None,
-            event_ts: ts(""),
+            event_ts: ts(),
             eligible: true,
             equipment_identified: true,
             interval_complete: true,
