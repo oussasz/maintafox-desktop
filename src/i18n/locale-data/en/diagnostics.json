@@ -13,5 +13,12 @@
   "copyToClipboard": "Copy to Clipboard",
   "copied": "Copied!",
   "copyFailed": "Failed to copy to clipboard.",
-  "close": "Close"
+  "close": "Close",
+  "sendTitle": "Send to Maintafox support",
+  "sendHint": "The bundle (sanitized logs, version, system) is sent to support. With a note, a ticket is opened.",
+  "notePlaceholder": "Describe the problem (optional)",
+  "send": "Send to support",
+  "sending": "Sending…",
+  "sent": "Bundle sent ({{bundle}}).",
+  "sentWithTicket": "Bundle sent ({{bundle}}), ticket {{ticket}} opened."
 }

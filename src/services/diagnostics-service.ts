@@ -107,3 +107,20 @@ export async function generateSupportBundle(): Promise<SupportBundle> {
   const raw = await invoke<unknown>("generate_support_bundle");
   return SupportBundleSchema.parse(raw) as SupportBundle;
 }
+
+/** Answer of `upload_support_bundle`: the server verified the upload (size + SHA-256). */
+export const SupportBundleUploadResultSchema = z.object({
+  bundle_id: z.string().min(1),
+  status: z.literal("uploaded"),
+  ticket_id: z.string().min(1).nullable(),
+});
+export type SupportBundleUploadResult = z.infer<typeof SupportBundleUploadResultSchema>;
+
+/**
+ * Send the sanitized support bundle to Maintafox support (control API, presigned upload).
+ * With a note (3–2000 characters) the server also opens a support ticket.
+ */
+export async function uploadSupportBundle(note: string | null): Promise<SupportBundleUploadResult> {
+  const raw = await invoke<unknown>("upload_support_bundle", { note });
+  return SupportBundleUploadResultSchema.parse(raw);
+}

@@ -292,6 +292,7 @@ pub fn run() {
             commands::diagnostics::seed_rams_presentation_data,
             commands::diagnostics::get_diagnostics_info,
             commands::diagnostics::generate_support_bundle,
+            commands::diagnostics::upload_support_bundle,
             commands::activation::apply_machine_activation_contract,
             commands::activation::get_machine_activation_status,
             commands::activation::evaluate_offline_activation_policy,
