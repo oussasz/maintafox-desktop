@@ -94,6 +94,45 @@ async fn insert_failure_detail(db: &DatabaseConnection, wo: i64, mode: Option<i6
     scalar_i64(db, "SELECT MAX(id) FROM work_order_failure_details", vec![]).await
 }
 
+/// A value of the governed failure-mode list (the published WORK.FAILURE_MODES set).
+async fn governed_mode(db: &DatabaseConnection, code: &str) -> i64 {
+    let set_id = scalar_i64(
+        db,
+        "SELECT rs.id FROM reference_sets rs JOIN reference_domains rd ON rd.id = rs.domain_id \
+         WHERE UPPER(TRIM(rd.code)) = 'WORK.FAILURE_MODES' AND rs.status = 'published' ORDER BY rs.id LIMIT 1",
+        vec![],
+    )
+    .await;
+    exec(
+        db,
+        "INSERT INTO reference_values (set_id, code, label, sort_order, is_active) VALUES (?, ?, ?, 1, 1)",
+        vec![set_id.into(), code.into(), code.into()],
+    )
+    .await;
+    scalar_i64(db, "SELECT id FROM reference_values WHERE code = ?", vec![code.into()]).await
+}
+
+/// A failure detail whose mode points nowhere (only possible with foreign keys off, e.g. an
+/// import or a damaged database): the one case the repair may clear.
+async fn dangling_failure_detail(db: &DatabaseConnection, wo: i64) -> (i64, i64) {
+    let dangling = 987_654_i64;
+    exec(db, "PRAGMA foreign_keys = OFF", vec![]).await;
+    exec(db, "DELETE FROM reference_values WHERE id = ?", vec![dangling.into()]).await;
+    exec(db, "DELETE FROM failure_codes WHERE id = ?", vec![dangling.into()]).await;
+    let fd = insert_failure_detail(db, wo, Some(dangling)).await;
+    exec(db, "PRAGMA foreign_keys = ON", vec![]).await;
+    (fd, dangling)
+}
+
+/// Failure detail coded with a governed value (the declared foreign key to `failure_codes`
+/// does not describe these ids, see migration 114).
+async fn insert_failure_detail_unchecked(db: &DatabaseConnection, wo: i64, mode: i64) -> i64 {
+    exec(db, "PRAGMA foreign_keys = OFF", vec![]).await;
+    let fd = insert_failure_detail(db, wo, Some(mode)).await;
+    exec(db, "PRAGMA foreign_keys = ON", vec![]).await;
+    fd
+}
+
 async fn segment_times(db: &DatabaseConnection, id: i64) -> (Option<String>, Option<String>) {
     (
         scalar_opt_text(
@@ -191,8 +230,8 @@ async fn clean_data_produces_no_findings() {
     let wo = insert_wo(&db, "WO-CLEAN", Some(("2026-04-10T08:00:00Z", "2026-04-10T18:00:00Z"))).await;
     insert_segment(&db, wo, "2026-04-10T08:00:00Z", Some("2026-04-10T10:00:00Z")).await;
     insert_segment(&db, wo, "2026-04-10T11:00:00Z", Some("2026-04-10T13:00:00Z")).await;
-    let mode = insert_failure_code(&db, "DI_OK_MODE", "mode", true).await;
-    insert_failure_detail(&db, wo, Some(mode)).await;
+    let mode = governed_mode(&db, "DI_OK_MODE").await;
+    insert_failure_detail_unchecked(&db, wo, mode).await;
     insert_failure_detail(&db, wo, None).await;
 
     assert_eq!(run_data_integrity_detectors(&db).await.expect("run"), 0);
@@ -204,15 +243,17 @@ async fn clean_data_produces_no_findings() {
 }
 
 #[tokio::test]
-async fn orphan_failure_mode_is_found_for_inactive_and_non_mode_codes() {
+async fn failure_mode_outside_the_governed_list_is_flagged() {
     let db = started_db().await;
     let wo = insert_wo(&db, "WO-FM", None).await;
-    let inactive = insert_failure_code(&db, "DI_OLD_MODE", "mode", false).await;
-    let cause = insert_failure_code(&db, "DI_A_CAUSE", "cause", true).await;
-    let good = insert_failure_code(&db, "DI_GOOD_MODE", "mode", true).await;
-    let fd_inactive = insert_failure_detail(&db, wo, Some(inactive)).await;
-    let fd_cause = insert_failure_detail(&db, wo, Some(cause)).await;
-    insert_failure_detail(&db, wo, Some(good)).await;
+    let governed = governed_mode(&db, "DI_GOVERNED_MODE").await;
+    exec(&db, "PRAGMA foreign_keys = OFF", vec![]).await;
+    let legacy = insert_failure_code(&db, "DI_LEGACY_MODE", "mode", true).await;
+    exec(&db, "DELETE FROM reference_values WHERE id = ?", vec![legacy.into()]).await;
+    exec(&db, "PRAGMA foreign_keys = ON", vec![]).await;
+    insert_failure_detail_unchecked(&db, wo, governed).await;
+    let fd_legacy = insert_failure_detail(&db, wo, Some(legacy)).await;
+    let (fd_dangling, dangling) = dangling_failure_detail(&db, wo).await;
 
     assert_eq!(run_data_integrity_detectors(&db).await.expect("run"), 2);
     let mut found: Vec<(i64, i64)> = open_findings(&db)
@@ -231,9 +272,12 @@ async fn orphan_failure_mode_is_found_for_inactive_and_non_mode_codes() {
         })
         .collect();
     found.sort_unstable();
-    let mut expected = vec![(fd_inactive, inactive), (fd_cause, cause)];
+    let mut expected = vec![(fd_legacy, legacy), (fd_dangling, dangling)];
     expected.sort_unstable();
-    assert_eq!(found, expected);
+    assert_eq!(
+        found, expected,
+        "the governed value is valid; the legacy code and the dangling id are not"
+    );
 }
 
 #[tokio::test]
@@ -355,7 +399,6 @@ async fn rerun_recomputes_open_findings_with_stable_identity() {
 }
 
 #[tokio::test]
-#[ignore = "BUG: FK_ORPHAN_FAILURE_MODE checks failure_codes, but failure_mode_id holds WORK.FAILURE_MODES reference_values ids since migration 114"]
 async fn governed_reference_failure_mode_is_not_an_orphan() {
     let db = started_db().await;
     // Rows remapped by migration 114 (or written by close-out) carry reference_values ids, which the
@@ -486,8 +529,7 @@ async fn repair_clear_failure_mode_nulls_the_mode_and_audits() {
     let db = started_db().await;
     let actor = admin_id(&db).await;
     let wo = insert_wo(&db, "WO-REP-FM", None).await;
-    let inactive = insert_failure_code(&db, "DI_RETIRED", "mode", false).await;
-    let fd = insert_failure_detail(&db, wo, Some(inactive)).await;
+    let (fd, inactive) = dangling_failure_detail(&db, wo).await;
     run_data_integrity_detectors(&db).await.expect("run");
     let f = only_open_finding(&db, "FK_ORPHAN_FAILURE_MODE").await;
 
@@ -517,6 +559,69 @@ async fn repair_clear_failure_mode_nulls_the_mode_and_audits() {
     assert_eq!(after["finding"]["status"], "repaired");
 
     assert_eq!(run_data_integrity_detectors(&db).await.expect("rerun"), 0);
+}
+
+#[tokio::test]
+async fn repair_refuses_to_clear_a_legacy_failure_code() {
+    let db = started_db().await;
+    let actor = admin_id(&db).await;
+    let wo = insert_wo(&db, "WO-REP-LEGACY", None).await;
+    exec(&db, "PRAGMA foreign_keys = OFF", vec![]).await;
+    let legacy = insert_failure_code(&db, "DI_LEGACY_ONLY", "mode", true).await;
+    exec(&db, "DELETE FROM reference_values WHERE id = ?", vec![legacy.into()]).await;
+    exec(&db, "PRAGMA foreign_keys = ON", vec![]).await;
+    let fd = insert_failure_detail(&db, wo, Some(legacy)).await;
+    run_data_integrity_detectors(&db).await.expect("run");
+    let f = only_open_finding(&db, "FK_ORPHAN_FAILURE_MODE").await;
+
+    let text = validation_text(apply_data_integrity_repair(&db, repair(&f, 1, "clear_failure_mode"), actor).await);
+    assert!(text.contains("legacy failure code"), "{text}");
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT failure_mode_id FROM work_order_failure_details WHERE id = ?",
+            vec![fd.into()],
+        )
+        .await,
+        legacy,
+        "the value is kept"
+    );
+    assert_eq!(audit_rows(&db, f.id).await, 0);
+    assert_eq!(only_open_finding(&db, "FK_ORPHAN_FAILURE_MODE").await.status, "open");
+}
+
+#[tokio::test]
+async fn repair_rechecks_and_refuses_a_value_that_is_now_governed() {
+    // The finding was raised on a dangling id; before the repair, the record was recoded with a
+    // governed value. The repair must re-check the record, not trust the stale finding.
+    let db = started_db().await;
+    let actor = admin_id(&db).await;
+    let wo = insert_wo(&db, "WO-REP-GOV", None).await;
+    let (fd, _) = dangling_failure_detail(&db, wo).await;
+    run_data_integrity_detectors(&db).await.expect("run");
+    let f = only_open_finding(&db, "FK_ORPHAN_FAILURE_MODE").await;
+    let governed = governed_mode(&db, "DI_RECODED").await;
+    exec(&db, "PRAGMA foreign_keys = OFF", vec![]).await;
+    exec(
+        &db,
+        "UPDATE work_order_failure_details SET failure_mode_id = ? WHERE id = ?",
+        vec![governed.into(), fd.into()],
+    )
+    .await;
+    exec(&db, "PRAGMA foreign_keys = ON", vec![]).await;
+
+    let text = validation_text(apply_data_integrity_repair(&db, repair(&f, 1, "clear_failure_mode"), actor).await);
+    assert!(text.contains("governed list"), "{text}");
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT failure_mode_id FROM work_order_failure_details WHERE id = ?",
+            vec![fd.into()],
+        )
+        .await,
+        governed
+    );
+    assert_eq!(audit_rows(&db, f.id).await, 0);
 }
 
 #[tokio::test]

@@ -173,6 +173,50 @@ pub async fn waive_data_integrity_finding(
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("finding missing after waive")))
 }
 
+/// The failure mode of a failure detail may only be cleared when it is provably dangling: not a
+/// value of the governed list (checked again now, not trusted from the finding) and not an older
+/// `failure_codes` entry either (a legacy code needs a person to map it, not deletion). The
+/// cleared id is kept in the repair audit row (`before`), so it can be restored.
+async fn ensure_failure_mode_is_dangling(txn: &impl ConnectionTrait, fd_id: i64) -> AppResult<()> {
+    let row = txn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT fd.failure_mode_id, {} AS governed, \
+                 EXISTS (SELECT 1 FROM failure_codes fc WHERE fc.id = fd.failure_mode_id) AS legacy \
+                 FROM work_order_failure_details fd WHERE fd.id = ?",
+                crate::data_integrity::detectors::governed_failure_mode_sql("fd.failure_mode_id")
+            ),
+            [fd_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "work_order_failure_details".into(),
+            id: fd_id.to_string(),
+        })?;
+    let mode: Option<i64> = row
+        .try_get("", "failure_mode_id")
+        .map_err(|e| map_err("failure_mode_id", e))?;
+    let governed: i64 = row.try_get("", "governed").map_err(|e| map_err("governed", e))?;
+    let legacy: i64 = row.try_get("", "legacy").map_err(|e| map_err("legacy", e))?;
+    let refusal = match (mode, governed != 0, legacy != 0) {
+        (None, _, _) => Some("the failure detail has no failure mode any more"),
+        (Some(_), true, _) => {
+            Some("the failure mode is a value of the governed list WORK.FAILURE_MODES, so it is valid")
+        }
+        (Some(_), false, true) => {
+            Some("the failure mode is a legacy failure code: map it to a governed failure mode instead of clearing it")
+        }
+        (Some(_), false, false) => None,
+    };
+    match refusal {
+        Some(why) => Err(AppError::ValidationFailed(vec![format!(
+            "Repair refused, the failure mode is not provably orphaned: {why}."
+        )])),
+        None => Ok(()),
+    }
+}
+
 pub async fn apply_data_integrity_repair(
     db: &DatabaseConnection,
     input: ApplyDataIntegrityRepairInput,
@@ -200,6 +244,7 @@ pub async fn apply_data_integrity_repair(
     let (before_extra, after_extra, action_label) = match (f0.finding_code.as_str(), input.repair_kind.as_str()) {
         ("FK_ORPHAN_FAILURE_MODE", "clear_failure_mode") => {
             let fd_id = f0.record_id;
+            ensure_failure_mode_is_dangling(&txn, fd_id).await?;
             let row = txn
                 .query_one(Statement::from_sql_and_values(
                     DbBackend::Sqlite,
