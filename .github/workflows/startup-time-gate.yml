@@ -3,8 +3,8 @@ name: Startup Time Gate
 on:
   push:
     branches: [main, develop]
+  # Every PR, whatever its target (stacked PRs such as Phase 6 -> phase0/security-hardening included).
   pull_request:
-    branches: [main, develop]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

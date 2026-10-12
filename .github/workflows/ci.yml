@@ -3,8 +3,8 @@ name: CI
 on:
   push:
     branches: [develop, staging, main]
+  # Every PR, whatever its target (stacked PRs such as Phase 6 -> phase0/security-hardening included).
   pull_request:
-    branches: [develop, staging, main]
   schedule:
     - cron: "0 6 * * 1" # Every Monday at 06:00 UTC
 
