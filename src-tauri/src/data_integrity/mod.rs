@@ -8,3 +8,6 @@ pub use repair::{
     apply_data_integrity_repair, waive_data_integrity_finding, ApplyDataIntegrityRepairInput,
     WaiveDataIntegrityFindingInput,
 };
+
+#[cfg(test)]
+mod tests;

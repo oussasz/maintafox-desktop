@@ -3,3 +3,6 @@
 pub mod layout;
 pub mod overview_kpis;
 pub mod projection;
+
+#[cfg(test)]
+mod tests;

@@ -232,8 +232,11 @@ pub async fn build_executive_dashboard(
                    AND po.due_at IS NOT NULL
                    AND po.due_at < datetime('now')
                    AND (? IS NULL OR e.installed_at_node_id = ?)";
-            total += count_i64(db, pm_sql, vec![org_bind.clone(), org_bind.clone()]).await?;
-            prev_total += total; // stable baseline when no shifted PM definition
+            let pm_overdue_now = count_i64(db, pm_sql, vec![org_bind.clone(), org_bind.clone()]).await?;
+            total += pm_overdue_now;
+            // No shifted PM definition: the PM part of the baseline is the current PM count
+            // (adding `total` here counted the requests twice).
+            prev_total += pm_overdue_now;
         }
         int_kpi("overdue_items", total, prev_total, None)
     } else {
