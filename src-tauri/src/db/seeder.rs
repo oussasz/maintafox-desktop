@@ -2925,10 +2925,13 @@ mod tests {
 
     #[test]
     fn seed_schema_version_is_positive() {
-        assert!(
-            SEED_SCHEMA_VERSION > 0,
-            "Seed schema version must be a positive integer"
-        );
+        // Evaluated at compile time: a non-positive version fails the build, not just this test.
+        const {
+            assert!(
+                SEED_SCHEMA_VERSION > 0,
+                "Seed schema version must be a positive integer"
+            )
+        };
     }
 
     #[test]

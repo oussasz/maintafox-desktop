@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use crate::vps::vendor_admin_console::{
-    admin_security_review_checklist, enforce_console_route, permissions, step_up_required_for_action, StepUpActionKind,
+    admin_security_review_checklist, enforce_console_route, step_up_required_for_action, StepUpActionKind,
 };
 
 #[test]

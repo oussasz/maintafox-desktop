@@ -1085,8 +1085,10 @@ mod tests {
 
         ensure_default_policies(&db).await.expect("seed defaults");
 
-        let mut draft_policy = SessionPolicy::default();
-        draft_policy.idle_timeout_minutes = 45;
+        let draft_policy = SessionPolicy {
+            idle_timeout_minutes: 45,
+            ..SessionPolicy::default()
+        };
         let draft_json = serde_json::to_string(&draft_policy).expect("serialize draft");
 
         let draft = save_policy_draft(&db, "session", &draft_json, 1)

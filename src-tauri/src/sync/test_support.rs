@@ -304,7 +304,6 @@ struct RawColumn {
 pub(crate) struct CreatedRow {
     pub entity_type: &'static str,
     pub entity_sync_id: String,
-    pub locator: RowLocator,
     pub rowid: i64,
     /// Payload as built on the creating device (natural key fields included).
     pub payload: serde_json::Map<String, serde_json::Value>,
@@ -694,7 +693,7 @@ fn value_for(column: &RawColumn, checks: &HashMap<String, String>, n: i64, posit
     format!("{name}-{n}").into()
 }
 
-/// Locator and payload of the row with local `rowid`.
+/// Sync id and payload of the row with local `rowid`.
 pub(crate) async fn created_row(db: &DatabaseConnection, entity_type: &str, rowid: i64) -> Result<CreatedRow, String> {
     let layout = row_layout::layout(db, entity_type).await.map_err(|e| e.to_string())?;
     let table = layout.table();
@@ -715,7 +714,7 @@ pub(crate) async fn created_row(db: &DatabaseConnection, entity_type: &str, rowi
                 let row = db
                     .query_one(Statement::from_sql_and_values(
                         DatabaseBackend::Sqlite,
-                        &format!("SELECT \"{name}\" AS v FROM \"{table}\" WHERE rowid = ?"),
+                        format!("SELECT \"{name}\" AS v FROM \"{table}\" WHERE rowid = ?"),
                         [rowid.into()],
                     ))
                     .await
@@ -737,7 +736,6 @@ pub(crate) async fn created_row(db: &DatabaseConnection, entity_type: &str, rowi
     Ok(CreatedRow {
         entity_type: layout.def.entity_type,
         entity_sync_id: payload.entity_sync_id,
-        locator,
         rowid,
         payload: payload.payload,
     })

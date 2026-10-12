@@ -766,7 +766,6 @@ mod tests {
         )
         .await
         .expect("start_wo");
-        let mut rv = wo.row_version;
         assert_eq!(wo.status_code.as_deref(), Some("in_progress"));
 
         // 7. add_labor (with both timestamps — auto-closes)
@@ -815,7 +814,7 @@ mod tests {
             .await
             .expect("get_work_order")
             .expect("WO must exist");
-        rv = refreshed.row_version;
+        let rv = refreshed.row_version;
 
         seed_rams_for_complete(&db, wo_id).await;
 

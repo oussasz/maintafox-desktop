@@ -218,7 +218,7 @@ mod tests {
             1,
         )
         .await
-        .expect(&format!("create asset {code}"))
+        .unwrap_or_else(|e| panic!("create asset {code}: {e}"))
     }
 
     // ── V1 — Cycle prevention ─────────────────────────────────────────────

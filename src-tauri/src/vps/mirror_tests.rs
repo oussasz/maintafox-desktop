@@ -36,12 +36,8 @@ fn tenant_provisioning_plan_enforces_baseline_and_invariants() {
     let ok = validate_tenant_provisioning(&plan, &plan.baseline_migrations, &plan.required_invariants);
     assert!(ok.is_ok());
 
-    let bad = validate_tenant_provisioning(
-        &plan,
-        &plan.baseline_migrations[..1].to_vec(),
-        &plan.required_invariants,
-    )
-    .expect_err("missing migrations should fail");
+    let bad = validate_tenant_provisioning(&plan, &plan.baseline_migrations[..1], &plan.required_invariants)
+        .expect_err("missing migrations should fail");
     assert_eq!(bad.code, "tenant_provisioning_incomplete");
 }
 

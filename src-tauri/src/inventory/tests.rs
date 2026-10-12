@@ -1353,7 +1353,7 @@ async fn reconciliation_detects_drift_under_realistic_volume() {
     )
     .await
     .expect("reconciliation run");
-    assert_eq!(run.checked_rows >= 120, true);
+    assert!(run.checked_rows >= 120, "checked_rows = {}", run.checked_rows);
 
     // Inject a drift directly in balances and verify reconciliation catches it.
     db.execute(Statement::from_string(

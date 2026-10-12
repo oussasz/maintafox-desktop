@@ -347,7 +347,7 @@ mod tests {
         let db = setup().await;
         let (_dom, set_id) = setup_draft_set(&db).await;
 
-        let a = values::create_value(&db, value_payload(set_id, "A", "A"), 1)
+        values::create_value(&db, value_payload(set_id, "A", "A"), 1)
             .await
             .expect("A");
         let b = values::create_value(&db, value_payload(set_id, "B", "B"), 1)

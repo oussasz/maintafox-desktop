@@ -165,7 +165,7 @@ mod tests {
             1,
         )
         .await
-        .expect(&format!("create asset {code}"))
+        .unwrap_or_else(|e| panic!("create asset {code}: {e}"))
     }
 
     async fn insert_open_di(db: &sea_orm::DatabaseConnection, asset_id: i64, org_node_id: i64) {
