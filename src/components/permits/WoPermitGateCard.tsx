@@ -11,6 +11,7 @@ import {
   getPermitForWorkOrder,
 } from "@/services/permit-service";
 import { toErrorMessage } from "@/utils/errors";
+import { P } from "@shared/rbac/permissions.generated";
 
 import { PERMIT_QUERY_CREATE_FOR_WO, PERMIT_QUERY_SELECT } from "./permit-rules";
 
@@ -54,7 +55,7 @@ export function WoPermitGateCard({ workOrderId, refreshKey }: WoPermitGateCardPr
     };
   }, [workOrderId, refreshKey]);
 
-  if (!can("ptw.view") || !loaded) return null;
+  if (!can(P.PTW_VIEW) || !loaded) return null;
 
   if (loadError) {
     return (
@@ -100,7 +101,7 @@ export function WoPermitGateCard({ workOrderId, refreshKey }: WoPermitGateCardPr
         >
           {t("woGate.open")}
         </Button>
-      ) : can("ptw.issue") ? (
+      ) : can(P.PTW_ISSUE) ? (
         <Button
           size="sm"
           onClick={() => navigate(`/permits?${PERMIT_QUERY_CREATE_FOR_WO}=${workOrderId}`)}

@@ -29,11 +29,12 @@ import {
 import { getWo } from "@/services/wo-service";
 import { toErrorMessage } from "@/utils/errors";
 import { formatDateTime } from "@/utils/format-date";
+import { P } from "@shared/rbac/permissions.generated";
 
 export function PermitsPage() {
   const { t, i18n } = useTranslation("permits");
   const { can } = usePermissions();
-  const canIssue = can("ptw.issue");
+  const canIssue = can(P.PTW_ISSUE);
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [types, setTypes] = useState<PermitTypeRecord[]>([]);

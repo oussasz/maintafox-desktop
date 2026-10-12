@@ -6,6 +6,7 @@
 
 import type { PermitIsolationRecord, WorkPermitRecord } from "@/services/permit-service";
 import type { WorkPermitStatus } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 /** `/permits` query params used by the WO detail launch point. */
 export const PERMIT_QUERY_SELECT = "permit";
@@ -70,7 +71,7 @@ export interface PermitTransition {
   to: WorkPermitStatus;
   labelKey: string;
   /** Close-type transitions require `ptw.close`; everything else `ptw.issue`. */
-  permission: "ptw.issue" | "ptw.close";
+  permission: typeof P.PTW_ISSUE | typeof P.PTW_CLOSE;
 }
 
 /** Forward transitions offered by `set_work_permit_status` (suspend has its own action). */
@@ -78,24 +79,24 @@ export function nextTransitions(status: string): PermitTransition[] {
   switch (status) {
     case "draft":
       return [
-        { to: "pending_review", labelKey: "transition.submitReview", permission: "ptw.issue" },
+        { to: "pending_review", labelKey: "transition.submitReview", permission: P.PTW_ISSUE },
       ];
     case "pending_review":
-      return [{ to: "approved", labelKey: "transition.approve", permission: "ptw.issue" }];
+      return [{ to: "approved", labelKey: "transition.approve", permission: P.PTW_ISSUE }];
     case "approved":
-      return [{ to: "issued", labelKey: "transition.issue", permission: "ptw.issue" }];
+      return [{ to: "issued", labelKey: "transition.issue", permission: P.PTW_ISSUE }];
     case "issued":
-      return [{ to: "active", labelKey: "transition.activate", permission: "ptw.issue" }];
+      return [{ to: "active", labelKey: "transition.activate", permission: P.PTW_ISSUE }];
     case "suspended":
       return [
-        { to: "revalidation_required", labelKey: "transition.revalidate", permission: "ptw.issue" },
+        { to: "revalidation_required", labelKey: "transition.revalidate", permission: P.PTW_ISSUE },
       ];
     case "revalidation_required":
-      return [{ to: "active", labelKey: "transition.reinstate", permission: "ptw.issue" }];
+      return [{ to: "active", labelKey: "transition.reinstate", permission: P.PTW_ISSUE }];
     case "active":
-      return [{ to: "closed", labelKey: "transition.close", permission: "ptw.close" }];
+      return [{ to: "closed", labelKey: "transition.close", permission: P.PTW_CLOSE }];
     case "closed":
-      return [{ to: "handed_back", labelKey: "transition.handBack", permission: "ptw.close" }];
+      return [{ to: "handed_back", labelKey: "transition.handBack", permission: P.PTW_CLOSE }];
     default:
       return [];
   }

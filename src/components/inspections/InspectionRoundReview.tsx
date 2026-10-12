@@ -27,6 +27,7 @@ import {
 import { useWorkOrderTypesCatalog } from "@/stores/work-order-types-catalog-store";
 import { toErrorMessage } from "@/utils/errors";
 import type { InspectionAnomaly, InspectionRoundRunner } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 interface InspectionRoundReviewProps {
   runner: InspectionRoundRunner;
@@ -64,8 +65,8 @@ export function InspectionRoundReview({ runner, onChanged }: InspectionRoundRevi
     })),
   );
   const round = runner.summary.round;
-  const canDecide = can("ins.execute");
-  const canReview = can("ins.admin");
+  const canDecide = can(P.INS_EXECUTE);
+  const canReview = can(P.INS_ADMIN);
 
   const act = async (fn: () => Promise<unknown>) => {
     setBusy(true);

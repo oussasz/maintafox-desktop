@@ -28,6 +28,7 @@ import {
 } from "@/services/inspection-service";
 import { toErrorMessage } from "@/utils/errors";
 import type { InspectionRoundRunner, InspectionRunnerCheckpoint } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 import { InspectionRoundReview } from "./InspectionRoundReview";
 import {
@@ -139,7 +140,7 @@ export function InspectionRunner({ roundId, onClose, onChanged }: InspectionRunn
 
   const status = runner.summary.round.status;
   const open = ROUND_OPEN_STATUSES.has(status);
-  const editable = open && can("ins.execute");
+  const editable = open && can(P.INS_EXECUTE);
   const total = runner.checkpoints.length;
   const answered = runner.checkpoints.filter((c) => c.result).length;
   const cp = current?.checkpoint;

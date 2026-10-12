@@ -36,6 +36,7 @@ import {
 } from "@/services/inspection-service";
 import { toErrorMessage } from "@/utils/errors";
 import type { InspectionCheckpointDraft, InspectionTemplate } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 import { CHECK_TYPES, parseReading } from "./inspection-rules";
 
@@ -106,7 +107,7 @@ export function InspectionTemplatesPanel() {
     void load();
   }, [load]);
 
-  const manage = can("ins.admin");
+  const manage = can(P.INS_ADMIN);
 
   return (
     <div className="space-y-4">

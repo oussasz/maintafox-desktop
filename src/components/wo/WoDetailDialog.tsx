@@ -145,6 +145,8 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
   const canEditWo = can(P.OT_EDIT);
   const canUploadAttachments =
     canEditWo && wo != null && !ATTACHMENT_UPLOAD_DENY.has(wo.status_code ?? "");
+  // `delete_wo_attachment` requires ot.admin (backend), not the edit right used for upload.
+  const canDeleteAttachments = canUploadAttachments && can(P.OT_ADMIN);
 
   const computedDefaultTab = useMemo(() => {
     if (!wo) return "plan";
@@ -390,7 +392,7 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
                 <WoAttachmentPanel
                   woId={wo.id}
                   canUpload={canUploadAttachments}
-                  canDelete={canUploadAttachments}
+                  canDelete={canDeleteAttachments}
                 />
               </TabsContent>
             </Tabs>

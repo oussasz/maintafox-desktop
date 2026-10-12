@@ -39,6 +39,7 @@ import {
 import { toErrorMessage } from "@/utils/errors";
 import { formatDateTime } from "@/utils/format-date";
 import type { WorkPermitStatus } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 import {
   ISOLATION_REMOVAL_STATUSES,
@@ -66,8 +67,8 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
   const { t, i18n } = useTranslation("permits");
   const { can } = usePermissions();
   const { info: session } = useSession();
-  const canIssue = can("ptw.issue");
-  const canClose = can("ptw.close");
+  const canIssue = can(P.PTW_ISSUE);
+  const canClose = can(P.PTW_CLOSE);
   const me = session?.user_id ?? null;
 
   const [isolations, setIsolations] = useState<PermitIsolationRecord[]>([]);
@@ -310,7 +311,7 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
       <div className="space-y-2">
         <div className="flex flex-wrap gap-2">
           {transitions.map((tr) => {
-            const allowed = tr.permission === "ptw.close" ? canClose : canIssue;
+            const allowed = tr.permission === P.PTW_CLOSE ? canClose : canIssue;
             if (!allowed) return null;
             const blocker = blockerFor(tr.to);
             return (

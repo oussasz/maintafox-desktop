@@ -35,6 +35,7 @@ import {
 import { listPersonnel } from "@/services/personnel-service";
 import { toErrorMessage } from "@/utils/errors";
 import type { InspectionRoundSummary, InspectionTemplate, Personnel } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 import { ROUND_FILTERS, ROUND_OPEN_STATUSES, type RoundFilterKey } from "./inspection-rules";
 
@@ -124,7 +125,7 @@ export function InspectionRoundsPanel({ onOpenRound, refreshKey }: InspectionRou
             {t(`filters.${key}`)}
           </Button>
         ))}
-        {can("ins.admin") ? (
+        {can(P.INS_ADMIN) ? (
           <Button size="lg" className="ml-auto min-h-12" onClick={() => setScheduleOpen(true)}>
             <CalendarPlus className="mr-2 h-5 w-5" />
             {t("rounds.schedule")}

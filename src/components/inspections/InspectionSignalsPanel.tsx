@@ -15,6 +15,7 @@ import {
 } from "@/services/inspection-service";
 import { toErrorMessage } from "@/utils/errors";
 import type { InspectionReliabilitySignal } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 export function InspectionSignalsPanel() {
   const { t } = useTranslation("inspections");
@@ -63,7 +64,7 @@ export function InspectionSignalsPanel() {
   return (
     <div className="space-y-4">
       <p className="text-sm text-text-muted">{t("signals.description")}</p>
-      {can("ins.admin") ? (
+      {can(P.INS_ADMIN) ? (
         <div className="flex flex-wrap items-end gap-3">
           <div className="space-y-1">
             <Label htmlFor="signals-window">{t("signals.window")}</Label>
