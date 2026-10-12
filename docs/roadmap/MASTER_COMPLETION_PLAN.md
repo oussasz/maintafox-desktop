@@ -649,6 +649,43 @@ Work is on branch `phase0/security-hardening` in both repos. Each side has a bas
   S3-compatible stand-in that checks the presigned query but not the signature); the new UI states
   in the running app (covered by component tests only); timings on a field PC.
 
+### Phase 3 — Control plane hardening (2026-10-12)
+
+Vendor console commits (branch phase0/security-hardening): f8bc541 3.5, 66309f5 3.6, 11eea48 3.1,
+300ae9c 3.2, 72c6805 3.3, b6fbdd3 3.4, e6da4b1 `unit_conversions`, 43cdc6a notification email
+(+ CI fixes e32d6da, 73d27fe). Desktop: 8cdc8630 (send support bundle). CI on 43cdc6a: all 7 jobs green.
+
+- **3.5 Backups:** nightly `pg_dump` + `pg_basebackup`, continuous WAL archiving (15 min), local
+  retention, MinIO bucket versioning, monthly automatic restore drill (row counts per table vs the
+  dump, migrations, audit chain), every run in `backup_runs`. Off-site copy to any S3 bucket, age-
+  encrypted to the owner's key, **disabled until the owner buys a bucket** (local copies only).
+  Drill verified locally with real PostgreSQL 16 (backup, drill, corrupt/tampered refusals,
+  point-in-time recovery both ways) and in CI. Runbook `deploy/BACKUP_AND_RESTORE.md`.
+- **3.6 CI:** lint (new ESLint), typecheck, console tests, build, `test:all` on Postgres 16,
+  backup drill, off-site + bundle upload against an S3 server, Docker images, `pnpm audit`
+  (high), gitleaks full history. Fixed on the way: audit findings (vite, overrides), lint findings,
+  a stale tenant-selection closure in the console, an embedded-Postgres orphan process on Windows.
+- **3.1:** `index.ts` (4,500 lines) split into 11 route modules + `app/` helpers; route
+  inventory identical; `test:all` before/after.
+- **3.2:** Postgres row-level security on every tenant table (role `mfx_app`, per-transaction
+  tenant/operator scope, operator access recorded); `user_accounts` payloads and stored exchange
+  responses AES-256-GCM encrypted at rest, delivery byte-exact. Test proves no-scope sees nothing
+  and tenant A cannot read/update/insert B.
+- **3.3:** ops figures measured from the sync store (per-device lag and checkpoint age, rejection
+  rate, dead letters, conflicts, retries); heuristics and invented services removed; Prometheus
+  endpoint `/api/v1/ops/metrics`.
+- **3.4:** support tickets (operator and device), diagnostic bundles uploaded from the desktop to
+  object storage (presigned, verified by size + SHA-256) and downloadable from the console
+  (audited), editable runbooks with real procedures, readiness computed; seed fixtures removed.
+- **Queued:** registry `unit_conversions`; `POST /api/v1/notifications/email` (SMTP from env,
+  capability `notifications.email` off by default).
+- **Found:** `minio/minio` and `minio/mc` images can no longer be pulled (Docker Hub, quay.io); the
+  VPS runs from its cache. Owner decision needed (`deploy/CI.md`).
+- **Not deployed.** New env: `PG_WAL_ARCHIVE_TIMEOUT_SECONDS`, `BACKUP_*`,
+  `MINIO_NONCURRENT_VERSION_RETENTION_DAYS`, `SYNC_PAYLOAD_ENCRYPTION_KEY`,
+  `OPERATOR_ACCESS_LOG_RETENTION_DAYS`, `EMAIL_DELIVERY_MODE` (+ optional `METRICS_SCRAPE_TOKEN`,
+  `SMTP_*`). Migrations 006–010.
+
 ## 6. Risks and open points
 
 - **D2 departs from the PRD.** The server would use a generic current-state table instead of typed per-entity tables, so the PRD needs an update if you approve it.
