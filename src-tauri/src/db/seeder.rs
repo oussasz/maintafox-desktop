@@ -2935,8 +2935,8 @@ mod tests {
     fn default_settings_count_is_expected() {
         assert_eq!(
             DEFAULT_SETTINGS.len(),
-            // +locale.currency_code, +ram.fmeca_rpn_critical_threshold
-            17,
+            // +locale.currency_code, +ram.fmeca_rpn_critical_threshold, +wo.reopen_window_days
+            18,
             "Default settings count changed; update migration and verification checks"
         );
     }

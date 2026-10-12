@@ -47,13 +47,78 @@ pub fn chain_hash_of(prev_hash: Option<&str>, payload: &serde_json::Map<String, 
     Ok(hex::encode(hasher.finalize()))
 }
 
-/// Canonical payload of one audit event.
+/// Canonical payload of one audit event (sync ids for references).
 async fn event_payload(conn: &impl ConnectionTrait, entity_sync_id: &str) -> AppResult<serde_json::Map<String, Value>> {
     let layout = crate::sync::row_layout::layout(conn, "audit_events").await?;
     load_row_payload(conn, &layout, &RowLocator::Identity(entity_sync_id.to_string()))
         .await?
         .map(|p| p.payload)
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("audit event {entity_sync_id} missing")))
+}
+
+/// Marks a hash computed over the event's local form: events whose target the sync codec cannot
+/// encode (a target type sync does not map) never leave this device, so their content is hashed
+/// as stored here. Verification uses the form the prefix names.
+pub const LOCAL_FORM_PREFIX: &str = "L1:";
+
+/// Columns of the local form (content and chain position; not `id`, not `chain_hash`).
+const LOCAL_FORM_COLUMNS: &[&str] = &[
+    "entity_sync_id",
+    "action_code",
+    "target_type",
+    "target_id",
+    "actor_id",
+    "auth_context",
+    "result",
+    "before_hash",
+    "after_hash",
+    "happened_at",
+    "retention_class",
+    "details_json",
+    "chain_origin",
+    "chain_seq",
+    "chain_prev_hash",
+];
+
+async fn local_form(conn: &impl ConnectionTrait, entity_sync_id: &str) -> AppResult<serde_json::Map<String, Value>> {
+    let row = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT {} FROM audit_events WHERE entity_sync_id = ?",
+                LOCAL_FORM_COLUMNS.join(", ")
+            ),
+            [entity_sync_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("audit event {entity_sync_id} missing")))?;
+    let mut out = serde_json::Map::new();
+    for col in LOCAL_FORM_COLUMNS {
+        let v = if matches!(*col, "actor_id" | "chain_seq") {
+            row.try_get::<Option<i64>>("", col)
+                .map_err(|e| decode_err(col, e))?
+                .map(Value::from)
+        } else {
+            row.try_get::<Option<String>>("", col)
+                .map_err(|e| decode_err(col, e))?
+                .map(Value::from)
+        };
+        out.insert((*col).to_string(), v.unwrap_or(Value::Null));
+    }
+    Ok(out)
+}
+
+/// Hash of an event at its chain position: over the sync payload when the codec can encode the
+/// event, otherwise over the local form (prefixed with [`LOCAL_FORM_PREFIX`]).
+async fn event_hash(conn: &impl ConnectionTrait, entity_sync_id: &str, prev_hash: Option<&str>) -> AppResult<String> {
+    match event_payload(conn, entity_sync_id).await {
+        Ok(payload) => chain_hash_of(prev_hash, &payload),
+        Err(AppError::SyncError(_)) => Ok(format!(
+            "{LOCAL_FORM_PREFIX}{}",
+            chain_hash_of(prev_hash, &local_form(conn, entity_sync_id).await?)?
+        )),
+        Err(other) => Err(other),
+    }
 }
 
 /// Next position of this device's chain: `(origin, seq, prev_hash)`.
@@ -84,7 +149,7 @@ pub(crate) async fn next_position(conn: &impl ConnectionTrait) -> AppResult<(Str
 
 /// Seals an event inserted at its chain position (same transaction as the insert).
 pub(crate) async fn seal(conn: &impl ConnectionTrait, entity_sync_id: &str, prev_hash: Option<&str>) -> AppResult<()> {
-    let hash = chain_hash_of(prev_hash, &event_payload(conn, entity_sync_id).await?)?;
+    let hash = event_hash(conn, entity_sync_id, prev_hash).await?;
     conn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE audit_events SET chain_hash = ? WHERE entity_sync_id = ?",
@@ -209,7 +274,20 @@ async fn verify_origin(
         } else if stored_prev != prev_hash {
             Some(ChainProblemKind::PrevMismatch)
         } else {
-            let actual = chain_hash_of(stored_prev.as_deref(), &event_payload(conn, &sync_id).await?)?;
+            let actual = if stored_hash.as_deref().is_some_and(|h| h.starts_with(LOCAL_FORM_PREFIX)) {
+                format!(
+                    "{LOCAL_FORM_PREFIX}{}",
+                    chain_hash_of(stored_prev.as_deref(), &local_form(conn, &sync_id).await?)?
+                )
+            } else {
+                match event_payload(conn, &sync_id).await {
+                    Ok(payload) => chain_hash_of(stored_prev.as_deref(), &payload)?,
+                    // The payload form was used when sealed but can no longer be built: the
+                    // event (or a row it references) changed.
+                    Err(AppError::SyncError(_)) => String::new(),
+                    Err(other) => return Err(other),
+                }
+            };
             (stored_hash.as_deref() != Some(actual.as_str())).then_some(ChainProblemKind::HashMismatch)
         };
         match kind {

@@ -179,3 +179,34 @@ async fn another_device_verifies_the_chain_it_received() {
     .await;
     assert_ne!(user_on_b, user.rowid, "the hash does not depend on local ids");
 }
+
+#[tokio::test]
+async fn events_the_sync_codec_cannot_encode_are_chained_in_local_form() {
+    // A target type sync does not map: the event stays on this device and is hashed as stored.
+    let db = started_db().await;
+    let mut input = event("case.reviewed", Some("42".into()), None);
+    input.target_type = Some("case".into());
+    let id = write_audit_event(&db, input).await.expect("write");
+    write_audit_event(&db, event("user.created", None, None))
+        .await
+        .expect("next event");
+    let prefixed = scalar_i64(
+        &db,
+        "SELECT COUNT(*) FROM audit_events WHERE id = ? AND chain_hash LIKE 'L1:%'",
+        vec![id.into()],
+    )
+    .await;
+    assert_eq!(prefixed, 1);
+    assert!(verify_audit_chain(&db).await.expect("verify").intact);
+
+    exec(
+        &db,
+        "UPDATE audit_events SET target_id = '43' WHERE id = ?",
+        vec![id.into()],
+    )
+    .await;
+    let report = verify_audit_chain(&db).await.expect("verify");
+    let problem = report.chains[0].first_problem.clone().expect("problem");
+    assert_eq!(problem.kind, ChainProblemKind::HashMismatch);
+    assert_eq!(problem.audit_event_id, id);
+}
