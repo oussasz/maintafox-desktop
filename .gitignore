@@ -7,10 +7,11 @@ dist/
 build/
 .tauri/
 
-# Rust build artifacts
+# Rust build artifacts (default dir + ad-hoc per-agent/per-check target dirs)
 src-tauri/target/
-src-tauri/target-agent-*/
-target-agent-test/
+src-tauri/target-*/
+/target-*/
+target-*-log.txt
 
 # Environment files (never commit secrets)
 .env

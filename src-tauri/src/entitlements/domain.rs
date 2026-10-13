@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-pub const ENTITLEMENT_SIGNATURE_ALG_V1: &str = "sha256:issuer-key-v1";
+/// Ed25519 over the canonical payload (see `queries::canonical_payload`, `trusted_keys`).
+pub const ENTITLEMENT_SIGNATURE_ALG: &str = "ed25519:v2";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntitlementEnvelopeInput {

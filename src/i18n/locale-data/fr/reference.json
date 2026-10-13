@@ -130,7 +130,26 @@
     "confirmDescription": "Ceci publiera le jeu brouillon et remplacera la version publiée actuelle.",
     "confirmProtected": "Il s'agit d'un domaine protégé. La publication nécessite des privilèges élevés et sera auditée.",
     "cancel": "Annuler",
-    "confirm": "Publier"
+    "confirm": "Publier",
+    "removedCodes": "Valeurs supprimées : {{codes}}",
+    "deactivatedCodes": "Valeurs désactivées : {{codes}}",
+    "impactTable": "{{table}}.{{column}} : {{count}} enregistrement(s)",
+    "impactStatus": {
+      "available": "Vérifié",
+      "no_impact": "Aucun changement",
+      "unavailable": "Non vérifié sur le poste"
+    },
+    "module": {
+      "assets": "Équipements",
+      "work_orders": "Ordres de travail",
+      "pm_plans": "Maintenance préventive",
+      "inventory": "Stock",
+      "reliability_events": "Fiabilité",
+      "interventions": "Demandes d'intervention",
+      "personnel": "Personnel",
+      "other": "Autres enregistrements",
+      "external_integrations": "Intégrations externes"
+    }
   },
   "import": {
     "title": "Importer des valeurs de référence",

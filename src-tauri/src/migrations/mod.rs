@@ -133,8 +133,37 @@ mod m20260813_000129_di_sla_immutable_snapshot;
 mod m20260814_000130_wo_lifecycle_redesign;
 mod m20260815_000138_personnel_create_platform;
 mod m20260816_000139_di_lifecycle_disposition;
+mod m20260820_000140_personnel_crew_ssot;
+mod m20260821_000141_crew_fk_followup;
+mod m20260821_000142_team_crest_identity;
+mod m20260822_000143_wo_assigned_team_id;
+mod m20260822_000144_pm_assigned_team_id;
+mod m20260822_000145_di_drop_review_team_id;
+mod m20260823_000146_di_equipment_id;
+mod m20260824_000147_pm_generation_autopilot;
+mod m20260825_000148_universal_sync_identity;
+mod m20260826_000149_report_artifacts;
+mod m20260826_000150_user_analytics_dashboard_layouts;
 mod m20260901_000034_notification_core;
 mod m20261001_000035_archive_core;
+mod m20261010_000151_finance_approval_rights;
+mod m20261010_000160_sync_foundations_v2;
+mod m20261011_000161_sync_transport_v2;
+mod m20261011_000162_sync_capture_identity;
+mod m20261011_000163_pm_due_basis_meter_sync_id;
+mod m20261011_000164_legacy_users_fk_to_user_accounts;
+mod m20261011_000165_sync_media_downloads;
+mod m20261011_000166_sync_code_clash_conflicts;
+mod m20261011_000167_sync_history_ids;
+mod m20261011_000168_sync_inbox_scale;
+mod m20261011_000169_permit_isolation_removal_verifier;
+mod m20261011_000170_reliability_censoring_and_availability;
+mod m20261012_000171_inspection_field_runner;
+mod m20261012_000172_rcm_fmeca_pm_loop;
+mod m20261012_000173_audit_hash_chain;
+mod m20261012_000174_unit_conversions;
+pub(crate) mod m20261012_000175_wo_lifecycle_facts;
+mod m20261012_000176_notification_daily_digest;
 mod m20261101_000036_activity_audit_log;
 mod m20261201_000037_observability_permissions;
 mod m_test;
@@ -282,6 +311,35 @@ impl MigratorTrait for Migrator {
             Box::new(m20260729_000137_rbac_permission_normalization::Migration),
             Box::new(m20260815_000138_personnel_create_platform::Migration),
             Box::new(m20260816_000139_di_lifecycle_disposition::Migration),
+            Box::new(m20260820_000140_personnel_crew_ssot::Migration),
+            Box::new(m20260821_000141_crew_fk_followup::Migration),
+            Box::new(m20260821_000142_team_crest_identity::Migration),
+            Box::new(m20260822_000143_wo_assigned_team_id::Migration),
+            Box::new(m20260822_000144_pm_assigned_team_id::Migration),
+            Box::new(m20260822_000145_di_drop_review_team_id::Migration),
+            Box::new(m20260823_000146_di_equipment_id::Migration),
+            Box::new(m20260824_000147_pm_generation_autopilot::Migration),
+            Box::new(m20260825_000148_universal_sync_identity::Migration),
+            Box::new(m20260826_000149_report_artifacts::Migration),
+            Box::new(m20260826_000150_user_analytics_dashboard_layouts::Migration),
+            Box::new(m20261010_000151_finance_approval_rights::Migration),
+            Box::new(m20261010_000160_sync_foundations_v2::Migration),
+            Box::new(m20261011_000161_sync_transport_v2::Migration),
+            Box::new(m20261011_000162_sync_capture_identity::Migration),
+            Box::new(m20261011_000163_pm_due_basis_meter_sync_id::Migration),
+            Box::new(m20261011_000164_legacy_users_fk_to_user_accounts::Migration),
+            Box::new(m20261011_000165_sync_media_downloads::Migration),
+            Box::new(m20261011_000166_sync_code_clash_conflicts::Migration),
+            Box::new(m20261011_000167_sync_history_ids::Migration),
+            Box::new(m20261011_000168_sync_inbox_scale::Migration),
+            Box::new(m20261011_000169_permit_isolation_removal_verifier::Migration),
+            Box::new(m20261011_000170_reliability_censoring_and_availability::Migration),
+            Box::new(m20261012_000171_inspection_field_runner::Migration),
+            Box::new(m20261012_000172_rcm_fmeca_pm_loop::Migration),
+            Box::new(m20261012_000173_audit_hash_chain::Migration),
+            Box::new(m20261012_000174_unit_conversions::Migration),
+            Box::new(m20261012_000175_wo_lifecycle_facts::Migration),
+            Box::new(m20261012_000176_notification_daily_digest::Migration),
             Box::new(m_test::Migration),
         ]
     }

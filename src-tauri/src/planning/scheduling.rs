@@ -11,18 +11,62 @@ use crate::{activity, notifications};
 use super::domain::{
     CapacityRule, CapacityRuleFilter, CreateCapacityRuleInput, CreatePlanningWindowInput, CreateScheduleBreakInInput,
     CreateScheduleCommitmentInput, ExportPlanningGanttPdfInput, ExportedBinaryDocument, FreezeSchedulePeriodInput,
-    NotifyTeamsInput, NotifyTeamsResult, PlanningAssigneeLane, PlanningGanttFilter, PlanningGanttSnapshot,
-    PlanningWindow, PlanningWindowFilter, RescheduleCommitmentInput, ScheduleBreakIn, ScheduleBreakInFilter,
-    ScheduleChangeLogEntry, ScheduleCommitment, ScheduleCommitmentFilter, TeamCapacityLoad, UpdateCapacityRuleInput,
-    UpdatePlanningWindowInput,
+    NotifyTeamsInput, NotifyTeamsResult, PlanningAssigneeLane, PlanningCrewLane, PlanningGanttFilter,
+    PlanningGanttSnapshot, PlanningWindow, PlanningWindowFilter, RescheduleCommitmentInput, ScheduleBreakIn,
+    ScheduleBreakInFilter, ScheduleChangeLogEntry, ScheduleCommitment, ScheduleCommitmentFilter, TeamCapacityLoad,
+    UpdateCapacityRuleInput, UpdatePlanningWindowInput,
 };
+use super::wo_sync::{self, WoSyncOutcome};
 
 const CAPACITY_COLS: &str = "id,entity_id,team_id,effective_start,effective_end,available_hours_per_day,max_overtime_hours_per_day,row_version,created_at,updated_at";
 const WINDOW_COLS: &str =
     "id,entity_id,window_type,start_datetime,end_datetime,is_locked,lock_reason,row_version,created_at,updated_at";
-const COMMITMENT_COLS: &str = "id,schedule_candidate_id,source_type,source_id,schedule_period_start,schedule_period_end,committed_start,committed_end,assigned_team_id,assigned_personnel_id,committed_by_id,frozen_at,estimated_labor_cost,budget_threshold,cost_variance_warning,has_blocking_conflict,nearest_feasible_window,row_version,created_at,updated_at";
-const CHANGE_LOG_COLS: &str = "id,commitment_id,action_type,actor_id,field_changed,old_value,new_value,reason_code,reason_note,reason,details_json,created_at";
-const BREAK_IN_COLS: &str = "id,schedule_commitment_id,break_in_reason,approved_by_user_id,approved_by_personnel_id,override_reason,old_slot_start,old_slot_end,new_slot_start,new_slot_end,old_assignee_id,new_assignee_id,cost_impact_delta,notification_dedupe_key,row_version,created_by_id,created_at";
+const COMMITMENT_COLS: &str = "sc.id,sc.schedule_candidate_id,sc.source_type,sc.source_id,sc.schedule_period_start,sc.schedule_period_end,sc.committed_start,sc.committed_end,sc.assigned_team_id,sc.assigned_personnel_id,sc.committed_by_id,sc.frozen_at,sc.estimated_labor_cost,sc.budget_threshold,sc.cost_variance_warning,sc.has_blocking_conflict,sc.nearest_feasible_window,sc.row_version,sc.created_at,sc.updated_at";
+const COMMITMENT_JOIN_COLS: &str = "\
+    CASE sc.source_type \
+        WHEN 'work_order' THEN wo.code \
+        WHEN 'pm_occurrence' THEN COALESCE(pp.code, 'PM-' || CAST(sc.source_id AS TEXT)) \
+        WHEN 'inspection_follow_up' THEN ir.code \
+        ELSE NULL \
+    END AS source_code, \
+    CASE sc.source_type \
+        WHEN 'work_order' THEN wo.title \
+        WHEN 'pm_occurrence' THEN COALESCE(pp.title, po.status) \
+        WHEN 'inspection_follow_up' THEN ir.title \
+        ELSE NULL \
+    END AS source_title, \
+    CASE WHEN t.id IS NOT NULL THEN t.name || ' (' || t.code || ')' ELSE NULL END AS assigned_team_label, \
+    p.full_name AS assigned_personnel_name";
+const COMMITMENT_JOINS: &str = "\
+    LEFT JOIN work_orders wo ON sc.source_type = 'work_order' AND wo.id = sc.source_id \
+    LEFT JOIN pm_occurrences po ON sc.source_type = 'pm_occurrence' AND po.id = sc.source_id \
+    LEFT JOIN pm_plans pp ON pp.id = po.pm_plan_id \
+    LEFT JOIN intervention_requests ir ON sc.source_type = 'inspection_follow_up' AND ir.id = sc.source_id \
+    LEFT JOIN teams t ON t.id = sc.assigned_team_id \
+    LEFT JOIN personnel p ON p.id = sc.assigned_personnel_id";
+const CHANGE_LOG_COLS: &str = "scl.id,scl.commitment_id,scl.action_type,scl.actor_id,scl.field_changed,scl.old_value,scl.new_value,scl.reason_code,scl.reason_note,scl.reason,scl.details_json,scl.created_at";
+const CHANGE_LOG_JOIN_COLS: &str = "COALESCE(ua.display_name, ua.username) AS actor_display_name";
+const CHANGE_LOG_JOINS: &str = "LEFT JOIN user_accounts ua ON ua.id = scl.actor_id";
+const BREAK_IN_COLS: &str = "sb.id,sb.schedule_commitment_id,sb.break_in_reason,sb.approved_by_user_id,sb.approved_by_personnel_id,sb.override_reason,sb.old_slot_start,sb.old_slot_end,sb.new_slot_start,sb.new_slot_end,sb.old_assignee_id,sb.new_assignee_id,sb.cost_impact_delta,sb.notification_dedupe_key,sb.row_version,sb.created_by_id,sb.created_at";
+const BREAK_IN_JOIN_COLS: &str = "\
+    CASE cmt.source_type \
+        WHEN 'work_order' THEN wo.code \
+        WHEN 'pm_occurrence' THEN COALESCE(pp.code, 'PM-' || CAST(cmt.source_id AS TEXT)) \
+        WHEN 'inspection_follow_up' THEN ir.code \
+        ELSE NULL \
+    END AS commitment_source_code, \
+    COALESCE(approver.display_name, approver.username) AS approved_by_display_name, \
+    old_p.full_name AS old_assignee_name, \
+    new_p.full_name AS new_assignee_name";
+const BREAK_IN_JOINS: &str = "\
+    LEFT JOIN schedule_commitments cmt ON cmt.id = sb.schedule_commitment_id \
+    LEFT JOIN work_orders wo ON cmt.source_type = 'work_order' AND wo.id = cmt.source_id \
+    LEFT JOIN pm_occurrences po ON cmt.source_type = 'pm_occurrence' AND po.id = cmt.source_id \
+    LEFT JOIN pm_plans pp ON pp.id = po.pm_plan_id \
+    LEFT JOIN intervention_requests ir ON cmt.source_type = 'inspection_follow_up' AND ir.id = cmt.source_id \
+    LEFT JOIN user_accounts approver ON approver.id = sb.approved_by_user_id \
+    LEFT JOIN personnel old_p ON old_p.id = sb.old_assignee_id \
+    LEFT JOIN personnel new_p ON new_p.id = sb.new_assignee_id";
 
 fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
     AppError::Internal(anyhow::anyhow!(
@@ -155,6 +199,12 @@ fn map_commitment(row: &QueryResult) -> AppResult<ScheduleCommitment> {
             .map_err(|e| decode_err("row_version", e))?,
         created_at: row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
         updated_at: row.try_get("", "updated_at").map_err(|e| decode_err("updated_at", e))?,
+        source_code: row.try_get::<Option<String>>("", "source_code").unwrap_or(None),
+        source_title: row.try_get::<Option<String>>("", "source_title").unwrap_or(None),
+        assigned_team_label: row.try_get::<Option<String>>("", "assigned_team_label").unwrap_or(None),
+        assigned_personnel_name: row
+            .try_get::<Option<String>>("", "assigned_personnel_name")
+            .unwrap_or(None),
     })
 }
 
@@ -184,6 +234,7 @@ fn map_change_log(row: &QueryResult) -> AppResult<ScheduleChangeLogEntry> {
             .try_get("", "details_json")
             .map_err(|e| decode_err("details_json", e))?,
         created_at: row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
+        actor_display_name: row.try_get::<Option<String>>("", "actor_display_name").unwrap_or(None),
     })
 }
 
@@ -236,6 +287,14 @@ fn map_schedule_break_in(row: &QueryResult) -> AppResult<ScheduleBreakIn> {
             .try_get("", "created_by_id")
             .map_err(|e| decode_err("created_by_id", e))?,
         created_at: row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
+        commitment_source_code: row
+            .try_get::<Option<String>>("", "commitment_source_code")
+            .unwrap_or(None),
+        approved_by_display_name: row
+            .try_get::<Option<String>>("", "approved_by_display_name")
+            .unwrap_or(None),
+        old_assignee_name: row.try_get::<Option<String>>("", "old_assignee_name").unwrap_or(None),
+        new_assignee_name: row.try_get::<Option<String>>("", "new_assignee_name").unwrap_or(None),
     })
 }
 
@@ -243,7 +302,12 @@ async fn get_commitment(db: &impl ConnectionTrait, commitment_id: i64) -> AppRes
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            format!("SELECT {COMMITMENT_COLS} FROM schedule_commitments WHERE id = ?"),
+            format!(
+                "SELECT {COMMITMENT_COLS}, {COMMITMENT_JOIN_COLS}
+                 FROM schedule_commitments sc
+                 {COMMITMENT_JOINS}
+                 WHERE sc.id = ?"
+            ),
             [commitment_id.into()],
         ))
         .await?
@@ -556,6 +620,34 @@ async fn resolve_user_personnel_id(db: &impl ConnectionTrait, user_id: i64) -> A
     Ok(row.and_then(|r| r.try_get::<i64>("", "personnel_id").ok()))
 }
 
+async fn maybe_sync_work_order(
+    tx: &impl ConnectionTrait,
+    actor_id: i64,
+    schedule_candidate_id: i64,
+    source_type: &str,
+    source_id: i64,
+    committed_start: &str,
+    committed_end: &str,
+    assigned_team_id: i64,
+    assigned_personnel_id: Option<i64>,
+) -> AppResult<Option<WoSyncOutcome>> {
+    if source_type != "work_order" {
+        return Ok(None);
+    }
+    let outcome = wo_sync::sync_work_order_from_commitment(
+        tx,
+        actor_id,
+        schedule_candidate_id,
+        source_id,
+        committed_start,
+        committed_end,
+        assigned_team_id,
+        assigned_personnel_id,
+    )
+    .await?;
+    Ok(Some(outcome))
+}
+
 async fn user_has_plan_approval_scope(db: &impl ConnectionTrait, user_id: i64) -> AppResult<bool> {
     let has: i64 = db
         .query_one(Statement::from_sql_and_values(
@@ -664,21 +756,9 @@ async fn estimate_labor_cost(
     let Some(personnel_id) = personnel_id else {
         return Ok(None);
     };
-    let rate_row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT labor_rate
-             FROM personnel_rate_cards
-             WHERE personnel_id = ?
-             ORDER BY effective_from DESC
-             LIMIT 1",
-            [personnel_id.into()],
-        ))
-        .await?;
-    let Some(rate_row) = rate_row else {
+    let Some(rate) = crate::personnel::queries::resolve_active_labor_rate(db, personnel_id).await? else {
         return Ok(None);
     };
-    let rate: f64 = rate_row.try_get("", "labor_rate").unwrap_or(0.0);
     let duration = hours_between(committed_start, committed_end)?;
     Ok(Some((duration * rate * 100.0).round() / 100.0))
 }
@@ -838,6 +918,7 @@ pub async fn create_capacity_rule(db: &DatabaseConnection, input: CreateCapacity
         None,
     )
     .await?;
+    crate::repository::team_repository::assert_active_crew_exists(db, input.team_id).await?;
 
     let inserted = db
         .execute(Statement::from_sql_and_values(
@@ -1086,29 +1167,30 @@ pub async fn list_schedule_commitments(
     let mut where_sql = vec!["1 = 1".to_string()];
     let mut values: Vec<sea_orm::Value> = Vec::new();
     if let Some(start) = filter.period_start {
-        where_sql.push("committed_end >= ?".to_string());
+        where_sql.push("sc.committed_end >= ?".to_string());
         values.push(start.into());
     }
     if let Some(end) = filter.period_end {
-        where_sql.push("committed_start <= ?".to_string());
+        where_sql.push("sc.committed_start <= ?".to_string());
         values.push(end.into());
     }
     if let Some(team_id) = filter.team_id {
-        where_sql.push("assigned_team_id = ?".to_string());
+        where_sql.push("sc.assigned_team_id = ?".to_string());
         values.push(team_id.into());
     }
     if let Some(personnel_id) = filter.personnel_id {
-        where_sql.push("assigned_personnel_id = ?".to_string());
+        where_sql.push("sc.assigned_personnel_id = ?".to_string());
         values.push(personnel_id.into());
     }
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             format!(
-                "SELECT {COMMITMENT_COLS}
-                 FROM schedule_commitments
+                "SELECT {COMMITMENT_COLS}, {COMMITMENT_JOIN_COLS}
+                 FROM schedule_commitments sc
+                 {COMMITMENT_JOINS}
                  WHERE {}
-                 ORDER BY committed_start ASC, id ASC",
+                 ORDER BY sc.committed_start ASC, sc.id ASC",
                 where_sql.join(" AND ")
             ),
             values,
@@ -1124,17 +1206,18 @@ pub async fn list_schedule_change_log(
     let mut where_sql = vec!["1 = 1".to_string()];
     let mut values: Vec<sea_orm::Value> = Vec::new();
     if let Some(commitment_id) = commitment_id {
-        where_sql.push("commitment_id = ?".to_string());
+        where_sql.push("scl.commitment_id = ?".to_string());
         values.push(commitment_id.into());
     }
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             format!(
-                "SELECT {CHANGE_LOG_COLS}
-                 FROM schedule_change_log
+                "SELECT {CHANGE_LOG_COLS}, {CHANGE_LOG_JOIN_COLS}
+                 FROM schedule_change_log scl
+                 {CHANGE_LOG_JOINS}
                  WHERE {}
-                 ORDER BY created_at DESC, id DESC",
+                 ORDER BY scl.created_at DESC, scl.id DESC",
                 where_sql.join(" AND ")
             ),
             values,
@@ -1169,8 +1252,9 @@ pub async fn list_schedule_break_ins(
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             format!(
-                "SELECT {BREAK_IN_COLS}
+                "SELECT {BREAK_IN_COLS}, {BREAK_IN_JOIN_COLS}
                  FROM schedule_break_ins sb
+                 {BREAK_IN_JOINS}
                  WHERE {}
                  ORDER BY sb.created_at DESC, sb.id DESC",
                 where_sql.join(" AND ")
@@ -1397,6 +1481,19 @@ pub async fn create_schedule_break_in(
     )
     .await?;
 
+    let wo_sync = maybe_sync_work_order(
+        &tx,
+        actor_id,
+        current.schedule_candidate_id,
+        &current.source_type,
+        current.source_id,
+        &input.new_slot_start,
+        &input.new_slot_end,
+        next_team_id,
+        next_personnel_id,
+    )
+    .await?;
+
     let payload = json!({
         "break_in_id": break_in_id,
         "schedule_commitment_id": current.id,
@@ -1414,6 +1511,9 @@ pub async fn create_schedule_break_in(
         "team_id": next_team_id
     });
     tx.commit().await?;
+    if let Some(outcome) = wo_sync {
+        wo_sync::record_wo_sync_audit(db, actor_id, outcome.wo_id, "break_in").await;
+    }
     emit_planning_notification(
         db,
         "planning.break_in.created",
@@ -1429,6 +1529,11 @@ pub async fn create_schedule_break_in(
         ),
     )
     .await;
+    // Correlates the events of one break-in on every device: by sync id, not the local id.
+    let correlation = crate::sync::identity::optional_entity_sync_id(db, "schedule_break_ins", break_in_id)
+        .await?
+        // Every row gets a sync id at insert; a row without one keeps a device-marked key.
+        .unwrap_or_else(|| format!("local-{break_in_id}"));
     let _ = activity::emitter::emit_activity_event(
         db,
         activity::emitter::ActivityEventInput {
@@ -1445,7 +1550,7 @@ pub async fn create_schedule_break_in(
                 "info".to_string()
             },
             summary_json: Some(payload),
-            correlation_id: Some(format!("planning-breakin-{break_in_id}")),
+            correlation_id: Some(format!("planning-breakin-{correlation}")),
             visibility_scope: "entity".to_string(),
         },
     )
@@ -1453,7 +1558,12 @@ pub async fn create_schedule_break_in(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            format!("SELECT {BREAK_IN_COLS} FROM schedule_break_ins WHERE id = ?"),
+            format!(
+                "SELECT {BREAK_IN_COLS}, {BREAK_IN_JOIN_COLS}
+                 FROM schedule_break_ins sb
+                 {BREAK_IN_JOINS}
+                 WHERE sb.id = ?"
+            ),
             [break_in_id.into()],
         ))
         .await?
@@ -1503,7 +1613,7 @@ pub async fn create_schedule_commitment(
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
         [
             input.schedule_candidate_id.into(),
-            gate.source_type.into(),
+            gate.source_type.clone().into(),
             gate.source_id.into(),
             period_start.into(),
             period_end.into(),
@@ -1521,6 +1631,8 @@ pub async fn create_schedule_commitment(
         .await?;
     let id = i64::try_from(inserted.last_insert_id())
         .map_err(|_| AppError::Internal(anyhow::anyhow!("schedule_commitments last_insert_id does not fit i64")))?;
+    // The candidate is derived on each device; the commitment depends on it, so it travels now.
+    crate::sync::capture::capture_row_change(&tx, "schedule_candidates", input.schedule_candidate_id).await?;
     append_change_log(
         &tx,
         Some(id),
@@ -1542,7 +1654,24 @@ pub async fn create_schedule_commitment(
         ),
     )
     .await?;
+
+    let wo_sync = maybe_sync_work_order(
+        &tx,
+        actor_id,
+        input.schedule_candidate_id,
+        &gate.source_type,
+        gate.source_id,
+        &input.committed_start,
+        &input.committed_end,
+        input.assigned_team_id,
+        input.assigned_personnel_id,
+    )
+    .await?;
+
     tx.commit().await?;
+    if let Some(outcome) = wo_sync {
+        wo_sync::record_wo_sync_audit(db, actor_id, outcome.wo_id, "create").await;
+    }
     get_commitment(db, id).await
 }
 
@@ -1563,21 +1692,25 @@ pub async fn reschedule_schedule_commitment(
             "{}:{}:{}",
             current.id, current.schedule_period_start, current.schedule_period_end
         );
+        let payload = json!({
+            "commitment_id": current.id,
+            "team_id": current.assigned_team_id,
+            "impacted_assignee_id": current.assigned_personnel_id,
+            "old_slot_start": current.committed_start,
+            "old_slot_end": current.committed_end,
+            "attempted_slot_start": input.committed_start,
+            "attempted_slot_end": input.committed_end
+        });
+        // Release the open SQLite transaction before emitting — same connection cannot
+        // write notification_events while the reschedule txn is held.
+        tx.rollback().await.ok();
         emit_planning_notification(
             db,
             "planning.freeze_breach.blocked",
             "warning",
             Some(format!("planning.freeze-breach.{period_key}")),
             current.id.to_string(),
-            json!({
-                "commitment_id": current.id,
-                "team_id": current.assigned_team_id,
-                "impacted_assignee_id": current.assigned_personnel_id,
-                "old_slot_start": current.committed_start,
-                "old_slot_end": current.committed_end,
-                "attempted_slot_start": input.committed_start,
-                "attempted_slot_end": input.committed_end
-            }),
+            payload,
             "Freeze breach blocked".to_string(),
             "Attempted reschedule was rejected because the commitment is frozen.".to_string(),
         )
@@ -1662,7 +1795,24 @@ pub async fn reschedule_schedule_commitment(
         ),
     )
     .await?;
+
+    let wo_sync = maybe_sync_work_order(
+        &tx,
+        actor_id,
+        current.schedule_candidate_id,
+        &current.source_type,
+        current.source_id,
+        &input.committed_start,
+        &input.committed_end,
+        input.assigned_team_id,
+        input.assigned_personnel_id,
+    )
+    .await?;
+
     tx.commit().await?;
+    if let Some(outcome) = wo_sync {
+        wo_sync::record_wo_sync_audit(db, actor_id, outcome.wo_id, "reschedule").await;
+    }
     get_commitment(db, input.commitment_id).await
 }
 
@@ -1776,68 +1926,128 @@ pub async fn get_planning_gantt_snapshot(
     }
 
     let mut personnel_ids = BTreeSet::new();
-    for commitment in &commitments {
-        if let Some(personnel_id) = commitment.assigned_personnel_id {
-            personnel_ids.insert(personnel_id);
-        }
-    }
     let mut assignee_lanes: Vec<PlanningAssigneeLane> = Vec::new();
-    for personnel_id in personnel_ids {
-        let full_name = db
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT full_name FROM personnel WHERE id = ?",
-                [personnel_id.into()],
-            ))
-            .await?
-            .and_then(|r| r.try_get::<String>("", "full_name").ok())
-            .unwrap_or_else(|| format!("Personnel #{personnel_id}"));
+    let mut crew_lanes: Vec<PlanningCrewLane> = Vec::new();
 
-        let blocked_rows = db
+    // Single-crew drill-in: seed technician lanes from roster + people with work.
+    // Plant-wide All Crews: crew-level lanes only (no person roster).
+    if let Some(team_id) = filter.team_id {
+        let roster_rows = db
             .query_all(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT start_at, end_at, block_type, is_critical
-                 FROM personnel_availability_blocks
-                 WHERE personnel_id = ?
-                   AND start_at < ?
-                   AND end_at > ?",
-                [
-                    personnel_id.into(),
-                    filter.period_end.clone().into(),
-                    filter.period_start.clone().into(),
-                ],
+                "SELECT p.id AS personnel_id
+                 FROM personnel_team_assignments pta
+                 INNER JOIN personnel p ON p.id = pta.personnel_id
+                 WHERE pta.team_id = ?
+                   AND (pta.valid_to IS NULL OR pta.valid_to >= strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+                   AND p.employment_status = 'active'
+                 ORDER BY pta.is_lead DESC, p.full_name ASC, pta.id ASC",
+                [team_id.into()],
             ))
             .await?;
-        let blocked: Vec<Value> = blocked_rows
-            .into_iter()
-            .map(|row| {
-                json!({
-                    "start_at": row.try_get::<String>("", "start_at").unwrap_or_default(),
-                    "end_at": row.try_get::<String>("", "end_at").unwrap_or_default(),
-                    "block_type": row.try_get::<String>("", "block_type").unwrap_or_default(),
-                    "critical": row.try_get::<i64>("", "is_critical").unwrap_or_default() == 1
+        for row in roster_rows {
+            if let Ok(personnel_id) = row.try_get::<i64>("", "personnel_id") {
+                personnel_ids.insert(personnel_id);
+            }
+        }
+        for commitment in &commitments {
+            if let Some(personnel_id) = commitment.assigned_personnel_id {
+                personnel_ids.insert(personnel_id);
+            }
+        }
+        for personnel_id in personnel_ids {
+            let full_name = db
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "SELECT full_name FROM personnel WHERE id = ?",
+                    [personnel_id.into()],
+                ))
+                .await?
+                .and_then(|r| r.try_get::<String>("", "full_name").ok())
+                .unwrap_or_else(|| format!("Personnel #{personnel_id}"));
+
+            let blocked_rows = db
+                .query_all(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "SELECT start_at, end_at, block_type, is_critical
+                     FROM personnel_availability_blocks
+                     WHERE personnel_id = ?
+                       AND start_at < ?
+                       AND end_at > ?",
+                    [
+                        personnel_id.into(),
+                        filter.period_end.clone().into(),
+                        filter.period_start.clone().into(),
+                    ],
+                ))
+                .await?;
+            let blocked: Vec<Value> = blocked_rows
+                .into_iter()
+                .map(|row| {
+                    json!({
+                        "start_at": row.try_get::<String>("", "start_at").unwrap_or_default(),
+                        "end_at": row.try_get::<String>("", "end_at").unwrap_or_default(),
+                        "block_type": row.try_get::<String>("", "block_type").unwrap_or_default(),
+                        "critical": row.try_get::<i64>("", "is_critical").unwrap_or_default() == 1
+                    })
                 })
-            })
-            .collect();
-        let lane_commitments: Vec<Value> = commitments
-            .iter()
-            .filter(|c| c.assigned_personnel_id == Some(personnel_id))
-            .map(|c| {
-                json!({
-                    "id": c.id,
-                    "start": c.committed_start,
-                    "end": c.committed_end,
-                    "source_type": c.source_type,
-                    "source_id": c.source_id,
+                .collect();
+            let lane_commitments: Vec<Value> = commitments
+                .iter()
+                .filter(|c| c.assigned_personnel_id == Some(personnel_id))
+                .map(|c| {
+                    json!({
+                        "id": c.id,
+                        "start": c.committed_start,
+                        "end": c.committed_end,
+                        "source_type": c.source_type,
+                        "source_id": c.source_id,
+                    })
                 })
-            })
-            .collect();
-        assignee_lanes.push(PlanningAssigneeLane {
-            personnel_id,
-            full_name,
-            blocked_intervals_json: Value::Array(blocked).to_string(),
-            commitments_json: Value::Array(lane_commitments).to_string(),
-        });
+                .collect();
+            assignee_lanes.push(PlanningAssigneeLane {
+                personnel_id,
+                full_name,
+                blocked_intervals_json: Value::Array(blocked).to_string(),
+                commitments_json: Value::Array(lane_commitments).to_string(),
+            });
+        }
+    } else {
+        let crew_rows = db
+            .query_all(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT id, code, name
+                 FROM teams
+                 WHERE deleted_at IS NULL
+                   AND status = 'active'
+                 ORDER BY name ASC, code ASC, id ASC",
+                [],
+            ))
+            .await?;
+        for row in crew_rows {
+            let team_id: i64 = row.try_get("", "id").map_err(|e| decode_err("team_id", e))?;
+            let team_code: String = row.try_get("", "code").unwrap_or_default();
+            let team_name: String = row.try_get("", "name").unwrap_or_default();
+            let lane_commitments: Vec<Value> = commitments
+                .iter()
+                .filter(|c| c.assigned_team_id == team_id)
+                .map(|c| {
+                    json!({
+                        "id": c.id,
+                        "start": c.committed_start,
+                        "end": c.committed_end,
+                        "source_type": c.source_type,
+                        "source_id": c.source_id,
+                    })
+                })
+                .collect();
+            crew_lanes.push(PlanningCrewLane {
+                team_id,
+                team_code,
+                team_name,
+                commitments_json: Value::Array(lane_commitments).to_string(),
+            });
+        }
     }
 
     let locked_rows = db
@@ -1863,82 +2073,8 @@ pub async fn get_planning_gantt_snapshot(
         locked_windows,
         capacity: capacity_by_team_day.into_values().collect(),
         assignee_lanes,
+        crew_lanes,
     })
-}
-
-fn pdf_escape(input: &str) -> String {
-    input.replace('\\', "\\\\").replace('(', "\\(").replace(')', "\\)")
-}
-
-fn build_simple_pdf(lines: &[String], paper_size: &str) -> Vec<u8> {
-    let (w, h) = if paper_size.eq_ignore_ascii_case("A3") {
-        (1191, 842)
-    } else {
-        (842, 595)
-    };
-    let mut content = String::from("BT /F1 11 Tf 40 ");
-    content.push_str(&(h - 50).to_string());
-    content.push_str(" Td ");
-    for (idx, line) in lines.iter().enumerate() {
-        if idx > 0 {
-            content.push_str("T* ");
-        }
-        content.push('(');
-        content.push_str(&pdf_escape(line));
-        content.push_str(") Tj ");
-    }
-    content.push_str("ET");
-    let stream = content.into_bytes();
-
-    let mut out = Vec::<u8>::new();
-    out.extend_from_slice(b"%PDF-1.4\n");
-    let mut offsets = vec![0_usize];
-    let push_obj = |buf: &mut Vec<u8>, offsets: &mut Vec<usize>, body: &[u8]| {
-        offsets.push(buf.len());
-        buf.extend_from_slice(body);
-        buf.extend_from_slice(b"\n");
-    };
-
-    push_obj(
-        &mut out,
-        &mut offsets,
-        b"1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj",
-    );
-    push_obj(
-        &mut out,
-        &mut offsets,
-        b"2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj",
-    );
-    let page_obj = format!(
-        "3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 {w} {h}] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >> endobj"
-    );
-    push_obj(&mut out, &mut offsets, page_obj.as_bytes());
-    let stream_head = format!("4 0 obj << /Length {} >> stream\n", stream.len());
-    offsets.push(out.len());
-    out.extend_from_slice(stream_head.as_bytes());
-    out.extend_from_slice(&stream);
-    out.extend_from_slice(b"\nendstream endobj\n");
-    push_obj(
-        &mut out,
-        &mut offsets,
-        b"5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj",
-    );
-
-    let xref_pos = out.len();
-    let object_count = offsets.len();
-    out.extend_from_slice(format!("xref\n0 {}\n", object_count).as_bytes());
-    out.extend_from_slice(b"0000000000 65535 f \n");
-    for off in offsets.iter().skip(1) {
-        out.extend_from_slice(format!("{off:010} 00000 n \n").as_bytes());
-    }
-    out.extend_from_slice(
-        format!(
-            "trailer << /Size {} /Root 1 0 R >>\nstartxref\n{}\n%%EOF\n",
-            object_count, xref_pos
-        )
-        .as_bytes(),
-    );
-    out
 }
 
 pub async fn export_planning_gantt_pdf(
@@ -1954,28 +2090,40 @@ pub async fn export_planning_gantt_pdf(
         },
     )
     .await?;
-    let mut lines = vec![
-        "Maintafox - Planning Gantt Export".to_string(),
-        format!("Period: {} -> {}", snapshot.period_start, snapshot.period_end),
-        format!("Commitments: {}", snapshot.commitments.len()),
-    ];
-    for commitment in snapshot.commitments.iter().take(40) {
-        lines.push(format!(
-            "#{} {}:{} {} -> {} team={} personnel={}",
-            commitment.id,
-            commitment.source_type,
-            commitment.source_id,
-            commitment.committed_start,
-            commitment.committed_end,
-            commitment.assigned_team_id,
-            commitment
-                .assigned_personnel_id
-                .map(|v| v.to_string())
-                .unwrap_or_else(|| "-".to_string())
-        ));
-    }
     let paper_size = input.paper_size.unwrap_or_else(|| "A4".to_string());
-    let bytes = build_simple_pdf(&lines, &paper_size);
+    let font = crate::reports::pdf::load_system_font()?;
+    let mut doc = crate::reports::pdf::PdfDocument::new(
+        &font,
+        crate::reports::pdf::PaperSize::from_code(&paper_size, true),
+        "Maintafox — Planning",
+    )?;
+    doc.heading("Planning — Gantt");
+    doc.paragraph(&format!(
+        "{} → {} · {} commitment(s)",
+        snapshot.period_start,
+        snapshot.period_end,
+        snapshot.commitments.len()
+    ));
+    let rows: Vec<Vec<String>> = snapshot
+        .commitments
+        .iter()
+        .map(|c| {
+            vec![
+                c.source_code.clone().unwrap_or_else(|| c.source_type.clone()),
+                c.source_title.clone().unwrap_or_default(),
+                c.committed_start.clone(),
+                c.committed_end.clone(),
+                c.assigned_team_label.clone().unwrap_or_default(),
+                c.assigned_personnel_name.clone().unwrap_or_else(|| "—".to_string()),
+            ]
+        })
+        .collect();
+    doc.table(
+        &["Ref.", "Title", "Start", "End", "Crew", "Assignee"],
+        &rows,
+        &[1.2, 3.0, 1.6, 1.6, 1.5, 1.6],
+    );
+    let bytes = doc.finish()?;
     Ok(ExportedBinaryDocument {
         file_name: format!("planning-gantt-{}-{}.pdf", snapshot.period_start, snapshot.period_end),
         mime_type: "application/pdf".to_string(),

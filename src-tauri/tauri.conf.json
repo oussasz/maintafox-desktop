@@ -13,12 +13,11 @@
       "assetProtocol": {
         "enable": true,
         "scope": [
-          "$APPDATA/**",
-          "$APPLOCALDATA/**",
-          "$HOME/**"
+          "$TEMP/maintafox-print-*.html"
         ]
       },
-      "csp": "default-src 'self'; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost ws://localhost:1420 http://localhost:1420 https://api.maintafox.systems; img-src 'self' data: asset: blob: https://asset.localhost http://asset.localhost; style-src 'self' 'unsafe-inline'; font-src 'self' data:;"
+      "csp": "default-src 'self'; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost https://api.maintafox.systems; img-src 'self' data: asset: blob: https://asset.localhost http://asset.localhost; style-src 'self' 'unsafe-inline'; font-src 'self' data:;",
+      "devCsp": "default-src 'self'; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost ws://localhost:1420 http://localhost:1420 https://api.maintafox.systems; img-src 'self' data: asset: blob: https://asset.localhost http://asset.localhost; style-src 'self' 'unsafe-inline'; font-src 'self' data:;"
     },
     "windows": [
       {
@@ -49,7 +48,9 @@
     ]
   },
   "plugins": {
-    "shell": { "open": true },
+    "shell": {
+      "open": true
+    },
     "updater": {
       "pubkey": "PLACEHOLDER_UPDATER_PUBLIC_KEY_REPLACE_IN_PHASE2",
       "endpoints": [

@@ -31,6 +31,8 @@ pub struct LicenseStatusView {
     pub license_edition: Option<String>,
     pub entitlement_tier: Option<String>,
     pub envelope_id: Option<String>,
+    /// Signing key of the active envelope (target of compromise responses).
+    pub envelope_key_id: Option<String>,
     pub verification_result: Option<String>,
     pub policy_sync_pending: bool,
     pub pending_local_writes: i64,

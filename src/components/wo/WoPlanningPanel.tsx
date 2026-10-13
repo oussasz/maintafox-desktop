@@ -1,4 +1,4 @@
-﻿import {
+import {
   forwardRef,
   useCallback,
   useEffect,
@@ -8,7 +8,10 @@
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router-dom";
 
+import { PermissionGate } from "@/components/PermissionGate";
+import { OverrideReasonDialog } from "@/components/planning/OverrideReasonDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -28,7 +31,7 @@ import {
   listInventoryArticles,
   listInventoryLocations,
 } from "@/services/inventory-service";
-import { listOrgTree } from "@/services/org-node-service";
+import { listActiveTeams, listTeamMembers } from "@/services/personnel-service";
 import {
   addPart,
   addTask,
@@ -37,13 +40,14 @@ import {
   listTasks,
   listWoTools,
 } from "@/services/wo-execution-service";
-import { assignWo, evaluateWoReadiness, planWo } from "@/services/wo-service";
+import { emergencyReassignWo, evaluateWoReadiness, planWo } from "@/services/wo-service";
 import { useWoStore } from "@/stores/wo-store";
 import { useWorkOrderPrioritiesCatalog } from "@/stores/work-order-priorities-catalog-store";
 import { toErrorMessage } from "@/utils/errors";
 import type {
   InventoryArticle,
   StockLocation,
+  TeamMemberRow,
   WoExecPart,
   WoExecTask,
   WoMaterialReadiness,
@@ -53,6 +57,7 @@ import type {
   WorkOrderPriorityOption,
   WoShift,
 } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 export interface WoPlanningPanelHandle {
   refreshReadiness: () => Promise<WoReadinessResult | null>;
@@ -164,6 +169,7 @@ function blockingMessagesFromReport(result: WoReadinessResult): string[] {
 export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanelProps>(
   function WoPlanningPanel({ wo, canEdit, onReadinessChange }, ref) {
     const { t, i18n } = useTranslation("ot");
+    const navigate = useNavigate();
     const prioritiesCatalog = useWorkOrderPrioritiesCatalog((s) => s.priorities);
     const loadPriorities = useWorkOrderPrioritiesCatalog((s) => s.load);
     const activePriorities = useMemo(
@@ -189,13 +195,14 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
     );
     const [urgencyId, setUrgencyId] = useState(wo.urgency_id != null ? String(wo.urgency_id) : "");
 
-    const [assignedGroupId, setAssignedGroupId] = useState(
-      wo.assigned_group_id != null ? String(wo.assigned_group_id) : "",
+    const [assignedTeamId, setAssignedTeamId] = useState(
+      wo.assigned_team_id != null ? String(wo.assigned_team_id) : "",
     );
     const [primaryResponsibleId, setPrimaryResponsibleId] = useState(
       wo.primary_responsible_id != null ? String(wo.primary_responsible_id) : "",
     );
-    const [scheduledAt, setScheduledAt] = useState(toDatetimeLocal(wo.scheduled_at));
+    const [emergencyOpen, setEmergencyOpen] = useState(false);
+    const [emergencyBusy, setEmergencyBusy] = useState(false);
 
     const [tasks, setTasks] = useState<TaskDraft[]>([]);
     const [parts, setParts] = useState<PartDraft[]>([]);
@@ -210,6 +217,8 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
     const [error, setError] = useState<string | null>(null);
     const [groupOptions, setGroupOptions] = useState<SelectOption[]>([]);
     const [responsibleOptions, setResponsibleOptions] = useState<SelectOption[]>([]);
+    const [teamRosterOptions, setTeamRosterOptions] = useState<SelectOption[]>([]);
+    const [noTeamLeadUser, setNoTeamLeadUser] = useState(false);
     const lastValuationKeyByPart = useRef<Record<string, string>>({});
 
     // Readiness evaluation state (planning → ready)
@@ -236,11 +245,10 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
         wo.planned_downtime_hours != null ? String(wo.planned_downtime_hours) : "",
       );
       setUrgencyId(wo.urgency_id != null ? String(wo.urgency_id) : "");
-      setAssignedGroupId(wo.assigned_group_id != null ? String(wo.assigned_group_id) : "");
+      setAssignedTeamId(wo.assigned_team_id != null ? String(wo.assigned_team_id) : "");
       setPrimaryResponsibleId(
         wo.primary_responsible_id != null ? String(wo.primary_responsible_id) : "",
       );
-      setScheduledAt(toDatetimeLocal(wo.scheduled_at));
     }, [wo]);
 
     useEffect(() => {
@@ -258,13 +266,13 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
 
       async function loadGroupOptions() {
         try {
-          const rows = await listOrgTree();
+          const rows = await listActiveTeams({ include_inactive: false });
           if (cancelled) return;
 
           const opts = rows
-            .map((row) => ({
-              value: String(row.node.id),
-              label: row.node.code ? `${row.node.name} (${row.node.code})` : row.node.name,
+            .map((team) => ({
+              value: String(team.id),
+              label: `${team.code} — ${team.name}`,
             }))
             .sort((a, b) => a.label.localeCompare(b.label));
 
@@ -280,6 +288,55 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
         cancelled = true;
       };
     }, []);
+
+    const applyTeamRoster = useCallback(async (teamId: string, autofillLead: boolean) => {
+      if (!teamId) {
+        setTeamRosterOptions([]);
+        setNoTeamLeadUser(false);
+        if (autofillLead) setPrimaryResponsibleId("");
+        return;
+      }
+
+      try {
+        const members = await listTeamMembers(Number(teamId));
+        const linked = members.filter(
+          (m): m is TeamMemberRow & { user_account_id: number } => m.user_account_id != null,
+        );
+        setTeamRosterOptions(
+          linked
+            .map((m) => ({
+              value: String(m.user_account_id),
+              label: m.full_name.trim() || m.employee_code,
+            }))
+            .sort((a, b) => a.label.localeCompare(b.label)),
+        );
+
+        if (!autofillLead) {
+          setNoTeamLeadUser(false);
+          return;
+        }
+
+        const lead = members.find((m) => m.is_lead === 1);
+        if (lead?.user_account_id != null) {
+          setPrimaryResponsibleId(String(lead.user_account_id));
+          setNoTeamLeadUser(false);
+        } else {
+          setPrimaryResponsibleId("");
+          setNoTeamLeadUser(Boolean(teamId));
+        }
+      } catch {
+        setTeamRosterOptions([]);
+        if (autofillLead) {
+          setPrimaryResponsibleId("");
+          setNoTeamLeadUser(Boolean(teamId));
+        }
+      }
+    }, []);
+
+    useEffect(() => {
+      // Load roster for the WO's current team without overwriting saved responsible.
+      void applyTeamRoster(wo.assigned_team_id != null ? String(wo.assigned_team_id) : "", false);
+    }, [wo.id, wo.assigned_team_id, applyTeamRoster]);
 
     useEffect(() => {
       const responsibleDedup = new Map<string, string>();
@@ -328,6 +385,12 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
         }
       }
 
+      for (const opt of teamRosterOptions) {
+        if (!responsibleDedup.has(opt.value)) {
+          responsibleDedup.set(opt.value, opt.label);
+        }
+      }
+
       setResponsibleOptions(
         Array.from(responsibleDedup.entries())
           .map(([value, label]) => ({ value, label }))
@@ -347,8 +410,9 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
       wo.planner_username,
       wo.planner_display_name,
       info?.user_id,
-      info?.username,
       info?.display_name,
+      info?.username,
+      teamRosterOptions,
     ]);
 
     useEffect(() => {
@@ -465,13 +529,11 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
     const tasksPartsDisabled = !canEdit || !isPlanningEditable || busy;
     const allFieldsDisabled = scheduleFieldsDisabled;
 
-    const planReady =
-      plannerId.trim().length > 0 &&
-      plannedStart.trim().length > 0 &&
-      plannedEnd.trim().length > 0 &&
-      fromDatetimeLocal(plannedEnd) >= fromDatetimeLocal(plannedStart);
+    const planReady = plannerId.trim().length > 0;
 
-    const assignReady = assignedGroupId.trim().length > 0 || primaryResponsibleId.trim().length > 0;
+    const assignReady = assignedTeamId.trim().length > 0 || primaryResponsibleId.trim().length > 0;
+    const hasCommitment = wo.schedule_commitment_id != null;
+    const scheduleFrozen = Boolean(wo.schedule_frozen);
 
     const plannedCost = useMemo(() => {
       return parts.reduce((sum, part) => {
@@ -511,7 +573,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
 
     useImperativeHandle(ref, () => ({ refreshReadiness: loadReadiness }), [loadReadiness]);
 
-    /** Save planning data without status change (non-transitioning) */
+    /** Save job-prep without status change. Dates owned by Planning when committed. */
     const handleSavePlan = useCallback(async () => {
       if (!planReady || !requireActor) return;
 
@@ -523,8 +585,16 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
           actor_id: requireActor,
           expected_row_version: rowVersion,
           planner_id: Number(plannerId),
-          planned_start: fromDatetimeLocal(plannedStart),
-          planned_end: fromDatetimeLocal(plannedEnd),
+          planned_start: hasCommitment
+            ? null
+            : plannedStart.trim()
+              ? fromDatetimeLocal(plannedStart)
+              : null,
+          planned_end: hasCommitment
+            ? null
+            : plannedEnd.trim()
+              ? fromDatetimeLocal(plannedEnd)
+              : null,
           shift: shift || null,
           expected_duration_hours: parseNumber(expectedHours),
           planned_downtime_hours: parseNumber(plannedDowntimeHours),
@@ -550,6 +620,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
       plannerId,
       plannedStart,
       plannedEnd,
+      hasCommitment,
       shift,
       expectedHours,
       plannedDowntimeHours,
@@ -559,49 +630,46 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
       loadReadiness,
     ]);
 
-    // Kept as alias — planWo is a non-status save in Option B.
     const handleMoveToReady = handleSavePlan;
 
-    const handleAssign = useCallback(async () => {
-      if (!assignReady || !requireActor) {
-        return;
-      }
-
-      setBusy(true);
-      setError(null);
-      try {
-        const next = await assignWo({
-          wo_id: wo.id,
-          actor_id: requireActor,
-          expected_row_version: rowVersion,
-          assigned_group_id: parseNumber(assignedGroupId),
-          primary_responsible_id: parseNumber(primaryResponsibleId),
-          scheduled_at: scheduledAt ? fromDatetimeLocal(scheduledAt) : null,
-        });
-
-        setRowVersion(next.row_version);
-        setStatusCode(next.status_code ?? statusCode);
-        await refreshActiveWo();
-        if ((next.status_code ?? statusCode) === "planning") {
-          await loadReadiness();
+    const handleEmergencyReassign = useCallback(
+      async (reason: string) => {
+        if (!assignReady || !requireActor) return;
+        setEmergencyBusy(true);
+        setError(null);
+        try {
+          const next = await emergencyReassignWo({
+            wo_id: wo.id,
+            actor_id: requireActor,
+            expected_row_version: rowVersion,
+            assigned_team_id: parseNumber(assignedTeamId),
+            primary_responsible_id: parseNumber(primaryResponsibleId),
+            override_reason: reason,
+          });
+          setRowVersion(next.row_version);
+          setStatusCode(next.status_code ?? statusCode);
+          await refreshActiveWo();
+          if ((next.status_code ?? statusCode) === "planning") {
+            await loadReadiness();
+          }
+        } catch (e) {
+          setError(toErrorMessage(e));
+        } finally {
+          setEmergencyBusy(false);
         }
-      } catch (e) {
-        setError(toErrorMessage(e));
-      } finally {
-        setBusy(false);
-      }
-    }, [
-      assignReady,
-      requireActor,
-      wo.id,
-      rowVersion,
-      assignedGroupId,
-      primaryResponsibleId,
-      scheduledAt,
-      refreshActiveWo,
-      statusCode,
-      loadReadiness,
-    ]);
+      },
+      [
+        assignReady,
+        requireActor,
+        wo.id,
+        rowVersion,
+        assignedTeamId,
+        primaryResponsibleId,
+        refreshActiveWo,
+        statusCode,
+        loadReadiness,
+      ],
+    );
 
     const addTaskRow = useCallback(() => {
       setTasks((prev) => [
@@ -827,24 +895,28 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-1">
-              <Label>{t("planning.plannedStart")}</Label>
-              <Input
-                type="datetime-local"
-                value={plannedStart}
-                onChange={(e) => setPlannedStart(e.target.value)}
-                disabled={allFieldsDisabled}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label>{t("planning.plannedEnd")}</Label>
-              <Input
-                type="datetime-local"
-                value={plannedEnd}
-                onChange={(e) => setPlannedEnd(e.target.value)}
-                disabled={allFieldsDisabled}
-              />
-            </div>
+            {!hasCommitment ? (
+              <>
+                <div className="space-y-1">
+                  <Label>{t("planning.plannedStart")}</Label>
+                  <Input
+                    type="datetime-local"
+                    value={plannedStart}
+                    onChange={(e) => setPlannedStart(e.target.value)}
+                    disabled={allFieldsDisabled}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label>{t("planning.plannedEnd")}</Label>
+                  <Input
+                    type="datetime-local"
+                    value={plannedEnd}
+                    onChange={(e) => setPlannedEnd(e.target.value)}
+                    disabled={allFieldsDisabled}
+                  />
+                </div>
+              </>
+            ) : null}
             <div className="space-y-1">
               <Label>{t("planning.shift")}</Label>
               <Select
@@ -933,76 +1005,154 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
 
         <section className="space-y-3">
           <h3 className="text-sm font-semibold">3. {t("planning.assignment")}</h3>
-          <div className="grid gap-3 md:grid-cols-3">
-            <div className="space-y-1">
-              <Label>{t("planning.assignedGroupId")}</Label>
-              <Select
-                value={assignedGroupId || "__none"}
-                onValueChange={(value) => setAssignedGroupId(value === "__none" ? "" : value)}
-                disabled={allFieldsDisabled}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder={t("planning.assignedGroupId")} />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none">—</SelectItem>
-                  {groupOptions.map((opt) => (
-                    <SelectItem key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1">
-              <Label>{t("planning.primaryResponsibleId")}</Label>
-              <Select
-                value={primaryResponsibleId || "__none"}
-                onValueChange={(value) => setPrimaryResponsibleId(value === "__none" ? "" : value)}
-                disabled={allFieldsDisabled}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder={t("planning.primaryResponsibleId")} />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none">—</SelectItem>
-                  {responsibleOptions.map((opt) => (
-                    <SelectItem key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1">
-              <Label>{t("planning.scheduledAt")}</Label>
-              <Input
-                type="datetime-local"
-                value={scheduledAt}
-                onChange={(e) => setScheduledAt(e.target.value)}
-                disabled={allFieldsDisabled}
-              />
-            </div>
-          </div>
-          {groupOptions.length === 0 ? (
-            <p className="text-xs text-muted-foreground">{t("planning.noOrgGroups")}</p>
+          <p className="text-xs text-muted-foreground">{t("planning.scheduleLockedHint")}</p>
+          {scheduleFrozen ? (
+            <p className="text-xs text-amber-700 dark:text-amber-400">
+              {t("planning.scheduleFrozenHint")}
+            </p>
           ) : null}
+
+          <div className="rounded-md border bg-muted/30 p-3 space-y-2">
+            <p className="text-xs font-medium text-muted-foreground">
+              {t("planning.scheduleStripTitle")}
+            </p>
+            {hasCommitment ||
+            wo.planned_start ||
+            wo.assigned_team_id ||
+            wo.primary_responsible_id ? (
+              <dl className="grid gap-2 text-sm md:grid-cols-3">
+                <div>
+                  <dt className="text-xs text-muted-foreground">{t("planning.slotLabel")}</dt>
+                  <dd>
+                    {wo.planned_start || wo.planned_end
+                      ? `${formatOrDash(wo.planned_start)} → ${formatOrDash(wo.planned_end)}`
+                      : "—"}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-muted-foreground">{t("planning.crewLabel")}</dt>
+                  <dd>
+                    {formatOrDash(
+                      wo.assigned_team_label ??
+                        (wo.assigned_team_code || wo.assigned_team_name
+                          ? [wo.assigned_team_code, wo.assigned_team_name]
+                              .filter(Boolean)
+                              .join(" — ")
+                          : null),
+                    )}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-muted-foreground">{t("planning.technicianLabel")}</dt>
+                  <dd>{formatPersonLabel(wo.responsible_display_name, wo.responsible_username)}</dd>
+                </div>
+              </dl>
+            ) : (
+              <p className="text-sm text-muted-foreground">{t("planning.scheduleEmpty")}</p>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => navigate(`/planning?woId=${wo.id}`)}
+            >
+              {t("planning.openInPlanning")}
+            </Button>
+          </div>
+
           {(isPlanningEditable || isReadyScheduleEditable) && (
-            <div className="flex flex-wrap items-center gap-2 border-t pt-3">
-              <Button
-                variant="outline"
-                onClick={() => void handleAssign()}
-                disabled={allFieldsDisabled || !assignReady || !requireActor}
-              >
-                {t("planning.assign")}
-              </Button>
-              {!requireActor && (
-                <span className="text-sm text-muted-foreground">
-                  {t("planning.sessionRequired")}
-                </span>
-              )}
-            </div>
+            <PermissionGate permission={P.OT_EMERGENCY_ASSIGN}>
+              <div className="space-y-3 border-t pt-3">
+                <p className="text-xs text-muted-foreground">
+                  {t("planning.emergencyReassignHint")}
+                </p>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="space-y-1">
+                    <Label>{t("planning.assignedTeamId")}</Label>
+                    <Select
+                      value={assignedTeamId || "__none"}
+                      onValueChange={(value) => {
+                        const next = value === "__none" ? "" : value;
+                        setAssignedTeamId(next);
+                        void applyTeamRoster(next, true);
+                      }}
+                      disabled={allFieldsDisabled || scheduleFrozen || emergencyBusy}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder={t("planning.assignedTeamId")} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none">—</SelectItem>
+                        {groupOptions.map((opt) => (
+                          <SelectItem key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1">
+                    <Label>{t("planning.primaryResponsibleId")}</Label>
+                    <Select
+                      value={primaryResponsibleId || "__none"}
+                      onValueChange={(value) => {
+                        setPrimaryResponsibleId(value === "__none" ? "" : value);
+                        setNoTeamLeadUser(false);
+                      }}
+                      disabled={allFieldsDisabled || scheduleFrozen || emergencyBusy}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder={t("planning.primaryResponsibleId")} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none">—</SelectItem>
+                        {responsibleOptions.map((opt) => (
+                          <SelectItem key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                {groupOptions.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">{t("planning.noTeams")}</p>
+                ) : null}
+                {noTeamLeadUser ? (
+                  <p className="text-xs text-muted-foreground">{t("planning.noTeamLeadUser")}</p>
+                ) : null}
+                <Button
+                  type="button"
+                  variant="destructive"
+                  onClick={() => setEmergencyOpen(true)}
+                  disabled={
+                    allFieldsDisabled ||
+                    scheduleFrozen ||
+                    !assignReady ||
+                    !requireActor ||
+                    emergencyBusy
+                  }
+                >
+                  {t("planning.emergencyReassign")}
+                </Button>
+                {!requireActor && (
+                  <span className="text-sm text-muted-foreground">
+                    {t("planning.sessionRequired")}
+                  </span>
+                )}
+              </div>
+            </PermissionGate>
           )}
+
+          <OverrideReasonDialog
+            open={emergencyOpen}
+            onOpenChange={setEmergencyOpen}
+            title={t("planning.emergencyOverrideTitle")}
+            description={t("planning.emergencyOverrideDescription")}
+            onConfirm={(reason) => void handleEmergencyReassign(reason)}
+          />
         </section>
 
         <section className="space-y-3">

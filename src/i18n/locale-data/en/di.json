@@ -372,7 +372,17 @@
   "woConversion": {
     "checkAsset": "Asset confirmed",
     "checkClassif": "Classification set",
-    "checkUrgency": "Urgency validated"
+    "checkUrgency": "Urgency validated",
+    "title": "Convert to work order",
+    "description": "DI <bold>{{code}}</bold> will be converted into a work order. This action cannot be undone.",
+    "prerequisites": "Conversion prerequisites",
+    "stepUpLabel": "Confirmation code (step-up)",
+    "stepUpPlaceholder": "Enter your PIN code",
+    "notesLabel": "Conversion notes (optional)",
+    "notesPlaceholder": "Comments for the conversion…",
+    "cancel": "Cancel",
+    "converting": "Converting…",
+    "confirm": "Convert to WO"
   },
   "print": {
     "htmlLang": "en",

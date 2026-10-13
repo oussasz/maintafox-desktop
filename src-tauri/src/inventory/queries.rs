@@ -417,7 +417,7 @@ pub async fn create_inventory_tax_category(
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO lookup_values (
-            sync_id, domain_id, code, label, fr_label, en_label, description,
+            entity_sync_id, domain_id, code, label, fr_label, en_label, description,
             sort_order, is_active, is_system, color, parent_value_id, metadata_json,
             created_at, updated_at, row_version
          )
@@ -699,7 +699,8 @@ pub async fn create_warehouse(db: &DatabaseConnection, input: CreateWarehouseInp
             "Warehouse code and name are required.".to_string(),
         ]));
     }
-    let dup = db
+    let tx = db.begin().await?;
+    let dup = tx
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id FROM warehouses WHERE code = ? COLLATE NOCASE",
@@ -711,26 +712,32 @@ pub async fn create_warehouse(db: &DatabaseConnection, input: CreateWarehouseInp
             "Warehouse code '{code}' already exists."
         )]));
     }
-    db.execute(Statement::from_sql_and_values(
+    tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "INSERT INTO warehouses (code, name, is_active) VALUES (?, ?, 1)",
-        [code.into(), name.into()],
+        "INSERT INTO warehouses (entity_sync_id, code, name, is_active, row_version) VALUES (?, ?, ?, 1, 1)",
+        [
+            crate::sync::identity::new_entity_sync_id().into(),
+            code.into(),
+            name.into(),
+        ],
     ))
     .await?;
-    let row = db
+    let row = tx
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
             "SELECT id, code, name, is_active, created_at FROM warehouses WHERE id = last_insert_rowid()".to_string(),
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("warehouse insert")))?;
-    Ok(Warehouse {
+    let warehouse = Warehouse {
         id: row.try_get("", "id")?,
         code: row.try_get("", "code")?,
         name: row.try_get("", "name")?,
         is_active: row.try_get("", "is_active")?,
         created_at: row.try_get("", "created_at")?,
-    })
+    };
+    tx.commit().await?;
+    Ok(warehouse)
 }
 
 pub async fn update_warehouse(
@@ -761,7 +768,8 @@ pub async fn update_warehouse(
     }
     vals.push(warehouse_id.into());
     let sql = format!("UPDATE warehouses SET {} WHERE id = ?", sets.join(", "));
-    let result = db
+    let tx = db.begin().await?;
+    let result = tx
         .execute(Statement::from_sql_and_values(DbBackend::Sqlite, sql, vals))
         .await?;
     if result.rows_affected() == 0 {
@@ -770,7 +778,7 @@ pub async fn update_warehouse(
             id: warehouse_id.to_string(),
         });
     }
-    let row = db
+    let row = tx
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, code, name, is_active, created_at FROM warehouses WHERE id = ?",
@@ -781,13 +789,15 @@ pub async fn update_warehouse(
             entity: "Warehouse".to_string(),
             id: warehouse_id.to_string(),
         })?;
-    Ok(Warehouse {
+    let warehouse = Warehouse {
         id: row.try_get("", "id")?,
         code: row.try_get("", "code")?,
         name: row.try_get("", "name")?,
         is_active: row.try_get("", "is_active")?,
         created_at: row.try_get("", "created_at")?,
-    })
+    };
+    tx.commit().await?;
+    Ok(warehouse)
 }
 
 pub async fn create_stock_location(
@@ -841,11 +851,13 @@ pub async fn create_stock_location(
         ))
         .await?;
     }
+    let entity_sync_id = crate::sync::identity::new_entity_sync_id();
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "INSERT INTO stock_locations (warehouse_id, code, name, is_default, is_active, row_version)
-         VALUES (?, ?, ?, ?, 1, 1)",
+        "INSERT INTO stock_locations (entity_sync_id, warehouse_id, code, name, is_default, is_active, row_version)
+         VALUES (?, ?, ?, ?, ?, 1, 1)",
         [
+            entity_sync_id.into(),
             input.warehouse_id.into(),
             code.into(),
             name.into(),
@@ -853,16 +865,16 @@ pub async fn create_stock_location(
         ],
     ))
     .await?;
-    tx.commit().await?;
-
-    let id_row = db
+    let id_row = tx
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT id FROM stock_locations WHERE rowid = last_insert_rowid()".to_string(),
+            "SELECT last_insert_rowid() AS id".to_string(),
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("location insert")))?;
     let new_id: i64 = id_row.try_get("", "id")?;
+    tx.commit().await?;
+
     list_locations(db, Some(input.warehouse_id))
         .await?
         .into_iter()
@@ -1184,10 +1196,11 @@ pub async fn create_article(db: &DatabaseConnection, input: InventoryArticleInpu
     }
 
     let tx = db.begin().await?;
+    let entity_sync_id = crate::sync::identity::new_entity_sync_id();
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO articles (
-            article_code, article_name, family_id, unit_value_id, criticality_value_id,
+            entity_sync_id, article_code, article_name, family_id, unit_value_id, criticality_value_id,
             stocking_type_value_id, tax_category_value_id, procurement_category_value_id,
             preferred_warehouse_id, preferred_location_id,
             min_stock, max_stock, reorder_point, safety_stock,
@@ -1196,9 +1209,10 @@ pub async fn create_article(db: &DatabaseConnection, input: InventoryArticleInpu
             order_multiple_qty, lead_time_days, review_period_days,
             abc_class_code, xyz_class_code,
             is_critical_spare, requires_expiration, shelf_life_days, requires_batch_tracking,
-            is_active
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            is_active, row_version
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
         [
+            entity_sync_id.into(),
             code.clone().into(),
             name.into(),
             input.family_id.map_or(Value::BigInt(None), Value::from),
@@ -1816,6 +1830,7 @@ pub async fn adjust_stock(
         input.source_ref.as_deref(),
         input.reason_code.as_deref(),
         input.notes.as_deref(),
+        None,
     )
     .await?;
 
@@ -1966,14 +1981,18 @@ async fn insert_inventory_transaction<C: ConnectionTrait>(
     source_ref: Option<&str>,
     reason_code: Option<&str>,
     notes: Option<&str>,
-) -> AppResult<()> {
+    entity_sync_id: Option<uuid::Uuid>,
+) -> AppResult<i64> {
+    let entity_sync_id = entity_sync_id.unwrap_or_else(uuid::Uuid::new_v4).to_string();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO inventory_transactions (
-             article_id, warehouse_id, location_id, reservation_id, movement_type, quantity,
-             source_type, source_id, source_ref, reason_code, reason, performed_by_id, performed_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
+             entity_sync_id, article_id, warehouse_id, location_id, reservation_id, movement_type, quantity,
+             source_type, source_id, source_ref, reason_code, reason, performed_by_id, performed_at,
+             row_version
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1)",
         [
+            entity_sync_id.into(),
             article_id.into(),
             warehouse_id.into(),
             location_id.into(),
@@ -1988,7 +2007,14 @@ async fn insert_inventory_transaction<C: ConnectionTrait>(
         ],
     ))
     .await?;
-    Ok(())
+    let id_row = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT last_insert_rowid() AS id".to_string(),
+        ))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to read inventory transaction id")))?;
+    Ok(id_row.try_get("", "id")?)
 }
 
 async fn load_balance(db: &DatabaseConnection, article_id: i64, location_id: i64) -> AppResult<InventoryStockBalance> {
@@ -2109,10 +2135,11 @@ pub async fn reserve_stock(db: &DatabaseConnection, input: InventoryReserveInput
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO stock_reservations (
-             article_id, warehouse_id, location_id, source_type, source_id, source_ref,
-             quantity_reserved, quantity_issued, status, notes, created_by_id
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'active', ?, NULL)",
+             entity_sync_id, article_id, warehouse_id, location_id, source_type, source_id, source_ref,
+             quantity_reserved, quantity_issued, status, notes, created_by_id, row_version
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 'active', ?, NULL, 1)",
         [
+            uuid::Uuid::new_v4().to_string().into(),
             input.article_id.into(),
             warehouse_id.into(),
             input.location_id.into(),
@@ -2147,6 +2174,7 @@ pub async fn reserve_stock(db: &DatabaseConnection, input: InventoryReserveInput
         input.source_ref.as_deref(),
         None,
         input.notes.as_deref(),
+        None,
     )
     .await?;
 
@@ -2230,6 +2258,7 @@ pub async fn issue_reserved_stock(db: &DatabaseConnection, input: InventoryIssue
         input.source_ref.as_deref().or(reservation.source_ref.as_deref()),
         None,
         input.notes.as_deref(),
+        None,
     )
     .await?;
 
@@ -2305,6 +2334,7 @@ pub async fn return_reserved_stock(
         reservation.source_ref.as_deref(),
         None,
         input.notes.as_deref(),
+        None,
     )
     .await?;
     tx.commit().await?;
@@ -2315,12 +2345,12 @@ pub(crate) async fn release_stock_reservation_with_connection<C: ConnectionTrait
     db: &C,
     reservation_id: i64,
     notes: Option<&str>,
-) -> AppResult<StockReservation> {
+) -> AppResult<(StockReservation, Option<i64>)> {
     let reservation = load_reservation_by_id(db, reservation_id).await?;
     ensure_reservation_invariants(&reservation)?;
     ensure_active_mutation_context(db, reservation.article_id, reservation.location_id).await?;
     if reservation.status == "released" {
-        return Ok(reservation);
+        return Ok((reservation, None));
     }
     let remaining_reserved = (reservation.quantity_reserved - reservation.quantity_issued).max(0.0);
 
@@ -2350,24 +2380,30 @@ pub(crate) async fn release_stock_reservation_with_connection<C: ConnectionTrait
         [reservation.id.into()],
     ))
     .await?;
-    if remaining_reserved > 0.0 {
-        insert_inventory_transaction(
-            db,
-            reservation.article_id,
-            reservation.warehouse_id,
-            reservation.location_id,
-            Some(reservation.id),
-            "RELEASE",
-            remaining_reserved,
-            &reservation.source_type,
-            reservation.source_id,
-            reservation.source_ref.as_deref(),
-            None,
-            notes,
+    let movement_id = if remaining_reserved > 0.0 {
+        Some(
+            insert_inventory_transaction(
+                db,
+                reservation.article_id,
+                reservation.warehouse_id,
+                reservation.location_id,
+                Some(reservation.id),
+                "RELEASE",
+                remaining_reserved,
+                &reservation.source_type,
+                reservation.source_id,
+                reservation.source_ref.as_deref(),
+                None,
+                notes,
+                None,
+            )
+            .await?,
         )
-        .await?;
-    }
-    load_reservation_by_id(db, reservation.id).await
+    } else {
+        None
+    };
+    let released = load_reservation_by_id(db, reservation.id).await?;
+    Ok((released, movement_id))
 }
 
 pub async fn release_stock_reservation(
@@ -2375,7 +2411,8 @@ pub async fn release_stock_reservation(
     input: InventoryReleaseReservationInput,
 ) -> AppResult<StockReservation> {
     let tx = db.begin().await?;
-    let released = release_stock_reservation_with_connection(&tx, input.reservation_id, input.notes.as_deref()).await?;
+    let (released, _movement_id) =
+        release_stock_reservation_with_connection(&tx, input.reservation_id, input.notes.as_deref()).await?;
     tx.commit().await?;
     Ok(released)
 }
@@ -2446,6 +2483,7 @@ pub async fn transfer_stock(
         input.source_ref.as_deref(),
         None,
         input.notes.as_deref(),
+        None,
     )
     .await?;
     insert_inventory_transaction(
@@ -2461,6 +2499,7 @@ pub async fn transfer_stock(
         input.source_ref.as_deref(),
         None,
         input.notes.as_deref(),
+        None,
     )
     .await?;
 
@@ -2982,9 +3021,9 @@ pub async fn upsert_article_equivalent(
     }
     let allowed = ["DIRECT", "FUNCTIONAL", "UPGRADE"];
     if !allowed.contains(&input.equivalence_type.as_str()) {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "equivalence_type must be one of: DIRECT, FUNCTIONAL, UPGRADE."
-        )]));
+        return Err(AppError::ValidationFailed(vec![
+            "equivalence_type must be one of: DIRECT, FUNCTIONAL, UPGRADE.".to_string(),
+        ]));
     }
     let is_bidirectional = input.is_bidirectional.unwrap_or(true) as i64;
     db.execute(Statement::from_sql_and_values(

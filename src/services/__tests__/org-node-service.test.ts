@@ -21,7 +21,7 @@ import {
 
 const baseNode = {
   id: 1,
-  sync_id: "aaa-bbb-ccc",
+  entity_sync_id: "aaa-bbb-ccc",
   code: "SITE-001",
   name: "Usine Principale",
   node_type_id: 1,

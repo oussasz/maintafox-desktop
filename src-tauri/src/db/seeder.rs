@@ -1,7 +1,6 @@
 use crate::errors::{AppError, AppResult};
 use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, Value};
-use uuid::Uuid;
 
 /// Current version of the system seed data set.
 /// Increment this when adding new system domains or values in a release.
@@ -11,11 +10,14 @@ pub const SEED_SCHEMA_VERSION: i32 = 2;
 /// Tuple format: (`setting_key`, category, `setting_scope`, `setting_value_json`)
 const DEFAULT_SETTINGS: &[(&str, &str, &str, &str)] = &[
     ("ram.fmeca_rpn_critical_threshold", "reliability", "tenant", r"150"),
+    // PRD §6.5: a closed WO may be reopened within this many days of its closure.
+    ("wo.reopen_window_days", "work_orders", "tenant", r"30"),
     ("locale.primary_language", "localization", "tenant", r#""fr""#),
     ("locale.fallback_language", "localization", "tenant", r#""en""#),
     ("locale.date_format", "localization", "tenant", r#""DD/MM/YYYY""#),
     ("locale.number_format", "localization", "tenant", r#""fr-FR""#),
     ("locale.week_start_day", "localization", "tenant", r"1"),
+    ("locale.currency_code", "localization", "tenant", r#""DZD""#),
     ("appearance.color_mode", "appearance", "tenant", r#""light""#),
     ("appearance.density", "appearance", "tenant", r#""standard""#),
     ("appearance.text_scale", "appearance", "tenant", r"1.0"),
@@ -25,6 +27,12 @@ const DEFAULT_SETTINGS: &[(&str, &str, &str, &str)] = &[
     ("backup.retention_weekly", "backup", "tenant", r"4"),
     ("backup.retention_monthly", "backup", "tenant", r"12"),
     ("diagnostics.log_retention_days", "system", "device", r"30"),
+    (
+        "documents.default_header",
+        "documents",
+        "tenant",
+        r#"{"version":1,"content_json":{"type":"doc","content":[{"type":"paragraph"}]},"html":"","logo_relative_path":null}"#,
+    ),
 ];
 
 /// Inserts all system-governed lookup domains and values idempotently.
@@ -2276,6 +2284,9 @@ pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
     // ── 7. Seed default application settings ──────────────────────────────
     seed_default_settings(db).await?;
 
+    // ── 8. Ensure default session/backup policy snapshots ─────────────────
+    crate::settings::ensure_default_policies(db).await?;
+
     tracing::info!("seeder::complete — system seed version {} applied", SEED_SCHEMA_VERSION);
     Ok(())
 }
@@ -2291,6 +2302,7 @@ pub async fn seed_default_settings(db: &DatabaseConnection) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
 
     for (setting_key, category, setting_scope, setting_value_json) in DEFAULT_SETTINGS {
+        // Insert missing rows; do not overwrite tenant-customized values.
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             r"INSERT OR IGNORE INTO app_settings
@@ -2306,6 +2318,45 @@ pub async fn seed_default_settings(db: &DatabaseConnection) -> AppResult<()> {
             ],
         ))
         .await?;
+
+        // Repair category drift from older seeds so Settings tab filters keep matching.
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            r"UPDATE app_settings
+               SET category = ?
+               WHERE setting_key = ? AND setting_scope = ? AND category != ?",
+            [
+                (*category).into(),
+                (*setting_key).into(),
+                (*setting_scope).into(),
+                (*category).into(),
+            ],
+        ))
+        .await?;
+    }
+
+    // Keep runtime locale resolution aligned with Settings SSOT.
+    // Seed system_config tenant default only when missing (do not overwrite admin overrides).
+    let existing_default = crate::locale::read_locale_config(db, "locale.default_language").await?;
+    if existing_default.is_none() {
+        let primary = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                r"SELECT setting_value_json FROM app_settings
+                   WHERE setting_key = 'locale.primary_language' AND setting_scope = 'tenant'
+                   LIMIT 1",
+                [],
+            ))
+            .await?;
+        if let Some(row) = primary {
+            if let Ok(raw) = row.try_get::<String>("", "setting_value_json") {
+                let code = serde_json::from_str::<String>(&raw).unwrap_or(raw);
+                let code = code.trim().to_lowercase();
+                if matches!(code.as_str(), "fr" | "en") {
+                    crate::locale::write_locale_config(db, "locale.default_language", &code).await?;
+                }
+            }
+        }
     }
 
     tracing::info!(
@@ -2377,16 +2428,17 @@ async fn seed_domain(
     is_extensible: bool,
 ) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
-    let sync_id = Uuid::new_v4().to_string();
+    // Seeded on every device: identity from the natural key (`sync::seeded_identity`).
+    let entity_sync_id = crate::sync::identity::seeded_entity_sync_id("lookup_domains", domain_key);
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT OR IGNORE INTO lookup_domains
-               (sync_id, domain_key, display_name, domain_type,
+               (entity_sync_id, domain_key, display_name, domain_type,
                 is_ordered, is_extensible, is_locked, schema_version,
                 created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, 0, 1, ?, ?)",
         [
-            sync_id.into(),
+            entity_sync_id.into(),
             domain_key.into(),
             display_name.into(),
             domain_type.into(),
@@ -2431,16 +2483,29 @@ async fn seed_value(
     is_system: bool,
 ) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
-    let sync_id = Uuid::new_v4().to_string();
+    // Seeded on every device: identity from `domain_key:code` (`sync::seeded_identity`).
+    let domain_key: String = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT domain_key FROM lookup_domains WHERE id = ?",
+            [domain_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "lookup_domain".into(),
+            id: domain_id.to_string(),
+        })?
+        .try_get("", "domain_key")?;
+    let entity_sync_id = crate::sync::identity::seeded_entity_sync_id("lookup_values", &format!("{domain_key}:{code}"));
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT OR IGNORE INTO lookup_values
-               (sync_id, domain_id, code, label, fr_label, en_label,
+               (entity_sync_id, domain_id, code, label, fr_label, en_label,
                 color, sort_order, is_active, is_system,
                 created_at, updated_at, row_version)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, 1)",
         [
-            sync_id.into(),
+            entity_sync_id.into(),
             domain_id.into(),
             code.into(),
             label.into(),
@@ -2534,17 +2599,25 @@ async fn seed_system_roles(db: &DatabaseConnection) -> AppResult<()> {
             "custom",
         ),
         ("Readonly", "Read-only access to all operational modules.", 1, "system"),
+        (
+            "Finance Manager",
+            "Budget preparation, reporting and approval (fin.approve).",
+            0,
+            "custom",
+        ),
     ];
 
     for (name, desc, is_system, role_type) in baseline_roles {
-        let sync_id = Uuid::new_v4().to_string();
+        // Every device seeds these roles on its own: the id is derived from the role name
+        // so the same baseline role has the same sync identity on every device.
+        let entity_sync_id = crate::sync::identity::seeded_entity_sync_id("roles", name);
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             r"INSERT OR IGNORE INTO roles
-                   (sync_id, name, description, is_system, role_type, status, created_at, updated_at, row_version)
+                   (entity_sync_id, name, description, is_system, role_type, status, created_at, updated_at, row_version)
                VALUES (?, ?, ?, ?, ?, 'active', ?, ?, 1)",
             [
-                sync_id.into(),
+                entity_sync_id.into(),
                 (*name).into(),
                 (*desc).into(),
                 (*is_system).into(),
@@ -2586,6 +2659,14 @@ async fn seed_system_roles(db: &DatabaseConnection) -> AppResult<()> {
             .filter(|p| p.ends_with(".view"))
             .collect();
         for perm_name in view_perms {
+            assign_permission_by_name(db, rid, perm_name, &now).await?;
+        }
+    }
+
+    // Finance Manager -> budgets end to end, including approval (with Administrator, the only
+    // default holders of fin.approve)
+    if let Some(rid) = get_role_id_by_name(db, "Finance Manager").await? {
+        for perm_name in crate::rbac::permissions::FINANCE_MANAGER_PERMISSIONS {
             assign_permission_by_name(db, rid, perm_name, &now).await?;
         }
     }
@@ -2757,17 +2838,18 @@ async fn seed_admin_account(db: &DatabaseConnection) -> AppResult<()> {
     let password_hash = hash_password("Admin#2026!")?;
 
     let now = Utc::now().to_rfc3339();
-    let sync_id = Uuid::new_v4().to_string();
+    // Every device seeds this account: identity from the username (`sync::seeded_identity`).
+    let entity_sync_id = crate::sync::identity::seeded_entity_sync_id("user_accounts", "admin");
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT OR IGNORE INTO user_accounts
-               (sync_id, username, display_name, identity_mode, password_hash,
+               (entity_sync_id, username, display_name, identity_mode, password_hash,
                 is_active, is_admin, force_password_change,
                 failed_login_attempts, created_at, updated_at, row_version)
            VALUES (?, ?, ?, ?, ?, 1, 1, 1, 0, ?, ?, 1)",
         [
-            sync_id.into(),
+            entity_sync_id.into(),
             "admin".into(),
             "Administrateur Maintafox".into(),
             "local".into(),
@@ -2790,7 +2872,9 @@ async fn seed_admin_account(db: &DatabaseConnection) -> AppResult<()> {
 /// Idempotent — uses INSERT OR IGNORE.
 async fn ensure_admin_role_assignment(db: &DatabaseConnection) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
-    let sync_id = Uuid::new_v4().to_string();
+    // Every device seeds this assignment (`sync::seeded_identity`).
+    let entity_sync_id =
+        crate::sync::identity::seeded_entity_sync_id("user_scope_assignments", "admin:Administrator:tenant");
 
     // Resolve user_id for 'admin' and role_id for 'Administrator'
     let result = db
@@ -2812,11 +2896,11 @@ async fn ensure_admin_role_assignment(db: &DatabaseConnection) -> AppResult<()> 
             db.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 r"INSERT OR IGNORE INTO user_scope_assignments
-                       (sync_id, user_id, role_id, scope_type, scope_reference,
+                       (entity_sync_id, user_id, role_id, scope_type, scope_reference,
                         valid_from, valid_to, assigned_by_id, notes, created_at, updated_at, row_version)
                    VALUES (?, ?, ?, 'tenant', NULL, NULL, NULL, NULL, 'System seeder', ?, ?, 1)",
                 [
-                    sync_id.into(),
+                    entity_sync_id.into(),
                     user_id.into(),
                     role_id.into(),
                     now.clone().into(),
@@ -2851,7 +2935,8 @@ mod tests {
     fn default_settings_count_is_expected() {
         assert_eq!(
             DEFAULT_SETTINGS.len(),
-            15,
+            // +locale.currency_code, +ram.fmeca_rpn_critical_threshold, +wo.reopen_window_days
+            18,
             "Default settings count changed; update migration and verification checks"
         );
     }

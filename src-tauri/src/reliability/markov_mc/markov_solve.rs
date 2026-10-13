@@ -39,6 +39,8 @@ pub fn solve_dtmc_steady_state(spec: &MarkovSpec, max_iter: usize, eps: f64) -> 
     let mut pi = vec![1.0 / (n as f64); n];
     for it in 0..max_iter {
         let mut next = vec![0.0; n];
+        // Index form mirrors the textbook pi_next[j] = sum_i pi[i] * P[i][j].
+        #[allow(clippy::needless_range_loop)]
         for j in 0..n {
             for i in 0..n {
                 next[j] += pi[i] * spec.matrix[i][j];

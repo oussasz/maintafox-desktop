@@ -17,6 +17,8 @@ const ActivityEventSummarySchema = z.object({
   summary_json: z.unknown().nullable(),
   correlation_id: z.string().nullable(),
   visibility_scope: z.string(),
+  /** Received from another device before history ids travelled as sync ids: ids in it are that device's. */
+  from_other_device: z.boolean().default(false),
 });
 
 const ActivityEventDetailSchema = z.object({
@@ -58,6 +60,8 @@ const AuditEventSummarySchema = z.object({
   result: z.string(),
   happened_at: z.string(),
   retention_class: z.string(),
+  /** Received from another device before history ids travelled as sync ids: ids in it are that device's. */
+  from_other_device: z.boolean().default(false),
 });
 
 const AuditEventDetailSchema = z.object({
@@ -74,6 +78,8 @@ const AuditEventDetailSchema = z.object({
   happened_at: z.string(),
   retention_class: z.string(),
   details_json: z.unknown().nullable(),
+  /** Received from another device before history ids travelled as sync ids: ids in it are that device's. */
+  from_other_device: z.boolean().default(false),
 });
 
 const ExportResultSchema = z.object({
@@ -171,4 +177,35 @@ export async function getAuditEvent(event_id: number): Promise<AuditEventDetail>
 export async function exportAuditLog(payload: ExportAuditInput): Promise<ExportResult> {
   const raw = await invoke<ExportResult>("export_audit_log", { payload });
   return ExportResultSchema.parse(raw);
+}
+
+const AuditChainReportSchema = z.object({
+  checked_at: z.string(),
+  chains: z.array(
+    z.object({
+      origin: z.string(),
+      device_code: z.string(),
+      is_this_device: z.boolean(),
+      events: z.number(),
+      last_seq: z.number(),
+      intact: z.boolean(),
+      first_problem: z
+        .object({
+          chain_seq: z.number(),
+          audit_event_id: z.number(),
+          kind: z.enum(["hash_mismatch", "prev_mismatch", "missing_positions"]),
+        })
+        .nullable(),
+    }),
+  ),
+  unchained_events: z.number(),
+  intact: z.boolean(),
+});
+
+export type AuditChainReport = z.infer<typeof AuditChainReportSchema>;
+
+/** Verifies the hash chain of every device's audit trail held in this database. */
+export async function verifyAuditChain(): Promise<AuditChainReport> {
+  const raw = await invoke<unknown>("verify_audit_chain");
+  return AuditChainReportSchema.parse(raw);
 }

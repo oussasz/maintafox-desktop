@@ -146,8 +146,8 @@ export function DiCreateForm({
   // ── Equipment pre-fill for edit mode ──────────────────────────────────
 
   useEffect(() => {
-    if (initial?.asset_id && !selectedAsset) {
-      void getAssetById(initial.asset_id)
+    if (initial?.equipment_id && !selectedAsset) {
+      void getAssetById(initial.equipment_id)
         .then((asset) => setSelectedAsset(assetToSearchResult(asset)))
         .catch(() => {
           /* Missing asset — user can search manually */
@@ -270,7 +270,7 @@ export function DiCreateForm({
         onSubmitted({ ...initial, title, description, request_type: requestType });
       } else {
         const input: DiCreateInput = {
-          asset_id: selectedAsset.id,
+          equipment_id: selectedAsset.id,
           org_node_id: selectedAsset.org_node_id,
           title: title.trim(),
           description: description.trim(),

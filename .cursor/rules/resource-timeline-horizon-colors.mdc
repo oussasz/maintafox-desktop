@@ -1,0 +1,39 @@
+---
+description: ResourceTimeline horizon, zoom, and semantic color standards
+globs:
+  - src/components/timeline/**
+  - src/components/personnel/Availability*.tsx
+  - src/components/personnel/availability-model.ts
+  - src/pages/PersonnelPage.tsx
+  - src/design-system/resource-timeline*
+  - docs/engineering/AVAILABILITY_TAB_FUNCTIONAL_SPEC.md
+  - docs/engineering/RESOURCE_TIMELINE.md
+alwaysApply: false
+---
+
+# ResourceTimeline — horizon, zoom, colors
+
+## Horizon
+
+- Use only `RESOURCE_TIMELINE_HORIZON_PRESETS` / `RESOURCE_TIMELINE_DEFAULT_HORIZON_DAYS` from `src/design-system/resource-timeline-tokens.ts`.
+- Do not invent inline day counts (`7`, `14`, `28`) in feature components.
+- Custom from–to ranges are allowed; both bounds must be validated before fetch.
+
+## Zoom
+
+- Zoom in / out / fit-to-horizon live on `ResourceTimeline` chrome only.
+- Adapters must not build a second zoom control strip.
+
+## Color coding
+
+- Map semantic states (`free`, `partial`, `blocked`, `critical`, `rest`, `shift`, `commitment`, block types) via `RESOURCE_TIMELINE_STATE_VAR` / `RESOURCE_TIMELINE_STATE_CLASS`.
+- Forbidden: one-off Tailwind hex or arbitrary RGB in Availability / Planning adapters for bar or legend colors.
+
+## Errors and empty states
+
+- Load failures must show an i18n error string (no silent blank chart).
+- Empty groups/items use shared empty patterns; do not invent a parallel empty UI inside the library wrapper.
+
+## Library boundary
+
+- Feature code imports `@/components/timeline/ResourceTimeline` only — never `react-calendar-timeline` directly.

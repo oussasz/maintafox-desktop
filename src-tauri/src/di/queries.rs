@@ -7,7 +7,7 @@
 
 use crate::errors::{AppError, AppResult};
 use chrono::Utc;
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
 use super::domain::{generate_di_code, guard_transition, map_intervention_request, DiStatus, InterventionRequest};
@@ -20,7 +20,7 @@ use super::domain::{generate_di_code, guard_transition, map_intervention_request
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct DiListFilter {
     pub status: Option<Vec<String>>,
-    pub asset_id: Option<i64>,
+    pub equipment_id: Option<i64>,
     pub org_node_id: Option<i64>,
     pub submitter_id: Option<i64>,
     pub reviewer_id: Option<i64>,
@@ -66,7 +66,7 @@ pub struct DiSummaryRow {
 /// Input for creating a new intervention request.
 #[derive(Debug, Clone, Deserialize)]
 pub struct DiCreateInput {
-    pub asset_id: i64,
+    pub equipment_id: i64,
     pub org_node_id: i64,
     pub title: String,
     pub description: String,
@@ -122,12 +122,12 @@ pub struct DiDraftUpdateInput {
 
 /// All columns from `intervention_requests` for SELECT reuse.
 const IR_COLS: &str = "\
-    ir.id, ir.code, ir.asset_id, ir.sub_asset_ref, ir.org_node_id, \
+    ir.id, ir.code, ir.equipment_id, ir.sub_asset_ref, ir.org_node_id, \
     ir.status, ir.title, ir.description, ir.origin_type, ir.request_type, ir.symptom_code_id, \
     ir.impact_level, ir.production_impact, ir.safety_flag, ir.environmental_flag, \
     ir.quality_flag, ir.reported_urgency, ir.validated_urgency, \
     ir.observed_at, ir.submitted_at, \
-    ir.review_team_id, ir.reviewer_id, ir.screened_at, ir.approved_at, \
+    ir.reviewer_id, ir.screened_at, ir.approved_at, \
     ir.deferred_until, ir.declined_at, ir.closed_at, ir.archived_at, \
     ir.converted_to_wo_id, ir.converted_at, \
     ir.sla_rule_id, ir.sla_target_response_hours, ir.sla_target_resolution_hours, \
@@ -149,7 +149,7 @@ const IR_JOIN_COLS: &str = "\
     related_di.code AS related_di_code";
 
 const IR_JOINS: &str = "\
-    LEFT JOIN equipment eq ON eq.id = ir.asset_id \
+    LEFT JOIN equipment eq ON eq.id = ir.equipment_id \
     LEFT JOIN org_nodes org ON org.id = ir.org_node_id \
     LEFT JOIN user_accounts us ON us.id = ir.submitter_id \
     LEFT JOIN user_accounts ur ON ur.id = ir.reviewer_id \
@@ -228,9 +228,9 @@ pub async fn list_intervention_requests(db: &DatabaseConnection, filter: DiListF
     }
 
     // ── Scalar FK filters ─────────────────────────────────────────────────
-    if let Some(asset_id) = filter.asset_id {
-        where_clauses.push("ir.asset_id = ?".to_string());
-        binds.push(asset_id.into());
+    if let Some(equipment_id) = filter.equipment_id {
+        where_clauses.push("ir.equipment_id = ?".to_string());
+        binds.push(equipment_id.into());
     }
     if let Some(org_node_id) = filter.org_node_id {
         where_clauses.push("ir.org_node_id = ?".to_string());
@@ -295,7 +295,7 @@ pub async fn list_intervention_requests(db: &DatabaseConnection, filter: DiListF
         .map_err(|e| decode_err("total", e))?;
 
     // ── Data query with LIMIT/OFFSET ──────────────────────────────────────
-    let row_limit = filter.limit.min(200).max(1);
+    let row_limit = filter.limit.clamp(1, 200);
     let offset = filter.offset.max(0);
 
     let data_sql = format!(
@@ -322,11 +322,11 @@ pub async fn list_intervention_requests(db: &DatabaseConnection, filter: DiListF
 // B) get_intervention_request — single row by id
 // ═══════════════════════════════════════════════════════════════════════════════
 
-pub async fn get_intervention_request(db: &DatabaseConnection, id: i64) -> AppResult<Option<InterventionRequest>> {
+pub async fn get_intervention_request(db: &impl ConnectionTrait, id: i64) -> AppResult<Option<InterventionRequest>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!(
+            format!(
                 "SELECT {IR_COLS}, {IR_JOIN_COLS} \
                  FROM intervention_requests ir \
                  {IR_JOINS} \
@@ -370,15 +370,15 @@ pub async fn get_di_transition_log(db: &DatabaseConnection, di_id: i64) -> AppRe
 
 pub async fn get_recent_similar_dis(
     db: &DatabaseConnection,
-    asset_id: i64,
+    equipment_id: i64,
     symptom_code_id: Option<i64>,
     days: i64,
 ) -> AppResult<Vec<DiSummaryRow>> {
     let mut where_clauses = vec![
-        "asset_id = ?".to_string(),
+        "equipment_id = ?".to_string(),
         format!("submitted_at >= datetime('now', '-{} days')", days.max(1)),
     ];
-    let mut binds: Vec<sea_orm::Value> = vec![asset_id.into()];
+    let mut binds: Vec<sea_orm::Value> = vec![equipment_id.into()];
 
     if let Some(symptom_id) = symptom_code_id {
         where_clauses.push("symptom_code_id = ?".to_string());
@@ -420,18 +420,22 @@ pub async fn create_intervention_request(
 
     let code = generate_di_code(db).await?;
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let entity_sync_id = crate::sync::identity::new_entity_sync_id();
 
-    db.execute(Statement::from_sql_and_values(
+    // The DI row, its logs and its sync outbox entry commit together.
+    let txn = db.begin().await?;
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO intervention_requests (\
-            code, asset_id, org_node_id, status, title, description, origin_type, request_type, \
+            entity_sync_id, code, equipment_id, org_node_id, status, title, description, origin_type, request_type, \
             symptom_code_id, impact_level, production_impact, safety_flag, \
             environmental_flag, quality_flag, reported_urgency, observed_at, \
             submitted_at, submitter_id, source_inspection_anomaly_id, row_version, created_at, updated_at\
-         ) VALUES (?, ?, ?, 'submitted', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+         ) VALUES (?, ?, ?, ?, 'submitted', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
         [
+            entity_sync_id.into(),
             code.clone().into(),
-            input.asset_id.into(),
+            input.equipment_id.into(),
             input.org_node_id.into(),
             input.title.into(),
             input.description.into(),
@@ -464,7 +468,7 @@ pub async fn create_intervention_request(
             AppError::ValidationFailed(vec!["Un code DI en doublon a été généré. Veuillez réessayer.".into()])
         } else if e.to_string().contains("FOREIGN KEY") {
             AppError::ValidationFailed(vec![
-                "Référence invalide (asset_id, org_node_id, ou submitter_id).".into()
+                "Référence invalide (equipment_id, org_node_id, ou submitter_id).".into()
             ])
         } else {
             AppError::Database(e)
@@ -472,10 +476,10 @@ pub async fn create_intervention_request(
     })?;
 
     // Fetch the inserted row by code (code is UNIQUE)
-    let row = db
+    let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!(
+            format!(
                 "SELECT {IR_COLS}, {IR_JOIN_COLS} \
                  FROM intervention_requests ir \
                  {IR_JOINS} \
@@ -489,7 +493,7 @@ pub async fn create_intervention_request(
     let di = map_intervention_request(&row)?;
 
     // Write initial transition log entry
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO di_state_transition_log (di_id, from_status, to_status, action, actor_id, acted_at) \
          VALUES (?, 'none', 'submitted', 'intake_submitted', ?, ?)",
@@ -498,9 +502,9 @@ pub async fn create_intervention_request(
     .await?;
 
     // Freeze immutable SLA on the DI, then persist full audit snapshot.
-    let di = super::sla::freeze_sla_on_di(db, &di).await?;
+    let di = super::sla::freeze_sla_on_di(&txn, &di).await?;
     let snap = super::sla::snapshot_sla_for_review_event(&di);
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO di_review_events \
             (di_id, event_type, actor_id, acted_at, from_status, to_status, \
@@ -527,6 +531,7 @@ pub async fn create_intervention_request(
     ))
     .await?;
 
+    txn.commit().await?;
     Ok(di)
 }
 
@@ -538,8 +543,10 @@ pub async fn update_di_draft_fields(
     db: &DatabaseConnection,
     input: DiDraftUpdateInput,
 ) -> AppResult<InterventionRequest> {
+    let txn = db.begin().await?;
+
     // 1. Fetch current row to validate status
-    let current = get_intervention_request(db, input.id)
+    let current = get_intervention_request(&txn, input.id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "InterventionRequest".into(),
@@ -571,7 +578,7 @@ pub async fn update_di_draft_fields(
         values.push(description.clone().into());
     }
     if let Some(ref request_type) = input.request_type {
-        let validated = crate::di::reference_catalog::validate_di_request_type(db, request_type).await?;
+        let validated = crate::di::reference_catalog::validate_di_request_type(&txn, request_type).await?;
         sets.push("request_type = ?".into());
         values.push(validated.into());
     }
@@ -582,7 +589,7 @@ pub async fn update_di_draft_fields(
             }
             Some(id) => {
                 // Validate only when writing a new value (legacy rows keep existing id until changed).
-                crate::di::reference_catalog::validate_di_symptom_id(db, *id).await?;
+                crate::di::reference_catalog::validate_di_symptom_id(&txn, *id).await?;
                 sets.push("symptom_code_id = ?".into());
                 values.push((*id).into());
             }
@@ -624,6 +631,7 @@ pub async fn update_di_draft_fields(
 
     if sets.is_empty() {
         // Nothing to update — return current row as-is
+        txn.commit().await?;
         return Ok(current);
     }
 
@@ -642,7 +650,7 @@ pub async fn update_di_draft_fields(
         sets.join(", ")
     );
 
-    let result = db
+    let result = txn
         .execute(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
         .await?;
 
@@ -655,12 +663,14 @@ pub async fn update_di_draft_fields(
     }
 
     // 5. Re-fetch and return updated row
-    get_intervention_request(db, input.id)
+    let di = get_intervention_request(&txn, input.id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "InterventionRequest".into(),
             id: input.id.to_string(),
-        })
+        })?;
+    txn.commit().await?;
+    Ok(di)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -673,7 +683,8 @@ pub async fn triage_submitted_di(
     input: DiTriageSubmittedInput,
     actor_id: i64,
 ) -> AppResult<InterventionRequest> {
-    let current = get_intervention_request(db, input.di_id)
+    let txn = db.begin().await?;
+    let current = get_intervention_request(&txn, input.di_id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "InterventionRequest".into(),
@@ -696,7 +707,7 @@ pub async fn triage_submitted_di(
 
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
-    let result = db
+    let result = txn
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE intervention_requests SET \
@@ -720,7 +731,7 @@ pub async fn triage_submitted_di(
         ]));
     }
 
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO di_state_transition_log \
             (di_id, from_status, to_status, action, actor_id, reason_code, notes, acted_at) \
@@ -742,12 +753,13 @@ pub async fn triage_submitted_di(
     ))
     .await?;
 
-    let updated = get_intervention_request(db, input.di_id)
+    let updated = get_intervention_request(&txn, input.di_id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "InterventionRequest".into(),
             id: input.di_id.to_string(),
         })?;
+    txn.commit().await?;
     super::notifications::notify_entered_in_review(db, &updated).await;
     Ok(updated)
 }

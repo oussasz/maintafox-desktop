@@ -1,68 +1,410 @@
-﻿import { useEffect, useState } from "react";
+import type { ColumnDef } from "@tanstack/react-table";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { PermissionGate } from "@/components/PermissionGate";
+import { DataTable } from "@/components/data/DataTable";
+import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
+import type { SmartFilterDef } from "@/components/filters/smart-filter-types";
+import { CrestIconPicker } from "@/components/personnel/CrestIconPicker";
+import { CrewBadge } from "@/components/personnel/CrewBadge";
+import { TeamDetailWorkspace } from "@/components/personnel/TeamDetailWorkspace";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
-import { listTeamCapacitySummary, scanSuccessionRisk } from "@/services/personnel-service";
-import type { SuccessionRiskRow, TeamCapacitySummaryRow } from "@shared/ipc-types";
+import { Label } from "@/components/ui/label";
+import { mfLayout } from "@/design-system/tokens";
+import { usePermissions } from "@/hooks/use-permissions";
+import { cn } from "@/lib/utils";
+import { getOrgDesignerSnapshot } from "@/services/org-designer-service";
+import {
+  createTeam,
+  listActiveTeams,
+  listTeamCapacitySummary,
+  updateTeam,
+} from "@/services/personnel-service";
+import type { OrgDesignerNodeRow, TeamCapacitySummaryRow, TeamSummary } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
+
+export type TeamCapacityBoardHandle = {
+  refresh: () => void;
+  openCreate: () => void;
+};
 
 interface TeamCapacityBoardProps {
   entityId?: number | null;
+  onOpenPersonnel?: ((personnelId: number) => void) | undefined;
 }
+
+type CrewTableRow = TeamSummary & {
+  member_count: number;
+  lead_count: number;
+  total_available_minutes: number;
+  total_blocked_minutes: number;
+  avg_availability_ratio: number | null;
+};
+
+const TEAM_TYPES = ["maintenance", "inspection", "planning", "contractor", "hse"] as const;
 
 function toIsoDate(value: Date): string {
   return value.toISOString().slice(0, 10);
 }
 
-export function TeamCapacityBoard({ entityId }: TeamCapacityBoardProps) {
-  const { t } = useTranslation("personnel");
-  const [rows, setRows] = useState<TeamCapacitySummaryRow[]>([]);
-  const [riskRows, setRiskRows] = useState<SuccessionRiskRow[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [dateFrom, setDateFrom] = useState(() => toIsoDate(new Date()));
-  const [dateTo, setDateTo] = useState(() => {
-    const d = new Date();
-    d.setDate(d.getDate() + 6);
-    return toIsoDate(d);
-  });
+export const TeamCapacityBoard = forwardRef<TeamCapacityBoardHandle, TeamCapacityBoardProps>(
+  function TeamCapacityBoard({ entityId, onOpenPersonnel }, ref) {
+    const { t } = useTranslation("personnel");
+    const { can } = usePermissions();
+    const canManage = can(P.PER_MANAGE);
 
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    void listTeamCapacitySummary({
-      date_from: dateFrom,
-      date_to: dateTo,
-      entity_id: entityId ?? null,
-      include_inactive: false,
-    })
-      .then((data) => {
-        if (!cancelled) setRows(data);
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    void scanSuccessionRisk(entityId ?? null, null).then((data) => {
-      if (!cancelled) setRiskRows(data.slice(0, 8));
+    const [rows, setRows] = useState<TeamCapacitySummaryRow[]>([]);
+    const [crews, setCrews] = useState<TeamSummary[]>([]);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const [reloadToken, setReloadToken] = useState(0);
+    const [dateFrom, setDateFrom] = useState(() => toIsoDate(new Date()));
+    const [dateTo, setDateTo] = useState(() => {
+      const d = new Date();
+      d.setDate(d.getDate() + 6);
+      return toIsoDate(d);
     });
-    return () => {
-      cancelled = true;
-    };
-  }, [dateFrom, dateTo, entityId]);
+    const [filterEntityId, setFilterEntityId] = useState<number | null>(entityId ?? null);
+    const [entityNodes, setEntityNodes] = useState<OrgDesignerNodeRow[]>([]);
+    const [searchInput, setSearchInput] = useState("");
+    const [searchQuery, setSearchQuery] = useState("");
 
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-lg">{t("tabs.teamCapacity")}</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="flex flex-wrap gap-3">
-          <label className="flex items-center gap-2 text-sm">
-            {t("availability.from")}
+    const [dialogOpen, setDialogOpen] = useState(false);
+    const [editingCrew, setEditingCrew] = useState<TeamSummary | null>(null);
+    const [formCode, setFormCode] = useState("");
+    const [formName, setFormName] = useState("");
+    const [formType, setFormType] = useState<string>("maintenance");
+    const [formNodeId, setFormNodeId] = useState<number | null>(null);
+    const [formStatus, setFormStatus] = useState("active");
+    const [formDescription, setFormDescription] = useState("");
+    const [formIconKey, setFormIconKey] = useState("");
+    const [formAccentColor, setFormAccentColor] = useState("");
+    const [formError, setFormError] = useState<string | null>(null);
+    const [formSaving, setFormSaving] = useState(false);
+
+    const [detailTeamId, setDetailTeamId] = useState<number | null>(null);
+
+    useEffect(() => {
+      if (entityId != null) setFilterEntityId(entityId);
+    }, [entityId]);
+
+    useEffect(() => {
+      let cancelled = false;
+      void getOrgDesignerSnapshot()
+        .then((snap) => {
+          if (cancelled) return;
+          const nodes = snap.nodes.filter((n) => n.status === "active");
+          const entityCandidates = nodes.filter((n) => n.active_binding_count > 0);
+          setEntityNodes(
+            entityCandidates.length > 0 ? entityCandidates : nodes.filter((n) => n.can_own_work),
+          );
+        })
+        .catch(() => {
+          if (!cancelled) setEntityNodes([]);
+        });
+      return () => {
+        cancelled = true;
+      };
+    }, []);
+
+    const refresh = useCallback(() => {
+      setReloadToken((v) => v + 1);
+    }, []);
+
+    const openCreate = useCallback(() => {
+      setEditingCrew(null);
+      setFormCode("");
+      setFormName("");
+      setFormType("maintenance");
+      setFormNodeId(filterEntityId);
+      setFormStatus("active");
+      setFormDescription("");
+      setFormIconKey("");
+      setFormAccentColor("");
+      setFormError(null);
+      setDialogOpen(true);
+    }, [filterEntityId]);
+
+    useImperativeHandle(ref, () => ({ refresh, openCreate }), [refresh, openCreate]);
+
+    useEffect(() => {
+      let cancelled = false;
+      setLoading(true);
+      setError(null);
+      void Promise.all([
+        listTeamCapacitySummary({
+          date_from: dateFrom,
+          date_to: dateTo,
+          entity_id: filterEntityId,
+          include_inactive: false,
+        }),
+        listActiveTeams({
+          entity_id: filterEntityId,
+          include_inactive: true,
+        }),
+      ])
+        .then(([capacity, crewList]) => {
+          if (cancelled) return;
+          setRows(capacity);
+          setCrews(crewList);
+        })
+        .catch((err: unknown) => {
+          if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+      return () => {
+        cancelled = true;
+      };
+    }, [dateFrom, dateTo, filterEntityId, reloadToken]);
+
+    const capacityByTeam = useMemo(() => {
+      const map = new Map<number, TeamCapacitySummaryRow>();
+      for (const row of rows) map.set(row.team_id, row);
+      return map;
+    }, [rows]);
+
+    const tableRows = useMemo<CrewTableRow[]>(() => {
+      const q = searchQuery.trim().toLowerCase();
+      return crews
+        .filter(
+          (row) =>
+            !q ||
+            row.name.toLowerCase().includes(q) ||
+            row.code.toLowerCase().includes(q) ||
+            (row.node_name ?? "").toLowerCase().includes(q) ||
+            (row.node_code ?? "").toLowerCase().includes(q),
+        )
+        .map((crew) => {
+          const capacity = capacityByTeam.get(crew.id);
+          return {
+            ...crew,
+            member_count: capacity?.member_count ?? 0,
+            lead_count: capacity?.lead_count ?? 0,
+            total_available_minutes: capacity?.total_available_minutes ?? 0,
+            total_blocked_minutes: capacity?.total_blocked_minutes ?? 0,
+            avg_availability_ratio: capacity?.avg_availability_ratio ?? null,
+          };
+        });
+    }, [crews, searchQuery, capacityByTeam]);
+
+    const resetFilters = useCallback(() => {
+      const from = toIsoDate(new Date());
+      const to = new Date();
+      to.setDate(to.getDate() + 6);
+      setDateFrom(from);
+      setDateTo(toIsoDate(to));
+      setFilterEntityId(entityId ?? null);
+      setSearchInput("");
+      setSearchQuery("");
+    }, [entityId]);
+
+    const filterDefs = useMemo<SmartFilterDef[]>(
+      () => [
+        {
+          id: "entity",
+          kind: "select",
+          label: t("filters.entity"),
+          options: entityNodes.map((n) => ({
+            value: String(n.node_id),
+            label: `${n.code} — ${n.name}`,
+          })),
+          value: filterEntityId != null ? String(filterEntityId) : null,
+          onChange: (val) => setFilterEntityId(val ? Number(val) : null),
+        },
+      ],
+      [t, entityNodes, filterEntityId],
+    );
+
+    const openEdit = (crew: TeamSummary) => {
+      setEditingCrew(crew);
+      setFormCode(crew.code);
+      setFormName(crew.name);
+      setFormType(crew.team_type);
+      setFormNodeId(crew.primary_node_id);
+      setFormStatus(crew.status);
+      setFormDescription(crew.description ?? "");
+      setFormIconKey(crew.icon_key ?? "");
+      setFormAccentColor(crew.accent_color ?? "");
+      setFormError(null);
+      setDialogOpen(true);
+    };
+
+    const openDetail = (crew: CrewTableRow) => {
+      setDetailTeamId((prev) => (prev === crew.id ? null : crew.id));
+    };
+
+    const submitCrew = async () => {
+      setFormError(null);
+      if (!formCode.trim() || !formName.trim()) {
+        setFormError(t("crews.form.errors.required"));
+        return;
+      }
+      if (formNodeId == null) {
+        setFormError(t("crews.form.errors.siteRequired"));
+        return;
+      }
+      setFormSaving(true);
+      try {
+        if (editingCrew) {
+          await updateTeam({
+            id: editingCrew.id,
+            code: formCode.trim(),
+            name: formName.trim(),
+            team_type: formType,
+            primary_node_id: formNodeId,
+            status: formStatus,
+            description: formDescription.trim() || null,
+            icon_key: formIconKey,
+            accent_color: formAccentColor,
+          });
+        } else {
+          await createTeam({
+            code: formCode.trim(),
+            name: formName.trim(),
+            team_type: formType,
+            primary_node_id: formNodeId,
+            status: formStatus,
+            description: formDescription.trim() || null,
+            icon_key: formIconKey || null,
+            accent_color: formAccentColor || null,
+          });
+        }
+        setDialogOpen(false);
+        refresh();
+      } catch (err) {
+        setFormError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setFormSaving(false);
+      }
+    };
+
+    const columns = useMemo<ColumnDef<CrewTableRow>[]>(
+      () => [
+        {
+          id: "crest",
+          header: "",
+          cell: ({ row }) => (
+            <CrewBadge
+              code={row.original.code}
+              name={row.original.name}
+              iconKey={row.original.icon_key}
+              accentColor={row.original.accent_color}
+              size="sm"
+            />
+          ),
+        },
+        {
+          accessorKey: "code",
+          header: t("crews.list.code"),
+          cell: ({ row }) => <span className="font-mono text-xs">{row.original.code}</span>,
+        },
+        {
+          accessorKey: "name",
+          header: t("crews.list.name"),
+          cell: ({ row }) => <span className="font-medium">{row.original.name}</span>,
+        },
+        {
+          id: "site",
+          header: t("crews.form.site"),
+          cell: ({ row }) => {
+            const { node_code, node_name } = row.original;
+            if (node_code && node_name) return `${node_code} — ${node_name}`;
+            return node_name ?? node_code ?? "—";
+          },
+        },
+        {
+          accessorKey: "team_type",
+          header: t("crews.form.type"),
+          cell: ({ row }) => (
+            <Badge variant="outline" className="text-[10px]">
+              {t(`crews.types.${row.original.team_type}`, row.original.team_type)}
+            </Badge>
+          ),
+        },
+        {
+          accessorKey: "status",
+          header: t("crews.form.status"),
+          cell: ({ row }) => (
+            <Badge variant="secondary" className="text-[10px]">
+              {t(`crews.status.${row.original.status}`, row.original.status)}
+            </Badge>
+          ),
+        },
+        {
+          accessorKey: "member_count",
+          header: t("crews.list.members"),
+        },
+        {
+          accessorKey: "lead_count",
+          header: t("crews.list.leads"),
+        },
+        {
+          accessorKey: "total_available_minutes",
+          header: t("crews.list.availableMin"),
+        },
+        {
+          accessorKey: "total_blocked_minutes",
+          header: t("crews.list.blockedMin"),
+        },
+        {
+          id: "ratio",
+          header: t("crews.list.availabilityPct"),
+          cell: ({ row }) => {
+            const ratio = row.original.avg_availability_ratio;
+            return ratio == null ? "—" : `${Math.round(ratio * 100)}%`;
+          },
+        },
+        {
+          id: "actions",
+          header: "",
+          cell: ({ row }) =>
+            canManage ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openEdit(row.original);
+                }}
+              >
+                {t("crews.actions.edit")}
+              </Button>
+            ) : null,
+        },
+      ],
+      [t, canManage],
+    );
+
+    const detailCapacity = detailTeamId != null ? (capacityByTeam.get(detailTeamId) ?? null) : null;
+
+    return (
+      <div className="flex min-h-0 flex-1 flex-col space-y-4">
+        <SmartFilterBar
+          searchPlaceholder={t("capacity.filters.searchPlaceholder")}
+          searchValue={searchInput}
+          onSearchInputChange={setSearchInput}
+          onSearchChange={setSearchQuery}
+          filters={filterDefs}
+          resultCount={tableRows.length}
+          onReset={resetFilters}
+        />
+
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="text-sm">
+            <span className="mb-1 block text-text-muted">{t("availability.from")}</span>
             <Input
               type="date"
               value={dateFrom}
@@ -70,8 +412,8 @@ export function TeamCapacityBoard({ entityId }: TeamCapacityBoardProps) {
               className="w-44"
             />
           </label>
-          <label className="flex items-center gap-2 text-sm">
-            {t("availability.to")}
+          <label className="text-sm">
+            <span className="mb-1 block text-text-muted">{t("availability.to")}</span>
             <Input
               type="date"
               value={dateTo}
@@ -84,51 +426,138 @@ export function TeamCapacityBoard({ entityId }: TeamCapacityBoardProps) {
         {error ? <div className="text-sm text-destructive">{error}</div> : null}
         {loading ? <div className="text-sm text-text-muted">{t("common.loading")}</div> : null}
 
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {!loading && rows.length === 0 ? (
-            <div className="text-sm text-text-muted">{t("common.noData")}</div>
-          ) : null}
-          {rows.map((row) => (
-            <div key={row.team_id} className="rounded border p-3">
-              <div className="text-sm font-semibold">
-                {row.team_name} <span className="text-xs text-text-muted">({row.team_code})</span>
-              </div>
-              <div className="mt-2 space-y-1 text-sm">
-                <div>{t("capacity.memberCount", { count: row.member_count })}</div>
-                <div>{t("capacity.leadCount", { count: row.lead_count })}</div>
-                <div>{t("capacity.availableMinutes", { count: row.total_available_minutes })}</div>
-                <div>{t("capacity.blockedMinutes", { count: row.total_blocked_minutes })}</div>
-                <div>
-                  {t("capacity.ratio", { value: Math.round(row.avg_availability_ratio * 100) })}%
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
+        {!loading && tableRows.length === 0 ? (
+          <PermissionGate
+            permission={P.PER_MANAGE}
+            fallback={<EmptyState title={t("crews.empty")} />}
+          >
+            <EmptyState
+              title={t("crews.empty")}
+              actionLabel={t("crews.actions.create")}
+              onAction={openCreate}
+            />
+          </PermissionGate>
+        ) : null}
 
-        <div className="space-y-2">
-          <div className="text-sm font-medium">
-            {t("capacity.successionRisk", "Succession risk")}
-          </div>
-          {riskRows.length === 0 ? (
-            <div className="text-sm text-text-muted">{t("common.noData")}</div>
-          ) : (
-            <div className="grid gap-2 md:grid-cols-2">
-              {riskRows.map((row) => (
-                <div key={row.personnel_id} className="rounded border p-2 text-sm">
-                  <div className="font-medium">{row.full_name}</div>
-                  <div className="text-text-muted">
-                    {row.position_name ?? "—"} · {row.team_name ?? "—"}
-                  </div>
-                  <div className="text-xs">
-                    {row.risk_level.toUpperCase()} · {row.reason}
-                  </div>
-                </div>
-              ))}
+        {!loading && tableRows.length > 0 ? (
+          <div className={cn(mfLayout.moduleWorkspaceSplit, "min-h-0 flex-1")}>
+            <div
+              className={cn(
+                "flex min-h-0 flex-col overflow-auto border-r border-surface-border",
+                detailTeamId != null ? "w-[55%] min-w-[360px]" : "w-full",
+              )}
+            >
+              <DataTable
+                columns={columns}
+                data={tableRows}
+                pageSize={20}
+                onRowClick={(row) => openDetail(row)}
+                isRowSelected={(row) => row.id === detailTeamId}
+              />
             </div>
-          )}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
+            {detailTeamId != null ? (
+              <div className="min-w-[300px] flex-1 overflow-hidden">
+                <TeamDetailWorkspace
+                  teamId={detailTeamId}
+                  dateFrom={dateFrom}
+                  dateTo={dateTo}
+                  capacity={detailCapacity}
+                  canManage={canManage}
+                  onClose={() => setDetailTeamId(null)}
+                  onEdit={(crew) => {
+                    openEdit(crew);
+                  }}
+                  onOpenPersonnel={onOpenPersonnel}
+                  onRosterChanged={refresh}
+                />
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle>
+                {editingCrew ? t("crews.form.editTitle") : t("crews.form.createTitle")}
+              </DialogTitle>
+            </DialogHeader>
+            <div className="grid gap-3 py-2">
+              <div className="space-y-1.5">
+                <Label>{t("crews.form.code")}</Label>
+                <Input value={formCode} onChange={(e) => setFormCode(e.target.value)} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>{t("crews.form.name")}</Label>
+                <Input value={formName} onChange={(e) => setFormName(e.target.value)} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>{t("crews.form.type")}</Label>
+                <select
+                  className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+                  value={formType}
+                  onChange={(e) => setFormType(e.target.value)}
+                >
+                  {TEAM_TYPES.map((type) => (
+                    <option key={type} value={type}>
+                      {t(`crews.types.${type}`)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>{t("crews.form.site")}</Label>
+                <select
+                  className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+                  value={formNodeId ?? ""}
+                  onChange={(e) => setFormNodeId(e.target.value ? Number(e.target.value) : null)}
+                >
+                  <option value="">—</option>
+                  {entityNodes.map((n) => (
+                    <option key={n.node_id} value={n.node_id}>
+                      {n.code} — {n.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>{t("crews.form.status")}</Label>
+                <select
+                  className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+                  value={formStatus}
+                  onChange={(e) => setFormStatus(e.target.value)}
+                >
+                  <option value="active">{t("crews.status.active")}</option>
+                  <option value="inactive">{t("crews.status.inactive")}</option>
+                  <option value="disbanded">{t("crews.status.disbanded")}</option>
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>{t("crews.form.description")}</Label>
+                <Input
+                  value={formDescription}
+                  onChange={(e) => setFormDescription(e.target.value)}
+                />
+              </div>
+              <CrestIconPicker
+                iconKey={formIconKey}
+                accentColor={formAccentColor}
+                onIconKeyChange={setFormIconKey}
+                onAccentColorChange={setFormAccentColor}
+              />
+              {formError ? <div className="text-sm text-destructive">{formError}</div> : null}
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>
+                {t("create.cancel")}
+              </Button>
+              <Button type="button" onClick={() => void submitCrew()} disabled={formSaving}>
+                {formSaving ? t("common.loading") : t("crews.form.save")}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </div>
+    );
+  },
+);

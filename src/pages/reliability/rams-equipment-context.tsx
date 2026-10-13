@@ -26,6 +26,15 @@ function readStoredId(): number | null {
   }
 }
 
+export function persistRamsEquipmentSelection(id: number): void {
+  try {
+    localStorage.setItem(STORAGE_KEY, String(id));
+    localStorage.setItem(STORAGE_MULTI_KEY, JSON.stringify([id]));
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
 /** Last selected RAMS equipment id (localStorage); safe outside `RamsEquipmentProvider`. */
 export function getStoredRamsEquipmentId(): number | null {
   const n = readStoredId();

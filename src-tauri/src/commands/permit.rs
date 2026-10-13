@@ -6,9 +6,9 @@ use crate::auth::rbac::PermissionScope;
 use crate::errors::{AppError, AppResult};
 use crate::permit::domain::{
     LotoCardPrintInput, LotoCardPrintJob, LotoCardView, PermitComplianceKpi30d, PermitHandoverLog,
-    PermitHandoverLogInput, PermitIsolation, PermitIsolationUpsertInput, PermitSuspendInput, PermitSuspension,
-    PermitType, PermitTypeUpsertInput, WorkPermit, WorkPermitCreateInput, WorkPermitListFilter, WorkPermitStatusInput,
-    WorkPermitUpdateInput,
+    PermitHandoverLogInput, PermitIsolation, PermitIsolationActionInput, PermitIsolationUpsertInput,
+    PermitSuspendInput, PermitSuspension, PermitType, PermitTypeUpsertInput, WorkPermit, WorkPermitCreateInput,
+    WorkPermitListFilter, WorkPermitStatusInput, WorkPermitUpdateInput,
 };
 use crate::permit::queries;
 use crate::state::AppState;
@@ -112,7 +112,7 @@ pub async fn set_work_permit_status(input: WorkPermitStatusInput, state: State<'
             );
         }
     }
-    queries::set_work_permit_status(&state.db, input).await
+    queries::set_work_permit_status(&state.db, input, i64::from(user.user_id)).await
 }
 
 #[tauri::command]
@@ -142,6 +142,54 @@ pub async fn upsert_permit_isolation(
     queries::upsert_permit_isolation(&state.db, input).await
 }
 
+/// Records the session user as the person who applied the isolation (lock fitted).
+#[tauri::command]
+pub async fn apply_permit_isolation(
+    input: PermitIsolationActionInput,
+    state: State<'_, AppState>,
+) -> AppResult<PermitIsolation> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PTW_ISSUE,
+        PermissionScope::Global
+    );
+    queries::apply_permit_isolation(&state.db, input, i64::from(user.user_id)).await
+}
+
+/// Records the session user as verifier; rejected when they also applied it (two-person rule).
+#[tauri::command]
+pub async fn verify_permit_isolation(
+    input: PermitIsolationActionInput,
+    state: State<'_, AppState>,
+) -> AppResult<PermitIsolation> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PTW_ISSUE,
+        PermissionScope::Global
+    );
+    queries::verify_permit_isolation(&state.db, input, i64::from(user.user_id)).await
+}
+
+/// Records verified lock removal by the session user (part of closing a permit).
+#[tauri::command]
+pub async fn verify_permit_isolation_removal(
+    input: PermitIsolationActionInput,
+    state: State<'_, AppState>,
+) -> AppResult<PermitIsolation> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PTW_CLOSE,
+        PermissionScope::Global
+    );
+    queries::verify_permit_isolation_removal(&state.db, input, i64::from(user.user_id)).await
+}
+
 #[tauri::command]
 pub async fn suspend_work_permit(
     input: PermitSuspendInput,
@@ -154,7 +202,7 @@ pub async fn suspend_work_permit(
         crate::rbac::permissions::PTW_ISSUE,
         PermissionScope::Global
     );
-    queries::suspend_work_permit(&state.db, input).await
+    queries::suspend_work_permit(&state.db, input, i64::from(user.user_id)).await
 }
 
 #[tauri::command]
@@ -227,7 +275,7 @@ pub async fn record_loto_card_print(
         crate::rbac::permissions::PTW_ISSUE,
         PermissionScope::Global
     );
-    queries::record_loto_card_print(&state.db, input).await
+    queries::record_loto_card_print(&state.db, input, i64::from(user.user_id)).await
 }
 
 #[tauri::command]

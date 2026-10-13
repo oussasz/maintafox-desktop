@@ -1,4 +1,4 @@
-use sea_orm::{ConnectionTrait, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, DbBackend, Statement, TransactionTrait};
 use sha2::{Digest, Sha256};
 
 use crate::errors::AppResult;
@@ -17,17 +17,45 @@ pub struct AuditEventInput {
     pub details_json: Option<serde_json::Value>,
 }
 
-pub async fn write_audit_event(pool: &sea_orm::DatabaseConnection, input: AuditEventInput) -> AppResult<i64> {
-    let details_json = input.details_json.map(|value| value.to_string());
+/// Serialises the audit writers of this process: each event takes the next position of the
+/// device's chain (`audit::chain`). The unique index on `(chain_origin, chain_seq)` makes a write
+/// that still races (another process on the same database) fail instead of forking the chain.
+static CHAIN_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-    let insert = pool
+/// Writes and chains an audit event in its own transaction. Persistence failures are returned
+/// (and logged) so callers can decide whether to block.
+pub async fn write_audit_event(pool: &sea_orm::DatabaseConnection, input: AuditEventInput) -> AppResult<i64> {
+    let _guard = CHAIN_LOCK.lock().await;
+    let result = async {
+        let txn = pool.begin().await?;
+        let id = write_audit_event_in(&txn, input).await?;
+        txn.commit().await?;
+        Ok(id)
+    }
+    .await;
+    if let Err(err) = &result {
+        tracing::error!(error = %err, "CRITICAL: audit::write_audit_event failed");
+    }
+    result
+}
+
+/// Writes and chains an audit event inside the caller's transaction (the event is committed or
+/// rolled back with the business change it records).
+pub async fn write_audit_event_in(conn: &impl ConnectionTrait, input: AuditEventInput) -> AppResult<i64> {
+    let details_json = input.details_json.map(|value| value.to_string());
+    let sync_id = crate::sync::identity::new_entity_sync_id();
+    let (origin, seq, prev_hash) = crate::audit::chain::next_position(conn).await?;
+    let happened_at = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let insert = conn
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO audit_events
-                (action_code, target_type, target_id, actor_id, auth_context, result,
-                 before_hash, after_hash, happened_at, retention_class, details_json)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ','now'), ?, ?)",
+                (entity_sync_id, action_code, target_type, target_id, actor_id, auth_context, result,
+                 before_hash, after_hash, happened_at, retention_class, details_json,
+                 chain_origin, chain_seq, chain_prev_hash)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
+                sync_id.clone().into(),
                 input.action_code.into(),
                 input.target_type.into(),
                 input.target_id.into(),
@@ -36,22 +64,17 @@ pub async fn write_audit_event(pool: &sea_orm::DatabaseConnection, input: AuditE
                 input.result.into(),
                 input.before_hash.into(),
                 input.after_hash.into(),
+                happened_at.into(),
                 input.retention_class.into(),
                 details_json.into(),
+                origin.into(),
+                seq.into(),
+                prev_hash.clone().into(),
             ],
         ))
-        .await;
-
-    match insert {
-        Ok(res) => Ok(res.last_insert_id() as i64),
-        Err(err) => {
-            tracing::error!(
-                error = %err,
-                "CRITICAL: audit::write_audit_event failed"
-            );
-            Err(err.into())
-        }
-    }
+        .await?;
+    crate::audit::chain::seal(conn, &sync_id, prev_hash.as_deref()).await?;
+    Ok(insert.last_insert_id() as i64)
 }
 
 pub fn compute_hash(value: &serde_json::Value) -> String {

@@ -76,12 +76,22 @@ export async function validateBackupFile(backupPath: string): Promise<RestoreTes
 }
 
 /**
- * Factory reset stub â€” validates all security gates but does NOT delete data.
- * Phase 2 will implement actual data deletion after VPS sync drain.
+ * Restore the database from a backup file, then restart the application.
+ * The backup must pass validation and must not come from a newer app version; the current
+ * database is saved as a `pre_restore` backup first.
+ * Requires: active session + adm.settings + step-up.
+ */
+export async function restoreFromBackup(backupPath: string): Promise<void> {
+  await invoke<void>("restore_from_backup", { backupPath });
+}
+
+/**
+ * Erase all data on this device and restart into first-time setup. A `pre_factory_reset`
+ * backup is written first; nothing is erased if it fails.
  * Requires: active session + adm.settings + step-up + typed confirmation phrase.
  */
-export async function factoryResetStub(confirmationPhrase: string): Promise<void> {
-  await invoke<void>("factory_reset_stub", {
+export async function factoryReset(confirmationPhrase: string): Promise<void> {
+  await invoke<void>("factory_reset", {
     payload: { confirmation_phrase: confirmationPhrase },
   });
 }

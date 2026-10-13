@@ -548,8 +548,12 @@ export function NodeInspectorPanel({ readOnly = false }: NodeInspectorPanelProps
                     )}
                   </div>
                   <div className="text-xs text-text-muted mt-1">
-                    {r.person_id && `${t("designer.inspector.person")}: #${r.person_id}`}
-                    {r.team_id && `${t("designer.inspector.team")}: #${r.team_id}`}
+                    {r.person_id != null
+                      ? `${t("designer.inspector.person")}: ${r.person_display_name ?? "—"}`
+                      : null}
+                    {r.team_id != null
+                      ? `${t("designer.inspector.team")}: ${r.team_label ?? "—"}`
+                      : null}
                   </div>
                 </div>
               ))}

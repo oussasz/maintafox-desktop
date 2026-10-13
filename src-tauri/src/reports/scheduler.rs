@@ -1,14 +1,15 @@
 use chrono::{DateTime, Duration, Utc};
 use cron::Schedule;
 use sea_orm::DatabaseConnection;
+use std::path::PathBuf;
 use std::str::FromStr;
 use tokio::time::{interval, Duration as TokioDuration};
 
 use crate::errors::AppResult;
+use crate::reports::artifacts::persist_run_artifact;
 use crate::reports::export::export_report_document;
 use crate::reports::queries::{
-    finish_run_failed, finish_run_success, get_template_by_id, insert_run, list_enabled_schedules,
-    update_schedule_times,
+    finish_run_failed, get_template_by_id, insert_run, list_enabled_schedules, update_schedule_times,
 };
 
 pub fn next_run_rfc3339(schedule: &Schedule) -> String {
@@ -20,21 +21,17 @@ pub fn next_run_rfc3339(schedule: &Schedule) -> String {
         .to_rfc3339()
 }
 
-fn reports_artifact_dir() -> std::path::PathBuf {
-    std::env::temp_dir().join("maintafox").join("reports")
-}
-
-pub async fn start_report_scheduler(db: DatabaseConnection) {
+pub async fn start_report_scheduler(db: DatabaseConnection, app_data_dir: PathBuf) {
     let mut ticker = interval(TokioDuration::from_secs(60));
     loop {
         ticker.tick().await;
-        if let Err(err) = run_due_schedules(&db).await {
+        if let Err(err) = run_due_schedules(&db, &app_data_dir).await {
             tracing::error!(error = %err, "reports::scheduler tick failed");
         }
     }
 }
 
-async fn run_due_schedules(db: &DatabaseConnection) -> AppResult<()> {
+async fn run_due_schedules(db: &DatabaseConnection, app_data_dir: &std::path::Path) -> AppResult<()> {
     let now = Utc::now();
     let all = list_enabled_schedules(db).await?;
     let due: Vec<_> = all
@@ -65,25 +62,17 @@ async fn run_due_schedules(db: &DatabaseConnection) -> AppResult<()> {
             }
         };
 
-        let dir = reports_artifact_dir();
-        if std::fs::create_dir_all(&dir).is_err() {
-            let _ = finish_run_failed(db, run_id, "failed to create reports directory").await;
+        if let Err(e) =
+            persist_run_artifact(db, app_data_dir, run_id, &s.export_format, &doc.file_name, &doc.bytes).await
+        {
+            let _ = finish_run_failed(db, run_id, &e.to_string()).await;
+            let cron = Schedule::from_str(s.cron_expr.trim())
+                .unwrap_or_else(|_| Schedule::from_str("0 0 8 * * *").expect("default cron"));
+            let next = next_run_rfc3339(&cron);
+            let ts = Utc::now().to_rfc3339();
+            let _ = update_schedule_times(db, s.id, &ts, &next).await;
             continue;
         }
-        let ext = if s.export_format.eq_ignore_ascii_case("xlsx") {
-            "xlsx"
-        } else {
-            "pdf"
-        };
-        let name = format!("scheduled-{}-{}.{ext}", s.id, Utc::now().timestamp_millis());
-        let path = dir.join(&name);
-        if std::fs::write(&path, &doc.bytes).is_err() {
-            let _ = finish_run_failed(db, run_id, "failed to write artifact").await;
-            continue;
-        }
-        let path_str = path.to_string_lossy().to_string();
-        let sz = doc.bytes.len() as i64;
-        finish_run_success(db, run_id, &path_str, sz).await?;
 
         let cron = Schedule::from_str(s.cron_expr.trim())
             .unwrap_or_else(|_| Schedule::from_str("0 0 8 * * *").expect("default cron"));

@@ -11,6 +11,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
+import { MediaFileStateBadge, useMediaFileStates } from "@/components/sync/MediaFileStatus";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -28,7 +29,7 @@ import {
   uploadAssetPhoto,
 } from "@/services/asset-lifecycle-service";
 import { toErrorMessage } from "@/utils/errors";
-import type { AssetPhoto } from "@shared/ipc-types";
+import type { AssetPhoto, MediaFileState } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
 function photoDataUrl(preview: { mime_type: string; data_base64: string }): string {
@@ -38,12 +39,15 @@ function photoDataUrl(preview: { mime_type: string; data_base64: string }): stri
 interface AssetPhotoImageProps {
   photo: AssetPhoto;
   variant: "grid" | "lightbox";
+  /** Sync state of the file: a photo from another device may not be downloaded yet. */
+  fileState?: MediaFileState | undefined;
+  onRetried?: () => void;
 }
 
 /**
  * Loads bytes from the Rust side (same permission as listing photos) and displays a `data:` URL.
  */
-function AssetPhotoImage({ photo, variant }: AssetPhotoImageProps) {
+function AssetPhotoImage({ photo, variant, fileState, onRetried }: AssetPhotoImageProps) {
   const [src, setSrc] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -69,12 +73,14 @@ function AssetPhotoImage({ photo, variant }: AssetPhotoImageProps) {
     return () => {
       cancelled = true;
     };
-  }, [photo.file_name, photo.file_path, photo.id]);
+    // A download that completes changes the file state: load the picture again.
+  }, [photo.file_name, photo.file_path, photo.id, fileState?.state]);
 
   if (failed) {
     return (
       <div className="flex h-full w-full flex-col items-center justify-center gap-1 bg-surface-2 p-2 text-center text-xs text-text-muted">
         <span className="line-clamp-3 break-all">{photo.file_name}</span>
+        <MediaFileStateBadge state={fileState} {...(onRetried ? { onRetried } : {})} />
       </div>
     );
   }
@@ -130,6 +136,10 @@ export function AssetPhotoGallery({ assetId, onToast }: AssetPhotoGalleryProps) 
   useEffect(() => {
     void loadPhotos();
   }, [loadPhotos]);
+
+  const { states: fileStates, refresh: refreshFileStates } = useMediaFileStates(
+    photos.map((p) => p.relative_path),
+  );
 
   // ── Upload via Tauri dialog ────────────────────────────────────────────
 
@@ -253,7 +263,12 @@ export function AssetPhotoGallery({ assetId, onToast }: AssetPhotoGalleryProps) 
                 className="group relative aspect-square overflow-hidden rounded-md border bg-surface-2 focus:outline-none focus:ring-2 focus:ring-ring"
                 onClick={() => setLightboxIndex(idx)}
               >
-                <AssetPhotoImage photo={photo} variant="grid" />
+                <AssetPhotoImage
+                  photo={photo}
+                  variant="grid"
+                  fileState={fileStates.get(photo.relative_path)}
+                  onRetried={() => void refreshFileStates()}
+                />
               </button>
             ))}
           </div>
@@ -277,7 +292,11 @@ export function AssetPhotoGallery({ assetId, onToast }: AssetPhotoGalleryProps) 
             onKeyDown={() => {}}
             role="presentation"
           >
-            <AssetPhotoImage photo={lightboxPhoto} variant="lightbox" />
+            <AssetPhotoImage
+              photo={lightboxPhoto}
+              variant="lightbox"
+              fileState={fileStates.get(lightboxPhoto.relative_path)}
+            />
 
             {/* Navigation arrows */}
             {lightboxIndex !== null && lightboxIndex > 0 && (

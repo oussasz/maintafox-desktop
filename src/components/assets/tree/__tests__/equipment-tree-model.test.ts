@@ -12,7 +12,7 @@ import type { AssetSearchResult } from "@shared/ipc-types";
 function asset(id: number, code: string, parent_asset_id: number | null = null): AssetSearchResult {
   return {
     id,
-    sync_id: `sync-${id}`,
+    entity_sync_id: `sync-${id}`,
     asset_code: code,
     asset_name: code,
     class_code: null,

@@ -326,6 +326,151 @@ pub async fn infer_exposure_hours(
     Ok(out)
 }
 
+/// Exposure time base for interval-level reliability analysis (Weibull inter-failure times, RUL age).
+///
+/// Chosen once per equipment so every interval of a dataset uses the same clock:
+/// 1. operating schedule × utilization factor when the equipment has a non-empty schedule;
+/// 2. otherwise the logged runtime hours (`runtime_exposure_logs`, `exposure_type = 'hours'`), each
+///    increment attributed to its `recorded_at` instant;
+/// 3. otherwise no basis — callers must refuse the analysis (`MISSING_EXPOSURE`), never fall back to
+///    calendar time.
+#[derive(Debug, Clone)]
+pub enum ExposureBasis {
+    Schedule {
+        shifts: Vec<ScheduleShiftSpec>,
+        utilization_factor: f64,
+        schedule_reference_value_id: i64,
+    },
+    RuntimeLogs {
+        increments: Vec<(DateTime<Utc>, f64)>,
+    },
+}
+
+/// Public mirror of a schedule shift (kept separate so the inference internals stay private).
+#[derive(Debug, Clone)]
+pub struct ScheduleShiftSpec(ScheduleShift);
+
+impl ExposureBasis {
+    #[must_use]
+    pub fn source(&self) -> &'static str {
+        match self {
+            Self::Schedule { .. } => "calendar_operating_schedule_inferred",
+            Self::RuntimeLogs { .. } => "runtime_exposure_logs",
+        }
+    }
+
+    /// Exposure hours accumulated in `(t0, t1]`.
+    #[must_use]
+    pub fn hours_between(&self, t0: DateTime<Utc>, t1: DateTime<Utc>) -> f64 {
+        if t1 <= t0 {
+            return 0.0;
+        }
+        match self {
+            Self::Schedule {
+                shifts,
+                utilization_factor,
+                ..
+            } => {
+                let raw: Vec<ScheduleShift> = shifts.iter().map(|s| s.0.clone()).collect();
+                (compute_scheduled_hours(t0, t1, &raw) * utilization_factor).max(0.0)
+            }
+            Self::RuntimeLogs { increments } => increments
+                .iter()
+                .filter(|(at, _)| *at > t0 && *at <= t1)
+                .map(|(_, v)| v.max(0.0))
+                .sum(),
+        }
+    }
+}
+
+/// Load the exposure basis for `equipment_id`; `Ok(None)` when no governed exposure exists.
+pub async fn load_exposure_basis(db: &DatabaseConnection, equipment_id: i64) -> AppResult<Option<ExposureBasis>> {
+    let eq_row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT rams_schedule_reference_value_id, COALESCE(rams_utilization_factor, 1.0) AS ku
+             FROM equipment WHERE id = ?",
+            [equipment_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "equipment".into(),
+            id: equipment_id.to_string(),
+        })?;
+    let schedule_reference_value_id: Option<i64> = eq_row
+        .try_get("", "rams_schedule_reference_value_id")
+        .map_err(|e| AppError::SyncError(format!("decode rams_schedule_reference_value_id failed: {e}")))?;
+    let ku: f64 = eq_row
+        .try_get("", "ku")
+        .map_err(|e| AppError::SyncError(format!("decode ku failed: {e}")))?;
+    let ku = if ku.is_finite() && ku > 0.0 { ku } else { 1.0 };
+
+    if let Some(sc_id) = schedule_reference_value_id {
+        let rows = db
+            .query_all(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT day_of_week, shift_start, shift_end, is_rest_day
+                 FROM schedule_details WHERE reference_value_id = ? ORDER BY day_of_week ASC",
+                [sc_id.into()],
+            ))
+            .await?;
+        let mut shifts = Vec::with_capacity(rows.len());
+        for row in rows {
+            let day_of_week: i64 = row
+                .try_get("", "day_of_week")
+                .map_err(|e| AppError::SyncError(format!("decode day_of_week failed: {e}")))?;
+            let shift_start_s: String = row
+                .try_get("", "shift_start")
+                .map_err(|e| AppError::SyncError(format!("decode shift_start failed: {e}")))?;
+            let shift_end_s: String = row
+                .try_get("", "shift_end")
+                .map_err(|e| AppError::SyncError(format!("decode shift_end failed: {e}")))?;
+            let is_rest_day_i: i64 = row
+                .try_get("", "is_rest_day")
+                .map_err(|e| AppError::SyncError(format!("decode is_rest_day failed: {e}")))?;
+            shifts.push(ScheduleShiftSpec(ScheduleShift {
+                day_of_week,
+                shift_start: parse_time(&shift_start_s)?,
+                shift_end: parse_time(&shift_end_s)?,
+                is_rest_day: is_rest_day_i != 0,
+            }));
+        }
+        if shifts.iter().any(|s| !s.0.is_rest_day) {
+            return Ok(Some(ExposureBasis::Schedule {
+                shifts,
+                utilization_factor: ku,
+                schedule_reference_value_id: sc_id,
+            }));
+        }
+    }
+
+    let exclude = i64::from(crate::commands::product_license::is_product_activation_complete(db).await?);
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT recorded_at, value FROM runtime_exposure_logs
+             WHERE equipment_id = ? AND exposure_type = 'hours'
+               AND (? = 0 OR COALESCE(source_type, '') <> 'rams_injector')
+             ORDER BY recorded_at ASC",
+            [equipment_id.into(), exclude.into()],
+        ))
+        .await?;
+    let mut increments = Vec::with_capacity(rows.len());
+    for row in rows {
+        let at: String = row
+            .try_get("", "recorded_at")
+            .map_err(|e| AppError::SyncError(format!("decode recorded_at failed: {e}")))?;
+        let v: f64 = row
+            .try_get("", "value")
+            .map_err(|e| AppError::SyncError(format!("decode value failed: {e}")))?;
+        increments.push((parse_dt_utc(&at)?, v));
+    }
+    if increments.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(ExposureBasis::RuntimeLogs { increments }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -343,6 +488,30 @@ mod tests {
             shift_end: parse_time(end).expect("valid shift end"),
             is_rest_day,
         }
+    }
+
+    #[test]
+    fn exposure_basis_runtime_logs_sum_increments_in_half_open_interval() {
+        let basis = ExposureBasis::RuntimeLogs {
+            increments: vec![
+                (dt("2026-01-01T00:00:00Z"), 8.0),
+                (dt("2026-01-02T00:00:00Z"), 8.0),
+                (dt("2026-01-03T00:00:00Z"), 6.0),
+            ],
+        };
+        let h = basis.hours_between(dt("2026-01-01T00:00:00Z"), dt("2026-01-03T00:00:00Z"));
+        assert!((h - 14.0).abs() < 1e-12, "got {h}");
+    }
+
+    #[test]
+    fn exposure_basis_schedule_applies_utilization() {
+        let basis = ExposureBasis::Schedule {
+            shifts: vec![ScheduleShiftSpec(shift(1, "08:00", "16:00", false))],
+            utilization_factor: 0.5,
+            schedule_reference_value_id: 1,
+        };
+        let h = basis.hours_between(dt("2026-04-06T00:00:00Z"), dt("2026-04-13T00:00:00Z"));
+        assert!((h - 4.0).abs() < 1e-12, "got {h}");
     }
 
     #[test]

@@ -136,7 +136,7 @@ mod tests {
     /// Create a second active org node (sibling root).
     async fn setup_second_org_node(db: &sea_orm::DatabaseConnection) -> i64 {
         let now = chrono::Utc::now().to_rfc3339();
-        let sync_id = uuid::Uuid::new_v4().to_string();
+        let entity_sync_id = uuid::Uuid::new_v4().to_string();
         let node_type_id: i64 = db
             .query_one(Statement::from_string(
                 DbBackend::Sqlite,
@@ -151,11 +151,16 @@ mod tests {
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO org_nodes \
-             (sync_id, code, name, node_type_id, parent_id, status, \
+             (entity_sync_id, code, name, node_type_id, parent_id, status, \
               created_at, updated_at, row_version, structure_model_id) \
              VALUES (?, 'SITE-002', 'Second Site', ?, NULL, 'active', ?, ?, 1, \
                      (SELECT id FROM org_structure_models WHERE status = 'active' ORDER BY id DESC LIMIT 1))",
-            [sync_id.into(), node_type_id.into(), now.clone().into(), now.into()],
+            [
+                entity_sync_id.into(),
+                node_type_id.into(),
+                now.clone().into(),
+                now.into(),
+            ],
         ))
         .await
         .expect("insert second org node");
@@ -174,14 +179,14 @@ mod tests {
     /// Insert a test equipment class.
     async fn setup_equipment_class(db: &sea_orm::DatabaseConnection) {
         let now = chrono::Utc::now().to_rfc3339();
-        let sync_id = uuid::Uuid::new_v4().to_string();
+        let entity_sync_id = uuid::Uuid::new_v4().to_string();
 
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             r"INSERT INTO equipment_classes
-              (sync_id, code, name, parent_id, level, is_active, created_at, updated_at)
+              (entity_sync_id, code, name, parent_id, level, is_active, created_at, updated_at)
               VALUES (?, 'PUMP', 'Pompes', NULL, 'class', 1, ?, ?)",
-            [sync_id.into(), now.clone().into(), now.into()],
+            [entity_sync_id.into(), now.clone().into(), now.into()],
         ))
         .await
         .expect("insert equipment class");

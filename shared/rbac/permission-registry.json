@@ -148,6 +148,15 @@
       "aliases": []
     },
     {
+      "name": "ot.emergency_assign",
+      "description": "Emergency reassign crew/technician on a work order without Planning capacity gates",
+      "category": "ot",
+      "is_dangerous": true,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
       "name": "ot.approve",
       "description": "Approve work orders from draft / planning",
       "category": "ot",
@@ -252,8 +261,7 @@
       "category": "per",
       "is_dangerous": false,
       "requires_step_up": false,
-      "usage": "catalog-only",
-      "usage_justification": "Reserved for field-level masking; not yet enforced",
+      "usage": "backend",
       "aliases": []
     },
     {
@@ -379,8 +387,7 @@
       "category": "pm",
       "is_dangerous": false,
       "requires_step_up": false,
-      "usage": "catalog-only",
-      "usage_justification": "Reserved for PM approval workflow; not yet enforced",
+      "usage": "both",
       "aliases": []
     },
     {
@@ -718,8 +725,7 @@
       "category": "fin",
       "is_dangerous": true,
       "requires_step_up": true,
-      "usage": "catalog-only",
-      "usage_justification": "Reserved for finance approval workflow; not yet enforced",
+      "usage": "both",
       "aliases": []
     },
     {
@@ -998,6 +1004,7 @@
   "dependencies": [
     { "permission": "ot.create", "requires": "ot.view", "dep_type": "hard" },
     { "permission": "ot.edit", "requires": "ot.view", "dep_type": "hard" },
+    { "permission": "ot.emergency_assign", "requires": "ot.edit", "dep_type": "hard" },
     { "permission": "ot.approve", "requires": "ot.view", "dep_type": "hard" },
     { "permission": "ot.close", "requires": "ot.edit", "dep_type": "hard" },
     { "permission": "ot.reopen", "requires": "ot.close", "dep_type": "warn" },
@@ -1036,6 +1043,7 @@
     { "permission": "integrity.repair", "requires": "sync.manage", "dep_type": "hard" },
     { "permission": "ent.manage", "requires": "ent.view", "dep_type": "hard" },
     { "permission": "act.manage", "requires": "act.view", "dep_type": "hard" },
+    { "permission": "fin.approve", "requires": "fin.view", "dep_type": "hard" },
     { "permission": "lic.manage", "requires": "lic.view", "dep_type": "hard" },
     { "permission": "log.export", "requires": "log.view", "dep_type": "hard" },
     { "permission": "arc.restore", "requires": "arc.view", "dep_type": "hard" },
@@ -1061,7 +1069,8 @@
       "audit.view",
       "lic.manage",
       "ent.manage",
-      "act.manage"
+      "act.manage",
+      "fin.approve"
     ],
     "operator": [
       "eq.view",
@@ -1072,6 +1081,7 @@
       "ot.view",
       "ot.create",
       "ot.edit",
+      "ot.emergency_assign",
       "ot.close",
       "org.view",
       "per.view",
@@ -1103,6 +1113,7 @@
       "ot.view",
       "ot.create",
       "ot.edit",
+      "ot.emergency_assign",
       "di.view",
       "di.create",
       "di.screen",
@@ -1131,6 +1142,23 @@
       "ram.view",
       "sync.view",
       "cfg.view"
+    ],
+    "finance_manager": [
+      "fin.view",
+      "fin.budget",
+      "fin.report",
+      "fin.post",
+      "fin.approve",
+      "org.view",
+      "ref.view",
+      "eq.view",
+      "ot.view",
+      "inv.view",
+      "pm.view",
+      "plan.view",
+      "rep.view",
+      "rep.export",
+      "doc.view"
     ]
   },
   "role_templates": {
@@ -1138,6 +1166,7 @@
       "ot.view",
       "ot.create",
       "ot.edit",
+      "ot.emergency_assign",
       "ot.approve",
       "ot.close",
       "di.view",
@@ -1165,6 +1194,7 @@
       "ot.view",
       "ot.create",
       "ot.edit",
+      "ot.emergency_assign",
       "di.view",
       "di.create",
       "di.create.own",
@@ -1175,6 +1205,7 @@
       "ot.view",
       "ot.create",
       "ot.edit",
+      "ot.emergency_assign",
       "di.view",
       "di.create",
       "di.screen",
@@ -1189,6 +1220,23 @@
       "inv.manage",
       "inv.procure"
     ],
-    "Observer Template": ["ot.view", "di.view", "pm.view", "eq.view"]
+    "Observer Template": ["ot.view", "di.view", "pm.view", "eq.view"],
+    "Finance Manager Template": [
+      "fin.view",
+      "fin.budget",
+      "fin.report",
+      "fin.post",
+      "fin.approve",
+      "org.view",
+      "ref.view",
+      "eq.view",
+      "ot.view",
+      "inv.view",
+      "pm.view",
+      "plan.view",
+      "rep.view",
+      "rep.export",
+      "doc.view"
+    ]
   }
 }

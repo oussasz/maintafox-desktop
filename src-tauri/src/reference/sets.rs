@@ -109,7 +109,7 @@ async fn get_set_by_id(db: &DatabaseConnection, set_id: i64) -> AppResult<Refere
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("SELECT {SELECT_COLS} FROM reference_sets WHERE id = ?"),
+            format!("SELECT {SELECT_COLS} FROM reference_sets WHERE id = ?"),
             [set_id.into()],
         ))
         .await?
@@ -165,7 +165,7 @@ async fn clone_published_values_into_draft(
     let source_rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!(
+            format!(
                 "SELECT {VALUE_CLONE_COLS} FROM reference_values WHERE set_id = ? \
                  ORDER BY sort_order ASC, code ASC"
             ),
@@ -201,11 +201,13 @@ async fn clone_published_values_into_draft(
 
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "INSERT INTO reference_values \
-                 (set_id, parent_id, code, label, description, sort_order, \
+            "INSERT INTO reference_values (entity_sync_id, set_id, parent_id, code, label, description, sort_order, \
                   color_hex, icon_name, semantic_tag, external_code, is_active, metadata_json) \
-             VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
+                // The draft copy is a new row (entity_sync_id is unique), created by the user's
+                // "new draft" action.
+                crate::sync::identity::new_entity_sync_id().into(),
                 draft_set_id.into(),
                 code.clone().into(),
                 label.into(),
@@ -356,7 +358,7 @@ pub async fn list_sets_for_domain(db: &DatabaseConnection, domain_id: i64) -> Ap
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!(
+            format!(
                 "SELECT {SELECT_COLS} FROM reference_sets \
                  WHERE domain_id = ? ORDER BY version_no DESC"
             ),
@@ -401,7 +403,7 @@ pub async fn create_draft_set(db: &DatabaseConnection, domain_id: i64, actor_id:
     let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!(
+            format!(
                 "SELECT {SELECT_COLS} FROM reference_sets \
                  WHERE domain_id = ? AND version_no = ?"
             ),

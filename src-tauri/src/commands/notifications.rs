@@ -358,11 +358,7 @@ pub async fn update_notification_preference(
     }
 
     if let Some(mode) = payload.digest_mode.as_deref() {
-        if !matches!(mode, "instant" | "daily_digest" | "off") {
-            return Err(AppError::ValidationFailed(vec![
-                "digest_mode must be one of: instant, daily_digest, off".to_string(),
-            ]));
-        }
+        crate::notifications::digest::validate_digest_mode(&payload.category_code, mode)?;
     }
 
     let existing = state
@@ -425,13 +421,20 @@ pub async fn update_notification_preference(
         current_muted_until
     };
 
+    let sync_id = crate::sync::identity::user_keyed_entity_sync_id(
+        &state.db,
+        "notification_preferences",
+        i64::from(user.user_id),
+        &payload.category_code,
+    )
+    .await?;
     state
         .db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO notification_preferences
-                (user_id, category_code, in_app_enabled, os_enabled, email_enabled, sms_enabled, digest_mode, muted_until)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (entity_sync_id, user_id, category_code, in_app_enabled, os_enabled, email_enabled, sms_enabled, digest_mode, muted_until)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(user_id, category_code)
              DO UPDATE SET
                 in_app_enabled = excluded.in_app_enabled,
@@ -441,6 +444,7 @@ pub async fn update_notification_preference(
                 digest_mode = excluded.digest_mode,
                 muted_until = excluded.muted_until",
             [
+                sync_id.into(),
                 user.user_id.into(),
                 payload.category_code.into(),
                 in_app_enabled.into(),
@@ -619,4 +623,71 @@ pub async fn list_notification_categories(state: State<'_, AppState>) -> AppResu
     }
 
     Ok(categories)
+}
+
+/// Notifications to toast for the signed-in user (see `notifications::os_toast`). Without
+/// `since_id` (window just opened): the watermark to pass on the next calls, nothing to show.
+#[tauri::command]
+pub async fn list_pending_os_toasts(
+    since_id: Option<i64>,
+    state: State<'_, AppState>,
+) -> AppResult<crate::notifications::os_toast::OsToastBatch> {
+    let user = require_session!(state);
+    crate::notifications::os_toast::pending_os_toasts(&state.db, i64::from(user.user_id), since_id).await
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ShowOsToastInput {
+    pub notification_ids: Vec<i64>,
+    pub title: String,
+    pub body: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ShowOsToastResult {
+    pub shown: bool,
+    pub error: Option<String>,
+}
+
+/// Shows one OS toast covering `notification_ids` (worded by the window) and records the outcome
+/// for each of them.
+#[tauri::command]
+pub async fn show_os_toast(
+    input: ShowOsToastInput,
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> AppResult<ShowOsToastResult> {
+    use tauri_plugin_notification::NotificationExt;
+
+    let user = require_session!(state);
+    crate::notifications::os_toast::ensure_owned(&state.db, i64::from(user.user_id), &input.notification_ids).await?;
+    if input.title.trim().is_empty() {
+        return Err(AppError::ValidationFailed(vec!["title is required.".into()]));
+    }
+    let outcome = app
+        .notification()
+        .builder()
+        .title(input.title.trim())
+        .body(input.body.trim())
+        .show()
+        .map_err(|e| e.to_string());
+    crate::notifications::os_toast::record_os_toasts(&state.db, &input.notification_ids, &outcome).await?;
+    Ok(ShowOsToastResult {
+        shown: outcome.is_ok(),
+        error: outcome.err(),
+    })
+}
+
+#[derive(Debug, Serialize)]
+pub struct NotificationChannelStatus {
+    pub email: crate::notifications::email::ChannelAvailability,
+}
+
+/// Whether the email channel can be used on this device (`notifications::email`).
+#[tauri::command]
+pub async fn get_notification_channel_status(state: State<'_, AppState>) -> AppResult<NotificationChannelStatus> {
+    let _user = require_session!(state);
+    Ok(NotificationChannelStatus {
+        email: crate::notifications::email::email_channel_status(&state.db).await?,
+    })
 }

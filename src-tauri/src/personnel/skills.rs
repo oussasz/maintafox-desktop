@@ -44,7 +44,7 @@ pub async fn list_skills_matrix(db: &DatabaseConnection, filter: SkillsMatrixFil
         values.push(personnel_id.into());
     }
     if let Some(team_id) = filter.team_id {
-        where_sql.push("COALESCE(t.id, p.primary_team_id) = ?".to_string());
+        where_sql.push("COALESCE(t.id, home.id, p.primary_team_id) = ?".to_string());
         values.push(team_id.into());
     }
     if let Some(skill_code) = filter.skill_code {
@@ -64,8 +64,8 @@ pub async fn list_skills_matrix(db: &DatabaseConnection, filter: SkillsMatrixFil
             p.availability_status,
             p.primary_entity_id AS entity_id,
             e.name AS entity_name,
-            COALESCE(t.id, p.primary_team_id) AS team_id,
-            COALESCE(t.name, pt.name) AS team_name,
+            COALESCE(t.id, home.id, p.primary_team_id) AS team_id,
+            COALESCE(t.name, home.name) AS team_name,
             rv.code AS skill_code,
             rv.label AS skill_label,
             ps.proficiency_level,
@@ -76,7 +76,7 @@ pub async fn list_skills_matrix(db: &DatabaseConnection, filter: SkillsMatrixFil
             END AS coverage_status
          FROM personnel p
          LEFT JOIN org_nodes e ON e.id = p.primary_entity_id
-         LEFT JOIN org_nodes pt ON pt.id = p.primary_team_id
+         LEFT JOIN teams home ON home.id = p.primary_team_id
          LEFT JOIN teams t ON t.id = (
              SELECT pta.team_id
                FROM personnel_team_assignments pta

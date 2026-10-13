@@ -12,6 +12,8 @@ describe("module-capability", () => {
     expect(moduleCapabilityFromPermission(P.INV_VIEW)).toBe("inventory");
     expect(moduleCapabilityFromPermission(P.INV_MANAGE)).toBe("inventory");
     expect(moduleCapabilityFromPermission(P.PLAN_VIEW)).toBe("planning");
+    expect(moduleCapabilityFromPermission(P.PER_VIEW)).toBe("personnel");
+    expect(moduleCapabilityFromPermission(P.TRN_VIEW)).toBe("training");
     expect(moduleCapabilityFromPermission(P.ADM_USERS)).toBeNull();
   });
 
@@ -21,9 +23,13 @@ describe("module-capability", () => {
   });
 
   it("hides modules explicitly set to false", () => {
-    const map = parseCapabilityMap(JSON.stringify({ equipment: true, planning: false, pm: false }));
+    const map = parseCapabilityMap(
+      JSON.stringify({ equipment: true, planning: false, pm: false, training: false }),
+    );
     expect(isModuleCapabilityAllowed(map, P.EQ_VIEW)).toBe(true);
     expect(isModuleCapabilityAllowed(map, P.PLAN_VIEW)).toBe(false);
     expect(isModuleCapabilityAllowed(map, P.PM_EDIT)).toBe(false);
+    expect(isModuleCapabilityAllowed(map, P.TRN_VIEW)).toBe(false);
+    expect(isModuleCapabilityAllowed(map, P.PER_VIEW)).toBe(true);
   });
 });

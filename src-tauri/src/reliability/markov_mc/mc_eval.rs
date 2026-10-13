@@ -37,7 +37,7 @@ fn percentile(sorted: &[f64], q: f64) -> f64 {
 }
 
 pub fn evaluate_mc(graph_json: &str, trials: i64, seed: Option<i64>) -> Result<McEvalResult, String> {
-    let t = trials.max(1).min(10_000_000);
+    let t = trials.clamp(1, 10_000_000);
     let spec: McSpec = serde_json::from_str(graph_json).map_err(|e| format!("MC graph_json: {e}"))?;
     if spec.kind != "mc_sample" {
         return Err(format!("unsupported MC kind '{}'", spec.kind));

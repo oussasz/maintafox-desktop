@@ -554,7 +554,7 @@ async fn remap_integer_fk(
 ) -> AppResult<()> {
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        &format!(
+        format!(
             "UPDATE {table} SET {column} = ?, updated_at = ?, row_version = row_version + 1 \
              WHERE {column} = ?"
         ),
@@ -574,7 +574,7 @@ async fn remap_integer_fk_row_version_only(
 ) -> AppResult<()> {
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        &format!(
+        format!(
             "UPDATE {table} SET {column} = ?, row_version = row_version + 1 \
              WHERE {column} = ?"
         ),
@@ -621,14 +621,10 @@ async fn count_ops_references(txn: &impl ConnectionTrait, active_node_id: i64) -
           (SELECT COUNT(*) FROM intervention_requests WHERE org_node_id = {id}) + \
           (SELECT COUNT(*) FROM work_orders WHERE location_id = {id}) + \
           (SELECT COUNT(*) FROM personnel WHERE primary_entity_id = {id}) + \
-          (SELECT COUNT(*) FROM personnel WHERE primary_team_id = {id}) + \
           (SELECT COUNT(*) FROM user_scope_assignments WHERE scope_reference = '{id}' AND scope_type IN ('entity','org_node','site','team') AND deleted_at IS NULL) + \
           (SELECT COUNT(*) FROM capacity_rules WHERE entity_id = {id}) + \
-          (SELECT COUNT(*) FROM capacity_rules WHERE team_id = {id}) + \
           (SELECT COUNT(*) FROM planning_windows WHERE entity_id = {id}) + \
-          (SELECT COUNT(*) FROM schedule_commitments WHERE assigned_team_id = {id}) + \
           (SELECT COUNT(*) FROM cost_centers WHERE entity_id = {id}) + \
-          (SELECT COUNT(*) FROM budget_lines WHERE team_id = {id}) + \
           (SELECT COUNT(*) FROM inspection_templates WHERE org_scope_id = {id}) + \
           (SELECT COUNT(*) FROM closeout_validation_policies WHERE entity_id = {id}) \
          AS total",
@@ -711,13 +707,9 @@ async fn remap_node_ops_fks(txn: &impl ConnectionTrait, old_id: i64, new_id: i64
     remap_integer_fk(txn, "intervention_requests", "org_node_id", old_id, new_id, now).await?;
     remap_integer_fk(txn, "work_orders", "location_id", old_id, new_id, now).await?;
     remap_integer_fk(txn, "personnel", "primary_entity_id", old_id, new_id, now).await?;
-    remap_integer_fk(txn, "personnel", "primary_team_id", old_id, new_id, now).await?;
     remap_integer_fk(txn, "capacity_rules", "entity_id", old_id, new_id, now).await?;
-    remap_integer_fk(txn, "capacity_rules", "team_id", old_id, new_id, now).await?;
     remap_integer_fk(txn, "planning_windows", "entity_id", old_id, new_id, now).await?;
-    remap_integer_fk(txn, "schedule_commitments", "assigned_team_id", old_id, new_id, now).await?;
     remap_integer_fk(txn, "cost_centers", "entity_id", old_id, new_id, now).await?;
-    remap_integer_fk(txn, "budget_lines", "team_id", old_id, new_id, now).await?;
     remap_integer_fk_row_version_only(txn, "inspection_templates", "org_scope_id", old_id, new_id).await?;
     remap_integer_fk(txn, "closeout_validation_policies", "entity_id", old_id, new_id, now).await?;
 
@@ -725,6 +717,7 @@ async fn remap_node_ops_fks(txn: &impl ConnectionTrait, old_id: i64, new_id: i64
     remap_scope_reference(txn, "entity", old_id, new_id, now).await?;
     remap_scope_reference(txn, "org_node", old_id, new_id, now).await?;
     remap_scope_reference(txn, "site", old_id, new_id, now).await?;
+    // RBAC scope_type = 'team' may still be org-ish; leave remapping for scope_reference.
     remap_scope_reference(txn, "team", old_id, new_id, now).await?;
 
     Ok(())

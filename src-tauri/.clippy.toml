@@ -1,1 +1,2 @@
-msrv = "1.78.0"
+# Keep in sync with Cargo.toml rust-version (code uses 1.80 LazyLock and 1.82 Option::is_none_or).
+msrv = "1.82.0"

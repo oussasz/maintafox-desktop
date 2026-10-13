@@ -10,9 +10,12 @@
 
 import { create } from "zustand";
 
+import { createLatestRequestGuard } from "@/lib/latest-request";
 import { searchReferenceValues } from "@/services/reference-service";
 import { toErrorMessage } from "@/utils/errors";
 import type { ReferenceSearchHit } from "@shared/ipc-types";
+
+const searches = createLatestRequestGuard();
 
 // ── Store interface ───────────────────────────────────────────────────────────
 
@@ -47,19 +50,22 @@ export const useReferenceSearchStore = create<ReferenceSearchStoreState>()((set,
   error: null,
 
   runSearch: async () => {
+    // Typing fires a search per keystroke: only the latest one may land (an emptied query also
+    // makes pending searches stale).
+    const isCurrent = searches.begin();
     const { query, locale, domain } = get();
     if (!query.trim() || !domain) {
-      set({ results: [], error: null });
+      set({ results: [], error: null, loading: false });
       return;
     }
     set({ loading: true, error: null });
     try {
       const results = await searchReferenceValues(domain, query, locale);
-      set({ results });
+      if (!isCurrent()) return;
+      set({ results, loading: false });
     } catch (err) {
-      set({ results: [], error: toErrorMessage(err) });
-    } finally {
-      set({ loading: false });
+      if (!isCurrent()) return;
+      set({ results: [], error: toErrorMessage(err), loading: false });
     }
   },
 
@@ -83,6 +89,7 @@ export const useReferenceSearchStore = create<ReferenceSearchStoreState>()((set,
   },
 
   reset: () => {
+    searches.invalidate();
     set({
       query: "",
       locale: "fr",

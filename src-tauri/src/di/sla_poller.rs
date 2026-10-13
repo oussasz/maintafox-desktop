@@ -3,10 +3,10 @@
 //! Selects only SQL-filtered breach candidates (past frozen deadline, not yet
 //! notified), emits `di_sla_breach`, then sets persistent notify timestamps.
 
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use tokio::time::{interval, Duration};
 
-use crate::notifications::emitter::{emit_event, NotificationEventInput};
+use crate::notifications::emitter::{emit_device_event, NotificationEventInput};
 
 use super::domain::map_intervention_request;
 use super::sla::{compute_sla_status, mark_resolution_breach_notified, mark_response_breach_notified};
@@ -23,12 +23,12 @@ const OPEN_STATUSES: &str = "(\
 )";
 
 const IR_COLS: &str = "\
-    ir.id, ir.code, ir.asset_id, ir.sub_asset_ref, ir.org_node_id, ir.status, \
+    ir.id, ir.code, ir.equipment_id, ir.sub_asset_ref, ir.org_node_id, ir.status, \
     ir.title, ir.description, ir.origin_type, ir.request_type, ir.symptom_code_id, \
     ir.impact_level, ir.production_impact, ir.safety_flag, ir.environmental_flag, \
     ir.quality_flag, ir.reported_urgency, ir.validated_urgency, \
     ir.observed_at, ir.submitted_at, \
-    ir.review_team_id, ir.reviewer_id, ir.screened_at, ir.approved_at, \
+    ir.reviewer_id, ir.screened_at, ir.approved_at, \
     ir.deferred_until, ir.declined_at, ir.closed_at, ir.archived_at, \
     ir.converted_to_wo_id, ir.converted_at, \
     ir.sla_rule_id, ir.sla_target_response_hours, ir.sla_target_resolution_hours, \
@@ -48,7 +48,7 @@ const IR_JOIN_COLS: &str = "\
     related_di.code AS related_di_code";
 
 const IR_JOINS: &str = "\
-    LEFT JOIN equipment eq ON eq.id = ir.asset_id \
+    LEFT JOIN equipment eq ON eq.id = ir.equipment_id \
     LEFT JOIN org_nodes org ON org.id = ir.org_node_id \
     LEFT JOIN user_accounts us ON us.id = ir.submitter_id \
     LEFT JOIN user_accounts ur ON ur.id = ir.reviewer_id \
@@ -173,20 +173,37 @@ async fn emit_breach(
         "breach_kind": kind,
     });
 
-    let _ = emit_event(
-        db,
-        NotificationEventInput {
-            source_module: "intervention_requests".into(),
-            source_record_id: Some(di.id.to_string()),
-            event_code: "di_sla_breach".into(),
-            category_code: "di_sla_breach".into(),
-            severity: "warning".into(),
-            dedupe_key: Some(dedupe_key),
-            payload_json: Some(payload.to_string()),
-            title,
-            body: Some(body),
-            action_url: Some(format!("/requests?di={}", di.id)),
-        },
-    )
+    // Every device's poller detects the same breach: the event is kept on each device, with the
+    // same identity everywhere (built from the request's sync id).
+    let result: crate::errors::AppResult<()> = async {
+        let txn = db.begin().await?;
+        crate::sync::capture::begin_suppression(&txn).await?;
+        let identity = crate::sync::identity::optional_entity_sync_id(&txn, "intervention_requests", di.id)
+            .await?
+            .map(|sync_id| format!("di_sla_breach|{kind}|{sync_id}"));
+        emit_device_event(
+            &txn,
+            NotificationEventInput {
+                source_module: "intervention_requests".into(),
+                source_record_id: Some(di.id.to_string()),
+                event_code: "di_sla_breach".into(),
+                category_code: "di_sla_breach".into(),
+                severity: "warning".into(),
+                dedupe_key: Some(dedupe_key),
+                payload_json: Some(payload.to_string()),
+                title,
+                body: Some(body),
+                action_url: Some(format!("/requests?di={}", di.id)),
+            },
+            identity.as_deref(),
+        )
+        .await?;
+        crate::sync::capture::end_suppression(&txn).await?;
+        txn.commit().await?;
+        Ok(())
+    }
     .await;
+    if let Err(err) = result {
+        tracing::error!(di_id = di.id, error = %err, "di::sla_poller breach notification failed");
+    }
 }

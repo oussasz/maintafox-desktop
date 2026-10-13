@@ -6,5 +6,25 @@
   "tabs": {
     "activity": "Activity feed",
     "audit": "Audit log"
+  },
+  "chain": {
+    "help": "Each device chains the audit events it writes; a changed, removed or inserted event breaks the chain.",
+    "verify": "Verify integrity",
+    "running": "Verifying…",
+    "failed": "Verification failed: {{message}}",
+    "intact": "All audit chains are intact.",
+    "broken": "An audit chain is broken.",
+    "thisDevice": "This device ({{code}})",
+    "otherDevice": "Device {{code}}",
+    "events_one": "{{count}} event",
+    "events_other": "{{count}} events",
+    "none": "No chained audit event yet.",
+    "unchained_one": "{{count}} older event was written before chaining existed and is not covered.",
+    "unchained_other": "{{count}} older events were written before chaining existed and are not covered.",
+    "problem": {
+      "hash_mismatch": "event #{{id}} (position {{seq}}) was changed",
+      "prev_mismatch": "the chain is relinked at position {{seq}} (event #{{id}}): an event before it was removed or replaced",
+      "missing_positions": "positions before {{seq}} are missing (event #{{id}}): removed, or not received from that device yet"
+    }
   }
 }

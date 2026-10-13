@@ -14,17 +14,28 @@ async fn setup_db() -> DatabaseConnection {
     db
 }
 
+/// Idempotency key the outbox assigned to the latest staged change of an entity.
+async fn outbox_key(db: &DatabaseConnection, entity_sync_id: &str) -> String {
+    db.query_one(sea_orm::Statement::from_sql_and_values(
+        sea_orm::DatabaseBackend::Sqlite,
+        "SELECT idempotency_key FROM sync_outbox WHERE entity_sync_id = ? ORDER BY id DESC LIMIT 1",
+        [entity_sync_id.into()],
+    ))
+    .await
+    .expect("query outbox key")
+    .expect("staged outbox item")
+    .try_get("", "idempotency_key")
+    .expect("idempotency_key")
+}
+
 #[tokio::test]
 async fn staging_outbox_is_idempotent_for_duplicate_envelope() {
     let db = setup_db().await;
     let input = StageOutboxItemInput {
-        idempotency_key: "batch-001".to_string(),
         entity_type: "work_orders".to_string(),
         entity_sync_id: "wo-sync-001".to_string(),
         operation: "update".to_string(),
-        row_version: 3,
         payload_json: r#"{"status":"in_progress"}"#.to_string(),
-        origin_machine_id: Some("machine-a".to_string()),
     };
 
     let first = queries::stage_outbox_item(&db, input.clone())
@@ -47,13 +58,10 @@ async fn partial_apply_with_invalid_inbound_does_not_advance_checkpoint() {
     queries::stage_outbox_item(
         &db,
         StageOutboxItemInput {
-            idempotency_key: "batch-ack-1".to_string(),
             entity_type: "work_orders".to_string(),
             entity_sync_id: "wo-sync-ack-1".to_string(),
             operation: "update".to_string(),
-            row_version: 5,
             payload_json: r#"{"status":"done"}"#.to_string(),
-            origin_machine_id: Some("machine-a".to_string()),
         },
     )
     .await
@@ -66,9 +74,10 @@ async fn partial_apply_with_invalid_inbound_does_not_advance_checkpoint() {
             server_batch_id: "srv-001".to_string(),
             checkpoint_token: "ckpt-001".to_string(),
             acknowledged_items: vec![crate::sync::domain::SyncAckInput {
-                idempotency_key: "batch-ack-1".to_string(),
+                idempotency_key: outbox_key(&db, "wo-sync-ack-1").await,
                 entity_sync_id: "wo-sync-ack-1".to_string(),
                 operation: "update".to_string(),
+                ..Default::default()
             }],
             rejected_items: vec![],
             inbound_items: vec![SyncInboundItemInput {
@@ -77,7 +86,9 @@ async fn partial_apply_with_invalid_inbound_does_not_advance_checkpoint() {
                 operation: "update".to_string(),
                 row_version: 1,
                 payload_json: "{invalid-json}".to_string(),
+                ..Default::default()
             }],
+            conflict_items: vec![],
             policy_metadata_json: Some(r#"{"entitlement_state":"active"}"#.to_string()),
         },
     )
@@ -114,7 +125,9 @@ async fn replaying_same_batch_is_duplicate_safe_and_checkpoint_stable() {
             operation: "upsert".to_string(),
             row_version: 7,
             payload_json: r#"{"code":"WO-1001"}"#.to_string(),
+            ..Default::default()
         }],
+        conflict_items: vec![],
         policy_metadata_json: Some(r#"{"channel":"stable"}"#.to_string()),
     };
 
@@ -133,7 +146,7 @@ async fn replaying_same_batch_is_duplicate_safe_and_checkpoint_stable() {
     let push = queries::get_sync_push_payload(&db, Some(50))
         .await
         .expect("push payload");
-    assert_eq!(push.protocol_version, SYNC_PROTOCOL_VERSION_V1);
+    assert_eq!(push.protocol_version, crate::sync::domain::SYNC_PROTOCOL_VERSION_V2);
     assert_eq!(push.checkpoint_token.as_deref(), Some("ckpt-002"));
 }
 
@@ -143,13 +156,10 @@ async fn conflict_routing_creates_operator_review_records() {
     queries::stage_outbox_item(
         &db,
         StageOutboxItemInput {
-            idempotency_key: "batch-conflict-1".to_string(),
             entity_type: "work_orders".to_string(),
             entity_sync_id: "wo-sync-conflict-1".to_string(),
             operation: "update".to_string(),
-            row_version: 2,
             payload_json: r#"{"status":"planning"}"#.to_string(),
-            origin_machine_id: Some("machine-z".to_string()),
         },
     )
     .await
@@ -163,13 +173,14 @@ async fn conflict_routing_creates_operator_review_records() {
             checkpoint_token: "ckpt-conf-001".to_string(),
             acknowledged_items: vec![],
             rejected_items: vec![SyncRejectedItemInput {
-                idempotency_key: "batch-conflict-1".to_string(),
+                idempotency_key: outbox_key(&db, "wo-sync-conflict-1").await,
                 entity_sync_id: "wo-sync-conflict-1".to_string(),
                 operation: "update".to_string(),
                 rejection_code: "AUTHORITY_MISMATCH".to_string(),
                 rejection_message: "Remote authority wins for a protected field.".to_string(),
             }],
             inbound_items: vec![],
+            conflict_items: vec![],
             policy_metadata_json: Some(r#"{"entitlement_state":"active"}"#.to_string()),
         },
     )
@@ -189,7 +200,7 @@ async fn conflict_routing_creates_operator_review_records() {
     .expect("list conflicts");
     assert_eq!(conflicts.len(), 1);
     assert!(conflicts[0].requires_operator_review);
-    assert_eq!(conflicts[0].recommended_action, "merge_fields");
+    assert_eq!(conflicts[0].recommended_action, "accept_remote");
 }
 
 #[tokio::test]
@@ -199,13 +210,10 @@ async fn replay_checkpoint_guard_and_resolution_enable_replay() {
     queries::stage_outbox_item(
         &db,
         StageOutboxItemInput {
-            idempotency_key: "batch-replay-guard-1".to_string(),
             entity_type: "work_orders".to_string(),
             entity_sync_id: "wo-sync-guard-1".to_string(),
             operation: "update".to_string(),
-            row_version: 3,
             payload_json: r#"{"priority":"high"}"#.to_string(),
-            origin_machine_id: Some("machine-y".to_string()),
         },
     )
     .await
@@ -219,13 +227,14 @@ async fn replay_checkpoint_guard_and_resolution_enable_replay() {
             checkpoint_token: "ckpt-guard-001".to_string(),
             acknowledged_items: vec![],
             rejected_items: vec![SyncRejectedItemInput {
-                idempotency_key: "batch-replay-guard-1".to_string(),
+                idempotency_key: outbox_key(&db, "wo-sync-guard-1").await,
                 entity_sync_id: "wo-sync-guard-1".to_string(),
                 operation: "update".to_string(),
                 rejection_code: "AUTHORITY_MISMATCH".to_string(),
                 rejection_message: "Governed field cannot be auto-merged.".to_string(),
             }],
             inbound_items: vec![],
+            conflict_items: vec![],
             policy_metadata_json: None,
         },
     )
@@ -307,17 +316,14 @@ struct MockVpsContract {
     checkpoint_token: &'static str,
 }
 
-async fn stage_record_class_outbox(db: &DatabaseConnection, record_class: &str, suffix: &str) {
+async fn stage_record_class_outbox(db: &impl ConnectionTrait, record_class: &str, suffix: &str) {
     queries::stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!("idk-{record_class}-{suffix}"),
             entity_type: record_class.to_string(),
             entity_sync_id: format!("{record_class}-sync-{suffix}"),
             operation: "update".to_string(),
-            row_version: 1,
             payload_json: r#"{"status":"queued"}"#.to_string(),
-            origin_machine_id: Some("test-machine".to_string()),
         },
     )
     .await
@@ -334,12 +340,13 @@ async fn apply_mock_vps_contract(db: &DatabaseConnection, contract: &MockVpsCont
             server_batch_id: contract.batch_id.to_string(),
             checkpoint_token: contract.checkpoint_token.to_string(),
             acknowledged_items: vec![SyncAckInput {
-                idempotency_key: format!("idk-{}-1", contract.record_class),
+                idempotency_key: outbox_key(db, &base_sync_id).await,
                 entity_sync_id: base_sync_id,
                 operation: "update".to_string(),
+                ..Default::default()
             }],
             rejected_items: vec![SyncRejectedItemInput {
-                idempotency_key: format!("idk-{}-2", contract.record_class),
+                idempotency_key: outbox_key(db, &second_sync_id).await,
                 entity_sync_id: second_sync_id,
                 operation: "update".to_string(),
                 rejection_code: "AUTHORITY_MISMATCH".to_string(),
@@ -351,7 +358,9 @@ async fn apply_mock_vps_contract(db: &DatabaseConnection, contract: &MockVpsCont
                 operation: "upsert".to_string(),
                 row_version: 1,
                 payload_json: r#"{"upstream":"ok"}"#.to_string(),
+                ..Default::default()
             }],
+            conflict_items: vec![],
             policy_metadata_json: Some(r#"{"entitlement_state":"active"}"#.to_string()),
         },
     )
@@ -374,7 +383,7 @@ async fn deterministic_sync_matrix_covers_record_classes_partial_acceptance_repl
             checkpoint_token: "ckpt-102",
         },
         MockVpsContract {
-            record_class: "inventory_movements",
+            record_class: "inventory_transactions",
             batch_id: "srv-matrix-inv",
             checkpoint_token: "ckpt-103",
         },
@@ -428,12 +437,14 @@ async fn stale_checkpoint_is_rejected_deterministically() {
             server_batch_id: "srv-stale-a".to_string(),
             checkpoint_token: "ckpt-200".to_string(),
             acknowledged_items: vec![SyncAckInput {
-                idempotency_key: "idk-work_orders-1".to_string(),
+                idempotency_key: outbox_key(&db, "work_orders-sync-1").await,
                 entity_sync_id: "work_orders-sync-1".to_string(),
                 operation: "update".to_string(),
+                ..Default::default()
             }],
             rejected_items: vec![],
             inbound_items: vec![],
+            conflict_items: vec![],
             policy_metadata_json: None,
         },
     )
@@ -448,12 +459,14 @@ async fn stale_checkpoint_is_rejected_deterministically() {
             server_batch_id: "srv-stale-b".to_string(),
             checkpoint_token: "ckpt-199".to_string(),
             acknowledged_items: vec![SyncAckInput {
-                idempotency_key: "idk-work_orders-2".to_string(),
+                idempotency_key: outbox_key(&db, "work_orders-sync-2").await,
                 entity_sync_id: "work_orders-sync-2".to_string(),
                 operation: "update".to_string(),
+                ..Default::default()
             }],
             rejected_items: vec![],
             inbound_items: vec![],
+            conflict_items: vec![],
             policy_metadata_json: None,
         },
     )
@@ -475,13 +488,14 @@ async fn repair_preview_execute_flow_is_scoped_audited_and_non_destructive() {
             checkpoint_token: "ckpt-300".to_string(),
             acknowledged_items: vec![],
             rejected_items: vec![SyncRejectedItemInput {
-                idempotency_key: "idk-work_orders-1".to_string(),
+                idempotency_key: outbox_key(&db, "work_orders-sync-1").await,
                 entity_sync_id: "work_orders-sync-1".to_string(),
                 operation: "update".to_string(),
                 rejection_code: "AUTHORITY_MISMATCH".to_string(),
                 rejection_message: "Needs operator repair.".to_string(),
             }],
             inbound_items: vec![],
+            conflict_items: vec![],
             policy_metadata_json: None,
         },
     )
@@ -580,13 +594,14 @@ async fn sync_observability_report_includes_alerts_runbooks_and_recovery_proofs(
             checkpoint_token: "ckpt-401".to_string(),
             acknowledged_items: vec![],
             rejected_items: vec![SyncRejectedItemInput {
-                idempotency_key: "idk-intervention_requests-1".to_string(),
+                idempotency_key: outbox_key(&db, "intervention_requests-sync-1").await,
                 entity_sync_id: "intervention_requests-sync-1".to_string(),
                 operation: "update".to_string(),
                 rejection_code: "AUTHORITY_MISMATCH".to_string(),
                 rejection_message: "force conflict".to_string(),
             }],
             inbound_items: vec![],
+            conflict_items: vec![],
             policy_metadata_json: None,
         },
     )
@@ -612,7 +627,7 @@ async fn sync_observability_report_includes_alerts_runbooks_and_recovery_proofs(
         ResolveSyncConflictInput {
             conflict_id: conflict.id,
             expected_row_version: conflict.row_version,
-            action: "accept_remote".to_string(),
+            action: "accept_local".to_string(),
             resolution_note: Some("resolved for proof workflow".to_string()),
         },
     )
@@ -653,4 +668,53 @@ async fn sync_observability_report_includes_alerts_runbooks_and_recovery_proofs(
     assert!(report.alerts.iter().all(|alert| alert
         .runbook_url
         .starts_with("https://docs.maintafox.com/runbooks/sync/")));
+}
+
+#[tokio::test]
+async fn inbox_ingest_is_pending_then_materialize_applies_equipment() {
+    let db = setup_db().await;
+
+    let batch = ApplySyncBatchInput {
+        protocol_version: SYNC_PROTOCOL_VERSION_V1.to_string(),
+        server_batch_id: "srv-mat-1".to_string(),
+        checkpoint_token: "ckpt-mat-1".to_string(),
+        acknowledged_items: vec![],
+        rejected_items: vec![],
+        inbound_items: vec![SyncInboundItemInput {
+            entity_type: "equipment".to_string(),
+            entity_sync_id: "eq-sync-mat-1".to_string(),
+            operation: "upsert".to_string(),
+            row_version: 1,
+            payload_json: r#"{"_sync_format":"row.v1","asset_id_code":"EQ-MAT-1","name":"Pump","lifecycle_status":"active_in_service","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#.to_string(),
+            ..Default::default()
+        }],
+        conflict_items: vec![],
+        policy_metadata_json: None,
+    };
+
+    let ingest = queries::apply_sync_batch(&db, batch).await.expect("ingest");
+    assert_eq!(ingest.inbound_applied_count, 1);
+
+    let inbox = queries::list_inbox_items(&db, Some("pending".into()), Some(10))
+        .await
+        .expect("list pending");
+    assert_eq!(inbox.len(), 1);
+
+    let mat = crate::sync::materialize::materialize_inbox_batch(&db, Some(50))
+        .await
+        .expect("materialize");
+    assert_eq!(mat.applied, 1);
+    assert_eq!(mat.conflicts, 0);
+
+    let row = db
+        .query_one(sea_orm::Statement::from_sql_and_values(
+            sea_orm::DatabaseBackend::Sqlite,
+            "SELECT asset_id_code, name FROM equipment WHERE entity_sync_id = ?",
+            ["eq-sync-mat-1".into()],
+        ))
+        .await
+        .expect("query")
+        .expect("equipment row");
+    let code: String = row.try_get("", "asset_id_code").expect("code");
+    assert_eq!(code, "EQ-MAT-1");
 }

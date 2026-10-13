@@ -45,7 +45,7 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssetMeter {
     pub id: i64,
-    pub sync_id: String,
+    pub entity_sync_id: String,
     pub asset_id: i64,
     pub name: String,
     pub meter_code: Option<String>,
@@ -109,9 +109,9 @@ fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
 fn map_meter(row: &QueryResult) -> AppResult<AssetMeter> {
     Ok(AssetMeter {
         id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
-        sync_id: row
-            .try_get::<String>("", "sync_id")
-            .map_err(|e| decode_err("sync_id", e))?,
+        entity_sync_id: row
+            .try_get::<String>("", "entity_sync_id")
+            .map_err(|e| decode_err("entity_sync_id", e))?,
         asset_id: row
             .try_get::<i64>("", "equipment_id")
             .map_err(|e| decode_err("equipment_id", e))?,
@@ -284,7 +284,7 @@ async fn assert_single_primary(
 // ─── Select fragments ─────────────────────────────────────────────────────────
 
 const METER_SELECT: &str = r"
-    id, sync_id, equipment_id, name, meter_code, meter_type, unit,
+    id, entity_sync_id, equipment_id, name, meter_code, meter_type, unit,
     current_reading, last_read_at, expected_rate_per_day, rollover_value,
     is_primary, is_active, created_at, updated_at
 ";
@@ -373,18 +373,18 @@ pub async fn create_asset_meter(
         .unwrap_or_else(|| name.to_uppercase().replace(' ', "_"));
 
     // ── 6. Insert the meter row ──────────────────────────────────────────
-    let sync_id = Uuid::new_v4().to_string();
+    let entity_sync_id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
 
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO equipment_meters \
-         (sync_id, equipment_id, name, meter_code, meter_type, unit, \
+         (entity_sync_id, equipment_id, name, meter_code, meter_type, unit, \
           current_reading, expected_rate_per_day, rollover_value, \
           is_primary, is_active, created_at, updated_at) \
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
         [
-            sync_id.clone().into(),
+            entity_sync_id.clone().into(),
             payload.asset_id.into(),
             name.into(),
             meter_code.into(),
@@ -404,8 +404,8 @@ pub async fn create_asset_meter(
     let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("SELECT {METER_SELECT} FROM equipment_meters WHERE sync_id = ?"),
-            [sync_id.into()],
+            format!("SELECT {METER_SELECT} FROM equipment_meters WHERE entity_sync_id = ?"),
+            [entity_sync_id.into()],
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("meter created but not found after insert")))?;
@@ -444,7 +444,7 @@ pub async fn record_meter_reading(
     let txn = db.begin().await?;
 
     // ── 1. Validate meter exists and is active ───────────────────────────
-    let (_equipment_id, rollover_value) = assert_meter_exists(&txn, payload.meter_id).await?;
+    let (equipment_id, rollover_value) = assert_meter_exists(&txn, payload.meter_id).await?;
 
     // ── 2. Validate source_type against lookup domain ────────────────────
     validate_lookup(
@@ -548,7 +548,7 @@ pub async fn record_meter_reading(
     let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!(
+            format!(
                 "SELECT {READING_SELECT} FROM asset_meter_readings \
                  WHERE meter_id = ? ORDER BY id DESC LIMIT 1"
             ),
@@ -559,6 +559,11 @@ pub async fn record_meter_reading(
     let reading = map_reading(&row)?;
 
     txn.commit().await?;
+
+    // Best-effort PM regen for equipment-scoped meter plans (never fail the reading).
+    if quality_flag != "corrected" {
+        crate::pm::generation_control::try_generate_pm_for_equipment(db, equipment_id).await;
+    }
 
     tracing::info!(
         reading_id = reading.id,

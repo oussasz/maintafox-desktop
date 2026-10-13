@@ -14,7 +14,7 @@
 
 use crate::errors::{AppError, AppResult};
 use chrono::Utc;
-use sea_orm::{ConnectionTrait, DbBackend, QueryResult, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use uuid::Uuid;
@@ -115,7 +115,7 @@ fn map_attachment(row: &QueryResult) -> AppResult<DiAttachment> {
 /// - Invalid attachment type
 /// - Disk write failure
 pub async fn save_di_attachment(
-    db: &impl ConnectionTrait,
+    db: &DatabaseConnection,
     app_data_dir: &Path,
     input: DiAttachmentInput,
 ) -> AppResult<DiAttachment> {
@@ -144,11 +144,17 @@ pub async fn save_di_attachment(
         return Err(AppError::ValidationFailed(vec!["Nom de fichier invalide.".into()]));
     }
 
+    // Read before the transaction: the tenant lookup runs on the pool connection.
+    let tenant_id = crate::sync::media::resolve_media_tenant_id(db).await;
+
+    // The attachment row and its media sync entry commit together.
+    let txn = db.begin().await?;
+
     // ── Verify DI exists and is not archived ──────────────────────────────
-    let di_row = db
+    let di_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, status FROM intervention_requests WHERE id = ?",
+            "SELECT id, status, entity_sync_id FROM intervention_requests WHERE id = ?",
             [input.di_id.into()],
         ))
         .await?
@@ -165,6 +171,8 @@ pub async fn save_di_attachment(
         ]));
     }
 
+    let parent_entity_sync_id = crate::sync::identity::require_parent_sync_id(&di_row, "entity_sync_id")?;
+
     // ── Generate unique relative path ─────────────────────────────────────
     let uuid = Uuid::new_v4();
     let relative_path = format!("di_attachments/{}/{}-{}", input.di_id, uuid, sanitized_name);
@@ -179,8 +187,10 @@ pub async fn save_di_attachment(
     // ── Insert DB record ──────────────────────────────────────────────────
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let size_bytes = input.file_bytes.len() as i64;
+    let mime_type = input.mime_type.clone();
+    let file_name = sanitized_name.to_string();
 
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO di_attachments \
             (di_id, file_name, relative_path, mime_type, size_bytes, \
@@ -188,9 +198,9 @@ pub async fn save_di_attachment(
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             input.di_id.into(),
-            sanitized_name.to_string().into(),
+            file_name.clone().into(),
             relative_path.clone().into(),
-            input.mime_type.into(),
+            mime_type.clone().into(),
             size_bytes.into(),
             input.attachment_type.into(),
             input.uploaded_by_id.into(),
@@ -203,8 +213,21 @@ pub async fn save_di_attachment(
     ))
     .await?;
 
+    let payload = crate::sync::media::build_media_attachment(
+        crate::sync::media::resolve_media_deployment_env(),
+        &tenant_id,
+        "intervention_requests",
+        &parent_entity_sync_id,
+        &file_name,
+        &mime_type,
+        &input.file_bytes,
+        Some(relative_path.clone()),
+        None,
+    )?;
+    crate::sync::media::upsert_media_attachment_row(&txn, &payload).await?;
+
     // ── Re-fetch the inserted row ─────────────────────────────────────────
-    let row = db
+    let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT * FROM di_attachments WHERE relative_path = ?",
@@ -212,13 +235,15 @@ pub async fn save_di_attachment(
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to re-fetch inserted di_attachment")))?;
+    let attachment = map_attachment(&row)?;
 
-    map_attachment(&row)
+    txn.commit().await?;
+    Ok(attachment)
 }
 
 /// Save a DI attachment by copying from a filesystem path (equipment-photo style).
 pub async fn save_di_attachment_from_path(
-    db: &impl ConnectionTrait,
+    db: &DatabaseConnection,
     app_data_dir: &Path,
     di_id: i64,
     source_path: &str,
@@ -384,8 +409,36 @@ pub async fn list_di_attachments(db: &impl ConnectionTrait, di_id: i64) -> AppRe
 
 /// Delete the attachment DB record. Does NOT delete the file from disk.
 /// The caller (command layer) must hold `di.admin` to invoke this.
-pub async fn delete_di_attachment_record(db: &impl ConnectionTrait, attachment_id: i64) -> AppResult<()> {
-    let result = db
+pub async fn delete_di_attachment_record(db: &DatabaseConnection, attachment_id: i64) -> AppResult<()> {
+    // The delete and its media sync entry commit together.
+    let txn = db.begin().await?;
+    let existing = txn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT a.relative_path, ir.entity_sync_id AS parent_entity_sync_id
+             FROM di_attachments a
+             JOIN intervention_requests ir ON ir.id = a.di_id
+             WHERE a.id = ?",
+            [attachment_id.into()],
+        ))
+        .await?;
+
+    if let Some(row) = existing {
+        let relative_path: String = row
+            .try_get("", "relative_path")
+            .map_err(|e| decode_err("relative_path", e))?;
+        let parent_esid = crate::sync::identity::require_parent_sync_id(&row, "parent_entity_sync_id")?;
+        crate::sync::media::delete_media_attachment_if_found(
+            &txn,
+            Some("intervention_requests"),
+            Some(parent_esid.as_str()),
+            Some(relative_path.as_str()),
+            None,
+        )
+        .await?;
+    }
+
+    let result = txn
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "DELETE FROM di_attachments WHERE id = ?",
@@ -400,5 +453,6 @@ pub async fn delete_di_attachment_record(db: &impl ConnectionTrait, attachment_i
         });
     }
 
+    txn.commit().await?;
     Ok(())
 }

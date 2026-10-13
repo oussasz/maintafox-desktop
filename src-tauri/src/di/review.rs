@@ -31,7 +31,6 @@ pub struct DiScreenInput {
     pub actor_id: i64,
     pub expected_row_version: i64,
     pub validated_urgency: String,
-    pub review_team_id: Option<i64>,
     pub classification_code_id: Option<i64>,
     pub reviewer_note: Option<String>,
 }
@@ -141,12 +140,12 @@ pub struct DiReviewEvent {
 
 /// All columns from `intervention_requests` for SELECT reuse (aliased as `ir`).
 const IR_COLS: &str = "\
-    ir.id, ir.code, ir.asset_id, ir.sub_asset_ref, ir.org_node_id, \
+    ir.id, ir.code, ir.equipment_id, ir.sub_asset_ref, ir.org_node_id, \
     ir.status, ir.title, ir.description, ir.origin_type, ir.request_type, ir.symptom_code_id, \
     ir.impact_level, ir.production_impact, ir.safety_flag, ir.environmental_flag, \
     ir.quality_flag, ir.reported_urgency, ir.validated_urgency, \
     ir.observed_at, ir.submitted_at, \
-    ir.review_team_id, ir.reviewer_id, ir.screened_at, ir.approved_at, \
+    ir.reviewer_id, ir.screened_at, ir.approved_at, \
     ir.deferred_until, ir.declined_at, ir.closed_at, ir.archived_at, \
     ir.converted_to_wo_id, ir.converted_at, \
     ir.sla_rule_id, ir.sla_target_response_hours, ir.sla_target_resolution_hours, \
@@ -168,7 +167,7 @@ const IR_JOIN_COLS: &str = "\
     related_di.code AS related_di_code";
 
 const IR_JOINS: &str = "\
-    LEFT JOIN equipment eq ON eq.id = ir.asset_id \
+    LEFT JOIN equipment eq ON eq.id = ir.equipment_id \
     LEFT JOIN org_nodes org ON org.id = ir.org_node_id \
     LEFT JOIN user_accounts us ON us.id = ir.submitter_id \
     LEFT JOIN user_accounts urv ON urv.id = ir.reviewer_id \
@@ -240,7 +239,7 @@ async fn load_di_with_status(txn: &impl ConnectionTrait, di_id: i64) -> AppResul
     let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!(
+            format!(
                 "SELECT {IR_COLS}, {IR_JOIN_COLS} \
                  FROM intervention_requests ir \
                  {IR_JOINS} \
@@ -373,7 +372,7 @@ async fn refetch_di(txn: &impl ConnectionTrait, di_id: i64) -> AppResult<Interve
     let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!(
+            format!(
                 "SELECT {IR_COLS}, {IR_JOIN_COLS} \
                  FROM intervention_requests ir \
                  {IR_JOINS} \
@@ -433,7 +432,6 @@ pub async fn screen_di(db: &DatabaseConnection, input: DiScreenInput) -> AppResu
             "UPDATE intervention_requests SET \
                 status = 'awaiting_approval', \
                 validated_urgency = ?, \
-                review_team_id = COALESCE(?, review_team_id), \
                 classification_code_id = COALESCE(?, classification_code_id), \
                 reviewer_note = COALESCE(?, reviewer_note), \
                 reviewer_id = ?, \
@@ -443,10 +441,6 @@ pub async fn screen_di(db: &DatabaseConnection, input: DiScreenInput) -> AppResu
              WHERE id = ? AND row_version = ?",
             [
                 input.validated_urgency.clone().into(),
-                input
-                    .review_team_id
-                    .map(sea_orm::Value::from)
-                    .unwrap_or(sea_orm::Value::from(None::<i64>)),
                 input
                     .classification_code_id
                     .map(sea_orm::Value::from)
@@ -503,7 +497,6 @@ pub async fn screen_di(db: &DatabaseConnection, input: DiScreenInput) -> AppResu
     // 8. Re-fetch and commit
     let updated = refetch_di(&txn, input.di_id).await?;
     txn.commit().await?;
-
     Ok(updated)
 }
 

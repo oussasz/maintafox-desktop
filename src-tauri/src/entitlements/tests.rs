@@ -1,53 +1,19 @@
 use sea_orm::{ConnectionTrait, Database, DatabaseConnection};
 use sea_orm_migration::MigratorTrait;
-use sha2::{Digest, Sha256};
 
-use crate::entitlements::domain::{EntitlementEnvelopeInput, ENTITLEMENT_SIGNATURE_ALG_V1};
+use crate::entitlements::domain::{EntitlementEnvelopeInput, ENTITLEMENT_SIGNATURE_ALG};
 use crate::entitlements::queries;
+use crate::entitlements::test_support::{now_rfc3339, sign_envelope};
+use crate::entitlements::trusted_keys::TEST_ENTITLEMENT_KEY_ID;
 use crate::errors::AppError;
 
 async fn setup_db() -> DatabaseConnection {
     let db = Database::connect("sqlite::memory:").await.expect("in-memory sqlite");
     crate::migrations::Migrator::up(&db, None).await.expect("migrations");
+    crate::license::security::ensure_default_licensing_trust_keys(&db)
+        .await
+        .expect("seed trusted signing keys (as startup.rs does)");
     db
-}
-
-fn sign_envelope(input: &EntitlementEnvelopeInput) -> String {
-    let previous = match &input.previous_envelope_id {
-        Some(v) => serde_json::to_string(v).unwrap(),
-        None => "null".to_string(),
-    };
-    let payload = format!(
-        "{{\"envelope_id\":{},\"previous_envelope_id\":{},\"lineage_version\":{},\"issuer\":{},\"key_id\":{},\"signature_alg\":{},\"tier\":{},\"state\":{},\"channel\":{},\"machine_slots\":{},\"feature_flags_json\":{},\"capabilities_json\":{},\"policy_json\":{},\"issued_at\":{},\"valid_from\":{},\"valid_until\":{},\"offline_grace_until\":{}}}",
-        serde_json::to_string(&input.envelope_id).unwrap(),
-        previous,
-        input.lineage_version,
-        serde_json::to_string(&input.issuer).unwrap(),
-        serde_json::to_string(&input.key_id).unwrap(),
-        serde_json::to_string(&input.signature_alg).unwrap(),
-        serde_json::to_string(&input.tier).unwrap(),
-        serde_json::to_string(&input.state).unwrap(),
-        serde_json::to_string(&input.channel).unwrap(),
-        input.machine_slots,
-        serde_json::to_string(&input.feature_flags_json).unwrap(),
-        serde_json::to_string(&input.capabilities_json).unwrap(),
-        serde_json::to_string(&input.policy_json).unwrap(),
-        serde_json::to_string(&input.issued_at).unwrap(),
-        serde_json::to_string(&input.valid_from).unwrap(),
-        serde_json::to_string(&input.valid_until).unwrap(),
-        serde_json::to_string(&input.offline_grace_until).unwrap(),
-    );
-    let mut payload_hasher = Sha256::new();
-    payload_hasher.update(payload);
-    let payload_hash = hex::encode(payload_hasher.finalize());
-    let secret = match input.key_id.as_str() {
-        "key-v1" => "MAINTAFOX_TRUSTED_ISSUER_KEY_V1",
-        "key-rotated-v2" => "MAINTAFOX_TRUSTED_ISSUER_KEY_V2",
-        _ => "UNKNOWN",
-    };
-    let mut hasher = Sha256::new();
-    hasher.update(format!("{}:{}:{}:{}", input.issuer, input.key_id, payload_hash, secret));
-    hex::encode(hasher.finalize())
 }
 
 fn base_envelope(envelope_id: &str, lineage_version: i64, previous: Option<&str>) -> EntitlementEnvelopeInput {
@@ -56,8 +22,8 @@ fn base_envelope(envelope_id: &str, lineage_version: i64, previous: Option<&str>
         previous_envelope_id: previous.map(|v| v.to_string()),
         lineage_version,
         issuer: "maintafox-vps".to_string(),
-        key_id: "key-v1".to_string(),
-        signature_alg: ENTITLEMENT_SIGNATURE_ALG_V1.to_string(),
+        key_id: TEST_ENTITLEMENT_KEY_ID.to_string(),
+        signature_alg: ENTITLEMENT_SIGNATURE_ALG.to_string(),
         tier: "enterprise".to_string(),
         state: "active".to_string(),
         channel: "stable".to_string(),
@@ -67,8 +33,10 @@ fn base_envelope(envelope_id: &str, lineage_version: i64, previous: Option<&str>
             r#"{"equipment":true,"inventory":true,"finance":true,"planning":true,"sync":true,"pm":true,"personnel":true}"#
                 .to_string(),
         policy_json: r#"{"grace_allowed_modules":["sync","equipment","inventory"]}"#.to_string(),
-        issued_at: "2026-07-26T00:00:00Z".to_string(),
-        valid_from: "2026-07-26T00:00:00Z".to_string(),
+        // Signed "now": the verifier enforces a 24h anti-replay window on issued_at, so a fixed
+        // date turned these tests into time bombs once it was older than a day.
+        issued_at: now_rfc3339(),
+        valid_from: now_rfc3339(),
         valid_until: "2099-01-01T00:00:00Z".to_string(),
         offline_grace_until: "2099-01-03T00:00:00Z".to_string(),
         signature: String::new(),
@@ -207,7 +175,7 @@ async fn lineage_requires_previous_reference_for_new_versions() {
 #[tokio::test]
 async fn compromised_signing_key_blocks_entitlement_acceptance() {
     let db = setup_db().await;
-    crate::license::security::mark_key_compromised(&db, "maintafox-vps", "key-v1", "incident drill")
+    crate::license::security::mark_key_compromised(&db, "maintafox-vps", TEST_ENTITLEMENT_KEY_ID, "incident drill")
         .await
         .expect("mark compromised");
     let envelope = base_envelope("env-compromised", 1, None);
@@ -218,4 +186,50 @@ async fn compromised_signing_key_blocks_entitlement_acceptance() {
         AppError::LicenseDenied { reason_code, .. } => assert_eq!(reason_code, "compromised_key"),
         other => panic!("expected compromised key denial, got: {other}"),
     }
+}
+
+/// Cross-language contract: `testdata/ed25519_vector.json` is produced by the control plane's
+/// real signer (`maintafox-vendor-console/api/scripts/entitlement-ed25519-vector.mjs`).
+/// Regenerate it with that script whenever the canonical payload changes on either side.
+#[test]
+fn server_signed_vector_verifies_and_canonical_payload_matches_byte_for_byte() {
+    use crate::entitlements::trusted_keys::{verify_entitlement_signature, SignatureCheck};
+
+    let vector: serde_json::Value =
+        serde_json::from_str(include_str!("testdata/ed25519_vector.json")).expect("vector json");
+    assert_eq!(
+        vector["public_key_hex"].as_str(),
+        Some(crate::entitlements::test_support::test_public_key_hex().as_str()),
+        "server and desktop must derive the same TEST-ONLY key"
+    );
+    let envelope: EntitlementEnvelopeInput =
+        serde_json::from_value(vector["envelope"].clone()).expect("vector envelope");
+
+    let canonical = queries::canonical_payload(&envelope);
+    assert_eq!(
+        canonical,
+        vector["canonical_payload"].as_str().expect("canonical"),
+        "Rust canonical_payload must equal Node canonicalPayload byte-for-byte"
+    );
+    assert_eq!(
+        verify_entitlement_signature(
+            &envelope.issuer,
+            &envelope.key_id,
+            canonical.as_bytes(),
+            &envelope.signature
+        ),
+        SignatureCheck::Verified
+    );
+
+    let mut tampered = envelope.clone();
+    tampered.machine_slots += 1;
+    assert_eq!(
+        verify_entitlement_signature(
+            &tampered.issuer,
+            &tampered.key_id,
+            queries::canonical_payload(&tampered).as_bytes(),
+            &tampered.signature
+        ),
+        SignatureCheck::InvalidSignature
+    );
 }

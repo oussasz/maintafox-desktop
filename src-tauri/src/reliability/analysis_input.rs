@@ -116,7 +116,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn dataset_hash_golden_empty_parts_v1() {
+    // Golden for ANALYSIS_INPUT_SPEC_VERSION = 2 (bumped from 1 in commit 6384d3d2; spec_version is
+    // part of the hashed canonical form). Any other change to this value means snapshot hashes changed.
+    fn dataset_hash_golden_empty_parts_v2() {
         let h = dataset_hash_sha256(
             1,
             "2026-01-01T00:00:00Z",
@@ -127,6 +129,6 @@ mod tests {
             vec![],
             vec![],
         );
-        assert_eq!(h, "8979cea7ed742c0839b03a3990a37545133fd62e582da6e5fec603eef4ab07d7");
+        assert_eq!(h, "a3c8f6e1695d6d4b527f7ed7ffe1a4aee0645bdbbea9c2e4702edd958ccc5349");
     }
 }

@@ -20,7 +20,7 @@ use crate::assets::{
     import::{self, ApplyPolicy},
     lifecycle::{self, RecordLifecycleEventPayload},
     meters::{self, CreateAssetMeterPayload, RecordMeterReadingPayload},
-    photos,
+    photos, registry_metrics,
     search::{self, AssetPickerSuggestFilters, AssetSearchFilters},
     taxonomy_reference, EquipmentTaxonomyCatalog,
 };
@@ -86,6 +86,16 @@ pub async fn search_assets(
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
     search::search_assets(&state.db, filters).await
+}
+
+#[tauri::command]
+pub async fn get_equipment_registry_metrics(
+    filters: AssetSearchFilters,
+    state: State<'_, AppState>,
+) -> AppResult<registry_metrics::EquipmentRegistryMetricsPayload> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
+    registry_metrics::get_equipment_registry_metrics(&state.db, filters).await
 }
 
 #[tauri::command]

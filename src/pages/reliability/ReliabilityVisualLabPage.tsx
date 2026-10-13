@@ -547,7 +547,7 @@ function VisualLabCanvas({ mode, equipmentId }: { mode: LabMode; equipmentId: nu
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      setErr(`${t("lab.loadError")}: ${msg}`);
+      setErr(t("visualLab.loadErrorWithMessage", { message: msg }));
       setFtaRows([]);
       setRbdRows([]);
     }
@@ -1036,7 +1036,7 @@ function VisualLabCanvas({ mode, equipmentId }: { mode: LabMode; equipmentId: nu
           )}
         >
           <div className="shrink-0 border-b border-slate-400/60 bg-white/90 px-2 py-1 text-[11px] text-slate-600 dark:border-slate-600 dark:bg-slate-900/90 dark:text-slate-300 sm:hidden">
-            Utilisez la bibliothèque de symboles en mode desktop (stencil X6).
+            {t("visualLab.stencilDesktopHint")}
           </div>
           <div className="relative h-full w-full min-h-0 flex-1 overflow-hidden">
             <div ref={graphHostRef} className="rams-x6-canvas relative h-full w-full min-h-0" />
@@ -1045,9 +1045,7 @@ function VisualLabCanvas({ mode, equipmentId }: { mode: LabMode; equipmentId: nu
             !err ? (
               <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
                 <div className="rounded-sm border border-slate-400/70 bg-white/90 px-3 py-2 text-[11px] font-mono text-slate-700 dark:border-slate-600 dark:bg-slate-900/90 dark:text-slate-200">
-                  {mode === "fta"
-                    ? "FTA empty canvas — create a model to begin."
-                    : "RBD empty canvas — create a model to begin."}
+                  {mode === "fta" ? t("visualLab.emptyCanvasFta") : t("visualLab.emptyCanvasRbd")}
                 </div>
               </div>
             ) : null}

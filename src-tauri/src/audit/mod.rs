@@ -5,6 +5,7 @@
 //! `emit` remains as a compatibility adapter for existing call sites that use
 //! fire-and-log semantics.
 
+pub mod chain;
 pub mod writer;
 
 /// All recognized audit event types.
@@ -118,3 +119,6 @@ fn build_compat_details_json(event: &AuditEvent<'_>) -> serde_json::Value {
 
     details
 }
+
+#[cfg(test)]
+mod chain_tests;

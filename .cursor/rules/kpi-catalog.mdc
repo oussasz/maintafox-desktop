@@ -20,6 +20,9 @@ Before finalizing any **schema**, **table**, **workflow**, or **UI** that introd
 
 ## Entry template (every KPI uses this exact shape)
 
+Overview strip adapters use **Semantic key** (`DI_OPEN`, …) from the catalog template — mirrored in `shared/overview-kpi-registry.ts`.
+Equipment registry strip keys (`EQUIP_*`) live in `shared/equipment-kpi-registry.ts`.
+
 ```markdown
 # KPI-NNN
 
@@ -61,3 +64,396 @@ Also document under each KPI or a linked section when relevant: **derived metric
 ❌ BAD — ship plan-vs-actual columns with no catalog entry
 ✅ GOOD — add KPI-00x Plan Adherence % (+ derived efficiency/cost variance), list fields, then implement
 ```
+
+## Staging — Availability inspector KPIs (not yet in KPI_CATALOG.md)
+
+Removed from Availability Inspector UI (`AvailabilityInspectorWorkspace`). Parked here until formal `KPI-NNN` ids are assigned in `docs/engineering/KPI_CATALOG.md`.
+
+Source inputs (client-derived today from horizon cells):
+- `personnel_availability_day_cells` / adapter cells: day state (`free` | `partial` | `blocked` | `critical` | …), `available_minutes`
+- Horizon: inclusive `date_from` … `date_to`
+
+### Pending — Free Days (horizon)
+
+Nom:
+Availability Free Days (horizon)
+
+Module:
+Personnel / Availability
+
+Description:
+Count of days in the selected horizon where the person is fully free (no blocking constraint).
+
+Formula:
+COUNT days WHERE deriveCellState(cell) = 'free' over [date_from, date_to]
+
+Inputs:
+- Day cells for the person over the horizon
+- Derived cell state
+
+Required fields:
+- cell date, block presence / capacity fields used by `deriveCellState`
+- `available_minutes` (related capacity input)
+
+Displayed:
+- Was: Availability Inspector header KPI strip — removed pending catalog placement
+
+Status:
+Planned
+
+### Pending — Partial Days (horizon)
+
+Nom:
+Availability Partial Days (horizon)
+
+Module:
+Personnel / Availability
+
+Description:
+Count of days in the selected horizon with partial availability (constrained but not fully blocked).
+
+Formula:
+COUNT days WHERE deriveCellState(cell) = 'partial' over [date_from, date_to]
+
+Inputs:
+- Day cells for the person over the horizon
+- Derived cell state
+
+Required fields:
+- Same cell fields as Free Days
+
+Displayed:
+- Was: Availability Inspector header KPI strip — removed pending catalog placement
+
+Status:
+Planned
+
+### Pending — Blocked / Critical Days (horizon)
+
+Nom:
+Availability Blocked or Critical Days (horizon)
+
+Module:
+Personnel / Availability
+
+Description:
+Count of days in the selected horizon that are blocked or marked critical (not assignable / high-risk constraint).
+
+Formula:
+COUNT days WHERE deriveCellState(cell) IN ('blocked', 'critical') over [date_from, date_to]
+
+Inputs:
+- Day cells for the person over the horizon
+- Derived cell state
+- Critical flag on availability blocks when applicable
+
+Required fields:
+- Same cell fields as Free Days
+- `is_critical` on availability blocks (when state derives from blocks)
+
+Displayed:
+- Was: Availability Inspector header KPI strip — removed pending catalog placement
+
+Status:
+Planned
+
+### Pending — Available Minutes (horizon)
+
+Nom:
+Available Minutes (horizon)
+
+Module:
+Personnel / Availability
+
+Description:
+Sum of available work minutes across all days in the selected horizon for the person.
+
+Formula:
+SUM(cell.available_minutes) over [date_from, date_to]
+
+Inputs:
+- `available_minutes` per day cell
+
+Required fields:
+- `available_minutes` on day capacity / availability cells
+
+Displayed:
+- Was: Availability Inspector header KPI strip — removed pending catalog placement
+
+Status:
+Planned
+
+Derived metrics (when catalogued):
+- Free-day ratio = free / horizon days
+- Blocked ratio = blocked_critical / horizon days
+- Effective capacity hours = available_minutes / 60
+
+Future dashboards / reports:
+- Team capacity heatmaps; planning load vs free capacity
+- Workforce KPI export already has related `blocked_ratio` — align formulas when promoting these entries
+
+AI opportunities:
+- Predict assignability risk from upcoming blocked/critical density
+
+## Staging — Availability page summary KPIs (not yet in KPI_CATALOG.md)
+
+Removed from Availability tab page chrome (`AvailabilityCalendar`). Parked here until formal `KPI-NNN` ids are assigned in `docs/engineering/KPI_CATALOG.md`.
+
+Formula implementation retained (unused by UI): `computeAvailabilitySummary` in `src/components/personnel/availability-model.ts`.
+i18n labels retained under `availability.summary.*` (en/fr personnel).
+
+Source inputs (client-derived today from filtered person day cells over the selected horizon):
+- Per-person cells: day state via `deriveCellState` (`free` | `partial` | `blocked` | `critical` | …)
+- Filtered people scope (`peopleForView`) and inclusive date list (`dates`)
+
+### Pending — Available Technicians (horizon, filtered scope)
+
+Nom:
+Available Technicians (horizon)
+
+Module:
+Personnel / Availability
+
+Description:
+Count of technicians in the filtered scope whose free days are at least half of their scored days in the horizon (majority-free heuristic).
+
+Formula:
+COUNT people WHERE scoredDays > 0 AND freeDays * 2 >= scoredDays
+(freeDays = COUNT days with deriveCellState = 'free'; scoredDays = days with a cell)
+
+Inputs:
+- Filtered person rows + day cells over [date_from, date_to]
+
+Required fields:
+- cell date / state inputs used by `deriveCellState`
+
+Displayed:
+- Was: Availability page KPI strip — `availability.summary.available` / `availableHint` — removed pending catalog placement
+
+Status:
+Planned
+
+### Pending — Blocked Technicians (horizon, filtered scope)
+
+Nom:
+Blocked Technicians (horizon)
+
+Module:
+Personnel / Availability
+
+Description:
+Count of technicians in the filtered scope with at least one blocked or critical day in the horizon.
+
+Formula:
+COUNT people WHERE EXISTS day with deriveCellState(cell) IN ('blocked', 'critical')
+
+Inputs:
+- Filtered person rows + day cells over [date_from, date_to]
+
+Required fields:
+- Same cell fields as Available Technicians
+- Critical / block presence used by `deriveCellState`
+
+Displayed:
+- Was: Availability page KPI strip — `availability.summary.blocked` / `blockedHint` — removed pending catalog placement
+
+Status:
+Planned
+
+### Pending — Critical Constraints (person-days)
+
+Nom:
+Critical Constraint Person-Days (horizon)
+
+Module:
+Personnel / Availability
+
+Description:
+Count of person-days in the filtered scope marked critical over the horizon.
+
+Formula:
+COUNT (person, day) WHERE deriveCellState(cell) = 'critical'
+
+Inputs:
+- Filtered person rows + day cells over [date_from, date_to]
+- Critical flag on availability blocks when applicable
+
+Required fields:
+- Same as Blocked Technicians
+- `is_critical` / critical state derivation
+
+Displayed:
+- Was: Availability page KPI strip — `availability.summary.critical` / `criticalHint` — removed pending catalog placement
+
+Status:
+Planned
+
+### Pending — Coverage Risk Days (horizon, filtered scope)
+
+Nom:
+Coverage Risk Days (horizon)
+
+Module:
+Personnel / Availability
+
+Description:
+Count of calendar days in the horizon where the filtered scope has zero free technicians (no one fully free that day).
+
+Formula:
+COUNT days WHERE people.length > 0 AND freeHeadcount = 0
+(freeHeadcount = COUNT people with deriveCellState(cell) = 'free' for that day)
+
+Inputs:
+- Filtered person rows + day cells over [date_from, date_to]
+
+Required fields:
+- Same cell fields as Available Technicians
+
+Displayed:
+- Was: Availability page KPI strip — `availability.summary.coverageRisk` / `coverageRiskHint` — removed pending catalog placement
+
+Status:
+Planned
+
+Derived metrics (when catalogued):
+- Available technician ratio = availableTechnicians / filtered headcount
+- Blocked technician ratio = blockedTechnicians / filtered headcount
+- Coverage risk ratio = coverageRiskDays / horizon days
+
+Future dashboards / reports:
+- Team / entity coverage heatmaps; planning assignability warnings
+- Align with workforce export `blocked_ratio` when promoting to KPI_CATALOG.md
+
+AI opportunities:
+- Predict coverage risk days from upcoming leave / training density in filtered scopes
+
+## Staging — PM due-queue summary KPIs (not yet in KPI_CATALOG.md)
+
+Removed from PM page chrome (`PmMetricsStrip` / `PmPage`). Parked here until formal `KPI-NNN` ids are assigned in `docs/engineering/KPI_CATALOG.md`.
+
+Formula implementation retained: `get_pm_due_metrics` in `src-tauri/src/pm/queries.rs` (`PmDueMetrics`).
+i18n labels retained under `metrics.*` (en/fr pm).
+Store/service loaders retained (`loadDueMetrics` / `getPmDueMetrics`) but no longer rendered on the PM page.
+
+Source inputs (as-of UTC day boundaries over active pipeline occurrences):
+- `pm_occurrences` status in active pipeline (not completed / cancelled / missed terminal archive)
+- `due_at` date fields for calendar buckets
+- Planning readiness projection for ready-for-scheduling count
+
+### Pending — PM Overdue Count (as-of)
+
+Nom:
+PM Overdue Occurrences (as-of)
+
+Module:
+Preventive Maintenance / Due queue
+
+Description:
+Count of open PM occurrences whose due date is before the as-of calendar day.
+
+Formula:
+COUNT occurrences WHERE status IN active pipeline AND due_at < start_of_as_of_day
+
+Inputs:
+- `get_pm_due_metrics` → `overdue_count`
+- Occurrence `due_at`, `status`
+
+Required fields:
+- `pm_occurrences.due_at`, `pm_occurrences.status`
+
+Displayed:
+- Was: PM page KPI strip — `metrics.overdue` — removed pending catalog placement
+
+Status:
+Planned
+
+### Pending — PM Due Today Count (as-of)
+
+Nom:
+PM Due Today Occurrences (as-of)
+
+Module:
+Preventive Maintenance / Due queue
+
+Description:
+Count of open PM occurrences due on the as-of calendar day.
+
+Formula:
+COUNT occurrences WHERE status IN active pipeline AND due_at within [start_of_as_of_day, end_of_as_of_day]
+
+Inputs:
+- `get_pm_due_metrics` → `due_today_count`
+
+Required fields:
+- Same as Overdue Count
+
+Displayed:
+- Was: PM page KPI strip — `metrics.dueToday` — removed pending catalog placement
+
+Status:
+Planned
+
+### Pending — PM Due Next 7 Days Count (as-of)
+
+Nom:
+PM Due Next 7 Days Occurrences (as-of)
+
+Module:
+Preventive Maintenance / Due queue
+
+Description:
+Count of open PM occurrences due within the next 7 calendar days from as-of (inclusive window used by metrics query).
+
+Formula:
+COUNT occurrences WHERE status IN active pipeline AND due_at within next-7-day window from as-of
+
+Inputs:
+- `get_pm_due_metrics` → `due_next_7d_count`
+
+Required fields:
+- Same as Overdue Count
+
+Displayed:
+- Was: PM page KPI strip — `metrics.next7d` — removed pending catalog placement
+
+Status:
+Planned
+
+### Pending — PM Ready for Scheduling Count (as-of)
+
+Nom:
+PM Ready for Scheduling (as-of)
+
+Module:
+Preventive Maintenance / Due queue / Planning readiness
+
+Description:
+Count of open PM occurrences that pass planning readiness (no blockers) and are candidates for scheduling.
+
+Formula:
+COUNT candidates WHERE ready_for_scheduling = true (aligned with `list_pm_planning_readiness` / metrics `ready_for_scheduling_count`)
+
+Inputs:
+- `get_pm_due_metrics` → `ready_for_scheduling_count`
+- Planning readiness blockers when derived from the same projection
+
+Required fields:
+- Occurrence status / due fields used by readiness
+- Blocker derivation inputs (skills, parts stub, linked WO, etc.)
+
+Displayed:
+- Was: PM page KPI strip — `metrics.ready` — removed pending catalog placement
+
+Status:
+Planned
+
+Derived metrics (when catalogued):
+- Overdue ratio = overdue / (overdue + due_today + due_next_7d) or vs open pipeline headcount
+- Ready ratio = ready_for_scheduling / open pipeline headcount
+
+Future dashboards / reports:
+- PM compliance / overdue risk already partial in governance KPIs — align bucket formulas when promoting
+- Planning board demand vs ready count
+
+AI opportunities:
+- Predict overdue risk from horizon density and readiness blocker patterns

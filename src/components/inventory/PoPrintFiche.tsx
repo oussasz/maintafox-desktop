@@ -3,6 +3,11 @@
  * Follows WoPrintFiche pattern (iframe + print).
  */
 
+import {
+  DOCUMENT_HEADER_PRINT_CSS,
+  loadDocumentHeaderHtml,
+  wrapDocumentHeaderBlock,
+} from "@/export/templates/document-header";
 import { formatAssetLabel, formatEntityCode, formatOrDash } from "@/lib/display";
 import type { PurchaseOrderDetail } from "@shared/ipc-types";
 
@@ -37,7 +42,13 @@ function esc(v: string | null | undefined): string {
     .replace(/"/g, "&quot;");
 }
 
-function buildHtml(detail: PurchaseOrderDetail, t: TFn, locale: string): string {
+function buildHtml(
+  detail: PurchaseOrderDetail,
+  t: TFn,
+  locale: string,
+  letterheadHtml: string,
+): string {
+  const letterhead = wrapDocumentHeaderBlock(letterheadHtml);
   const { order, lines, grand_total, grand_total_partial } = detail;
   const now = new Date().toLocaleDateString(locale);
   const supplier =
@@ -85,11 +96,12 @@ function buildHtml(detail: PurchaseOrderDetail, t: TFn, locale: string): string 
     .footer { margin-top: 24px; font-size: 9px; color: #999; text-align: center; border-top: 1px solid #eee; padding-top: 6px; }
     .total-row { font-weight: bold; }
     @media print { body { margin: 0; padding: 10px 20px; } }
+    ${DOCUMENT_HEADER_PRINT_CSS}
   </style>
 </head>
 <body>
+  ${letterhead}
   <div class="header">
-    <div class="company">Maintafox</div>
     <h1>${esc(t("procurement.poWorkspace.print.heading"))}</h1>
     <div class="subtitle">${esc(t("procurement.poWorkspace.print.confidential"))}</div>
   </div>
@@ -153,14 +165,19 @@ function buildHtml(detail: PurchaseOrderDetail, t: TFn, locale: string): string 
   </div>
 
   <div class="footer">
-    ${esc(t("procurement.poWorkspace.print.reference"))} : ${esc(formatOrDash(order.po_number))} | Maintafox | ${now} — ${esc(t("procurement.poWorkspace.print.confidential"))}
+    ${esc(t("procurement.poWorkspace.print.reference"))} : ${esc(formatOrDash(order.po_number))} | ${now} — ${esc(t("procurement.poWorkspace.print.confidential"))}
   </div>
 </body>
 </html>`;
 }
 
-export function printPoFiche(detail: PurchaseOrderDetail, t: TFn = DEFAULT_T, locale = "fr"): void {
-  const html = buildHtml(detail, t, locale);
+export async function printPoFiche(
+  detail: PurchaseOrderDetail,
+  t: TFn = DEFAULT_T,
+  locale = "fr",
+): Promise<void> {
+  const letterheadHtml = await loadDocumentHeaderHtml();
+  const html = buildHtml(detail, t, locale, letterheadHtml);
 
   const iframe = document.createElement("iframe");
   iframe.style.position = "fixed";

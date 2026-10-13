@@ -19,6 +19,7 @@ export const P = {
   OT_VIEW: "ot.view",
   OT_CREATE: "ot.create",
   OT_EDIT: "ot.edit",
+  OT_EMERGENCY_ASSIGN: "ot.emergency_assign",
   OT_APPROVE: "ot.approve",
   OT_CLOSE: "ot.close",
   OT_REOPEN: "ot.reopen",
@@ -275,6 +276,15 @@ export const PERMISSION_CATALOG: readonly PermissionMeta[] = [
     aliases: [] as const,
   },
   {
+    name: P.OT_EMERGENCY_ASSIGN,
+    description: "Emergency reassign crew/technician on a work order without Planning capacity gates",
+    category: "ot",
+    isDangerous: true,
+    requiresStepUp: false,
+    usage: "both",
+    aliases: [] as const,
+  },
+  {
     name: P.OT_APPROVE,
     description: "Approve work orders from draft / planning",
     category: "ot",
@@ -379,8 +389,7 @@ export const PERMISSION_CATALOG: readonly PermissionMeta[] = [
     category: "per",
     isDangerous: false,
     requiresStepUp: false,
-    usage: "catalog-only",
-    usageJustification: "Reserved for field-level masking; not yet enforced",
+    usage: "backend",
     aliases: [] as const,
   },
   {
@@ -506,8 +515,7 @@ export const PERMISSION_CATALOG: readonly PermissionMeta[] = [
     category: "pm",
     isDangerous: false,
     requiresStepUp: false,
-    usage: "catalog-only",
-    usageJustification: "Reserved for PM approval workflow; not yet enforced",
+    usage: "both",
     aliases: [] as const,
   },
   {
@@ -845,8 +853,7 @@ export const PERMISSION_CATALOG: readonly PermissionMeta[] = [
     category: "fin",
     isDangerous: true,
     requiresStepUp: true,
-    usage: "catalog-only",
-    usageJustification: "Reserved for finance approval workflow; not yet enforced",
+    usage: "both",
     aliases: [] as const,
   },
   {
@@ -1167,9 +1174,10 @@ export const PERMISSION_ALIAS_MAP: Readonly<Record<string, PermissionName>> = {
 };
 
 export const ROLE_TEMPLATES: Readonly<Record<string, readonly PermissionName[]>> = {
-  "Supervisor Template": [P.OT_VIEW, P.OT_CREATE, P.OT_EDIT, P.OT_APPROVE, P.OT_CLOSE, P.DI_VIEW, P.DI_CREATE, P.DI_SCREEN, P.DI_REVIEW, P.DI_APPROVE, P.DI_CONVERT, P.PM_VIEW, P.PM_CREATE, P.PM_EDIT, P.PM_APPROVE, P.PER_VIEW, P.PER_MANAGE, P.PER_REPORT, P.PER_POSITION_VIEW, P.PER_POSITION_MANAGE, P.EQ_VIEW, P.EQ_MANAGE, P.INV_VIEW, P.INV_MANAGE, P.INV_PROCURE],
-  "Technician Template": [P.OT_VIEW, P.OT_CREATE, P.OT_EDIT, P.DI_VIEW, P.DI_CREATE, P.DI_CREATE_OWN, P.EQ_VIEW, P.EQ_MANAGE],
-  "Planner Template": [P.OT_VIEW, P.OT_CREATE, P.OT_EDIT, P.DI_VIEW, P.DI_CREATE, P.DI_SCREEN, P.PM_VIEW, P.PM_CREATE, P.PM_EDIT, P.PLAN_VIEW, P.PLAN_EDIT, P.PLAN_CONFIRM, P.PLAN_WINDOWS, P.INV_VIEW, P.INV_MANAGE, P.INV_PROCURE],
+  "Supervisor Template": [P.OT_VIEW, P.OT_CREATE, P.OT_EDIT, P.OT_EMERGENCY_ASSIGN, P.OT_APPROVE, P.OT_CLOSE, P.DI_VIEW, P.DI_CREATE, P.DI_SCREEN, P.DI_REVIEW, P.DI_APPROVE, P.DI_CONVERT, P.PM_VIEW, P.PM_CREATE, P.PM_EDIT, P.PM_APPROVE, P.PER_VIEW, P.PER_MANAGE, P.PER_REPORT, P.PER_POSITION_VIEW, P.PER_POSITION_MANAGE, P.EQ_VIEW, P.EQ_MANAGE, P.INV_VIEW, P.INV_MANAGE, P.INV_PROCURE],
+  "Technician Template": [P.OT_VIEW, P.OT_CREATE, P.OT_EDIT, P.OT_EMERGENCY_ASSIGN, P.DI_VIEW, P.DI_CREATE, P.DI_CREATE_OWN, P.EQ_VIEW, P.EQ_MANAGE],
+  "Planner Template": [P.OT_VIEW, P.OT_CREATE, P.OT_EDIT, P.OT_EMERGENCY_ASSIGN, P.DI_VIEW, P.DI_CREATE, P.DI_SCREEN, P.PM_VIEW, P.PM_CREATE, P.PM_EDIT, P.PLAN_VIEW, P.PLAN_EDIT, P.PLAN_CONFIRM, P.PLAN_WINDOWS, P.INV_VIEW, P.INV_MANAGE, P.INV_PROCURE],
   "Observer Template": [P.OT_VIEW, P.DI_VIEW, P.PM_VIEW, P.EQ_VIEW],
+  "Finance Manager Template": [P.FIN_VIEW, P.FIN_BUDGET, P.FIN_REPORT, P.FIN_POST, P.FIN_APPROVE, P.ORG_VIEW, P.REF_VIEW, P.EQ_VIEW, P.OT_VIEW, P.INV_VIEW, P.PM_VIEW, P.PLAN_VIEW, P.REP_VIEW, P.REP_EXPORT, P.DOC_VIEW],
 };
 

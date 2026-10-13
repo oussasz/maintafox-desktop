@@ -4,8 +4,9 @@
 //! Locale precedence (highest to lowest):
 //!   1. User preference in `system_config` (key: `locale.user_language`)
 //!   2. Tenant default in `system_config` (key: `locale.default_language`)
-//!   3. OS locale (detected at startup via `sys_locale`)
-//!   4. Hard fallback: "fr"
+//!   3. Settings SSOT `app_settings.locale.primary_language` (tenant scope)
+//!   4. OS locale (detected at startup via `sys_locale`)
+//!   5. Hard fallback: "fr"
 
 use crate::errors::{AppError, AppResult};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
@@ -77,10 +78,45 @@ pub async fn write_locale_config(db: &DatabaseConnection, key: &str, value: &str
     Ok(())
 }
 
+/// Read tenant primary language from `app_settings` (JSON string value).
+async fn read_app_settings_primary_language(db: &DatabaseConnection) -> AppResult<Option<String>> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            r"SELECT setting_value_json FROM app_settings
+               WHERE setting_key = 'locale.primary_language'
+                 AND setting_scope = 'tenant'
+               LIMIT 1",
+            [],
+        ))
+        .await?;
+
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let raw = row.try_get::<String>("", "setting_value_json").ok();
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+
+    // Stored as JSON string, e.g. "\"fr\"".
+    let parsed = serde_json::from_str::<String>(&raw).unwrap_or(raw);
+    let normalized = parsed.trim().to_lowercase();
+    if SUPPORTED_LOCALES.contains(&normalized.as_str()) {
+        Ok(Some(normalized))
+    } else {
+        Ok(None)
+    }
+}
+
 /// Resolve the full locale preference according to the precedence chain.
 pub async fn resolve_locale_preference(db: &DatabaseConnection) -> AppResult<LocalePreference> {
     let user_locale = read_locale_config(db, "locale.user_language").await?;
-    let tenant_locale = read_locale_config(db, "locale.default_language").await?;
+    let mut tenant_locale = read_locale_config(db, "locale.default_language").await?;
+    if tenant_locale.is_none() {
+        // Fall back to Settings SSOT when system_config tenant default was never seeded.
+        tenant_locale = read_app_settings_primary_language(db).await?;
+    }
     let os_locale = detect_os_locale();
 
     let active_locale = user_locale

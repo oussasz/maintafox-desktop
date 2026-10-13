@@ -4,6 +4,11 @@ import { useTranslation } from "react-i18next";
 import { Navigate, useParams } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
+import {
+  isMediaFileAvailable,
+  MediaFileStateBadge,
+  useMediaFileStates,
+} from "@/components/sync/MediaFileStatus";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -53,6 +58,9 @@ export function DocumentationCategoryPage() {
   const canManage = can(P.DOC_MANAGE);
 
   const [docs, setDocs] = useState<LibraryDocument[]>([]);
+  const { states: fileStates, refresh: refreshFileStates } = useMediaFileStates(
+    docs.map((d) => d.relativePath),
+  );
   const [assets, setAssets] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -298,7 +306,13 @@ export function DocumentationCategoryPage() {
               {docs.map((doc) => (
                 <tr key={doc.id} className="hover:bg-surface-1/60">
                   <td className="px-3 py-2 font-medium text-text-primary">{doc.title}</td>
-                  <td className="px-3 py-2 text-text-secondary">{doc.fileName}</td>
+                  <td className="px-3 py-2 text-text-secondary">
+                    <div>{doc.fileName}</div>
+                    <MediaFileStateBadge
+                      state={fileStates.get(doc.relativePath)}
+                      onRetried={() => void refreshFileStates()}
+                    />
+                  </td>
                   <td className="px-3 py-2 text-text-secondary">
                     {doc.equipmentCode ? (
                       <span className="font-mono text-xs">{doc.equipmentCode}</span>
@@ -316,6 +330,7 @@ export function DocumentationCategoryPage() {
                         variant="ghost"
                         size="icon"
                         title={t("list.download")}
+                        disabled={!isMediaFileAvailable(fileStates.get(doc.relativePath))}
                         onClick={() => void handleDownload(doc)}
                       >
                         <Download className="h-4 w-4" />

@@ -100,7 +100,7 @@ async fn insert_approved_di(db: &DatabaseConnection, code: &str) {
         DbBackend::Sqlite,
         "INSERT INTO intervention_requests (
             code,
-            asset_id,
+            equipment_id,
             org_node_id,
             status,
             title,
@@ -130,76 +130,119 @@ async fn get_any_team_id(db: &DatabaseConnection) -> i64 {
     let existing = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
+            "SELECT id FROM teams WHERE deleted_at IS NULL ORDER BY id LIMIT 1",
+            [],
+        ))
+        .await
+        .expect("query crew");
+    if let Some(existing) = existing {
+        return existing.try_get("", "id").expect("crew id");
+    }
+
+    let node_id = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
             "SELECT id FROM org_nodes ORDER BY id LIMIT 1",
             [],
         ))
         .await
-        .expect("query org node");
-    if let Some(existing) = existing {
-        return existing.try_get("", "id").expect("org node id");
-    }
+        .expect("query org node")
+        .and_then(|r| r.try_get::<i64>("", "id").ok());
+
+    let primary_node_id = if let Some(id) = node_id {
+        id
+    } else {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO org_structure_models (entity_sync_id, version_number, status, description, created_at, updated_at)
+             VALUES ('planning-test-structure', 1, 'active', 'planning test structure', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            [],
+        ))
+        .await
+        .expect("insert org structure");
+
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO org_node_types (
+                entity_sync_id, structure_model_id, code, label, can_host_assets, can_own_work, can_carry_cost_center,
+                can_aggregate_kpis, can_receive_permits, is_root_type, is_active, created_at, updated_at
+             ) VALUES (
+                'planning-test-site-type',
+                (SELECT id FROM org_structure_models WHERE entity_sync_id = 'planning-test-structure'),
+                'SITE',
+                'Site',
+                0, 1, 0, 1, 0, 1, 1,
+                '2026-01-01T00:00:00Z',
+                '2026-01-01T00:00:00Z'
+             )",
+            [],
+        ))
+        .await
+        .expect("insert org node type");
+
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO org_nodes (
+                entity_sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status,
+                created_at, updated_at, row_version, structure_model_id
+             ) VALUES (
+                'planning-test-site',
+                'SITE-PLN',
+                'Planning Site',
+                (SELECT id FROM org_node_types WHERE entity_sync_id = 'planning-test-site-type'),
+                NULL,
+                '/',
+                0,
+                'active',
+                '2026-01-01T00:00:00Z',
+                '2026-01-01T00:00:00Z',
+                1,
+                (SELECT id FROM org_structure_models WHERE entity_sync_id = 'planning-test-structure')
+             )",
+            [],
+        ))
+        .await
+        .expect("insert org node");
+
+        db.query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id FROM org_nodes WHERE entity_sync_id = 'planning-test-site'",
+            [],
+        ))
+        .await
+        .expect("query inserted org node")
+        .and_then(|r| r.try_get("", "id").ok())
+        .expect("inserted org node id")
+    };
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "INSERT INTO org_structure_models (sync_id, version_number, status, description, created_at, updated_at)
-         VALUES ('planning-test-structure', 1, 'active', 'planning test structure', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
-        [],
-    ))
-    .await
-    .expect("insert org structure");
-
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO org_node_types (
-            sync_id, structure_model_id, code, label, can_host_assets, can_own_work, can_carry_cost_center,
-            can_aggregate_kpis, can_receive_permits, is_root_type, is_active, created_at, updated_at
+        "INSERT INTO teams (
+            entity_sync_id, code, name, team_type, primary_node_id, status, created_at, updated_at
          ) VALUES (
-            'planning-test-team-type',
-            (SELECT id FROM org_structure_models WHERE sync_id = 'planning-test-structure'),
-            'TEAM',
-            'Team',
-            0, 1, 0, 1, 0, 1, 1,
+            'planning-test-crew',
+            'CREW-PLN',
+            'Planning Crew',
+            'maintenance',
+            ?,
+            'active',
             '2026-01-01T00:00:00Z',
             '2026-01-01T00:00:00Z'
          )",
-        [],
+        [primary_node_id.into()],
     ))
     .await
-    .expect("insert org node type");
-
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO org_nodes (
-            sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status,
-            created_at, updated_at, row_version, structure_model_id
-         ) VALUES (
-            'planning-test-team',
-            'TEAM-PLN',
-            'Planning Team',
-            (SELECT id FROM org_node_types WHERE sync_id = 'planning-test-team-type'),
-            NULL,
-            '/',
-            0,
-            'active',
-            '2026-01-01T00:00:00Z',
-            '2026-01-01T00:00:00Z',
-            1,
-            (SELECT id FROM org_structure_models WHERE sync_id = 'planning-test-structure')
-         )",
-        [],
-    ))
-    .await
-    .expect("insert org node");
+    .expect("insert crew");
 
     db.query_one(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "SELECT id FROM org_nodes WHERE sync_id = 'planning-test-team'",
+        "SELECT id FROM teams WHERE entity_sync_id = 'planning-test-crew'",
         [],
     ))
     .await
-    .expect("query inserted org node")
+    .expect("query inserted crew")
     .and_then(|r| r.try_get("", "id").ok())
-    .expect("inserted org node id")
+    .expect("inserted crew id")
 }
 
 async fn ensure_personnel_with_rate(db: &DatabaseConnection, employee_code: &str) -> i64 {
@@ -246,7 +289,7 @@ async fn ensure_approver_user(db: &DatabaseConnection, user_id: i64, personnel_i
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT OR IGNORE INTO user_accounts
-            (id, sync_id, username, display_name, is_active, is_admin, force_password_change, personnel_id, created_at, updated_at)
+            (id, entity_sync_id, username, display_name, is_active, is_admin, force_password_change, personnel_id, created_at, updated_at)
          VALUES (?, ?, ?, ?, 1, 0, 0, ?, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
         [
             user_id.into(),
@@ -261,7 +304,7 @@ async fn ensure_approver_user(db: &DatabaseConnection, user_id: i64, personnel_i
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "INSERT OR IGNORE INTO roles (id, sync_id, name, created_at, updated_at, row_version)
+        "INSERT OR IGNORE INTO roles (id, entity_sync_id, name, created_at, updated_at, row_version)
          VALUES (777, 'planning-approver-role', 'planning-approver', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 1)",
         [],
     ))
@@ -278,7 +321,7 @@ async fn ensure_approver_user(db: &DatabaseConnection, user_id: i64, personnel_i
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT OR IGNORE INTO user_scope_assignments
-            (sync_id, user_id, role_id, scope_type, scope_reference, valid_from, created_at, updated_at)
+            (entity_sync_id, user_id, role_id, scope_type, scope_reference, valid_from, created_at, updated_at)
          VALUES (?, ?, 777, 'tenant', NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
         [format!("planning-approver-usa-{user_id}").into(), user_id.into()],
     ))
@@ -419,7 +462,7 @@ async fn refresh_from_approved_di_creates_schedule_candidates() {
 async fn commitment_requires_all_three_gates() {
     let db = setup_db().await;
     let team_id = get_any_team_id(&db).await;
-    let candidate_id = insert_candidate(&db, "work_order", 3001, "ready", 100.0).await;
+    let candidate_id = insert_candidate(&db, "pm_occurrence", 3001, "ready", 100.0).await;
 
     let no_capacity = scheduling::create_schedule_commitment(
         &db,
@@ -452,7 +495,7 @@ async fn commitment_requires_all_three_gates() {
     )
     .await
     .expect("capacity rule");
-    let candidate2 = insert_candidate(&db, "work_order", 3002, "ready", 100.0).await;
+    let candidate2 = insert_candidate(&db, "pm_occurrence", 3002, "ready", 100.0).await;
     let overloaded = scheduling::create_schedule_commitment(
         &db,
         1,
@@ -478,7 +521,7 @@ async fn assignee_unavailable_is_hard_rejected() {
     let db = setup_db().await;
     let team_id = get_any_team_id(&db).await;
     let personnel_id = ensure_personnel_with_rate(&db, "TECH-UNAVAILABLE").await;
-    let candidate_id = insert_candidate(&db, "work_order", 4001, "ready", 100.0).await;
+    let candidate_id = insert_candidate(&db, "pm_occurrence", 4001, "ready", 100.0).await;
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO personnel_availability_blocks (personnel_id, block_type, start_at, end_at, reason_note, is_critical, created_by_id)
@@ -513,8 +556,8 @@ async fn double_booking_requires_override_audit() {
     let db = setup_db().await;
     let team_id = get_any_team_id(&db).await;
     let personnel_id = ensure_personnel_with_rate(&db, "TECH-BOOKED").await;
-    let c1 = insert_candidate(&db, "work_order", 5001, "ready", 100.0).await;
-    let c2 = insert_candidate(&db, "work_order", 5002, "ready", 100.0).await;
+    let c1 = insert_candidate(&db, "pm_occurrence", 5001, "ready", 100.0).await;
+    let c2 = insert_candidate(&db, "pm_occurrence", 5002, "ready", 100.0).await;
 
     scheduling::create_schedule_commitment(
         &db,
@@ -582,7 +625,7 @@ async fn double_booking_requires_override_audit() {
 async fn freeze_blocks_reschedule_and_preserves_integrity() {
     let db = setup_db().await;
     let team_id = get_any_team_id(&db).await;
-    let candidate_id = insert_candidate(&db, "work_order", 6001, "ready", 100.0).await;
+    let candidate_id = insert_candidate(&db, "pm_occurrence", 6001, "ready", 100.0).await;
     let commitment = scheduling::create_schedule_commitment(
         &db,
         1,
@@ -661,7 +704,7 @@ async fn break_in_requires_approval_or_dangerous_override() {
     let assignee_id = ensure_personnel_with_rate(&db, "TECH-BREAKIN").await;
     let approver_personnel = ensure_personnel_with_rate(&db, "APPROVER-01").await;
     ensure_approver_user(&db, 42, approver_personnel).await;
-    let candidate_id = insert_candidate(&db, "work_order", 6101, "ready", 100.0).await;
+    let candidate_id = insert_candidate(&db, "pm_occurrence", 6101, "ready", 100.0).await;
     let commitment = scheduling::create_schedule_commitment(
         &db,
         1,
@@ -745,7 +788,7 @@ async fn freeze_breach_notifications_are_deduped_and_notify_teams_emits_payloads
     let team_id = get_any_team_id(&db).await;
     let assignee_id = ensure_personnel_with_rate(&db, "TECH-NOTIFY").await;
     ensure_approver_user(&db, 44, assignee_id).await;
-    let candidate_id = insert_candidate(&db, "work_order", 6201, "ready", 100.0).await;
+    let candidate_id = insert_candidate(&db, "pm_occurrence", 6201, "ready", 100.0).await;
     let commitment = scheduling::create_schedule_commitment(
         &db,
         1,
@@ -775,13 +818,28 @@ async fn freeze_breach_notifications_are_deduped_and_notify_teams_emits_payloads
     .await
     .expect("freeze");
 
+    let frozen = scheduling::list_schedule_commitments(
+        &db,
+        ScheduleCommitmentFilter {
+            period_start: Some("2026-08-20T00:00:00Z".to_string()),
+            period_end: Some("2026-08-21T00:00:00Z".to_string()),
+            team_id: Some(team_id),
+            personnel_id: None,
+        },
+    )
+    .await
+    .expect("reload frozen commitment")
+    .into_iter()
+    .find(|c| c.id == commitment.id)
+    .expect("commitment after freeze");
+
     for _ in 0..2 {
-        let _ = scheduling::reschedule_schedule_commitment(
+        let err = scheduling::reschedule_schedule_commitment(
             &db,
             1,
             RescheduleCommitmentInput {
-                commitment_id: commitment.id,
-                expected_row_version: commitment.row_version + 1,
+                commitment_id: frozen.id,
+                expected_row_version: frozen.row_version,
                 committed_start: "2026-08-20T12:00:00Z".to_string(),
                 committed_end: "2026-08-20T14:00:00Z".to_string(),
                 assigned_team_id: team_id,
@@ -791,7 +849,9 @@ async fn freeze_breach_notifications_are_deduped_and_notify_teams_emits_payloads
                 budget_threshold: None,
             },
         )
-        .await;
+        .await
+        .expect_err("frozen commitment rejects reschedule");
+        assert!(format!("{err:?}").contains("frozen"));
     }
 
     let dedupe_count: i64 = db
@@ -825,7 +885,19 @@ async fn freeze_breach_notifications_are_deduped_and_notify_teams_emits_payloads
 async fn gantt_snapshot_and_pdf_export_use_real_commitments() {
     let db = setup_db().await;
     let team_id = get_any_team_id(&db).await;
-    let candidate_id = insert_candidate(&db, "work_order", 7001, "ready", 100.0).await;
+    let roster_person = ensure_personnel_with_rate(&db, "TECH-GANTT-ROSTER").await;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO personnel_team_assignments (
+            personnel_id, team_id, role_code, allocation_percent,
+            valid_from, valid_to, is_lead, created_at, updated_at
+         ) VALUES (?, ?, 'member', 100.0, '2026-01-01T00:00:00Z', NULL, 0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        [roster_person.into(), team_id.into()],
+    ))
+    .await
+    .expect("assign roster person to crew");
+
+    let candidate_id = insert_candidate(&db, "pm_occurrence", 7001, "ready", 100.0).await;
     let _commitment = scheduling::create_schedule_commitment(
         &db,
         1,
@@ -856,6 +928,37 @@ async fn gantt_snapshot_and_pdf_export_use_real_commitments() {
     .expect("snapshot");
     assert_eq!(snapshot.commitments.len(), 1);
     assert!(!snapshot.capacity.is_empty());
+    assert!(
+        snapshot
+            .assignee_lanes
+            .iter()
+            .any(|lane| lane.personnel_id == roster_person),
+        "gantt snapshot must seed crew roster lanes even without per-person commitments"
+    );
+    assert!(
+        snapshot.crew_lanes.is_empty(),
+        "single-crew gantt must not populate plant-wide crew_lanes"
+    );
+
+    let plant_wide = scheduling::get_planning_gantt_snapshot(
+        &db,
+        PlanningGanttFilter {
+            period_start: "2026-09-01T00:00:00Z".to_string(),
+            period_end: "2026-09-02T00:00:00Z".to_string(),
+            team_id: None,
+        },
+    )
+    .await
+    .expect("plant-wide snapshot");
+    assert_eq!(plant_wide.commitments.len(), 1);
+    assert!(
+        plant_wide.assignee_lanes.is_empty(),
+        "All Crews overview uses crew lanes, not technician lanes"
+    );
+    assert!(
+        plant_wide.crew_lanes.iter().any(|lane| lane.team_id == team_id),
+        "All Crews snapshot must include active crew lanes"
+    );
 
     let pdf = scheduling::export_planning_gantt_pdf(
         &db,
@@ -883,4 +986,384 @@ async fn gantt_snapshot_and_pdf_export_use_real_commitments() {
     .await
     .expect("list commitments");
     assert_eq!(listed.len(), 1);
+}
+
+async fn seed_equipment_for_wo(db: &DatabaseConnection) {
+    let _ = get_any_team_id(db).await;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT OR IGNORE INTO equipment
+            (id, entity_sync_id, asset_id_code, name, lifecycle_status, installed_at_node_id, created_at, updated_at)
+         VALUES (
+            1,
+            'planning-eq-001',
+            'EQ-PLN-001',
+            'Planning Test Equipment',
+            'active_in_service',
+            (SELECT id FROM org_nodes ORDER BY id LIMIT 1),
+            '2026-01-01T00:00:00Z',
+            '2026-01-01T00:00:00Z'
+         )",
+        [],
+    ))
+    .await
+    .expect("seed equipment");
+}
+
+async fn create_planning_wo(db: &DatabaseConnection, title: &str) -> (i64, i64) {
+    seed_equipment_for_wo(db).await;
+    let actor = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id FROM user_accounts WHERE is_active = 1 ORDER BY id LIMIT 1",
+            [],
+        ))
+        .await
+        .expect("query actor")
+        .and_then(|r| r.try_get::<i64>("", "id").ok())
+        .unwrap_or(1);
+
+    let wo = crate::wo::queries::create_work_order(
+        db,
+        crate::wo::domain::WoCreateInput {
+            type_code: "corrective".into(),
+            equipment_id: Some(1),
+            location_id: None,
+            source_di_id: None,
+            source_inspection_anomaly_id: None,
+            source_ram_ishikawa_diagram_id: None,
+            source_ishikawa_flow_node_id: None,
+            source_rca_cause_text: None,
+            entity_id: None,
+            planner_id: None,
+            urgency_id: Some(3),
+            title: title.into(),
+            description: Some("planning sync test".into()),
+            notes: None,
+            planned_start: Some("2026-10-01T08:00:00Z".into()),
+            planned_end: Some("2026-10-01T10:00:00Z".into()),
+            shift: None,
+            expected_duration_hours: Some(2.0),
+            creator_id: actor,
+            requires_permit: None,
+        },
+    )
+    .await
+    .expect("create WO");
+
+    let wo = crate::wo::workflow::actions::submit::submit_wo(
+        db,
+        crate::wo::workflow::actions::submit::WoSubmitInput {
+            wo_id: wo.id,
+            actor_id: actor,
+            expected_row_version: wo.row_version,
+        },
+    )
+    .await
+    .expect("submit to planning");
+
+    (wo.id, actor)
+}
+
+async fn load_wo_planning_fields(
+    db: &DatabaseConnection,
+    wo_id: i64,
+) -> (Option<String>, Option<String>, Option<i64>, Option<i64>) {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT planned_start, planned_end, assigned_team_id, primary_responsible_id
+             FROM work_orders WHERE id = ?",
+            [wo_id.into()],
+        ))
+        .await
+        .expect("query wo")
+        .expect("wo row");
+    (
+        row.try_get("", "planned_start").ok().flatten(),
+        row.try_get("", "planned_end").ok().flatten(),
+        row.try_get("", "assigned_team_id").ok().flatten(),
+        row.try_get("", "primary_responsible_id").ok().flatten(),
+    )
+}
+
+#[tokio::test]
+async fn commitment_write_back_updates_work_order_fields() {
+    let db = setup_db().await;
+    let team_id = get_any_team_id(&db).await;
+    let personnel_id = ensure_personnel_with_rate(&db, "TECH-SYNC").await;
+    let user_id = 55_i64;
+    ensure_approver_user(&db, user_id, personnel_id).await;
+
+    let (wo_id, actor_id) = create_planning_wo(&db, "Sync commit WO").await;
+    let candidate_id = insert_candidate(&db, "work_order", wo_id, "ready", 100.0).await;
+
+    let commitment = scheduling::create_schedule_commitment(
+        &db,
+        actor_id,
+        CreateScheduleCommitmentInput {
+            schedule_candidate_id: candidate_id,
+            expected_candidate_row_version: None,
+            committed_start: "2026-10-05T08:00:00Z".to_string(),
+            committed_end: "2026-10-05T12:00:00Z".to_string(),
+            assigned_team_id: team_id,
+            assigned_personnel_id: Some(personnel_id),
+            allow_double_booking_override: Some(false),
+            override_reason: None,
+            budget_threshold: None,
+        },
+    )
+    .await
+    .expect("create commitment with write-back");
+
+    let (start, end, group, responsible) = load_wo_planning_fields(&db, wo_id).await;
+    assert_eq!(start.as_deref(), Some("2026-10-05T08:00:00Z"));
+    assert_eq!(end.as_deref(), Some("2026-10-05T12:00:00Z"));
+    assert_eq!(group, Some(team_id));
+    assert_eq!(responsible, Some(user_id));
+
+    let candidate = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT window_start, window_end, assigned_team_id, assigned_personnel_id
+             FROM schedule_candidates WHERE id = ?",
+            [candidate_id.into()],
+        ))
+        .await
+        .expect("query candidate")
+        .expect("candidate");
+    assert_eq!(
+        candidate
+            .try_get::<Option<String>>("", "window_start")
+            .unwrap()
+            .as_deref(),
+        Some("2026-10-05T08:00:00Z")
+    );
+    assert_eq!(
+        candidate.try_get::<Option<i64>>("", "assigned_team_id").unwrap(),
+        Some(team_id)
+    );
+    assert_eq!(
+        candidate.try_get::<Option<i64>>("", "assigned_personnel_id").unwrap(),
+        Some(personnel_id)
+    );
+
+    let action_count: i64 = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS c FROM wo_action_events
+             WHERE wo_id = ? AND action_code IN ('schedule_changed', 'assigned')",
+            [wo_id.into()],
+        ))
+        .await
+        .expect("count actions")
+        .and_then(|r| r.try_get("", "c").ok())
+        .unwrap_or(0);
+    assert!(action_count >= 2);
+
+    let change_count: i64 = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS c FROM wo_change_events
+             WHERE wo_id = ? AND action IN ('planned', 'assigned')
+               AND summary LIKE '%planning commitment%'",
+            [wo_id.into()],
+        ))
+        .await
+        .expect("count change events")
+        .and_then(|r| r.try_get("", "c").ok())
+        .unwrap_or(0);
+    assert!(change_count >= 2);
+
+    let rescheduled = scheduling::reschedule_schedule_commitment(
+        &db,
+        actor_id,
+        RescheduleCommitmentInput {
+            commitment_id: commitment.id,
+            expected_row_version: commitment.row_version,
+            committed_start: "2026-10-06T09:00:00Z".to_string(),
+            committed_end: "2026-10-06T11:00:00Z".to_string(),
+            assigned_team_id: team_id,
+            assigned_personnel_id: Some(personnel_id),
+            allow_double_booking_override: Some(false),
+            override_reason: None,
+            budget_threshold: None,
+        },
+    )
+    .await
+    .expect("reschedule write-back");
+
+    let (start, end, group, responsible) = load_wo_planning_fields(&db, wo_id).await;
+    assert_eq!(start.as_deref(), Some("2026-10-06T09:00:00Z"));
+    assert_eq!(end.as_deref(), Some("2026-10-06T11:00:00Z"));
+    assert_eq!(group, Some(team_id));
+    assert_eq!(responsible, Some(user_id));
+    assert_eq!(rescheduled.committed_start, "2026-10-06T09:00:00Z");
+}
+
+#[tokio::test]
+async fn break_in_write_back_updates_work_order_slot() {
+    let db = setup_db().await;
+    let team_id = get_any_team_id(&db).await;
+    let personnel_id = ensure_personnel_with_rate(&db, "TECH-BREAKIN-SYNC").await;
+    let approver_personnel = ensure_personnel_with_rate(&db, "APPROVER-SYNC").await;
+    ensure_approver_user(&db, 66, approver_personnel).await;
+
+    let (wo_id, actor_id) = create_planning_wo(&db, "Sync break-in WO").await;
+    let candidate_id = insert_candidate(&db, "work_order", wo_id, "ready", 100.0).await;
+    let commitment = scheduling::create_schedule_commitment(
+        &db,
+        actor_id,
+        CreateScheduleCommitmentInput {
+            schedule_candidate_id: candidate_id,
+            expected_candidate_row_version: None,
+            committed_start: "2026-11-01T08:00:00Z".to_string(),
+            committed_end: "2026-11-01T10:00:00Z".to_string(),
+            assigned_team_id: team_id,
+            assigned_personnel_id: Some(personnel_id),
+            allow_double_booking_override: Some(false),
+            override_reason: None,
+            budget_threshold: None,
+        },
+    )
+    .await
+    .expect("commitment");
+
+    scheduling::create_schedule_break_in(
+        &db,
+        actor_id,
+        CreateScheduleBreakInInput {
+            schedule_commitment_id: commitment.id,
+            expected_commitment_row_version: commitment.row_version,
+            break_in_reason: "emergency".to_string(),
+            new_slot_start: "2026-11-01T14:00:00Z".to_string(),
+            new_slot_end: "2026-11-01T16:00:00Z".to_string(),
+            new_assigned_team_id: Some(team_id),
+            new_assigned_personnel_id: Some(personnel_id),
+            approved_by_user_id: Some(66),
+            override_reason: Some("Emergency move".to_string()),
+            dangerous_override_reason: None,
+            bypass_availability: Some(true),
+            bypass_qualification: Some(true),
+        },
+    )
+    .await
+    .expect("break-in");
+
+    let (start, end, group, _) = load_wo_planning_fields(&db, wo_id).await;
+    assert_eq!(start.as_deref(), Some("2026-11-01T14:00:00Z"));
+    assert_eq!(end.as_deref(), Some("2026-11-01T16:00:00Z"));
+    assert_eq!(group, Some(team_id));
+}
+
+#[tokio::test]
+async fn frozen_reschedule_leaves_work_order_unchanged() {
+    let db = setup_db().await;
+    let team_id = get_any_team_id(&db).await;
+    let (wo_id, actor_id) = create_planning_wo(&db, "Frozen sync WO").await;
+    let candidate_id = insert_candidate(&db, "work_order", wo_id, "ready", 100.0).await;
+    let commitment = scheduling::create_schedule_commitment(
+        &db,
+        actor_id,
+        CreateScheduleCommitmentInput {
+            schedule_candidate_id: candidate_id,
+            expected_candidate_row_version: None,
+            committed_start: "2026-12-01T08:00:00Z".to_string(),
+            committed_end: "2026-12-01T10:00:00Z".to_string(),
+            assigned_team_id: team_id,
+            assigned_personnel_id: None,
+            allow_double_booking_override: Some(false),
+            override_reason: None,
+            budget_threshold: None,
+        },
+    )
+    .await
+    .expect("commitment");
+
+    scheduling::freeze_schedule_period(
+        &db,
+        actor_id,
+        FreezeSchedulePeriodInput {
+            period_start: "2026-12-01T00:00:00Z".to_string(),
+            period_end: "2026-12-02T00:00:00Z".to_string(),
+            reason: Some("Weekly freeze".to_string()),
+        },
+    )
+    .await
+    .expect("freeze");
+
+    let err = scheduling::reschedule_schedule_commitment(
+        &db,
+        actor_id,
+        RescheduleCommitmentInput {
+            commitment_id: commitment.id,
+            expected_row_version: commitment.row_version + 1, // freeze bumps row_version
+            committed_start: "2026-12-01T12:00:00Z".to_string(),
+            committed_end: "2026-12-01T14:00:00Z".to_string(),
+            assigned_team_id: team_id,
+            assigned_personnel_id: None,
+            allow_double_booking_override: Some(false),
+            override_reason: None,
+            budget_threshold: None,
+        },
+    )
+    .await
+    .expect_err("frozen reschedule blocked");
+    assert!(format!("{err:?}").contains("frozen"));
+
+    let (start, end, group, _) = load_wo_planning_fields(&db, wo_id).await;
+    assert_eq!(start.as_deref(), Some("2026-12-01T08:00:00Z"));
+    assert_eq!(end.as_deref(), Some("2026-12-01T10:00:00Z"));
+    assert_eq!(group, Some(team_id));
+}
+
+#[tokio::test]
+async fn commitment_rejects_when_work_order_not_planning_or_ready() {
+    let db = setup_db().await;
+    let team_id = get_any_team_id(&db).await;
+    let (wo_id, actor_id) = create_planning_wo(&db, "Draft-block sync WO").await;
+
+    // Force WO back to draft by rewriting status (simulates non-schedulable state).
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE work_orders
+         SET status_id = (SELECT id FROM work_order_statuses WHERE code = 'draft'),
+             row_version = row_version + 1
+         WHERE id = ?",
+        [wo_id.into()],
+    ))
+    .await
+    .expect("force draft");
+
+    let candidate_id = insert_candidate(&db, "work_order", wo_id, "ready", 100.0).await;
+    let err = scheduling::create_schedule_commitment(
+        &db,
+        actor_id,
+        CreateScheduleCommitmentInput {
+            schedule_candidate_id: candidate_id,
+            expected_candidate_row_version: None,
+            committed_start: "2026-12-10T08:00:00Z".to_string(),
+            committed_end: "2026-12-10T10:00:00Z".to_string(),
+            assigned_team_id: team_id,
+            assigned_personnel_id: None,
+            allow_double_booking_override: Some(false),
+            override_reason: None,
+            budget_threshold: None,
+        },
+    )
+    .await
+    .expect_err("draft WO must fail write-back");
+    assert!(format!("{err:?}").contains("planning or ready"));
+
+    let commitment_count: i64 = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS c FROM schedule_commitments WHERE source_type = 'work_order' AND source_id = ?",
+            [wo_id.into()],
+        ))
+        .await
+        .expect("count")
+        .and_then(|r| r.try_get("", "c").ok())
+        .unwrap_or(0);
+    assert_eq!(commitment_count, 0);
 }

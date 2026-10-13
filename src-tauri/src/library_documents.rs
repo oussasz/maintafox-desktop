@@ -1,8 +1,11 @@
 //! Tenant document library — filesystem storage + SQLite metadata (WO/DI attachment pattern).
+//!
+//! Documents replicate like attachments: the row syncs, and its `media_attachments` row (parent
+//! `library_documents`) makes the sync worker upload the file and the other devices download it.
 
 use crate::errors::{AppError, AppResult};
 use chrono::Utc;
-use sea_orm::{ConnectionTrait, DbBackend, QueryResult, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
@@ -137,11 +140,14 @@ pub struct LibraryDocumentUploadInput {
 }
 
 pub async fn save_library_document(
-    db: &impl ConnectionTrait,
+    db: &DatabaseConnection,
     app_data_dir: &Path,
     input: LibraryDocumentUploadInput,
 ) -> AppResult<LibraryDocumentRow> {
     validate_category(&input.category)?;
+    if input.file_bytes.is_empty() {
+        return Err(AppError::ValidationFailed(vec!["The file is empty.".into()]));
+    }
 
     if input.file_bytes.len() > MAX_FILE_SIZE_BYTES {
         return Err(AppError::ValidationFailed(vec![format!(
@@ -158,8 +164,14 @@ pub async fn save_library_document(
         return Err(AppError::ValidationFailed(vec!["Invalid file name.".into()]));
     }
 
+    // Resolved before the transaction: the helper reads through the pool connection.
+    let env = crate::sync::media::resolve_media_deployment_env();
+    let tenant_id = crate::sync::media::resolve_media_tenant_id(db).await;
+    // The document row and its media row commit together.
+    let txn = db.begin().await?;
+
     if let Some(eid) = input.equipment_id {
-        let exists = db
+        let exists = txn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "SELECT id FROM equipment WHERE id = ? AND deleted_at IS NULL",
@@ -193,12 +205,14 @@ pub async fn save_library_document(
         title
     };
 
-    db.execute(Statement::from_sql_and_values(
+    let entity_sync_id = crate::sync::identity::new_entity_sync_id();
+    let mime_type = input.mime_type.clone();
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO library_documents \
             (category, equipment_id, title, file_name, relative_path, mime_type, size_bytes, \
-             uploaded_by_id, uploaded_at, notes) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             uploaded_by_id, uploaded_at, notes, entity_sync_id) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             input.category.into(),
             input
@@ -216,11 +230,25 @@ pub async fn save_library_document(
                 .notes
                 .map(sea_orm::Value::from)
                 .unwrap_or(sea_orm::Value::from(None::<String>)),
+            entity_sync_id.clone().into(),
         ],
     ))
     .await?;
 
-    let row = db
+    let media = crate::sync::media::build_media_attachment(
+        env,
+        &tenant_id,
+        "library_documents",
+        &entity_sync_id,
+        sanitized_name,
+        &mime_type,
+        &input.file_bytes,
+        Some(relative_path.clone()),
+        None,
+    )?;
+    crate::sync::media::upsert_media_attachment_row(&txn, &media).await?;
+
+    let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT ld.id, ld.category, ld.equipment_id, ld.title, ld.file_name, ld.relative_path, \
@@ -233,8 +261,9 @@ pub async fn save_library_document(
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to re-fetch library_documents row")))?;
-
-    map_row(&row)
+    let document = map_row(&row)?;
+    txn.commit().await?;
+    Ok(document)
 }
 
 /// Read file bytes for a document (path validated against stored prefix).
@@ -266,21 +295,41 @@ pub async fn read_library_document_file(db: &impl ConnectionTrait, app_data_dir:
         .map_err(|e| AppError::Internal(anyhow::anyhow!("Failed to read library file {relative_path}: {e}")))
 }
 
-pub async fn delete_library_document_record(db: &impl ConnectionTrait, id: i64) -> AppResult<()> {
-    let result = db
-        .execute(Statement::from_sql_and_values(
+/// Delete the document row and its media row (the file stays on disk, like attachments).
+pub async fn delete_library_document_record(db: &DatabaseConnection, id: i64) -> AppResult<()> {
+    let txn = db.begin().await?;
+    let row = txn
+        .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "DELETE FROM library_documents WHERE id = ?",
+            "SELECT relative_path, entity_sync_id FROM library_documents WHERE id = ?",
             [id.into()],
         ))
-        .await?;
-
-    if result.rows_affected() == 0 {
-        return Err(AppError::NotFound {
+        .await?
+        .ok_or_else(|| AppError::NotFound {
             entity: "LibraryDocument".into(),
             id: id.to_string(),
-        });
-    }
+        })?;
+    let relative_path: String = row
+        .try_get("", "relative_path")
+        .map_err(|e| decode_err("relative_path", e))?;
+    let entity_sync_id: Option<String> = row
+        .try_get("", "entity_sync_id")
+        .map_err(|e| decode_err("entity_sync_id", e))?;
+    crate::sync::media::delete_media_attachment_if_found(
+        &txn,
+        Some("library_documents"),
+        entity_sync_id.as_deref(),
+        Some(relative_path.as_str()),
+        None,
+    )
+    .await?;
+    txn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "DELETE FROM library_documents WHERE id = ?",
+        [id.into()],
+    ))
+    .await?;
+    txn.commit().await?;
     Ok(())
 }
 

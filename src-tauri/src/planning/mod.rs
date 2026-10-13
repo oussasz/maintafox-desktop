@@ -3,6 +3,7 @@
 pub mod domain;
 pub mod queries;
 pub mod scheduling;
+pub mod wo_sync;
 
 #[cfg(test)]
 mod tests;

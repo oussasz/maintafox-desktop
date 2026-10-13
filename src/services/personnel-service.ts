@@ -10,6 +10,7 @@ import { invoke } from "@/lib/ipc-invoke";
 import type {
   DeclareOwnSkillInput,
   AvailabilityBlockCreateInput,
+  AvailabilityBlockUpdateInput,
   AvailabilityCalendarEntry,
   AvailabilityCalendarFilter,
   CompanyListFilter,
@@ -38,6 +39,12 @@ import type {
   SkillsMatrixFilter,
   TeamCapacityFilter,
   TeamCapacitySummaryRow,
+  TeamCreateInput,
+  TeamListFilter,
+  TeamMemberRow,
+  SetTeamLeadInput,
+  TeamSummary,
+  TeamUpdateInput,
   SuccessionRiskRow,
   PersonnelImportCreateInput,
   PersonnelImportApplyResult,
@@ -113,6 +120,8 @@ export const PersonnelSchema = z.object({
   supervisor_name: z.string().nullable(),
   schedule_name: z.string().nullable(),
   company_name: z.string().nullable(),
+  /** Contact, contract and HR fields withheld (no per.sensitiveview, not own record). */
+  sensitive_masked: z.boolean().optional().default(false),
 });
 export const PersonnelListPageSchema = z.object({
   items: z.array(PersonnelSchema),
@@ -238,8 +247,19 @@ export const PersonnelAvailabilityBlockSchema = z.object({
   reason_note: z.string().nullable(),
   is_critical: z.boolean(),
   created_by_id: z.number().nullable(),
+  created_by_label: z.string().nullable(),
   created_at: z.string(),
+  /** `reason_note` withheld (no per.sensitiveview, not own record). */
+  reason_masked: z.boolean().optional().default(false),
 });
+
+/** Backend ValidationFailed payload fragment for soft overlap confirm. */
+export const AVAILABILITY_BLOCK_OVERLAP_CONFIRM = "AVAILABILITY_BLOCK_OVERLAP_CONFIRM";
+
+export function isAvailabilityOverlapConfirmError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return message.includes(AVAILABILITY_BLOCK_OVERLAP_CONFIRM);
+}
 
 export const PersonnelTeamAssignmentSchema = z.object({
   id: z.number(),
@@ -558,6 +578,23 @@ export async function uploadPersonnelPhoto(
   return path;
 }
 
+const PersonnelPhotoPreviewSchema = z.object({
+  mime_type: z.string(),
+  data_base64: z.string(),
+});
+
+/** Load photo bytes via IPC for a `data:` URL (do not use `convertFileSrc`). */
+export async function readPersonnelPhotoPreview(
+  personnelId: number,
+): Promise<{ mime_type: string; data_base64: string }> {
+  const raw = await invokeParsed(
+    "read_personnel_photo_preview",
+    { personnelId },
+    PersonnelPhotoPreviewSchema,
+  );
+  return raw;
+}
+
 export async function listPersonnelAssignmentHistory(
   personnelId: number,
   limit = 60,
@@ -597,6 +634,15 @@ export async function listRateCards(personnelId: number): Promise<PersonnelRateC
     z.array(PersonnelRateCardSchema),
   );
   return rows as PersonnelRateCard[];
+}
+
+export async function getActiveRateCard(personnelId: number): Promise<PersonnelRateCard | null> {
+  const row = await invokeParsed(
+    "get_active_rate_card",
+    { personnelId },
+    PersonnelRateCardSchema.nullable(),
+  );
+  return row as PersonnelRateCard | null;
 }
 
 export async function createRateCard(
@@ -718,12 +764,96 @@ export async function listTeamCapacitySummary(
   return rows as TeamCapacitySummaryRow[];
 }
 
+export const TeamSummarySchema = z.object({
+  id: z.number(),
+  entity_sync_id: z.string(),
+  code: z.string(),
+  name: z.string(),
+  team_type: z.string(),
+  status: z.string(),
+  primary_node_id: z.number().nullable(),
+  node_name: z.string().nullable(),
+  node_code: z.string().nullable(),
+  description: z.string().nullable(),
+  icon_key: z.string().nullable(),
+  accent_color: z.string().nullable(),
+});
+
+export async function listActiveTeams(filter: TeamListFilter = {}): Promise<TeamSummary[]> {
+  const rows = await invokeParsed("list_active_teams", { filter }, z.array(TeamSummarySchema));
+  return rows as TeamSummary[];
+}
+
+export async function getTeam(teamId: number): Promise<TeamSummary> {
+  const row = await invokeParsed("get_team", { teamId }, TeamSummarySchema);
+  return row as TeamSummary;
+}
+
+const TeamMemberRowSchema = z.object({
+  assignment_id: z.number(),
+  personnel_id: z.number(),
+  employee_code: z.string(),
+  full_name: z.string(),
+  position_name: z.string().nullable(),
+  role_code: z.string(),
+  allocation_percent: z.number(),
+  valid_from: z.string().nullable(),
+  valid_to: z.string().nullable(),
+  is_lead: z.number(),
+  availability_status: z.string(),
+  user_account_id: z.number().nullable(),
+});
+
+export async function listTeamMembers(teamId: number): Promise<TeamMemberRow[]> {
+  const rows = await invokeParsed("list_team_members", { teamId }, z.array(TeamMemberRowSchema));
+  return rows as TeamMemberRow[];
+}
+
+export async function createTeam(input: TeamCreateInput): Promise<TeamSummary> {
+  const row = await invokeParsed("create_team", { input }, TeamSummarySchema);
+  return row as TeamSummary;
+}
+
+export async function updateTeam(input: TeamUpdateInput): Promise<TeamSummary> {
+  const row = await invokeParsed("update_team", { input }, TeamSummarySchema);
+  return row as TeamSummary;
+}
+
+export async function setTeamLead(input: SetTeamLeadInput): Promise<TeamMemberRow> {
+  const row = await invokeParsed("set_team_lead", { input }, TeamMemberRowSchema);
+  return row as TeamMemberRow;
+}
+
 export async function createAvailabilityBlock(
   input: AvailabilityBlockCreateInput,
 ): Promise<PersonnelAvailabilityBlock> {
   const row = await invokeParsed(
     "create_availability_block",
     { input },
+    PersonnelAvailabilityBlockSchema,
+  );
+  return row as PersonnelAvailabilityBlock;
+}
+
+export async function updateAvailabilityBlock(
+  input: AvailabilityBlockUpdateInput,
+): Promise<PersonnelAvailabilityBlock> {
+  const row = await invokeParsed(
+    "update_availability_block",
+    { input },
+    PersonnelAvailabilityBlockSchema,
+  );
+  return row as PersonnelAvailabilityBlock;
+}
+
+export async function deleteAvailabilityBlock(id: number): Promise<void> {
+  await invoke("delete_availability_block", { id });
+}
+
+export async function endAvailabilityBlock(id: number): Promise<PersonnelAvailabilityBlock> {
+  const row = await invokeParsed(
+    "end_availability_block",
+    { id },
     PersonnelAvailabilityBlockSchema,
   );
   return row as PersonnelAvailabilityBlock;

@@ -1,6 +1,6 @@
 use std::collections::{BTreeSet, HashMap};
 
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde_json::{json, Value};
 
 use crate::errors::{AppError, AppResult};
@@ -10,9 +10,43 @@ use super::domain::{
     ScheduleCandidate, ScheduleCandidateFilter, SchedulingConflict,
 };
 
-const CANDIDATE_COLS: &str = "id,source_type,source_id,source_di_id,readiness_status,readiness_score,priority_id,required_skill_set_json,required_parts_ready,permit_status,shutdown_requirement,prerequisite_status,estimated_duration_hours,assigned_personnel_id,assigned_team_id,window_start,window_end,suggested_assignees_json,availability_conflict_count,skill_match_score,estimated_labor_cost_range_json,blocking_flags_json,open_work_count,next_available_window,estimated_assignment_risk,risk_reason_codes_json,row_version,created_at,updated_at";
+const CANDIDATE_COLS: &str = "sc.id,sc.source_type,sc.source_id,sc.source_di_id,sc.readiness_status,sc.readiness_score,sc.priority_id,sc.required_skill_set_json,sc.required_parts_ready,sc.permit_status,sc.shutdown_requirement,sc.prerequisite_status,sc.estimated_duration_hours,sc.assigned_personnel_id,sc.assigned_team_id,sc.window_start,sc.window_end,sc.suggested_assignees_json,sc.availability_conflict_count,sc.skill_match_score,sc.estimated_labor_cost_range_json,sc.blocking_flags_json,sc.open_work_count,sc.next_available_window,sc.estimated_assignment_risk,sc.risk_reason_codes_json,sc.row_version,sc.created_at,sc.updated_at";
+const CANDIDATE_JOIN_COLS: &str = "\
+    CASE sc.source_type \
+        WHEN 'work_order' THEN wo.code \
+        WHEN 'pm_occurrence' THEN COALESCE(pp.code, 'PM-' || CAST(sc.source_id AS TEXT)) \
+        WHEN 'inspection_follow_up' THEN ir.code \
+        ELSE NULL \
+    END AS source_code, \
+    CASE sc.source_type \
+        WHEN 'work_order' THEN wo.title \
+        WHEN 'pm_occurrence' THEN COALESCE(pp.title, po.status) \
+        WHEN 'inspection_follow_up' THEN ir.title \
+        ELSE NULL \
+    END AS source_title, \
+    CASE WHEN t.id IS NOT NULL THEN t.name || ' (' || t.code || ')' ELSE NULL END AS assigned_team_label, \
+    p.full_name AS assigned_personnel_name, \
+    ul.label AS priority_label";
+const CANDIDATE_JOINS: &str = "\
+    LEFT JOIN work_orders wo ON sc.source_type = 'work_order' AND wo.id = sc.source_id \
+    LEFT JOIN pm_occurrences po ON sc.source_type = 'pm_occurrence' AND po.id = sc.source_id \
+    LEFT JOIN pm_plans pp ON pp.id = po.pm_plan_id \
+    LEFT JOIN intervention_requests ir ON sc.source_type = 'inspection_follow_up' AND ir.id = sc.source_id \
+    LEFT JOIN teams t ON t.id = sc.assigned_team_id \
+    LEFT JOIN personnel p ON p.id = sc.assigned_personnel_id \
+    LEFT JOIN urgency_levels ul ON ul.id = sc.priority_id";
 const CONFLICT_COLS: &str =
     "id,candidate_id,conflict_type,reference_type,reference_id,reason_code,severity,details_json,resolved_at,created_at";
+
+/// WO statuses that feed the planning backlog (Option B + legacy aliases).
+/// Option B: `planning` (Kanban Planification), `ready` (Kanban Prêt).
+/// Legacy: remapped by m20260814 but still referenced by older DBs / overlap checks.
+const WO_SCHEDULE_CANDIDATE_STATUS_SQL: &str =
+    "'planning','ready','planned','ready_to_schedule','assigned','waiting_for_prerequisite','awaiting_approval'";
+
+/// Open WO statuses counted as concurrent assignee load during readiness evaluation.
+const WO_OPEN_ASSIGNMENT_STATUS_SQL: &str =
+    "'planning','ready','planned','ready_to_schedule','assigned','waiting_for_prerequisite','awaiting_approval','in_progress','on_hold'";
 
 #[derive(Debug, Clone)]
 struct EvaluatedConflict {
@@ -108,6 +142,13 @@ fn map_candidate(row: &QueryResult) -> AppResult<ScheduleCandidate> {
             .map_err(|e| decode_err("row_version", e))?,
         created_at: row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
         updated_at: row.try_get("", "updated_at").map_err(|e| decode_err("updated_at", e))?,
+        source_code: row.try_get::<Option<String>>("", "source_code").unwrap_or(None),
+        source_title: row.try_get::<Option<String>>("", "source_title").unwrap_or(None),
+        assigned_team_label: row.try_get::<Option<String>>("", "assigned_team_label").unwrap_or(None),
+        assigned_personnel_name: row
+            .try_get::<Option<String>>("", "assigned_personnel_name")
+            .unwrap_or(None),
+        priority_label: row.try_get::<Option<String>>("", "priority_label").unwrap_or(None),
     })
 }
 
@@ -170,11 +211,16 @@ fn parse_string_array(input: Option<&str>) -> Vec<String> {
         .collect()
 }
 
-async fn get_candidate(db: &DatabaseConnection, candidate_id: i64) -> AppResult<ScheduleCandidate> {
+async fn get_candidate(db: &impl ConnectionTrait, candidate_id: i64) -> AppResult<ScheduleCandidate> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            format!("SELECT {CANDIDATE_COLS} FROM schedule_candidates WHERE id = ?"),
+            format!(
+                "SELECT {CANDIDATE_COLS}, {CANDIDATE_JOIN_COLS}
+                 FROM schedule_candidates sc
+                 {CANDIDATE_JOINS}
+                 WHERE sc.id = ?"
+            ),
             [candidate_id.into()],
         ))
         .await?
@@ -193,15 +239,15 @@ pub async fn list_schedule_candidates(
     let mut values: Vec<sea_orm::Value> = Vec::new();
 
     if let Some(source_type) = filter.source_type {
-        where_sql.push("source_type = ?".to_string());
+        where_sql.push("sc.source_type = ?".to_string());
         values.push(source_type.into());
     }
     if let Some(readiness_status) = filter.readiness_status {
-        where_sql.push("readiness_status = ?".to_string());
+        where_sql.push("sc.readiness_status = ?".to_string());
         values.push(readiness_status.into());
     }
     if let Some(assigned_personnel_id) = filter.assigned_personnel_id {
-        where_sql.push("assigned_personnel_id = ?".to_string());
+        where_sql.push("sc.assigned_personnel_id = ?".to_string());
         values.push(assigned_personnel_id.into());
     }
 
@@ -209,17 +255,18 @@ pub async fn list_schedule_candidates(
     let include_resolved = filter.include_resolved_conflicts.unwrap_or(false);
     if !include_resolved {
         where_sql.push(
-            "NOT EXISTS (SELECT 1 FROM scheduling_conflicts sc WHERE sc.candidate_id = schedule_candidates.id AND sc.resolved_at IS NULL)"
+            "NOT EXISTS (SELECT 1 FROM scheduling_conflicts scx WHERE scx.candidate_id = sc.id AND scx.resolved_at IS NULL)"
                 .to_string(),
         );
     }
 
     values.push(limit.into());
     let sql = format!(
-        "SELECT {CANDIDATE_COLS}
-         FROM schedule_candidates
+        "SELECT {CANDIDATE_COLS}, {CANDIDATE_JOIN_COLS}
+         FROM schedule_candidates sc
+         {CANDIDATE_JOINS}
          WHERE {}
-         ORDER BY readiness_status DESC, readiness_score DESC, updated_at DESC
+         ORDER BY sc.readiness_status DESC, sc.readiness_score DESC, sc.updated_at DESC
          LIMIT ?",
         where_sql.join(" AND ")
     );
@@ -257,24 +304,41 @@ pub async fn list_scheduling_conflicts(
     rows.iter().map(map_conflict).collect()
 }
 
-async fn refresh_from_work_orders(db: &DatabaseConnection, limit: i64) -> AppResult<(i64, i64)> {
+async fn refresh_from_work_orders(db: &impl ConnectionTrait, limit: i64) -> AppResult<(i64, i64)> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT
-                wo.id AS source_id,
-                wo.source_di_id,
-                wo.primary_responsible_id AS assigned_personnel_id,
-                wo.assigned_group_id AS assigned_team_id,
-                wo.planned_start AS window_start,
-                wo.planned_end AS window_end,
-                wo.expected_duration_hours,
-                wos.code AS status_code
-             FROM work_orders wo
-             JOIN work_order_statuses wos ON wos.id = wo.status_id
-             WHERE wos.code IN ('planned','ready_to_schedule','assigned','waiting_for_prerequisite')
-             ORDER BY wo.updated_at DESC
-             LIMIT ?",
+            format!(
+                "SELECT
+                    wo.id AS source_id,
+                    (
+                      SELECT ir.id
+                      FROM intervention_requests ir
+                      WHERE ir.id = wo.source_di_id
+                    ) AS source_di_id,
+                    (
+                      SELECT ua.personnel_id
+                      FROM user_accounts ua
+                      WHERE ua.id = wo.primary_responsible_id
+                        AND ua.deleted_at IS NULL
+                        AND ua.personnel_id IS NOT NULL
+                    ) AS assigned_personnel_id,
+                    (
+                      SELECT t.id
+                      FROM teams t
+                      WHERE t.id = wo.assigned_team_id
+                        AND t.deleted_at IS NULL
+                    ) AS assigned_team_id,
+                    wo.planned_start AS window_start,
+                    wo.planned_end AS window_end,
+                    wo.expected_duration_hours,
+                    wos.code AS status_code
+                 FROM work_orders wo
+                 JOIN work_order_statuses wos ON wos.id = wo.status_id
+                 WHERE wos.code IN ({WO_SCHEDULE_CANDIDATE_STATUS_SQL})
+                 ORDER BY wo.updated_at DESC
+                 LIMIT ?"
+            ),
             [limit.into()],
         ))
         .await?;
@@ -313,9 +377,9 @@ async fn refresh_from_work_orders(db: &DatabaseConnection, limit: i64) -> AppRes
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "INSERT INTO schedule_candidates
-                    (source_type, source_id, source_di_id, assigned_personnel_id, assigned_team_id, window_start, window_end, estimated_duration_hours, prerequisite_status, permit_status, shutdown_requirement)
+                    (entity_sync_id, source_type, source_id, source_di_id, assigned_personnel_id, assigned_team_id, window_start, window_end, estimated_duration_hours, prerequisite_status, permit_status, shutdown_requirement)
                  VALUES
-                    ('work_order', ?, ?, ?, ?, ?, ?, ?, ?, 'unknown', NULL)
+                    (?, 'work_order', ?, ?, ?, ?, ?, ?, ?, ?, 'unknown', NULL)
                  ON CONFLICT(source_type, source_id) DO UPDATE SET
                     source_di_id = excluded.source_di_id,
                     assigned_personnel_id = excluded.assigned_personnel_id,
@@ -327,6 +391,7 @@ async fn refresh_from_work_orders(db: &DatabaseConnection, limit: i64) -> AppRes
                     row_version = schedule_candidates.row_version + 1,
                     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')",
                 [
+                    candidate_sync_id(db, "work_order", "work_orders", source_id).await?.into(),
                     source_id.into(),
                     source_di_id.into(),
                     assigned_personnel_id.into(),
@@ -348,7 +413,7 @@ async fn refresh_from_work_orders(db: &DatabaseConnection, limit: i64) -> AppRes
     Ok((inserted, updated))
 }
 
-async fn refresh_from_pm_occurrences(db: &DatabaseConnection, limit: i64) -> AppResult<(i64, i64)> {
+async fn refresh_from_pm_occurrences(db: &impl ConnectionTrait, limit: i64) -> AppResult<(i64, i64)> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -360,9 +425,24 @@ async fn refresh_from_pm_occurrences(db: &DatabaseConnection, limit: i64) -> App
                 po.status AS occurrence_status,
                 pp.requires_permit,
                 pp.requires_shutdown,
-                wo.source_di_id,
-                wo.primary_responsible_id AS assigned_personnel_id,
-                wo.assigned_group_id AS assigned_team_id,
+                (
+                  SELECT ir.id
+                  FROM intervention_requests ir
+                  WHERE ir.id = wo.source_di_id
+                ) AS source_di_id,
+                (
+                  SELECT ua.personnel_id
+                  FROM user_accounts ua
+                  WHERE ua.id = wo.primary_responsible_id
+                    AND ua.deleted_at IS NULL
+                    AND ua.personnel_id IS NOT NULL
+                ) AS assigned_personnel_id,
+                (
+                  SELECT t.id
+                  FROM teams t
+                  WHERE t.id = wo.assigned_team_id
+                    AND t.deleted_at IS NULL
+                ) AS assigned_team_id,
                 pv.required_skills_json
              FROM pm_occurrences po
              JOIN pm_plan_versions pv ON pv.id = po.plan_version_id
@@ -428,9 +508,9 @@ async fn refresh_from_pm_occurrences(db: &DatabaseConnection, limit: i64) -> App
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "INSERT INTO schedule_candidates
-                    (source_type, source_id, source_di_id, assigned_personnel_id, assigned_team_id, window_start, window_end, estimated_duration_hours, prerequisite_status, permit_status, shutdown_requirement, required_skill_set_json)
+                    (entity_sync_id, source_type, source_id, source_di_id, assigned_personnel_id, assigned_team_id, window_start, window_end, estimated_duration_hours, prerequisite_status, permit_status, shutdown_requirement, required_skill_set_json)
                  VALUES
-                    ('pm_occurrence', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (?, 'pm_occurrence', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT(source_type, source_id) DO UPDATE SET
                     source_di_id = excluded.source_di_id,
                     assigned_personnel_id = excluded.assigned_personnel_id,
@@ -445,6 +525,7 @@ async fn refresh_from_pm_occurrences(db: &DatabaseConnection, limit: i64) -> App
                     row_version = schedule_candidates.row_version + 1,
                     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')",
                 [
+                    candidate_sync_id(db, "pm_occurrence", "pm_occurrences", source_id).await?.into(),
                     source_id.into(),
                     source_di_id.into(),
                     assigned_personnel_id.into(),
@@ -469,7 +550,7 @@ async fn refresh_from_pm_occurrences(db: &DatabaseConnection, limit: i64) -> App
     Ok((inserted, updated))
 }
 
-async fn refresh_from_approved_di(db: &DatabaseConnection, limit: i64) -> AppResult<(i64, i64)> {
+async fn refresh_from_approved_di(db: &impl ConnectionTrait, limit: i64) -> AppResult<(i64, i64)> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -507,9 +588,9 @@ async fn refresh_from_approved_di(db: &DatabaseConnection, limit: i64) -> AppRes
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "INSERT INTO schedule_candidates
-                    (source_type, source_id, source_di_id, window_start, window_end, estimated_duration_hours, prerequisite_status, permit_status)
+                    (entity_sync_id, source_type, source_id, source_di_id, window_start, window_end, estimated_duration_hours, prerequisite_status, permit_status)
                  VALUES
-                    ('inspection_follow_up', ?, ?, ?, ?, ?, ?, 'unknown')
+                    (?, 'inspection_follow_up', ?, ?, ?, ?, ?, ?, 'unknown')
                  ON CONFLICT(source_type, source_id) DO UPDATE SET
                     source_di_id = excluded.source_di_id,
                     window_start = excluded.window_start,
@@ -519,6 +600,7 @@ async fn refresh_from_approved_di(db: &DatabaseConnection, limit: i64) -> AppRes
                     row_version = schedule_candidates.row_version + 1,
                     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')",
                 [
+                    candidate_sync_id(db, "inspection_follow_up", "intervention_requests", source_id).await?.into(),
                     source_id.into(),
                     Some(source_id).into(),
                     window_start.into(),
@@ -537,7 +619,7 @@ async fn refresh_from_approved_di(db: &DatabaseConnection, limit: i64) -> AppRes
     Ok((inserted, updated))
 }
 
-async fn evaluate_candidate(db: &DatabaseConnection, candidate_id: i64) -> AppResult<(String, f64, i64)> {
+async fn evaluate_candidate(db: &impl ConnectionTrait, candidate_id: i64) -> AppResult<(String, f64, i64)> {
     let candidate = get_candidate(db, candidate_id).await?;
     let mut conflicts: Vec<EvaluatedConflict> = Vec::new();
 
@@ -614,7 +696,7 @@ async fn evaluate_candidate(db: &DatabaseConnection, candidate_id: i64) -> AppRe
             if pm_status == "deferred" {
                 prerequisite_blocked = true;
             }
-            if parse_string_array(required_parts_json.as_deref()).len() > 0 {
+            if !parse_string_array(required_parts_json.as_deref()).is_empty() {
                 required_parts_missing = true;
             }
             if required_skills.is_empty() {
@@ -801,19 +883,23 @@ async fn evaluate_candidate(db: &DatabaseConnection, candidate_id: i64) -> AppRe
         let overlap_row = db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT COUNT(*) AS c
-                 FROM work_orders wo
-                 JOIN work_order_statuses wos ON wos.id = wo.status_id
-                 WHERE wo.primary_responsible_id = ?
-                   AND wos.code IN ('planned','ready_to_schedule','assigned','waiting_for_prerequisite','in_progress')
-                   AND wo.id != (
-                     CASE WHEN ? = 'work_order' THEN ? ELSE -1 END
-                   )
-                   AND (? IS NOT NULL AND ? IS NOT NULL)
-                   AND wo.planned_start IS NOT NULL
-                   AND wo.planned_end IS NOT NULL
-                   AND wo.planned_start < ?
-                   AND wo.planned_end > ?",
+                format!(
+                    "SELECT COUNT(*) AS c
+                     FROM work_orders wo
+                     JOIN work_order_statuses wos ON wos.id = wo.status_id
+                     JOIN user_accounts ua ON ua.id = wo.primary_responsible_id
+                      AND ua.deleted_at IS NULL
+                      AND ua.personnel_id = ?
+                     WHERE wos.code IN ({WO_OPEN_ASSIGNMENT_STATUS_SQL})
+                       AND wo.id != (
+                         CASE WHEN ? = 'work_order' THEN ? ELSE -1 END
+                       )
+                       AND (? IS NOT NULL AND ? IS NOT NULL)
+                       AND wo.planned_start IS NOT NULL
+                       AND wo.planned_end IS NOT NULL
+                       AND wo.planned_start < ?
+                       AND wo.planned_end > ?"
+                ),
                 [
                     personnel_id.into(),
                     candidate.source_type.clone().into(),
@@ -851,30 +937,22 @@ async fn evaluate_candidate(db: &DatabaseConnection, candidate_id: i64) -> AppRe
         open_work_count = db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT COUNT(*) AS c
-                 FROM work_orders wo
-                 JOIN work_order_statuses wos ON wos.id = wo.status_id
-                 WHERE wo.primary_responsible_id = ?
-                   AND wos.code IN ('planned','ready_to_schedule','assigned','waiting_for_prerequisite','in_progress')",
+                format!(
+                    "SELECT COUNT(*) AS c
+                     FROM work_orders wo
+                     JOIN work_order_statuses wos ON wos.id = wo.status_id
+                     JOIN user_accounts ua ON ua.id = wo.primary_responsible_id
+                      AND ua.deleted_at IS NULL
+                      AND ua.personnel_id = ?
+                     WHERE wos.code IN ({WO_OPEN_ASSIGNMENT_STATUS_SQL})"
+                ),
                 [personnel_id.into()],
             ))
             .await?
             .and_then(|row| row.try_get("", "c").ok());
 
-        let rate = db
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT labor_rate, overtime_rate
-                 FROM personnel_rate_cards
-                 WHERE personnel_id = ?
-                 ORDER BY effective_from DESC
-                 LIMIT 1",
-                [personnel_id.into()],
-            ))
-            .await?;
-        if let (Some(duration), Some(rate_row)) = (candidate.estimated_duration_hours, rate) {
-            let labor_rate: f64 = rate_row.try_get("", "labor_rate").unwrap_or(0.0);
-            let overtime_rate: f64 = rate_row.try_get("", "overtime_rate").unwrap_or(labor_rate);
+        let rate_pair = crate::personnel::queries::resolve_active_rate_pair(db, personnel_id).await?;
+        if let (Some(duration), Some((labor_rate, overtime_rate))) = (candidate.estimated_duration_hours, rate_pair) {
             labor_cost_range = Some(
                 json!({
                     "min": duration * labor_rate,
@@ -1008,8 +1086,44 @@ async fn evaluate_candidate(db: &DatabaseConnection, candidate_id: i64) -> AppRe
     Ok((readiness_status.to_string(), readiness_score, conflicts.len() as i64))
 }
 
+/// Identity of the scheduling candidate of a work item: every device that derives the candidate of
+/// the same source gives it the same `entity_sync_id`.
+///
+/// A source without sync identity (database without sync capture) gives no identity: the capture
+/// insert trigger, when installed, assigns one.
+async fn candidate_sync_id(
+    db: &impl ConnectionTrait,
+    source_type: &str,
+    source_table: &str,
+    source_id: i64,
+) -> AppResult<Option<String>> {
+    Ok(
+        crate::sync::identity::optional_entity_sync_id(db, source_table, source_id)
+            .await?
+            .map(|source| {
+                crate::sync::identity::seeded_entity_sync_id("schedule_candidates", &format!("{source_type}:{source}"))
+            }),
+    )
+}
+
+/// Rebuild the scheduling candidates from the open work. Candidates are derived on every device
+/// from synchronised work orders, PM occurrences and requests, so the refresh is not captured; a
+/// candidate travels when a person commits it to the schedule (`create_schedule_commitment`).
 pub async fn refresh_schedule_candidates(
     db: &DatabaseConnection,
+    input: RefreshScheduleCandidatesInput,
+) -> AppResult<RefreshScheduleCandidatesResult> {
+    let tx = db.begin().await?;
+    crate::sync::capture::begin_suppression(&tx).await?;
+    let result = refresh_schedule_candidates_in(&tx, input).await;
+    crate::sync::capture::end_suppression(&tx).await?;
+    let result = result?;
+    tx.commit().await?;
+    Ok(result)
+}
+
+async fn refresh_schedule_candidates_in(
+    db: &impl ConnectionTrait,
     input: RefreshScheduleCandidatesInput,
 ) -> AppResult<RefreshScheduleCandidatesResult> {
     let limit = input.limit_per_source.unwrap_or(300).clamp(1, 1_000);

@@ -13,3 +13,8 @@ strip = true
 opt-level = 0
 debug = true
 incremental = true
+
+# Third-party crates: no debug info. Our own code keeps full debug info; this
+# only drops line numbers inside dependency frames, and shrinks target/ a lot.
+[profile.dev.package."*"]
+debug = false

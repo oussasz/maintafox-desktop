@@ -4,21 +4,21 @@
     "noNotifications": "Aucune notification",
     "userMenu": "Menu utilisateur",
     "profile": "Mon profil",
-    "settings": "Param\u00e8tres",
+    "settings": "Paramètres",
     "language": "Langue",
-    "logout": "D\u00e9connexion",
+    "logout": "Déconnexion",
     "help": "Aide",
-    "about": "\u00c0 propos"
+    "about": "À propos"
   },
   "sidebar": {
     "toggle": "Afficher/masquer le menu",
-    "expand": "D\u00e9velopper le menu",
-    "collapse": "R\u00e9duire le menu"
+    "expand": "Développer le menu",
+    "collapse": "Réduire le menu"
   },
   "search": {
     "placeholder": "Recherche globale...",
-    "noResults": "Aucun r\u00e9sultat pour \u00ab\u00a0{{query}}\u00a0\u00bb",
-    "hint": "Appuyez sur Entr\u00e9e pour rechercher"
+    "noResults": "Aucun résultat pour « {{query}} »",
+    "hint": "Appuyez sur Entrée pour rechercher"
   },
   "notifications": {
     "label": "{{count}} notifications non lues"
@@ -31,22 +31,131 @@
   },
   "sync": {
     "offline": "Hors ligne",
-    "syncing": "Synchronisation\u2026",
+    "syncing": "Synchronisation…",
     "error": "Erreur de sync",
-    "offlineChangesSaved": "Mode hors ligne : vos modifications sont enregistr\u00e9es localement et seront synchronis\u00e9es lors du retour de la connexion.",
+    "offlineChangesSaved": "Mode hors ligne : vos modifications sont enregistrées localement et seront synchronisées lors du retour de la connexion.",
     "syncCenter": "Centre de synchronisation",
     "syncCenterTitle": "Centre de synchronisation",
-    "syncCenterConflicts": "Conflits non r\u00e9solus",
-    "syncCenterRejected": "\u00c9l\u00e9ments rejet\u00e9s (file d'attente)",
-    "resolveLocal": "Conserver la version locale",
-    "resolveRemote": "Conserver la version serveur",
-    "noConflicts": "Aucun \u00e9l\u00e9ment \u00e0 traiter."
+    "syncCenterConflicts": "Conflits non résolus",
+    "syncCenterRejected": "Éléments rejetés (file d'attente)",
+    "resolveLocal": "Garder la version de cet appareil",
+    "resolveRemote": "Prendre la version du serveur",
+    "noConflicts": "Aucun élément à traiter.",
+    "dismissConflict": "Ignorer",
+    "conflictVersions": "Cet appareil : {{local}} · Serveur : {{remote}}",
+    "versionUnknown": "inconnue",
+    "deferredInbox": "{{count}} modification(s) reçue(s) attendent des données liées ou une version plus récente de l'application. Elles seront appliquées automatiquement.",
+    "resolveFailed": "Le choix n'a pas pu être appliqué : {{message}}",
+    "codeClash": "Le numéro {{number}} est déjà utilisé sur cet appareil par un autre enregistrement (numéroté sur deux appareils avant les codes d'appareil, ou deux appareils partagent un code). Renuméroter donne à l'enregistrement de cet appareil un nouveau numéro de cet appareil ; l'enregistrement reçu garde {{number}}. Rien n'est renommé sans votre choix.",
+    "renumberLocal": "Renuméroter l'enregistrement de cet appareil",
+    "conflictKind": {
+      "CONCURRENT_EDIT": "Modifié sur cet appareil et sur un autre appareil",
+      "SERVER_CONFLICT": "Le serveur possède déjà une version plus récente",
+      "STALE_INBOUND": "Le serveur a envoyé une version plus ancienne que celle-ci",
+      "EQUAL_VERSION_DIVERGENCE": "Même numéro de version avec un contenu différent",
+      "CODE_CLASH": "Le même numéro est déjà utilisé ici par un autre enregistrement",
+      "MATERIALIZE_ERROR": "Une modification reçue n'a pas pu être appliquée",
+      "INVALID_INBOUND_PAYLOAD": "Une modification reçue était invalide",
+      "OUTBOX_DEAD_LETTER": "Une modification locale n'a pas pu être envoyée après plusieurs tentatives",
+      "AUTHORITY_MISMATCH": "Le serveur a refusé une modification protégée",
+      "other": "À examiner"
+    },
+    "history": {
+      "fromOtherDevice": "D'un autre appareil (enregistré avant cette version) : les numéros de cette entrée sont les identifiants de cet appareil et ne désignent pas les enregistrements d'ici."
+    },
+    "mediaFile": {
+      "pending": "Pas encore téléchargé",
+      "pendingHint": "Ce fichier a été ajouté sur un autre poste. Il est téléchargé automatiquement lors de la synchronisation.",
+      "failed": "Échec du téléchargement",
+      "failedHint": "Le fichier n'a pas pu être téléchargé : {{message}}",
+      "missing": "Fichier absent de ce poste",
+      "missingHint": "Ce fichier n'est pas enregistré sur ce poste et aucun téléchargement n'est prévu.",
+      "retry": "Réessayer",
+      "retryQueued": "Téléchargement relancé.",
+      "retryNothing": "Rien à télécharger pour ce fichier."
+    },
+    "worker": {
+      "title": "Synchronisation",
+      "runsInBackground": "La synchronisation continue quand la fenêtre est fermée (Maintafox reste dans la zone de notification).",
+      "state": {
+        "starting": "Démarrage…",
+        "idle": "À jour",
+        "running": "Synchronisation en cours…",
+        "paused": "En pause",
+        "offline": "Hors ligne : nouvel essai automatique",
+        "retrying": "Nouvel essai prévu",
+        "blocked": "Arrêtée",
+        "error": "Erreur"
+      },
+      "blocker": {
+        "not_licensed": "La synchronisation n'est pas incluse dans la licence de cet appareil.",
+        "not_activated": "Cet appareil n'est pas activé.",
+        "activation_refused": "Le serveur a refusé l'activation de cet appareil. La licence est en cours de vérification.",
+        "tenant_config_mismatch": "Les données de cet appareil appartiennent à une autre organisation que son activation. Contactez votre administrateur.",
+        "not_configured": "La synchronisation n'est pas configurée sur cet appareil.",
+        "other": "La synchronisation est arrêtée."
+      },
+      "lastSuccess": "Dernière synchronisation réussie",
+      "never": "Jamais",
+      "nextAttempt": "Prochain essai : {{time}}",
+      "pausedUntil": "En pause jusqu'à {{time}}",
+      "pending": "Modifications en attente d'envoi",
+      "conflicts": "Conflits à examiner",
+      "media": "Fichiers en attente d'envoi : {{pending}} · en échec : {{failed}}",
+      "mediaDownloads": "Fichiers d'autres postes en attente de téléchargement : {{pending}} · en échec : {{failed}}",
+      "deadLetter": "{{count}} modification(s) n'ont pas pu être envoyées après plusieurs tentatives : voir les conflits.",
+      "lastError": "Dernière erreur : {{message}}",
+      "syncNow": "Synchroniser maintenant",
+      "pause": "Mettre en pause",
+      "pauseDuration": "Durée de la pause",
+      "pauseOption": {
+        "m15": "15 minutes",
+        "h1": "1 heure",
+        "h4": "4 heures",
+        "h24": "24 heures"
+      },
+      "resume": "Reprendre",
+      "actionFailed": "L'action n'a pas abouti : {{message}}"
+    },
+    "indicator": {
+      "idle": "À jour",
+      "scheduled": "Démarrage de la synchronisation",
+      "running": "Synchronisation",
+      "degraded": "Attention requise",
+      "paused": "En pause",
+      "blocked": "Arrêtée",
+      "error": "Erreur de sync",
+      "pausedTitle": "La synchronisation a été mise en pause par un opérateur",
+      "blockedTitle": "La synchronisation est arrêtée",
+      "degradedTitle": "La synchronisation demande votre attention (nouvel essai prévu ou conflits à examiner)",
+      "statusBar": "Sync : {{state}}"
+    },
+    "panel": {
+      "title": "Diagnostic de synchronisation",
+      "description": "État du service de synchronisation de cet appareil, actions de reprise et conflits à examiner.",
+      "replay": "Rejouer les éléments en échec",
+      "export": "Exporter le diagnostic",
+      "support": "Transmettre au support",
+      "conflictsTitle": "Conflits à examiner",
+      "recommended": "Recommandé : {{action}}",
+      "apply": "Appliquer",
+      "resolutionNote": "Résolu par un opérateur avec l'action « {{action}} ».",
+      "action": {
+        "accept_local": "Garder la version de cet appareil",
+        "accept_remote": "Prendre la version du serveur",
+        "renumber_local": "Renuméroter l'enregistrement de cet appareil",
+        "retry_later": "Réessayer plus tard",
+        "escalate": "Escalader",
+        "dismiss": "Ignorer",
+        "review": "Examiner"
+      }
+    }
   },
   "status": {
     "online": "En ligne",
     "offline": "Hors ligne",
     "db": "BDD",
-    "dbHealthy": "Base de donn\u00e9es op\u00e9rationnelle",
+    "dbHealthy": "Base de données opérationnelle",
     "pendingSync": "{{count}} en attente"
   },
   "statusBar": {
@@ -54,7 +163,7 @@
     "offline": "Hors ligne",
     "syncing": "Synchronisation...",
     "syncError": "Erreur de synchronisation",
-    "lastSync": "Derni\u00e8re sync. : {{time}}",
+    "lastSync": "Dernière sync. : {{time}}",
     "appVersion": "Maintafox {{version}}"
   },
   "tray": {
@@ -72,63 +181,70 @@
   },
   "device": {
     "trusted": "Appareil de confiance",
-    "untrusted": "Appareil non v\u00e9rifi\u00e9"
+    "untrusted": "Appareil non vérifié"
   },
   "startup": {
-    "loading": "D\u00e9marrage en cours\u2026",
-    "errorTitle": "Erreur de d\u00e9marrage",
-    "retry": "R\u00e9essayer"
+    "loading": "Démarrage en cours…",
+    "errorTitle": "Erreur de démarrage",
+    "retry": "Réessayer",
+    "dbRecovery": {
+      "title": "Clé de chiffrement requise",
+      "body": "La base de données de cet appareil est chiffrée, mais sa clé est introuvable dans le coffre d’identifiants Windows (réinstallation, changement de profil…). Saisissez la clé de récupération pour la rouvrir. Aucune donnée n’est créée ni effacée ici.",
+      "label": "Clé de récupération",
+      "submit": "Déverrouiller la base",
+      "help": "La clé de récupération est affichée par un administrateur dans Paramètres › Sauvegarde. Sans elle, les données locales ne peuvent pas être lues."
+    }
   },
   "placeholder": {
-    "notYetImplemented": "Ce module sera impl\u00e9ment\u00e9 lors de la {{phase}}."
+    "notYetImplemented": "Ce module sera implémenté lors de la {{phase}}."
   },
   "diagnostics": {
     "title": "Diagnostics",
-    "subtitle": "V\u00e9rification de l'int\u00e9grit\u00e9 des donn\u00e9es de r\u00e9f\u00e9rence et r\u00e9paration automatique.",
-    "checking": "V\u00e9rification en cours\u2026",
-    "repairing": "R\u00e9paration en cours\u2026",
+    "subtitle": "Vérification de l'intégrité des données de référence et réparation automatique.",
+    "checking": "Vérification en cours…",
+    "repairing": "Réparation en cours…",
     "errorTitle": "Erreur de diagnostic",
-    "healthy": "Toutes les v\u00e9rifications sont r\u00e9ussies.",
-    "unhealthy": "Des probl\u00e8mes ont \u00e9t\u00e9 d\u00e9tect\u00e9s.",
+    "healthy": "Toutes les vérifications sont réussies.",
+    "unhealthy": "Des problèmes ont été détectés.",
     "seedVersion": "Version seed",
     "domainCount": "Domaines",
     "valueCount": "Valeurs",
-    "issuesTitle": "{{count}} probl\u00e8me(s) d\u00e9tect\u00e9(s)",
-    "autoRepairable": "(r\u00e9parable)",
-    "recheck": "Rev\u00e9rifier",
-    "repairBtn": "R\u00e9parer les donn\u00e9es"
+    "issuesTitle": "{{count}} problème(s) détecté(s)",
+    "autoRepairable": "(réparable)",
+    "recheck": "Revérifier",
+    "repairBtn": "Réparer les données"
   },
   "nav": {
     "groups": {
-      "core": "Op\u00e9rations",
+      "core": "Opérations",
       "planning": "Planification",
-      "compliance": "Conformit\u00e9",
+      "compliance": "Conformité",
       "inventory": "Stocks",
       "analytics": "Analytique",
       "admin": "Administration"
     },
-    "dashboard": "Tableau de bord",
+    "dashboard": "Vue d'ensemble",
     "vendorConsole": "Console fournisseur",
-    "equipment": "\u00c9quipements",
+    "equipment": "Équipements",
     "requests": "Demandes d'intervention",
     "workOrders": "Ordres de travail",
     "planning": "Planification",
-    "pm": "Maintenance pr\u00e9ventive",
+    "pm": "Maintenance préventive",
     "permits": "Permis de travail",
     "inspections": "Rondes et checklists",
-    "inventory": "Pi\u00e8ces de rechange",
+    "inventory": "Pièces de rechange",
     "personnel": "Personnel",
     "training": "Formations & habilitations",
-    "analytics": "Tableaux de bord",
-    "reliability": "Fiabilit\u00e9 (RAMS)",
-    "budget": "Budget & co\u00fbts",
+    "analytics": "RAMS & Analytique",
+    "reliability": "Fiabilité (RAMS)",
+    "budget": "Budget & coûts",
     "archive": "Archivage",
-    "lookups": "Donn\u00e9es de r\u00e9f\u00e9rence",
+    "lookups": "Données de référence",
     "notifications": "Notifications",
     "documentation": "Documentation",
-    "activity": "Journal d'activit\u00e9",
-    "settings": "Param\u00e8tres",
-    "users": "Utilisateurs & r\u00f4les",
+    "activity": "Journal d'activité",
+    "settings": "Paramètres",
+    "users": "Utilisateurs & rôles",
     "org": "Organisation",
     "diagnostics": "Diagnostics",
     "profile": "Mon profil",

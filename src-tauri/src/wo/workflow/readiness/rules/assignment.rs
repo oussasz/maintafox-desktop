@@ -14,7 +14,7 @@ impl ReadinessRule for AssignmentCompleted {
         RuleSeverity::Blocking
     }
     fn validate(&self, ctx: &WoReadinessContext) -> crate::wo::workflow::readiness::rule::ReadinessCheck {
-        if ctx.primary_responsible_id.is_some() || ctx.assigned_group_id.is_some() {
+        if ctx.primary_responsible_id.is_some() || ctx.assigned_team_id.is_some() {
             check(self, ReadinessOutcome::Pass, None)
         } else {
             check(

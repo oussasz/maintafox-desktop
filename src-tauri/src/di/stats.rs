@@ -41,7 +41,7 @@ pub struct DiTrendPoint {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DiEquipmentCount {
-    pub asset_id: i64,
+    pub equipment_id: i64,
     pub asset_label: String,
     pub count: i64,
     pub percentage: f64,
@@ -408,13 +408,13 @@ pub async fn get_di_stats(db: &DatabaseConnection, filter: DiStatsFilter) -> App
                 DbBackend::Sqlite,
                 format!(
                     "SELECT
-                       ir.asset_id AS asset_id,
-                       COALESCE(e.name, ('Asset #' || ir.asset_id)) AS asset_label,
+                       ir.equipment_id AS equipment_id,
+                       COALESCE(e.name, ('Asset #' || ir.equipment_id)) AS asset_label,
                        COUNT(*) AS count
                      FROM intervention_requests ir
-                     LEFT JOIN equipment e ON e.id = ir.asset_id
+                     LEFT JOIN equipment e ON e.id = ir.equipment_id
                      WHERE {base_where}
-                     GROUP BY ir.asset_id, asset_label
+                     GROUP BY ir.equipment_id, asset_label
                      ORDER BY count DESC, asset_label ASC
                      LIMIT 10"
                 ),
@@ -430,7 +430,7 @@ pub async fn get_di_stats(db: &DatabaseConnection, filter: DiStatsFilter) -> App
                     0.0
                 };
                 Ok(DiEquipmentCount {
-                    asset_id: row.try_get("", "asset_id")?,
+                    equipment_id: row.try_get("", "equipment_id")?,
                     asset_label: row.try_get("", "asset_label")?,
                     count,
                     percentage,

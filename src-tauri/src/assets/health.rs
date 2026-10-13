@@ -133,7 +133,7 @@ pub async fn get_asset_health_score(db: &DatabaseConnection, asset_id: i64) -> A
     let open_di = count_i64(
         db,
         "SELECT COUNT(*) AS cnt FROM intervention_requests \
-         WHERE asset_id = ? AND status NOT IN (\
+         WHERE equipment_id = ? AND status NOT IN (\
            'rejected','converted_to_work_order','closed_as_non_executable','archived'\
          )",
         asset_id,

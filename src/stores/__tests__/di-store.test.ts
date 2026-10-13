@@ -18,7 +18,7 @@ function makeDi(overrides: Partial<InterventionRequest> = {}): InterventionReque
   return {
     id: 1,
     code: "DI-0001",
-    asset_id: 10,
+    equipment_id: 10,
     sub_asset_ref: null,
     org_node_id: 5,
     status: "submitted",
@@ -36,7 +36,6 @@ function makeDi(overrides: Partial<InterventionRequest> = {}): InterventionReque
     validated_urgency: null,
     observed_at: null,
     submitted_at: "2026-04-01T10:00:00Z",
-    review_team_id: null,
     reviewer_id: null,
     screened_at: null,
     approved_at: null,
@@ -82,15 +81,15 @@ describe("di-store — Supervisor Verification S3", () => {
   // ── V3 — Store filter merge ───────────────────────────────────────────────
 
   describe("V3 — setFilter merges partial updates", () => {
-    it("merges status filter then asset_id filter", () => {
+    it("merges status filter then equipment_id filter", () => {
       const { setFilter } = useDiStore.getState();
 
       setFilter({ status: ["submitted"] });
-      setFilter({ asset_id: 5 });
+      setFilter({ equipment_id: 5 });
 
       const { filter } = useDiStore.getState();
       expect(filter.status).toEqual(["submitted"]);
-      expect(filter.asset_id).toBe(5);
+      expect(filter.equipment_id).toBe(5);
       // Default fields preserved
       expect(filter.limit).toBe(50);
       expect(filter.offset).toBe(0);
@@ -215,7 +214,7 @@ describe("di-store — Supervisor Verification S3", () => {
       .mockResolvedValueOnce(pageAfter); // list_di (reload)
 
     const result = await useDiStore.getState().submitNewDi({
-      asset_id: 10,
+      equipment_id: 10,
       org_node_id: 5,
       title: "New DI",
       description: "Desc",

@@ -79,6 +79,7 @@ fn assert_fixture(json: &str) {
         t_exp_hours: f.t_exp_hours,
         repeat_lookback_days: f.repeat_lookback_days,
         min_sample_n: f.min_sample_n,
+        repairable: true,
         events,
     });
     let rel = f.tolerance.rel;

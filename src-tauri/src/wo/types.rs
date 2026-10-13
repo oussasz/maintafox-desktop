@@ -81,7 +81,7 @@ pub async fn ensure_required_work_order_types(db: &DatabaseConnection) -> AppRes
     Ok(())
 }
 
-pub async fn resolve_work_order_type_id_by_code(db: &DatabaseConnection, type_code: &str) -> AppResult<i64> {
+pub async fn resolve_work_order_type_id_by_code(db: &impl ConnectionTrait, type_code: &str) -> AppResult<i64> {
     let normalized = normalize_type_code(type_code);
     if normalized.is_empty() {
         return Err(AppError::ValidationFailed(vec![

@@ -11,6 +11,7 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, State
 use serde::{Deserialize, Serialize};
 
 use crate::errors::{AppError, AppResult};
+use crate::personnel::queries;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersonnelImportBatchSummary {
@@ -287,11 +288,12 @@ pub async fn apply_import_batch(
                 txn.execute(Statement::from_sql_and_values(
                     DbBackend::Sqlite,
                     "INSERT INTO personnel (
-                        employee_code, full_name, employment_type, position_id, primary_entity_id, primary_team_id,
+                        entity_sync_id, employee_code, full_name, employment_type, position_id, primary_entity_id, primary_team_id,
                         supervisor_id, availability_status, hire_date, email, phone, hr_external_id, external_company_id,
                         notes, row_version, created_at, updated_at
-                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
                     [
+                        crate::sync::identity::new_entity_sync_id().into(),
                         generated_code.into(),
                         full_name.into(),
                         employment_type.into(),
@@ -311,6 +313,17 @@ pub async fn apply_import_batch(
                     ],
                 ))
                 .await?;
+                let new_id: i64 = txn
+                    .query_one(Statement::from_string(
+                        DbBackend::Sqlite,
+                        "SELECT last_insert_rowid() AS id".to_string(),
+                    ))
+                    .await?
+                    .and_then(|r| r.try_get::<i64>("", "id").ok())
+                    .unwrap_or_default();
+                if let Some(team_id) = mapped.team_id {
+                    queries::sync_home_crew_assignment(&txn, new_id, team_id, &now).await?;
+                }
                 created += 1;
             }
             Some("update") => {
@@ -362,6 +375,9 @@ pub async fn apply_import_batch(
                         "Concurrency conflict on personnel id={personnel_id}. Import was prepared with stale row_version."
                     )]));
                 }
+                if let Some(team_id) = mapped.team_id {
+                    queries::sync_home_crew_assignment(&txn, personnel_id, team_id, &now).await?;
+                }
                 updated += 1;
             }
             _ => {
@@ -404,29 +420,26 @@ pub async fn apply_import_batch(
     ))
     .await?;
 
-    txn.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO audit_events (
-            action_code, target_type, target_id, actor_id, auth_context, result,
-            retention_class, details_json, happened_at
-         ) VALUES (
-            'personnel.import.apply', 'personnel_import_batch', ?, ?, 'step_up', 'success',
-            'standard', ?, ?
-         )",
-        [
-            batch_id.to_string().into(),
-            actor_id.into(),
-            serde_json::json!({
+    crate::audit::writer::write_audit_event_in(
+        &txn,
+        crate::audit::writer::AuditEventInput {
+            action_code: "personnel.import.apply".to_string(),
+            target_type: Some("personnel_import_batch".to_string()),
+            target_id: Some(batch_id.to_string()),
+            actor_id,
+            auth_context: "step_up".to_string(),
+            result: "success".to_string(),
+            before_hash: None,
+            after_hash: None,
+            retention_class: "standard".to_string(),
+            details_json: Some(serde_json::json!({
                 "created": created,
                 "updated": updated,
                 "skipped": skipped,
                 "protected_ignored": protected_ignored
-            })
-            .to_string()
-            .into(),
-            now.into(),
-        ],
-    ))
+            })),
+        },
+    )
     .await?;
 
     txn.commit().await?;
@@ -659,7 +672,7 @@ async fn validate_mapped_fields(
         }
     }
     if let Some(team_code) = normalized.team_code.as_deref() {
-        let found = crate::org::model_scope::try_resolve_active_org_node_id_by_code(db, team_code).await?;
+        let found = crate::repository::team_repository::try_resolve_active_team_id_by_code(db, team_code).await?;
         if found.is_none() {
             push_message(
                 messages,
@@ -720,7 +733,7 @@ async fn resolve_mapped_fields(db: &impl ConnectionTrait, normalized: &Normalize
         None => None,
     };
     let team_id = match normalized.team_code.as_deref() {
-        Some(code) => crate::org::model_scope::try_resolve_active_org_node_id_by_code(db, code).await?,
+        Some(code) => crate::repository::team_repository::try_resolve_active_team_id_by_code(db, code).await?,
         None => None,
     };
     Ok(MappedIds {

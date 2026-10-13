@@ -2,16 +2,27 @@
 //!
 //! Copies source file to `app_data_dir/personnel_photos/{personnel_id}/`
 //! and updates `personnel.photo_path`.
+//! Preview bytes are served via IPC (`data:` URL) — same rationale as asset photos
+//! (avoid `convertFileSrc` / asset-protocol WebView edge cases).
 
 use std::path::{Path, PathBuf};
 
+use base64::{engine::general_purpose::STANDARD as B64_ENGINE, Engine as _};
 use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
+use serde::Serialize;
 use uuid::Uuid;
 
 use crate::errors::{AppError, AppResult};
 
 const MAX_FILE_BYTES: u64 = 5 * 1024 * 1024; // 5 MB
+
+/// Inline preview for the webview (`data:` URL).
+#[derive(Debug, Clone, Serialize)]
+pub struct PersonnelPhotoPreview {
+    pub mime_type: String,
+    pub data_base64: String,
+}
 
 fn extension_mime(path: &Path) -> Option<&'static str> {
     let ext = path.extension()?.to_string_lossy().to_ascii_lowercase();
@@ -33,6 +44,88 @@ fn sanitize_file_name(path: &Path) -> AppResult<String> {
         return Err(AppError::ValidationFailed(vec!["Nom de fichier invalide.".into()]));
     }
     Ok(name.to_string())
+}
+
+fn ensure_path_under_app_data(file: &Path, app_data_dir: &Path) -> AppResult<()> {
+    let root = app_data_dir
+        .canonicalize()
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("canonicalize app_data_dir: {e}")))?;
+    let abs = file
+        .canonicalize()
+        .map_err(|e| AppError::ValidationFailed(vec![format!("Impossible de résoudre le chemin photo : {e}")]))?;
+    if !abs.starts_with(&root) {
+        return Err(AppError::ValidationFailed(vec![
+            "Chemin photo hors du répertoire de données de l'application.".into(),
+        ]));
+    }
+    Ok(())
+}
+
+/// Read personnel photo bytes for inline webview preview.
+pub async fn read_personnel_photo_preview(
+    db: &DatabaseConnection,
+    app_data_dir: &Path,
+    personnel_id: i64,
+) -> AppResult<PersonnelPhotoPreview> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT photo_path FROM personnel WHERE id = ? LIMIT 1",
+            [personnel_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "Personnel".into(),
+            id: personnel_id.to_string(),
+        })?;
+
+    let photo_path: Option<String> = row
+        .try_get("", "photo_path")
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("photo_path decode: {e}")))?;
+
+    let Some(photo_path) = photo_path.filter(|p| !p.trim().is_empty()) else {
+        return Err(AppError::NotFound {
+            entity: "personnel_photo".into(),
+            id: personnel_id.to_string(),
+        });
+    };
+
+    let abs = PathBuf::from(&photo_path);
+    ensure_path_under_app_data(&abs, app_data_dir)?;
+
+    if !abs.is_file() {
+        tracing::warn!(
+            personnel_id,
+            path = %abs.display(),
+            "personnel photo preview: file missing on disk"
+        );
+        return Err(AppError::ValidationFailed(vec![format!(
+            "Fichier photo introuvable : {}",
+            abs.display()
+        )]));
+    }
+
+    let mime_type = extension_mime(&abs).unwrap_or("application/octet-stream").to_string();
+
+    let abs_for_read = abs.clone();
+    let bytes = tokio::task::spawn_blocking(move || std::fs::read(abs_for_read))
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("read task join: {e}")))?
+        .map_err(|e| {
+            tracing::warn!(path = %abs.display(), error = %e, "personnel photo preview: read failed");
+            AppError::ValidationFailed(vec![format!("Impossible de lire le fichier photo : {e}")])
+        })?;
+
+    if bytes.len() as u64 > MAX_FILE_BYTES {
+        return Err(AppError::ValidationFailed(vec![
+            "La photo dépasse la limite de taille.".into(),
+        ]));
+    }
+
+    Ok(PersonnelPhotoPreview {
+        mime_type,
+        data_base64: B64_ENGINE.encode(bytes),
+    })
 }
 
 /// Upload a personnel photo and update `personnel.photo_path`.

@@ -28,6 +28,7 @@ pub mod import;
 pub mod lifecycle;
 pub mod meters;
 pub mod photos;
+pub mod registry_metrics;
 pub mod search;
 pub mod taxonomy_reference;
 

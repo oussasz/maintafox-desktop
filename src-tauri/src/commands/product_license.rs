@@ -52,6 +52,9 @@ pub enum ProductLicenseActivationStatus {
     DeniedSlotLimit,
     DeniedForceUpdateRequired,
     DeniedInvalid,
+    /// No successful contact with the control plane within the licence's `offline_grace_hours`.
+    /// Derived on read (see `effective_status`); cleared by the next successful reconciliation.
+    DeniedOfflineGraceExpired,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,7 +104,7 @@ pub struct ProductLicenseDiagnosticEvent {
     pub code: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProductLicenseReconciliationPolicy {
     pub retry_attempt: u32,
     pub next_retry_at: Option<String>,
@@ -109,19 +112,6 @@ pub struct ProductLicenseReconciliationPolicy {
     pub last_success_at: Option<String>,
     pub last_error_code: Option<String>,
     pub last_error_message: Option<String>,
-}
-
-impl Default for ProductLicenseReconciliationPolicy {
-    fn default() -> Self {
-        Self {
-            retry_attempt: 0,
-            next_retry_at: None,
-            last_attempt_at: None,
-            last_success_at: None,
-            last_error_code: None,
-            last_error_message: None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -339,22 +329,6 @@ async fn apply_claim_entitlement_envelope(
     envelope: Option<crate::entitlements::domain::EntitlementEnvelopeInput>,
 ) -> AppResult<()> {
     let Some(envelope) = envelope else {
-        // #region agent log
-        {
-            let line = format!(
-                "{{\"sessionId\":\"a6aab3\",\"runId\":\"post-fix\",\"hypothesisId\":\"A\",\"location\":\"product_license.rs:apply_claim_entitlement_envelope\",\"message\":\"claim had no entitlement_envelope\",\"data\":{{\"applied\":false}},\"timestamp\":{}}}\n",
-                chrono::Utc::now().timestamp_millis()
-            );
-            let _ = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(r"c:\Dev\MaintafoxSuite\desktop\maintafox-desktop\debug-a6aab3.log")
-                .and_then(|mut f| {
-                    use std::io::Write;
-                    f.write_all(line.as_bytes())
-                });
-        }
-        // #endregion
         return Ok(());
     };
     // Ensure trust material exists before verify (older DBs may have an empty table).
@@ -368,23 +342,6 @@ async fn apply_claim_entitlement_envelope(
     let result = match crate::entitlements::queries::apply_entitlement_envelope(db, envelope).await {
         Ok(result) => result,
         Err(e) => {
-            // #region agent log
-            {
-                let line = format!(
-                    "{{\"sessionId\":\"a6aab3\",\"runId\":\"post-fix\",\"hypothesisId\":\"K-trust\",\"location\":\"product_license.rs:apply_claim_entitlement_envelope\",\"message\":\"envelope apply error soft-continued\",\"data\":{{\"error\":\"{}\"}},\"timestamp\":{}}}\n",
-                    e.to_string().replace('\\', "\\\\").replace('"', "'"),
-                    chrono::Utc::now().timestamp_millis()
-                );
-                let _ = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(r"c:\Dev\MaintafoxSuite\desktop\maintafox-desktop\debug-a6aab3.log")
-                    .and_then(|mut f| {
-                        use std::io::Write;
-                        f.write_all(line.as_bytes())
-                    });
-            }
-            // #endregion
             // Soft phase: never roll activation back to degraded solely because envelope apply failed.
             tracing::warn!(
                 event = "desktop_entitlement_envelope_apply_failed",
@@ -394,26 +351,6 @@ async fn apply_claim_entitlement_envelope(
             return Ok(());
         }
     };
-    // #region agent log
-    {
-        let line = format!(
-            "{{\"sessionId\":\"a6aab3\",\"runId\":\"post-fix\",\"hypothesisId\":\"A-D\",\"location\":\"product_license.rs:apply_claim_entitlement_envelope\",\"message\":\"envelope apply result\",\"data\":{{\"applied\":true,\"verified\":{},\"envelopeId\":\"{}\",\"effectiveState\":\"{}\",\"verification\":\"{}\"}},\"timestamp\":{}}}\n",
-            result.verified,
-            result.envelope_id.replace('"', ""),
-            result.effective_state.replace('"', ""),
-            result.verification_result.replace('"', ""),
-            chrono::Utc::now().timestamp_millis()
-        );
-        let _ = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(r"c:\Dev\MaintafoxSuite\desktop\maintafox-desktop\debug-a6aab3.log")
-            .and_then(|mut f| {
-                use std::io::Write;
-                f.write_all(line.as_bytes())
-            });
-    }
-    // #endregion
     if !result.verified {
         tracing::warn!(
             event = "desktop_entitlement_envelope_unverified",
@@ -441,7 +378,9 @@ fn compute_backoff_at(attempt: u32) -> DateTime<Utc> {
 
 fn map_denied_status(code: Option<&str>) -> ProductLicenseActivationStatus {
     match code.unwrap_or_default() {
-        "license_revoked" => ProductLicenseActivationStatus::DeniedRevoked,
+        // Licence revoked, this device revoked by the vendor, or the customer account deactivated:
+        // all mean access was withdrawn; `deny_reason_code` keeps the exact server code.
+        "license_revoked" | "activation_revoked" | "tenant_inactive" => ProductLicenseActivationStatus::DeniedRevoked,
         "license_expired" => ProductLicenseActivationStatus::DeniedExpired,
         "slot_limit_reached" => ProductLicenseActivationStatus::DeniedSlotLimit,
         "force_update_required" => ProductLicenseActivationStatus::DeniedForceUpdateRequired,
@@ -499,7 +438,7 @@ pub fn record_has_valid_activation_claim(record: &ProductLicenseStateRecord) -> 
     record
         .activation_claim
         .as_ref()
-        .map_or(false, activation_claim_is_complete)
+        .is_some_and(activation_claim_is_complete)
 }
 
 /// True when this device has a complete product activation claim (tenant is bound).
@@ -524,14 +463,64 @@ fn commercial_edition_from_claim(claim: &ProductActivationClaimRecord) -> Option
     None
 }
 
+const OFFLINE_GRACE_EXPIRED_CODE: &str = "offline_grace_expired";
+
+/// Last successful contact with the control plane (falls back to the last reconciliation for
+/// records written before `last_success_at` existed).
+fn last_contact_at(record: &ProductLicenseStateRecord) -> Option<&str> {
+    record
+        .reconciliation
+        .last_success_at
+        .as_deref()
+        .or(record.last_reconciled_at.as_deref())
+}
+
+/// End of the offline grace window: last successful contact + the licence's `offline_grace_hours`.
+/// `None` when either is unknown (nothing to enforce).
+fn offline_grace_deadline(record: &ProductLicenseStateRecord) -> Option<DateTime<Utc>> {
+    let hours = record.activation_claim.as_ref()?.offline_grace_hours?;
+    let last_contact = DateTime::parse_from_rfc3339(last_contact_at(record)?)
+        .ok()?
+        .with_timezone(&Utc);
+    Some(last_contact + Duration::hours(i64::from(hours)))
+}
+
+/// Status as enforced now: a usable activation (active or degraded) whose offline grace window has
+/// ended is reported as `DeniedOfflineGraceExpired` until the next successful reconciliation.
+fn effective_status(record: &ProductLicenseStateRecord, now: DateTime<Utc>) -> ProductLicenseActivationStatus {
+    let usable = matches!(
+        record.status,
+        ProductLicenseActivationStatus::Active | ProductLicenseActivationStatus::DegradedApiUnavailable
+    );
+    if usable && offline_grace_deadline(record).is_some_and(|deadline| now > deadline) {
+        ProductLicenseActivationStatus::DeniedOfflineGraceExpired
+    } else {
+        record.status.clone()
+    }
+}
+
 fn onboarding_state_from_record(record: &ProductLicenseStateRecord) -> ProductLicenseOnboardingState {
     let complete = record_has_valid_activation_claim(record);
+    let status = effective_status(record, Utc::now());
+    let grace_expired = status == ProductLicenseActivationStatus::DeniedOfflineGraceExpired;
     ProductLicenseOnboardingState {
         complete,
-        status: record.status.clone(),
-        pending_online_validation: record.pending_online_validation,
-        deny_reason_code: record.deny_reason_code.clone(),
-        deny_message: record.deny_message.clone(),
+        status,
+        // Keep retrying: the denial clears as soon as the control plane is reachable again.
+        pending_online_validation: record.pending_online_validation || grace_expired,
+        deny_reason_code: if grace_expired {
+            Some(OFFLINE_GRACE_EXPIRED_CODE.to_string())
+        } else {
+            record.deny_reason_code.clone()
+        },
+        deny_message: if grace_expired {
+            Some(format!(
+                "No contact with the licence server since {}. Connect this device to the internet to continue.",
+                last_contact_at(record).unwrap_or("activation")
+            ))
+        } else {
+            record.deny_message.clone()
+        },
         degraded_reason: record.degraded_reason.clone(),
         next_retry_at: record.reconciliation.next_retry_at.clone(),
         retry_attempt: record.reconciliation.retry_attempt,
@@ -549,7 +538,7 @@ pub async fn product_activation_view_fields(db: &DatabaseConnection) -> AppResul
     let Some(record) = load_state_record_from_db(db).await? else {
         return Ok(("uninitialized".to_string(), None));
     };
-    let status = serde_json::to_value(&record.status)
+    let status = serde_json::to_value(effective_status(&record, Utc::now()))
         .ok()
         .and_then(|v| v.as_str().map(str::to_string))
         .unwrap_or_else(|| "uninitialized".to_string());
@@ -637,6 +626,10 @@ async fn reset_local_tenant_runtime_data_impl(state: &State<'_, AppState>) -> Ap
         "Runtime reset table selection"
     );
 
+    // The wipe and the reseed below are local maintenance, not changes for other devices: capture
+    // is off until it is installed again at the end.
+    crate::sync::capture::suspend_capture(&state.db).await?;
+
     // SQLite ignores (or cannot toggle) foreign_keys inside an active transaction. Run OFF on the
     // connection first, then delete inside a transaction, then restore ON. Requires a single-connection
     // pool (see init_db) so this pragma applies to the same connection as `begin()`.
@@ -671,12 +664,21 @@ async fn reset_local_tenant_runtime_data_impl(state: &State<'_, AppState>) -> Ap
         );
     }
 
-    let wiped_rows_total = wipe_result?;
-
-    crate::db::seeder::seed_system_data(&state.db).await?;
-    // Migrations are not re-run after wipe (seaql_migrations kept). Restore system
-    // reference_* catalogs that seed_system_data does not cover (lookup_* only).
-    crate::reference::system_catalog_integrity::ensure_system_reference_catalog_integrity(&state.db).await?;
+    let reseeded: AppResult<u64> = async {
+        let wiped_rows_total = wipe_result?;
+        crate::db::seeder::seed_system_data(&state.db).await?;
+        // Without these rows every outbox staging (so every business write) and the sync worker fail.
+        crate::sync::queries::ensure_sync_control_rows(&state.db).await?;
+        // Migrations are not re-run after wipe (seaql_migrations kept). Restore system
+        // reference_* catalogs that seed_system_data does not cover (lookup_* only).
+        crate::reference::system_catalog_integrity::ensure_system_reference_catalog_integrity(&state.db).await?;
+        Ok(wiped_rows_total)
+    }
+    .await;
+    // Capture comes back whatever happened above, so later business writes are never missed.
+    let installed = crate::sync::capture::install_capture(&state.db).await;
+    let wiped_rows_total = reseeded?;
+    installed?;
     tracing::warn!(
         event = "desktop_tenant_runtime_reset_complete",
         wiped_rows_total,
@@ -809,7 +811,7 @@ pub async fn bootstrap_initial_tenant_admin(
 
     let password_hash = crate::auth::password::hash_password(&input.password)?;
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let sync_id = Uuid::new_v4().to_string();
+    let entity_sync_id = Uuid::new_v4().to_string();
     let display_name = input
         .display_name
         .as_ref()
@@ -823,12 +825,12 @@ pub async fn bootstrap_initial_tenant_admin(
         .execute(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
             r"INSERT INTO user_accounts
-                (sync_id, username, display_name, identity_mode, password_hash,
+                (entity_sync_id, username, display_name, identity_mode, password_hash,
                  is_active, is_admin, force_password_change, failed_login_attempts,
                  created_at, updated_at, row_version)
              VALUES (?, ?, ?, 'local', ?, 1, 1, 1, 0, ?, ?, 1)",
             vec![
-                sync_id.into(),
+                entity_sync_id.into(),
                 username.to_string().into(),
                 display_name.into(),
                 password_hash.into(),
@@ -855,7 +857,7 @@ pub async fn bootstrap_initial_tenant_admin(
         .execute(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
             r"INSERT INTO user_scope_assignments
-                (sync_id, user_id, role_id, scope_type, scope_reference,
+                (entity_sync_id, user_id, role_id, scope_type, scope_reference,
                  valid_from, valid_to, assigned_by_id, notes, created_at, updated_at, row_version)
              VALUES (?, ?, ?, 'tenant', ?, NULL, NULL, NULL, ?, ?, ?, 1)",
             vec![
@@ -889,7 +891,7 @@ pub async fn bootstrap_initial_tenant_admin(
 
 async fn persist_state_record(
     state: &State<'_, AppState>,
-    user_id: i32,
+    user_id: Option<i32>,
     record: &ProductLicenseStateRecord,
     summary: &str,
 ) -> AppResult<()> {
@@ -932,6 +934,40 @@ pub async fn get_product_license_onboarding_state(
     }
 }
 
+/// Who may submit a licence key (pre-login gate or in-app):
+/// - No usable activation yet (uninitialized, pending, or any denied_* state, e.g. revoked/expired
+///   licence that blocks the whole app) → allowed without a session: onboarding and recovery.
+/// - An active or degraded (still usable) activation → only an authenticated session with
+///   `adm.settings` + step-up, so nobody at the login screen can swap a working licence.
+async fn authorize_license_key_submission(state: &State<'_, AppState>) -> AppResult<()> {
+    let record = load_state_record(state).await?;
+    let usable_activation = record.as_ref().is_some_and(|r| {
+        record_has_valid_activation_claim(r)
+            && matches!(
+                r.status,
+                ProductLicenseActivationStatus::Active | ProductLicenseActivationStatus::DegradedApiUnavailable
+            )
+    });
+    if !usable_activation {
+        return Ok(());
+    }
+    if state.session.read().await.current.is_none() {
+        return Err(AppError::Auth(
+            "Une session administrateur est requise pour remplacer une licence active.              (An administrator session is required to replace an active licence.)"
+                .into(),
+        ));
+    }
+    let user = require_session!(state);
+    crate::require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_SETTINGS,
+        crate::auth::rbac::PermissionScope::Global
+    );
+    crate::require_step_up!(state);
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn submit_product_license_key(
     key: String,
@@ -940,14 +976,14 @@ pub async fn submit_product_license_key(
     app_version: Option<String>,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
+    authorize_license_key_submission(&state).await?;
     let changed_by_id = state
         .session
         .read()
         .await
         .current
         .as_ref()
-        .map(|session| session.user.user_id)
-        .unwrap_or(0);
+        .map(|session| session.user.user_id);
     let trimmed = key.trim();
     if trimmed.len() < 8 {
         return Err(AppError::ValidationFailed(vec![
@@ -1017,7 +1053,7 @@ pub async fn submit_product_license_key(
     }
     tracing::info!(
         event = "desktop_activation_submit",
-        user_id = changed_by_id,
+        user_id = ?changed_by_id,
         pending_online_validation = record.pending_online_validation,
         status = ?record.status,
         has_claim = record.activation_claim.is_some(),
@@ -1066,32 +1102,12 @@ pub async fn apply_product_license_reconciliation(
         .await
         .current
         .as_ref()
-        .map(|session| session.user.user_id)
-        .unwrap_or(0);
+        .map(|session| session.user.user_id);
     let mut record = load_state_record(&state)
         .await?
         .ok_or_else(|| AppError::ValidationFailed(vec!["No local product license state found.".into()]))?;
     let outcome_value: serde_json::Value = serde_json::from_str(&outcome_json)
         .map_err(|e| AppError::ValidationFailed(vec![format!("outcomeJson must be valid JSON: {e}")]))?;
-    // #region agent log
-    {
-        let kind = outcome_value.get("kind").and_then(|v| v.as_str()).unwrap_or("");
-        let has_claim = outcome_value.get("claim").is_some();
-        let has_env = outcome_value.get("entitlement_envelope").is_some();
-        let line = format!(
-            "{{\"sessionId\":\"a6aab3\",\"runId\":\"post-fix\",\"hypothesisId\":\"G-serde\",\"location\":\"product_license.rs:apply_reconciliation\",\"message\":\"reconciling outcome\",\"data\":{{\"kind\":\"{kind}\",\"hasClaim\":{has_claim},\"hasEnvelope\":{has_env}}},\"timestamp\":{}}}\n",
-            chrono::Utc::now().timestamp_millis()
-        );
-        let _ = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(r"c:\Dev\MaintafoxSuite\desktop\maintafox-desktop\debug-a6aab3.log")
-            .and_then(|mut f| {
-                use std::io::Write;
-                f.write_all(line.as_bytes())
-            });
-    }
-    // #endregion
     let entitlement_envelope = match outcome_value
         .get("entitlement_envelope")
         .cloned()
@@ -1101,23 +1117,6 @@ pub async fn apply_product_license_reconciliation(
     {
         Ok(v) => v,
         Err(e) => {
-            // #region agent log
-            {
-                let line = format!(
-                    "{{\"sessionId\":\"a6aab3\",\"runId\":\"post-fix\",\"hypothesisId\":\"G-serde\",\"location\":\"product_license.rs:envelope_parse\",\"message\":\"envelope deserialize failed; continuing without envelope\",\"data\":{{\"error\":\"{}\"}},\"timestamp\":{}}}\n",
-                    e.to_string().replace('\\', "\\\\").replace('"', "'"),
-                    chrono::Utc::now().timestamp_millis()
-                );
-                let _ = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(r"c:\Dev\MaintafoxSuite\desktop\maintafox-desktop\debug-a6aab3.log")
-                    .and_then(|mut f| {
-                        use std::io::Write;
-                        f.write_all(line.as_bytes())
-                    });
-            }
-            // #endregion
             tracing::warn!(
                 event = "desktop_entitlement_envelope_parse_failed",
                 error = %e,
@@ -1136,29 +1135,11 @@ pub async fn apply_product_license_reconciliation(
         obj.remove("entitlement_envelope");
         obj.insert("claim".into(), claim_value);
     }
-    let mut outcome: ProductLicenseReconciliationInput = serde_json::from_value(outcome_for_meta)
-        .map_err(|e| {
-            // #region agent log
-            {
-                let line = format!(
-                    "{{\"sessionId\":\"a6aab3\",\"runId\":\"post-fix\",\"hypothesisId\":\"G-serde\",\"location\":\"product_license.rs:outcome_parse\",\"message\":\"outcome deserialize failed\",\"data\":{{\"error\":\"{}\"}},\"timestamp\":{}}}\n",
-                    e.to_string().replace('\\', "\\\\").replace('"', "'"),
-                    chrono::Utc::now().timestamp_millis()
-                );
-                let _ = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(r"c:\Dev\MaintafoxSuite\desktop\maintafox-desktop\debug-a6aab3.log")
-                    .and_then(|mut f| {
-                        use std::io::Write;
-                        f.write_all(line.as_bytes())
-                    });
-            }
-            // #endregion
-            AppError::ValidationFailed(vec![format!(
-                "outcomeJson must be valid ProductLicenseReconciliationInput JSON: {e}"
-            )])
-        })?;
+    let mut outcome: ProductLicenseReconciliationInput = serde_json::from_value(outcome_for_meta).map_err(|e| {
+        AppError::ValidationFailed(vec![format!(
+            "outcomeJson must be valid ProductLicenseReconciliationInput JSON: {e}"
+        )])
+    })?;
     outcome.entitlement_envelope = entitlement_envelope;
 
     let now = Utc::now().to_rfc3339();
@@ -1251,7 +1232,7 @@ pub async fn apply_product_license_reconciliation(
 
     tracing::info!(
         event = "desktop_activation_reconciliation",
-        user_id = changed_by_id,
+        user_id = ?changed_by_id,
         status = ?record.status,
         pending_online_validation = record.pending_online_validation,
         retry_attempt = record.reconciliation.retry_attempt,
@@ -1330,21 +1311,32 @@ pub async fn reset_product_license_activation(state: State<'_, AppState>) -> App
         }
     }
 
+    let wiped_rows = reset_to_first_run(&state, "recovery").await?;
+    tracing::warn!(
+        event = "desktop_activation_reset",
+        wiped_rows,
+        "Product activation state reset and tenant runtime wiped"
+    );
+    Ok(())
+}
+
+/// Returns the device to its first-run state: wipes tenant runtime data, forgets the product
+/// license onboarding and tenant bootstrap, and ends the session. Callers enforce authorization.
+pub(crate) async fn reset_to_first_run(state: &State<'_, AppState>, reason: &str) -> AppResult<u64> {
     let changed_by_id = state
         .session
         .read()
         .await
         .current
         .as_ref()
-        .map(|session| session.user.user_id)
-        .unwrap_or(0);
-    let wiped_rows = reset_local_tenant_runtime_data_impl(&state).await?;
+        .map(|session| session.user.user_id);
+    let wiped_rows = reset_local_tenant_runtime_data_impl(state).await?;
     let _ = settings::delete_setting(
         &state.db,
         PRODUCT_LICENSE_ONBOARDING_KEY,
         PRODUCT_LICENSE_SCOPE,
         changed_by_id,
-        "product license activation reset (recovery)",
+        &format!("product license activation reset ({reason})"),
     )
     .await?;
     let _ = settings::delete_setting(
@@ -1352,19 +1344,14 @@ pub async fn reset_product_license_activation(state: State<'_, AppState>) -> App
         TENANT_BOOTSTRAP_KEY,
         TENANT_BOOTSTRAP_SCOPE,
         changed_by_id,
-        "tenant bootstrap reset (recovery)",
+        &format!("tenant bootstrap reset ({reason})"),
     )
     .await?;
     {
         let mut session_guard = state.session.write().await;
         session_guard.clear_session();
     }
-    tracing::warn!(
-        event = "desktop_activation_reset",
-        wiped_rows,
-        "Product activation state reset and tenant runtime wiped"
-    );
-    Ok(())
+    Ok(wiped_rows)
 }
 
 #[tauri::command]
@@ -1412,16 +1399,14 @@ pub async fn reset_local_tenant_runtime_data(state: State<'_, AppState>) -> AppR
     Ok(wiped_rows)
 }
 
-/// Bearer token from the last successful activation claim (`/api/v1/activation/claim`).
-/// Used by the control-plane sync transport; requires an authenticated desktop session.
-#[tauri::command]
-pub async fn get_control_plane_activation_bearer_token(state: State<'_, AppState>) -> AppResult<Option<String>> {
-    let _session = require_session!(state);
-    let record = load_state_record(&state).await?;
-    let Some(rec) = record else {
+/// Bearer token from the last successful activation claim (`/api/v1/activation/claim`) for the
+/// Rust sync worker. Never exposed as a command: the sync token stays in Rust. `None` unless the
+/// activation is currently active.
+pub async fn sync_activation_bearer_token(db: &DatabaseConnection) -> AppResult<Option<String>> {
+    let Some(rec) = load_state_record_from_db(db).await? else {
         return Ok(None);
     };
-    if rec.status != ProductLicenseActivationStatus::Active {
+    if effective_status(&rec, Utc::now()) != ProductLicenseActivationStatus::Active {
         return Ok(None);
     }
     if !record_has_valid_activation_claim(&rec) {
@@ -1522,4 +1507,148 @@ mod claim_json_tests {
         assert!(!obj.contains_key("company_name"));
         assert!(!obj.contains_key("seat_limit"));
     }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+
+    fn record(
+        status: ProductLicenseActivationStatus,
+        last_success: &str,
+        grace_hours: Option<u32>,
+    ) -> ProductLicenseStateRecord {
+        serde_json::from_value(serde_json::json!({
+            "schema_version": 1,
+            "key_sha256": "abc",
+            "license_key_plaintext": null,
+            "machine_fingerprint": "fp-1",
+            "app_version": "1.0.0",
+            "submitted_at": "2026-10-01T00:00:00Z",
+            "status": status,
+            "pending_online_validation": false,
+            "deny_reason_code": null,
+            "deny_message": null,
+            "degraded_reason": null,
+            "activation_claim": {
+                "tenant_id": "t-1",
+                "license_id": "lic-1",
+                "machine_fingerprint": "fp-1",
+                "activation_token": "tok-1",
+                "offline_grace_hours": grace_hours,
+            },
+            "last_reconciled_at": last_success,
+            "reconciliation": { "retry_attempt": 0, "last_success_at": last_success },
+            "diagnostics": [],
+        }))
+        .expect("record fixture")
+    }
+
+    fn at(s: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc)
+    }
+
+    #[test]
+    fn revocation_codes_map_to_denied_revoked() {
+        for code in ["license_revoked", "activation_revoked", "tenant_inactive"] {
+            assert_eq!(
+                map_denied_status(Some(code)),
+                ProductLicenseActivationStatus::DeniedRevoked,
+                "{code}"
+            );
+        }
+        assert_eq!(
+            map_denied_status(Some("license_expired")),
+            ProductLicenseActivationStatus::DeniedExpired
+        );
+        assert_eq!(
+            map_denied_status(Some("something_else")),
+            ProductLicenseActivationStatus::DeniedInvalid
+        );
+    }
+
+    #[test]
+    fn active_within_grace_stays_active() {
+        let r = record(ProductLicenseActivationStatus::Active, "2026-10-10T00:00:00Z", Some(72));
+        assert_eq!(
+            effective_status(&r, at("2026-10-12T23:00:00Z")),
+            ProductLicenseActivationStatus::Active
+        );
+    }
+
+    #[test]
+    fn active_or_degraded_past_grace_is_denied() {
+        for status in [
+            ProductLicenseActivationStatus::Active,
+            ProductLicenseActivationStatus::DegradedApiUnavailable,
+        ] {
+            let r = record(status, "2026-10-10T00:00:00Z", Some(72));
+            assert_eq!(
+                effective_status(&r, at("2026-10-13T00:00:01Z")),
+                ProductLicenseActivationStatus::DeniedOfflineGraceExpired
+            );
+        }
+    }
+
+    #[test]
+    fn grace_not_enforced_without_server_value_and_other_denials_are_kept() {
+        let r = record(ProductLicenseActivationStatus::Active, "2020-01-01T00:00:00Z", None);
+        assert_eq!(
+            effective_status(&r, at("2026-10-13T00:00:00Z")),
+            ProductLicenseActivationStatus::Active
+        );
+        let r = record(
+            ProductLicenseActivationStatus::DeniedRevoked,
+            "2020-01-01T00:00:00Z",
+            Some(1),
+        );
+        assert_eq!(
+            effective_status(&r, at("2026-10-13T00:00:00Z")),
+            ProductLicenseActivationStatus::DeniedRevoked
+        );
+    }
+
+    #[test]
+    fn onboarding_state_reports_grace_expiry() {
+        let r = record(ProductLicenseActivationStatus::Active, "2020-01-01T00:00:00Z", Some(72));
+        let view = onboarding_state_from_record(&r);
+        assert_eq!(view.status, ProductLicenseActivationStatus::DeniedOfflineGraceExpired);
+        assert_eq!(view.deny_reason_code.as_deref(), Some(OFFLINE_GRACE_EXPIRED_CODE));
+        assert!(view.pending_online_validation, "must keep retrying when back online");
+    }
+}
+
+/// Tests and the multi-device harness: record a complete activation claim for `tenant_id`, as a
+/// successful activation does, so tenant scoping (media object keys, `tenant_config`) is real.
+#[cfg(test)]
+pub(crate) async fn record_activation_claim_for_tests(
+    db: &DatabaseConnection,
+    tenant_id: &str,
+    machine_fingerprint: &str,
+    activation_token: &str,
+) -> AppResult<()> {
+    let record = serde_json::json!({
+        "schema_version": 1,
+        "key_sha256": "test",
+        "submitted_at": Utc::now().to_rfc3339(),
+        "status": "active",
+        "pending_online_validation": false,
+        "activation_claim": {
+            "tenant_id": tenant_id,
+            "license_id": "test-licence",
+            "machine_fingerprint": machine_fingerprint,
+            "activation_token": activation_token,
+        },
+        "reconciliation": { "retry_attempt": 0 },
+        "diagnostics": [],
+    });
+    settings::set_setting(
+        db,
+        PRODUCT_LICENSE_ONBOARDING_KEY,
+        PRODUCT_LICENSE_SCOPE,
+        &record.to_string(),
+        None,
+        "test activation",
+    )
+    .await
 }

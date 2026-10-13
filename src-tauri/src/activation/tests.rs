@@ -15,7 +15,7 @@ async fn seed_user_and_permissions(db: &DatabaseConnection) {
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT OR IGNORE INTO user_accounts
-            (id, sync_id, username, display_name, identity_mode, password_hash, is_active, is_admin, force_password_change,
+            (id, entity_sync_id, username, display_name, identity_mode, password_hash, is_active, is_admin, force_password_change,
              failed_login_attempts, created_at, updated_at)
          VALUES
             (1, 'sync-user-1', 'tester', 'Tester', 'local', 'dummy', 1, 1, 0, 0, strftime('%Y-%m-%dT%H:%M:%SZ','now'),
@@ -43,7 +43,7 @@ fn activation_input(contract_id: &str, nonce: &str, slot_assignment_id: &str) ->
         trust_score: 99,
         vps_version: 10,
         response_nonce: nonce.to_string(),
-        issued_at: "2026-04-16T00:00:00Z".to_string(),
+        issued_at: crate::entitlements::test_support::now_rfc3339(),
         expires_at: "2099-01-01T00:00:00Z".to_string(),
         offline_grace_until: "2099-01-03T00:00:00Z".to_string(),
         revocation_state: "active".to_string(),

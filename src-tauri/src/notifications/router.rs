@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
-use crate::notifications::{Result, SqlitePool};
+use crate::notifications::Result;
 
 #[derive(Debug, Clone, Default)]
 pub struct RoutingResult {
@@ -11,7 +11,7 @@ pub struct RoutingResult {
 }
 
 pub async fn resolve_recipients(
-    pool: &SqlitePool,
+    pool: &impl ConnectionTrait,
     routing_mode: &str,
     payload: &serde_json::Value,
 ) -> Result<RoutingResult> {
@@ -58,12 +58,12 @@ pub async fn resolve_recipients(
                         user_ids.insert(user_id);
                     } else if let Some(team_id) = query_optional_i64(
                         pool,
-                        "SELECT pp.assigned_group_id
+                        "SELECT pp.assigned_team_id
                          FROM pm_occurrences po
                          JOIN pm_plans pp ON pp.id = po.pm_plan_id
                          WHERE po.id = ?",
                         [source_id.into()],
-                        "assigned_group_id",
+                        "assigned_team_id",
                     )
                     .await?
                     {
@@ -176,7 +176,7 @@ pub async fn resolve_recipients(
             let team_id = payload
                 .get("team_id")
                 .and_then(as_i64)
-                .or_else(|| payload.get("assigned_group_id").and_then(as_i64));
+                .or_else(|| payload.get("assigned_team_id").and_then(as_i64));
             if let Some(team_id) = team_id {
                 let rows = pool
                     .query_all(Statement::from_sql_and_values(
@@ -301,7 +301,7 @@ fn as_i64(value: &serde_json::Value) -> Option<i64> {
 }
 
 async fn query_optional_i64<const N: usize>(
-    pool: &SqlitePool,
+    pool: &impl ConnectionTrait,
     sql: &str,
     values: [sea_orm::Value; N],
     col: &str,

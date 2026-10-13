@@ -48,12 +48,12 @@ pub struct WoConversionResult {
 
 /// All columns from `intervention_requests` for SELECT reuse (aliased as `ir`).
 const IR_COLS: &str = "\
-    ir.id, ir.code, ir.asset_id, ir.sub_asset_ref, ir.org_node_id, \
+    ir.id, ir.code, ir.equipment_id, ir.sub_asset_ref, ir.org_node_id, \
     ir.status, ir.title, ir.description, ir.origin_type, ir.request_type, ir.symptom_code_id, \
     ir.impact_level, ir.production_impact, ir.safety_flag, ir.environmental_flag, \
     ir.quality_flag, ir.reported_urgency, ir.validated_urgency, \
     ir.observed_at, ir.submitted_at, \
-    ir.review_team_id, ir.reviewer_id, ir.screened_at, ir.approved_at, \
+    ir.reviewer_id, ir.screened_at, ir.approved_at, \
     ir.deferred_until, ir.declined_at, ir.closed_at, ir.archived_at, \
     ir.converted_to_wo_id, ir.converted_at, \
     ir.sla_rule_id, ir.sla_target_response_hours, ir.sla_target_resolution_hours, \
@@ -75,7 +75,7 @@ const IR_JOIN_COLS: &str = "\
     related_di.code AS related_di_code";
 
 const IR_JOINS: &str = "\
-    LEFT JOIN equipment eq ON eq.id = ir.asset_id \
+    LEFT JOIN equipment eq ON eq.id = ir.equipment_id \
     LEFT JOIN org_nodes org ON org.id = ir.org_node_id \
     LEFT JOIN user_accounts us ON us.id = ir.submitter_id \
     LEFT JOIN user_accounts urv ON urv.id = ir.reviewer_id \
@@ -106,7 +106,7 @@ fn check_concurrency(rows_affected: u64) -> AppResult<()> {
 ///
 /// The entire operation executes inside a single transaction:
 ///   1. Load DI + guard state transition
-///   2. Validate prerequisites (asset_id, classification_code_id)
+///   2. Validate prerequisites (equipment_id, classification_code_id)
 ///   3. Generate WO code and insert WO stub
 ///   4. Update DI status to `closed` with disposition `converted_to_wo`
 ///   5. Insert state transition log
@@ -125,7 +125,7 @@ pub async fn convert_di_to_work_order(
     let di_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!(
+            format!(
                 "SELECT {IR_COLS}, {IR_JOIN_COLS} \
                  FROM intervention_requests ir \
                  {IR_JOINS} \
@@ -155,7 +155,7 @@ pub async fn convert_di_to_work_order(
     // ── 2. Validate conversion prerequisites ──────────────────────────────
     let mut errors: Vec<String> = Vec::new();
 
-    if di.asset_id == 0 {
+    if di.equipment_id == 0 {
         errors.push("Contexte d'actif requis pour la conversion.".into());
     }
     if di.org_node_id == 0 {
@@ -226,16 +226,16 @@ pub async fn convert_di_to_work_order(
         "INSERT INTO work_orders (\
             code, type_id, status_id, equipment_id, \
             source_di_id, entity_id, requester_id, \
-            title, description, row_version, created_at, updated_at\
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+            title, description, entity_sync_id, row_version, created_at, updated_at\
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
         [
             wo_code.clone().into(),
             type_id.into(),
             planning_status_id.into(),
-            if di.asset_id == 0 {
+            if di.equipment_id == 0 {
                 sea_orm::Value::from(None::<i64>)
             } else {
-                di.asset_id.into()
+                di.equipment_id.into()
             },
             input.di_id.into(),
             if di.org_node_id == 0 {
@@ -246,6 +246,7 @@ pub async fn convert_di_to_work_order(
             input.actor_id.into(),
             di.title.clone().into(),
             di.description.clone().into(),
+            crate::sync::identity::new_entity_sync_id().into(),
             now.clone().into(),
             now.clone().into(),
         ],
@@ -419,7 +420,7 @@ pub async fn convert_di_to_work_order(
     let updated_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!(
+            format!(
                 "SELECT {IR_COLS}, {IR_JOIN_COLS} \
                  FROM intervention_requests ir \
                  {IR_JOINS} \
@@ -434,6 +435,9 @@ pub async fn convert_di_to_work_order(
         })?;
 
     let updated_di = map_intervention_request(&updated_row)?;
+
+    // ── 9. Stage the new WO and the closed DI in the same transaction ─────
+
     txn.commit().await?;
 
     super::notifications::notify_converted(db, &updated_di).await;

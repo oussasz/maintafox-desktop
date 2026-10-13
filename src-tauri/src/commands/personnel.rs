@@ -53,6 +53,39 @@ async fn can_read_personnel_record(
     Ok(linked_personnel_id(state, user.user_id).await? == Some(personnel_id))
 }
 
+/// Who may see `per.sensitiveview` fields (contact, contract/HR data, pay rates, absence reasons):
+/// holders of the permission see every record; everyone else sees only their own record.
+struct SensitiveAccess {
+    has_permission: bool,
+    own_personnel_id: Option<i64>,
+}
+
+impl SensitiveAccess {
+    async fn load(state: &State<'_, AppState>, user_id: i32) -> AppResult<Self> {
+        let has_permission = crate::auth::rbac::check_permission_cached(
+            &state.db,
+            &state.permission_cache,
+            user_id,
+            crate::rbac::permissions::PER_SENSITIVEVIEW,
+            &PermissionScope::Global,
+        )
+        .await?;
+        let own_personnel_id = if has_permission {
+            None
+        } else {
+            linked_personnel_id(state, user_id).await?
+        };
+        Ok(Self {
+            has_permission,
+            own_personnel_id,
+        })
+    }
+
+    fn can_view(&self, personnel_id: i64) -> bool {
+        self.has_permission || self.own_personnel_id == Some(personnel_id)
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // A) list_personnel — per.view
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -66,7 +99,14 @@ pub async fn list_personnel(filter: PersonnelListFilter, state: State<'_, AppSta
         crate::rbac::permissions::PER_VIEW,
         PermissionScope::Global
     );
-    queries::list_personnel(&state.db, filter).await
+    let mut page = queries::list_personnel(&state.db, filter).await?;
+    let access = SensitiveAccess::load(&state, user.user_id).await?;
+    for person in &mut page.items {
+        if !access.can_view(person.id) {
+            person.mask_sensitive();
+        }
+    }
+    Ok(page)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -80,12 +120,22 @@ pub async fn get_personnel(id: i64, state: State<'_, AppState>) -> AppResult<Per
         return Err(AppError::PermissionDenied("Permission requise : per.view".to_string()));
     }
 
-    queries::get_personnel_detail(&state.db, id)
+    let mut detail = queries::get_personnel_detail(&state.db, id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "Personnel".into(),
             id: id.to_string(),
-        })
+        })?;
+    if !SensitiveAccess::load(&state, user.user_id).await?.can_view(id) {
+        // `sensitive_masked` on the record also tells the UI that pay rates were withheld.
+        detail.personnel.mask_sensitive();
+        detail.rate_cards.clear();
+    }
+    Ok(detail)
+}
+
+fn sensitive_denied() -> AppError {
+    AppError::PermissionDenied("Permission requise : per.sensitiveview".to_string())
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -119,7 +169,7 @@ pub async fn create_personnel(input: PersonnelCreateInput, state: State<'_, AppS
 
     queries::assert_position_exists(&state.db, payload.position_id).await?;
     queries::assert_org_node_exists(&state.db, payload.primary_entity_id).await?;
-    queries::assert_org_node_exists(&state.db, payload.primary_team_id).await?;
+    crate::repository::team_repository::assert_active_crew_exists(&state.db, payload.primary_team_id).await?;
 
     queries::create_personnel(&state.db, payload, i64::from(user.user_id)).await
 }
@@ -150,7 +200,7 @@ pub async fn update_personnel(input: PersonnelUpdateInput, state: State<'_, AppS
         queries::assert_org_node_exists(&state.db, eid).await?;
     }
     if let Some(tid) = input.primary_team_id {
-        queries::assert_org_node_exists(&state.db, tid).await?;
+        crate::repository::team_repository::assert_active_crew_exists(&state.db, tid).await?;
     }
 
     queries::update_personnel(&state.db, input, i64::from(user.user_id)).await
@@ -305,6 +355,23 @@ pub async fn upload_personnel_photo(
 }
 
 #[tauri::command]
+pub async fn read_personnel_photo_preview(
+    app: AppHandle,
+    personnel_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<photos::PersonnelPhotoPreview> {
+    let user = require_session!(state);
+    if !can_read_personnel_record(&state, &user, personnel_id).await? {
+        return Err(AppError::PermissionDenied("Permission requise : per.view".to_string()));
+    }
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("app_data_dir: {e}")))?;
+    photos::read_personnel_photo_preview(&state.db, &app_data_dir, personnel_id).await
+}
+
+#[tauri::command]
 pub async fn get_personnel_availability_state(
     personnel_id: i64,
     state: State<'_, AppState>,
@@ -342,7 +409,31 @@ pub async fn list_rate_cards(personnel_id: i64, state: State<'_, AppState>) -> A
     if !can_read_personnel_record(&state, &user, personnel_id).await? {
         return Err(AppError::PermissionDenied("Permission requise : per.view".to_string()));
     }
+    if !SensitiveAccess::load(&state, user.user_id)
+        .await?
+        .can_view(personnel_id)
+    {
+        return Err(sensitive_denied());
+    }
     queries::list_rate_cards(&state.db, personnel_id).await
+}
+
+#[tauri::command]
+pub async fn get_active_rate_card(
+    personnel_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<Option<PersonnelRateCard>> {
+    let user = require_session!(state);
+    if !can_read_personnel_record(&state, &user, personnel_id).await? {
+        return Err(AppError::PermissionDenied("Permission requise : per.view".to_string()));
+    }
+    if !SensitiveAccess::load(&state, user.user_id)
+        .await?
+        .can_view(personnel_id)
+    {
+        return Err(sensitive_denied());
+    }
+    queries::get_active_rate_card(&state.db, personnel_id).await
 }
 
 #[tauri::command]
@@ -521,6 +612,96 @@ pub async fn list_team_capacity_summary(
 }
 
 #[tauri::command]
+pub async fn list_active_teams(
+    filter: crate::repository::team_repository::TeamListFilter,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::repository::team_repository::TeamSummary>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PER_VIEW,
+        PermissionScope::Global
+    );
+    crate::repository::team_repository::list_active_teams(&state.db, filter).await
+}
+
+#[tauri::command]
+pub async fn get_team(
+    team_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<crate::repository::team_repository::TeamSummary> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PER_VIEW,
+        PermissionScope::Global
+    );
+    crate::repository::team_repository::get_team_by_id(&state.db, team_id).await
+}
+
+#[tauri::command]
+pub async fn list_team_members(
+    team_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::personnel::domain::TeamMemberRow>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PER_VIEW,
+        PermissionScope::Global
+    );
+    queries::list_team_members(&state.db, team_id).await
+}
+
+#[tauri::command]
+pub async fn create_team(
+    input: crate::repository::team_repository::TeamCreateInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::repository::team_repository::TeamSummary> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PER_MANAGE,
+        PermissionScope::Global
+    );
+    crate::repository::team_repository::create_team(&state.db, input).await
+}
+
+#[tauri::command]
+pub async fn update_team(
+    input: crate::repository::team_repository::TeamUpdateInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::repository::team_repository::TeamSummary> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PER_MANAGE,
+        PermissionScope::Global
+    );
+    crate::repository::team_repository::update_team(&state.db, input).await
+}
+
+#[tauri::command]
+pub async fn set_team_lead(
+    input: crate::personnel::domain::SetTeamLeadInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::personnel::domain::TeamMemberRow> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PER_MANAGE,
+        PermissionScope::Global
+    );
+    queries::set_team_lead(&state.db, input).await
+}
+
+#[tauri::command]
 pub async fn create_availability_block(
     input: availability::AvailabilityBlockCreateInput,
     state: State<'_, AppState>,
@@ -561,6 +742,48 @@ pub async fn create_availability_block(
 }
 
 #[tauri::command]
+pub async fn update_availability_block(
+    input: availability::AvailabilityBlockUpdateInput,
+    state: State<'_, AppState>,
+) -> AppResult<availability::PersonnelAvailabilityBlock> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PER_MANAGE,
+        PermissionScope::Global
+    );
+    availability::update_availability_block(&state.db, input).await
+}
+
+#[tauri::command]
+pub async fn delete_availability_block(id: i64, state: State<'_, AppState>) -> AppResult<()> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PER_MANAGE,
+        PermissionScope::Global
+    );
+    availability::delete_availability_block(&state.db, id).await
+}
+
+#[tauri::command]
+pub async fn end_availability_block(
+    id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<availability::PersonnelAvailabilityBlock> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PER_MANAGE,
+        PermissionScope::Global
+    );
+    availability::end_availability_block(&state.db, id).await
+}
+
+#[tauri::command]
 pub async fn list_personnel_team_assignments(
     personnel_id: i64,
     state: State<'_, AppState>,
@@ -582,7 +805,16 @@ pub async fn list_personnel_availability_blocks(
     if !can_read_personnel_record(&state, &user, personnel_id).await? {
         return Err(AppError::PermissionDenied("Permission requise : per.view".to_string()));
     }
-    queries::list_personnel_availability_blocks(&state.db, personnel_id, limit.unwrap_or(50)).await
+    let mut blocks = queries::list_personnel_availability_blocks(&state.db, personnel_id, limit.unwrap_or(50)).await?;
+    if !SensitiveAccess::load(&state, user.user_id)
+        .await?
+        .can_view(personnel_id)
+    {
+        for block in &mut blocks {
+            block.mask_sensitive();
+        }
+    }
+    Ok(blocks)
 }
 
 #[tauri::command]

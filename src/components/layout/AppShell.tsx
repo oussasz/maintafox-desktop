@@ -2,6 +2,7 @@ import { useEffect, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 import { AppToastHost } from "@/components/shell/AppToastHost";
+import { DatabaseRecoveryScreen } from "@/components/startup/DatabaseRecoveryScreen";
 import { useStartupBridge } from "@/hooks/use-startup-bridge";
 import { invokeSilent } from "@/lib/ipc-invoke";
 import { isSessionActiveForBackgroundWork } from "@/lib/session-ready";
@@ -9,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { defaultNavItems } from "@/navigation/nav-registry";
 import { useAppStore } from "@/store/app-store";
 import { useSessionStore } from "@/store/session-store";
+import { useLocaleStore } from "@/stores/locale-store";
 import { useSyncOrchestratorStore } from "@/stores/sync-orchestrator-store";
 
 import { Sidebar } from "./Sidebar";
@@ -29,6 +31,7 @@ export function AppShell({ children }: AppShellProps) {
   const collapsed = useAppStore((s) => s.sidebarCollapsed);
   const initializeSync = useSyncOrchestratorStore((s) => s.initialize);
   const shutdownSync = useSyncOrchestratorStore((s) => s.shutdown);
+  const refreshCurrency = useLocaleStore((s) => s.refreshCurrency);
   const sessionAuthenticated = useSessionStore((s) => s.info?.is_authenticated === true);
   const sessionLocked = useSessionStore((s) => s.info?.is_locked === true);
 
@@ -39,6 +42,11 @@ export function AppShell({ children }: AppShellProps) {
     initializeSync();
     return () => shutdownSync();
   }, [initializeSync, shutdownSync]);
+
+  useEffect(() => {
+    if (!sessionAuthenticated || sessionLocked) return;
+    void refreshCurrency();
+  }, [sessionAuthenticated, sessionLocked, refreshCurrency]);
 
   // Shell-level activity heartbeat — covers idle UI with no authenticated IPC.
   useEffect(() => {
@@ -71,6 +79,10 @@ export function AppShell({ children }: AppShellProps) {
         <p className="text-sm text-text-secondary">{startupMsg || t("startup.loading")}</p>
       </div>
     );
+  }
+
+  if (appStatus === "database_key_required") {
+    return <DatabaseRecoveryScreen reason={startupMsg ?? ""} />;
   }
 
   if (appStatus === "error") {

@@ -6,6 +6,8 @@ import { z } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
 import type {
+  DocumentBrandingLogoPreview,
+  DocumentBrandingLogoUploadResult,
   ActivatePolicyPayload,
   AppSetting,
   PolicySnapshot,
@@ -23,8 +25,12 @@ const AppSettingSchema = z.object({
   setting_scope: z.string(),
   setting_value_json: z.string(),
   category: z.string(),
-  setting_risk: z.enum(["low", "high"]),
-  validation_status: z.enum(["valid", "draft", "error", "untested"]),
+  // Coerce legacy/unknown DB values so one bad row cannot blank the whole Settings UI.
+  setting_risk: z.string().transform((v): "low" | "high" => (v === "high" ? "high" : "low")),
+  validation_status: z.string().transform((v): "valid" | "draft" | "error" | "untested" => {
+    if (v === "draft" || v === "error" || v === "untested" || v === "valid") return v;
+    return "valid";
+  }),
   secret_ref_id: z.number().nullable(),
   last_modified_by_id: z.number().nullable(),
   last_modified_at: z.string(),
@@ -60,6 +66,14 @@ const SettingsChangeEventSchema = z.object({
 export async function listAllSettings(): Promise<AppSetting[]> {
   const raw = await invoke<AppSetting[]>("list_all_settings");
   return z.array(AppSettingSchema).parse(raw);
+}
+
+/**
+ * Ensure baseline settings + default policy snapshots exist (idempotent).
+ * Requires `adm.settings`.
+ */
+export async function ensureSettingsDefaults(): Promise<void> {
+  await invoke<void>("ensure_settings_defaults");
 }
 
 /**
@@ -195,4 +209,74 @@ export async function discardPolicyDraft(domain: string): Promise<void> {
 export async function listPolicySnapshots(domain: string): Promise<PolicySnapshot[]> {
   const raw = await invoke<PolicySnapshot[]>("list_policy_snapshots", { domain });
   return z.array(PolicySnapshotSchema).parse(raw);
+}
+
+// ── Document branding (letterhead logo) ─────────────────────────────────────
+
+const DocumentBrandingLogoPreviewSchema = z.object({
+  mime_type: z.string(),
+  data_base64: z.string(),
+  relative_path: z.string(),
+});
+
+const DocumentBrandingLogoUploadResultSchema = z.object({
+  relative_path: z.string(),
+  mime_type: z.string(),
+  data_base64: z.string(),
+});
+
+/** Setting key for the TipTap letterhead JSON (tenant scope). */
+export const DOCUMENT_HEADER_SETTING_KEY = "documents.default_header";
+
+export interface DocumentHeaderSettingValue {
+  version: number;
+  content_json: unknown;
+  html: string;
+  logo_relative_path: string | null;
+}
+
+export const EMPTY_DOCUMENT_HEADER: DocumentHeaderSettingValue = {
+  version: 1,
+  content_json: { type: "doc", content: [{ type: "paragraph" }] },
+  html: "",
+  logo_relative_path: null,
+};
+
+export function parseDocumentHeaderValue(
+  raw: string | null | undefined,
+): DocumentHeaderSettingValue {
+  if (!raw || !raw.trim()) return { ...EMPTY_DOCUMENT_HEADER };
+  try {
+    const parsed = JSON.parse(raw) as Partial<DocumentHeaderSettingValue>;
+    if (typeof parsed !== "object" || parsed === null) return { ...EMPTY_DOCUMENT_HEADER };
+    return {
+      version: typeof parsed.version === "number" ? parsed.version : 1,
+      content_json: parsed.content_json ?? EMPTY_DOCUMENT_HEADER.content_json,
+      html: typeof parsed.html === "string" ? parsed.html : "",
+      logo_relative_path:
+        typeof parsed.logo_relative_path === "string" ? parsed.logo_relative_path : null,
+    };
+  } catch {
+    return { ...EMPTY_DOCUMENT_HEADER };
+  }
+}
+
+/** Upload / replace tenant document branding logo. Requires `adm.settings`. */
+export async function uploadDocumentBrandingLogo(
+  sourcePath: string,
+): Promise<DocumentBrandingLogoUploadResult> {
+  const raw = await invoke<unknown>("upload_document_branding_logo", { sourcePath });
+  return DocumentBrandingLogoUploadResultSchema.parse(raw);
+}
+
+/** Clear tenant document branding logo. Requires `adm.settings`. */
+export async function clearDocumentBrandingLogo(): Promise<void> {
+  await invoke<void>("clear_document_branding_logo");
+}
+
+/** Read tenant document branding logo preview for a `data:` URL. */
+export async function readDocumentBrandingLogoPreview(): Promise<DocumentBrandingLogoPreview | null> {
+  const raw = await invoke<unknown>("read_document_branding_logo_preview");
+  if (raw === null) return null;
+  return DocumentBrandingLogoPreviewSchema.parse(raw);
 }

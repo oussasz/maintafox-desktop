@@ -5,7 +5,8 @@
 //! V2 — Self-verification guard: save_verification with verified_by_id =
 //!       primary_responsible_id must fail.
 //! V3 — Cost roll-up: labor 220 + parts 100 + service 50 = total 370.
-//! V4 — Reopen from closed must fail (closed is a terminal state; reopen_wo requires completed).
+//! V4 — Reopen from closed: allowed within the tenant reopen window (PRD §6.5), keeping the
+//!      verification evidence; refused once the window has passed.
 
 #[cfg(test)]
 mod tests {
@@ -69,7 +70,7 @@ mod tests {
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT OR IGNORE INTO user_accounts \
-             (sync_id, username, display_name, identity_mode, password_hash, \
+             (entity_sync_id, username, display_name, identity_mode, password_hash, \
               is_active, is_admin, force_password_change, \
               failed_login_attempts, created_at, updated_at, row_version) \
              VALUES ('test-verifier-sync', 'verifier', 'Test Verifier', 'local', \
@@ -96,7 +97,7 @@ mod tests {
             .execute(Statement::from_string(
                 DbBackend::Sqlite,
                 "INSERT OR IGNORE INTO org_structure_models \
-                 (id, sync_id, version_number, status, created_at, updated_at) \
+                 (id, entity_sync_id, version_number, status, created_at, updated_at) \
                  VALUES (1, 'test-model-001', 1, 'active', datetime('now'), datetime('now'));"
                     .to_string(),
             ))
@@ -105,7 +106,7 @@ mod tests {
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             "INSERT OR IGNORE INTO org_node_types \
-             (id, sync_id, structure_model_id, code, label, is_active, created_at, updated_at) \
+             (id, entity_sync_id, structure_model_id, code, label, is_active, created_at, updated_at) \
              VALUES (1, 'test-type-001', 1, 'SITE', 'Site', 1, datetime('now'), datetime('now'));"
                 .to_string(),
         ))
@@ -115,7 +116,7 @@ mod tests {
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             "INSERT OR IGNORE INTO org_nodes \
-             (id, sync_id, code, name, node_type_id, status, created_at, updated_at, structure_model_id) \
+             (id, entity_sync_id, code, name, node_type_id, status, created_at, updated_at, structure_model_id) \
              VALUES (1, 'test-org-001', 'SITE-001', 'Test Site', 1, 'active', \
                      datetime('now'), datetime('now'), 1);"
                 .to_string(),
@@ -126,7 +127,7 @@ mod tests {
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             "INSERT OR IGNORE INTO equipment \
-             (id, sync_id, asset_id_code, name, lifecycle_status, installed_at_node_id, \
+             (id, entity_sync_id, asset_id_code, name, lifecycle_status, installed_at_node_id, \
               created_at, updated_at) \
              VALUES (1, 'test-eq-co-001', 'EQ-CO-001', 'Closeout Test Equipment', \
                      'active_in_service', 1, datetime('now'), datetime('now'));"
@@ -254,8 +255,8 @@ mod tests {
                 actor_id: actor,
                 expected_row_version: wo.row_version,
                 planner_id: actor,
-                planned_start: "2026-04-10T08:00:00Z".into(),
-                planned_end: "2026-04-10T16:00:00Z".into(),
+                planned_start: Some("2026-04-10T08:00:00Z".to_string()),
+                planned_end: Some("2026-04-10T16:00:00Z".to_string()),
                 shift: None,
                 expected_duration_hours: Some(8.0),
                 planned_downtime_hours: None,
@@ -272,9 +273,10 @@ mod tests {
                 wo_id,
                 actor_id: actor,
                 expected_row_version: wo.row_version,
-                assigned_group_id: None,
+                assigned_team_id: None,
                 primary_responsible_id: Some(actor),
                 scheduled_at: None,
+                override_reason: "test assign".to_string(),
             },
         )
         .await
@@ -682,15 +684,11 @@ mod tests {
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // V4 — Reopen from closed must fail (closed is terminal)
+    // V4 — Reopen from closed: inside the window only, evidence preserved
     // ═══════════════════════════════════════════════════════════════════════
-    //
-    // In Option B, reopen_wo only operates on completed WOs.
-    // closed is a terminal state; attempting reopen_wo from closed must fail
-    // with an invalid transition error.
 
     #[tokio::test]
-    async fn v4_reopen_from_closed_is_rejected() {
+    async fn v4_reopen_from_closed_respects_window_and_keeps_evidence() {
         let db = setup().await;
         let actor = admin_id(&db).await;
         let verifier = create_second_user(&db).await;
@@ -765,34 +763,54 @@ mod tests {
 
         assert_eq!(closed_wo.status_code.as_deref(), Some("closed"));
 
-        // Attempt reopen_wo from closed — must fail because closed is terminal.
-        // reopen_wo only works from completed in Option B.
-        let result = closeout::reopen_wo(
-            &db,
-            WoReopenInput {
-                wo_id,
-                actor_id: actor,
-                expected_row_version: closed_wo.row_version,
-                reason: "Need to add more data".into(),
-                target_status: None,
-            },
-        )
-        .await;
-
-        assert!(result.is_err(), "reopen_wo must fail from closed state (terminal)");
-        match result.unwrap_err() {
-            AppError::ValidationFailed(errors) => {
-                let joined = errors.join(" | ");
-                assert!(
-                    joined.to_lowercase().contains("closed")
-                        || joined.to_lowercase().contains("statut")
-                        || joined.to_lowercase().contains("status")
-                        || joined.to_lowercase().contains("transition")
-                        || joined.to_lowercase().contains("completed"),
-                    "Error must mention closed/status/transition: {joined}"
-                );
-            }
-            other => panic!("Expected ValidationFailed, got: {other:?}"),
+        // Outside the window (closed 40 days ago, window 30): refused.
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE work_orders SET closed_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-40 days') WHERE id = ?",
+            [wo_id.into()],
+        ))
+        .await
+        .expect("age closure");
+        let reopen = |rv: i64| WoReopenInput {
+            wo_id,
+            actor_id: actor,
+            expected_row_version: rv,
+            reason: "Leak came back".into(),
+            target_status: None,
+        };
+        match closeout::reopen_wo(&db, reopen(closed_wo.row_version)).await {
+            Err(AppError::ValidationFailed(errors)) => assert!(
+                errors.join(" ").contains("reopen window"),
+                "expected the window message: {errors:?}"
+            ),
+            other => panic!("expected the window refusal, got {other:?}"),
         }
+
+        // Inside the window: reopened to execution, verification evidence kept.
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE work_orders SET closed_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-2 days') WHERE id = ?",
+            [wo_id.into()],
+        ))
+        .await
+        .expect("recent closure");
+        let reopened = closeout::reopen_wo(&db, reopen(closed_wo.row_version))
+            .await
+            .expect("reopen within window");
+        assert_eq!(reopened.status_code.as_deref(), Some("in_progress"));
+        assert!(reopened.technically_verified_at.is_some(), "verification kept");
+        assert!(reopened.mechanically_completed_at.is_some(), "completion evidence kept");
+        assert!(reopened.closed_at.is_none());
+        assert!(reopened.last_closed_at.is_some());
+        assert_eq!(reopened.reopen_count, 1);
+
+        // A missing setting is an error, never a guessed window.
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            "DELETE FROM app_settings WHERE setting_key = 'wo.reopen_window_days'".to_string(),
+        ))
+        .await
+        .expect("drop setting");
+        assert!(closeout::reopen_window_days(&db).await.is_err());
     }
 }

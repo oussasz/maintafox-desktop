@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
+import controlPlaneConfig from "@shared/control-plane.json";
 
 /** Session flag: show one-time login notice after activation (LoginPage reads and clears). */
 export const POST_ACTIVATION_LOGIN_HINT_KEY = "maintafox:post-activation-login-hint:v1";
@@ -33,6 +34,21 @@ export async function resetProductLicenseActivation(): Promise<void> {
   await invoke<void>("reset_product_license_activation");
 }
 
+/**
+ * Whether activating `claimTenantId` must first wipe local tenant data.
+ * Re-activating the tenant already bound on this device keeps its data (e.g. after a licence
+ * reset or app reinstall); a first activation or a switch to another tenant wipes it so no data
+ * leaks across tenants. The backend still requires an admin session to wipe once an
+ * administrator exists.
+ */
+export function activationRequiresLocalDataReset(
+  boundTenantId: string | null | undefined,
+  claimTenantId: string,
+): boolean {
+  const bound = boundTenantId?.trim();
+  return !bound || bound !== claimTenantId.trim();
+}
+
 /** Wipes tenant runtime data (operational tables) while preserving global settings/bootstrap data. */
 export async function resetLocalTenantRuntimeData(): Promise<number> {
   return await invoke<number>("reset_local_tenant_runtime_data");
@@ -48,6 +64,26 @@ const ProductLicenseActivationStatusSchema = z.enum([
   "denied_slot_limit",
   "denied_force_update_required",
   "denied_invalid",
+  "denied_offline_grace_expired",
+]);
+
+/** Fired when a control-plane call reveals the licence may have changed (e.g. sync got 401/403). */
+export const LICENSE_RECHECK_REQUESTED_EVENT = "maintafox:license-recheck-requested";
+
+export function requestLicenseRecheck(reason: string): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(LICENSE_RECHECK_REQUESTED_EVENT, { detail: { reason } }));
+}
+
+/**
+ * Policy-refresh failures after which re-claiming with the cached licence key is allowed: the
+ * device token is merely unusable (expired, malformed, or replaced by a newer claim). Revocations
+ * and other denials must never fall back to a claim.
+ */
+export const CLAIM_FALLBACK_TOKEN_ERRORS: ReadonlySet<string> = new Set([
+  "missing_token",
+  "invalid_token",
+  "token_superseded",
 ]);
 
 const ProductLicenseOnboardingStateSchema = z.object({
@@ -343,6 +379,27 @@ export function toUserFacingActivationError(err: unknown): UserFacingActivationE
       ...(code ? { code } : {}),
     };
   }
+  if (code === "activation_revoked") {
+    return {
+      title: "Device revoked",
+      message:
+        "This device was revoked by the vendor. Ask your administrator to have it reinstated.",
+      referenceCode,
+      technicalDetails,
+      ...(status != null ? { status } : {}),
+      code,
+    };
+  }
+  if (code === "tenant_inactive") {
+    return {
+      title: "Account deactivated",
+      message: "Your organization's account is deactivated. Contact your vendor to restore access.",
+      referenceCode,
+      technicalDetails,
+      ...(status != null ? { status } : {}),
+      code,
+    };
+  }
   if (code === "license_revoked") {
     return {
       title: "License revoked",
@@ -433,10 +490,14 @@ export async function getProductLicenseOnboardingState(): Promise<ProductLicense
   return ProductLicenseOnboardingStateSchema.parse(raw);
 }
 
-/** Control-plane API origin (activation, sync exchange). Matches VPS deployment URL. */
+/**
+ * Control-plane API origin for activation and licence calls. The Rust sync worker resolves the
+ * same value at build time (`src-tauri/build.rs`): `VITE_ADMIN_API_BASE_URL`, else the shared
+ * default in `shared/control-plane.json`.
+ */
 export function controlPlaneApiBase(): string {
   const fromEnv = (import.meta.env["VITE_ADMIN_API_BASE_URL"] as string | undefined)?.trim();
-  return (fromEnv && fromEnv.length > 0 ? fromEnv : "https://api.maintafox.systems").replace(
+  return (fromEnv && fromEnv.length > 0 ? fromEnv : controlPlaneConfig.defaultApiBaseUrl).replace(
     /\/$/,
     "",
   );

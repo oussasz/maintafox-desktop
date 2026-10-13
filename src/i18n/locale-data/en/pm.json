@@ -1,37 +1,64 @@
-﻿{
+{
   "page": {
-    "title": "Preventive Maintenance Strategies",
+    "title": "Preventive Maintenance",
     "filters": "Filters",
     "searchPlaceholder": "Search by plan code or title",
-    "clearSearch": "Clear search",
-    "allLifecycles": "All lifecycles",
-    "allStrategies": "All strategies"
+    "dueSearchPlaceholder": "Search due work by plan or WO",
+    "plansView": "Plans",
+    "dueView": "Due queue",
+    "planCount": "{{count}} plans",
+    "dueCount": "{{count}} due",
+    "calendarCount": "{{count}} dated"
   },
   "actions": {
     "refresh": "Refresh",
-    "generate": "Generate Planning",
+    "refreshForecast": "Refresh forecast",
     "newPlan": "New plan",
+    "editPlan": "Edit plan",
     "newVersion": "New version",
     "editVersion": "Edit",
     "publish": "Publish",
-    "transition": "Update plan status",
-    "transitionOccurrence": "Apply",
+    "transition": "Update status",
+    "transitionOccurrence": "Change status",
     "logExecution": "Log execution",
     "viewFindings": "View findings",
     "createFollowUpDi": "Create DI follow-up",
     "createFollowUpWo": "Create WO follow-up",
-    "touch": "Refresh plan snapshot",
     "cancel": "Cancel",
     "create": "Create",
     "save": "Save",
-    "moveToStatus": "Move to {{status}}",
-    "refreshTaskLists": "Refresh task lists",
-    "saveTaskListToReferences": "Save to reference data",
-    "clearSelection": "Clear selection",
+    "close": "Close",
+    "openPlan": "Open plan",
+    "propose": "Propose",
+    "approve": "Approve",
+    "activate": "Activate",
     "delete": "Delete",
     "deletePlan": "Delete plan",
     "deleteVersion": "Delete version",
-    "confirmDelete": "Delete permanently"
+    "confirmDelete": "Delete permanently",
+    "runForecast": "Run forecast"
+  },
+  "views": {
+    "plans": "Plans",
+    "due": "Due queue",
+    "calendar": "Calendar"
+  },
+  "calendar": {
+    "today": "Today",
+    "loading": "Loading…",
+    "empty": "No occurrences due on this day.",
+    "more": "+{{count}} more",
+    "mode": {
+      "month": "Month",
+      "week": "Week",
+      "day": "Day"
+    },
+    "legend": {
+      "overdue": "Overdue",
+      "today": "Today",
+      "pipeline": "Upcoming",
+      "completed": "Completed"
+    }
   },
   "fields": {
     "code": "Code",
@@ -39,31 +66,32 @@
     "description": "Description",
     "strategy": "Strategy",
     "scopeType": "Asset scope type",
-    "scopeId": "Asset scope id",
+    "asset": "Asset",
+    "crew": "Crew",
+    "criticality": "Criticality",
     "lifecycle": "Lifecycle",
+    "requiresShutdown": "Requires shutdown",
+    "requiresPermit": "Requires permit",
+    "isActive": "Active",
     "reasonCode": "Reason code",
     "reason": "Reason",
     "effectiveFrom": "Effective from",
     "effectiveTo": "Effective to",
-    "triggerDefinitionJson": "Trigger definition JSON",
     "intervalUnit": "Interval unit",
     "intervalValue": "Interval value",
     "meterSource": "Meter source",
     "eventCode": "Event code",
     "conditionCode": "Condition code",
-    "taskListReference": "Maintenance task list (reference)",
-    "taskContent": "Task content",
-    "taskContentPlaceholder": "One step per line, for example:\nInspect belts\nCheck lubrication\nTighten terminals",
-    "newTaskListName": "New maintenance task list name",
-    "requiredPartsJson": "Required parts JSON",
-    "requiredSkillsJson": "Required skills JSON (code array)",
-    "requiredToolsJson": "Required tools JSON",
-    "requiredParts": "Required parts",
-    "requiredSkills": "Required skills",
-    "requiredTools": "Required tools",
-    "searchPartsPlaceholder": "Search parts by code or label",
-    "searchSkillsPlaceholder": "Search skills by code or label",
-    "searchToolsPlaceholder": "Search tools by code or label",
+    "eventCodesOptional": "Event codes (optional)",
+    "conditionCodesOptional": "Condition codes (optional)",
+    "horizonDays": "Horizon (days)",
+    "forecastScope": "Scope",
+    "forecastAllPlans": "All eligible plans",
+    "forecastSelectedPlan": "Selected plan only",
+    "taskPackage": "Task package (one step per line)",
+    "requiredParts": "Required parts (codes, comma-separated)",
+    "requiredSkills": "Required skills (codes, comma-separated)",
+    "requiredTools": "Required tools (codes, comma-separated)",
     "estimatedDurationHours": "Estimated duration (h)",
     "estimatedLaborCost": "Estimated labor cost",
     "estimatedPartsCost": "Estimated parts cost",
@@ -72,22 +100,77 @@
     "executionResult": "Execution result",
     "findingType": "Finding type",
     "severity": "Severity",
-    "findingDescription": "Finding description"
+    "findingDescription": "Finding description",
+    "dueWindow": "Due window",
+    "status": "Status",
+    "note": "Note"
   },
   "sections": {
-    "versions": "Plan versions",
-    "occurrences": "Forecast occurrences",
-    "executions": "Execution history",
-    "findingsForExecution": "Findings for execution #{{id}}",
-    "recurringFindings": "Recurring findings (90d)"
+    "overview": "Overview",
+    "versions": "Versions",
+    "occurrences": "Occurrences",
+    "executions": "Executions",
+    "governance": "Governance",
+    "findings": "Findings",
+    "recurringFindings": "Recurring findings (90d)",
+    "readiness": "Planning readiness",
+    "kpis": "Governance KPIs",
+    "archive": "Retired plans"
+  },
+  "strategy": {
+    "fixed": "Fixed calendar",
+    "floating": "Floating calendar",
+    "meter": "Meter / counter",
+    "event": "Event-based",
+    "condition": "Condition-based"
+  },
+  "lifecycle": {
+    "draft": "Draft",
+    "proposed": "Proposed",
+    "approved": "Approved",
+    "active": "Active",
+    "suspended": "Suspended",
+    "retired": "Retired"
+  },
+  "occurrenceStatus": {
+    "forecasted": "Forecasted",
+    "generated": "Generated",
+    "ready_for_scheduling": "Ready for scheduling",
+    "scheduled": "Scheduled",
+    "in_progress": "In progress",
+    "completed": "Completed",
+    "deferred": "Deferred",
+    "missed": "Missed",
+    "cancelled": "Cancelled"
+  },
+  "executionResult": {
+    "completed_no_findings": "Completed — no findings",
+    "completed_with_findings": "Completed — with findings",
+    "deferred": "Deferred",
+    "missed": "Missed",
+    "cancelled": "Cancelled"
+  },
+  "scope": {
+    "equipment": "Equipment",
+    "family": "Family",
+    "location": "Location",
+    "criticality_group": "Criticality group"
+  },
+  "dueWindow": {
+    "all": "All",
+    "overdue": "Overdue",
+    "today": "Today",
+    "next7": "Next 7 days"
   },
   "labels": {
     "active": "Active",
     "inactive": "Inactive",
     "loading": "Loading...",
-    "none": "None",
+    "none": "—",
+    "yes": "Yes",
+    "no": "No",
     "noResults": "No matching items",
-    "selectedCount": "{{count}} selected"
+    "blockers": "{{count}} blockers"
   },
   "reasons": {
     "capacity_constraint": "Capacity constraint",
@@ -106,7 +189,7 @@
     },
     "meterSource": {
       "odometer": "Odometer",
-      "operatingHours": "Operating hours"
+      "operating_hours": "Operating hours"
     }
   },
   "metrics": {
@@ -117,34 +200,51 @@
   },
   "table": {
     "code": "Code",
+    "title": "Title",
     "strategy": "Strategy",
     "status": "Status",
+    "lifecycle": "Lifecycle",
+    "crew": "Crew",
+    "criticality": "Criticality",
+    "updated": "Updated",
     "version": "Version",
     "window": "Effective window",
     "due": "Due",
     "basis": "Basis",
     "workOrder": "Work order",
-    "occurrence": "Occurrence",
+    "plan": "Plan",
     "result": "Result",
     "actualDuration": "Actual duration (h)",
     "findingType": "Finding type",
-    "plan": "Plan",
     "count": "Count",
     "lastSeen": "Last seen",
-    "actions": "Actions"
+    "actions": "Actions",
+    "readiness": "Readiness"
   },
   "dialogs": {
     "newPlan": {
       "title": "Create PM plan",
-      "description": "Create a governed PM strategy with lifecycle controls."
+      "description": "Define a governed PM strategy. Publish a version after approval to generate due work."
+    },
+    "editPlan": {
+      "title": "Edit PM plan",
+      "description": "Update plan metadata. Strategy changes require a new version for trigger rules."
     },
     "newVersion": {
       "title": "Create PM version",
-      "description": "Draft a new version before publishing it."
+      "description": "Draft trigger rules and estimates before publishing."
     },
     "editVersion": {
       "title": "Edit PM version",
       "description": "Only draft versions can be edited."
+    },
+    "refreshForecast": {
+      "title": "Refresh forecast",
+      "description": "Evaluate active published strategies and create due occurrences. Event and condition codes are optional and only needed for those strategies."
+    },
+    "transitionOccurrence": {
+      "title": "Update occurrence status",
+      "description": "Advance this PM occurrence in the operational pipeline."
     },
     "execution": {
       "title": "Log PM execution",
@@ -152,47 +252,73 @@
     },
     "deletePlan": {
       "title": "Delete PM plan",
-      "description": "Delete plan {{code}}? This action is permanent and allowed only for draft plans without versions."
+      "description": "Delete plan {{code}}? Allowed only for draft plans without versions."
     },
     "deleteVersion": {
       "title": "Delete PM version",
-      "description": "Delete version v{{version}}? This action is permanent and allowed only for draft versions."
+      "description": "Delete version v{{version}}? Allowed only for draft versions without occurrences."
     }
   },
   "guidance": {
-    "activationTitle": "How to make this plan active",
-    "activationPath": "Use lifecycle steps in order: draft -> proposed -> approved -> active. A draft plan will not drive active PM operations.",
+    "activationTitle": "How to activate this plan",
+    "activationPath": "Lifecycle order: draft → proposed → approved → active. Publish a version while approved/active/suspended. Then use Refresh forecast to create due work.",
     "currentStatus": "Current status: {{status}}",
-    "alreadyOperational": "Already active or beyond activation path"
+    "alreadyOperational": "This plan is already operational or retired."
   },
   "empty": {
-    "noPlanSelected": "Select a PM plan to view and manage versions.",
-    "noPlansMatch": "No plans match the current search/filter."
+    "noPlans": "No PM plans yet. Create a plan to start.",
+    "noPlansMatch": "No plans match the current filters.",
+    "noDue": "No active due occurrences in this view.",
+    "noVersions": "No versions yet.",
+    "noOccurrences": "No occurrences for this plan.",
+    "noExecutions": "No executions recorded.",
+    "noArchive": "No retired plans.",
+    "noReadiness": "No readiness candidates for this plan.",
+    "noKpis": "No governance KPI data."
   },
   "hints": {
-    "publishBlockedByLifecycle": "To publish this draft version, first set plan status to approved, active, or suspended.",
+    "publishBlockedByLifecycle": "To publish, set plan status to approved, active, or suspended.",
     "publishDraftOnly": "Publish is available only for draft versions.",
     "editVersionDraftOnly": "Edit is available only for draft versions.",
     "deletePlanDraftOnly": "Delete is available only for draft plans.",
     "deleteVersionDraftOnly": "Delete is available only for draft versions.",
-    "lifecycleAction": "This updates the plan status (lifecycle). Status controls what actions are allowed, including version publishing.",
-    "touchAction": "Refresh plan snapshot saves the current plan record (updated date + row version) without changing business data.",
-    "generationNeedPlan": "Select a plan first, then generate forecast occurrences.",
-    "generationNeedLifecycle": "Generation works when the selected plan is active and in lifecycle active or suspended.",
-    "generationNeedVersion": "Publish at least one version before generation.",
-    "generationReady": "Generation is ready: click Generate Planning to create due occurrences.",
-    "occurrenceSameStatus": "Choose a different status before applying transition."
+    "generationNeedLifecycle": "Forecast requires active/suspended lifecycle and an active flag.",
+    "generationNeedVersion": "Publish at least one version before refreshing the forecast.",
+    "generationReady": "Ready to refresh the forecast.",
+    "readyCreatesWo": "Moving to ready for scheduling can create a linked preventive work order."
   },
   "messages": {
-    "touchStarted": "Saving plan snapshot...",
-    "touchCompleted": "Plan snapshot saved.",
-    "generationStarted": "Generating forecast occurrences...",
-    "generationCreated": "Generation completed: {{count}} new occurrences created.",
-    "generationNoNew": "Generation completed: no new occurrences were created for current inputs.",
+    "generationStarted": "Refreshing forecast…",
+    "generationCreated": "Forecast refreshed: {{count}} new occurrence(s).",
+    "generationNoNew": "Forecast refreshed: no new occurrences for current inputs.",
     "planDeleted": "Plan {{code}} deleted.",
-    "versionDeleted": "Version v{{version}} deleted."
+    "versionDeleted": "Version v{{version}} deleted.",
+    "lifecycleUpdated": "Plan status updated.",
+    "occurrenceUpdated": "Occurrence status updated.",
+    "executionLogged": "Execution logged."
+  },
+  "archive": {
+    "title": "Retired plans",
+    "count": "{{count}} retired",
+    "loadError": "Failed to load retired plans."
+  },
+  "autopilot": {
+    "autoOn": "Auto on",
+    "autoOff": "Auto off",
+    "lastRun": "Last run",
+    "neverRun": "Never",
+    "counts": "{{generated}} generated · {{skipped}} skipped",
+    "settings": "Auto-pilot settings",
+    "enabled": "Automatic generation",
+    "schedule": "Schedule",
+    "cronMidnight": "Daily at midnight",
+    "cronMorning": "Daily at 06:00",
+    "cronCustom": "Custom cron",
+    "horizonDays": "Horizon (days)"
   },
   "errors": {
-    "taskListNameRequired": "Please provide a task list name before saving to references."
+    "assetRequired": "Select an asset when scope is equipment.",
+    "eventCodeRequired": "Event code is required for event strategies.",
+    "conditionCodeRequired": "Condition code is required for condition strategies."
   }
 }

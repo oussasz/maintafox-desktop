@@ -5,7 +5,7 @@
 //!   (+ Cancelled from any non-closed).
 
 use crate::errors::{AppError, AppResult};
-use sea_orm::{ConnectionTrait, DbBackend, QueryResult, Statement};
+use sea_orm::{ConnectionTrait, QueryResult};
 use serde::{Deserialize, Serialize};
 
 pub use crate::wo::workflow::{assert_action_allowed, guard_wo_transition, WoAction, WoStatus};
@@ -81,7 +81,7 @@ pub struct WorkOrder {
     pub entity_id: Option<i64>,
     pub planner_id: Option<i64>,
     pub approver_id: Option<i64>,
-    pub assigned_group_id: Option<i64>,
+    pub assigned_team_id: Option<i64>,
     pub primary_responsible_id: Option<i64>,
     // Urgency
     pub urgency_id: Option<i64>,
@@ -137,6 +137,9 @@ pub struct WorkOrder {
     // Join fields (populated by queries, not stored in DB)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status_code: Option<String>,
+    /// PRD §6.5 lifecycle state derived from the WO's facts (`wo::lifecycle`); not stored.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lifecycle_state: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status_label: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -169,6 +172,16 @@ pub struct WorkOrder {
     pub source_di_title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_di_status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assigned_team_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assigned_team_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assigned_team_label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schedule_commitment_id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schedule_frozen: Option<bool>,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -186,6 +199,8 @@ pub struct WoTransitionRow {
     pub reason_code: Option<String>,
     pub notes: Option<String>,
     pub acted_at: String,
+    /// Lifecycle state right after the transition (NULL for transitions logged before 6.4).
+    pub lifecycle_state: Option<String>,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -309,9 +324,9 @@ pub fn map_work_order(row: &QueryResult) -> AppResult<WorkOrder> {
         approver_id: row
             .try_get::<Option<i64>>("", "approver_id")
             .map_err(|e| decode_err("approver_id", e))?,
-        assigned_group_id: row
-            .try_get::<Option<i64>>("", "assigned_group_id")
-            .map_err(|e| decode_err("assigned_group_id", e))?,
+        assigned_team_id: row
+            .try_get::<Option<i64>>("", "assigned_team_id")
+            .map_err(|e| decode_err("assigned_team_id", e))?,
         primary_responsible_id: row
             .try_get::<Option<i64>>("", "primary_responsible_id")
             .map_err(|e| decode_err("primary_responsible_id", e))?,
@@ -446,6 +461,9 @@ pub fn map_work_order(row: &QueryResult) -> AppResult<WorkOrder> {
             .map_err(|e| decode_err("updated_at", e))?,
         // Join fields — optional, depend on query shape
         status_code: row.try_get::<Option<String>>("", "status_code").unwrap_or(None),
+        lifecycle_state: row
+            .try_get::<Option<String>>("", "lifecycle_state")
+            .map_err(|e| decode_err("lifecycle_state", e))?,
         status_label: row.try_get::<Option<String>>("", "status_label").unwrap_or(None),
         status_color: row.try_get::<Option<String>>("", "status_color").unwrap_or(None),
         type_code: row.try_get::<Option<String>>("", "type_code").unwrap_or(None),
@@ -468,6 +486,16 @@ pub fn map_work_order(row: &QueryResult) -> AppResult<WorkOrder> {
         source_di_code: row.try_get::<Option<String>>("", "source_di_code").unwrap_or(None),
         source_di_title: row.try_get::<Option<String>>("", "source_di_title").unwrap_or(None),
         source_di_status: row.try_get::<Option<String>>("", "source_di_status").unwrap_or(None),
+        assigned_team_code: row.try_get::<Option<String>>("", "assigned_team_code").unwrap_or(None),
+        assigned_team_name: row.try_get::<Option<String>>("", "assigned_team_name").unwrap_or(None),
+        assigned_team_label: row.try_get::<Option<String>>("", "assigned_team_label").unwrap_or(None),
+        schedule_commitment_id: row.try_get::<Option<i64>>("", "schedule_commitment_id").unwrap_or(None),
+        schedule_frozen: row
+            .try_get::<Option<i64>>("", "schedule_frozen")
+            .ok()
+            .flatten()
+            .map(|v| v != 0)
+            .or_else(|| row.try_get::<i64>("", "schedule_frozen").ok().map(|v| v != 0)),
     })
 }
 
@@ -497,6 +525,9 @@ pub fn map_wo_transition_row(row: &QueryResult) -> AppResult<WoTransitionRow> {
         acted_at: row
             .try_get::<String>("", "acted_at")
             .map_err(|e| decode_err("acted_at", e))?,
+        lifecycle_state: row
+            .try_get::<Option<String>>("", "lifecycle_state")
+            .map_err(|e| decode_err("lifecycle_state", e))?,
     })
 }
 
@@ -504,33 +535,14 @@ pub fn map_wo_transition_row(row: &QueryResult) -> AppResult<WoTransitionRow> {
 // WO code generator
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Generate the next unique WO code in the format `OT-NNNN`.
-///
-/// Reads the current max sequence from the database and increments.
+/// Generate the next unique WO code in the format `OT-<device>-NNNN` (`sync::device_code`):
+/// the sequence counts only this device's numbers, so two devices never hand out the same one.
+/// Codes made before device codes existed (`OT-NNNN`) are kept as they are.
 /// The code is never recycled after deletion or cancellation.
 ///
-/// Pass a transaction connection when allocating + inserting in one txn
-/// (same pattern as [`crate::personnel::domain::generate_personnel_code`]).
+/// Pass a transaction connection when allocating + inserting in one txn.
 pub async fn generate_wo_code(db: &impl ConnectionTrait) -> AppResult<String> {
-    let row = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            // Only count canonical OT-<digits> codes so legacy/demo leftovers
-            // never poison the sequence (migration remaps those to OT-NNNN).
-            "SELECT COALESCE(MAX(CAST(SUBSTR(code, 4) AS INTEGER)), 0) + 1 AS next_seq \
-             FROM work_orders \
-             WHERE code GLOB 'OT-[0-9]*' \
-               AND SUBSTR(code, 4) GLOB '[0-9]*'"
-                .to_string(),
-        ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("WO code sequence query returned no rows")))?;
-
-    let next_seq: i64 = row
-        .try_get::<i64>("", "next_seq")
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("WO code decode error: {e}")))?;
-
-    Ok(format!("OT-{next_seq:04}"))
+    crate::sync::code_clash::WORK_ORDERS.next_number(db).await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -29,7 +29,7 @@ fn as_f64(v: Option<&Value>) -> Option<f64> {
     }
 }
 
-fn as_str<'a>(v: Option<&'a Value>) -> Option<&'a str> {
+fn as_str(v: Option<&Value>) -> Option<&str> {
     v.and_then(Value::as_str)
 }
 
@@ -390,7 +390,7 @@ async fn last_insert_id(db: &DatabaseConnection) -> AppResult<i64> {
         ))
         .await?
         .ok_or_else(|| AppError::SyncError("last_insert_rowid missing.".into()))?;
-    Ok(row.try_get("", "id").map_err(|e| decode_err("id", e))?)
+    row.try_get("", "id").map_err(|e| decode_err("id", e))
 }
 
 fn map_fta(row: &sea_orm::QueryResult) -> AppResult<FtaModel> {

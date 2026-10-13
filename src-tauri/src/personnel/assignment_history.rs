@@ -26,7 +26,7 @@ pub async fn list_personnel_assignment_history(
                 sched.label   AS schedule_name
              FROM personnel_assignment_history h
              LEFT JOIN org_nodes   en    ON en.id    = h.entity_id
-             LEFT JOIN org_nodes   tm    ON tm.id    = h.team_id
+             LEFT JOIN teams       tm    ON tm.id    = h.team_id
              LEFT JOIN positions   pos   ON pos.id   = h.position_id
              LEFT JOIN personnel   mgr   ON mgr.id   = h.manager_id
              LEFT JOIN reference_values sched ON sched.id = h.schedule_reference_value_id

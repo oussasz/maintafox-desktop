@@ -1,6 +1,6 @@
 //! Personnel domain types and code generation (PRD §6.6).
 
-use crate::errors::{AppError, AppResult};
+use crate::errors::AppResult;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use serde::{Deserialize, Serialize};
 
@@ -49,6 +49,32 @@ pub struct PersonnelTeamAssignment {
     pub updated_at: String,
 }
 
+/// Open assignment row for a crew roster (team-scoped).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamMemberRow {
+    pub assignment_id: i64,
+    pub personnel_id: i64,
+    pub employee_code: String,
+    pub full_name: String,
+    pub position_name: Option<String>,
+    pub role_code: String,
+    pub allocation_percent: f64,
+    pub valid_from: Option<String>,
+    pub valid_to: Option<String>,
+    pub is_lead: i64,
+    pub availability_status: String,
+    /// Linked login account when `user_accounts.personnel_id` matches (WO assignment bridge).
+    pub user_account_id: Option<i64>,
+}
+
+/// Set or clear crew lead on an existing open assignment (does not touch membership sync).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetTeamLeadInput {
+    pub team_id: i64,
+    pub personnel_id: i64,
+    pub is_lead: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersonnelAvailabilityBlock {
     pub id: i64,
@@ -59,7 +85,18 @@ pub struct PersonnelAvailabilityBlock {
     pub reason_note: Option<String>,
     pub is_critical: bool,
     pub created_by_id: Option<i64>,
+    pub created_by_label: Option<String>,
     pub created_at: String,
+    /// True when `reason_note` was withheld (caller lacks `per.sensitiveview`, not own record).
+    #[serde(default)]
+    pub reason_masked: bool,
+}
+
+impl PersonnelAvailabilityBlock {
+    pub fn mask_sensitive(&mut self) {
+        self.reason_note = None;
+        self.reason_masked = true;
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -617,6 +654,24 @@ pub struct Personnel {
     pub supervisor_name: Option<String>,
     pub schedule_name: Option<String>,
     pub company_name: Option<String>,
+    /// True when contact, contract and HR fields were withheld (caller lacks `per.sensitiveview`
+    /// and this is not their own record). Withheld fields are `None`, not empty values.
+    #[serde(default)]
+    pub sensitive_masked: bool,
+}
+
+impl Personnel {
+    /// Withholds the fields covered by `per.sensitiveview`.
+    pub fn mask_sensitive(&mut self) {
+        self.email = None;
+        self.phone = None;
+        self.hr_external_id = None;
+        self.contract_number = None;
+        self.contract_start_date = None;
+        self.contract_end_date = None;
+        self.notes = None;
+        self.sensitive_masked = true;
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -807,55 +862,76 @@ impl Default for PersonnelListFilter {
 // Personnel code generator — `PER-NNNN`
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Next sequential code for rows with `employee_code` like `PER-%`.
+/// Next code `PER-<device>-NNNN` (`sync::device_code`): the sequence counts only this device's
+/// codes, so two devices never hand out the same one. Codes made before device codes existed
+/// (`PER-NNNN`) are kept as they are.
 ///
-/// Uses numeric suffix after the `PER-` prefix (substring from column 5). This is a **read
-/// only**; pairing it with a separate `INSERT` in two steps can race under concurrent writers.
-/// For allocation + insert inside a transaction, pass a [`sea_orm::Transaction`] as `db`.
+/// This is a **read only**; pairing it with a separate `INSERT` in two steps can race under
+/// concurrent writers. For allocation + insert, pass the inserting [`sea_orm::Transaction`].
 pub async fn generate_personnel_code(db: &impl ConnectionTrait) -> AppResult<String> {
-    let row = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT COALESCE(MAX(CAST(SUBSTR(employee_code, 5) AS INTEGER)), 0) + 1 AS next_seq \
-             FROM personnel WHERE employee_code LIKE 'PER-%'"
-                .to_string(),
-        ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Personnel code sequence query returned no rows")))?;
-
-    let next_seq: i64 = row
-        .try_get::<i64>("", "next_seq")
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("Personnel code decode error: {e}")))?;
-
-    Ok(format!("PER-{next_seq:04}"))
+    crate::sync::code_clash::PERSONNEL.next_number(db).await
 }
 
-/// Inserts a personnel row with an auto-generated `PER-NNNN` code.
+/// Inserts a personnel row with an auto-generated `PER-<device>-NNNN` code.
 ///
 /// Uses a single `INSERT … SELECT … RETURNING` statement so allocation is atomic under
 /// concurrent writers (unlike calling [`generate_personnel_code`] and inserting in two steps).
 pub async fn insert_personnel_with_auto_code(db: &DatabaseConnection, full_name: &str) -> AppResult<String> {
-    let name_esc = full_name.replace('\'', "''");
-    let sql = format!(
-        "INSERT INTO personnel (employee_code, full_name, employment_type, availability_status, row_version) \
-         SELECT \
-           'PER-' || printf('%04d', COALESCE((SELECT MAX(CAST(SUBSTR(employee_code, 5) AS INTEGER)) \
-             FROM personnel WHERE employee_code LIKE 'PER-%'), 0) + 1), \
-           '{name_esc}', 'employee', 'available', 1 \
-         RETURNING employee_code"
-    );
+    let entity_sync_id = crate::sync::identity::new_entity_sync_id();
+    let stem = crate::sync::device_code::device_stem(db, &crate::sync::code_clash::PERSONNEL.prefix()).await?;
+    let (next, next_values) = crate::sync::device_code::next_number_sql("personnel", "employee_code", &stem, 4);
+    let mut values: Vec<sea_orm::Value> = vec![entity_sync_id.into()];
+    values.extend(next_values);
+    values.push(full_name.into());
     let row = db
-        .query_one(Statement::from_string(DbBackend::Sqlite, sql))
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "INSERT INTO personnel (entity_sync_id, employee_code, full_name, employment_type, availability_status, row_version)                  SELECT ?, {next}, ?, 'employee', 'available', 1                  RETURNING employee_code"
+            ),
+            values,
+        ))
         .await?
         .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
+            crate::errors::AppError::Internal(anyhow::anyhow!(
                 "INSERT personnel with auto code: RETURNING returned no row"
             ))
         })?;
-    let code: String = row
-        .try_get::<String>("", "employee_code")
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("employee_code decode: {e}")))?;
-    Ok(code)
+    row.try_get::<String>("", "employee_code")
+        .map_err(|e| crate::errors::AppError::Internal(anyhow::anyhow!("employee_code decode: {e}")))
+}
+
+#[cfg(test)]
+mod masking_tests {
+    use super::*;
+
+    #[test]
+    fn mask_sensitive_withholds_contact_contract_and_hr_fields_only() {
+        let mut p: Personnel = serde_json::from_value(serde_json::json!({
+            "id": 7, "employee_code": "PER-0007", "full_name": "A. Tech",
+            "employment_type": "employee", "employment_origin": "internal", "employment_status": "active",
+            "blocked_override": false, "position_id": null, "primary_entity_id": null,
+            "primary_team_id": null, "supervisor_id": null, "home_schedule_reference_value_id": null,
+            "availability_status": "available", "hire_date": "2020-01-01", "termination_date": null,
+            "email": "a@example.com", "phone": "+213 555", "photo_path": null, "hr_external_id": "HR-1",
+            "external_company_id": null, "contract_number": "C-1", "contract_start_date": "2020-01-01",
+            "contract_end_date": "2030-01-01", "notes": "private", "row_version": 1,
+            "created_at": "2020-01-01", "updated_at": "2020-01-01", "position_name": null,
+            "position_code": null, "position_category": null, "entity_name": null, "team_name": "Crew A",
+            "supervisor_name": null, "schedule_name": null, "company_name": null
+        }))
+        .expect("fixture");
+        assert!(!p.sensitive_masked, "defaults to unmasked when absent");
+
+        p.mask_sensitive();
+        assert!(p.sensitive_masked);
+        for field in [&p.email, &p.phone, &p.hr_external_id, &p.contract_number, &p.notes] {
+            assert!(field.is_none());
+        }
+        assert!(p.contract_start_date.is_none() && p.contract_end_date.is_none());
+        assert_eq!(p.full_name, "A. Tech", "operational identity stays visible");
+        assert_eq!(p.team_name.as_deref(), Some("Crew A"));
+    }
 }
 
 #[cfg(test)]
@@ -970,24 +1046,30 @@ mod tests {
     #[tokio::test]
     async fn generate_personnel_code_first_is_per_0001() {
         let db = setup_migrated_db().await;
+        let dev = crate::sync::device_code::this_device_code(&db)
+            .await
+            .expect("device code");
         let code = generate_personnel_code(&db).await.expect("code gen");
-        assert_eq!(code, "PER-0001");
+        assert_eq!(code, format!("PER-{dev}-0001"));
         let code2 = generate_personnel_code(&db).await.expect("code gen 2");
-        assert_eq!(code2, "PER-0001", "no PER rows yet; max still 1");
+        assert_eq!(code2, format!("PER-{dev}-0001"), "no PER rows yet; max still 1");
     }
 
     #[tokio::test]
     async fn generate_personnel_code_increments_after_insert() {
         let db = setup_migrated_db().await;
 
-        db.execute_unprepared(
-            "INSERT INTO personnel (employee_code, full_name, employment_type, availability_status, row_version) \
-             VALUES ('PER-0001', 'Test User', 'employee', 'available', 1)",
-        )
+        let dev = crate::sync::device_code::this_device_code(&db)
+            .await
+            .expect("device code");
+        db.execute_unprepared(&format!(
+            "INSERT INTO personnel (entity_sync_id, employee_code, full_name, employment_type, availability_status, row_version) \
+             VALUES ('test-personnel-per-0001', 'PER-{dev}-0001', 'Test User', 'employee', 'available', 1)"
+        ))
         .await
         .expect("insert personnel");
 
         let next = generate_personnel_code(&db).await.expect("next code");
-        assert_eq!(next, "PER-0002");
+        assert_eq!(next, format!("PER-{dev}-0002"));
     }
 }

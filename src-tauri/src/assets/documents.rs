@@ -259,7 +259,7 @@ pub async fn upsert_asset_document_link(
     let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!(
+            format!(
                 "SELECT {DOC_LINK_SELECT} FROM asset_document_links \
                  WHERE asset_id = ? ORDER BY id DESC LIMIT 1"
             ),
@@ -311,7 +311,7 @@ pub async fn expire_asset_document_link(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("SELECT {DOC_LINK_SELECT} FROM asset_document_links WHERE id = ?"),
+            format!("SELECT {DOC_LINK_SELECT} FROM asset_document_links WHERE id = ?"),
             [link_id.into()],
         ))
         .await?

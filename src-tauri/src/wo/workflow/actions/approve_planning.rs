@@ -55,12 +55,12 @@ pub async fn approve_planning(db: &DatabaseConnection, input: WoApprovePlanningI
     )
     .await?;
 
-    txn.commit().await?;
-
-    queries::get_work_order(db, input.wo_id)
+    let wo = queries::get_work_order(&txn, input.wo_id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "WorkOrder".into(),
             id: input.wo_id.to_string(),
-        })
+        })?;
+    txn.commit().await?;
+    Ok(wo)
 }

@@ -50,6 +50,7 @@ interface Registry {
     supervisor_exclusions: string[];
     operator: string[];
     planner: string[];
+    finance_manager: string[];
   };
   role_templates: Record<string, string[]>;
 }
@@ -182,13 +183,20 @@ function generateRust(registry: Registry): string {
   );
   lines.push("");
 
+  const fm = registry.role_defaults.finance_manager;
+  lines.push("/// Default Finance Manager permission set (budget preparation and approval).");
+  lines.push(
+    `pub const FINANCE_MANAGER_PERMISSIONS: &[&str] = &[${fm.map((n) => constName(n)).join(", ")}];`,
+  );
+  lines.push("");
+
   lines.push("/// Resolve a permission or alias to its canonical name.");
   lines.push("pub fn canonicalize(name: &str) -> Option<&'static str> {");
   lines.push("    for meta in CATALOG {");
   lines.push("        if meta.name == name {");
   lines.push("            return Some(meta.name);");
   lines.push("        }");
-  lines.push("        if meta.aliases.iter().any(|a| *a == name) {");
+  lines.push("        if meta.aliases.contains(&name) {");
   lines.push("            return Some(meta.name);");
   lines.push("        }");
   lines.push("    }");

@@ -1,5 +1,5 @@
 use chrono::Utc;
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TryGetable};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait, TryGetable};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -19,7 +19,7 @@ struct TenantBootstrapState {
     bootstrapped_at: String,
 }
 
-pub async fn bootstrap_from_activation_claim(db: &DatabaseConnection, changed_by_id: i32) -> AppResult<()> {
+pub async fn bootstrap_from_activation_claim(db: &DatabaseConnection, changed_by_id: Option<i32>) -> AppResult<()> {
     let Some(claim) = crate::commands::product_license::get_activation_claim_record(db).await? else {
         return Ok(());
     };
@@ -34,7 +34,14 @@ pub async fn bootstrap_from_activation_claim(db: &DatabaseConnection, changed_by
     // ALWAYS ensure local org integrity for vendor-console / activation tenants.
     // `is_initialized` must not skip model-scoping the root — that caused publish
     // failures when forks omitted unscoped live nodes.
-    let root_id = ensure_root_organization(db, tenant_id, &root_name, &now).await?;
+    // Every device of the tenant creates the same root organisation itself (seeded identities,
+    // `sync::seeded_identity`); it is not a change to send, so capture is suppressed while it is
+    // written, in one transaction.
+    let tx = db.begin().await?;
+    crate::sync::capture::begin_suppression(&tx).await?;
+    let root_id = ensure_root_organization(&tx, tenant_id, &root_name, &now).await?;
+    crate::sync::capture::end_suppression(&tx).await?;
+    tx.commit().await?;
     crate::org::model_scope::heal_null_structure_model_ids_onto_active(db).await?;
     crate::org::model_scope::assert_no_null_structure_model_ids(db).await?;
 
@@ -88,7 +95,7 @@ async fn load_bootstrap_state(db: &DatabaseConnection) -> AppResult<Option<Tenan
 }
 
 async fn ensure_root_organization(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     tenant_id: &str,
     tenant_name: &str,
     now: &str,
@@ -124,11 +131,11 @@ async fn ensure_root_organization(
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO org_nodes
-            (sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status,
+            (entity_sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status,
              created_at, updated_at, row_version, structure_model_id)
           VALUES (?, ?, ?, ?, NULL, '/', 0, 'active', ?, ?, 1, ?)",
         [
-            Uuid::new_v4().to_string().into(),
+            crate::sync::identity::seeded_entity_sync_id("org_nodes", &root_code).into(),
             root_code.into(),
             tenant_name.into(),
             root_type_id.into(),
@@ -149,7 +156,7 @@ async fn ensure_root_organization(
     Ok(root_id)
 }
 
-async fn ensure_active_org_model(db: &DatabaseConnection, now: &str) -> AppResult<i64> {
+async fn ensure_active_org_model(db: &impl ConnectionTrait, now: &str) -> AppResult<i64> {
     let existing = db
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
@@ -158,16 +165,16 @@ async fn ensure_active_org_model(db: &DatabaseConnection, now: &str) -> AppResul
         ))
         .await?;
     if let Some(row) = existing {
-        return Ok(try_get_i64(&row, "id")?);
+        return try_get_i64(&row, "id");
     }
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO org_structure_models
-            (sync_id, version_number, status, description, activated_at, created_at, updated_at)
+            (entity_sync_id, version_number, status, description, activated_at, created_at, updated_at)
           VALUES (?, 1, 'active', ?, ?, ?, ?)",
         [
-            Uuid::new_v4().to_string().into(),
+            crate::sync::identity::seeded_entity_sync_id("org_structure_models", "bootstrap-model").into(),
             "Tenant activation bootstrap".into(),
             now.into(),
             now.into(),
@@ -178,7 +185,7 @@ async fn ensure_active_org_model(db: &DatabaseConnection, now: &str) -> AppResul
     last_insert_id(db).await
 }
 
-async fn ensure_root_node_type(db: &DatabaseConnection, model_id: i64, now: &str) -> AppResult<i64> {
+async fn ensure_root_node_type(db: &impl ConnectionTrait, model_id: i64, now: &str) -> AppResult<i64> {
     let existing = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -187,18 +194,18 @@ async fn ensure_root_node_type(db: &DatabaseConnection, model_id: i64, now: &str
         ))
         .await?;
     if let Some(row) = existing {
-        return Ok(try_get_i64(&row, "id")?);
+        return try_get_i64(&row, "id");
     }
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO org_node_types
-            (sync_id, structure_model_id, code, label, can_host_assets, can_own_work,
+            (entity_sync_id, structure_model_id, code, label, can_host_assets, can_own_work,
              can_carry_cost_center, can_aggregate_kpis, can_receive_permits,
              is_root_type, is_active, created_at, updated_at)
           VALUES (?, ?, 'ROOT', 'Root Organization', 1, 1, 1, 1, 1, 1, 1, ?, ?)",
         [
-            Uuid::new_v4().to_string().into(),
+            crate::sync::identity::seeded_entity_sync_id("org_node_types", "bootstrap-root-type").into(),
             model_id.into(),
             now.into(),
             now.into(),
@@ -325,13 +332,13 @@ async fn ensure_node_type(
         ))
         .await?;
     if let Some(row) = existing {
-        return Ok(try_get_i64(&row, "id")?);
+        return try_get_i64(&row, "id");
     }
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO org_node_types
-            (sync_id, structure_model_id, code, label, can_host_assets, can_own_work,
+            (entity_sync_id, structure_model_id, code, label, can_host_assets, can_own_work,
              can_carry_cost_center, can_aggregate_kpis, can_receive_permits,
              is_root_type, is_active, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, 0, 1, 0, ?, 1, ?, ?)",
@@ -388,7 +395,7 @@ async fn ensure_org_node(
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO org_nodes
-            (sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status,
+            (entity_sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status,
              created_at, updated_at, row_version, structure_model_id)
           VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, 1, ?)",
         [
@@ -436,13 +443,13 @@ async fn ensure_equipment_class(
         ))
         .await?;
     if let Some(row) = existing {
-        return Ok(try_get_i64(&row, "id")?);
+        return try_get_i64(&row, "id");
     }
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO equipment_classes
-            (sync_id, code, name, parent_id, level, is_active, created_at, updated_at)
+            (entity_sync_id, code, name, parent_id, level, is_active, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
         [
             Uuid::new_v4().to_string().into(),
@@ -475,13 +482,13 @@ async fn ensure_equipment(
         ))
         .await?;
     if let Some(row) = existing {
-        return Ok(try_get_i64(&row, "id")?);
+        return try_get_i64(&row, "id");
     }
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO equipment
-            (sync_id, asset_id_code, name, class_id, lifecycle_status, installed_at_node_id,
+            (entity_sync_id, asset_id_code, name, class_id, lifecycle_status, installed_at_node_id,
              manufacturer, created_at, updated_at, row_version)
           VALUES (?, ?, ?, ?, 'active_in_service', ?, ?, ?, ?, 1)",
         [
@@ -524,11 +531,12 @@ async fn ensure_di(
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO intervention_requests
-            (code, asset_id, org_node_id, status, title, description, origin_type,
+            (entity_sync_id, code, equipment_id, org_node_id, status, title, description, origin_type,
              impact_level, production_impact, safety_flag, environmental_flag, quality_flag,
              reported_urgency, submitted_at, submitter_id, row_version, created_at, updated_at)
-          VALUES (?, ?, ?, 'submitted', ?, ?, 'operator', 'unknown', 0, 0, 0, 0, ?, ?, ?, 1, ?, ?)",
+          VALUES (?, ?, ?, ?, 'submitted', ?, ?, 'operator', 'unknown', 0, 0, 0, 0, ?, ?, ?, 1, ?, ?)",
         [
+            crate::sync::identity::new_entity_sync_id().into(),
             code.into(),
             asset_id.into(),
             org_node_id.into(),
@@ -566,7 +574,7 @@ async fn ensure_work_order(
         ))
         .await?;
     if let Some(row) = existing {
-        return Ok(try_get_i64(&row, "id")?);
+        return try_get_i64(&row, "id");
     }
 
     let code = crate::wo::domain::generate_wo_code(db).await?;
@@ -574,11 +582,12 @@ async fn ensure_work_order(
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO work_orders (
-            code, type_id, status_id, equipment_id, entity_id,
+            entity_sync_id, code, type_id, status_id, equipment_id, entity_id,
             requester_id, planner_id, urgency_id, title, description,
             row_version, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
         [
+            crate::sync::identity::new_entity_sync_id().into(),
             code.into(),
             type_id.into(),
             status_id.into(),
@@ -662,7 +671,7 @@ async fn resolve_urgency_id(db: &DatabaseConnection, level: i64) -> AppResult<Op
     Ok(row.and_then(|r| i64::try_get(&r, "", "id").ok()))
 }
 
-async fn last_insert_id(db: &DatabaseConnection) -> AppResult<i64> {
+async fn last_insert_id(db: &impl ConnectionTrait) -> AppResult<i64> {
     let row = db
         .query_one(Statement::from_string(
             DbBackend::Sqlite,

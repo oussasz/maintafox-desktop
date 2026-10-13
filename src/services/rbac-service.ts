@@ -8,6 +8,8 @@ import { invoke, invokeSilent } from "@/lib/ipc-invoke";
 import type {
   AdminChangeEventDetail,
   AdminEventFilter,
+  AdminSetUserPasswordInput,
+  AdminSetUserPasswordResult,
   AdminStatsPayload,
   AssignableRoleSummary,
   AssignRoleScopeInput,
@@ -314,6 +316,17 @@ export async function unlockUserAccount(userId: number): Promise<void> {
   await invoke<void>("unlock_user_account", { userId });
 }
 
+const AdminSetUserPasswordResultSchema = z.object({
+  temporary_password: z.string().min(1),
+});
+
+export async function adminSetUserPassword(
+  input: AdminSetUserPasswordInput,
+): Promise<AdminSetUserPasswordResult> {
+  const raw = await invoke<unknown>("admin_set_user_password", { input });
+  return AdminSetUserPasswordResultSchema.parse(raw);
+}
+
 // â”€â”€ RBAC settings (password policy, lockout) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const RbacSettingSchema = z.object({
@@ -557,6 +570,8 @@ const AdminChangeEventDetailSchema = z.object({
   diff_json: z.string().nullable(),
   step_up_used: z.boolean(),
   apply_result: z.string(),
+  /** Received from another device before history ids travelled as sync ids: ids in it are that device's. */
+  from_other_device: z.boolean().default(false),
 });
 
 export async function listAdminEvents(filter: AdminEventFilter): Promise<AdminChangeEventDetail[]> {

@@ -512,12 +512,15 @@ const ModuleImpactSchema = z.object({
   status: z.string(),
   affected_count: z.number(),
   details: z.string().nullable(),
+  tables: z.array(z.object({ table: z.string(), column: z.string(), count: z.number() })),
 });
 
 const ReferenceImpactSummarySchema = z.object({
   set_id: z.number(),
   domain_id: z.number(),
   domain_code: z.string(),
+  removed_codes: z.array(z.string()),
+  deactivated_codes: z.array(z.string()),
   total_affected: z.number(),
   dimensions: z.array(ModuleImpactSchema),
   computed_at: z.string(),

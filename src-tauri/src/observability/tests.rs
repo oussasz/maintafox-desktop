@@ -14,7 +14,7 @@ use crate::commands::admin_users::{assign_role_scope_impl, AssignRoleScopeInput}
 use crate::commands::archive::evaluate_purge_eligibility_db;
 use crate::di::conversion::{convert_di_to_work_order, WoConversionInput};
 use crate::di::queries::{create_intervention_request, DiCreateInput};
-use crate::di::review::{approve_di_for_planning, screen_di, DiApproveInput, DiScreenInput};
+use crate::di::review::{approve_di, screen_di, DiApproveInput, DiScreenInput};
 use crate::notifications::delivery;
 use crate::notifications::emitter::{emit_event, NotificationEventInput};
 use crate::notifications::scheduler;
@@ -63,16 +63,16 @@ async fn admin_id(db: &DatabaseConnection) -> i64 {
 
 async fn create_user(db: &DatabaseConnection, username: &str) -> i64 {
     let now = chrono::Utc::now().to_rfc3339();
-    let sync_id = format!("{username}-sync");
+    let entity_sync_id = format!("{username}-sync");
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO user_accounts \
-         (sync_id, username, display_name, identity_mode, password_hash, \
+         (entity_sync_id, username, display_name, identity_mode, password_hash, \
           is_active, is_admin, force_password_change, failed_login_attempts, \
           created_at, updated_at, row_version) \
          VALUES (?, ?, ?, 'local', 'no-login-needed', 1, 0, 0, 0, ?, ?, 1)",
         [
-            sync_id.into(),
+            entity_sync_id.into(),
             username.to_string().into(),
             format!("{username} display").into(),
             now.clone().into(),
@@ -102,7 +102,7 @@ async fn seed_di_fk_data(db: &DatabaseConnection) {
     db.execute(Statement::from_string(
         DbBackend::Sqlite,
         "INSERT OR IGNORE INTO equipment \
-         (id, sync_id, asset_id_code, name, lifecycle_status, created_at, updated_at) \
+         (id, entity_sync_id, asset_id_code, name, lifecycle_status, created_at, updated_at) \
          VALUES (1, 'obs-eq-001', 'EQ-OBS-001', 'Obs Equipment', 'active_in_service', \
                  datetime('now'), datetime('now'));"
             .to_string(),
@@ -113,7 +113,7 @@ async fn seed_di_fk_data(db: &DatabaseConnection) {
     db.execute(Statement::from_string(
         DbBackend::Sqlite,
         "INSERT OR IGNORE INTO org_structure_models \
-         (id, sync_id, version_number, status, created_at, updated_at) \
+         (id, entity_sync_id, version_number, status, created_at, updated_at) \
          VALUES (1, 'obs-model-001', 1, 'active', datetime('now'), datetime('now'));"
             .to_string(),
     ))
@@ -123,7 +123,7 @@ async fn seed_di_fk_data(db: &DatabaseConnection) {
     db.execute(Statement::from_string(
         DbBackend::Sqlite,
         "INSERT OR IGNORE INTO org_node_types \
-         (id, sync_id, structure_model_id, code, label, is_active, created_at, updated_at) \
+         (id, entity_sync_id, structure_model_id, code, label, is_active, created_at, updated_at) \
          VALUES (1, 'obs-nt-001', 1, 'SITE', 'Site', 1, datetime('now'), datetime('now'));"
             .to_string(),
     ))
@@ -133,13 +133,21 @@ async fn seed_di_fk_data(db: &DatabaseConnection) {
     db.execute(Statement::from_string(
         DbBackend::Sqlite,
         "INSERT OR IGNORE INTO org_nodes \
-         (id, sync_id, code, name, node_type_id, status, created_at, updated_at) \
-         VALUES (1, 'obs-on-001', 'SITE-OBS', 'Obs Site', 1, 'active', \
+         (id, entity_sync_id, structure_model_id, code, name, node_type_id, status, created_at, updated_at) \
+         VALUES (1, 'obs-on-001', 1, 'SITE-OBS', 'Obs Site', 1, 'active', \
                  datetime('now'), datetime('now'));"
             .to_string(),
     ))
     .await
     .expect("org_nodes");
+
+    // WO creation requires the equipment to be installed at an org node (set once the node exists).
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "UPDATE equipment SET installed_at_node_id = 1 WHERE id = 1 AND installed_at_node_id IS NULL;".to_string(),
+    ))
+    .await
+    .expect("equipment installed_at_node_id");
 
     db.execute(Statement::from_string(
         DbBackend::Sqlite,
@@ -173,9 +181,15 @@ async fn seed_di_fk_data(db: &DatabaseConnection) {
     .expect("reference_values");
 }
 
+/// Work orders must reference equipment (no orphan WO rule); reuse the shared FK fixture.
+async fn obs_equipment_id(db: &DatabaseConnection) -> i64 {
+    seed_di_fk_data(db).await;
+    1
+}
+
 async fn di_create_input(db: &sea_orm::DatabaseConnection, submitter_id: i64) -> DiCreateInput {
     DiCreateInput {
-        asset_id: 1,
+        equipment_id: 1,
         org_node_id: 1,
         title: "Obs DI".to_string(),
         description: "Observability chain".to_string(),
@@ -206,12 +220,12 @@ async fn advance_di_to_approved(db: &DatabaseConnection, user_id: i64) -> (i64, 
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "UPDATE intervention_requests SET status = 'pending_review', \
+        "UPDATE intervention_requests SET status = 'in_review', \
          row_version = row_version + 1, updated_at = datetime('now') WHERE id = ?",
         [di.id.into()],
     ))
     .await
-    .expect("pending_review");
+    .expect("in_review");
 
     let screened = screen_di(
         db,
@@ -220,7 +234,6 @@ async fn advance_di_to_approved(db: &DatabaseConnection, user_id: i64) -> (i64, 
             actor_id: user_id,
             expected_row_version: 2,
             validated_urgency: "high".to_string(),
-            review_team_id: Some(1),
             classification_code_id: Some(1),
             reviewer_note: Some("OK".to_string()),
         },
@@ -228,7 +241,7 @@ async fn advance_di_to_approved(db: &DatabaseConnection, user_id: i64) -> (i64, 
     .await
     .expect("screen");
 
-    let approved = approve_di_for_planning(
+    let approved = approve_di(
         db,
         DiApproveInput {
             di_id: di.id,
@@ -250,15 +263,37 @@ async fn transition_planned_assigned_in_progress_for_user(
     actor: i64,
     primary: i64,
 ) -> crate::wo::domain::WorkOrder {
+    // Job-prep fields can only be saved once the WO left draft (Draft → Planning via submit).
+    // WOs converted from a DI are created directly in planning and must not be re-submitted.
+    let current = queries::get_work_order(db, wo_id)
+        .await
+        .expect("load wo")
+        .expect("wo exists");
+    let plan_rv = if current.status_code.as_deref() == Some("draft") {
+        crate::wo::workflow::actions::submit::submit_wo(
+            db,
+            crate::wo::workflow::actions::submit::WoSubmitInput {
+                wo_id,
+                actor_id: actor,
+                expected_row_version: start_rv,
+            },
+        )
+        .await
+        .expect("submit_wo")
+        .row_version
+    } else {
+        start_rv
+    };
+
     let wo = execution::plan_wo(
         db,
         WoPlanInput {
             wo_id,
             actor_id: actor,
-            expected_row_version: start_rv,
+            expected_row_version: plan_rv,
             planner_id: actor,
-            planned_start: "2026-04-10T08:00:00Z".into(),
-            planned_end: "2026-04-10T16:00:00Z".into(),
+            planned_start: Some("2026-04-10T08:00:00Z".to_string()),
+            planned_end: Some("2026-04-10T16:00:00Z".to_string()),
             shift: None,
             expected_duration_hours: Some(8.0),
             planned_downtime_hours: None,
@@ -268,31 +303,32 @@ async fn transition_planned_assigned_in_progress_for_user(
     .await
     .expect("plan_wo");
 
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "UPDATE work_orders SET \
-         status_id = (SELECT id FROM work_order_statuses WHERE code = 'ready_to_schedule'), \
-         row_version = row_version + 1, \
-         updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') \
-         WHERE id = ?",
-        [wo_id.into()],
-    ))
-    .await
-    .expect("ready_to_schedule");
-
+    // Real workflow (mirrors wo::execution_tests): plan → assign → mark ready → start.
     let wo = execution::assign_wo(
         db,
         WoAssignInput {
             wo_id,
             actor_id: actor,
-            expected_row_version: wo.row_version + 1,
-            assigned_group_id: None,
+            expected_row_version: wo.row_version,
+            assigned_team_id: None,
             primary_responsible_id: Some(primary),
             scheduled_at: None,
+            override_reason: "test assign".to_string(),
         },
     )
     .await
     .expect("assign_wo");
+
+    let wo = crate::wo::workflow::actions::mark_ready::mark_wo_ready(
+        db,
+        crate::wo::workflow::actions::mark_ready::WoMarkReadyInput {
+            wo_id,
+            actor_id: actor,
+            expected_row_version: wo.row_version,
+        },
+    )
+    .await
+    .expect("mark_wo_ready");
 
     execution::start_wo(
         db,
@@ -312,7 +348,7 @@ async fn close_wo_all_gates(db: &DatabaseConnection, actor: i64) -> crate::wo::d
         db,
         WoCreateInput {
             type_code: "corrective".into(),
-            equipment_id: None,
+            equipment_id: Some(obs_equipment_id(&db).await),
             location_id: None,
             source_di_id: None,
             source_inspection_anomaly_id: None,
@@ -375,32 +411,23 @@ async fn close_wo_all_gates(db: &DatabaseConnection, actor: i64) -> crate::wo::d
         .await
         .expect("usage");
 
-    let wo = execution::complete_wo_mechanically(
-        db,
-        WoMechCompleteInput {
-            wo_id: wo.id,
-            actor_id: actor,
-            expected_row_version: wo.row_version,
-            actual_end: None,
-            actual_duration_hours: None,
-            conclusion: Some("done".into()),
-        },
-    )
-    .await
-    .expect("mech complete");
-
+    // RAMS data-quality gate: failure coding (symptom) and RCA must exist BEFORE mechanical completion.
+    let symptom_id = crate::di::reference_catalog::resolve_di_symptom_id_by_code(db, "vibration")
+        .await
+        .expect("lookup symptom")
+        .expect("seeded DI.SYMPTOM vibration");
     closeout::save_failure_detail(
         db,
         SaveFailureDetailInput {
             wo_id: wo.id,
-            symptom_id: None,
+            symptom_id: Some(symptom_id),
             failure_mode_id: None,
             failure_cause_id: None,
             failure_effect_id: None,
             is_temporary_repair: false,
             is_permanent_repair: true,
             cause_not_determined: true,
-            notes: Some("captured".into()),
+            notes: Some("Captured during observability chain test (cause not determined).".into()),
         },
     )
     .await
@@ -416,6 +443,24 @@ async fn close_wo_all_gates(db: &DatabaseConnection, actor: i64) -> crate::wo::d
     )
     .await
     .expect("rca");
+
+    let current = queries::get_work_order(db, wo.id)
+        .await
+        .expect("reload wo")
+        .expect("wo exists");
+    let wo = execution::complete_wo_mechanically(
+        db,
+        WoMechCompleteInput {
+            wo_id: wo.id,
+            actor_id: actor,
+            expected_row_version: current.row_version,
+            actual_end: None,
+            actual_duration_hours: None,
+            conclusion: Some("done".into()),
+        },
+    )
+    .await
+    .expect("mech complete");
 
     let (_v, wo) = closeout::save_verification(
         db,
@@ -480,7 +525,7 @@ async fn test_obs_01_emit_creates_notification() {
         &db,
         WoCreateInput {
             type_code: "corrective".into(),
-            equipment_id: None,
+            equipment_id: Some(obs_equipment_id(&db).await),
             location_id: None,
             source_di_id: None,
             source_inspection_anomaly_id: None,
@@ -547,7 +592,7 @@ async fn test_obs_02_dedupe_prevents_flood() {
         &db,
         WoCreateInput {
             type_code: "corrective".into(),
-            equipment_id: None,
+            equipment_id: Some(obs_equipment_id(&db).await),
             location_id: None,
             source_di_id: None,
             source_inspection_anomaly_id: None,
@@ -632,7 +677,7 @@ async fn test_obs_03_snooze_wakes() {
         &db,
         WoCreateInput {
             type_code: "corrective".into(),
-            equipment_id: None,
+            equipment_id: Some(obs_equipment_id(&db).await),
             location_id: None,
             source_di_id: None,
             source_inspection_anomaly_id: None,
@@ -743,7 +788,7 @@ async fn test_obs_04_acknowledge_closes_escalation_path() {
         &db,
         WoCreateInput {
             type_code: "corrective".into(),
-            equipment_id: None,
+            equipment_id: Some(obs_equipment_id(&db).await),
             location_id: None,
             source_di_id: None,
             source_inspection_anomaly_id: None,
@@ -1307,33 +1352,23 @@ async fn test_obs_12_full_observability_chain() {
         .await
         .expect("usage");
 
-    let wo_work = execution::complete_wo_mechanically(
-        &db,
-        WoMechCompleteInput {
-            wo_id: wo_work.id,
-            actor_id: actor,
-            expected_row_version: wo_work.row_version,
-            actual_end: None,
-            actual_duration_hours: None,
-            conclusion: Some("done".into()),
-        },
-    )
-    .await
-    .expect("mech");
-
-    let verifier = create_verifier(&db, "obs12ver").await;
+    // RAMS data-quality gate: failure coding + RCA before mechanical completion.
+    let obs12_symptom = crate::di::reference_catalog::resolve_di_symptom_id_by_code(&db, "vibration")
+        .await
+        .expect("lookup symptom")
+        .expect("seeded DI.SYMPTOM vibration");
     closeout::save_failure_detail(
         &db,
         SaveFailureDetailInput {
             wo_id: wo_work.id,
-            symptom_id: None,
+            symptom_id: Some(obs12_symptom),
             failure_mode_id: None,
             failure_cause_id: None,
             failure_effect_id: None,
             is_temporary_repair: false,
             is_permanent_repair: true,
             cause_not_determined: true,
-            notes: Some("n".into()),
+            notes: Some("Cause not determined during full observability chain test.".into()),
         },
     )
     .await
@@ -1343,12 +1378,32 @@ async fn test_obs_12_full_observability_chain() {
         &db,
         UpdateWoRcaInput {
             wo_id: wo_work.id,
-            root_cause_summary: Some("r".into()),
-            corrective_action_summary: Some("c".into()),
+            root_cause_summary: Some("Root cause recorded by observability chain test.".into()),
+            corrective_action_summary: Some("Corrective action recorded by test.".into()),
         },
     )
     .await
     .expect("rca");
+
+    let current = queries::get_work_order(&db, wo_work.id)
+        .await
+        .expect("reload wo")
+        .expect("wo exists");
+    let wo_work = execution::complete_wo_mechanically(
+        &db,
+        WoMechCompleteInput {
+            wo_id: wo_work.id,
+            actor_id: actor,
+            expected_row_version: current.row_version,
+            actual_end: None,
+            actual_duration_hours: None,
+            conclusion: Some("done".into()),
+        },
+    )
+    .await
+    .expect("mech");
+
+    let verifier = create_verifier(&db, "obs12ver").await;
 
     let (_v, wo_work) = closeout::save_verification(
         &db,

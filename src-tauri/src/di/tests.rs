@@ -56,7 +56,7 @@ mod tests {
     async fn seed_fk_data(db: &sea_orm::DatabaseConnection) {
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "INSERT INTO equipment (id, sync_id, asset_id_code, name, lifecycle_status, created_at, updated_at) \
+            "INSERT INTO equipment (id, entity_sync_id, asset_id_code, name, lifecycle_status, created_at, updated_at) \
              VALUES (1, 'test-eq-001', 'EQ-TEST-001', 'Test Equipment', 'active_in_service', \
              datetime('now'), datetime('now'));"
                 .to_string(),
@@ -66,7 +66,7 @@ mod tests {
 
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "INSERT INTO org_structure_models (id, sync_id, version_number, status, created_at, updated_at) \
+            "INSERT INTO org_structure_models (id, entity_sync_id, version_number, status, created_at, updated_at) \
              VALUES (1, 'test-model-001', 1, 'active', datetime('now'), datetime('now'));"
                 .to_string(),
         ))
@@ -75,7 +75,7 @@ mod tests {
 
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "INSERT INTO org_node_types (id, sync_id, structure_model_id, code, label, is_active, created_at, updated_at) \
+            "INSERT INTO org_node_types (id, entity_sync_id, structure_model_id, code, label, is_active, created_at, updated_at) \
              VALUES (1, 'test-type-001', 1, 'SITE', 'Site', 1, datetime('now'), datetime('now'));".to_string(),
         ))
         .await
@@ -83,7 +83,7 @@ mod tests {
 
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "INSERT INTO org_nodes (id, sync_id, code, name, node_type_id, status, created_at, updated_at, structure_model_id) \
+            "INSERT INTO org_nodes (id, entity_sync_id, code, name, node_type_id, status, created_at, updated_at, structure_model_id) \
              VALUES (1, 'test-org-001', 'SITE-001', 'Test Site', 1, 'active', \
              datetime('now'), datetime('now'), 1);".to_string(),
         ))
@@ -139,7 +139,7 @@ mod tests {
 
     async fn make_create_input(db: &sea_orm::DatabaseConnection, user_id: i64) -> DiCreateInput {
         DiCreateInput {
-            asset_id: 1,
+            equipment_id: 1,
             org_node_id: 1,
             title: "Pump vibration alert".to_string(),
             description: "Excessive vibration on pump P-101".to_string(),
@@ -313,9 +313,12 @@ mod tests {
             .await
             .expect("create DI #3");
 
-        assert_eq!(di1.code, "DI-0001");
-        assert_eq!(di2.code, "DI-0002");
-        assert_eq!(di3.code, "DI-0003");
+        let dev = crate::sync::device_code::this_device_code(&db)
+            .await
+            .expect("device code");
+        assert_eq!(di1.code, format!("DI-{dev}-0001"));
+        assert_eq!(di2.code, format!("DI-{dev}-0002"));
+        assert_eq!(di3.code, format!("DI-{dev}-0003"));
 
         let codes: std::collections::HashSet<&str> = [di1.code.as_str(), di2.code.as_str(), di3.code.as_str()]
             .into_iter()
@@ -722,7 +725,6 @@ mod tests {
                 actor_id: user_id,
                 expected_row_version: 999, // wildly stale
                 validated_urgency: "high".into(),
-                review_team_id: None,
                 classification_code_id: Some(900001),
                 reviewer_note: Some("Test".into()),
             },
@@ -783,7 +785,6 @@ mod tests {
                 actor_id: user_id,
                 expected_row_version: rv,
                 validated_urgency: "high".into(),
-                review_team_id: None,
                 classification_code_id: Some(900001),
                 reviewer_note: Some("Validated by reviewer".into()),
             },
@@ -954,7 +955,6 @@ mod tests {
                 actor_id: user_id,
                 expected_row_version: rv2,
                 validated_urgency: "high".into(),
-                review_team_id: None,
                 classification_code_id: Some(900001),
                 reviewer_note: Some("Re-screened after clarification".into()),
             },
@@ -988,7 +988,6 @@ mod tests {
                 actor_id: user_id,
                 expected_row_version: rv,
                 validated_urgency: "medium".into(),
-                review_team_id: None,
                 classification_code_id: Some(900001),
                 reviewer_note: None,
             },

@@ -8,7 +8,7 @@
 //! of a transition. `guard_transition` is the single authority.
 
 use crate::errors::{AppError, AppResult};
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement};
+use sea_orm::{ConnectionTrait, QueryResult};
 use serde::{Deserialize, Serialize};
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -243,7 +243,7 @@ pub struct InterventionRequest {
     pub id: i64,
     pub code: String,
     // Origin context
-    pub asset_id: i64,
+    pub equipment_id: i64,
     pub sub_asset_ref: Option<String>,
     pub org_node_id: i64,
     // State
@@ -268,7 +268,6 @@ pub struct InterventionRequest {
     pub observed_at: Option<String>,
     pub submitted_at: String,
     // Review / approval tracking
-    pub review_team_id: Option<i64>,
     pub reviewer_id: Option<i64>,
     pub screened_at: Option<String>,
     pub approved_at: Option<String>,
@@ -352,9 +351,9 @@ pub fn map_intervention_request(row: &QueryResult) -> AppResult<InterventionRequ
     Ok(InterventionRequest {
         id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
         code: row.try_get::<String>("", "code").map_err(|e| decode_err("code", e))?,
-        asset_id: row
-            .try_get::<i64>("", "asset_id")
-            .map_err(|e| decode_err("asset_id", e))?,
+        equipment_id: row
+            .try_get::<i64>("", "equipment_id")
+            .map_err(|e| decode_err("equipment_id", e))?,
         sub_asset_ref: row
             .try_get::<Option<String>>("", "sub_asset_ref")
             .map_err(|e| decode_err("sub_asset_ref", e))?,
@@ -408,9 +407,6 @@ pub fn map_intervention_request(row: &QueryResult) -> AppResult<InterventionRequ
         submitted_at: row
             .try_get::<String>("", "submitted_at")
             .map_err(|e| decode_err("submitted_at", e))?,
-        review_team_id: row
-            .try_get::<Option<i64>>("", "review_team_id")
-            .map_err(|e| decode_err("review_team_id", e))?,
         reviewer_id: row
             .try_get::<Option<i64>>("", "reviewer_id")
             .map_err(|e| decode_err("reviewer_id", e))?,
@@ -546,25 +542,12 @@ pub fn guard_transition(from: &DiStatus, to: &DiStatus) -> Result<(), String> {
 // DI code generator
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Generate the next unique DI code in the format `DI-NNNN`.
-/// Reads the current max sequence from the database and increments.
+/// Generate the next unique DI code in the format `DI-<device>-NNNN` (`sync::device_code`):
+/// the sequence counts only this device's numbers, so two devices never hand out the same one.
+/// Codes made before device codes existed (`DI-NNNN`) are kept as they are.
 /// The code is never recycled after deletion or archival.
-pub async fn generate_di_code(db: &DatabaseConnection) -> AppResult<String> {
-    let row = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT COALESCE(MAX(CAST(SUBSTR(code, 4) AS INTEGER)), 0) + 1 AS next_seq \
-             FROM intervention_requests WHERE code LIKE 'DI-%'"
-                .to_string(),
-        ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("DI code sequence query returned no rows")))?;
-
-    let next_seq: i64 = row
-        .try_get::<i64>("", "next_seq")
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("DI code decode error: {e}")))?;
-
-    Ok(format!("DI-{next_seq:04}"))
+pub async fn generate_di_code(db: &impl ConnectionTrait) -> AppResult<String> {
+    crate::sync::code_clash::INTERVENTION_REQUESTS.next_number(db).await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

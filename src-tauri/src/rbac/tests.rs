@@ -49,16 +49,15 @@ mod tests {
     /// Create a test user and return their `user_accounts.id`.
     async fn create_test_user(db: &DatabaseConnection, username: &str) -> i64 {
         let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let sync_id = Uuid::new_v4().to_string();
+        let entity_sync_id = Uuid::new_v4().to_string();
 
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "INSERT INTO user_accounts \
-             (sync_id, username, display_name, identity_mode, is_active, is_admin, \
+            "INSERT INTO user_accounts (entity_sync_id, username, display_name, identity_mode, is_active, is_admin, \
               force_password_change, failed_login_attempts, created_at, updated_at, row_version) \
              VALUES (?, ?, ?, 'local', 1, 0, 0, 0, ?, ?, 1)",
             [
-                sync_id.into(),
+                entity_sync_id.into(),
                 username.into(),
                 username.into(),
                 now.clone().into(),
@@ -105,16 +104,16 @@ mod tests {
         valid_to: Option<&str>,
     ) -> i64 {
         let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let sync_id = Uuid::new_v4().to_string();
+        let entity_sync_id = Uuid::new_v4().to_string();
 
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO user_scope_assignments \
-             (sync_id, user_id, role_id, scope_type, scope_reference, \
+             (entity_sync_id, user_id, role_id, scope_type, scope_reference, \
               valid_from, valid_to, created_at, updated_at, row_version) \
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
             [
-                sync_id.into(),
+                entity_sync_id.into(),
                 user_id.into(),
                 role_id.into(),
                 scope_type.into(),
@@ -155,17 +154,17 @@ mod tests {
         reason: &str,
     ) -> i64 {
         let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let sync_id = Uuid::new_v4().to_string();
+        let entity_sync_id = Uuid::new_v4().to_string();
 
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO user_scope_assignments \
-             (sync_id, user_id, role_id, scope_type, scope_reference, \
+             (entity_sync_id, user_id, role_id, scope_type, scope_reference, \
               is_emergency, emergency_reason, emergency_expires_at, \
               created_at, updated_at, row_version) \
              VALUES (?, ?, ?, ?, NULL, 1, ?, ?, ?, ?, 1)",
             [
-                sync_id.into(),
+                entity_sync_id.into(),
                 user_id.into(),
                 role_id.into(),
                 scope_type.into(),
@@ -193,14 +192,19 @@ mod tests {
     /// Returns the new role's id.
     async fn create_test_role(db: &DatabaseConnection, name: &str, permission_names: &[&str]) -> i64 {
         let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let sync_id = Uuid::new_v4().to_string();
+        let entity_sync_id = Uuid::new_v4().to_string();
 
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "INSERT INTO roles (sync_id, name, description, role_type, status, is_system, \
+            "INSERT INTO roles (entity_sync_id, name, description, role_type, status, is_system, \
                                 created_at, updated_at, row_version) \
              VALUES (?, ?, NULL, 'custom', 'active', 0, ?, ?, 1)",
-            [sync_id.into(), name.into(), now.clone().into(), now.clone().into()],
+            [
+                entity_sync_id.into(),
+                name.into(),
+                now.clone().into(),
+                now.clone().into(),
+            ],
         ))
         .await
         .expect("insert test role");

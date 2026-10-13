@@ -49,6 +49,8 @@ export type SmartFilterBarProps = {
    * stays controlled. If omitted, the bar keeps an internal draft synced from searchValue.
    */
   onSearchInputChange?: (value: string) => void;
+  /** When false, omit the search input (Availability tab). Default true. */
+  showSearch?: boolean;
   filters: SmartFilterDef[];
   resultCount?: number | null;
   /** Pre-translated count label, e.g. "12 results". */

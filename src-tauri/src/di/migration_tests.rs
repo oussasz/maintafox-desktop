@@ -93,7 +93,7 @@ mod tests {
         let expected_columns = [
             "id",
             "code",
-            "asset_id",
+            "equipment_id",
             "sub_asset_ref",
             "org_node_id",
             "status",
@@ -111,7 +111,6 @@ mod tests {
             "validated_urgency",
             "observed_at",
             "submitted_at",
-            "review_team_id",
             "reviewer_id",
             "screened_at",
             "approved_at",
@@ -139,6 +138,8 @@ mod tests {
             "related_di_id",
             "closed_by_id",
             "deferred_from_status",
+            // Sync identity (outbox staging).
+            "entity_sync_id",
             "row_version",
             "submitter_id",
             "created_at",
@@ -188,6 +189,8 @@ mod tests {
             "reason_code",
             "notes",
             "acted_at",
+            // Sync identity (migration 162).
+            "entity_sync_id",
         ];
 
         for expected in &expected_columns {
@@ -215,7 +218,8 @@ mod tests {
 
         let expected_indexes = [
             "idx_ir_status",
-            "idx_ir_asset",
+            // Renamed from idx_ir_asset by migration 146 (asset_id -> equipment_id).
+            "idx_ir_equipment",
             "idx_ir_org_node",
             "idx_ir_submitter",
             "idx_ir_reviewer",
@@ -335,8 +339,11 @@ mod tests {
         let db = setup().await;
 
         let code = generate_di_code(&db).await.expect("code generation should succeed");
+        let dev = crate::sync::device_code::this_device_code(&db)
+            .await
+            .expect("device code");
 
-        assert_eq!(code, "DI-0001", "First DI code must be DI-0001");
+        assert_eq!(code, format!("DI-{dev}-0001"), "first DI code of this device");
     }
 
     #[tokio::test]
@@ -347,20 +354,23 @@ mod tests {
         // We need prerequisite rows for FK constraints.
         seed_minimal_fk_data(&db).await;
 
+        let dev = crate::sync::device_code::this_device_code(&db)
+            .await
+            .expect("device code");
         let code1 = generate_di_code(&db).await.expect("first code gen");
-        assert_eq!(code1, "DI-0001");
+        assert_eq!(code1, format!("DI-{dev}-0001"));
 
         // Insert the first DI with code1
         insert_stub_di(&db, &code1).await;
 
         let code2 = generate_di_code(&db).await.expect("second code gen");
-        assert_eq!(code2, "DI-0002");
+        assert_eq!(code2, format!("DI-{dev}-0002"));
 
         // Insert the second DI with code2
         insert_stub_di(&db, &code2).await;
 
         let code3 = generate_di_code(&db).await.expect("third code gen");
-        assert_eq!(code3, "DI-0003");
+        assert_eq!(code3, format!("DI-{dev}-0003"));
 
         // Verify uniqueness: all three are distinct
         assert_ne!(code1, code2);
@@ -373,15 +383,21 @@ mod tests {
         let db = setup().await;
         seed_minimal_fk_data(&db).await;
 
-        // Insert DI-0001
-        insert_stub_di(&db, "DI-0001").await;
-        // Insert DI-0005 (simulating a gap from import or manual)
-        insert_stub_di(&db, "DI-0005").await;
+        let dev = crate::sync::device_code::this_device_code(&db)
+            .await
+            .expect("device code");
+        insert_stub_di(&db, &format!("DI-{dev}-0001")).await;
+        // A gap (import or manual), and numbers of before device codes and of another device,
+        // which never feed this device's sequence.
+        insert_stub_di(&db, &format!("DI-{dev}-0005")).await;
+        insert_stub_di(&db, "DI-0042").await;
+        insert_stub_di(&db, "DI-ZZZZ-0077").await;
 
         let next = generate_di_code(&db).await.expect("code gen after gap");
         assert_eq!(
-            next, "DI-0006",
-            "Next code must follow the highest existing sequence, not fill gaps"
+            next,
+            format!("DI-{dev}-0006"),
+            "Next code must follow this device's highest sequence, not fill gaps"
         );
     }
 
@@ -432,7 +448,7 @@ mod tests {
         if equipment_exists.is_none() {
             db.execute(Statement::from_string(
                 DbBackend::Sqlite,
-                "INSERT INTO equipment (id, sync_id, asset_id_code, name, lifecycle_status, created_at, updated_at) \
+                "INSERT INTO equipment (id, entity_sync_id, asset_id_code, name, lifecycle_status, created_at, updated_at) \
                  VALUES (1, 'test-eq-001', 'EQ-TEST-001', 'Test Equipment', 'active_in_service', \
                  datetime('now'), datetime('now'));"
                     .to_string(),
@@ -456,7 +472,7 @@ mod tests {
             // Need a structure model first (FK for org_node_types)
             db.execute(Statement::from_string(
                 DbBackend::Sqlite,
-                "INSERT INTO org_structure_models (id, sync_id, version_number, status, created_at, updated_at) \
+                "INSERT INTO org_structure_models (id, entity_sync_id, version_number, status, created_at, updated_at) \
                  VALUES (1, 'test-model-001', 1, 'active', datetime('now'), datetime('now'));"
                     .to_string(),
             ))
@@ -465,7 +481,7 @@ mod tests {
 
             db.execute(Statement::from_string(
                 DbBackend::Sqlite,
-                "INSERT INTO org_node_types (id, sync_id, structure_model_id, code, label, is_active, created_at, updated_at) \
+                "INSERT INTO org_node_types (id, entity_sync_id, structure_model_id, code, label, is_active, created_at, updated_at) \
                  VALUES (1, 'test-type-001', 1, 'SITE', 'Site', 1, datetime('now'), datetime('now'));".to_string(),
             ))
             .await
@@ -485,7 +501,7 @@ mod tests {
         if org_exists.is_none() {
             db.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "INSERT INTO org_nodes (id, sync_id, code, name, node_type_id, status, created_at, updated_at, structure_model_id) \
+                "INSERT INTO org_nodes (id, entity_sync_id, code, name, node_type_id, status, created_at, updated_at, structure_model_id) \
                  VALUES (1, 'test-org-001', 'SITE-001', 'Test Site', ?, 'active', \
                  datetime('now'), datetime('now'), 1)",
                 [type_id.into()],
@@ -534,7 +550,7 @@ mod tests {
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO intervention_requests \
-             (code, asset_id, org_node_id, status, title, description, origin_type, \
+             (code, equipment_id, org_node_id, status, title, description, origin_type, \
               impact_level, reported_urgency, submitted_at, submitter_id, created_at, updated_at) \
              VALUES (?, ?, ?, 'submitted', 'Test DI', 'Test description', 'operator', \
               'unknown', 'medium', datetime('now'), ?, datetime('now'), datetime('now'))",

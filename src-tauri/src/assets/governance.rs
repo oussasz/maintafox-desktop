@@ -191,18 +191,16 @@ pub async fn validate_import_row(
 
     // Family code — validate parent linkage if both class and family are provided
     if let (Some(ref family_code), Some(ref class_code)) = (&row.family_code, &row.class_code) {
-        if existing_class_parent_id.is_some() {
-            if let Err(_) = validate_family_exists(db, family_code, class_code).await {
-                messages.push(ValidationMessage {
-                    category: ConflictCategory::FamilyClassMismatch,
-                    field: "family_code".into(),
-                    message: format!(
-                        "Le code famille '{}' ne correspond pas a la classe '{}'.",
-                        family_code, class_code
-                    ),
-                    severity: ValidationSeverity::Error,
-                });
-            }
+        if existing_class_parent_id.is_some() && validate_family_exists(db, family_code, class_code).await.is_err() {
+            messages.push(ValidationMessage {
+                category: ConflictCategory::FamilyClassMismatch,
+                field: "family_code".into(),
+                message: format!(
+                    "Le code famille '{}' ne correspond pas a la classe '{}'.",
+                    family_code, class_code
+                ),
+                severity: ValidationSeverity::Error,
+            });
         }
     }
 

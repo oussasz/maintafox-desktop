@@ -1,12 +1,12 @@
 //! Frozen analytics contract registry (gap 06 sprint 03).
 
+use sea_orm::TransactionTrait;
 use serde::Deserialize;
 use tauri::State;
 use uuid::Uuid;
 
 use crate::analytics_contract::{
-    get_contract_version_by_id, insert_contract_version, list_contract_versions, stage_analytics_contract_version_sync,
-    AnalyticsContractVersionRow,
+    get_contract_version_by_id, insert_contract_version, list_contract_versions, AnalyticsContractVersionRow,
 };
 use crate::auth::rbac::PermissionScope;
 use crate::errors::AppResult;
@@ -62,17 +62,18 @@ pub async fn register_analytics_contract_version(
     }
 
     let esid = format!("{}:{}", input.contract_id.trim(), Uuid::new_v4());
+    let txn = state.db.begin().await?;
     let id = insert_contract_version(
-        &state.db,
+        &txn,
         &esid,
         input.contract_id.trim(),
         input.version_semver.trim(),
         input.content_sha256.trim(),
     )
     .await?;
-    let row = get_contract_version_by_id(&state.db, id)
+    let row = get_contract_version_by_id(&txn, id)
         .await?
         .ok_or_else(|| crate::errors::AppError::Internal(anyhow::anyhow!("contract version row")))?;
-    stage_analytics_contract_version_sync(&state.db, &row).await?;
+    txn.commit().await?;
     Ok(row)
 }

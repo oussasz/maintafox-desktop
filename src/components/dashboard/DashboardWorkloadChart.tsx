@@ -147,7 +147,9 @@ export function DashboardWorkloadChart() {
               <button
                 type="button"
                 className="text-sm font-medium text-primary underline-offset-2 hover:underline"
-                onClick={() => navigate(`/reliability/foundation${RELIABILITY_RAM_EVIDENCE_HASH}`)}
+                onClick={() =>
+                  navigate(`/analytics/rams/foundation${RELIABILITY_RAM_EVIDENCE_HASH}`)
+                }
               >
                 {t("chart.openRamEvidence")}
               </button>

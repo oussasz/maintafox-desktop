@@ -14,7 +14,7 @@
 use crate::errors::{AppError, AppResult};
 use crate::wo::execution_log::{emit_execution_event, part_label_json};
 use crate::wo::time::now_utc_z;
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -105,7 +105,7 @@ fn map_task(row: &sea_orm::QueryResult) -> AppResult<WoTask> {
 }
 
 /// Load the WO status code.
-async fn load_wo_status_code(db: &DatabaseConnection, wo_id: i64) -> AppResult<String> {
+async fn load_wo_status_code(db: &impl ConnectionTrait, wo_id: i64) -> AppResult<String> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -136,7 +136,8 @@ const TASK_COLS: &str = "id, work_order_id, task_description, sequence_order, \
 // ═══════════════════════════════════════════════════════════════════════════════
 
 pub async fn add_task(db: &DatabaseConnection, input: AddTaskInput) -> AppResult<WoTask> {
-    let status_code = load_wo_status_code(db, input.wo_id).await?;
+    let txn = db.begin().await?;
+    let status_code = load_wo_status_code(&txn, input.wo_id).await?;
 
     let origin = if let Some(ref o) = input.origin {
         o.clone()
@@ -174,11 +175,11 @@ pub async fn add_task(db: &DatabaseConnection, input: AddTaskInput) -> AppResult
         ]));
     }
 
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO work_order_tasks \
-         (work_order_id, task_description, sequence_order, is_mandatory, estimated_minutes, origin) \
-         VALUES (?, ?, ?, ?, ?, ?)",
+         (work_order_id, task_description, sequence_order, is_mandatory, estimated_minutes, origin, entity_sync_id) \
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
         [
             input.wo_id.into(),
             input.task_description.clone().into(),
@@ -189,21 +190,22 @@ pub async fn add_task(db: &DatabaseConnection, input: AddTaskInput) -> AppResult
                 .map(sea_orm::Value::from)
                 .unwrap_or(sea_orm::Value::from(None::<i64>)),
             origin.clone().into(),
+            crate::sync::identity::new_entity_sync_id().into(),
         ],
     ))
     .await?;
 
-    let row = db
+    let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("SELECT {TASK_COLS} FROM work_order_tasks WHERE rowid = last_insert_rowid()"),
+            format!("SELECT {TASK_COLS} FROM work_order_tasks WHERE rowid = last_insert_rowid()"),
             [],
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to re-read task after insert")))?;
     let task = map_task(&row)?;
     let _ = emit_execution_event(
-        db,
+        &txn,
         task.work_order_id,
         "task_added",
         "executionLog.taskAdded",
@@ -213,6 +215,7 @@ pub async fn add_task(db: &DatabaseConnection, input: AddTaskInput) -> AppResult
         None,
     )
     .await;
+    txn.commit().await?;
     Ok(task)
 }
 
@@ -237,7 +240,9 @@ pub async fn complete_task(
     let now = now_utc_z();
     let result_code_owned = result_code.clone();
 
-    let result = db
+    let txn = db.begin().await?;
+
+    let result = txn
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE work_order_tasks SET \
@@ -266,10 +271,10 @@ pub async fn complete_task(
         });
     }
 
-    let row = db
+    let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("SELECT {TASK_COLS} FROM work_order_tasks WHERE id = ?"),
+            format!("SELECT {TASK_COLS} FROM work_order_tasks WHERE id = ?"),
             [task_id.into()],
         ))
         .await?
@@ -280,7 +285,7 @@ pub async fn complete_task(
     let task = map_task(&row)?;
     let cancelled = result_code_owned == "cancelled";
     let _ = emit_execution_event(
-        db,
+        &txn,
         task.work_order_id,
         if cancelled { "task_cancelled" } else { "task_completed" },
         if cancelled {
@@ -294,6 +299,7 @@ pub async fn complete_task(
         Some(actor_id),
     )
     .await;
+    txn.commit().await?;
     Ok(task)
 }
 
@@ -302,8 +308,10 @@ pub async fn complete_task(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 pub async fn reopen_task(db: &DatabaseConnection, task_id: i64, _actor_id: i64) -> AppResult<WoTask> {
+    let txn = db.begin().await?;
+
     // Load the task to get wo_id
-    let row = db
+    let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT work_order_id FROM work_order_tasks WHERE id = ?",
@@ -318,7 +326,7 @@ pub async fn reopen_task(db: &DatabaseConnection, task_id: i64, _actor_id: i64) 
         .try_get::<i64>("", "work_order_id")
         .map_err(|e| decode_err("work_order_id", e))?;
 
-    let status_code = load_wo_status_code(db, wo_id).await?;
+    let status_code = load_wo_status_code(&txn, wo_id).await?;
     // Blocked once mechanically complete or later
     if matches!(status_code.as_str(), "completed" | "closed" | "cancelled") {
         return Err(AppError::ValidationFailed(vec![format!(
@@ -326,7 +334,7 @@ pub async fn reopen_task(db: &DatabaseConnection, task_id: i64, _actor_id: i64) 
         )]));
     }
 
-    let result = db
+    let result = txn
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE work_order_tasks SET \
@@ -346,10 +354,10 @@ pub async fn reopen_task(db: &DatabaseConnection, task_id: i64, _actor_id: i64) 
         });
     }
 
-    let updated = db
+    let updated = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("SELECT {TASK_COLS} FROM work_order_tasks WHERE id = ?"),
+            format!("SELECT {TASK_COLS} FROM work_order_tasks WHERE id = ?"),
             [task_id.into()],
         ))
         .await?
@@ -357,7 +365,9 @@ pub async fn reopen_task(db: &DatabaseConnection, task_id: i64, _actor_id: i64) 
             entity: "WoTask".into(),
             id: task_id.to_string(),
         })?;
-    map_task(&updated)
+    let task = map_task(&updated)?;
+    txn.commit().await?;
+    Ok(task)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -368,7 +378,7 @@ pub async fn list_tasks(db: &DatabaseConnection, wo_id: i64) -> AppResult<Vec<Wo
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!(
+            format!(
                 "SELECT {TASK_COLS} FROM work_order_tasks \
                  WHERE work_order_id = ? ORDER BY sequence_order ASC, id ASC"
             ),

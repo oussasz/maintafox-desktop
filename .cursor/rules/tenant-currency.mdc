@@ -1,0 +1,55 @@
+---
+description: Tenant currency via Settings — never hardcode EUR/USD in money UI
+alwaysApply: true
+---
+
+# Tenant currency (Settings SSOT)
+
+Money display and cost math labels must follow the **tenant currency setting**, same class as language — not a hardcoded `EUR`, `USD`, or `€`.
+
+## SSOT
+
+| Layer | Source |
+|---|---|
+| Persistence | `app_settings` key `locale.currency_code` (tenant scope, Localization category) |
+| Seed default | `src-tauri/src/db/seeder.rs` → `DEFAULT_SETTINGS` |
+| Runtime store | `useLocaleStore().activeCurrencyCode` (`src/stores/locale-store.ts`) |
+| Shared constants | `src/lib/currency.ts` (`FALLBACK_CURRENCY_CODE`, option list, normalize) |
+| UI formatting | `useFormatters().formatCurrency(amount)` only |
+
+Settings UI: `SettingsValueEditor` select for `locale.currency_code` (live-updates the store on save).
+
+## Required path (every module)
+
+```tsx
+// ✅ GOOD
+const { formatCurrency } = useFormatters();
+<span>{formatCurrency(line.cost)}</span>
+
+// ❌ BAD — hardcodes product currency
+formatCurrency(line.cost, "EUR")
+`${amount.toFixed(2)} €`
+<span>€{amount}</span>
+```
+
+- Prefer the hook with **no** currency override for normal tenant amounts.
+- Pass an override **only** for true multi-currency surfaces (e.g. FX source currency) where the amount’s currency is not the tenant base.
+- Pure `formatCurrency(value, locale, currency)` in `src/utils/formatters.ts` **requires** an explicit ISO 4217 code — do not reintroduce a default of `"EUR"`.
+- Backend/storage may keep amounts as plain numbers; display currency is a presentation concern unless a domain table already stores `currency_code` (Finance / inventory valuation). Do not invent a second parallel “display currency” setting.
+
+## Extending the currency list
+
+1. Add the ISO 4217 code to `CURRENCY_CODE_OPTIONS` in `src/lib/currency.ts`.
+2. Add `options.currency.<CODE>` in `en` / `fr` `settings.json`.
+3. Do not hardcode the new code in feature modules.
+
+## Anti-patterns
+
+- Defaulting formatters or IPC DTOs to `"EUR"` / `"USD"`.
+- Module-local currency symbols or `Intl.NumberFormat({ style: "currency", currency: "EUR" })`.
+- Coupling currency to language (`fr` ⇒ EUR, `en` ⇒ USD). Language and currency are independent Settings.
+
+```text
+❌ BAD — labor/planning/WO costs always show €
+✅ GOOD — Settings → Localization → Currency drives all formatCurrency() output
+```

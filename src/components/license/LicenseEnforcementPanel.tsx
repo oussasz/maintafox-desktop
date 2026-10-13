@@ -94,11 +94,19 @@ export function LicenseEnforcementPanel() {
   };
 
   const handleCompromiseResponse = async () => {
+    // Target the key that actually signed the active envelope; there is nothing to revoke otherwise.
+    const keyId = status?.envelope_key_id;
+    if (!keyId) {
+      setError(
+        "No active signed entitlement envelope: there is no signing key to mark as compromised.",
+      );
+      return;
+    }
     setCompromiseLoading(true);
     try {
       await applyLicensingCompromiseResponse({
         issuer: "maintafox-vps",
-        key_id: "key-v1",
+        key_id: keyId,
         reason: "operator initiated compromise drill",
         force_revocation: true,
       });

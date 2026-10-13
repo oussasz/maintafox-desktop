@@ -572,7 +572,7 @@ mod tests {
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO user_scope_assignments \
-             (sync_id, user_id, role_id, scope_type, created_at, updated_at) \
+             (entity_sync_id, user_id, role_id, scope_type, created_at, updated_at) \
              VALUES ('test-assign-' || ?, ?, \
                (SELECT id FROM roles WHERE name = ?), \
                'tenant', ?, ?)",

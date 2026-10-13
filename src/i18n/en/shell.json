@@ -31,16 +31,125 @@
   },
   "sync": {
     "offline": "Offline",
-    "syncing": "Syncing\u2026",
+    "syncing": "Syncing…",
     "error": "Sync error",
     "offlineChangesSaved": "Offline mode active—your changes are saved locally and will sync when the connection is restored.",
     "syncCenter": "Sync center",
     "syncCenterTitle": "Sync center",
     "syncCenterConflicts": "Unresolved conflicts",
     "syncCenterRejected": "Rejected outbox items",
-    "resolveLocal": "Keep local version",
-    "resolveRemote": "Keep server version",
-    "noConflicts": "No items need review."
+    "resolveLocal": "Keep this device's version",
+    "resolveRemote": "Take the server's version",
+    "noConflicts": "No items need review.",
+    "dismissConflict": "Dismiss",
+    "conflictVersions": "This device: {{local}} · Server: {{remote}}",
+    "versionUnknown": "unknown",
+    "deferredInbox": "{{count}} received change(s) are waiting for related data or a newer app version. They are applied automatically.",
+    "resolveFailed": "The choice could not be applied: {{message}}",
+    "codeClash": "Number {{number}} is already used on this device by another record (numbered on two devices before device codes existed, or two devices share a code). Renumbering gives the record on this device a new number of this device; the received record keeps {{number}}. Nothing is renamed without your choice.",
+    "renumberLocal": "Renumber the record on this device",
+    "conflictKind": {
+      "CONCURRENT_EDIT": "Changed on this device and on another device",
+      "SERVER_CONFLICT": "The server already holds a newer version",
+      "STALE_INBOUND": "The server sent an older version than the one here",
+      "EQUAL_VERSION_DIVERGENCE": "Same version number with different content",
+      "CODE_CLASH": "The same number is used here by another record",
+      "MATERIALIZE_ERROR": "A received change could not be applied",
+      "INVALID_INBOUND_PAYLOAD": "A received change was invalid",
+      "OUTBOX_DEAD_LETTER": "A local change could not be sent after repeated attempts",
+      "AUTHORITY_MISMATCH": "The server refused a protected change",
+      "other": "Needs review"
+    },
+    "history": {
+      "fromOtherDevice": "From another device (recorded before this version): the numbers in this entry are that device's record ids and do not point to records here."
+    },
+    "mediaFile": {
+      "pending": "Not downloaded yet",
+      "pendingHint": "This file was added on another device. It is downloaded automatically when sync runs.",
+      "failed": "Download failed",
+      "failedHint": "The file could not be downloaded: {{message}}",
+      "missing": "File not on this device",
+      "missingHint": "This file is not stored on this device and no download is known for it.",
+      "retry": "Retry",
+      "retryQueued": "Download queued again.",
+      "retryNothing": "Nothing to download for this file."
+    },
+    "worker": {
+      "title": "Synchronization",
+      "runsInBackground": "Sync keeps running when the window is closed (Maintafox stays in the notification area).",
+      "state": {
+        "starting": "Starting…",
+        "idle": "Up to date",
+        "running": "Syncing…",
+        "paused": "Paused",
+        "offline": "Offline: retried automatically",
+        "retrying": "Retry scheduled",
+        "blocked": "Stopped",
+        "error": "Error"
+      },
+      "blocker": {
+        "not_licensed": "Sync is not included in this device's licence.",
+        "not_activated": "This device is not activated.",
+        "activation_refused": "The server refused this device's activation. The licence is being checked.",
+        "tenant_config_mismatch": "This device's data belongs to another organisation than its activation. Contact your administrator.",
+        "not_configured": "Sync is not configured on this device.",
+        "other": "Sync is stopped."
+      },
+      "lastSuccess": "Last successful sync",
+      "never": "Never",
+      "nextAttempt": "Next attempt: {{time}}",
+      "pausedUntil": "Paused until {{time}}",
+      "pending": "Changes waiting to be sent",
+      "conflicts": "Conflicts to review",
+      "media": "Files waiting to upload: {{pending}} · failed: {{failed}}",
+      "mediaDownloads": "Files from other devices waiting to download: {{pending}} · failed: {{failed}}",
+      "deadLetter": "{{count}} change(s) could not be sent after repeated attempts: see the conflicts.",
+      "lastError": "Last error: {{message}}",
+      "syncNow": "Sync now",
+      "pause": "Pause",
+      "pauseDuration": "Pause duration",
+      "pauseOption": {
+        "m15": "15 minutes",
+        "h1": "1 hour",
+        "h4": "4 hours",
+        "h24": "24 hours"
+      },
+      "resume": "Resume",
+      "actionFailed": "The action failed: {{message}}"
+    },
+    "indicator": {
+      "idle": "Up to date",
+      "scheduled": "Sync starting",
+      "running": "Syncing",
+      "degraded": "Needs attention",
+      "paused": "Paused",
+      "blocked": "Stopped",
+      "error": "Sync error",
+      "pausedTitle": "Sync is paused by an operator",
+      "blockedTitle": "Sync is stopped",
+      "degradedTitle": "Sync needs attention (retry scheduled or conflicts to review)",
+      "statusBar": "Sync: {{state}}"
+    },
+    "panel": {
+      "title": "Sync diagnostics",
+      "description": "Status of the sync service on this device, recovery actions and conflicts to review.",
+      "replay": "Replay failed items",
+      "export": "Export diagnostics",
+      "support": "Support handoff",
+      "conflictsTitle": "Conflicts to review",
+      "recommended": "Recommended: {{action}}",
+      "apply": "Apply",
+      "resolutionNote": "Resolved by an operator with the action \"{{action}}\".",
+      "action": {
+        "accept_local": "Keep this device's version",
+        "accept_remote": "Take the server's version",
+        "renumber_local": "Renumber the record on this device",
+        "retry_later": "Retry later",
+        "escalate": "Escalate",
+        "dismiss": "Dismiss",
+        "review": "Review"
+      }
+    }
   },
   "status": {
     "online": "Online",
@@ -75,9 +184,16 @@
     "untrusted": "Unverified device"
   },
   "startup": {
-    "loading": "Starting up\u2026",
+    "loading": "Starting up…",
     "errorTitle": "Startup error",
-    "retry": "Retry"
+    "retry": "Retry",
+    "dbRecovery": {
+      "title": "Encryption key required",
+      "body": "This device’s database is encrypted, but its key is missing from the Windows credential store (reinstall, profile change…). Enter the recovery key to reopen it. Nothing is created or erased here.",
+      "label": "Recovery key",
+      "submit": "Unlock database",
+      "help": "An administrator can display the recovery key in Settings › Backup. Without it, local data cannot be read."
+    }
   },
   "placeholder": {
     "notYetImplemented": "This module will be implemented in {{phase}}."
@@ -85,8 +201,8 @@
   "diagnostics": {
     "title": "Diagnostics",
     "subtitle": "Seed data integrity check and automatic repair.",
-    "checking": "Checking integrity\u2026",
-    "repairing": "Repairing seed data\u2026",
+    "checking": "Checking integrity…",
+    "repairing": "Repairing seed data…",
     "errorTitle": "Diagnostic error",
     "healthy": "All checks passed.",
     "unhealthy": "Issues detected.",
@@ -107,7 +223,7 @@
       "analytics": "Analytics",
       "admin": "Administration"
     },
-    "dashboard": "Dashboard",
+    "dashboard": "Overview",
     "vendorConsole": "Vendor console",
     "equipment": "Equipment",
     "requests": "Intervention Requests",
@@ -119,7 +235,7 @@
     "inventory": "Spare Parts",
     "personnel": "Personnel",
     "training": "Training & Habilitation",
-    "analytics": "Dashboards",
+    "analytics": "RAMS & Analytics",
     "reliability": "Reliability (RAMS)",
     "budget": "Budget & Costs",
     "archive": "Archive",

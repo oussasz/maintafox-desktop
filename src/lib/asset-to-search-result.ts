@@ -9,7 +9,7 @@ export function assetToSearchResult(
 ): AssetSearchResult {
   return {
     id: asset.id,
-    sync_id: asset.sync_id,
+    entity_sync_id: asset.entity_sync_id,
     asset_code: asset.asset_code,
     asset_name: asset.asset_name,
     class_code: asset.class_code,

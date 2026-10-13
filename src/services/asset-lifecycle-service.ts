@@ -30,7 +30,7 @@ import type {
 
 export const AssetLifecycleEventSchema = z.object({
   id: z.number(),
-  sync_id: z.string(),
+  entity_sync_id: z.string(),
   asset_id: z.number(),
   event_type: z.string(),
   event_at: z.string(),
@@ -50,7 +50,7 @@ export const AssetLifecycleEventSchema = z.object({
 
 export const AssetMeterSchema = z.object({
   id: z.number(),
-  sync_id: z.string(),
+  entity_sync_id: z.string(),
   asset_id: z.number(),
   name: z.string(),
   meter_code: z.string().nullable(),

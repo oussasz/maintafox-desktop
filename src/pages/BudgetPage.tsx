@@ -26,6 +26,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { usePermissions } from "@/hooks/use-permissions";
+import { useStepUp } from "@/hooks/use-step-up";
 import {
   createBudgetActual,
   createBudgetAlertConfig,
@@ -194,6 +195,9 @@ export function BudgetPage() {
   const canBudget = canAny(P.FIN_BUDGET, P.FIN_MANAGE);
   const canPost = can(P.FIN_POST);
   const canReport = can(P.FIN_REPORT);
+  /** Approval decisions are separate from budget authoring (fin.approve + step-up). */
+  const canApprove = can(P.FIN_APPROVE);
+  const { withStepUp, StepUpDialogElement } = useStepUp();
 
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [versions, setVersions] = useState<BudgetVersion[]>([]);
@@ -590,11 +594,13 @@ export function BudgetPage() {
     setSaving(true);
     setError(null);
     try {
-      const updated = await transitionBudgetVersionLifecycle({
-        version_id: selectedVersion.id,
-        expected_row_version: selectedVersion.row_version,
-        next_status: nextStatus,
-      });
+      const transition = () =>
+        transitionBudgetVersionLifecycle({
+          version_id: selectedVersion.id,
+          expected_row_version: selectedVersion.row_version,
+          next_status: nextStatus,
+        });
+      const updated = nextStatus === "approved" ? await withStepUp(transition) : await transition();
       await loadBaseline();
       setSelectedVersionId(updated.id);
     } catch (err) {
@@ -827,19 +833,25 @@ export function BudgetPage() {
     setSaving(true);
     setError(null);
     try {
-      await transitionBudgetVarianceReview({
-        review_id: selectedVarianceReview.id,
-        expected_row_version: selectedVarianceReview.row_version,
-        next_status: nextStatus,
-        review_commentary:
-          nextStatus === "closed"
-            ? "Disposition completed with corrective action owner accountability."
-            : "Review status advanced with evidence-backed commentary.",
-        reopen_reason:
-          nextStatus === "open"
-            ? "Material posting change triggered automatic reassessment."
-            : null,
-      });
+      const transition = () =>
+        transitionBudgetVarianceReview({
+          review_id: selectedVarianceReview.id,
+          expected_row_version: selectedVarianceReview.row_version,
+          next_status: nextStatus,
+          review_commentary:
+            nextStatus === "closed"
+              ? "Disposition completed with corrective action owner accountability."
+              : "Review status advanced with evidence-backed commentary.",
+          reopen_reason:
+            nextStatus === "open"
+              ? "Material posting change triggered automatic reassessment."
+              : null,
+        });
+      if (nextStatus === "accepted" || nextStatus === "closed") {
+        await withStepUp(transition);
+      } else {
+        await transition();
+      }
       await loadVersionFinanceLayers(selectedVersionId);
     } catch (err) {
       setError(toErrorMessage(err));
@@ -1416,7 +1428,7 @@ export function BudgetPage() {
                       disabled={
                         !selectedVersion ||
                         selectedVersion.status !== "submitted" ||
-                        !canBudget ||
+                        !canApprove ||
                         saving
                       }
                     >
@@ -2002,13 +2014,13 @@ export function BudgetPage() {
                   <Button
                     variant="outline"
                     onClick={() => void handleAdvanceVarianceReview("accepted")}
-                    disabled={!canBudget || !selectedVarianceReview || saving}
+                    disabled={!canApprove || !selectedVarianceReview || saving}
                   >
                     Accept
                   </Button>
                   <Button
                     onClick={() => void handleAdvanceVarianceReview("closed")}
-                    disabled={!canBudget || !selectedVarianceReview || saving}
+                    disabled={!canApprove || !selectedVarianceReview || saving}
                   >
                     Close
                   </Button>
@@ -2473,6 +2485,7 @@ export function BudgetPage() {
       {loading ? (
         <p className="text-sm text-muted-foreground">Loading finance baseline workspace...</p>
       ) : null}
+      {StepUpDialogElement}
     </ModulePageShell>
   );
 }

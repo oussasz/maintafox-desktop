@@ -52,7 +52,7 @@ mod tests {
             DbBackend::Sqlite,
             format!(
                 "INSERT OR IGNORE INTO org_structure_models \
-                 (sync_id, version_number, status, created_at, updated_at) \
+                 (entity_sync_id, version_number, status, created_at, updated_at) \
                  VALUES ('test-model-001', 1, 'active', '{now}', '{now}')"
             ),
         ))
@@ -62,7 +62,7 @@ mod tests {
         let model_id: i64 = db
             .query_one(Statement::from_string(
                 DbBackend::Sqlite,
-                "SELECT id FROM org_structure_models WHERE sync_id = 'test-model-001'".to_string(),
+                "SELECT id FROM org_structure_models WHERE entity_sync_id = 'test-model-001'".to_string(),
             ))
             .await
             .expect("q")
@@ -74,7 +74,7 @@ mod tests {
             DbBackend::Sqlite,
             format!(
                 "INSERT OR IGNORE INTO org_node_types \
-                 (sync_id, structure_model_id, code, label, is_active, created_at, updated_at) \
+                 (entity_sync_id, structure_model_id, code, label, is_active, created_at, updated_at) \
                  VALUES ('test-type-001', {model_id}, 'TEST', 'Test Type', 1, '{now}', '{now}')"
             ),
         ))
@@ -84,7 +84,7 @@ mod tests {
         let type_id: i64 = db
             .query_one(Statement::from_string(
                 DbBackend::Sqlite,
-                "SELECT id FROM org_node_types WHERE sync_id = 'test-type-001' LIMIT 1".to_string(),
+                "SELECT id FROM org_node_types WHERE entity_sync_id = 'test-type-001' LIMIT 1".to_string(),
             ))
             .await
             .expect("q")
@@ -95,8 +95,7 @@ mod tests {
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             format!(
-                "INSERT OR IGNORE INTO org_nodes \
-                 (sync_id, code, name, node_type_id, structure_model_id, \
+                "INSERT OR IGNORE INTO org_nodes (entity_sync_id, code, name, node_type_id, structure_model_id, \
                   ancestor_path, depth, status, created_at, updated_at) \
                  VALUES ('test-entity-001', 'ENT-TEST', 'Test Entity', \
                   {type_id}, {model_id}, '/', 0, 'active', '{now}', '{now}')"
@@ -108,7 +107,7 @@ mod tests {
         let entity_id: i64 = db
             .query_one(Statement::from_string(
                 DbBackend::Sqlite,
-                "SELECT id FROM org_nodes WHERE sync_id = 'test-entity-001'".to_string(),
+                "SELECT id FROM org_nodes WHERE entity_sync_id = 'test-entity-001'".to_string(),
             ))
             .await
             .expect("q")
@@ -119,26 +118,40 @@ mod tests {
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             format!(
-                "INSERT OR IGNORE INTO org_nodes \
-                 (sync_id, code, name, node_type_id, structure_model_id, \
-                  ancestor_path, depth, status, created_at, updated_at) \
-                 VALUES ('test-team-001', 'TEAM-TEST', 'Test Team', \
-                  {type_id}, {model_id}, '/', 0, 'active', '{now}', '{now}')"
+                "INSERT OR IGNORE INTO teams (entity_sync_id, code, name, team_type, primary_node_id, status, created_at, updated_at) \
+                 VALUES ('test-crew-pad', 'CREW-PAD', 'Pad Crew', 'maintenance', \
+                  NULL, 'active', '{now}', '{now}')"
             ),
         ))
         .await
-        .expect("insert team node");
+        .expect("insert pad crew");
+
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            format!(
+                "INSERT OR IGNORE INTO teams (entity_sync_id, code, name, team_type, primary_node_id, status, created_at, updated_at) \
+                 VALUES ('test-crew-001', 'CREW-TEST', 'Test Crew', 'maintenance', \
+                  {entity_id}, 'active', '{now}', '{now}')"
+            ),
+        ))
+        .await
+        .expect("insert crew");
 
         let team_id: i64 = db
             .query_one(Statement::from_string(
                 DbBackend::Sqlite,
-                "SELECT id FROM org_nodes WHERE sync_id = 'test-team-001'".to_string(),
+                "SELECT id FROM teams WHERE entity_sync_id = 'test-crew-001'".to_string(),
             ))
             .await
             .expect("q")
-            .expect("team row")
+            .expect("crew row")
             .try_get("", "id")
             .unwrap();
+
+        assert_ne!(
+            team_id, entity_id,
+            "crew id must differ from entity org_node id to catch FK collisions"
+        );
 
         let position_id: i64 = db
             .query_one(Statement::from_string(
@@ -373,6 +386,115 @@ mod tests {
         assert!(matches!(err, AppError::ValidationFailed(_)));
     }
 
+    /// V3b — Reassign home crew when teams.id ≠ org_nodes.id (history FK must accept crews).
+    #[tokio::test]
+    async fn v3b_update_primary_team_distinct_crew_id() {
+        let db = setup().await;
+        let actor = admin_id(&db).await;
+        let (position_id, entity_id, team_id, sched_rv_id) = prepare_prerequisites(&db).await;
+
+        let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            format!(
+                "INSERT INTO teams (entity_sync_id, code, name, team_type, primary_node_id, status, created_at, updated_at) \
+                 VALUES ('test-crew-002', 'CREW-ALT', 'Alt Crew', 'maintenance', \
+                  {entity_id}, 'active', '{now}', '{now}')"
+            ),
+        ))
+        .await
+        .expect("insert alt crew");
+        let alt_team_id: i64 = db
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT id FROM teams WHERE entity_sync_id = 'test-crew-002'".to_string(),
+            ))
+            .await
+            .expect("q")
+            .expect("alt crew")
+            .try_get("", "id")
+            .unwrap();
+        assert_ne!(alt_team_id, entity_id);
+
+        let p = create_personnel(
+            &db,
+            PersonnelCreateInput {
+                full_name: "Crew Switch".to_string(),
+                employee_code: "CREW-SW-1".to_string(),
+                employment_type: "employee".to_string(),
+                employment_origin: "internal".to_string(),
+                employment_status: None,
+                position_id,
+                primary_entity_id: entity_id,
+                primary_team_id: team_id,
+                supervisor_id: None,
+                home_schedule_reference_value_id: sched_rv_id,
+                hire_date: None,
+                email: None,
+                phone: None,
+                external_company_id: None,
+                contract_number: None,
+                contract_start_date: None,
+                contract_end_date: None,
+                notes: None,
+                blocked_override: None,
+                assignment_reason: None,
+                skills: vec![],
+                certifications: vec![],
+            },
+            actor,
+        )
+        .await
+        .expect("create");
+
+        let updated = update_personnel(
+            &db,
+            PersonnelUpdateInput {
+                id: p.id,
+                expected_row_version: p.row_version,
+                full_name: None,
+                employment_type: None,
+                employment_origin: None,
+                employment_status: None,
+                blocked_override: None,
+                position_id: None,
+                primary_entity_id: None,
+                primary_team_id: Some(alt_team_id),
+                supervisor_id: None,
+                home_schedule_reference_value_id: None,
+                availability_status: None,
+                hire_date: None,
+                termination_date: None,
+                email: None,
+                phone: None,
+                external_company_id: None,
+                contract_number: None,
+                contract_start_date: None,
+                contract_end_date: None,
+                notes: None,
+                assignment_reason: Some("crew_reassign_test".into()),
+                employee_code: None,
+            },
+            actor,
+        )
+        .await
+        .expect("update primary_team_id");
+
+        assert_eq!(updated.primary_team_id, Some(alt_team_id));
+
+        let hist_team: Option<i64> = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT team_id FROM personnel_assignment_history \
+                 WHERE personnel_id = ? AND ended_at IS NULL ORDER BY id DESC LIMIT 1",
+                [p.id.into()],
+            ))
+            .await
+            .expect("hist q")
+            .and_then(|r| r.try_get("", "team_id").ok());
+        assert_eq!(hist_team, Some(alt_team_id));
+    }
+
     /// V4 — WO primary blocks deactivation; after cancel, deactivation succeeds.
     #[tokio::test]
     async fn v4_deactivate_blocked_by_wo_then_succeeds() {
@@ -422,7 +544,7 @@ mod tests {
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             format!(
-                "INSERT INTO equipment (sync_id, asset_id_code, name, lifecycle_status, installed_at_node_id, created_at, updated_at) \
+                "INSERT INTO equipment (entity_sync_id, asset_id_code, name, lifecycle_status, installed_at_node_id, created_at, updated_at) \
                  VALUES ('test-eq-per-v4', 'EQ-PER-V4', 'Personnel V4 Equipment', 'active_in_service', \
                  {entity_id}, datetime('now'), datetime('now'))"
             ),
@@ -433,7 +555,7 @@ mod tests {
         let equipment_id: i64 = db
             .query_one(Statement::from_string(
                 DbBackend::Sqlite,
-                "SELECT id FROM equipment WHERE sync_id = 'test-eq-per-v4'".to_string(),
+                "SELECT id FROM equipment WHERE entity_sync_id = 'test-eq-per-v4'".to_string(),
             ))
             .await
             .expect("q")
@@ -634,6 +756,261 @@ mod tests {
             page.items[0].full_name.contains("unique"),
             "{}",
             page.items[0].full_name
+        );
+    }
+
+    /// Set / swap / clear team lead; reject non-member; sync preserves lead.
+    #[tokio::test]
+    async fn set_team_lead_swap_clear_preserve_on_sync() {
+        use crate::personnel::domain::SetTeamLeadInput;
+        use crate::personnel::queries::{set_team_lead, sync_home_crew_assignment};
+
+        let db = setup().await;
+        let actor = admin_id(&db).await;
+        let (position_id, entity_id, team_id, sched_rv_id) = prepare_prerequisites(&db).await;
+
+        let mk = |name: &str, code: &str| PersonnelCreateInput {
+            full_name: name.to_string(),
+            employee_code: code.to_string(),
+            employment_type: "employee".to_string(),
+            employment_origin: "internal".to_string(),
+            employment_status: None,
+            position_id,
+            primary_entity_id: entity_id,
+            primary_team_id: team_id,
+            supervisor_id: None,
+            home_schedule_reference_value_id: sched_rv_id,
+            hire_date: None,
+            email: None,
+            phone: None,
+            external_company_id: None,
+            contract_number: None,
+            contract_start_date: None,
+            contract_end_date: None,
+            notes: None,
+            blocked_override: None,
+            assignment_reason: None,
+            skills: vec![],
+            certifications: vec![],
+        };
+
+        let a = create_personnel(&db, mk("Lead Alpha", "LEAD-A"), actor)
+            .await
+            .expect("create a");
+        let b = create_personnel(&db, mk("Lead Beta", "LEAD-B"), actor)
+            .await
+            .expect("create b");
+
+        let promoted = set_team_lead(
+            &db,
+            SetTeamLeadInput {
+                team_id,
+                personnel_id: a.id,
+                is_lead: true,
+            },
+        )
+        .await
+        .expect("set lead a");
+        assert_eq!(promoted.is_lead, 1);
+        assert_eq!(promoted.role_code, "lead");
+
+        let swapped = set_team_lead(
+            &db,
+            SetTeamLeadInput {
+                team_id,
+                personnel_id: b.id,
+                is_lead: true,
+            },
+        )
+        .await
+        .expect("set lead b");
+        assert_eq!(swapped.is_lead, 1);
+        assert_eq!(swapped.role_code, "lead");
+
+        let a_row = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT is_lead, role_code FROM personnel_team_assignments
+                 WHERE personnel_id = ? AND team_id = ?
+                   AND (valid_to IS NULL OR date(valid_to) >= date('now'))
+                 LIMIT 1",
+                [a.id.into(), team_id.into()],
+            ))
+            .await
+            .expect("q")
+            .expect("a assignment");
+        let a_lead: i64 = a_row.try_get("", "is_lead").unwrap();
+        let a_role: String = a_row.try_get("", "role_code").unwrap();
+        assert_eq!(a_lead, 0, "previous lead demoted");
+        assert_eq!(a_role, "member");
+
+        let cleared = set_team_lead(
+            &db,
+            SetTeamLeadInput {
+                team_id,
+                personnel_id: b.id,
+                is_lead: false,
+            },
+        )
+        .await
+        .expect("clear lead b");
+        assert_eq!(cleared.is_lead, 0);
+        assert_eq!(cleared.role_code, "member");
+
+        let err = set_team_lead(
+            &db,
+            SetTeamLeadInput {
+                team_id,
+                personnel_id: 9_999_999,
+                is_lead: true,
+            },
+        )
+        .await
+        .expect_err("non-member");
+        assert!(matches!(err, AppError::ValidationFailed(_)));
+
+        set_team_lead(
+            &db,
+            SetTeamLeadInput {
+                team_id,
+                personnel_id: a.id,
+                is_lead: true,
+            },
+        )
+        .await
+        .expect("re-promote a");
+
+        let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        sync_home_crew_assignment(&db, a.id, team_id, &now)
+            .await
+            .expect("resync same team");
+
+        let preserved = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT is_lead, role_code FROM personnel_team_assignments
+                 WHERE personnel_id = ? AND team_id = ?
+                   AND (valid_to IS NULL OR date(valid_to) >= date(?))
+                 LIMIT 1",
+                [a.id.into(), team_id.into(), now.clone().into()],
+            ))
+            .await
+            .expect("q")
+            .expect("a after sync");
+        let lead: i64 = preserved.try_get("", "is_lead").unwrap();
+        let role: String = preserved.try_get("", "role_code").unwrap();
+        assert_eq!(lead, 1, "sync must preserve is_lead on same team");
+        assert_eq!(role, "lead");
+    }
+
+    /// Active rate card resolves for today; future-only card is ignored.
+    #[tokio::test]
+    async fn active_labor_rate_respects_effective_from() {
+        use crate::personnel::queries::{create_rate_card, resolve_active_labor_rate, resolve_active_rate_pair};
+
+        let db = setup().await;
+        let actor = admin_id(&db).await;
+        let (position_id, entity_id, team_id, sched_rv_id) = prepare_prerequisites(&db).await;
+
+        let p = create_personnel(
+            &db,
+            PersonnelCreateInput {
+                full_name: "Rate Tech".to_string(),
+                employee_code: "RATE-001".to_string(),
+                employment_type: "employee".to_string(),
+                employment_origin: "internal".to_string(),
+                employment_status: None,
+                position_id,
+                primary_entity_id: entity_id,
+                primary_team_id: team_id,
+                supervisor_id: None,
+                home_schedule_reference_value_id: sched_rv_id,
+                hire_date: None,
+                email: None,
+                phone: None,
+                external_company_id: None,
+                contract_number: None,
+                contract_start_date: None,
+                contract_end_date: None,
+                notes: None,
+                blocked_override: None,
+                assignment_reason: None,
+                skills: vec![],
+                certifications: vec![],
+            },
+            actor,
+        )
+        .await
+        .expect("create");
+
+        assert!(resolve_active_labor_rate(&db, p.id).await.expect("resolve").is_none());
+
+        create_rate_card(&db, p.id, 42.5, 55.0, None, "manual".into(), actor)
+            .await
+            .expect("create rate");
+
+        let rate = resolve_active_labor_rate(&db, p.id)
+            .await
+            .expect("resolve")
+            .expect("active rate");
+        assert!((rate - 42.5).abs() < f64::EPSILON);
+
+        let pair = resolve_active_rate_pair(&db, p.id)
+            .await
+            .expect("pair")
+            .expect("active pair");
+        assert!((pair.0 - 42.5).abs() < f64::EPSILON);
+        assert!((pair.1 - 55.0).abs() < f64::EPSILON);
+
+        // Future-dated-only card for another person → no active rate
+        let p2 = create_personnel(
+            &db,
+            PersonnelCreateInput {
+                full_name: "Future Rate".to_string(),
+                employee_code: "RATE-002".to_string(),
+                employment_type: "employee".to_string(),
+                employment_origin: "internal".to_string(),
+                employment_status: None,
+                position_id,
+                primary_entity_id: entity_id,
+                primary_team_id: team_id,
+                supervisor_id: None,
+                home_schedule_reference_value_id: sched_rv_id,
+                hire_date: None,
+                email: None,
+                phone: None,
+                external_company_id: None,
+                contract_number: None,
+                contract_start_date: None,
+                contract_end_date: None,
+                notes: None,
+                blocked_override: None,
+                assignment_reason: None,
+                skills: vec![],
+                certifications: vec![],
+            },
+            actor,
+        )
+        .await
+        .expect("create p2");
+
+        let future = "2099-01-01";
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO personnel_rate_cards \
+             (personnel_id, effective_from, labor_rate, overtime_rate, source_type, created_at) \
+             VALUES (?, ?, 99.0, 120.0, 'manual', ?)",
+            [p2.id.into(), future.into(), "2099-01-01T00:00:00Z".into()],
+        ))
+        .await
+        .expect("insert future card");
+
+        assert!(
+            resolve_active_labor_rate(&db, p2.id)
+                .await
+                .expect("resolve future")
+                .is_none(),
+            "future-dated card must not be active today"
         );
     }
 }

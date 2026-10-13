@@ -349,7 +349,7 @@ describe("Supervisor Verification — Sprint S2 Org Designer UI", () => {
       mockGetOrgDesignerSnapshot.mockResolvedValueOnce(threeNodeSnapshot);
       mockGetOrgNode.mockResolvedValue({
         id: 2,
-        sync_id: "abc",
+        entity_sync_id: "abc",
         code: "DEPT-M",
         name: "Maintenance Dept",
         node_type_id: 20,

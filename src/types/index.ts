@@ -1,5 +1,5 @@
 /** Application-level status values used in the UI */
-export type AppStatus = "loading" | "ready" | "error" | "offline";
+export type AppStatus = "loading" | "ready" | "error" | "offline" | "database_key_required";
 
 /** Semantic status badge variants */
 export type StatusVariant = "success" | "danger" | "warning" | "info" | "neutral";

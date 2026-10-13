@@ -94,6 +94,75 @@ pub fn route_contract_for_family(family: VpsContractFamily) -> Result<VpsRouteCo
         })
 }
 
+/// Validate additive sync exchange request shape (desktop → Fastify).
+/// Unknown optional fields are allowed; required v1 fields must be present.
+pub fn validate_sync_exchange_request_json(body: &serde_json::Value) -> Result<(), VpsTypedError> {
+    let obj = body.as_object().ok_or_else(|| {
+        typed_error(
+            VpsContractFamily::Sync,
+            "sync_exchange_invalid_body",
+            "Sync exchange body must be a JSON object.",
+            400,
+            false,
+        )
+    })?;
+    let protocol = obj.get("protocol_version").and_then(|v| v.as_str()).unwrap_or("");
+    if protocol != VPS_API_VERSION_V1 && protocol != "v1" {
+        return Err(typed_error(
+            VpsContractFamily::Sync,
+            "unsupported_protocol_version",
+            "protocol_version must be v1.",
+            426,
+            false,
+        ));
+    }
+    if !obj.contains_key("idempotency_key") {
+        return Err(typed_error(
+            VpsContractFamily::Sync,
+            "idempotency_key_required",
+            "idempotency_key is required on sync exchange.",
+            400,
+            false,
+        ));
+    }
+    if !obj.get("outbox_batch").map(|v| v.is_array()).unwrap_or(false) {
+        return Err(typed_error(
+            VpsContractFamily::Sync,
+            "outbox_batch_required",
+            "outbox_batch must be an array.",
+            400,
+            false,
+        ));
+    }
+    // Additive optional fields — validate shape when present
+    if let Some(dc) = obj.get("device_class") {
+        match dc.as_str() {
+            Some("desktop") | Some("mobile") => {}
+            _ => {
+                return Err(typed_error(
+                    VpsContractFamily::Sync,
+                    "device_class_invalid",
+                    "device_class must be desktop or mobile when present.",
+                    400,
+                    false,
+                ));
+            }
+        }
+    }
+    if let Some(mm) = obj.get("media_manifest") {
+        if !mm.is_null() && !mm.is_array() {
+            return Err(typed_error(
+                VpsContractFamily::Sync,
+                "media_manifest_invalid",
+                "media_manifest must be an array when present.",
+                400,
+                false,
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub fn enforce_request_context(route: &VpsRouteContract, ctx: &VpsRequestContext) -> Result<(), VpsTypedError> {
     if ctx.correlation_id.trim().is_empty() {
         return Err(typed_error(

@@ -144,14 +144,14 @@ mod tests {
     /// Insert a test equipment class. Returns the class id.
     async fn setup_equipment_class(db: &sea_orm::DatabaseConnection) -> i64 {
         let now = chrono::Utc::now().to_rfc3339();
-        let sync_id = uuid::Uuid::new_v4().to_string();
+        let entity_sync_id = uuid::Uuid::new_v4().to_string();
 
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             r"INSERT INTO equipment_classes
-              (sync_id, code, name, parent_id, level, is_active, created_at, updated_at)
+              (entity_sync_id, code, name, parent_id, level, is_active, created_at, updated_at)
               VALUES (?, 'PUMP', 'Pompes', NULL, 'class', 1, ?, ?)",
-            [sync_id.into(), now.clone().into(), now.into()],
+            [entity_sync_id.into(), now.clone().into(), now.into()],
         ))
         .await
         .expect("insert equipment class");
@@ -571,13 +571,13 @@ mod tests {
 
         // Insert a second class (MOTOR) for reclassification detection
         let now = chrono::Utc::now().to_rfc3339();
-        let sync_id = uuid::Uuid::new_v4().to_string();
+        let entity_sync_id = uuid::Uuid::new_v4().to_string();
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             r"INSERT INTO equipment_classes
-              (sync_id, code, name, parent_id, level, is_active, created_at, updated_at)
+              (entity_sync_id, code, name, parent_id, level, is_active, created_at, updated_at)
               VALUES (?, 'MOTOR', 'Moteurs', NULL, 'class', 1, ?, ?)",
-            [sync_id.into(), now.clone().into(), now.into()],
+            [entity_sync_id.into(), now.clone().into(), now.into()],
         ))
         .await
         .expect("insert motor class");
@@ -993,13 +993,13 @@ mod tests {
 
         // Insert second class for reclassification warning
         let now = chrono::Utc::now().to_rfc3339();
-        let sync_id = uuid::Uuid::new_v4().to_string();
+        let entity_sync_id = uuid::Uuid::new_v4().to_string();
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             r"INSERT INTO equipment_classes
-              (sync_id, code, name, parent_id, level, is_active, created_at, updated_at)
+              (entity_sync_id, code, name, parent_id, level, is_active, created_at, updated_at)
               VALUES (?, 'MOTOR', 'Moteurs', NULL, 'class', 1, ?, ?)",
-            [sync_id.into(), now.clone().into(), now.into()],
+            [entity_sync_id.into(), now.clone().into(), now.into()],
         ))
         .await
         .expect("insert motor class");
@@ -1080,7 +1080,7 @@ mod tests {
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT OR IGNORE INTO user_scope_assignments \
-             (sync_id, user_id, role_id, scope_type, created_at, updated_at) \
+             (entity_sync_id, user_id, role_id, scope_type, created_at, updated_at) \
              VALUES ('test-assign', 1, \
                (SELECT id FROM roles WHERE name = 'Administrator'), \
                'tenant', ?, ?)",
@@ -1105,7 +1105,7 @@ mod tests {
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT OR IGNORE INTO user_scope_assignments \
-             (sync_id, user_id, role_id, scope_type, created_at, updated_at) \
+             (entity_sync_id, user_id, role_id, scope_type, created_at, updated_at) \
              VALUES ('test-op', 2, \
                (SELECT id FROM roles WHERE name = 'Operator'), \
                'tenant', ?, ?)",

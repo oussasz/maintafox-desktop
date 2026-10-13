@@ -160,6 +160,87 @@ export const mfTable = {
 } as const;
 
 /**
+ * Compact high-density metric grid (ISA-101 / industrial HMI).
+ * Grey-scale for normal; status color only on exception values.
+ * Canonical renderer: `src/components/metrics/CompactMetricGrid.tsx`.
+ */
+export const mfMetric = {
+  panel: "overflow-hidden rounded-md border border-surface-border bg-surface-1",
+  header:
+    "flex items-baseline justify-between gap-3 border-b border-surface-border bg-surface-2/40 px-3 py-1.5",
+  title: "font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-text-muted",
+  hint: "min-w-0 truncate text-[10px] text-text-muted",
+  /** Hairline cell grid — ISA-101 density, not card gutters. */
+  grid: "grid gap-px bg-surface-border",
+  cell: "flex min-h-[3.25rem] flex-col justify-center gap-0.5 bg-surface-1 px-3 py-2 text-start",
+  cellInteractive:
+    "transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+  label: "text-[10px] font-medium uppercase tracking-wide text-text-muted",
+  value: "font-mono text-base font-semibold tabular-nums leading-none text-text-primary",
+  valueMuted: "font-mono text-base font-semibold tabular-nums leading-none text-text-muted",
+  delta: "font-mono text-[10px] tabular-nums text-text-muted",
+  chartBody: "p-3",
+  strip: "flex flex-wrap gap-px bg-surface-border",
+  stripCell:
+    "flex min-h-[3.25rem] min-w-[8.5rem] flex-1 items-center justify-between gap-2 bg-surface-1 px-2.5 py-1.5 text-start",
+  barTrack: "flex h-2.5 w-full overflow-hidden rounded-sm bg-surface-2",
+  barSegDanger: "h-full bg-status-danger",
+  barSegWarn: "h-full bg-status-warning",
+  barSegOk: "h-full bg-status-success",
+  barSegNeutral: "h-full bg-surface-3",
+  chipWarn:
+    "ms-1 inline-block rounded-sm border border-status-warning/40 px-1 font-mono text-[9px] uppercase leading-4 text-text-warning",
+  chipDanger:
+    "ms-1 inline-block rounded-sm border border-status-danger/40 px-1 font-mono text-[9px] uppercase leading-4 text-text-danger",
+} as const;
+
+/**
+ * Visual metric card — flat glass KPI unit with value, trend chip, and typed micro-viz.
+ * Canonical renderer: `src/components/metrics/VisualMetricCard.tsx`.
+ */
+export const mfVisualMetric = {
+  card: "relative overflow-hidden rounded-xl border border-surface-border bg-surface-1/80 text-left backdrop-blur-md transition-colors hover:bg-surface-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+  cardStatic:
+    "relative overflow-hidden rounded-xl border border-surface-border bg-surface-1/80 backdrop-blur-md",
+  body: "flex flex-row items-center justify-between gap-4 px-4 py-3",
+  data: "min-w-0 shrink-0",
+  dataWithViz: "min-w-0 flex-1 basis-[48%]",
+  title: "text-[11px] font-medium uppercase tracking-[0.12em] text-text-muted",
+  context: "mt-0.5 text-[11px] leading-snug text-text-secondary",
+  valueRow: "mt-1.5 flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5",
+  value: "font-mono text-2xl font-semibold tabular-nums leading-none text-text-primary",
+  unit: "font-mono text-sm font-medium text-text-muted",
+  badge:
+    "inline-flex shrink-0 items-center rounded-md px-1.5 py-0.5 font-mono text-[10px] font-medium tabular-nums text-text-secondary",
+  badgeUp: "bg-status-success/12 text-status-success",
+  badgeDown: "bg-status-danger/12 text-status-danger",
+  vizWrap:
+    "flex h-[3.25rem] min-h-[3.25rem] min-w-[7rem] flex-1 basis-[48%] items-center justify-center self-stretch",
+  viz: "h-full w-full min-h-[3.25rem]",
+  /** Accent text color for title + micro-viz currentColor */
+  accentTone: {
+    default: "text-primary",
+    brand: "text-primary",
+    amber: "text-status-warning",
+    danger: "text-status-danger",
+    teal: "text-teal-600 dark:text-teal-400",
+  },
+  accentDot: {
+    default: "bg-primary",
+    brand: "bg-primary",
+    amber: "bg-status-warning",
+    danger: "bg-status-danger",
+    teal: "bg-teal-500",
+  },
+  alertNormal:
+    "inline-flex items-center rounded-md border border-surface-border bg-surface-0/60 px-2 py-1 font-mono text-[10px] font-medium uppercase tracking-wide text-text-muted",
+  alertWarn:
+    "inline-flex animate-pulse items-center rounded-md bg-status-warning/15 px-2 py-1 font-mono text-[10px] font-semibold uppercase tracking-wide text-status-warning",
+  alertDanger:
+    "inline-flex animate-pulse items-center rounded-md bg-status-danger/15 px-2 py-1 font-mono text-[10px] font-semibold uppercase tracking-wide text-status-danger",
+} as const;
+
+/**
  * Buttons — mirrors `components/ui/button.tsx` (`buttonVariants`).
  * Prefer `<Button variant="…" />`; use these strings with `cn()` for native `<button>` when needed.
  */

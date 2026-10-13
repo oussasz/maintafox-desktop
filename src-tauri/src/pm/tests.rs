@@ -48,7 +48,7 @@ async fn create_plan_with_published_version(
             asset_scope_id: Some(1),
             strategy_type: strategy_type.to_string(),
             criticality_value_id: None,
-            assigned_group_id: None,
+            assigned_team_id: None,
             requires_shutdown: false,
             requires_permit: false,
             is_active: Some(true),
@@ -127,7 +127,7 @@ async fn lifecycle_requires_valid_transition() {
             asset_scope_id: Some(1),
             strategy_type: "fixed".to_string(),
             criticality_value_id: None,
-            assigned_group_id: None,
+            assigned_team_id: None,
             requires_shutdown: false,
             requires_permit: false,
             is_active: Some(true),
@@ -162,7 +162,7 @@ async fn stale_row_version_is_rejected() {
             asset_scope_id: Some(1),
             strategy_type: "event".to_string(),
             criticality_value_id: None,
-            assigned_group_id: None,
+            assigned_team_id: None,
             requires_shutdown: false,
             requires_permit: false,
             is_active: Some(true),
@@ -182,7 +182,7 @@ async fn stale_row_version_is_rejected() {
             asset_scope_id: None,
             strategy_type: None,
             criticality_value_id: None,
-            assigned_group_id: None,
+            assigned_team_id: None,
             requires_shutdown: None,
             requires_permit: None,
             is_active: None,
@@ -202,7 +202,7 @@ async fn stale_row_version_is_rejected() {
             asset_scope_id: None,
             strategy_type: None,
             criticality_value_id: None,
-            assigned_group_id: None,
+            assigned_team_id: None,
             requires_shutdown: None,
             requires_permit: None,
             is_active: None,
@@ -242,6 +242,7 @@ async fn fixed_generation_is_idempotent() {
             as_of: Some("2026-01-10T00:00:00Z".to_string()),
             horizon_days: Some(30),
             pm_plan_id: Some(plan_id),
+            equipment_id: None,
             event_codes: None,
             condition_codes: None,
         },
@@ -256,6 +257,7 @@ async fn fixed_generation_is_idempotent() {
             as_of: Some("2026-01-10T00:00:00Z".to_string()),
             horizon_days: Some(30),
             pm_plan_id: Some(plan_id),
+            equipment_id: None,
             event_codes: None,
             condition_codes: None,
         },
@@ -299,6 +301,7 @@ async fn floating_generation_reanchors_on_completion() {
             as_of: Some("2026-01-10T00:00:00Z".to_string()),
             horizon_days: Some(2),
             pm_plan_id: Some(plan_id),
+            equipment_id: None,
             event_codes: None,
             condition_codes: None,
         },
@@ -319,28 +322,13 @@ async fn floating_generation_reanchors_on_completion() {
     .await
     .expect("list floating occurrences");
     let first_occ = occurrences.remove(0);
-
-    let generated = queries::transition_pm_occurrence(
-        &db,
-        TransitionPmOccurrenceInput {
-            occurrence_id: first_occ.id,
-            expected_row_version: first_occ.row_version,
-            next_status: "generated".to_string(),
-            reason_code: None,
-            note: None,
-            generate_work_order: Some(false),
-            work_order_type_id: None,
-            actor_id: Some(1),
-        },
-    )
-    .await
-    .expect("forecasted -> generated");
+    assert_eq!(first_occ.status, "generated");
 
     let ready = queries::transition_pm_occurrence(
         &db,
         TransitionPmOccurrenceInput {
-            occurrence_id: generated.id,
-            expected_row_version: generated.row_version,
+            occurrence_id: first_occ.id,
+            expected_row_version: first_occ.row_version,
             next_status: "ready_for_scheduling".to_string(),
             reason_code: None,
             note: None,
@@ -406,6 +394,7 @@ async fn floating_generation_reanchors_on_completion() {
             as_of: Some("2026-01-12T00:00:00Z".to_string()),
             horizon_days: Some(3),
             pm_plan_id: Some(plan_id),
+            equipment_id: None,
             event_codes: None,
             condition_codes: None,
         },
@@ -422,7 +411,7 @@ async fn meter_generation_respects_threshold_and_idempotency() {
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "INSERT INTO equipment (sync_id, asset_id_code, name, lifecycle_status, created_at, updated_at)
+        "INSERT INTO equipment (entity_sync_id, asset_id_code, name, lifecycle_status, created_at, updated_at)
          VALUES ('eq_sync_pm_meter', 'EQ-PM-METER', 'PM Meter Asset', 'active_in_service', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
         [],
     ))
@@ -442,7 +431,7 @@ async fn meter_generation_respects_threshold_and_idempotency() {
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "INSERT INTO equipment_meters (sync_id, equipment_id, name, meter_type, unit, current_reading, expected_rate_per_day, is_primary, is_active, created_at, updated_at)
+        "INSERT INTO equipment_meters (entity_sync_id, equipment_id, name, meter_type, unit, current_reading, expected_rate_per_day, is_primary, is_active, created_at, updated_at)
          VALUES ('meter_sync_pm', ?, 'Runtime', 'hours', 'h', 120, 0, 1, 1, strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
         [equipment_id.into()],
     ))
@@ -452,7 +441,7 @@ async fn meter_generation_respects_threshold_and_idempotency() {
     let meter_row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id FROM equipment_meters WHERE sync_id = 'meter_sync_pm'",
+            "SELECT id FROM equipment_meters WHERE entity_sync_id = 'meter_sync_pm'",
             [],
         ))
         .await
@@ -474,6 +463,7 @@ async fn meter_generation_respects_threshold_and_idempotency() {
             as_of: Some("2026-01-10T00:00:00Z".to_string()),
             horizon_days: Some(7),
             pm_plan_id: Some(plan_id),
+            equipment_id: None,
             event_codes: None,
             condition_codes: None,
         },
@@ -487,6 +477,7 @@ async fn meter_generation_respects_threshold_and_idempotency() {
             as_of: Some("2026-01-10T00:00:00Z".to_string()),
             horizon_days: Some(7),
             pm_plan_id: Some(plan_id),
+            equipment_id: None,
             event_codes: None,
             condition_codes: None,
         },
@@ -505,7 +496,7 @@ async fn pm_permission_boundaries_view_without_create_edit() {
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "INSERT INTO roles (sync_id, name, description, is_system, role_type, status, created_at, updated_at)
+        "INSERT INTO roles (entity_sync_id, name, description, is_system, role_type, status, created_at, updated_at)
          VALUES ('role_sync_pm_view_only', 'pm_view_only_role', 'PM view only', 0, 'custom', 'active', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
         [],
     ))
@@ -536,7 +527,7 @@ async fn pm_permission_boundaries_view_without_create_edit() {
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "INSERT INTO user_accounts (sync_id, username, display_name, identity_mode, is_active, is_admin, force_password_change, created_at, updated_at)
+        "INSERT INTO user_accounts (entity_sync_id, username, display_name, identity_mode, is_active, is_admin, force_password_change, created_at, updated_at)
          VALUES ('user_sync_pm_view', 'pm_view_user', 'PM View User', 'local', 1, 0, 0, strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
         [],
     ))
@@ -556,7 +547,7 @@ async fn pm_permission_boundaries_view_without_create_edit() {
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "INSERT INTO user_scope_assignments (sync_id, user_id, role_id, scope_type, scope_reference, valid_from, valid_to, assigned_by_id, notes, created_at, updated_at)
+        "INSERT INTO user_scope_assignments (entity_sync_id, user_id, role_id, scope_type, scope_reference, valid_from, valid_to, assigned_by_id, notes, created_at, updated_at)
          VALUES ('usa_sync_pm_view', ?, ?, 'tenant', NULL, NULL, NULL, NULL, NULL, strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
         [user_id.into(), role_id.into()],
     ))
@@ -599,7 +590,44 @@ async fn execution_with_finding_creates_followups_and_events() {
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "INSERT OR IGNORE INTO equipment (id, sync_id, asset_id_code, name, lifecycle_status, installed_at_node_id, created_at, updated_at)
+        "INSERT OR IGNORE INTO org_structure_models
+            (id, entity_sync_id, version_number, status, description, activated_at, created_at, updated_at)
+         VALUES (1, 'pm_org_model', 1, 'active', 'PM test model',
+                 strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+                 strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+                 strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
+        [],
+    ))
+    .await
+    .expect("insert org model");
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT OR IGNORE INTO org_node_types
+            (id, entity_sync_id, structure_model_id, code, label, can_host_assets, can_own_work, is_root_type, is_active, created_at, updated_at)
+         VALUES (1, 'pm_org_type', 1, 'SITE', 'Site', 1, 1, 1, 1,
+                 strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+                 strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
+        [],
+    ))
+    .await
+    .expect("insert org node type");
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT OR IGNORE INTO org_nodes
+            (id, entity_sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status,
+             created_at, updated_at, row_version, structure_model_id)
+         VALUES (1, 'pm_org_node', 'SITE-1', 'Test Site', 1, NULL, '/', 0, 'active',
+                 strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+                 strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+                 1, 1)",
+        [],
+    ))
+    .await
+    .expect("insert org node");
+
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT OR IGNORE INTO equipment (id, entity_sync_id, asset_id_code, name, lifecycle_status, installed_at_node_id, created_at, updated_at)
          VALUES (1, 'eq_sync_pm_exec', 'EQ-PM-EXEC', 'PM Execution Asset', 'active_in_service', 1, strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
         [],
     ))
@@ -619,6 +647,7 @@ async fn execution_with_finding_creates_followups_and_events() {
             as_of: Some("2026-01-10T00:00:00Z".to_string()),
             horizon_days: Some(2),
             pm_plan_id: Some(plan_id),
+            equipment_id: None,
             event_codes: None,
             condition_codes: None,
         },
@@ -641,22 +670,7 @@ async fn execution_with_finding_creates_followups_and_events() {
     .await
     .expect("list occurrences");
     let occ = occurrences.remove(0);
-
-    let occ = queries::transition_pm_occurrence(
-        &db,
-        TransitionPmOccurrenceInput {
-            occurrence_id: occ.id,
-            expected_row_version: occ.row_version,
-            next_status: "generated".to_string(),
-            reason_code: None,
-            note: None,
-            generate_work_order: Some(false),
-            work_order_type_id: None,
-            actor_id: Some(1),
-        },
-    )
-    .await
-    .expect("to generated");
+    assert_eq!(occ.status, "generated");
 
     let occ = queries::transition_pm_occurrence(
         &db,
@@ -778,6 +792,7 @@ async fn missed_execution_requires_reason_code() {
             as_of: Some("2026-01-10T00:00:00Z".to_string()),
             horizon_days: Some(10),
             pm_plan_id: Some(plan_id),
+            equipment_id: None,
             event_codes: None,
             condition_codes: None,
         },
@@ -874,7 +889,7 @@ async fn planning_readiness_projection_returns_blockers_without_scheduler_side_e
             asset_scope_id: None,
             strategy_type: None,
             criticality_value_id: None,
-            assigned_group_id: None,
+            assigned_team_id: None,
             requires_shutdown: Some(true),
             requires_permit: Some(true),
             is_active: None,
@@ -889,6 +904,7 @@ async fn planning_readiness_projection_returns_blockers_without_scheduler_side_e
             as_of: Some("2026-01-10T00:00:00Z".to_string()),
             horizon_days: Some(3),
             pm_plan_id: Some(plan_id),
+            equipment_id: None,
             event_codes: None,
             condition_codes: None,
         },
@@ -909,21 +925,7 @@ async fn planning_readiness_projection_returns_blockers_without_scheduler_side_e
     .await
     .expect("list generated occurrences");
     let first_occurrence = occurrences.remove(0);
-    queries::transition_pm_occurrence(
-        &db,
-        TransitionPmOccurrenceInput {
-            occurrence_id: first_occurrence.id,
-            expected_row_version: first_occurrence.row_version,
-            next_status: "generated".to_string(),
-            reason_code: None,
-            note: None,
-            generate_work_order: Some(false),
-            work_order_type_id: None,
-            actor_id: Some(1),
-        },
-    )
-    .await
-    .expect("promote forecast occurrence to generated");
+    assert_eq!(first_occurrence.status, "generated");
 
     let readiness = queries::list_pm_planning_readiness(
         &db,
@@ -997,6 +999,7 @@ async fn governance_kpi_report_returns_transparent_derivations() {
             as_of: Some("2026-01-10T00:00:00Z".to_string()),
             horizon_days: Some(3),
             pm_plan_id: Some(plan_id),
+            equipment_id: None,
             event_codes: None,
             condition_codes: None,
         },
@@ -1019,21 +1022,7 @@ async fn governance_kpi_report_returns_transparent_derivations() {
     assert!(occurrences.len() >= 2);
 
     for occ in &mut occurrences {
-        *occ = queries::transition_pm_occurrence(
-            &db,
-            TransitionPmOccurrenceInput {
-                occurrence_id: occ.id,
-                expected_row_version: occ.row_version,
-                next_status: "generated".to_string(),
-                reason_code: None,
-                note: None,
-                generate_work_order: Some(false),
-                work_order_type_id: None,
-                actor_id: Some(1),
-            },
-        )
-        .await
-        .expect("to generated");
+        assert_eq!(occ.status, "generated");
         *occ = queries::transition_pm_occurrence(
             &db,
             TransitionPmOccurrenceInput {
@@ -1160,4 +1149,393 @@ async fn governance_kpi_report_returns_transparent_derivations() {
     assert!((report.effort_variance.actual_hours - 8.0).abs() < 0.0001);
     assert!((report.effort_variance.variance_hours).abs() < 0.0001);
     assert!(report.derivation_rules.len() >= 3);
+}
+
+#[tokio::test]
+async fn scheduler_skips_when_disabled_and_runs_when_due() {
+    let db = setup_db().await;
+    let _ = create_plan_with_published_version(
+        &db,
+        "PM-SCHED-001",
+        "fixed",
+        r#"{"interval_unit":"day","interval_value":7,"anchor_at":"2026-01-01T00:00:00Z"}"#,
+    )
+    .await;
+
+    crate::pm::generation_control::update_pm_generation_settings(
+        &db,
+        crate::pm::domain::UpdatePmGenerationSettingsInput {
+            enabled: Some(false),
+            cron_expr: None,
+            horizon_days: Some(14),
+        },
+    )
+    .await
+    .expect("disable autopilot");
+
+    crate::pm::scheduler::run_due_pm_generation_for_test(&db)
+        .await
+        .expect("disabled tick");
+
+    let runs_disabled = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS c FROM pm_generation_runs",
+            [],
+        ))
+        .await
+        .expect("count runs")
+        .expect("row");
+    let disabled_count: i64 = runs_disabled.try_get("", "c").expect("c");
+    assert_eq!(disabled_count, 0);
+
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE pm_generation_control
+         SET enabled = 1, next_run_at = '2000-01-01T00:00:00Z', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+         WHERE id = 1",
+        [],
+    ))
+    .await
+    .expect("force due");
+
+    crate::pm::scheduler::run_due_pm_generation_for_test(&db)
+        .await
+        .expect("due tick");
+
+    let control = crate::pm::generation_control::get_pm_generation_control(&db)
+        .await
+        .expect("control");
+    assert_eq!(control.last_status.as_deref(), Some("success"));
+    assert!(control.next_run_at.is_some());
+    assert_ne!(control.next_run_at.as_deref(), Some("2000-01-01T00:00:00Z"));
+
+    let runs_due = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS c FROM pm_generation_runs WHERE trigger_source = 'schedule'",
+            [],
+        ))
+        .await
+        .expect("count schedule runs")
+        .expect("row");
+    let due_count: i64 = runs_due.try_get("", "c").expect("c");
+    assert_eq!(due_count, 1);
+}
+
+#[tokio::test]
+async fn meter_reading_hook_generates_for_equipment_scope() {
+    let db = setup_db().await;
+
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO equipment (entity_sync_id, asset_id_code, name, lifecycle_status, created_at, updated_at)
+         VALUES ('eq_sync_pm_hook', 'EQ-PM-HOOK', 'PM Hook Asset', 'active_in_service', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
+        [],
+    ))
+    .await
+    .expect("insert equipment");
+
+    let equipment_id: i64 = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id FROM equipment WHERE asset_id_code = 'EQ-PM-HOOK'",
+            [],
+        ))
+        .await
+        .expect("query")
+        .expect("row")
+        .try_get("", "id")
+        .expect("id");
+
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO equipment_meters (entity_sync_id, equipment_id, name, meter_type, unit, current_reading, expected_rate_per_day, is_primary, is_active, created_at, updated_at)
+         VALUES ('meter_sync_pm_hook', ?, 'Runtime', 'hours', 'h', 50, 0, 1, 1, strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
+        [equipment_id.into()],
+    ))
+    .await
+    .expect("insert meter");
+
+    let meter_id: i64 = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id FROM equipment_meters WHERE entity_sync_id = 'meter_sync_pm_hook'",
+            [],
+        ))
+        .await
+        .expect("query meter")
+        .expect("row")
+        .try_get("", "id")
+        .expect("id");
+
+    let plan = queries::create_pm_plan(
+        &db,
+        CreatePmPlanInput {
+            code: "PM-METER-HOOK".to_string(),
+            title: "Meter hook plan".to_string(),
+            description: None,
+            asset_scope_type: "equipment".to_string(),
+            asset_scope_id: Some(equipment_id),
+            strategy_type: "meter".to_string(),
+            criticality_value_id: None,
+            assigned_team_id: None,
+            requires_shutdown: false,
+            requires_permit: false,
+            is_active: Some(true),
+        },
+    )
+    .await
+    .expect("create plan");
+
+    let proposed = queries::transition_pm_plan_lifecycle(
+        &db,
+        TransitionPmPlanLifecycleInput {
+            plan_id: plan.id,
+            expected_row_version: plan.row_version,
+            next_status: "proposed".to_string(),
+        },
+    )
+    .await
+    .expect("propose");
+    let approved = queries::transition_pm_plan_lifecycle(
+        &db,
+        TransitionPmPlanLifecycleInput {
+            plan_id: plan.id,
+            expected_row_version: proposed.row_version,
+            next_status: "approved".to_string(),
+        },
+    )
+    .await
+    .expect("approve");
+    let version = queries::create_pm_plan_version(
+        &db,
+        plan.id,
+        CreatePmPlanVersionInput {
+            effective_from: "2026-01-01T00:00:00Z".to_string(),
+            effective_to: None,
+            trigger_definition_json: format!(r#"{{"asset_meter_id":{},"threshold_value":100}}"#, meter_id),
+            task_package_json: None,
+            required_parts_json: None,
+            required_skills_json: Some("[]".to_string()),
+            required_tools_json: None,
+            estimated_duration_hours: None,
+            estimated_labor_cost: None,
+            estimated_parts_cost: None,
+            estimated_service_cost: None,
+            change_reason: None,
+        },
+    )
+    .await
+    .expect("version");
+    let _ = queries::publish_pm_plan_version(
+        &db,
+        PublishPmPlanVersionInput {
+            version_id: version.id,
+            expected_row_version: version.row_version,
+        },
+    )
+    .await
+    .expect("publish");
+    let _ = approved;
+
+    crate::assets::meters::record_meter_reading(
+        &db,
+        crate::assets::meters::RecordMeterReadingPayload {
+            meter_id,
+            reading_value: 150.0,
+            reading_at: Some("2026-01-10T12:00:00Z".to_string()),
+            source_type: "MANUAL".to_string(),
+            source_reference: None,
+            quality_flag: None,
+        },
+        1,
+    )
+    .await
+    .expect("record reading");
+
+    let occ_count: i64 = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS c FROM pm_occurrences WHERE pm_plan_id = ?",
+            [plan.id.into()],
+        ))
+        .await
+        .expect("count")
+        .expect("row")
+        .try_get("", "c")
+        .expect("c");
+    assert!(occ_count >= 1);
+
+    let meter_runs: i64 = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS c FROM pm_generation_runs WHERE trigger_source = 'meter'",
+            [],
+        ))
+        .await
+        .expect("runs")
+        .expect("row")
+        .try_get("", "c")
+        .expect("c");
+    assert_eq!(meter_runs, 1);
+}
+
+#[tokio::test]
+async fn wo_close_hook_completes_linked_occurrence_and_regens() {
+    let db = setup_db().await;
+    let (plan_id, _version_id) = create_plan_with_published_version(
+        &db,
+        "PM-WOCLOSE-001",
+        "floating",
+        r#"{"interval_unit":"day","interval_value":1}"#,
+    )
+    .await;
+
+    queries::generate_pm_occurrences(
+        &db,
+        GeneratePmOccurrencesInput {
+            as_of: Some("2026-01-10T00:00:00Z".to_string()),
+            horizon_days: Some(2),
+            pm_plan_id: Some(plan_id),
+            equipment_id: None,
+            event_codes: None,
+            condition_codes: None,
+        },
+    )
+    .await
+    .expect("generate");
+
+    let mut occ = queries::list_pm_occurrences(
+        &db,
+        PmOccurrenceFilter {
+            pm_plan_id: Some(plan_id),
+            status: None,
+            due_from: None,
+            due_to: None,
+            include_completed: Some(true),
+        },
+    )
+    .await
+    .expect("list")
+    .into_iter()
+    .next()
+    .expect("occurrence");
+
+    for next in ["ready_for_scheduling", "scheduled", "in_progress"] {
+        occ = queries::transition_pm_occurrence(
+            &db,
+            TransitionPmOccurrenceInput {
+                occurrence_id: occ.id,
+                expected_row_version: occ.row_version,
+                next_status: next.to_string(),
+                reason_code: None,
+                note: None,
+                generate_work_order: Some(false),
+                work_order_type_id: None,
+                actor_id: Some(1),
+            },
+        )
+        .await
+        .expect("advance");
+    }
+
+    // Minimal WO row for execute validation + link.
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO work_orders (entity_sync_id, code, type_id, status_id, title, row_version, created_at, updated_at)
+         SELECT ?, 'WO-PM-CLOSE-1', (SELECT id FROM work_order_types LIMIT 1),
+                (SELECT id FROM work_order_statuses WHERE code = 'closed' LIMIT 1),
+                'PM close hook', 1, strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now')",
+        [crate::sync::identity::new_entity_sync_id().into()],
+    ))
+    .await
+    .expect("insert wo");
+
+    let wo_id: i64 = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id FROM work_orders WHERE code = 'WO-PM-CLOSE-1'",
+            [],
+        ))
+        .await
+        .expect("wo")
+        .expect("row")
+        .try_get("", "id")
+        .expect("id");
+
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE pm_occurrences SET linked_work_order_id = ? WHERE id = ?",
+        [wo_id.into(), occ.id.into()],
+    ))
+    .await
+    .expect("link wo");
+
+    // The WO analytics feed points back to the PM occurrence and its plan (Phase 6.4).
+    let snapshot = crate::wo::analytics::get_wo_analytics_snapshot(&db, wo_id)
+        .await
+        .expect("analytics snapshot");
+    assert_eq!(snapshot.pm_occurrence_id, Some(occ.id));
+    assert!(snapshot.pm_plan_code.is_some());
+
+    // Refresh row_version after link update.
+    let occ = queries::list_pm_occurrences(
+        &db,
+        PmOccurrenceFilter {
+            pm_plan_id: Some(plan_id),
+            status: None,
+            due_from: None,
+            due_to: None,
+            include_completed: Some(true),
+        },
+    )
+    .await
+    .expect("list")
+    .into_iter()
+    .find(|o| o.id == occ.id)
+    .expect("occ");
+    let _ = occ;
+
+    crate::pm::generation_control::on_work_order_closed_for_pm(&db, wo_id, Some(1)).await;
+
+    let completed: i64 = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS c FROM pm_occurrences WHERE id = ? AND status = 'completed'",
+            [occ.id.into()],
+        ))
+        .await
+        .expect("completed q")
+        .expect("row")
+        .try_get("", "c")
+        .expect("c");
+    assert_eq!(completed, 1);
+
+    let open_after: i64 = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS c FROM pm_occurrences
+             WHERE pm_plan_id = ? AND status NOT IN ('completed','cancelled','missed')",
+            [plan_id.into()],
+        ))
+        .await
+        .expect("open q")
+        .expect("row")
+        .try_get("", "c")
+        .expect("c");
+    assert!(open_after >= 1);
+
+    let wo_runs: i64 = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS c FROM pm_generation_runs WHERE trigger_source = 'wo_close'",
+            [],
+        ))
+        .await
+        .expect("runs")
+        .expect("row")
+        .try_get("", "c")
+        .expect("c");
+    assert!(wo_runs >= 1);
 }

@@ -1,6 +1,6 @@
 {
   "page": {
-    "title": "Dashboard",
+    "title": "Overview",
     "welcome": "Welcome, {{name}}"
   },
   "kpi": {
@@ -10,6 +10,18 @@
     "overdueItems": "Overdue",
     "noChange": "no change",
     "vsPrevious": "vs previous period",
+    "stable": "Stable",
+    "trendNew": "New vs empty prior window",
+    "vsPriorPercent": "{{delta}}",
+    "contextOpenQueue": "Live operational queue",
+    "contextOverdue": "DI + PM past due",
+    "contextAssets": "Active equipment register",
+    "unit": {
+      "di": "DI",
+      "wo": "WO",
+      "items": "",
+      "assets": ""
+    },
     "notAvailableYet": "Data not available (module coming soon)",
     "comingSoon": "Coming soon",
     "openEvidence": "View source records",
@@ -17,6 +29,10 @@
       "insufficient_baseline": "Trend compares to an empty prior window — interpret with care.",
       "sparse_workload": "No DI/WO/PM activity in this range — data may be incomplete."
     }
+  },
+  "ops": {
+    "alertStripTitle": "Operational queues",
+    "alertStripAria": "Operational queue counts"
   },
   "chart": {
     "title": "Workload — Last {{days}} Days",
@@ -32,19 +48,67 @@
     "title": "Quick Actions",
     "newDi": "+ New DI",
     "newWo": "+ New WO",
-    "newAsset": "+ New Asset"
+    "newAsset": "+ New Asset",
+    "openAnalytics": "Open RAMS & Analytics →"
   },
   "layout": {
     "customize": "Customize",
     "customizeTitle": "Dashboard layout",
     "save": "Save",
     "reset": "Reset default",
+    "metricCardsHeading": "Overview KPIs",
+    "moveUp": "Move up",
+    "moveDown": "Move down",
+    "accentPicker": "Accent color",
+    "accent": {
+      "default": "Default",
+      "brand": "Brand",
+      "amber": "Amber",
+      "teal": "Teal",
+      "danger": "Danger"
+    },
     "labels": {
-      "kpis": "KPI cards",
+      "kpis": "Overview KPI strip",
       "workload": "Workload chart",
       "diStatus": "DI status distribution",
       "reliability": "Reliability KPI snapshots (365d)"
     }
+  },
+  "overviewKpi": {
+    "expand": "Show more (+{{count}})",
+    "collapse": "Show less",
+    "diOpen": "Open DIs",
+    "otInProgress": "WOs in progress",
+    "otOverdue": "Overdue WOs",
+    "mttr": "Avg MTTR",
+    "pmCompliance": "PM overdue",
+    "pmDueToday": "PM due today",
+    "maintBacklog": "Maint. backlog",
+    "availability": "Fleet operational availability (A_o)",
+    "mtbf": "Fleet MTBF",
+    "criticalDown": "Critical assets down",
+    "dataQuality": "Data quality",
+    "stockOut": "Stock-outs",
+    "reorderAlert": "Reorder alerts",
+    "totalCost": "Maintenance cost",
+    "contextOpenQueue": "Live operational queue",
+    "contextExecution": "Active execution",
+    "contextWoOverdue": "WO past planned end",
+    "contextPmPipeline": "PM pipeline risk (overdue count)",
+    "contextPmDue": "Due on today's calendar",
+    "contextBacklog": "Planned hours on open WOs",
+    "contextFleet": "Fleet snapshot (30d)",
+    "contextCriticalAssets": "Critical equipment not in service",
+    "contextInventory": "Inventory signals",
+    "contextCost": "Closed WO cost (30d)",
+    "unit": {
+      "di": "DI",
+      "wo": "WO",
+      "hours": "h",
+      "percent": "%"
+    },
+    "alertNormal": "Normal",
+    "alertAttention": "Attention"
   },
   "dev": {
     "kpiValidation": "KPI validation (SQL samples)",

@@ -24,6 +24,9 @@ pub struct AssetSearchFilters {
     pub org_node_ids: Option<Vec<i64>>,
     pub include_decommissioned: Option<bool>,
     pub limit: Option<u64>,
+    /// KPI strip click-to-filter focus (`status_down` | `critical_at_risk` | `open_work` | `stale_meters`).
+    #[serde(default)]
+    pub registry_focus: Option<String>,
 }
 
 /// Filters for the shared AssetPicker empty-query / typed suggestions.
@@ -38,7 +41,7 @@ pub struct AssetPickerSuggestFilters {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssetSearchResult {
     pub id: i64,
-    pub sync_id: String,
+    pub entity_sync_id: String,
     pub asset_code: String,
     pub asset_name: String,
     pub class_code: Option<String>,
@@ -186,9 +189,9 @@ fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
 fn map_search_result(row: &QueryResult) -> AppResult<AssetSearchResult> {
     Ok(AssetSearchResult {
         id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
-        sync_id: row
-            .try_get::<String>("", "sync_id")
-            .map_err(|e| decode_err("sync_id", e))?,
+        entity_sync_id: row
+            .try_get::<String>("", "entity_sync_id")
+            .map_err(|e| decode_err("entity_sync_id", e))?,
         asset_code: row
             .try_get::<String>("", "asset_code")
             .map_err(|e| decode_err("asset_code", e))?,
@@ -369,9 +372,9 @@ async fn usage_asset_ids(db: &DatabaseConnection, user_id: Option<i64>, limit: u
                     FROM work_orders
                     WHERE requester_id = ? AND equipment_id IS NOT NULL
                     UNION ALL
-                    SELECT asset_id, submitted_at AS used_at
+                    SELECT equipment_id AS asset_id, submitted_at AS used_at
                     FROM intervention_requests
-                    WHERE submitter_id = ? AND asset_id IS NOT NULL AND asset_id > 0
+                    WHERE submitter_id = ? AND equipment_id IS NOT NULL AND equipment_id > 0
                  )
                  SELECT asset_id
                  FROM usage
@@ -389,9 +392,9 @@ async fn usage_asset_ids(db: &DatabaseConnection, user_id: Option<i64>, limit: u
                     FROM work_orders
                     WHERE equipment_id IS NOT NULL
                     UNION ALL
-                    SELECT asset_id, submitted_at AS used_at
+                    SELECT equipment_id AS asset_id, submitted_at AS used_at
                     FROM intervention_requests
-                    WHERE asset_id IS NOT NULL AND asset_id > 0
+                    WHERE equipment_id IS NOT NULL AND equipment_id > 0
                  )
                  SELECT asset_id
                  FROM usage
@@ -421,7 +424,7 @@ async fn usage_asset_ids(db: &DatabaseConnection, user_id: Option<i64>, limit: u
 /// status expressions match `ASSET_SELECT` in identity.rs so List and Details share SSOT.
 const SEARCH_SELECT: &str = r"
     e.id,
-    e.sync_id,
+    e.entity_sync_id,
     e.asset_id_code         AS asset_code,
     e.name                  AS asset_name,
     COALESCE(rs_class.code, ec.code) AS class_code,
@@ -475,14 +478,19 @@ const SEARCH_FROM: &str = r"
     ) xid ON xid.asset_id = e.id
 ";
 
-// ─── Service functions ────────────────────────────────────────────────────────
+/// Lightweight FROM for aggregate metrics (same filter joins as search, no hierarchy/meter enrichment).
+pub(crate) const METRICS_FROM: &str = r"
+    FROM equipment e
+    LEFT JOIN equipment_classes ec ON ec.id = e.class_id
+    LEFT JOIN reference_values rs_class ON rs_class.id = e.equipment_class_ref_id
+    LEFT JOIN reference_values rs_fam ON rs_fam.id = e.equipment_family_ref_id
+    LEFT JOIN lookup_values lv ON lv.id = e.criticality_value_id
+    LEFT JOIN reference_values rs_crit ON rs_crit.id = e.equipment_criticality_ref_id
+    LEFT JOIN reference_values rs_stat ON rs_stat.id = e.equipment_status_ref_id
+";
 
-/// Domain-aware asset search with multi-criteria filtering.
-///
-/// Search ranking: asset code exact match is ordered first (via CASE expression),
-/// then code prefix, then name/serial partial match. Matching is accent- and
-/// case-insensitive.
-pub async fn search_assets(db: &DatabaseConnection, filters: AssetSearchFilters) -> AppResult<Vec<AssetSearchResult>> {
+/// Build WHERE + binds shared by search and registry metrics (SmartFilterBar scope).
+pub(crate) fn build_asset_scope_where(filters: &AssetSearchFilters) -> (String, Vec<sea_orm::Value>) {
     let mut where_clauses = vec!["e.deleted_at IS NULL".to_string()];
     let mut binds: Vec<sea_orm::Value> = Vec::new();
 
@@ -556,7 +564,85 @@ pub async fn search_assets(db: &DatabaseConnection, filters: AssetSearchFilters)
         }
     }
 
-    let where_sql = where_clauses.join(" AND ");
+    if let Some(ref focus) = filters.registry_focus {
+        match focus.as_str() {
+            "status_down" => {
+                where_clauses.push(
+                    "UPPER(COALESCE(rs_stat.code, e.lifecycle_status)) IN (\
+                     'OUT_OF_SERVICE','DOWN','INACTIVE','OUTOFSERVICE')"
+                        .to_string(),
+                );
+            }
+            "critical_at_risk" => {
+                where_clauses.push(
+                    "UPPER(COALESCE(rs_crit.code, lv.code)) IN ('A','CRITICAL','CRITIQUE') \
+                     AND (\
+                       UPPER(COALESCE(rs_stat.code, e.lifecycle_status)) IN (\
+                         'OUT_OF_SERVICE','DOWN','INACTIVE','OUTOFSERVICE') \
+                       OR EXISTS (\
+                         SELECT 1 FROM intervention_requests ir \
+                         WHERE ir.equipment_id = e.id \
+                           AND ir.status NOT IN ('rejected','converted_to_work_order',\
+                             'closed_as_non_executable','archived')\
+                       ) \
+                       OR EXISTS (\
+                         SELECT 1 FROM work_orders wo \
+                         JOIN work_order_statuses s ON s.id = wo.status_id \
+                         WHERE wo.equipment_id = e.id AND s.code NOT IN ('closed','cancelled')\
+                       )\
+                     )"
+                    .to_string(),
+                );
+            }
+            "open_work" => {
+                where_clauses.push(
+                    "(EXISTS (\
+                       SELECT 1 FROM intervention_requests ir \
+                       WHERE ir.equipment_id = e.id \
+                         AND ir.status NOT IN ('rejected','converted_to_work_order',\
+                           'closed_as_non_executable','archived')\
+                     ) OR EXISTS (\
+                       SELECT 1 FROM work_orders wo \
+                       JOIN work_order_statuses s ON s.id = wo.status_id \
+                       WHERE wo.equipment_id = e.id AND s.code NOT IN ('closed','cancelled')\
+                     ))"
+                    .to_string(),
+                );
+            }
+            "stale_meters" => {
+                where_clauses.push(
+                    "EXISTS (\
+                       SELECT 1 FROM equipment_meters em \
+                       WHERE em.equipment_id = e.id AND em.is_active = 1 \
+                         AND (em.last_read_at IS NULL \
+                              OR datetime(em.last_read_at) < datetime('now', '-30 days'))\
+                     )"
+                    .to_string(),
+                );
+            }
+            _ => {}
+        }
+    }
+
+    (where_clauses.join(" AND "), binds)
+}
+
+// ─── Service functions ────────────────────────────────────────────────────────
+
+/// Domain-aware asset search with multi-criteria filtering.
+///
+/// Search ranking: asset code exact match is ordered first (via CASE expression),
+/// then code prefix, then name/serial partial match. Matching is accent- and
+/// case-insensitive.
+pub async fn search_assets(db: &DatabaseConnection, filters: AssetSearchFilters) -> AppResult<Vec<AssetSearchResult>> {
+    let (where_sql, mut binds) = build_asset_scope_where(&filters);
+
+    let folded_query = filters
+        .query
+        .as_ref()
+        .map(|q| fold_search_text(q.trim()))
+        .filter(|q| !q.is_empty());
+
     let row_limit = filters.limit.unwrap_or(100).min(200);
 
     let order_sql = if let Some(ref folded) = folded_query {
@@ -610,6 +696,7 @@ pub async fn suggest_picker_assets(
                 org_node_ids: None,
                 include_decommissioned: Some(include_decommissioned),
                 limit: Some(limit),
+                registry_focus: None,
             },
         )
         .await?;

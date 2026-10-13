@@ -258,7 +258,7 @@ export function ReliabilityFoundationPage() {
             disabled={loading}
           >
             <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-            {loading ? "Actualisation..." : "Actualiser"}
+            {loading ? t("foundationPage.refreshing") : t("foundationPage.refresh")}
           </button>
         </div>
         {error ? <p className="mt-2 text-xs text-status-danger">{error}</p> : null}
@@ -272,16 +272,18 @@ export function ReliabilityFoundationPage() {
           className="h-full"
         >
           <TabsList className="mb-3 grid w-full grid-cols-2 gap-1 bg-surface-1 p-1 md:grid-cols-4">
-            <TabsTrigger value="quality">Qualité</TabsTrigger>
-            <TabsTrigger value="events">Événements</TabsTrigger>
-            <TabsTrigger value="models">Modèles mathématiques</TabsTrigger>
-            <TabsTrigger value="kpis">KPIs</TabsTrigger>
+            <TabsTrigger value="quality">{t("foundationPage.tabs.quality")}</TabsTrigger>
+            <TabsTrigger value="events">{t("foundationPage.tabs.events")}</TabsTrigger>
+            <TabsTrigger value="models">{t("foundationPage.tabs.models")}</TabsTrigger>
+            <TabsTrigger value="kpis">{t("foundationPage.tabs.kpis")}</TabsTrigger>
           </TabsList>
 
           <TabsContent value="quality" className="space-y-3">
             <div className="grid gap-3 lg:grid-cols-2">
               <section className={mfCard.panel}>
-                <p className="text-xs uppercase tracking-wide text-text-muted">Santé des données</p>
+                <p className="text-xs uppercase tracking-wide text-text-muted">
+                  {t("foundationPage.quality.dataHealth")}
+                </p>
                 <div className="mt-3 flex items-center gap-4">
                   <div
                     className="relative h-20 w-20 rounded-full"
@@ -296,7 +298,9 @@ export function ReliabilityFoundationPage() {
                       <span
                         className={`font-mono text-xs font-semibold ${scoreColor(qualityBadge?.data_quality_score ?? null)}`}
                       >
-                        {scorePercent == null ? "N/A" : `${scorePercent}%`}
+                        {scorePercent == null
+                          ? t("foundationPage.notAvailable")
+                          : `${scorePercent}%`}
                       </span>
                     </div>
                   </div>
@@ -304,10 +308,13 @@ export function ReliabilityFoundationPage() {
                     <span
                       className={`inline-flex rounded border px-2 py-0.5 text-xs ${qualityBadgeClass(qualityBadge?.badge ?? "unknown")}`}
                     >
-                      {qualityBadge?.badge ?? "Unknown"}
+                      {qualityBadge?.badge ?? t("foundationPage.quality.unknownBadge")}
                     </span>
                     <p className="mt-2 text-xs text-text-muted">
-                      {issues.length} écart(s) qualité actif(s) pour l’équipement #{equipmentId}.
+                      {t("foundationPage.quality.activeIssues", {
+                        count: issues.length,
+                        equipment: equipmentId,
+                      })}
                     </p>
                   </div>
                 </div>
@@ -315,33 +322,47 @@ export function ReliabilityFoundationPage() {
 
               <section className={mfCard.panel}>
                 <p className="text-xs uppercase tracking-wide text-text-muted">
-                  Complétude ISO 14224
+                  {t("foundationPage.quality.isoTitle")}
                 </p>
                 {iso ? (
                   miniCells([
-                    { label: "Enregistrements", value: String(iso.event_count) },
-                    { label: "Global", value: `${iso.completeness_percent.toFixed(1)}%` },
-                    { label: "Équipement", value: `${iso.dim_equipment_id_pct.toFixed(1)}%` },
-                    { label: "Intervalle", value: `${iso.dim_failure_interval_pct.toFixed(1)}%` },
-                    { label: "Mode", value: `${iso.dim_failure_mode_pct.toFixed(1)}%` },
+                    { label: t("foundationPage.iso.records"), value: String(iso.event_count) },
                     {
-                      label: "Clôture corrective",
+                      label: t("foundationPage.iso.overall"),
+                      value: `${iso.completeness_percent.toFixed(1)}%`,
+                    },
+                    {
+                      label: t("foundationPage.iso.equipment"),
+                      value: `${iso.dim_equipment_id_pct.toFixed(1)}%`,
+                    },
+                    {
+                      label: t("foundationPage.iso.interval"),
+                      value: `${iso.dim_failure_interval_pct.toFixed(1)}%`,
+                    },
+                    {
+                      label: t("foundationPage.iso.mode"),
+                      value: `${iso.dim_failure_mode_pct.toFixed(1)}%`,
+                    },
+                    {
+                      label: t("foundationPage.iso.closure"),
                       value: `${iso.dim_corrective_closure_pct.toFixed(1)}%`,
                     },
                   ])
                 ) : (
-                  <p className="mt-3 text-xs text-text-muted">Aucune donnée disponible.</p>
+                  <p className="mt-3 text-xs text-text-muted">{t("foundationPage.noData")}</p>
                 )}
               </section>
             </div>
 
             <section className={mfCard.panel}>
               <p className="text-xs uppercase tracking-wide text-text-muted">
-                Actions de remédiation
+                {t("foundationPage.quality.remediationTitle")}
               </p>
               <div className="mt-2 divide-y divide-surface-border">
                 {issues.length === 0 ? (
-                  <p className="py-2 text-xs text-text-muted">Aucun écart critique détecté.</p>
+                  <p className="py-2 text-xs text-text-muted">
+                    {t("foundationPage.quality.noIssues")}
+                  </p>
                 ) : (
                   issues.map((issue) => (
                     <div
@@ -350,7 +371,9 @@ export function ReliabilityFoundationPage() {
                     >
                       <div>
                         <p className="font-mono text-xs text-text-primary">{issue.issue_code}</p>
-                        <p className="text-[11px] text-text-muted">Sévérité: {issue.severity}</p>
+                        <p className="text-[11px] text-text-muted">
+                          {t("foundationPage.quality.severity", { severity: issue.severity })}
+                        </p>
                       </div>
                       <button
                         type="button"
@@ -358,7 +381,7 @@ export function ReliabilityFoundationPage() {
                         className="inline-flex items-center gap-1 rounded border border-surface-border px-2 py-1 text-[11px] hover:bg-surface-2"
                       >
                         <Search className="h-3.5 w-3.5" />
-                        Ouvrir l’action
+                        {t("foundationPage.quality.openAction")}
                       </button>
                     </div>
                   ))
@@ -371,19 +394,21 @@ export function ReliabilityFoundationPage() {
             <section className={mfCard.panel}>
               <div className="mb-2 flex items-center justify-between">
                 <p className="text-xs uppercase tracking-wide text-text-muted">
-                  Événements de défaillance
+                  {t("foundationPage.events.title")}
                 </p>
-                <span className="font-mono text-xs text-text-muted">{events.length} lignes</span>
+                <span className="font-mono text-xs text-text-muted">
+                  {t("foundationPage.events.rows", { count: events.length })}
+                </span>
               </div>
               <div className="overflow-auto rounded border border-surface-border">
                 <table className="min-w-full text-[11px]">
                   <thead className="bg-surface-2 text-text-muted">
                     <tr>
-                      <th className="px-2 py-1 text-left">ID</th>
-                      <th className="px-2 py-1 text-left">Source</th>
-                      <th className="px-2 py-1 text-right">Downtime (h)</th>
-                      <th className="px-2 py-1 text-right">Repair (h)</th>
-                      <th className="px-2 py-1 text-left">Statut</th>
+                      <th className="px-2 py-1 text-left">{t("foundationPage.col.id")}</th>
+                      <th className="px-2 py-1 text-left">{t("foundationPage.col.source")}</th>
+                      <th className="px-2 py-1 text-right">{t("foundationPage.col.downtime")}</th>
+                      <th className="px-2 py-1 text-right">{t("foundationPage.col.repair")}</th>
+                      <th className="px-2 py-1 text-left">{t("foundationPage.col.status")}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-surface-border bg-surface-1">
@@ -408,20 +433,20 @@ export function ReliabilityFoundationPage() {
             <section className={mfCard.panel}>
               <div className="mb-2 flex items-center justify-between">
                 <p className="text-xs uppercase tracking-wide text-text-muted">
-                  Exposition opérationnelle
+                  {t("foundationPage.exposure.title")}
                 </p>
                 <span className="font-mono text-xs text-text-muted">
-                  {exposures.length} relevés
+                  {t("foundationPage.exposure.readings", { count: exposures.length })}
                 </span>
               </div>
               <div className="overflow-auto rounded border border-surface-border">
                 <table className="min-w-full text-[11px]">
                   <thead className="bg-surface-2 text-text-muted">
                     <tr>
-                      <th className="px-2 py-1 text-left">Type</th>
-                      <th className="px-2 py-1 text-right">Valeur</th>
-                      <th className="px-2 py-1 text-left">Date</th>
-                      <th className="px-2 py-1 text-left">Source</th>
+                      <th className="px-2 py-1 text-left">{t("foundationPage.col.type")}</th>
+                      <th className="px-2 py-1 text-right">{t("foundationPage.col.value")}</th>
+                      <th className="px-2 py-1 text-left">{t("foundationPage.col.date")}</th>
+                      <th className="px-2 py-1 text-left">{t("foundationPage.col.source")}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-surface-border bg-surface-1">
@@ -444,20 +469,20 @@ export function ReliabilityFoundationPage() {
               <section className={mfCard.panel}>
                 <div className="mb-2 flex items-center justify-between">
                   <p className="text-xs uppercase tracking-wide text-text-muted">
-                    Arbres de défaillance (FTA)
+                    {t("foundationPage.models.fta")}
                   </p>
                   <button
                     type="button"
-                    onClick={() => void navigate("/reliability/lab")}
+                    onClick={() => void navigate("/analytics/rams/lab")}
                     className="inline-flex items-center gap-1 rounded border border-surface-border px-2 py-1 text-[11px] hover:bg-surface-2"
                   >
                     <ExternalLink className="h-3.5 w-3.5" />
-                    Gérer
+                    {t("foundationPage.models.manage")}
                   </button>
                 </div>
                 <div className="space-y-1 text-[11px]">
                   {ftaModels.length === 0 ? (
-                    <p className="text-text-muted">Aucun modèle FTA.</p>
+                    <p className="text-text-muted">{t("foundationPage.models.noFta")}</p>
                   ) : (
                     ftaModels.map((m) => (
                       <p key={m.id}>
@@ -471,20 +496,20 @@ export function ReliabilityFoundationPage() {
               <section className={mfCard.panel}>
                 <div className="mb-2 flex items-center justify-between">
                   <p className="text-xs uppercase tracking-wide text-text-muted">
-                    Diagrammes de blocs (RBD)
+                    {t("foundationPage.models.rbd")}
                   </p>
                   <button
                     type="button"
-                    onClick={() => void navigate("/reliability/lab")}
+                    onClick={() => void navigate("/analytics/rams/lab")}
                     className="inline-flex items-center gap-1 rounded border border-surface-border px-2 py-1 text-[11px] hover:bg-surface-2"
                   >
                     <ExternalLink className="h-3.5 w-3.5" />
-                    Gérer
+                    {t("foundationPage.models.manage")}
                   </button>
                 </div>
                 <div className="space-y-1 text-[11px]">
                   {rbdModels.length === 0 ? (
-                    <p className="text-text-muted">Aucun modèle RBD.</p>
+                    <p className="text-text-muted">{t("foundationPage.models.noRbd")}</p>
                   ) : (
                     rbdModels.map((m) => (
                       <p key={m.id}>
@@ -497,23 +522,25 @@ export function ReliabilityFoundationPage() {
 
               <section className={mfCard.panel}>
                 <div className="mb-2 flex items-center justify-between">
-                  <p className="text-xs uppercase tracking-wide text-text-muted">Monte Carlo</p>
+                  <p className="text-xs uppercase tracking-wide text-text-muted">
+                    {t("foundationPage.models.monteCarlo")}
+                  </p>
                   <button
                     type="button"
-                    onClick={() => void navigate("/reliability/advanced")}
+                    onClick={() => void navigate("/analytics/rams/advanced")}
                     className="inline-flex items-center gap-1 rounded border border-surface-border px-2 py-1 text-[11px] hover:bg-surface-2"
                   >
                     <ExternalLink className="h-3.5 w-3.5" />
-                    Gérer
+                    {t("foundationPage.models.manage")}
                   </button>
                 </div>
                 <div className="overflow-auto rounded border border-surface-border">
                   <table className="min-w-full text-[11px]">
                     <thead className="bg-surface-2 text-text-muted">
                       <tr>
-                        <th className="px-2 py-1 text-left">Titre</th>
-                        <th className="px-2 py-1 text-right">Trials</th>
-                        <th className="px-2 py-1 text-left">Statut</th>
+                        <th className="px-2 py-1 text-left">{t("foundationPage.col.title")}</th>
+                        <th className="px-2 py-1 text-right">{t("foundationPage.col.trials")}</th>
+                        <th className="px-2 py-1 text-left">{t("foundationPage.col.status")}</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-surface-border bg-surface-1">
@@ -532,26 +559,26 @@ export function ReliabilityFoundationPage() {
               <section className={mfCard.panel}>
                 <div className="mb-2 flex items-center justify-between">
                   <p className="text-xs uppercase tracking-wide text-text-muted">
-                    Markov (matrice)
+                    {t("foundationPage.models.markov")}
                   </p>
                   <button
                     type="button"
-                    onClick={() => void navigate("/reliability/advanced")}
+                    onClick={() => void navigate("/analytics/rams/advanced")}
                     className="inline-flex items-center gap-1 rounded border border-surface-border px-2 py-1 text-[11px] hover:bg-surface-2"
                   >
                     <ExternalLink className="h-3.5 w-3.5" />
-                    Gérer
+                    {t("foundationPage.models.manage")}
                   </button>
                 </div>
                 <div className="space-y-1 text-[11px]">
                   {markovModels.length === 0 ? (
-                    <p className="text-text-muted">Aucun modèle Markov.</p>
+                    <p className="text-text-muted">{t("foundationPage.models.noMarkov")}</p>
                   ) : (
                     markovModels.map((m) => (
                       <div key={m.id} className="rounded border border-surface-border p-2">
                         <p className="font-medium text-text-primary">{m.title}</p>
                         <p className="mt-1 font-mono text-[10px] text-text-muted">
-                          Status: {m.status}
+                          {t("foundationPage.models.status", { status: m.status })}
                         </p>
                       </div>
                     ))
@@ -590,50 +617,53 @@ export function ReliabilityFoundationPage() {
                 <div className="mb-2 flex items-center gap-2">
                   <Gauge className="h-4 w-4 text-text-muted" />
                   <p className="text-xs uppercase tracking-wide text-text-muted">
-                    Dernier instantané KPI
+                    {t("foundationPage.kpi.latest")}
                   </p>
                 </div>
                 {latestKpi ? (
                   miniCells([
                     {
-                      label: "MTBF",
+                      label: t("foundationPage.kpi.mtbf"),
                       value: latestKpi.mtbf == null ? "—" : latestKpi.mtbf.toFixed(2),
                     },
                     {
-                      label: "MTTR",
+                      label: t("foundationPage.kpi.mttr"),
                       value: latestKpi.mttr == null ? "—" : latestKpi.mttr.toFixed(2),
                     },
                     {
-                      label: "Availability",
+                      label: t("foundationPage.kpi.availability"),
                       value:
                         latestKpi.availability == null
                           ? "—"
                           : `${(latestKpi.availability * 100).toFixed(2)}%`,
                     },
                     {
-                      label: "Failure rate",
+                      label: t("foundationPage.kpi.failureRate"),
                       value:
                         latestKpi.failure_rate == null ? "—" : latestKpi.failure_rate.toFixed(4),
                     },
-                    { label: "Événements", value: String(latestKpi.event_count) },
-                    { label: "Qualité", value: latestKpi.data_quality_score.toFixed(2) },
+                    { label: t("foundationPage.kpi.events"), value: String(latestKpi.event_count) },
+                    {
+                      label: t("foundationPage.kpi.quality"),
+                      value: latestKpi.data_quality_score.toFixed(2),
+                    },
                   ])
                 ) : (
-                  <p className="text-xs text-text-muted">Aucun instantané disponible.</p>
+                  <p className="text-xs text-text-muted">{t("foundationPage.kpi.noSnapshot")}</p>
                 )}
               </section>
 
               <section className={mfCard.panel}>
                 <p className="text-xs uppercase tracking-wide text-text-muted">
-                  Orchestration des calculs
+                  {t("foundationPage.jobs.title")}
                 </p>
                 <div className="mt-2 overflow-auto rounded border border-surface-border">
                   <table className="min-w-full text-[11px]">
                     <thead className="bg-surface-2 text-text-muted">
                       <tr>
-                        <th className="px-2 py-1 text-left">ID</th>
-                        <th className="px-2 py-1 text-left">Type</th>
-                        <th className="px-2 py-1 text-left">Statut</th>
+                        <th className="px-2 py-1 text-left">{t("foundationPage.col.id")}</th>
+                        <th className="px-2 py-1 text-left">{t("foundationPage.col.type")}</th>
+                        <th className="px-2 py-1 text-left">{t("foundationPage.col.status")}</th>
                         <th className="px-2 py-1 text-right">%</th>
                       </tr>
                     </thead>

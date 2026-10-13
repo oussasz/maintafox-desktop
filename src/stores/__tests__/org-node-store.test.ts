@@ -19,7 +19,7 @@ import { useOrgNodeStore } from "../org-node-store";
 
 const rootNode = {
   id: 1,
-  sync_id: "aaa-111",
+  entity_sync_id: "aaa-111",
   code: "SITE-001",
   name: "Usine Principale",
   node_type_id: 1,
@@ -47,7 +47,7 @@ const rootNode = {
 const childNode = {
   ...rootNode,
   id: 2,
-  sync_id: "bbb-222",
+  entity_sync_id: "bbb-222",
   code: "WS-001",
   name: "Atelier Mécanique",
   node_type_id: 2,

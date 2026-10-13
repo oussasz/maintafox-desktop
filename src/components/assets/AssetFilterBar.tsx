@@ -10,6 +10,7 @@ import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
 import type { SmartFilterDef, SmartFilterOption } from "@/components/filters/smart-filter-types";
 import { listPublishedReferenceValuesByDomainCode } from "@/services/reference-service";
 import { useAssetSearchStore } from "@/stores/asset-search-store";
+import type { AssetSearchFilters } from "@shared/ipc-types";
 
 export function AssetFilterBar() {
   const { t } = useTranslation("equipment");
@@ -62,8 +63,18 @@ export function AssetFilterBar() {
     void clearFilters();
   }, [clearFilters]);
 
-  const filterDefs = useMemo<SmartFilterDef[]>(
+  const focusOptions = useMemo<SmartFilterOption[]>(
     () => [
+      { value: "status_down", label: t("metrics.statusSummary") },
+      { value: "critical_at_risk", label: t("metrics.criticalAtRisk") },
+      { value: "open_work", label: t("metrics.openWork") },
+      { value: "stale_meters", label: t("metrics.staleMeters") },
+    ],
+    [t],
+  );
+
+  const filterDefs = useMemo<SmartFilterDef[]>(() => {
+    const defs: SmartFilterDef[] = [
       {
         id: "class",
         kind: "select",
@@ -71,7 +82,6 @@ export function AssetFilterBar() {
         options: classOptions,
         value: filters.class_codes?.[0] ?? null,
         onChange: (v) => void updateFilters({ class_codes: v ? [v] : null }),
-        allLabel: t("registry.filters.all"),
       },
       {
         id: "family",
@@ -80,7 +90,6 @@ export function AssetFilterBar() {
         options: familyOptions,
         value: filters.family_codes?.[0] ?? null,
         onChange: (v) => void updateFilters({ family_codes: v ? [v] : null }),
-        allLabel: t("registry.filters.all"),
       },
       {
         id: "status",
@@ -88,12 +97,29 @@ export function AssetFilterBar() {
         label: t("list.filters.status"),
         options: statusOptions,
         value: filters.status_codes?.[0] ?? null,
-        onChange: (v) => void updateFilters({ status_codes: v ? [v] : null }),
-        allLabel: t("registry.filters.all"),
+        onChange: (v) =>
+          void updateFilters({
+            status_codes: v ? [v] : null,
+            ...(v ? { registry_focus: null } : {}),
+          }),
       },
-    ],
-    [t, classOptions, familyOptions, statusOptions, filters, updateFilters],
-  );
+    ];
+    // Chip + clear when a KPI drill focus is active (driven by metric strip).
+    if (filters.registry_focus) {
+      defs.push({
+        id: "registry_focus",
+        kind: "select",
+        label: t("metrics.focusFilter"),
+        options: focusOptions,
+        value: filters.registry_focus,
+        onChange: (v) =>
+          void updateFilters({
+            registry_focus: (v as AssetSearchFilters["registry_focus"]) ?? null,
+          }),
+      });
+    }
+    return defs;
+  }, [t, classOptions, familyOptions, statusOptions, focusOptions, filters, updateFilters]);
 
   return (
     <SmartFilterBar

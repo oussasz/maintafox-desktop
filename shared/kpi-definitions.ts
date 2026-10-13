@@ -29,11 +29,55 @@ export const DASHBOARD_KPI_DRILL_PATH: Record<DashboardKpiKey, string> = {
 export const RELIABILITY_KPI_SNAPSHOT_FIELDS = {
   MTBF: "mtbf",
   MTTR: "mttr",
+  /** KPI-035 operational availability A_o (alias of `availability_operational`). */
   AVAILABILITY: "availability",
+  AVAILABILITY_OPERATIONAL: "availability_operational",
+  AVAILABILITY_INHERENT: "availability_inherent",
+  /** Non-repairable equipment only (`equipment.rams_is_repairable = 0`). */
+  MTTF: "mttf",
   FAILURE_RATE: "failure_rate",
   REPEAT_FAILURE_RATE: "repeat_failure_rate",
   EVENT_COUNT: "event_count",
   DATA_QUALITY_SCORE: "data_quality_score",
 } as const;
 
+/** Formal catalog ids for Analytics hub KPIs (`docs/engineering/KPI_CATALOG.md`). */
+export const ANALYTICS_HUB_KPI_CATALOG_IDS = {
+  MTBF: "KPI-033",
+  MTTR: "KPI-034",
+  /** Operational availability A_o = T_up / (T_up + downtime) — not inherent availability. */
+  AVAILABILITY: "KPI-035",
+  PM_ADHERENCE: "KPI-036",
+  MAINTENANCE_COST: "KPI-037",
+  DI_OPEN: "KPI-038",
+  OT_IN_PROGRESS: "KPI-039",
+  OT_OVERDUE: "KPI-040",
+  PM_DUE_TODAY: "KPI-041",
+  MAINT_BACKLOG: "KPI-042",
+  CRITICAL_DOWN: "KPI-043",
+  DATA_QUALITY: "KPI-044",
+  STOCK_OUT: "KPI-045",
+  REORDER_ALERT: "KPI-046",
+  EQUIP_STATUS_SUMMARY: "KPI-047",
+  EQUIP_CRITICAL_AT_RISK: "KPI-048",
+  EQUIP_HEALTH_SCORE: "KPI-049",
+  EQUIP_OPEN_WORK: "KPI-050",
+  EQUIP_STALE_METERS: "KPI-051",
+} as const;
+
+/** Re-export Overview semantic keys — SSOT in `shared/overview-kpi-registry.ts`. */
+export { OVERVIEW_KPI_SEMANTIC_KEYS } from "@shared/overview-kpi-registry";
+
+/** Re-export Equipment registry semantic keys — SSOT in `shared/equipment-kpi-registry.ts`. */
+export {
+  EQUIPMENT_KPI_SEMANTIC_KEYS,
+  EQUIPMENT_KPI_CATALOG_IDS,
+} from "@shared/equipment-kpi-registry";
+
 export const RELIABILITY_RAM_EVIDENCE_HASH = "#ram-data-quality";
+
+/** Canonical Deep RAMS routes under the unified Analytics hub (M0+). */
+export const ANALYTICS_RAMS_BASE_PATH = "/analytics/rams";
+
+export const analyticsRamsPath = (segment: string, hash = "") =>
+  `${ANALYTICS_RAMS_BASE_PATH}/${segment.replace(/^\//, "")}${hash}`;

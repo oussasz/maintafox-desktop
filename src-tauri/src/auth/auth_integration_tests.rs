@@ -185,7 +185,7 @@ mod tests {
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             r"INSERT INTO user_scope_assignments
-                   (sync_id, user_id, role_id, scope_type, scope_reference,
+                   (entity_sync_id, user_id, role_id, scope_type, scope_reference,
                     valid_from, valid_to, assigned_by_id, notes, created_at, updated_at, row_version)
                VALUES (?, ?, ?, 'tenant', ?, NULL, NULL, NULL, 'test explicit tenant scope', ?, ?, 1)",
             [

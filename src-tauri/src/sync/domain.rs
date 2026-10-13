@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
 pub const SYNC_PROTOCOL_VERSION_V1: &str = "v1";
+/// Protocol v2 (`maintafox-vendor-console/deploy/SYNC_PROTOCOL_V2.md`). The local data model
+/// supports it; the v2 transport arrives with step 2.3.
+pub const SYNC_PROTOCOL_VERSION_V2: &str = "v2";
 
 /// Device-side tenant context included with sync exchange payloads for control-plane isolation checks.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -20,11 +23,24 @@ pub struct SyncOutboxItem {
     pub row_version: i64,
     pub payload_json: String,
     pub payload_hash: String,
+    /// `pending` | `in_flight` | `acked` | `rejected` | `conflict` | `dead_letter` | `superseded`.
     pub status: String,
     pub acknowledged_at: Option<String>,
     pub rejection_code: Option<String>,
     pub rejection_message: Option<String>,
     pub origin_machine_id: Option<String>,
+    /// Server row version this change was made on; `None` when the row is created here.
+    #[serde(default)]
+    pub base_row_version: Option<i64>,
+    /// Owning user for user-scoped entities.
+    #[serde(default)]
+    pub owner_user_sync_id: Option<String>,
+    #[serde(default)]
+    pub attempt_count: i64,
+    #[serde(default)]
+    pub last_attempt_at: Option<String>,
+    #[serde(default)]
+    pub last_error: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -40,9 +56,18 @@ pub struct SyncInboxItem {
     pub row_version: i64,
     pub payload_json: String,
     pub payload_hash: String,
+    /// `pending` | `applied` | `deferred` | `conflict` | `rejected` | `superseded`.
     pub apply_status: String,
     pub rejection_code: Option<String>,
     pub rejection_message: Option<String>,
+    #[serde(default)]
+    pub server_seq: Option<i64>,
+    #[serde(default)]
+    pub owner_user_sync_id: Option<String>,
+    #[serde(default)]
+    pub attempt_count: i64,
+    #[serde(default)]
+    pub last_attempt_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -58,15 +83,16 @@ pub struct SyncCheckpoint {
     pub updated_at: String,
 }
 
+/// A change to stage in the outbox.
+///
+/// The envelope's idempotency key, wire `row_version`, `base_row_version`, owner and origin are
+/// assigned by `stage_outbox_item`, so every stager follows the same versioning rules.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StageOutboxItemInput {
-    pub idempotency_key: String,
     pub entity_type: String,
     pub entity_sync_id: String,
     pub operation: String,
-    pub row_version: i64,
     pub payload_json: String,
-    pub origin_machine_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -75,11 +101,17 @@ pub struct ListOutboxFilter {
     pub limit: Option<i64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SyncAckInput {
     pub idempotency_key: String,
     pub entity_sync_id: String,
     pub operation: String,
+    /// v2: position of the applied item in the server log.
+    #[serde(default)]
+    pub server_seq: Option<i64>,
+    /// v2: the item was already applied by an earlier request.
+    #[serde(default)]
+    pub duplicate: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,13 +123,44 @@ pub struct SyncRejectedItemInput {
     pub rejection_message: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SyncInboundItemInput {
     pub entity_type: String,
     pub entity_sync_id: String,
     pub operation: String,
     pub row_version: i64,
     pub payload_json: String,
+    /// v2: position in the server log.
+    #[serde(default)]
+    pub server_seq: Option<i64>,
+    /// v2: SHA-256 of `payload_json` computed by the server; checked on ingest when present.
+    #[serde(default)]
+    pub payload_hash: Option<String>,
+    /// v2: owning user for user-scoped entities.
+    #[serde(default)]
+    pub owner_user_sync_id: Option<String>,
+    /// v2: tombstone (delivered with operation `delete`).
+    #[serde(default)]
+    pub deleted: bool,
+}
+
+/// v2: an outbox item the server refused because the row changed on the server meanwhile.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncServerConflictInput {
+    pub idempotency_key: String,
+    pub entity_type: String,
+    pub entity_sync_id: String,
+    pub local_row_version: i64,
+    pub local_base_row_version: Option<i64>,
+    pub server_row_version: i64,
+    pub server_operation: String,
+    pub server_payload_json: Option<String>,
+    #[serde(default)]
+    pub server_payload_hash: Option<String>,
+    #[serde(default)]
+    pub server_owner_user_sync_id: Option<String>,
+    #[serde(default)]
+    pub server_deleted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,6 +171,9 @@ pub struct ApplySyncBatchInput {
     pub acknowledged_items: Vec<SyncAckInput>,
     pub rejected_items: Vec<SyncRejectedItemInput>,
     pub inbound_items: Vec<SyncInboundItemInput>,
+    /// v2 only; always empty for v1 responses.
+    #[serde(default)]
+    pub conflict_items: Vec<SyncServerConflictInput>,
     pub policy_metadata_json: Option<String>,
 }
 
@@ -129,7 +195,18 @@ pub struct ApplySyncBatchResult {
     pub rejected_count: i64,
     pub inbound_applied_count: i64,
     pub inbound_duplicate_count: i64,
+    /// v2 server conflicts recorded for a person to resolve.
+    #[serde(default)]
+    pub conflict_count: i64,
     pub typed_rejections: Vec<SyncTypedRejection>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncMediaManifestItem {
+    pub entity_sync_id: String,
+    pub content_sha256: String,
+    pub object_key: String,
+    pub byte_size: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -139,6 +216,14 @@ pub struct SyncPushPayload {
     pub outbox_batch: Vec<SyncOutboxItem>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tenant_config: Option<TenantConfigSyncPayload>,
+    /// Additive v1 — desktop always `"desktop"`; mobile may filter later.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_class: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_manifest: Option<Vec<SyncMediaManifestItem>>,
+    /// v2: users known on this device; user-scoped rows are delivered only for them.
+    #[serde(default)]
+    pub current_user_sync_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -148,6 +233,16 @@ pub struct SyncStateSummary {
     pub pending_outbox_count: i64,
     pub rejected_outbox_count: i64,
     pub inbox_error_count: i64,
+    /// Sent but not yet acknowledged (the exchange may have failed; they are sent again).
+    pub in_flight_outbox_count: i64,
+    /// Gave up after the maximum number of delivery attempts; listed as conflicts.
+    pub dead_letter_outbox_count: i64,
+    /// Inbound rows waiting for a parent row or for a materializer.
+    pub deferred_inbox_count: i64,
+    /// Inbound rows that could not be applied and wait for a person.
+    pub inbox_conflict_count: i64,
+    /// Conflicts not yet resolved by a person (all sources).
+    pub unresolved_conflict_count: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -183,6 +278,12 @@ pub struct SyncConflictRecord {
     pub resolved_by_id: Option<i64>,
     pub resolved_at: Option<String>,
     pub row_version: i64,
+    /// Version of the local change involved (outbox side), when known.
+    #[serde(default)]
+    pub local_row_version: Option<i64>,
+    /// Version of the server/inbound row involved, when known.
+    #[serde(default)]
+    pub inbound_row_version: Option<i64>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -328,10 +429,11 @@ pub struct SyncObservabilityReport {
 
 pub const SYNC_ENTITY_PERMIT_TYPES: &str = "permit_types";
 pub const SYNC_ENTITY_WORK_ORDERS: &str = "work_orders";
+pub const SYNC_ENTITY_WORK_ORDER_TASKS: &str = "work_order_tasks";
+pub const SYNC_ENTITY_WORK_ORDER_INTERVENERS: &str = "work_order_interveners";
 pub const SYNC_ENTITY_DATA_INTEGRITY_FINDINGS: &str = "data_integrity_findings";
 pub const SYNC_ENTITY_DATA_INTEGRITY_REPAIR_ACTIONS: &str = "data_integrity_repair_actions";
 pub const SYNC_ENTITY_ANALYTICS_CONTRACT_VERSIONS: &str = "analytics_contract_versions";
-pub const SYNC_ENTITY_CLOSEOUT_VALIDATION_POLICIES: &str = "closeout_validation_policies";
 pub const SYNC_ENTITY_INTERVENTION_REQUESTS: &str = "intervention_requests";
 pub const SYNC_ENTITY_WORK_PERMITS: &str = "work_permits";
 pub const SYNC_ENTITY_PERMIT_ISOLATIONS: &str = "permit_isolations";
@@ -346,6 +448,25 @@ pub const SYNC_ENTITY_TRAINING_SESSIONS: &str = "training_sessions";
 pub const SYNC_ENTITY_TRAINING_ATTENDANCE: &str = "training_attendance";
 pub const SYNC_ENTITY_PERSONNEL_READINESS_SNAPSHOTS: &str = "personnel_readiness_snapshots";
 pub const SYNC_ENTITY_TRAINING_EXPIRY_ALERT_EVENTS: &str = "training_expiry_alert_events";
+
+// Entity type names used by stagers and materializers. The full list of replicated tables,
+// their scope and apply order lives in `sync::registry`.
+pub const SYNC_ENTITY_EQUIPMENT: &str = "equipment";
+pub const SYNC_ENTITY_USER_ACCOUNTS: &str = "user_accounts";
+pub const SYNC_ENTITY_ROLES: &str = "roles";
+pub const SYNC_ENTITY_ORG_NODES: &str = "org_nodes";
+pub const SYNC_ENTITY_PERSONNEL: &str = "personnel";
+pub const SYNC_ENTITY_TEAMS: &str = "teams";
+pub const SYNC_ENTITY_PM_PLANS: &str = "pm_plans";
+pub const SYNC_ENTITY_PM_PLAN_VERSIONS: &str = "pm_plan_versions";
+pub const SYNC_ENTITY_PM_OCCURRENCES: &str = "pm_occurrences";
+pub const SYNC_ENTITY_ARTICLES: &str = "articles";
+pub const SYNC_ENTITY_WAREHOUSES: &str = "warehouses";
+pub const SYNC_ENTITY_STOCK_LOCATIONS: &str = "stock_locations";
+pub const SYNC_ENTITY_STOCK_MOVEMENTS: &str = "inventory_transactions";
+pub const SYNC_ENTITY_STOCK_RESERVATIONS: &str = "stock_reservations";
+pub const SYNC_ENTITY_MEDIA_ATTACHMENTS: &str = "media_attachments";
+pub const SYNC_ENTITY_REFERENCE_VALUES: &str = "reference_values";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersonnelReadinessSnapshotSyncPayload {
@@ -429,11 +550,343 @@ pub struct QualificationRequirementProfileSyncPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct InterventionRequestSyncPayload {
-    pub id: i64,
+pub struct WorkOrderSyncPayload {
+    pub entity_sync_id: String,
     pub row_version: i64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub source_inspection_anomaly_id: Option<i64>,
+    pub code: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub maintenance_type_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub equipment_entity_sync_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_responsible_entity_sync_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assigned_team_entity_sync_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub planned_start: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub planned_end: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scheduled_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub closed_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub closeout_validation_profile_id: Option<i64>,
+    #[serde(default)]
+    pub closeout_validation_passed: bool,
+    #[serde(default)]
+    pub requires_permit: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_inspection_anomaly_entity_sync_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkOrderTaskSyncPayload {
+    pub entity_sync_id: String,
+    pub row_version: i64,
+    pub work_order_entity_sync_id: String,
+    pub task_description: String,
+    #[serde(default)]
+    pub sequence_order: i64,
+    #[serde(default)]
+    pub is_mandatory: bool,
+    #[serde(default)]
+    pub is_completed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkOrderIntervenerSyncPayload {
+    pub entity_sync_id: String,
+    pub row_version: i64,
+    pub work_order_entity_sync_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intervener_entity_sync_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hours_worked: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ended_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StockReservationSyncPayload {
+    pub entity_sync_id: String,
+    pub row_version: i64,
+    pub article_entity_sync_id: String,
+    pub warehouse_entity_sync_id: String,
+    pub location_entity_sync_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub work_order_entity_sync_id: Option<String>,
+    pub quantity: f64,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PmPlanVersionSyncPayload {
+    pub entity_sync_id: String,
+    pub row_version: i64,
+    pub pm_plan_entity_sync_id: String,
+    pub version_no: i64,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effective_from: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_definition_json: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PmOccurrenceSyncPayload {
+    pub entity_sync_id: String,
+    pub row_version: i64,
+    pub pm_plan_entity_sync_id: String,
+    pub pm_plan_version_entity_sync_id: String,
+    pub due_basis: String,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub due_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub linked_work_order_entity_sync_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EquipmentSyncPayload {
+    pub entity_sync_id: String,
+    pub row_version: i64,
+    pub asset_code: String,
+    pub asset_name: String,
+    pub status_code: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub org_node_entity_sync_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manufacturer: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub serial_number: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InterventionRequestSyncPayload {
+    pub entity_sync_id: String,
+    pub row_version: i64,
+    pub code: String,
+    pub title: String,
+    pub description: String,
+    pub status: String,
+    pub origin_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub equipment_entity_sync_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub org_node_entity_sync_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub submitter_entity_sync_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MediaAttachmentSyncPayload {
+    pub entity_sync_id: String,
+    pub row_version: i64,
+    pub parent_entity_type: String,
+    pub parent_entity_sync_id: String,
+    pub content_sha256: String,
+    pub mime_type: String,
+    pub byte_size: i64,
+    pub object_key: String,
+    pub file_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relative_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capture_meta_json: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrgNodeSyncPayload {
+    pub entity_sync_id: String,
+    pub row_version: i64,
+    pub code: String,
+    pub name: String,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_entity_sync_id: Option<String>,
+    #[serde(default)]
+    pub depth: i64,
+    #[serde(default)]
+    pub ancestor_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserAccountSyncPayload {
+    pub entity_sync_id: String,
+    pub row_version: i64,
+    pub username: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    /// Password hash travels in the tenant replica; never log this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password_hash: Option<String>,
+    #[serde(default)]
+    pub identity_mode: String,
+    #[serde(default)]
+    pub is_active: bool,
+    #[serde(default)]
+    pub is_admin: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoleSyncPayload {
+    pub entity_sync_id: String,
+    pub row_version: i64,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub role_type: String,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub is_system: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersonnelSyncPayload {
+    pub entity_sync_id: String,
+    pub row_version: i64,
+    pub employee_code: String,
+    pub full_name: String,
+    #[serde(default)]
+    pub availability_status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamSyncPayload {
+    pub entity_sync_id: String,
+    pub row_version: i64,
+    pub code: String,
+    pub name: String,
+    #[serde(default)]
+    pub is_active: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReferenceValueSyncPayload {
+    pub entity_sync_id: String,
+    pub row_version: i64,
+    pub set_code: String,
+    pub code: String,
+    pub label: String,
+    #[serde(default)]
+    pub is_active: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PmPlanSyncPayload {
+    pub entity_sync_id: String,
+    pub row_version: i64,
+    pub code: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub strategy_type: String,
+    pub asset_scope_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assigned_team_entity_sync_id: Option<String>,
+    #[serde(default)]
+    pub lifecycle_status: String,
+    #[serde(default)]
+    pub is_active: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArticleSyncPayload {
+    pub entity_sync_id: String,
+    pub row_version: i64,
+    pub article_code: String,
+    pub article_name: String,
+    #[serde(default)]
+    pub is_active: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit_value_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WarehouseSyncPayload {
+    pub entity_sync_id: String,
+    pub row_version: i64,
+    pub code: String,
+    pub name: String,
+    #[serde(default)]
+    pub is_active: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StockLocationSyncPayload {
+    pub entity_sync_id: String,
+    pub row_version: i64,
+    pub code: String,
+    pub name: String,
+    pub warehouse_entity_sync_id: String,
+    #[serde(default)]
+    pub is_active: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StockMovementSyncPayload {
+    pub entity_sync_id: String,
+    pub row_version: i64,
+    pub article_entity_sync_id: String,
+    pub warehouse_entity_sync_id: String,
+    pub location_entity_sync_id: String,
+    pub movement_type: String,
+    pub quantity: f64,
+    #[serde(default)]
+    pub source_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -470,27 +923,6 @@ pub struct AnalyticsContractVersionSyncPayload {
     pub contract_id: String,
     pub version_semver: String,
     pub content_sha256: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkOrderSyncPayload {
-    pub id: i64,
-    pub entity_sync_id: String,
-    pub row_version: i64,
-    pub status: String,
-    pub maintenance_type_code: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub asset_id: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub closed_at: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub closeout_validation_profile_id: Option<i64>,
-    pub closeout_validation_passed: bool,
-    pub code: String,
-    pub status_id: i64,
-    pub requires_permit: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub source_inspection_anomaly_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

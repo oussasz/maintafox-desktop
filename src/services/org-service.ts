@@ -43,12 +43,6 @@ export function forkOrgDraftFromPublished(description?: string | null): Promise<
   });
 }
 
-export function publishOrgStructureModel(modelId: number): Promise<OrgStructureModel> {
-  return invoke<OrgStructureModel>("publish_org_structure_model", {
-    modelId,
-  });
-}
-
 export function archiveOrgStructureModel(modelId: number): Promise<OrgStructureModel> {
   return invoke<OrgStructureModel>("archive_org_structure_model", {
     modelId,

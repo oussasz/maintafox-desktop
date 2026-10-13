@@ -11,6 +11,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Card, CardContent } from "@/components/ui/card";
+import { useFormatters } from "@/hooks/use-formatters";
 import { getCostSummary } from "@/services/wo-service";
 import type { WoCostSummary } from "@shared/ipc-types";
 
@@ -24,7 +25,8 @@ interface WoCostSummaryCardProps {
 // ── Component ───────────────────────────────────────────────────────────────
 
 export function WoCostSummaryCard({ woId, status }: WoCostSummaryCardProps) {
-  const { t, i18n } = useTranslation("ot");
+  const { t } = useTranslation("ot");
+  const { formatCurrency } = useFormatters();
   const [cost, setCost] = useState<WoCostSummary | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -63,19 +65,27 @@ export function WoCostSummaryCard({ woId, status }: WoCostSummaryCardProps) {
       ? cost.actual_duration_hours - cost.expected_duration_hours
       : null;
 
+  const missingRates = (cost.actual_duration_hours ?? 0) > 0 && cost.labor_cost === 0;
+
   return (
     <Card>
       <CardContent className="p-3 space-y-2">
         <h4 className="text-sm font-semibold">{t("cost.title")}</h4>
         <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-          <CostRow label={t("cost.labor")} value={cost.labor_cost} locale={i18n.language} />
-          <CostRow label={t("cost.parts")} value={cost.parts_cost} locale={i18n.language} />
-          <CostRow label={t("cost.services")} value={cost.service_cost} locale={i18n.language} />
+          <CostRow label={t("cost.labor")} value={formatCurrency(cost.labor_cost)} />
+          <CostRow label={t("cost.parts")} value={formatCurrency(cost.parts_cost)} />
+          <CostRow label={t("cost.services")} value={formatCurrency(cost.service_cost)} />
           <div className="col-span-2 border-t border-surface-border pt-1 mt-1 flex items-center justify-between text-sm font-bold">
             <span>{t("cost.total")}</span>
-            <span>{fmt(cost.total_cost, i18n.language)}</span>
+            <span>{formatCurrency(cost.total_cost)}</span>
           </div>
         </div>
+
+        {missingRates ? (
+          <p className="text-[11px] text-amber-700 dark:text-amber-400">
+            {t("cost.missingRatesHint")}
+          </p>
+        ) : null}
 
         {variance !== null && (
           <div className="flex items-center gap-1 text-xs pt-1">
@@ -106,15 +116,11 @@ export function WoCostSummaryCard({ woId, status }: WoCostSummaryCardProps) {
 
 // ── Sub-components ──────────────────────────────────────────────────────────
 
-function CostRow({ label, value, locale }: { label: string; value: number; locale: string }) {
+function CostRow({ label, value }: { label: string; value: string }) {
   return (
     <>
       <span className="text-muted-foreground">{label}</span>
-      <span className="text-right font-mono">{fmt(value, locale)}</span>
+      <span className="text-right font-mono">{value}</span>
     </>
   );
-}
-
-function fmt(v: number, locale: string): string {
-  return v.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }

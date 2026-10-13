@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, FromQueryResult)]
 pub struct EquipmentListRow {
     pub id: i32,
-    pub sync_id: String,
+    pub entity_sync_id: String,
     pub asset_id_code: String,
     pub name: String,
     pub lifecycle_status: String,
@@ -28,7 +28,7 @@ pub struct EquipmentListRow {
 #[derive(Debug, Clone, Serialize, FromQueryResult)]
 pub struct EquipmentDetail {
     pub id: i32,
-    pub sync_id: String,
+    pub entity_sync_id: String,
     pub asset_id_code: String,
     pub name: String,
     pub lifecycle_status: String,
@@ -122,7 +122,7 @@ pub async fn list_equipment(
     );
     let list_sql = format!(
         r"
-        SELECT e.id, e.sync_id, e.asset_id_code, e.name, e.lifecycle_status,
+        SELECT e.id, e.entity_sync_id, e.asset_id_code, e.name, e.lifecycle_status,
                e.class_id, ec.name AS class_name,
                e.installed_at_node_id, n.name AS node_name,
                e.criticality_value_id, lv.label AS criticality_label, lv.color AS criticality_color,
@@ -158,7 +158,7 @@ pub async fn list_equipment(
 /// Fetches full equipment detail by id.
 pub async fn get_equipment_by_id(db: &DatabaseConnection, equipment_id: i32) -> AppResult<EquipmentDetail> {
     let sql = r"
-        SELECT e.id, e.sync_id, e.asset_id_code, e.name, e.lifecycle_status,
+        SELECT e.id, e.entity_sync_id, e.asset_id_code, e.name, e.lifecycle_status,
                e.class_id, ec.name AS class_name,
                e.installed_at_node_id, n.name AS node_name,
                e.criticality_value_id, lv.label AS criticality_label,

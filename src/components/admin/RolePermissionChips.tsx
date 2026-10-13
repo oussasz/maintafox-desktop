@@ -47,17 +47,13 @@ export function RolePermissionChips({
       <span
         className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs ${mfChip.fullAccess}`}
       >
-        {t("roles.fullAccess", "Accès complet")}
+        {t("roles.fullAccess")}
       </span>
     );
   }
 
   if (domainCounts.length === 0) {
-    return (
-      <span className="text-xs text-text-muted">
-        {t("roles.noPermissions", "Aucune permission")}
-      </span>
-    );
+    return <span className="text-xs text-text-muted">{t("roles.noPermissions")}</span>;
   }
 
   const visible = showAll ? domainCounts : domainCounts.slice(0, MAX_VISIBLE_CHIPS);

@@ -28,7 +28,7 @@ async fn seed_budget_fixture_org(db: &DatabaseConnection) {
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO org_structure_models
-            (sync_id, version_number, status, description, created_at, updated_at)
+            (entity_sync_id, version_number, status, description, created_at, updated_at)
          VALUES ('budget-structure', 1, 'active', 'budget test structure', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
         [],
     ))
@@ -38,11 +38,11 @@ async fn seed_budget_fixture_org(db: &DatabaseConnection) {
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO org_node_types
-            (sync_id, structure_model_id, code, label, can_host_assets, can_own_work, can_carry_cost_center,
+            (entity_sync_id, structure_model_id, code, label, can_host_assets, can_own_work, can_carry_cost_center,
              can_aggregate_kpis, can_receive_permits, is_root_type, is_active, created_at, updated_at)
          VALUES (
             'budget-node-type',
-            (SELECT id FROM org_structure_models WHERE sync_id = 'budget-structure'),
+            (SELECT id FROM org_structure_models WHERE entity_sync_id = 'budget-structure'),
             'SITE',
             'Site',
             1, 1, 1, 1, 1, 1, 1,
@@ -57,12 +57,12 @@ async fn seed_budget_fixture_org(db: &DatabaseConnection) {
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO org_nodes
-            (sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status, created_at, updated_at, row_version, structure_model_id)
+            (entity_sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status, created_at, updated_at, row_version, structure_model_id)
          VALUES (
             'budget-site',
             'SITE-BGT',
             'Budget Site',
-            (SELECT id FROM org_node_types WHERE sync_id = 'budget-node-type'),
+            (SELECT id FROM org_node_types WHERE entity_sync_id = 'budget-node-type'),
             NULL,
             '/',
             0,
@@ -70,7 +70,7 @@ async fn seed_budget_fixture_org(db: &DatabaseConnection) {
             '2026-01-01T00:00:00Z',
             '2026-01-01T00:00:00Z',
             1,
-            (SELECT id FROM org_structure_models WHERE sync_id = 'budget-structure')
+            (SELECT id FROM org_structure_models WHERE entity_sync_id = 'budget-structure')
          )",
         [],
     ))
@@ -82,13 +82,37 @@ async fn site_node_id(db: &DatabaseConnection) -> i64 {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id FROM org_nodes WHERE sync_id = 'budget-site'",
+            "SELECT id FROM org_nodes WHERE entity_sync_id = 'budget-site'",
             [],
         ))
         .await
         .expect("query org node")
         .expect("org node row");
     row.try_get("", "id").expect("org node id")
+}
+
+/// Budget team columns reference `teams(id)` (crews) since migration 141, not org nodes.
+async fn budget_crew_id(db: &DatabaseConnection) -> i64 {
+    let site = site_node_id(db).await;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT OR IGNORE INTO teams (entity_sync_id, code, name, team_type, primary_node_id, status, created_at, updated_at)
+         VALUES ('budget-crew', 'BUD-CREW', 'Budget Test Crew', 'maintenance', ?, 'active',
+                 '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        [site.into()],
+    ))
+    .await
+    .expect("insert budget crew");
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id FROM teams WHERE entity_sync_id = 'budget-crew'",
+            [],
+        ))
+        .await
+        .expect("query budget crew")
+        .expect("budget crew row");
+    row.try_get("", "id").expect("budget crew id")
 }
 
 #[tokio::test]
@@ -311,7 +335,7 @@ async fn successor_version_creation_copies_budget_lines() {
             asset_family: Some("rotating".to_string()),
             work_category: Some("preventive".to_string()),
             shutdown_package_ref: None,
-            team_id: Some(entity_id),
+            team_id: Some(budget_crew_id(&db).await),
             skill_pool_id: None,
             labor_lane: Some("regular".to_string()),
         },
@@ -509,7 +533,7 @@ async fn posting_and_reversal_rules_preserve_traceability() {
             posting_status: Some("provisional".to_string()),
             provisional_reason: Some("waiting closeout".to_string()),
             personnel_id: None,
-            team_id: Some(entity_id),
+            team_id: Some(budget_crew_id(&db).await),
             rate_card_lane: Some("regular".to_string()),
             event_at: None,
         },
@@ -935,7 +959,7 @@ async fn dashboard_drilldown_and_erp_exports_are_traceable_and_flagged() {
             asset_family: None,
             work_category: Some("preventive".to_string()),
             shutdown_package_ref: None,
-            team_id: Some(entity_id),
+            team_id: Some(budget_crew_id(&db).await),
             skill_pool_id: None,
             labor_lane: Some("regular".to_string()),
         },
@@ -986,7 +1010,7 @@ async fn dashboard_drilldown_and_erp_exports_are_traceable_and_flagged() {
             posting_status: Some("posted".to_string()),
             provisional_reason: None,
             personnel_id: None,
-            team_id: Some(entity_id),
+            team_id: Some(budget_crew_id(&db).await),
             rate_card_lane: Some("regular".to_string()),
             event_at: None,
         },
@@ -1148,7 +1172,7 @@ async fn budget_alert_threshold_dedupe_and_ack_flow_are_governed() {
             asset_family: None,
             work_category: Some("corrective".to_string()),
             shutdown_package_ref: None,
-            team_id: Some(entity_id),
+            team_id: Some(budget_crew_id(&db).await),
             skill_pool_id: None,
             labor_lane: Some("overtime".to_string()),
         },
@@ -1174,7 +1198,7 @@ async fn budget_alert_threshold_dedupe_and_ack_flow_are_governed() {
             posting_status: Some("posted".to_string()),
             provisional_reason: None,
             personnel_id: None,
-            team_id: Some(entity_id),
+            team_id: Some(budget_crew_id(&db).await),
             rate_card_lane: Some("overtime".to_string()),
             event_at: None,
         },
@@ -1332,7 +1356,7 @@ async fn report_pack_export_matches_dashboard_and_handles_multi_currency() {
             asset_family: Some("compressor".to_string()),
             work_category: Some("preventive".to_string()),
             shutdown_package_ref: None,
-            team_id: Some(entity_id),
+            team_id: Some(budget_crew_id(&db).await),
             skill_pool_id: None,
             labor_lane: Some("contractor".to_string()),
         },
@@ -1383,7 +1407,7 @@ async fn report_pack_export_matches_dashboard_and_handles_multi_currency() {
             posting_status: Some("posted".to_string()),
             provisional_reason: None,
             personnel_id: None,
-            team_id: Some(entity_id),
+            team_id: Some(budget_crew_id(&db).await),
             rate_card_lane: Some("contractor".to_string()),
             event_at: None,
         },
@@ -1419,7 +1443,7 @@ async fn report_pack_export_matches_dashboard_and_handles_multi_currency() {
             period_month_end: Some(6),
             budget_bucket: Some("labor".to_string()),
             spend_mix: None,
-            team_id: Some(entity_id),
+            team_id: Some(budget_crew_id(&db).await),
             assignee_id: None,
             labor_lane: Some("contractor".to_string()),
             variance_driver_code: None,

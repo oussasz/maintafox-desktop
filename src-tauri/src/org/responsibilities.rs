@@ -25,6 +25,10 @@ pub struct OrgNodeResponsibility {
     pub responsibility_type: String,
     pub person_id: Option<i64>,
     pub team_id: Option<i64>,
+    /// Display enrichment (personnel.full_name). Prefer over person_id in UI.
+    pub person_display_name: Option<String>,
+    /// Display enrichment (teams.code + name). Prefer over team_id in UI.
+    pub team_label: Option<String>,
     pub valid_from: Option<String>,
     pub valid_to: Option<String>,
     pub created_at: String,
@@ -50,9 +54,24 @@ fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
 }
 
 const SELECT_COLS: &str = r"
-    id, node_id, responsibility_type, person_id, team_id,
-    valid_from, valid_to, created_at, updated_at
+    r.id, r.node_id, r.responsibility_type, r.person_id, r.team_id,
+    p.full_name AS person_display_name,
+    CASE
+      WHEN t.code IS NOT NULL AND t.name IS NOT NULL THEN t.code || ' — ' || t.name
+      ELSE COALESCE(t.name, t.code)
+    END AS team_label,
+    r.valid_from, r.valid_to, r.created_at, r.updated_at
 ";
+
+const SELECT_FROM: &str = r"
+    FROM org_node_responsibilities r
+    LEFT JOIN personnel p ON p.id = r.person_id
+    LEFT JOIN teams t ON t.id = r.team_id AND t.deleted_at IS NULL
+";
+
+fn select_by_id_sql() -> String {
+    format!("SELECT {SELECT_COLS} {SELECT_FROM} WHERE r.id = ?")
+}
 
 fn map_responsibility(row: &QueryResult) -> AppResult<OrgNodeResponsibility> {
     Ok(OrgNodeResponsibility {
@@ -69,6 +88,8 @@ fn map_responsibility(row: &QueryResult) -> AppResult<OrgNodeResponsibility> {
         team_id: row
             .try_get::<Option<i64>>("", "team_id")
             .map_err(|e| decode_err("team_id", e))?,
+        person_display_name: row.try_get::<Option<String>>("", "person_display_name").unwrap_or(None),
+        team_label: row.try_get::<Option<String>>("", "team_label").unwrap_or(None),
         valid_from: row
             .try_get::<Option<String>>("", "valid_from")
             .map_err(|e| decode_err("valid_from", e))?,
@@ -95,14 +116,18 @@ pub async fn list_node_responsibilities(
 ) -> AppResult<Vec<OrgNodeResponsibility>> {
     let sql = if include_inactive {
         format!(
-            "SELECT {SELECT_COLS} FROM org_node_responsibilities \
-             WHERE node_id = ? ORDER BY responsibility_type ASC, created_at DESC"
+            "SELECT {SELECT_COLS} FROM org_node_responsibilities r \
+             LEFT JOIN personnel p ON p.id = r.person_id \
+             LEFT JOIN teams t ON t.id = r.team_id AND t.deleted_at IS NULL \
+             WHERE r.node_id = ? ORDER BY r.responsibility_type ASC, r.created_at DESC"
         )
     } else {
         format!(
-            "SELECT {SELECT_COLS} FROM org_node_responsibilities \
-             WHERE node_id = ? AND valid_to IS NULL \
-             ORDER BY responsibility_type ASC, created_at DESC"
+            "SELECT {SELECT_COLS} FROM org_node_responsibilities r \
+             LEFT JOIN personnel p ON p.id = r.person_id \
+             LEFT JOIN teams t ON t.id = r.team_id AND t.deleted_at IS NULL \
+             WHERE r.node_id = ? AND r.valid_to IS NULL \
+             ORDER BY r.responsibility_type ASC, r.created_at DESC"
         )
     };
     let rows = db
@@ -151,6 +176,10 @@ pub async fn assign_responsibility(
     // Node must exist in the active (production) tree and be status=active
     crate::org::model_scope::assert_org_node_active(db, payload.node_id).await?;
 
+    if let Some(team_id) = payload.team_id {
+        crate::repository::team_repository::assert_active_crew_exists(db, team_id).await?;
+    }
+
     // Check for overlapping active assignment on the same (node_id, responsibility_type)
     let overlap_row = db
         .query_one(Statement::from_sql_and_values(
@@ -197,10 +226,7 @@ pub async fn assign_responsibility(
     let row = db
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
-            format!(
-                "SELECT {SELECT_COLS} FROM org_node_responsibilities \
-                 WHERE id = last_insert_rowid()"
-            ),
+            format!("SELECT {SELECT_COLS} {SELECT_FROM} WHERE r.id = last_insert_rowid()"),
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("responsibility created but not found after insert")))?;
@@ -222,7 +248,7 @@ pub async fn end_responsibility_assignment(
     valid_to: Option<String>,
     _actor_id: i32,
 ) -> AppResult<OrgNodeResponsibility> {
-    let sql = format!("SELECT {SELECT_COLS} FROM org_node_responsibilities WHERE id = ?");
+    let sql = select_by_id_sql();
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -258,7 +284,7 @@ pub async fn end_responsibility_assignment(
     .await?;
 
     // Re-fetch the updated row
-    let updated_sql = format!("SELECT {SELECT_COLS} FROM org_node_responsibilities WHERE id = ?");
+    let updated_sql = select_by_id_sql();
     let updated_row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -285,11 +311,11 @@ pub async fn resolve_current_responsibility(
     at_ts: &str,
 ) -> AppResult<Option<OrgNodeResponsibility>> {
     let sql = format!(
-        "SELECT {SELECT_COLS} FROM org_node_responsibilities \
-         WHERE node_id = ? AND responsibility_type = ? \
-           AND (valid_from IS NULL OR valid_from <= ?) \
-           AND (valid_to IS NULL OR valid_to > ?) \
-         ORDER BY created_at DESC LIMIT 1"
+        "SELECT {SELECT_COLS} {SELECT_FROM} \
+         WHERE r.node_id = ? AND r.responsibility_type = ? \
+           AND (r.valid_from IS NULL OR r.valid_from <= ?) \
+           AND (r.valid_to IS NULL OR r.valid_to > ?) \
+         ORDER BY r.created_at DESC LIMIT 1"
     );
     let row = db
         .query_one(Statement::from_sql_and_values(

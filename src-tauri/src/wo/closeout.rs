@@ -20,7 +20,6 @@ use crate::reliability::advanced_rams::queries as advanced_rams_queries;
 use crate::reliability::domain::RefreshReliabilityKpiSnapshotInput;
 use crate::reliability::queries as reliability_queries;
 use crate::wo::queries;
-use crate::wo::sync_stage;
 use crate::wo::time::now_utc_z;
 use chrono::{Duration, Utc};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
@@ -108,6 +107,41 @@ pub struct WoCloseInput {
     pub fmeca_parts_override_signed_by_id: Option<i64>,
     #[serde(default)]
     pub fmeca_parts_override_signer_password: Option<String>,
+}
+
+/// Tenant setting (`app_settings`, seeded): days after closure during which a closed WO may
+/// still be reopened (PRD §6.5 "configurable recurrence window").
+pub const SETTING_REOPEN_WINDOW_DAYS: &str = "wo.reopen_window_days";
+
+/// Reads the reopen window. A missing or malformed setting is an error: a closed WO is never
+/// reopened on a guessed window.
+pub async fn reopen_window_days(db: &impl ConnectionTrait) -> AppResult<i64> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT setting_value_json FROM app_settings WHERE setting_key = ? AND setting_scope = 'tenant'",
+            [SETTING_REOPEN_WINDOW_DAYS.into()],
+        ))
+        .await?
+        .ok_or_else(|| {
+            AppError::ValidationFailed(vec![format!(
+                "Setting {SETTING_REOPEN_WINDOW_DAYS} is missing; a closed work order cannot be reopened."
+            )])
+        })?;
+    let raw: String = row
+        .try_get("", "setting_value_json")
+        .map_err(|e| decode_err("setting_value_json", e))?;
+    let days: i64 = serde_json::from_str(raw.trim()).map_err(|_| {
+        AppError::ValidationFailed(vec![format!(
+            "Setting {SETTING_REOPEN_WINDOW_DAYS} must be a whole number of days (got {raw})."
+        )])
+    })?;
+    if days < 0 {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "Setting {SETTING_REOPEN_WINDOW_DAYS} must not be negative."
+        )]));
+    }
+    Ok(days)
 }
 
 /// Input for reopening a recently closed WO.
@@ -344,7 +378,8 @@ async fn resolve_status_id(txn: &impl ConnectionTrait, code: &str) -> AppResult<
     row.try_get::<i64>("", "id").map_err(|e| decode_err("status id", e))
 }
 
-/// Write an entry to the append-only state transition log.
+/// Write an entry to the append-only state transition log (the shared writer also records the
+/// derived lifecycle state and the planning-approval fact).
 async fn log_transition(
     txn: &impl ConnectionTrait,
     wo_id: i64,
@@ -356,28 +391,18 @@ async fn log_transition(
     notes: Option<&str>,
     acted_at: &str,
 ) -> AppResult<()> {
-    txn.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO wo_state_transition_log \
-         (wo_id, from_status, to_status, action, actor_id, reason_code, notes, acted_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        [
-            wo_id.into(),
-            from_status.into(),
-            to_status.into(),
-            action.into(),
-            actor_id.into(),
-            reason_code
-                .map(sea_orm::Value::from)
-                .unwrap_or(sea_orm::Value::from(None::<String>)),
-            notes
-                .map(sea_orm::Value::from)
-                .unwrap_or(sea_orm::Value::from(None::<String>)),
-            acted_at.into(),
-        ],
-    ))
-    .await?;
-    Ok(())
+    crate::wo::workflow::transition::log_transition(
+        txn,
+        wo_id,
+        from_status,
+        to_status,
+        action,
+        actor_id,
+        reason_code,
+        notes,
+        acted_at,
+    )
+    .await
 }
 
 /// Load the WO type code (e.g. "corrective", "preventive").
@@ -730,7 +755,7 @@ pub async fn save_failure_detail(db: &DatabaseConnection, input: SaveFailureDeta
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("{FAILURE_DETAIL_SELECT} WHERE fd.work_order_id = ?"),
+            format!("{FAILURE_DETAIL_SELECT} WHERE fd.work_order_id = ?"),
             [input.wo_id.into()],
         ))
         .await?
@@ -879,10 +904,8 @@ pub async fn save_verification(
     )
     .await?;
 
-    txn.commit().await?;
-
     // ── Re-fetch verification and WO ──────────────────────────────────────
-    let ver_row = db
+    let ver_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT * FROM work_order_verifications \
@@ -893,13 +916,14 @@ pub async fn save_verification(
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to re-fetch verification after insert")))?;
     let verification = map_verification(&ver_row)?;
 
-    let wo = queries::get_work_order(db, input.wo_id)
+    let wo = queries::get_work_order(&txn, input.wo_id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "WorkOrder".into(),
             id: input.wo_id.to_string(),
         })?;
 
+    txn.commit().await?;
     Ok((verification, wo))
 }
 
@@ -1048,7 +1072,7 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
                     );
                 }
                 let nmin = policy.notes_min_length_when_cnd.max(1) as usize;
-                if fd_notes.as_deref().map_or(true, |s| s.trim().len() < nmin) {
+                if fd_notes.as_deref().is_none_or(|s| s.trim().len() < nmin) {
                     preflight.add(format!(
                         "Notes obligatoires (cause non determinee), minimum {nmin} caracteres. \
                          (Notes required when cause not determined.)"
@@ -1093,7 +1117,7 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
         let rcs: Option<String> = rcs_row
             .try_get::<Option<String>>("", "root_cause_summary")
             .map_err(|e| decode_err("root_cause_summary", e))?;
-        if rcs.as_deref().map_or(true, |s| s.trim().is_empty()) {
+        if rcs.as_deref().is_none_or(|s| s.trim().is_empty()) {
             preflight.add("Resume de cause racine requis. (Root cause summary required.)");
         }
     }
@@ -1399,29 +1423,13 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
     )
     .await?;
 
+    // Audit P1-6: the governed failure event is written in the close transaction, so a failed ingest
+    // aborts the close instead of silently losing the reliability record.
+    reliability_queries::ingest_failure_event_from_closed_wo(&txn, input.wo_id, input.actor_id).await?;
+
     txn.commit().await?;
 
-    if let Ok(Some(wo)) = queries::get_work_order(db, input.wo_id).await {
-        let status_code = wo.status_code.as_deref().unwrap_or("closed");
-        let type_code = wo.type_code.as_deref().unwrap_or("corrective");
-        if let Err(e) = sync_stage::stage_work_order_sync(
-            db,
-            &wo,
-            status_code,
-            type_code,
-            wo.closed_at.as_deref(),
-            wo.closeout_validation_profile_id.or(Some(profile_id)),
-            wo.closeout_validation_passed,
-        )
-        .await
-        {
-            tracing::warn!(target: "maintafox", "stage_work_order_sync after close: {e}");
-        }
-    }
-
-    if let Err(e) = reliability_queries::ingest_failure_event_from_closed_wo(db, input.wo_id, input.actor_id).await {
-        tracing::warn!(target: "maintafox", "ingest_failure_event_from_closed_wo: {e}");
-    }
+    crate::pm::generation_control::on_work_order_closed_for_pm(db, input.wo_id, Some(input.actor_id)).await;
 
     // Optimistic immediate RAMS KPI refresh for the impacted equipment.
     if let Ok(Some(wo)) = queries::get_work_order(db, input.wo_id).await {
@@ -1432,7 +1440,7 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
                 equipment_id,
                 period_start: period_start.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
                 period_end: period_end.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-                min_sample_n: Some(1),
+                min_sample_n: None,
                 repeat_lookback_days: Some(30),
             };
             if let Err(e) = reliability_queries::refresh_reliability_kpi_snapshot(db, refresh_input).await {
@@ -1467,10 +1475,13 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// D) reopen_wo — completed → in_progress or planning
+// D) reopen_wo — completed / recently closed → in_progress or planning
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Reopen a completed WO to execution (`in_progress`) or plan (`planning`).
+/// Reopen a WO to execution (`in_progress`) or plan (`planning`) — from `completed`, or from
+/// `closed` within the tenant reopen window. The original close-out evidence is kept: the
+/// verification and mechanical-completion stamps stay, the closure date moves to
+/// `last_closed_at`, and the transition log records who reopened it and why.
 pub async fn reopen_wo(db: &DatabaseConnection, input: WoReopenInput) -> AppResult<WorkOrder> {
     if input.reason.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![
@@ -1492,13 +1503,21 @@ pub async fn reopen_wo(db: &DatabaseConnection, input: WoReopenInput) -> AppResu
 
     let (from_code, current_status, _rv) = load_wo_status(&txn, input.wo_id).await?;
     use crate::wo::workflow::state_machine::{assert_action_allowed, WoAction};
-    assert_action_allowed(&current_status, WoAction::Reopen).map_err(|e| AppError::ValidationFailed(vec![e]))?;
-    if current_status != WoStatus::Completed {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "Seuls les OT completed peuvent etre reouverts. Statut actuel : '{from_code}'."
-        )]));
+    match current_status {
+        WoStatus::Completed => {
+            assert_action_allowed(&current_status, WoAction::Reopen)
+                .map_err(|e| AppError::ValidationFailed(vec![e]))?;
+            guard_wo_transition(&current_status, &target).map_err(|e| AppError::ValidationFailed(vec![e]))?;
+        }
+        // Closed is terminal for every normal flow; reopening it is the supervisor exception
+        // of PRD §6.5, bounded by the reopen window.
+        WoStatus::Closed => ensure_within_reopen_window(&txn, input.wo_id).await?,
+        _ => {
+            return Err(AppError::ValidationFailed(vec![format!(
+                "Only completed or recently closed work orders can be reopened (current status '{from_code}')."
+            )]));
+        }
     }
-    guard_wo_transition(&current_status, &target).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
     let target_status_id = resolve_status_id(&txn, target.as_str()).await?;
     let now = now_utc_z();
@@ -1509,8 +1528,8 @@ pub async fn reopen_wo(db: &DatabaseConnection, input: WoReopenInput) -> AppResu
             "UPDATE work_orders SET \
                 status_id = ?, \
                 reopen_count = reopen_count + 1, \
-                mechanically_completed_at = NULL, \
-                technically_verified_at = NULL, \
+                last_closed_at = COALESCE(closed_at, last_closed_at), \
+                closed_at = NULL, \
                 actual_end = NULL, \
                 row_version = row_version + 1, \
                 updated_at = ? \
@@ -1549,14 +1568,46 @@ pub async fn reopen_wo(db: &DatabaseConnection, input: WoReopenInput) -> AppResu
     )
     .await?;
 
-    txn.commit().await?;
-
-    queries::get_work_order(db, input.wo_id)
+    let wo = queries::get_work_order(&txn, input.wo_id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "WorkOrder".into(),
             id: input.wo_id.to_string(),
-        })
+        })?;
+    txn.commit().await?;
+    Ok(wo)
+}
+
+/// A closed WO may be reopened only while `closed_at` is within the tenant reopen window.
+async fn ensure_within_reopen_window(txn: &impl ConnectionTrait, wo_id: i64) -> AppResult<()> {
+    let window = reopen_window_days(txn).await?;
+    let row = txn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT closed_at FROM work_orders WHERE id = ?",
+            [wo_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "WorkOrder".into(),
+            id: wo_id.to_string(),
+        })?;
+    let closed_at: Option<String> = row.try_get("", "closed_at").map_err(|e| decode_err("closed_at", e))?;
+    let closed = closed_at
+        .as_deref()
+        .and_then(|c| chrono::DateTime::parse_from_rfc3339(c).ok())
+        .ok_or_else(|| {
+            AppError::ValidationFailed(vec![
+                "The closure date of this work order is unknown; it cannot be reopened.".into(),
+            ])
+        })?;
+    let age_days = (chrono::Utc::now() - closed.with_timezone(&chrono::Utc)).num_seconds() as f64 / 86_400.0;
+    if age_days > window as f64 {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "This work order was closed more than {window} day(s) ago (reopen window); create a new work order instead."
+        )]));
+    }
+    Ok(())
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1568,7 +1619,7 @@ pub async fn get_failure_details(db: &impl ConnectionTrait, wo_id: i64) -> AppRe
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("{FAILURE_DETAIL_SELECT} WHERE fd.work_order_id = ?"),
+            format!("{FAILURE_DETAIL_SELECT} WHERE fd.work_order_id = ?"),
             [wo_id.into()],
         ))
         .await?;

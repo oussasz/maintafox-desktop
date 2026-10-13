@@ -34,7 +34,7 @@ const DiTrendPointSchema = z.object({
 });
 
 const DiEquipmentCountSchema = z.object({
-  asset_id: z.number(),
+  equipment_id: z.number(),
   asset_label: z.string(),
   count: z.number(),
   percentage: z.number(),

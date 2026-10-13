@@ -37,11 +37,41 @@ const InspectionsPage = lazy(() =>
     default: m.InspectionsPage,
   })),
 );
+const TrainingPage = lazy(() =>
+  import("@/pages/TrainingPage").then((m) => ({ default: m.TrainingPage })),
+);
 const InventoryPage = lazy(() =>
   import("@/pages/InventoryPage").then((m) => ({ default: m.InventoryPage })),
 );
-const AnalyticsPage = lazy(() =>
-  import("@/pages/AnalyticsPage").then((m) => ({ default: m.AnalyticsPage })),
+const AnalyticsModuleLayout = lazy(() =>
+  import("@/pages/analytics/AnalyticsModuleLayout").then((m) => ({
+    default: m.AnalyticsModuleLayout,
+  })),
+);
+const AnalyticsIndexRedirect = lazy(() =>
+  import("@/pages/analytics/AnalyticsModuleLayout").then((m) => ({
+    default: m.AnalyticsIndexRedirect,
+  })),
+);
+const AnalyticsDashboardsPage = lazy(() =>
+  import("@/pages/analytics/AnalyticsDashboardsPage").then((m) => ({
+    default: m.AnalyticsDashboardsPage,
+  })),
+);
+const AnalyticsTemplatesPage = lazy(() =>
+  import("@/pages/analytics/AnalyticsTemplatesPage").then((m) => ({
+    default: m.AnalyticsTemplatesPage,
+  })),
+);
+const AnalyticsSchedulesPage = lazy(() =>
+  import("@/pages/analytics/AnalyticsSchedulesPage").then((m) => ({
+    default: m.AnalyticsSchedulesPage,
+  })),
+);
+const AnalyticsHistoryPage = lazy(() =>
+  import("@/pages/analytics/AnalyticsHistoryPage").then((m) => ({
+    default: m.AnalyticsHistoryPage,
+  })),
 );
 const ReliabilityModuleLayout = lazy(() =>
   import("@/pages/reliability/ReliabilityModuleLayout").then((m) => ({
@@ -87,11 +117,6 @@ const OrgPage = lazy(() => import("@/pages/OrgPage").then((m) => ({ default: m.O
 const LookupsPage = lazy(() =>
   import("@/pages/LookupsPage").then((m) => ({ default: m.LookupsPage })),
 );
-const NotificationsPage = lazy(() =>
-  import("@/pages/NotificationsPage").then((m) => ({
-    default: m.NotificationsPage,
-  })),
-);
 const DocumentationModuleLayout = lazy(() =>
   import("@/pages/documentation/DocumentationModuleLayout").then((m) => ({
     default: m.DocumentationModuleLayout,
@@ -110,17 +135,8 @@ const DocumentationIndexRedirect = lazy(() =>
 const ArchivePage = lazy(() =>
   import("@/pages/ArchivePage").then((m) => ({ default: m.ArchivePage })),
 );
-const ActivityPage = lazy(() =>
-  import("@/pages/ActivityPage").then((m) => ({ default: m.ActivityPage })),
-);
 const SettingsPage = lazy(() =>
   import("@/pages/SettingsPage").then((m) => ({ default: m.SettingsPage })),
-);
-const ProfilePage = lazy(() =>
-  import("@/pages/ProfilePage").then((m) => ({ default: m.ProfilePage })),
-);
-const DiagnosticsPage = lazy(() =>
-  import("@/pages/DiagnosticsPage").then((m) => ({ default: m.DiagnosticsPage })),
 );
 const LoginPage = lazy(() =>
   import("@/pages/auth/LoginPage").then((m) => ({ default: m.LoginPage })),
@@ -236,12 +252,7 @@ const routes: RouteObject[] = [
                   },
                   {
                     element: <PermissionRoute permission={P.TRN_VIEW} />,
-                    children: [
-                      {
-                        path: "training",
-                        element: <Navigate to="/personnel?tab=training" replace />,
-                      },
-                    ],
+                    children: [{ path: "training", element: <TrainingPage /> }],
                   },
                   {
                     element: <PermissionRoute permission={P.INV_VIEW} />,
@@ -250,17 +261,56 @@ const routes: RouteObject[] = [
                   {
                     element: <PermissionRoute permission={P.REP_VIEW} />,
                     children: [
-                      { path: "analytics", element: <AnalyticsPage /> },
+                      {
+                        path: "analytics",
+                        element: <AnalyticsModuleLayout />,
+                        children: [
+                          { index: true, element: <AnalyticsIndexRedirect /> },
+                          { path: "dashboards", element: <AnalyticsDashboardsPage /> },
+                          { path: "templates", element: <AnalyticsTemplatesPage /> },
+                          { path: "schedules", element: <AnalyticsSchedulesPage /> },
+                          { path: "history", element: <AnalyticsHistoryPage /> },
+                          {
+                            path: "rams",
+                            element: <ReliabilityModuleLayout />,
+                            children: [
+                              { index: true, element: <Navigate to="dashboard" replace /> },
+                              { path: "dashboard", element: <ReliabilityDashboardPage /> },
+                              { path: "foundation", element: <ReliabilityFoundationPage /> },
+                              { path: "lab", element: <ReliabilityVisualLabPage /> },
+                              { path: "advanced", element: <ReliabilityAdvancedPage /> },
+                              { path: "governance", element: <ReliabilityGovernancePage /> },
+                            ],
+                          },
+                        ],
+                      },
                       {
                         path: "reliability",
-                        element: <ReliabilityModuleLayout />,
                         children: [
-                          { index: true, element: <Navigate to="dashboard" replace /> },
-                          { path: "dashboard", element: <ReliabilityDashboardPage /> },
-                          { path: "foundation", element: <ReliabilityFoundationPage /> },
-                          { path: "lab", element: <ReliabilityVisualLabPage /> },
-                          { path: "advanced", element: <ReliabilityAdvancedPage /> },
-                          { path: "governance", element: <ReliabilityGovernancePage /> },
+                          {
+                            index: true,
+                            element: <Navigate to="/analytics/rams/dashboard" replace />,
+                          },
+                          {
+                            path: "dashboard",
+                            element: <Navigate to="/analytics/rams/dashboard" replace />,
+                          },
+                          {
+                            path: "foundation",
+                            element: <Navigate to="/analytics/rams/foundation" replace />,
+                          },
+                          {
+                            path: "lab",
+                            element: <Navigate to="/analytics/rams/lab" replace />,
+                          },
+                          {
+                            path: "advanced",
+                            element: <Navigate to="/analytics/rams/advanced" replace />,
+                          },
+                          {
+                            path: "governance",
+                            element: <Navigate to="/analytics/rams/governance" replace />,
+                          },
                         ],
                       },
                     ],
@@ -294,7 +344,10 @@ const routes: RouteObject[] = [
                     element: <PermissionRoute permission={P.REF_VIEW} />,
                     children: [{ path: "lookups", element: <LookupsPage /> }],
                   },
-                  { path: "notifications", element: <NotificationsPage /> },
+                  {
+                    path: "notifications",
+                    element: <Navigate to="/settings?tab=notifications" replace />,
+                  },
                   {
                     element: <PermissionRoute permission={P.DOC_VIEW} />,
                     children: [
@@ -327,13 +380,10 @@ const routes: RouteObject[] = [
                     children: [{ path: "archive", element: <ArchivePage /> }],
                   },
                   {
-                    element: <PermissionRoute permission={P.LOG_VIEW} />,
-                    children: [{ path: "activity", element: <ActivityPage /> }],
+                    path: "activity",
+                    element: <Navigate to="/settings?tab=security" replace />,
                   },
-                  {
-                    element: <PermissionRoute permission={P.ADM_SETTINGS} />,
-                    children: [{ path: "settings", element: <SettingsPage /> }],
-                  },
+                  { path: "settings", element: <SettingsPage /> },
                   {
                     element: <PermissionRoute permission={P.CFG_VIEW} />,
                     children: [
@@ -344,10 +394,13 @@ const routes: RouteObject[] = [
                     ],
                   },
                   {
-                    element: <PermissionRoute permission={P.ADM_SETTINGS} />,
-                    children: [{ path: "diagnostics", element: <DiagnosticsPage /> }],
+                    path: "diagnostics",
+                    element: <Navigate to="/settings?tab=integrations" replace />,
                   },
-                  { path: "profile", element: <ProfilePage /> },
+                  {
+                    path: "profile",
+                    element: <Navigate to="/settings?tab=profile" replace />,
+                  },
                   { path: "unauthorized", element: <UnauthorizedPage /> },
                 ],
               },

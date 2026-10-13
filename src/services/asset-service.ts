@@ -22,7 +22,7 @@ import type {
 
 export const AssetSchema = z.object({
   id: z.number(),
-  sync_id: z.string(),
+  entity_sync_id: z.string(),
   asset_code: z.string(),
   asset_name: z.string(),
   class_id: z.number().nullable(),

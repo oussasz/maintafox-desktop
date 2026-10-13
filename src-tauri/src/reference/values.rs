@@ -12,7 +12,7 @@
 //! (Compat phase: draft-only manager mutate; Category B operational create).
 
 use crate::errors::{AppError, AppResult};
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
 use super::{domains, sets};
@@ -133,11 +133,11 @@ fn map_value(row: &QueryResult) -> AppResult<ReferenceValue> {
 // ─── Internal helpers ─────────────────────────────────────────────────────────
 
 /// Fetches a value by id. Returns `NotFound` if absent.
-async fn get_value_by_id(db: &DatabaseConnection, value_id: i64) -> AppResult<ReferenceValue> {
+async fn get_value_by_id(db: &impl ConnectionTrait, value_id: i64) -> AppResult<ReferenceValue> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("SELECT {SELECT_COLS} FROM reference_values WHERE id = ?"),
+            format!("SELECT {SELECT_COLS} FROM reference_values WHERE id = ?"),
             [value_id.into()],
         ))
         .await?
@@ -349,7 +349,7 @@ pub async fn list_values(db: &DatabaseConnection, set_id: i64) -> AppResult<Vec<
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!(
+            format!(
                 "SELECT {SELECT_COLS} FROM reference_values \
                  WHERE set_id = ? ORDER BY sort_order ASC, code ASC"
             ),
@@ -390,11 +390,11 @@ pub async fn create_value(
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "INSERT INTO reference_values \
-             (set_id, parent_id, code, label, description, sort_order, \
+        "INSERT INTO reference_values (entity_sync_id, set_id, parent_id, code, label, description, sort_order, \
               color_hex, icon_name, semantic_tag, external_code, is_active, metadata_json) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
         [
+            crate::sync::identity::new_entity_sync_id().into(),
             payload.set_id.into(),
             payload.parent_id.into(),
             code.clone().into(),
@@ -421,7 +421,7 @@ pub async fn create_value(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("SELECT {SELECT_COLS} FROM reference_values WHERE set_id = ? AND code = ?"),
+            format!("SELECT {SELECT_COLS} FROM reference_values WHERE set_id = ? AND code = ?"),
             [payload.set_id.into(), code.into()],
         ))
         .await?
@@ -499,7 +499,9 @@ pub async fn create_operational_value(
         validate_parent(db, set_id, pid).await?;
     }
 
-    let sort_order_row = db
+    // The value row and its sync outbox entry commit together.
+    let txn = db.begin().await?;
+    let sort_order_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT COALESCE(MAX(sort_order), 0) + 1 AS next_sort \
@@ -511,13 +513,13 @@ pub async fn create_operational_value(
         .map(|r| r.try_get::<i64>("", "next_sort").unwrap_or(1))
         .unwrap_or(1);
 
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "INSERT INTO reference_values \
-             (set_id, parent_id, code, label, description, sort_order, \
+        "INSERT INTO reference_values (entity_sync_id, set_id, parent_id, code, label, description, sort_order, \
               color_hex, icon_name, semantic_tag, external_code, is_active, metadata_json) \
-         VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, 1, NULL)",
+         VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, 1, NULL)",
         [
+            crate::sync::identity::new_entity_sync_id().into(),
             set_id.into(),
             payload.parent_id.into(),
             code.clone().into(),
@@ -537,16 +539,19 @@ pub async fn create_operational_value(
         }
     })?;
 
-    let row = db
+    let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("SELECT {SELECT_COLS} FROM reference_values WHERE set_id = ? AND code = ?"),
+            format!("SELECT {SELECT_COLS} FROM reference_values WHERE set_id = ? AND code = ?"),
             [set_id.into(), code.into()],
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("reference_values row missing after operational insert")))?;
 
     let created = map_value(&row)?;
+    txn.commit().await?;
+
+    // Schedule details hang off the committed value; the helper runs on the pool connection.
     crate::reference::schedule_patterns::seed_default_details_if_schedule_class(db, &created).await?;
     Ok(created)
 }
@@ -609,10 +614,14 @@ pub async fn update_value(
 
     let sql = format!("UPDATE reference_values SET {} WHERE id = ?", sets_clause.join(", "));
 
-    db.execute(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
+    // The update and its sync outbox entry commit together.
+    let txn = db.begin().await?;
+    txn.execute(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
         .await?;
 
-    get_value_by_id(db, value_id).await
+    let updated = get_value_by_id(&txn, value_id).await?;
+    txn.commit().await?;
+    Ok(updated)
 }
 
 /// Deactivates a reference value (soft-disable).

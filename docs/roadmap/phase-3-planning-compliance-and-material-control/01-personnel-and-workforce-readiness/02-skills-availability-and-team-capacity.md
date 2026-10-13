@@ -1,4 +1,4 @@
-﻿# Skills Availability And Team Capacity
+# Skills Availability And Team Capacity
 
 **PRD:** §6.6 (skills matrix, team assignments, availability blocks, capacity vs WO/PM)
 
@@ -14,4 +14,8 @@
 
 ---
 
-*Completion: date, verifier, `cargo check` / `pnpm typecheck` notes.*
+*Completion: Availability tab redesigned to People × Days matrix per `docs/engineering/AVAILABILITY_TAB_FUNCTIONAL_SPEC.md` (filters, summary, contextual blocks, edit/end APIs). Verified: `pnpm typecheck`, `cargo check`.*
+
+*Completion: Teams tab — paginated DataTable (`pageSize` 20) + centered `TeamDetailDialog` (Overview/Roster/Capacity/Skills/Succession); `list_team_members` / `get_team` IPC. Membership mutations deferred. Verified: `pnpm typecheck`, `cargo check`.*
+
+*Completion: ResourceTimeline DS (`react-calendar-timeline`); Availability chronology + split detail + WO/DI header icon toggles; Teams split `TeamDetailWorkspace` + CrewBadge crest + skill heatmap; `teams.icon_key`/`accent_color`. Spec updated. Verified: `pnpm typecheck`, `cargo check`.*

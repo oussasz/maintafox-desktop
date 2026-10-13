@@ -67,7 +67,7 @@ mod tests {
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT OR IGNORE INTO user_accounts \
-             (sync_id, username, display_name, identity_mode, password_hash, \
+             (entity_sync_id, username, display_name, identity_mode, password_hash, \
               is_active, is_admin, force_password_change, \
               failed_login_attempts, created_at, updated_at, row_version) \
              VALUES ('audit-verifier-sync', 'audit_verifier', 'Audit Verifier', 'local', \
@@ -94,7 +94,7 @@ mod tests {
             .execute(Statement::from_string(
                 DbBackend::Sqlite,
                 "INSERT OR IGNORE INTO org_structure_models \
-                 (id, sync_id, version_number, status, created_at, updated_at) \
+                 (id, entity_sync_id, version_number, status, created_at, updated_at) \
                  VALUES (1, 'test-model-001', 1, 'active', datetime('now'), datetime('now'));"
                     .to_string(),
             ))
@@ -103,7 +103,7 @@ mod tests {
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             "INSERT OR IGNORE INTO org_node_types \
-             (id, sync_id, structure_model_id, code, label, is_active, created_at, updated_at) \
+             (id, entity_sync_id, structure_model_id, code, label, is_active, created_at, updated_at) \
              VALUES (1, 'test-type-001', 1, 'SITE', 'Site', 1, datetime('now'), datetime('now'));"
                 .to_string(),
         ))
@@ -113,7 +113,7 @@ mod tests {
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             "INSERT OR IGNORE INTO org_nodes \
-             (id, sync_id, code, name, node_type_id, status, created_at, updated_at, structure_model_id) \
+             (id, entity_sync_id, code, name, node_type_id, status, created_at, updated_at, structure_model_id) \
              VALUES (1, 'test-org-001', 'SITE-001', 'Test Site', 1, 'active', \
                      datetime('now'), datetime('now'), 1);"
                 .to_string(),
@@ -124,7 +124,7 @@ mod tests {
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             "INSERT OR IGNORE INTO equipment \
-             (id, sync_id, asset_id_code, name, lifecycle_status, installed_at_node_id, \
+             (id, entity_sync_id, asset_id_code, name, lifecycle_status, installed_at_node_id, \
               created_at, updated_at) \
              VALUES (1, 'test-eq-audit-001', 'EQ-AUDIT-001', 'Audit Test Equipment', \
                      'active_in_service', 1, datetime('now'), datetime('now'));"
@@ -252,8 +252,8 @@ mod tests {
                 actor_id: actor,
                 expected_row_version: wo.row_version,
                 planner_id: actor,
-                planned_start: "2026-04-10T08:00:00Z".into(),
-                planned_end: "2026-04-10T12:00:00Z".into(),
+                planned_start: Some("2026-04-10T08:00:00Z".to_string()),
+                planned_end: Some("2026-04-10T12:00:00Z".to_string()),
                 shift: None,
                 expected_duration_hours: Some(4.0),
                 planned_downtime_hours: None,
@@ -270,9 +270,10 @@ mod tests {
                 wo_id,
                 actor_id: actor,
                 expected_row_version: wo.row_version,
-                assigned_group_id: None,
+                assigned_team_id: None,
                 primary_responsible_id: Some(actor),
                 scheduled_at: None,
+                override_reason: "test assign".to_string(),
             },
         )
         .await
@@ -389,7 +390,8 @@ mod tests {
             .expect("should return a row");
 
         let cnt: i64 = row.try_get("", "cnt").unwrap();
-        assert_eq!(cnt, 8, "expected 8 ot.* permissions, got {cnt}");
+        // 9 since ot.emergency_assign (emergency reassignment) joined the registry.
+        assert_eq!(cnt, 9, "expected 9 ot.* permissions, got {cnt}");
     }
 
     #[tokio::test]

@@ -245,7 +245,7 @@ export function DiDashboardView() {
           ) : (
             <div className="space-y-2">
               {stats.top_equipment.map((eq) => (
-                <div key={eq.asset_id} className="flex items-center gap-2 text-xs">
+                <div key={eq.equipment_id} className="flex items-center gap-2 text-xs">
                   <span className="flex-1 truncate">{eq.asset_label}</span>
                   <div className="w-24 h-2 rounded bg-surface-1">
                     <div

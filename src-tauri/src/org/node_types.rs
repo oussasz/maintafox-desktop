@@ -24,7 +24,7 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrgNodeType {
     pub id: i32,
-    pub sync_id: String,
+    pub entity_sync_id: String,
     pub structure_model_id: i32,
     pub code: String,
     pub label: String,
@@ -92,7 +92,7 @@ fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
 // ─── Row mapping ──────────────────────────────────────────────────────────────
 
 const SELECT_COLS: &str = r"
-    id, sync_id, structure_model_id, code, label, icon_key, color, depth_hint,
+    id, entity_sync_id, structure_model_id, code, label, icon_key, color, depth_hint,
     can_host_assets, can_own_work, can_carry_cost_center,
     can_aggregate_kpis, can_receive_permits, is_root_type,
     is_active, created_at, updated_at
@@ -101,9 +101,9 @@ const SELECT_COLS: &str = r"
 fn map_node_type(row: QueryResult) -> AppResult<OrgNodeType> {
     Ok(OrgNodeType {
         id: row.try_get::<i32>("", "id").map_err(|e| decode_err("id", e))?,
-        sync_id: row
-            .try_get::<String>("", "sync_id")
-            .map_err(|e| decode_err("sync_id", e))?,
+        entity_sync_id: row
+            .try_get::<String>("", "entity_sync_id")
+            .map_err(|e| decode_err("entity_sync_id", e))?,
         structure_model_id: row
             .try_get::<i32>("", "structure_model_id")
             .map_err(|e| decode_err("structure_model_id", e))?,
@@ -250,18 +250,18 @@ pub async fn create_node_type(db: &DatabaseConnection, payload: CreateNodeTypePa
     }
 
     let now = Utc::now().to_rfc3339();
-    let sync_id = Uuid::new_v4().to_string();
+    let entity_sync_id = Uuid::new_v4().to_string();
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO org_node_types
-          (sync_id, structure_model_id, code, label, icon_key, color, depth_hint,
+          (entity_sync_id, structure_model_id, code, label, icon_key, color, depth_hint,
            can_host_assets, can_own_work, can_carry_cost_center,
            can_aggregate_kpis, can_receive_permits, is_root_type,
            is_active, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
         [
-            sync_id.clone().into(),
+            entity_sync_id.clone().into(),
             payload.structure_model_id.into(),
             payload.code.clone().into(),
             payload.label.into(),
@@ -280,10 +280,14 @@ pub async fn create_node_type(db: &DatabaseConnection, payload: CreateNodeTypePa
     ))
     .await?;
 
-    // Retrieve via sync_id
-    let sql = format!("SELECT {SELECT_COLS} FROM org_node_types WHERE sync_id = ?");
+    // Retrieve via entity_sync_id
+    let sql = format!("SELECT {SELECT_COLS} FROM org_node_types WHERE entity_sync_id = ?");
     let row = db
-        .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, sql, [sync_id.into()]))
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            sql,
+            [entity_sync_id.into()],
+        ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("node type created but not found after insert")))?;
     let node_type = map_node_type(row)?;

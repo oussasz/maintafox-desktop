@@ -1,17 +1,14 @@
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 
 use crate::di::queries::{create_intervention_request, DiCreateInput};
 use crate::errors::{AppError, AppResult};
 use crate::inspection::domain::InspectionAnomaly;
 use crate::inspection::queries::get_inspection_checkpoint_by_id;
-use crate::inspection::results::{map_anomaly, stage_inspection_anomaly};
-use crate::sync::domain::{InterventionRequestSyncPayload, StageOutboxItemInput, SYNC_ENTITY_INTERVENTION_REQUESTS};
-use crate::sync::queries::stage_outbox_item;
+use crate::inspection::results::map_anomaly;
 use crate::wo::domain::WoCreateInput;
 use crate::wo::queries::create_work_order;
-use crate::wo::sync_stage::stage_work_order_sync;
 
-async fn load_anomaly(db: &DatabaseConnection, id: i64) -> AppResult<InspectionAnomaly> {
+async fn load_anomaly(db: &impl ConnectionTrait, id: i64) -> AppResult<InspectionAnomaly> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -35,47 +32,6 @@ fn assert_routable(a: &InspectionAnomaly) -> AppResult<()> {
         ]));
     }
     Ok(())
-}
-
-async fn stage_intervention_request_sync(
-    db: &DatabaseConnection,
-    di: &crate::di::domain::InterventionRequest,
-) -> AppResult<()> {
-    let payload = InterventionRequestSyncPayload {
-        id: di.id,
-        row_version: di.row_version,
-        source_inspection_anomaly_id: di.source_inspection_anomaly_id,
-    };
-    let payload_json = serde_json::to_string(&payload)?;
-    stage_outbox_item(
-        db,
-        StageOutboxItemInput {
-            idempotency_key: format!("intervention_requests:{}:v{}", di.code, di.row_version),
-            entity_type: SYNC_ENTITY_INTERVENTION_REQUESTS.to_string(),
-            entity_sync_id: di.code.clone(),
-            operation: "upsert".to_string(),
-            row_version: di.row_version,
-            payload_json,
-            origin_machine_id: None,
-        },
-    )
-    .await?;
-    Ok(())
-}
-
-async fn stage_work_order_sync_from_row(db: &DatabaseConnection, wo: &crate::wo::domain::WorkOrder) -> AppResult<()> {
-    let status_code = wo.status_code.as_deref().unwrap_or("draft");
-    let type_code = wo.type_code.as_deref().unwrap_or("corrective");
-    stage_work_order_sync(
-        db,
-        wo,
-        status_code,
-        type_code,
-        wo.closed_at.as_deref(),
-        wo.closeout_validation_profile_id,
-        wo.closeout_validation_passed,
-    )
-    .await
 }
 
 pub async fn route_inspection_anomaly_to_di(
@@ -151,7 +107,7 @@ pub async fn route_inspection_anomaly_to_di(
     let symptom_code_id = crate::di::reference_catalog::resolve_system_di_symptom_id(db, &a.anomaly_type).await?;
 
     let di_in = DiCreateInput {
-        asset_id,
+        equipment_id: asset_id,
         org_node_id,
         title,
         description,
@@ -169,11 +125,12 @@ pub async fn route_inspection_anomaly_to_di(
         source_inspection_anomaly_id: Some(anomaly_id),
     };
 
+    // create_intervention_request commits the DI together with its own outbox entry.
     let di = create_intervention_request(db, di_in).await?;
-    stage_intervention_request_sync(db, &di).await?;
 
+    let txn = db.begin().await?;
     let new_rv = a.row_version + 1;
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE inspection_anomalies SET linked_di_id = ?, routing_decision = 'di', resolution_status = 'triaged', \
          row_version = ? WHERE id = ? AND row_version = ?",
@@ -186,8 +143,8 @@ pub async fn route_inspection_anomaly_to_di(
     ))
     .await?;
 
-    let updated = load_anomaly(db, anomaly_id).await?;
-    stage_inspection_anomaly(db, &updated).await?;
+    let updated = load_anomaly(&txn, anomaly_id).await?;
+    txn.commit().await?;
     Ok((di, updated))
 }
 
@@ -272,11 +229,12 @@ pub async fn route_inspection_anomaly_to_wo(
         requires_permit: Some(a.requires_permit_review),
     };
 
+    // create_work_order commits the WO together with its own outbox entry.
     let wo = create_work_order(db, wo_in).await?;
-    stage_work_order_sync_from_row(db, &wo).await?;
 
+    let txn = db.begin().await?;
     let new_rv = a.row_version + 1;
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE inspection_anomalies SET linked_work_order_id = ?, routing_decision = 'wo', resolution_status = 'triaged', \
          row_version = ? WHERE id = ? AND row_version = ?",
@@ -289,8 +247,8 @@ pub async fn route_inspection_anomaly_to_wo(
     ))
     .await?;
 
-    let updated = load_anomaly(db, anomaly_id).await?;
-    stage_inspection_anomaly(db, &updated).await?;
+    let updated = load_anomaly(&txn, anomaly_id).await?;
+    txn.commit().await?;
     Ok((wo, updated))
 }
 
@@ -299,7 +257,8 @@ pub async fn defer_inspection_anomaly(
     anomaly_id: i64,
     expected_row_version: i64,
 ) -> AppResult<InspectionAnomaly> {
-    let a = load_anomaly(db, anomaly_id).await?;
+    let txn = db.begin().await?;
+    let a = load_anomaly(&txn, anomaly_id).await?;
     if a.row_version != expected_row_version {
         return Err(AppError::ValidationFailed(vec![
             "row_version mismatch on inspection_anomalies.".into(),
@@ -307,14 +266,14 @@ pub async fn defer_inspection_anomaly(
     }
     assert_routable(&a)?;
     let new_rv = a.row_version + 1;
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE inspection_anomalies SET routing_decision = 'defer', resolution_status = 'deferred', row_version = ? \
          WHERE id = ? AND row_version = ?",
         [new_rv.into(), anomaly_id.into(), expected_row_version.into()],
     ))
     .await?;
-    let updated = load_anomaly(db, anomaly_id).await?;
-    stage_inspection_anomaly(db, &updated).await?;
+    let updated = load_anomaly(&txn, anomaly_id).await?;
+    txn.commit().await?;
     Ok(updated)
 }

@@ -1,4 +1,4 @@
-// ADR-003: all invoke() calls live exclusively in src/services/.
+﻿// ADR-003: all invoke() calls live exclusively in src/services/.
 
 import { z } from "zod";
 
@@ -12,7 +12,7 @@ import type {
   PageRequest,
 } from "@shared/ipc-types";
 
-// â”€â”€ Zod schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// --- Zod schemas ---
 
 export const LookupValueOptionSchema = z.object({
   id: z.number().int(),
@@ -25,7 +25,7 @@ export const LookupValueOptionSchema = z.object({
 });
 
 export const LookupValueRecordSchema = LookupValueOptionSchema.extend({
-  sync_id: z.string().min(1),
+  entity_sync_id: z.string().min(1),
   domain_id: z.number().int(),
   description: z.string().nullable(),
   sort_order: z.number().int(),
@@ -33,7 +33,7 @@ export const LookupValueRecordSchema = LookupValueOptionSchema.extend({
   parent_value_id: z.number().int().nullable(),
 });
 
-// â”€â”€ Service functions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// --- Service functions ---
 
 /**
  * Returns all active values for a domain key.

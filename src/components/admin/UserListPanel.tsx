@@ -1,10 +1,20 @@
 ﻿import type { ColumnDef } from "@tanstack/react-table";
-import { ArrowRight, Loader2, LockOpen, Pencil, Plus, ShieldCheck, UserX } from "lucide-react";
+import {
+  ArrowRight,
+  KeyRound,
+  Loader2,
+  LockOpen,
+  Pencil,
+  Plus,
+  ShieldCheck,
+  UserX,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { CreateUserDialog } from "@/components/admin/CreateUserDialog";
 import { OnlinePresenceIndicator } from "@/components/admin/OnlinePresenceIndicator";
+import { TempPasswordDialog } from "@/components/admin/TempPasswordDialog";
 import { DataTable } from "@/components/data/DataTable";
 import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
 import type { SmartFilterDef } from "@/components/filters/smart-filter-types";
@@ -33,27 +43,28 @@ import { useStepUp } from "@/hooks/use-step-up";
 import { useToast } from "@/hooks/use-toast";
 import { listPersonnel } from "@/services/personnel-service";
 import {
-  listUsers,
-  getUser,
-  deactivateUser,
-  updateUser,
+  adminSetUserPassword,
   assignRoleScope,
-  revokeRoleScope,
+  deactivateUser,
+  getUser,
   listRoles,
+  listUsers,
+  revokeRoleScope,
   unlockUserAccount,
+  updateUser,
 } from "@/services/rbac-service";
 import type {
-  UserWithRoles,
+  AssignRoleScopeInput,
+  Personnel,
+  RoleWithPermissions,
+  UpdateUserInput,
   UserDetail,
   UserListFilter,
-  UpdateUserInput,
-  AssignRoleScopeInput,
-  RoleWithPermissions,
-  Personnel,
+  UserWithRoles,
 } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
-// â”€â”€ Detail modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Detail modal ────────────────────────────────────────────────────────────
 
 function UserDetailSheet({
   userId,
@@ -83,53 +94,39 @@ function UserDetailSheet({
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{detail?.user.display_name ?? detail?.user.username ?? "â€¦"}</DialogTitle>
+          <DialogTitle>{detail?.user.display_name ?? detail?.user.username ?? "…"}</DialogTitle>
         </DialogHeader>
 
-        {loading && (
-          <p className="mt-4 text-sm text-text-secondary">{t("common.loading", "Chargementâ€¦")}</p>
-        )}
+        {loading && <p className="mt-4 text-sm text-text-secondary">{t("common.loading")}</p>}
 
         {detail && !loading && (
           <div className="mt-4 space-y-6 text-sm">
             {/* Identity */}
             <section className="space-y-2">
-              <h4 className="font-medium text-text-primary">
-                {t("users.detail.identity", "IdentitÃ©")}
-              </h4>
+              <h4 className="font-medium text-text-primary">{t("users.detail.identity")}</h4>
               <dl className="grid grid-cols-2 gap-x-4 gap-y-1">
-                <dt className="text-text-secondary">{t("users.fields.username", "Identifiant")}</dt>
+                <dt className="text-text-secondary">{t("users.fields.username")}</dt>
                 <dd>{detail.user.username}</dd>
-                <dt className="text-text-secondary">
-                  {t("users.fields.identityMode", "Mode d'authentification")}
-                </dt>
+                <dt className="text-text-secondary">{t("users.fields.identityMode")}</dt>
                 <dd>
                   <Badge variant="outline">{detail.user.identity_mode}</Badge>
                 </dd>
-                <dt className="text-text-secondary">{t("users.fields.status", "Statut")}</dt>
+                <dt className="text-text-secondary">{t("users.fields.status")}</dt>
                 <dd>
                   <Badge variant={detail.user.is_active ? "default" : "destructive"}>
-                    {detail.user.is_active
-                      ? t("users.active", "Actif")
-                      : t("users.inactive", "Inactif")}
+                    {detail.user.is_active ? t("users.active") : t("users.inactive")}
                   </Badge>
                 </dd>
-                <dt className="text-text-secondary">
-                  {t("users.fields.lastSeen", "DerniÃ¨re connexion")}
-                </dt>
-                <dd>{detail.user.last_seen_at ?? "â€”"}</dd>
+                <dt className="text-text-secondary">{t("users.fields.lastSeen")}</dt>
+                <dd>{detail.user.last_seen_at ?? "—"}</dd>
               </dl>
             </section>
 
             {/* Role assignments */}
             <section className="space-y-2">
-              <h4 className="font-medium text-text-primary">
-                {t("users.detail.roles", "RÃ´les assignÃ©s")}
-              </h4>
+              <h4 className="font-medium text-text-primary">{t("users.detail.roles")}</h4>
               {detail.scope_assignments.length === 0 && (
-                <p className="text-text-secondary">
-                  {t("users.detail.noRoles", "Aucun rÃ´le assignÃ©.")}
-                </p>
+                <p className="text-text-secondary">{t("users.detail.noRoles")}</p>
               )}
               <ul className="space-y-1">
                 {detail.user.roles.map((r) => (
@@ -145,7 +142,7 @@ function UserDetailSheet({
                       </Badge>
                       {r.is_emergency && (
                         <Badge variant="destructive" className="text-[10px]">
-                          {t("users.emergency", "Urgence")}
+                          {t("users.emergency")}
                         </Badge>
                       )}
                     </div>
@@ -156,7 +153,7 @@ function UserDetailSheet({
                         void revokeRoleScope(r.assignment_id).then(onClose);
                       }}
                     >
-                      {t("users.actions.revoke", "RÃ©voquer")}
+                      {t("users.actions.revoke")}
                     </Button>
                   </li>
                 ))}
@@ -166,7 +163,7 @@ function UserDetailSheet({
             {/* Effective permissions */}
             <section className="space-y-2">
               <h4 className="font-medium text-text-primary">
-                {t("users.detail.permissions", "Permissions effectives")}
+                {t("users.detail.permissions")}
                 <Badge variant="secondary" className="ml-2">
                   {detail.effective_permissions.length}
                 </Badge>
@@ -192,7 +189,7 @@ function UserDetailSheet({
                   }}
                 >
                   <UserX className="mr-1.5 h-4 w-4" />
-                  {t("users.actions.deactivate", "DÃ©sactiver")}
+                  {t("users.actions.deactivate")}
                 </Button>
               </div>
             )}
@@ -203,8 +200,8 @@ function UserDetailSheet({
   );
 }
 
-// â”€â”€ CreateUserDialog â€” imported from CreateUserDialog.tsx â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// â”€â”€ Assign-role dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── CreateUserDialog — imported from CreateUserDialog.tsx ────────────────────
+// ── Assign-role dialog ──────────────────────────────────────────────────────
 
 function AssignRoleDialog({
   user,
@@ -265,60 +262,47 @@ function AssignRoleDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>
-            {t("users.assignRole.title", "Assigner un rÃ´le")} â€” {user?.username}
+            {t("users.assignRole.titleWithUser", { username: user?.username ?? "" })}
           </DialogTitle>
-          <DialogDescription>
-            {t("users.assignRole.description", "SÃ©lectionnez un rÃ´le et un type de pÃ©rimÃ¨tre.")}
-          </DialogDescription>
+          <DialogDescription>{t("users.assignRole.description")}</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-2">
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">
-              {t("users.assignRole.scope", "PÃ©rimÃ¨tre")}
-            </label>
+            <label className="text-sm font-medium">{t("users.assignRole.scope")}</label>
             <Select value={scopeType} onValueChange={setScopeType}>
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="tenant">{t("scope.global", "Global")}</SelectItem>
-                <SelectItem value="site">{t("scope.site", "Site")}</SelectItem>
-                <SelectItem value="org_node">{t("scope.department", "DÃ©partement")}</SelectItem>
+                <SelectItem value="tenant">{t("scope.global")}</SelectItem>
+                <SelectItem value="site">{t("scope.site")}</SelectItem>
+                <SelectItem value="org_node">{t("scope.department")}</SelectItem>
               </SelectContent>
             </Select>
           </div>
 
           <div className="space-y-2">
-            <label className="text-sm font-medium">
-              {t("users.assignRole.replacement", "Ancien rÃ´le â†’ nouveau rÃ´le")}
-            </label>
-            <p className="text-xs text-text-secondary">
-              {t(
-                "users.assignRole.replacementHint",
-                "Pour ce pÃ©rimÃ¨tre, une seule attribution Ã  la fois : le nouveau rÃ´le remplace lâ€™actuel (y compris une Ã©lÃ©vation dâ€™urgence Ã  ce niveau).",
-              )}
-            </p>
+            <label className="text-sm font-medium">{t("users.assignRole.replacement")}</label>
+            <p className="text-xs text-text-secondary">{t("users.assignRole.replacementHint")}</p>
             <div
               className="flex min-h-[2.5rem] flex-col gap-2 rounded-md border border-surface-border bg-surface-1/50 p-3 sm:flex-row sm:items-stretch"
-              aria-label={t("users.assignRole.replacement", "Ancien rÃ´le â†’ nouveau rÃ´le")}
+              aria-label={t("users.assignRole.replacement")}
             >
               <div className="flex min-w-0 flex-1 flex-col justify-center gap-1 sm:pr-1">
-                <span className="text-xs text-text-secondary">
-                  {t("users.assignRole.current", "RÃ´le actuel")}
-                </span>
+                <span className="text-xs text-text-secondary">{t("users.assignRole.current")}</span>
                 {assignmentAtScope ? (
                   <span className="font-medium text-foreground">
                     {assignmentAtScope.role_name}
                     {assignmentAtScope.is_emergency ? (
                       <span className="ml-1 text-xs font-normal text-amber-700">
-                        {t("users.assignRole.emergencyBadge", "(urgence)")}
+                        {t("users.assignRole.emergencyBadge")}
                       </span>
                     ) : null}
                   </span>
                 ) : (
                   <span className="text-sm text-text-secondary">
-                    {t("users.assignRole.noRoleAtScope", "Aucun")}
+                    {t("users.assignRole.noRoleAtScope")}
                   </span>
                 )}
               </div>
@@ -330,13 +314,11 @@ function AssignRoleDialog({
               </div>
               <div className="flex min-w-0 flex-1 flex-col gap-1.5 sm:pl-1">
                 <span className="text-xs text-text-secondary">
-                  {t("users.assignRole.newLabel", "Nouveau rÃ´le")}
+                  {t("users.assignRole.newLabel")}
                 </span>
                 <Select value={selectedRole} onValueChange={setSelectedRole}>
                   <SelectTrigger className="w-full min-w-0">
-                    <SelectValue
-                      placeholder={t("users.assignRole.selectRole", "Choisir un rÃ´le")}
-                    />
+                    <SelectValue placeholder={t("users.assignRole.selectRole")} />
                   </SelectTrigger>
                   <SelectContent>
                     {roles.map((r) => (
@@ -353,10 +335,10 @@ function AssignRoleDialog({
 
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
-            {t("common.cancel", "Annuler")}
+            {t("common.cancel")}
           </Button>
           <Button onClick={handleSubmit} disabled={!selectedRole || submitting}>
-            {t("users.assignRole.confirm", "Assigner")}
+            {t("users.assignRole.confirm")}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -364,7 +346,7 @@ function AssignRoleDialog({
   );
 }
 
-// â”€â”€ Edit-user dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Edit-user dialog ────────────────────────────────────────────────────────
 
 function EditUserDialog({
   user,
@@ -415,7 +397,7 @@ function EditUserDialog({
         if (!cancelled) {
           setPersonnelItems([]);
           toast({
-            title: t("users.create.personnelLoadError", "Could not load personnel list"),
+            title: t("users.create.personnelLoadError"),
             variant: "destructive",
           });
         }
@@ -433,7 +415,7 @@ function EditUserDialog({
     if (!normalized) return null;
     const basicEmailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!basicEmailRegex.test(normalized)) {
-      return t("users.edit.invalidEmail", "Please enter a valid email address.");
+      return t("users.edit.invalidEmail");
     }
     return null;
   }, [email, t]);
@@ -449,7 +431,7 @@ function EditUserDialog({
         : `+${cleaned}`;
     const digits = candidate.replace(/\D/g, "");
     if (!candidate.startsWith("+") || digits.length < 8 || digits.length > 15) {
-      return t("users.edit.invalidPhone", "Please enter a valid phone number (E.164).");
+      return t("users.edit.invalidPhone");
     }
     return null;
   }, [phone, t]);
@@ -473,13 +455,13 @@ function EditUserDialog({
       };
       await updateUser(payload);
 
-      toast({ title: t("users.edit.success", "User updated"), variant: "success" });
+      toast({ title: t("users.edit.success"), variant: "success" });
       onSaved();
       onClose();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       toast({
-        title: msg || t("users.edit.error", "Failed to update user"),
+        title: msg || t("users.edit.error"),
         variant: "destructive",
       });
     } finally {
@@ -491,35 +473,24 @@ function EditUserDialog({
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{t("users.edit.title", "Edit user")}</DialogTitle>
-          <DialogDescription>
-            {t(
-              "users.edit.description",
-              "Update account identity and flags. To change permissions, use Assign role (shield) on a user row.",
-            )}
-          </DialogDescription>
+          <DialogTitle>{t("users.edit.title")}</DialogTitle>
+          <DialogDescription>{t("users.edit.description")}</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-2">
           <div className="grid grid-cols-1 gap-3 rounded-md border border-surface-border bg-surface-1/50 p-3 sm:grid-cols-2">
             <div>
-              <p className="text-xs text-text-secondary">
-                {t("users.fields.identityMode", "Authentication mode")}
-              </p>
-              <p className="text-sm font-medium">{user?.identity_mode ?? "â€”"}</p>
+              <p className="text-xs text-text-secondary">{t("users.fields.identityMode")}</p>
+              <p className="text-sm font-medium">{user?.identity_mode ?? "—"}</p>
             </div>
             <div>
-              <p className="text-xs text-text-secondary">
-                {t("users.fields.lastSeen", "Last seen")}
-              </p>
-              <p className="text-sm font-medium">{user?.last_seen_at ?? "â€”"}</p>
+              <p className="text-xs text-text-secondary">{t("users.fields.lastSeen")}</p>
+              <p className="text-sm font-medium">{user?.last_seen_at ?? "—"}</p>
             </div>
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">
-              {t("users.fields.displayName", "Display name")}
-            </label>
+            <label className="text-sm font-medium">{t("users.fields.displayName")}</label>
             <Input
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
@@ -530,24 +501,20 @@ function EditUserDialog({
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">
-                {t("users.fields.email", "Email Professionnel")}
-              </label>
+              <label className="text-sm font-medium">{t("users.fields.email")}</label>
               <Input
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 disabled={saving}
-                placeholder="name@company.com"
+                placeholder={t("users.edit.emailPlaceholder")}
                 autoComplete="email"
               />
               {emailError && <p className="text-xs text-red-600">{emailError}</p>}
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">
-                {t("users.fields.phone", "NumÃ©ro de TÃ©lÃ©phone")}
-              </label>
+              <label className="text-sm font-medium">{t("users.fields.phone")}</label>
               <Input
                 type="tel"
                 value={phone}
@@ -561,7 +528,7 @@ function EditUserDialog({
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">{t("users.fields.username", "Username")}</label>
+            <label className="text-sm font-medium">{t("users.fields.username")}</label>
             <Input
               value={username}
               onChange={(e) => setUsername(e.target.value)}
@@ -571,39 +538,29 @@ function EditUserDialog({
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">
-              {t("users.create.linkPersonnel", "Link to existing personnel")}
-            </label>
+            <label className="text-sm font-medium">{t("users.create.linkPersonnel")}</label>
             {canViewPersonnel ? (
               personnelLoading ? (
-                <p className="text-xs text-text-secondary">
-                  {t("common.loading", "Chargementâ€¦")}
-                </p>
+                <p className="text-xs text-text-secondary">{t("common.loading")}</p>
               ) : (
                 <PersonnelPickerCombobox
                   items={personnelItems}
                   value={personnelId}
                   onChange={setPersonnelId}
                   disabled={saving}
-                  placeholder={t(
-                    "users.create.personnelSearchPlaceholder",
-                    "Search by name or employee codeâ€¦",
-                  )}
+                  placeholder={t("users.create.personnelSearchPlaceholder")}
                 />
               )
             ) : (
               <p className="text-xs text-amber-800 dark:text-amber-200">
-                {t(
-                  "users.create.noPersonnelPermission",
-                  "Listing personnel requires the Â« per.view Â» permission. You can create the account without a link and associate it later.",
-                )}
+                {t("users.create.noPersonnelPermission")}
               </p>
             )}
           </div>
 
           <label className="flex items-center gap-2 text-sm">
             <Checkbox checked={isActive} onCheckedChange={setIsActive} disabled={saving} />
-            {t("users.active", "Active")}
+            {t("users.active")}
           </label>
 
           <label className="flex items-center gap-2 text-sm">
@@ -612,22 +569,22 @@ function EditUserDialog({
               onCheckedChange={setForcePasswordChange}
               disabled={saving}
             />
-            {t("users.create.forceChange", "Force password change on first login")}
+            {t("users.create.forceChange")}
           </label>
         </div>
 
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={saving}>
-            {t("common.cancel", "Cancel")}
+            {t("common.cancel")}
           </Button>
           <Button onClick={handleSave} disabled={!canSave}>
             {saving ? (
               <>
                 <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-                {t("common.saving", "Savingâ€¦")}
+                {t("common.saving")}
               </>
             ) : (
-              t("common.save", "Save")
+              t("common.save")
             )}
           </Button>
         </DialogFooter>
@@ -636,7 +593,7 @@ function EditUserDialog({
   );
 }
 
-// â”€â”€ Main panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Main panel ──────────────────────────────────────────────────────────────
 
 export function UserListPanel() {
   const { t } = useTranslation("admin");
@@ -649,7 +606,7 @@ export function UserListPanel() {
   const [roles, setRoles] = useState<RoleWithPermissions[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Filters â€” searchInput is immediate UI; search is debounced (via SmartFilterBar)
+  // Filters — searchInput is immediate UI; search is debounced (via SmartFilterBar)
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [activeFilter, setActiveFilter] = useState<string>("all");
@@ -664,6 +621,9 @@ export function UserListPanel() {
 
   // Create dialog
   const [showCreate, setShowCreate] = useState(false);
+
+  // Show-once temporary password after admin reset (never persist beyond React state)
+  const [tempPassword, setTempPassword] = useState<string | null>(null);
 
   const buildFilter = useCallback((): UserListFilter => {
     const f: UserListFilter = {};
@@ -681,7 +641,7 @@ export function UserListPanel() {
       setUsers(data);
     } catch {
       toast({
-        title: t("users.errors.loadFailed", "Erreur de chargement des utilisateurs"),
+        title: t("users.errors.loadFailed"),
         variant: "destructive",
       });
     } finally {
@@ -702,7 +662,7 @@ export function UserListPanel() {
     async (userId: number) => {
       try {
         await withStepUp(() => deactivateUser(userId));
-        toast({ title: t("users.deactivated", "Utilisateur dÃ©sactivÃ©"), variant: "success" });
+        toast({ title: t("users.deactivated"), variant: "success" });
         void fetchUsers();
       } catch (err) {
         // User explicitly cancelled the step-up dialog.
@@ -710,7 +670,7 @@ export function UserListPanel() {
           return;
         }
         toast({
-          title: t("users.errors.deactivateFailed", "Erreur lors de la dÃ©sactivation"),
+          title: t("users.errors.deactivateFailed"),
           variant: "destructive",
         });
       }
@@ -723,11 +683,42 @@ export function UserListPanel() {
     async (userId: number) => {
       try {
         await withStepUp(() => unlockUserAccount(userId));
-        toast({ title: t("users.unlocked", "Compte dÃ©verrouillÃ©"), variant: "success" });
+        toast({ title: t("users.unlocked"), variant: "success" });
         void fetchUsers();
       } catch {
         toast({
-          title: t("users.errors.unlockFailed", "Erreur lors du dÃ©verrouillage"),
+          title: t("users.errors.unlockFailed"),
+          variant: "destructive",
+        });
+      }
+    },
+    [fetchUsers, toast, t, withStepUp],
+  );
+
+  const handleResetPassword = useCallback(
+    async (user: UserWithRoles) => {
+      if (user.identity_mode === "sso") {
+        toast({
+          title: t("users.resetPassword.ssoUnavailable"),
+          variant: "destructive",
+        });
+        return;
+      }
+      const confirmed = window.confirm(t("users.resetPassword.confirm"));
+      if (!confirmed) return;
+      try {
+        const result = await withStepUp(() =>
+          adminSetUserPassword({ user_id: user.id, temporary_password: null }),
+        );
+        setTempPassword(result.temporary_password);
+        toast({ title: t("users.resetPassword.success"), variant: "success" });
+        void fetchUsers();
+      } catch (err) {
+        if (err instanceof Error && err.message.includes("Step-up cancelled")) {
+          return;
+        }
+        toast({
+          title: t("users.errors.resetPasswordFailed"),
           variant: "destructive",
         });
       }
@@ -740,7 +731,7 @@ export function UserListPanel() {
     () => [
       {
         accessorKey: "username",
-        header: t("users.columns.username", "Identifiant"),
+        header: t("users.columns.username"),
         cell: ({ row }) => (
           <div className="flex items-center gap-1.5">
             <OnlinePresenceIndicator userId={row.original.id} />
@@ -750,12 +741,12 @@ export function UserListPanel() {
       },
       {
         accessorKey: "display_name",
-        header: t("users.columns.displayName", "Nom affichÃ©"),
-        cell: ({ row }) => row.original.display_name ?? "â€”",
+        header: t("users.columns.displayName"),
+        cell: ({ row }) => row.original.display_name ?? "—",
       },
       {
         accessorKey: "identity_mode",
-        header: t("users.columns.identityMode", "Auth"),
+        header: t("users.columns.identityMode"),
         cell: ({ row }) => (
           <Badge variant="outline" className="text-[10px]">
             {row.original.identity_mode}
@@ -764,7 +755,7 @@ export function UserListPanel() {
       },
       {
         id: "status",
-        header: t("users.columns.status", "Statut"),
+        header: t("users.columns.status"),
         cell: ({ row }) => {
           const isLocked =
             row.original.locked_until != null &&
@@ -772,16 +763,14 @@ export function UserListPanel() {
           return (
             <div className="flex items-center gap-1">
               <Badge variant={row.original.is_active ? "default" : "destructive"}>
-                {row.original.is_active
-                  ? t("users.active", "Actif")
-                  : t("users.inactive", "Inactif")}
+                {row.original.is_active ? t("users.active") : t("users.inactive")}
               </Badge>
               {isLocked && (
                 <Badge
                   variant="outline"
                   className="border-amber-300 bg-amber-50 text-amber-700 text-[10px]"
                 >
-                  {t("users.locked", "VerrouillÃ©")}
+                  {t("users.locked")}
                 </Badge>
               )}
             </div>
@@ -790,11 +779,11 @@ export function UserListPanel() {
       },
       {
         id: "roles",
-        header: t("users.columns.roles", "RÃ´les"),
+        header: t("users.columns.roles"),
         cell: ({ row }) => {
           const roleRows = row.original.roles;
           if (roleRows.length === 0) {
-            return <span className="text-xs text-text-muted">â€”</span>;
+            return <span className="text-xs text-text-muted">—</span>;
           }
           return (
             <div className="flex max-w-[14rem] flex-wrap gap-1">
@@ -809,9 +798,9 @@ export function UserListPanel() {
       },
       {
         accessorKey: "last_seen_at",
-        header: t("users.columns.lastSeen", "DerniÃ¨re connexion"),
+        header: t("users.columns.lastSeen"),
         cell: ({ row }) => (
-          <span className="text-xs text-text-secondary">{row.original.last_seen_at ?? "â€”"}</span>
+          <span className="text-xs text-text-secondary">{row.original.last_seen_at ?? "—"}</span>
         ),
       },
       {
@@ -825,7 +814,7 @@ export function UserListPanel() {
                 <Button
                   variant="ghost"
                   size="sm"
-                  title={t("users.unlock", "DÃ©verrouiller")}
+                  title={t("users.unlock")}
                   onClick={(e) => {
                     e.stopPropagation();
                     void handleUnlock(row.original.id);
@@ -834,11 +823,24 @@ export function UserListPanel() {
                   <LockOpen className="h-3.5 w-3.5 text-amber-600" />
                 </Button>
               )}
+            {can(P.ADM_USERS) && row.original.identity_mode !== "sso" && (
+              <Button
+                variant="ghost"
+                size="sm"
+                title={t("users.actions.resetPassword")}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void handleResetPassword(row.original);
+                }}
+              >
+                <KeyRound className="h-3.5 w-3.5 text-primary" />
+              </Button>
+            )}
             {can(P.ADM_USERS) && (
               <Button
                 variant="ghost"
                 size="sm"
-                title={t("common.edit", "Edit")}
+                title={t("common.edit")}
                 onClick={(e) => {
                   e.stopPropagation();
                   setEditTarget(row.original);
@@ -875,7 +877,7 @@ export function UserListPanel() {
         ),
       },
     ],
-    [t, can, handleDeactivate, handleUnlock],
+    [t, can, handleDeactivate, handleUnlock, handleResetPassword],
   );
 
   return (
@@ -884,7 +886,7 @@ export function UserListPanel() {
         <div className="flex flex-wrap items-start gap-3">
           <div className="min-w-0 flex-1">
             <SmartFilterBar
-              searchPlaceholder={t("users.search", "Rechercher un utilisateurâ€¦")}
+              searchPlaceholder={t("users.search")}
               searchValue={searchInput}
               onSearchInputChange={setSearchInput}
               onSearchChange={setSearch}
@@ -893,27 +895,27 @@ export function UserListPanel() {
                   {
                     id: "active",
                     kind: "select",
-                    label: t("users.filter.statusLabel", "Statut"),
+                    label: t("users.filter.statusLabel"),
                     options: [
-                      { value: "active", label: t("users.filter.active", "Actifs") },
-                      { value: "inactive", label: t("users.filter.inactive", "Inactifs") },
+                      { value: "active", label: t("users.filter.active") },
+                      { value: "inactive", label: t("users.filter.inactive") },
                     ],
                     value: activeFilter === "all" ? null : activeFilter,
                     onChange: (v) => setActiveFilter(v ?? "all"),
-                    allLabel: t("users.filter.all", "Tous"),
+                    allLabel: t("users.filter.all"),
                   },
                   {
                     id: "mode",
                     kind: "select",
-                    label: t("users.filter.modeLabel", "Mode"),
+                    label: t("users.filter.modeLabel"),
                     options: [
-                      { value: "local", label: t("users.filter.local", "Local") },
-                      { value: "sso", label: t("users.filter.sso", "SSO") },
-                      { value: "hybrid", label: t("users.filter.hybrid", "Hybride") },
+                      { value: "local", label: t("users.filter.local") },
+                      { value: "sso", label: t("users.filter.sso") },
+                      { value: "hybrid", label: t("users.filter.hybrid") },
                     ],
                     value: modeFilter === "all" ? null : modeFilter,
                     onChange: (v) => setModeFilter(v ?? "all"),
-                    allLabel: t("users.filter.allModes", "Tous modes"),
+                    allLabel: t("users.filter.allModes"),
                   },
                 ] satisfies SmartFilterDef[]
               }
@@ -930,7 +932,7 @@ export function UserListPanel() {
           {can(P.ADM_USERS) && (
             <Button size="sm" className="shrink-0 mt-0.5" onClick={() => setShowCreate(true)}>
               <Plus className="mr-1.5 h-4 w-4" />
-              {t("users.create", "Nouvel utilisateur")}
+              {t("users.create")}
             </Button>
           )}
         </div>
@@ -972,6 +974,12 @@ export function UserListPanel() {
         open={editTarget !== null}
         onClose={() => setEditTarget(null)}
         onSaved={() => void fetchUsers()}
+      />
+
+      <TempPasswordDialog
+        open={tempPassword !== null}
+        temporaryPassword={tempPassword}
+        onClose={() => setTempPassword(null)}
       />
 
       {/* Create user dialog */}

@@ -1,5 +1,6 @@
 {
   "name": "G-AVAIL-01",
+  "note": "WP-07 / audit P1-4: t_exp_hours is uptime, so A_o = T / (T + D) = 100 / 125 = 0.8 (was (T - D) / T = 0.75, which subtracted downtime from uptime). A_i = T / (T + active repair) = 100 / 100 = 1.0.",
   "period": {
     "start": "2026-01-01T00:00:00Z",
     "end": "2026-02-01T00:00:00Z"
@@ -18,7 +19,7 @@
     }
   ],
   "expected": {
-    "availability": 0.75,
+    "availability": 0.8,
     "event_count": 1
   },
   "tolerance": { "rel": 1e-9 }

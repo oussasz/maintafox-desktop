@@ -7,6 +7,11 @@ use serde::{Deserialize, Serialize};
 use super::domain::PersonnelAvailabilityState;
 use crate::errors::{AppError, AppResult};
 
+pub use super::domain::PersonnelAvailabilityBlock;
+
+/// Returned in ValidationFailed when overlap exists and confirm_overlap was not set.
+pub const OVERLAP_CONFIRM_CODE: &str = "AVAILABILITY_BLOCK_OVERLAP_CONFIRM";
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct AvailabilityCalendarFilter {
     pub date_from: String,
@@ -44,19 +49,97 @@ pub struct AvailabilityBlockCreateInput {
     pub end_at: String,
     pub reason_note: Option<String>,
     pub is_critical: Option<bool>,
+    /// When true, skip hard overlap rejection (soft-confirm path).
+    pub confirm_overlap: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct PersonnelAvailabilityBlock {
+#[derive(Debug, Clone, Deserialize)]
+pub struct AvailabilityBlockUpdateInput {
     pub id: i64,
-    pub personnel_id: i64,
     pub block_type: String,
     pub start_at: String,
     pub end_at: String,
     pub reason_note: Option<String>,
-    pub is_critical: bool,
-    pub created_by_id: Option<i64>,
-    pub created_at: String,
+    pub is_critical: Option<bool>,
+    pub confirm_overlap: Option<bool>,
+}
+
+async fn assert_no_overlapping_blocks(
+    db: &DatabaseConnection,
+    personnel_id: i64,
+    start_at: &str,
+    end_at: &str,
+    exclude_id: Option<i64>,
+    confirm_overlap: bool,
+) -> AppResult<()> {
+    let mut sql = String::from(
+        "SELECT id FROM personnel_availability_blocks
+         WHERE personnel_id = ?
+           AND start_at < ?
+           AND end_at > ?",
+    );
+    let mut values: Vec<sea_orm::Value> = vec![personnel_id.into(), end_at.into(), start_at.into()];
+    if let Some(id) = exclude_id {
+        sql.push_str(" AND id <> ?");
+        values.push(id.into());
+    }
+    sql.push_str(" LIMIT 1");
+
+    let overlap = db
+        .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, sql, values))
+        .await?;
+    if overlap.is_some() {
+        if confirm_overlap {
+            return Ok(());
+        }
+        return Err(AppError::ValidationFailed(vec![OVERLAP_CONFIRM_CODE.to_string()]));
+    }
+    Ok(())
+}
+
+const BLOCK_SELECT_SQL: &str = "SELECT
+                b.id,
+                b.personnel_id,
+                b.block_type,
+                b.start_at,
+                b.end_at,
+                b.reason_note,
+                b.is_critical,
+                b.created_by_id,
+                COALESCE(NULLIF(TRIM(ua.display_name), ''), ua.username) AS created_by_label,
+                b.created_at
+             FROM personnel_availability_blocks b
+             LEFT JOIN user_accounts ua ON ua.id = b.created_by_id";
+
+fn map_block_row(row: sea_orm::QueryResult) -> PersonnelAvailabilityBlock {
+    PersonnelAvailabilityBlock {
+        id: row.try_get("", "id").unwrap_or_default(),
+        personnel_id: row.try_get("", "personnel_id").unwrap_or_default(),
+        block_type: row.try_get("", "block_type").unwrap_or_default(),
+        start_at: row.try_get("", "start_at").unwrap_or_default(),
+        end_at: row.try_get("", "end_at").unwrap_or_default(),
+        reason_note: row.try_get("", "reason_note").unwrap_or(None),
+        is_critical: row.try_get::<i64>("", "is_critical").unwrap_or(0) == 1,
+        created_by_id: row.try_get("", "created_by_id").unwrap_or(None),
+        created_by_label: row.try_get("", "created_by_label").unwrap_or(None),
+        created_at: row.try_get("", "created_at").unwrap_or_default(),
+        reason_masked: false,
+    }
+}
+
+async fn fetch_block_by_id(db: &DatabaseConnection, id: i64) -> AppResult<PersonnelAvailabilityBlock> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!("{BLOCK_SELECT_SQL} WHERE b.id = ? LIMIT 1"),
+            [id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "AvailabilityBlock".into(),
+            id: id.to_string(),
+        })?;
+    Ok(map_block_row(row))
 }
 
 pub async fn list_availability_calendar(
@@ -85,7 +168,7 @@ pub async fn list_availability_calendar(
     }
 
     let team_filter_sql = if filter.team_id.is_some() {
-        "AND COALESCE(t.id, pd.primary_team_id) = ?"
+        "AND COALESCE(t.id, home.id, pd.primary_team_id) = ?"
     } else {
         ""
     };
@@ -124,8 +207,8 @@ pub async fn list_availability_calendar(
             pd.full_name,
             pd.primary_entity_id AS entity_id,
             e.name AS entity_name,
-            COALESCE(t.id, pd.primary_team_id) AS team_id,
-            COALESCE(t.name, pt.name) AS team_name,
+            COALESCE(t.id, home.id, pd.primary_team_id) AS team_id,
+            COALESCE(t.name, home.name) AS team_name,
             pd.work_date,
             sd.shift_start,
             sd.shift_end,
@@ -162,7 +245,7 @@ pub async fn list_availability_calendar(
             ), '') AS block_types
          FROM person_days pd
          LEFT JOIN org_nodes e ON e.id = pd.primary_entity_id
-         LEFT JOIN org_nodes pt ON pt.id = pd.primary_team_id
+         LEFT JOIN teams home ON home.id = pd.primary_team_id
          LEFT JOIN teams t ON t.id = (
             SELECT pta.team_id
             FROM personnel_team_assignments pta
@@ -236,6 +319,16 @@ pub async fn create_availability_block(
         return Err(AppError::ValidationFailed(vec!["block_type is required.".to_string()]));
     }
 
+    assert_no_overlapping_blocks(
+        db,
+        input.personnel_id,
+        &input.start_at,
+        &input.end_at,
+        None,
+        input.confirm_overlap.unwrap_or(false),
+    )
+    .await?;
+
     let is_critical =
         input.is_critical.unwrap_or(false) || matches!(input.block_type.as_str(), "medical" | "restriction");
 
@@ -259,34 +352,114 @@ pub async fn create_availability_block(
     let row = db
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT
-                id,
-                personnel_id,
-                block_type,
-                start_at,
-                end_at,
-                reason_note,
-                is_critical,
-                created_by_id,
-                created_at
-             FROM personnel_availability_blocks
-             WHERE id = last_insert_rowid()"
-                .to_string(),
+            format!("{BLOCK_SELECT_SQL} WHERE b.id = last_insert_rowid()"),
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("availability block insert failed")))?;
 
-    Ok(PersonnelAvailabilityBlock {
-        id: row.try_get("", "id").unwrap_or_default(),
-        personnel_id: row.try_get("", "personnel_id").unwrap_or_default(),
-        block_type: row.try_get("", "block_type").unwrap_or_default(),
-        start_at: row.try_get("", "start_at").unwrap_or_default(),
-        end_at: row.try_get("", "end_at").unwrap_or_default(),
-        reason_note: row.try_get("", "reason_note").unwrap_or(None),
-        is_critical: row.try_get::<i64>("", "is_critical").unwrap_or(0) == 1,
-        created_by_id: row.try_get("", "created_by_id").unwrap_or(None),
-        created_at: row.try_get("", "created_at").unwrap_or_default(),
-    })
+    Ok(map_block_row(row))
+}
+
+pub async fn update_availability_block(
+    db: &DatabaseConnection,
+    input: AvailabilityBlockUpdateInput,
+) -> AppResult<PersonnelAvailabilityBlock> {
+    if input.start_at >= input.end_at {
+        return Err(AppError::ValidationFailed(vec![
+            "start_at must be before end_at.".to_string()
+        ]));
+    }
+    if input.block_type.trim().is_empty() {
+        return Err(AppError::ValidationFailed(vec!["block_type is required.".to_string()]));
+    }
+
+    let existing = fetch_block_by_id(db, input.id).await?;
+    assert_no_overlapping_blocks(
+        db,
+        existing.personnel_id,
+        &input.start_at,
+        &input.end_at,
+        Some(input.id),
+        input.confirm_overlap.unwrap_or(false),
+    )
+    .await?;
+
+    let is_critical =
+        input.is_critical.unwrap_or(false) || matches!(input.block_type.as_str(), "medical" | "restriction");
+
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE personnel_availability_blocks
+         SET block_type = ?, start_at = ?, end_at = ?, reason_note = ?, is_critical = ?
+         WHERE id = ?",
+        [
+            input.block_type.clone().into(),
+            input.start_at.clone().into(),
+            input.end_at.clone().into(),
+            input.reason_note.clone().into(),
+            (if is_critical { 1 } else { 0 }).into(),
+            input.id.into(),
+        ],
+    ))
+    .await?;
+
+    fetch_block_by_id(db, input.id).await
+}
+
+pub async fn delete_availability_block(db: &DatabaseConnection, id: i64) -> AppResult<()> {
+    let existing = fetch_block_by_id(db, id).await?;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "DELETE FROM personnel_availability_blocks WHERE id = ?",
+        [existing.id.into()],
+    ))
+    .await?;
+    Ok(())
+}
+
+/// Truncate an active block so `end_at = now` (soft end). Rejects if now is outside [start, end).
+pub async fn end_availability_block(db: &DatabaseConnection, id: i64) -> AppResult<PersonnelAvailabilityBlock> {
+    let existing = fetch_block_by_id(db, id).await?;
+    let now = Utc::now();
+    let now_str = now.format("%Y-%m-%dT%H:%M:%SZ").to_string();
+
+    let start = chrono::DateTime::parse_from_rfc3339(&existing.start_at)
+        .ok()
+        .map(|d| d.with_timezone(&Utc))
+        .or_else(|| {
+            chrono::NaiveDateTime::parse_from_str(&existing.start_at, "%Y-%m-%dT%H:%M:%SZ")
+                .ok()
+                .map(|n| n.and_utc())
+        });
+    let end = chrono::DateTime::parse_from_rfc3339(&existing.end_at)
+        .ok()
+        .map(|d| d.with_timezone(&Utc))
+        .or_else(|| {
+            chrono::NaiveDateTime::parse_from_str(&existing.end_at, "%Y-%m-%dT%H:%M:%SZ")
+                .ok()
+                .map(|n| n.and_utc())
+        });
+
+    let (Some(start_dt), Some(end_dt)) = (start, end) else {
+        return Err(AppError::ValidationFailed(vec![
+            "Block start_at/end_at could not be parsed.".to_string(),
+        ]));
+    };
+
+    if !(start_dt < now && now < end_dt) {
+        return Err(AppError::ValidationFailed(vec![
+            "Block can only be ended while it is currently active (start < now < end).".to_string(),
+        ]));
+    }
+
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE personnel_availability_blocks SET end_at = ? WHERE id = ?",
+        [now_str.into(), id.into()],
+    ))
+    .await?;
+
+    fetch_block_by_id(db, id).await
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

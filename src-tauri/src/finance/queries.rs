@@ -1,5 +1,5 @@
 use hex;
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, Value};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait, Value};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
@@ -20,7 +20,6 @@ use crate::finance::domain::{
     TransitionBudgetVersionLifecycleInput, UpdateBudgetAlertConfigInput, UpdateBudgetLineInput,
     UpdateBudgetVersionInput, UpdateCostCenterInput, UpdateIntegrationExceptionInput,
 };
-use crate::finance::sync_stage;
 
 fn map_cost_center(row: &QueryResult) -> AppResult<CostCenter> {
     Ok(CostCenter {
@@ -469,7 +468,7 @@ async fn validate_cost_center_parent(
     Ok(())
 }
 
-async fn get_budget_version(db: &DatabaseConnection, version_id: i64) -> AppResult<BudgetVersion> {
+async fn get_budget_version(db: &impl ConnectionTrait, version_id: i64) -> AppResult<BudgetVersion> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -484,7 +483,7 @@ async fn get_budget_version(db: &DatabaseConnection, version_id: i64) -> AppResu
     map_budget_version(&row)
 }
 
-async fn ensure_version_editable(db: &DatabaseConnection, version_id: i64) -> AppResult<BudgetVersion> {
+async fn ensure_version_editable(db: &impl ConnectionTrait, version_id: i64) -> AppResult<BudgetVersion> {
     let version = get_budget_version(db, version_id).await?;
     if version.status != "draft" {
         return Err(AppError::ValidationFailed(vec![
@@ -494,7 +493,7 @@ async fn ensure_version_editable(db: &DatabaseConnection, version_id: i64) -> Ap
     Ok(version)
 }
 
-async fn next_version_no(db: &DatabaseConnection, fiscal_year: i64, scenario_type: &str) -> AppResult<i64> {
+async fn next_version_no(db: &impl ConnectionTrait, fiscal_year: i64, scenario_type: &str) -> AppResult<i64> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -509,7 +508,7 @@ async fn next_version_no(db: &DatabaseConnection, fiscal_year: i64, scenario_typ
 }
 
 async fn ensure_single_frozen_baseline(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     version_id: i64,
     fiscal_year: i64,
     scenario_type: &str,
@@ -717,7 +716,7 @@ pub async fn update_cost_center(
 }
 
 pub async fn list_budget_versions(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     filter: BudgetVersionFilter,
 ) -> AppResult<Vec<BudgetVersion>> {
     let mut sql = String::from("SELECT * FROM budget_versions WHERE 1 = 1");
@@ -746,12 +745,13 @@ pub async fn create_budget_version(
     actor_user_id: i64,
     input: CreateBudgetVersionInput,
 ) -> AppResult<BudgetVersion> {
+    let txn = db.begin().await?;
     let scenario_type = required_trimmed("Scenario type", &input.scenario_type)?;
     let currency_code = required_trimmed("Currency code", &input.currency_code)?;
-    let version_no = next_version_no(db, input.fiscal_year, &scenario_type).await?;
+    let version_no = next_version_no(&txn, input.fiscal_year, &scenario_type).await?;
     let entity_sync_id = Uuid::new_v4().to_string();
 
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO budget_versions (
             entity_sync_id,
@@ -786,7 +786,7 @@ pub async fn create_budget_version(
     .await?;
 
     let created = list_budget_versions(
-        db,
+        &txn,
         BudgetVersionFilter {
             fiscal_year: Some(input.fiscal_year),
             scenario_type: Some(input.scenario_type),
@@ -797,7 +797,7 @@ pub async fn create_budget_version(
     .into_iter()
     .find(|version| version.version_no == version_no)
     .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Inserted budget version could not be reloaded.")))?;
-    sync_stage::stage_budget_version(db, &created).await?;
+    txn.commit().await?;
     Ok(created)
 }
 
@@ -806,7 +806,8 @@ pub async fn create_budget_successor_version(
     actor_user_id: i64,
     input: CreateBudgetSuccessorInput,
 ) -> AppResult<BudgetVersion> {
-    let source = get_budget_version(db, input.source_version_id).await?;
+    let txn = db.begin().await?;
+    let source = get_budget_version(&txn, input.source_version_id).await?;
     if !matches!(source.status.as_str(), "approved" | "frozen" | "closed" | "superseded") {
         return Err(AppError::ValidationFailed(vec![
             "Successor versions can only be created from approved, frozen, closed, or superseded baselines."
@@ -821,10 +822,10 @@ pub async fn create_budget_successor_version(
         .map(|value| required_trimmed("Scenario type", value))
         .transpose()?
         .unwrap_or(source.scenario_type.clone());
-    let version_no = next_version_no(db, fiscal_year, &scenario_type).await?;
+    let version_no = next_version_no(&txn, fiscal_year, &scenario_type).await?;
     let entity_sync_id = Uuid::new_v4().to_string();
 
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO budget_versions (
             entity_sync_id,
@@ -841,7 +842,7 @@ pub async fn create_budget_successor_version(
             erp_external_ref,
             successor_of_version_id,
             created_by_id
-         ) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         ) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             entity_sync_id.into(),
             fiscal_year.into(),
@@ -863,7 +864,7 @@ pub async fn create_budget_successor_version(
     .await?;
 
     let inserted = list_budget_versions(
-        db,
+        &txn,
         BudgetVersionFilter {
             fiscal_year: Some(fiscal_year),
             scenario_type: Some(scenario_type.clone()),
@@ -879,7 +880,7 @@ pub async fn create_budget_successor_version(
         ))
     })?;
 
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO budget_lines (
             budget_version_id,
@@ -906,19 +907,7 @@ pub async fn create_budget_successor_version(
     ))
     .await?;
 
-    sync_stage::stage_budget_version(db, &inserted).await?;
-    let copied_lines = list_budget_lines(
-        db,
-        BudgetLineFilter {
-            budget_version_id: Some(inserted.id),
-            ..BudgetLineFilter::default()
-        },
-    )
-    .await?;
-    for line in copied_lines {
-        sync_stage::stage_budget_line(db, &line).await?;
-    }
-
+    txn.commit().await?;
     Ok(inserted)
 }
 
@@ -928,7 +917,8 @@ pub async fn update_budget_version(
     expected_row_version: i64,
     input: UpdateBudgetVersionInput,
 ) -> AppResult<BudgetVersion> {
-    let version = ensure_version_editable(db, version_id).await?;
+    let txn = db.begin().await?;
+    let version = ensure_version_editable(&txn, version_id).await?;
     if version.row_version != expected_row_version {
         return Err(AppError::ValidationFailed(vec![
             "Budget version was modified elsewhere (stale row_version).".to_string(),
@@ -941,7 +931,7 @@ pub async fn update_budget_version(
         .map(|value| required_trimmed("Currency code", value))
         .transpose()?;
 
-    let result = db
+    let result = txn
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE budget_versions
@@ -985,8 +975,8 @@ pub async fn update_budget_version(
         ]));
     }
 
-    let updated = get_budget_version(db, version_id).await?;
-    sync_stage::stage_budget_version(db, &updated).await?;
+    let updated = get_budget_version(&txn, version_id).await?;
+    txn.commit().await?;
     Ok(updated)
 }
 
@@ -995,7 +985,8 @@ pub async fn transition_budget_version_lifecycle(
     actor_user_id: i64,
     input: TransitionBudgetVersionLifecycleInput,
 ) -> AppResult<BudgetVersion> {
-    let version = get_budget_version(db, input.version_id).await?;
+    let txn = db.begin().await?;
+    let version = get_budget_version(&txn, input.version_id).await?;
     if version.row_version != input.expected_row_version {
         return Err(AppError::ValidationFailed(vec![
             "Budget lifecycle transition failed (stale row_version).".to_string(),
@@ -1008,7 +999,7 @@ pub async fn transition_budget_version_lifecycle(
         )]));
     }
     if input.next_status == "frozen" {
-        ensure_single_frozen_baseline(db, version.id, version.fiscal_year, &version.scenario_type).await?;
+        ensure_single_frozen_baseline(&txn, version.id, version.fiscal_year, &version.scenario_type).await?;
     }
 
     let approved_at = if input.next_status == "approved" {
@@ -1036,7 +1027,7 @@ pub async fn transition_budget_version_lifecycle(
         frozen_at.unwrap_or("frozen_at"),
     );
 
-    let result = db
+    let result = txn
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             sql,
@@ -1058,12 +1049,12 @@ pub async fn transition_budget_version_lifecycle(
         ]));
     }
 
-    let updated = get_budget_version(db, input.version_id).await?;
-    sync_stage::stage_budget_version(db, &updated).await?;
+    let updated = get_budget_version(&txn, input.version_id).await?;
+    txn.commit().await?;
     Ok(updated)
 }
 
-pub async fn list_budget_lines(db: &DatabaseConnection, filter: BudgetLineFilter) -> AppResult<Vec<BudgetLine>> {
+pub async fn list_budget_lines(db: &impl ConnectionTrait, filter: BudgetLineFilter) -> AppResult<Vec<BudgetLine>> {
     let mut sql = String::from(
         "SELECT bl.*, cc.code AS cost_center_code, cc.name AS cost_center_name
          FROM budget_lines bl
@@ -1087,7 +1078,8 @@ pub async fn list_budget_lines(db: &DatabaseConnection, filter: BudgetLineFilter
 }
 
 pub async fn create_budget_line(db: &DatabaseConnection, input: CreateBudgetLineInput) -> AppResult<BudgetLine> {
-    let version = ensure_version_editable(db, input.budget_version_id).await?;
+    let txn = db.begin().await?;
+    let version = ensure_version_editable(&txn, input.budget_version_id).await?;
     let _ = version;
     let budget_bucket = required_trimmed("Budget bucket", &input.budget_bucket)?;
     if input.period_month.is_some_and(|month| !(1..=12).contains(&month)) {
@@ -1097,7 +1089,7 @@ pub async fn create_budget_line(db: &DatabaseConnection, input: CreateBudgetLine
     }
     let entity_sync_id = Uuid::new_v4().to_string();
 
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO budget_lines (
             budget_version_id,
@@ -1134,7 +1126,7 @@ pub async fn create_budget_line(db: &DatabaseConnection, input: CreateBudgetLine
     ))
     .await?;
 
-    let row = db
+    let row = txn
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
             "SELECT last_insert_rowid() AS id".to_string(),
@@ -1143,7 +1135,7 @@ pub async fn create_budget_line(db: &DatabaseConnection, input: CreateBudgetLine
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Inserted budget line id missing.")))?;
     let line_id: i64 = row.try_get("", "id")?;
     let created = list_budget_lines(
-        db,
+        &txn,
         BudgetLineFilter {
             budget_version_id: Some(input.budget_version_id),
             ..BudgetLineFilter::default()
@@ -1156,7 +1148,7 @@ pub async fn create_budget_line(db: &DatabaseConnection, input: CreateBudgetLine
         entity: "BudgetLine".to_string(),
         id: line_id.to_string(),
     })?;
-    sync_stage::stage_budget_line(db, &created).await?;
+    txn.commit().await?;
     Ok(created)
 }
 
@@ -1166,7 +1158,8 @@ pub async fn update_budget_line(
     expected_row_version: i64,
     input: UpdateBudgetLineInput,
 ) -> AppResult<BudgetLine> {
-    let row = db
+    let txn = db.begin().await?;
+    let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, budget_version_id, row_version FROM budget_lines WHERE id = ?",
@@ -1179,7 +1172,7 @@ pub async fn update_budget_line(
         })?;
     let budget_version_id: i64 = row.try_get("", "budget_version_id")?;
     let row_version: i64 = row.try_get("", "row_version")?;
-    ensure_version_editable(db, budget_version_id).await?;
+    ensure_version_editable(&txn, budget_version_id).await?;
     if row_version != expected_row_version {
         return Err(AppError::ValidationFailed(vec![
             "Budget line was modified elsewhere (stale row_version).".to_string(),
@@ -1196,7 +1189,7 @@ pub async fn update_budget_line(
         .map(|value| required_trimmed("Budget bucket", value))
         .transpose()?;
 
-    let result = db
+    let result = txn
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE budget_lines
@@ -1238,7 +1231,7 @@ pub async fn update_budget_line(
     }
 
     let updated = list_budget_lines(
-        db,
+        &txn,
         BudgetLineFilter {
             budget_version_id: Some(budget_version_id),
             ..BudgetLineFilter::default()
@@ -1251,7 +1244,7 @@ pub async fn update_budget_line(
         entity: "BudgetLine".to_string(),
         id: line_id.to_string(),
     })?;
-    sync_stage::stage_budget_line(db, &updated).await?;
+    txn.commit().await?;
     Ok(updated)
 }
 
@@ -3004,8 +2997,9 @@ pub async fn record_erp_export_batch(
         Some(t) if !t.trim().is_empty() => Some(t.trim().to_string()),
         _ => None,
     };
+    let txn = db.begin().await?;
 
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO posted_export_batches (
             entity_sync_id, batch_uuid, export_kind, tenant_id, relay_payload_json,
@@ -3023,7 +3017,7 @@ pub async fn record_erp_export_batch(
     ))
     .await?;
 
-    let id_row = db
+    let id_row = txn
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
             "SELECT last_insert_rowid() AS id".to_string(),
@@ -3035,7 +3029,7 @@ pub async fn record_erp_export_batch(
     let mut exceptions_out: Vec<IntegrationException> = Vec::new();
     for (src_kind, src_id, snap) in exception_specs {
         let ex_sync = Uuid::new_v4().to_string();
-        db.execute(Statement::from_sql_and_values(
+        txn.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO integration_exceptions (
                 entity_sync_id, posted_export_batch_id, source_record_kind, source_record_id,
@@ -3050,7 +3044,7 @@ pub async fn record_erp_export_batch(
             ],
         ))
         .await?;
-        let ex_id_row = db
+        let ex_id_row = txn
             .query_one(Statement::from_string(
                 DbBackend::Sqlite,
                 "SELECT last_insert_rowid() AS id".to_string(),
@@ -3058,7 +3052,7 @@ pub async fn record_erp_export_batch(
             .await?
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("integration_exceptions id missing")))?;
         let ex_id: i64 = ex_id_row.try_get("", "id")?;
-        let ex_row = db
+        let ex_row = txn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "SELECT * FROM integration_exceptions WHERE id = ?",
@@ -3067,11 +3061,10 @@ pub async fn record_erp_export_batch(
             .await?
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("integration exception row missing")))?;
         let mapped = map_integration_exception(&ex_row)?;
-        sync_stage::stage_integration_exception(db, &mapped).await?;
         exceptions_out.push(mapped);
     }
 
-    let batch_row = db
+    let batch_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT * FROM posted_export_batches WHERE id = ?",
@@ -3080,7 +3073,7 @@ pub async fn record_erp_export_batch(
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("posted export batch row missing")))?;
     let batch = map_posted_export_batch(&batch_row)?;
-    sync_stage::stage_posted_export_batch(db, &batch).await?;
+    txn.commit().await?;
 
     Ok(ErpExportBatchResult {
         batch,
@@ -3140,7 +3133,8 @@ pub async fn update_integration_exception(
     input: UpdateIntegrationExceptionInput,
 ) -> AppResult<IntegrationException> {
     let resolution = required_trimmed("resolution_status", &input.resolution_status)?;
-    let current = db
+    let txn = db.begin().await?;
+    let current = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT row_version FROM integration_exceptions WHERE id = ?",
@@ -3159,7 +3153,7 @@ pub async fn update_integration_exception(
     }
     let ext = optional_trimmed(&input.external_value_snapshot);
     let rej = optional_trimmed(&input.rejection_code);
-    let result = db
+    let result = txn
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE integration_exceptions
@@ -3183,7 +3177,7 @@ pub async fn update_integration_exception(
             "Integration exception update failed.".to_string()
         ]));
     }
-    let row = db
+    let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT * FROM integration_exceptions WHERE id = ?",
@@ -3195,7 +3189,7 @@ pub async fn update_integration_exception(
             id: exception_id.to_string(),
         })?;
     let mapped = map_integration_exception(&row)?;
-    sync_stage::stage_integration_exception(db, &mapped).await?;
+    txn.commit().await?;
     Ok(mapped)
 }
 
@@ -3231,6 +3225,7 @@ pub async fn create_budget_alert_config(
     db: &DatabaseConnection,
     input: CreateBudgetAlertConfigInput,
 ) -> AppResult<BudgetAlertConfig> {
+    let txn = db.begin().await?;
     let alert_type = required_trimmed("Alert type", &input.alert_type)?;
     if !valid_alert_type(&alert_type) {
         return Err(AppError::ValidationFailed(vec![
@@ -3238,7 +3233,7 @@ pub async fn create_budget_alert_config(
         ]));
     }
     if let Some(version_id) = input.budget_version_id {
-        let version = get_budget_version(db, version_id).await?;
+        let version = get_budget_version(&txn, version_id).await?;
         if version.status != "frozen" {
             return Err(AppError::ValidationFailed(vec![
                 "Only frozen control baselines may be bound to production alert configs.".to_string(),
@@ -3252,7 +3247,7 @@ pub async fn create_budget_alert_config(
     }
 
     let entity_sync_id = Uuid::new_v4().to_string();
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO budget_alert_configs (
             entity_sync_id,
@@ -3276,7 +3271,7 @@ pub async fn create_budget_alert_config(
         ],
     ))
     .await?;
-    let id_row = db
+    let id_row = txn
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
             "SELECT last_insert_rowid() AS id".to_string(),
@@ -3284,7 +3279,7 @@ pub async fn create_budget_alert_config(
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Inserted alert config id missing.")))?;
     let config_id: i64 = id_row.try_get("", "id")?;
-    let row = db
+    let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT * FROM budget_alert_configs WHERE id = ?",
@@ -3296,7 +3291,7 @@ pub async fn create_budget_alert_config(
             id: config_id.to_string(),
         })?;
     let mapped = map_budget_alert_config(&row)?;
-    sync_stage::stage_budget_alert_config(db, &mapped).await?;
+    txn.commit().await?;
     Ok(mapped)
 }
 
@@ -3306,7 +3301,8 @@ pub async fn update_budget_alert_config(
     expected_row_version: i64,
     input: UpdateBudgetAlertConfigInput,
 ) -> AppResult<BudgetAlertConfig> {
-    let current = db
+    let txn = db.begin().await?;
+    let current = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT row_version, budget_bucket, threshold_pct, threshold_amount, recipient_user_id, recipient_role_id,
@@ -3360,7 +3356,7 @@ pub async fn update_budget_alert_config(
         .unwrap_or(current.try_get::<i64>("", "requires_ack")? == 1);
     let is_active = input.is_active.unwrap_or(current.try_get::<i64>("", "is_active")? == 1);
 
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE budget_alert_configs
          SET budget_bucket = ?,
@@ -3390,7 +3386,7 @@ pub async fn update_budget_alert_config(
         ],
     ))
     .await?;
-    let row = db
+    let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT * FROM budget_alert_configs WHERE id = ?",
@@ -3402,12 +3398,12 @@ pub async fn update_budget_alert_config(
             id: config_id.to_string(),
         })?;
     let mapped = map_budget_alert_config(&row)?;
-    sync_stage::stage_budget_alert_config(db, &mapped).await?;
+    txn.commit().await?;
     Ok(mapped)
 }
 
 pub async fn list_budget_alert_events(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     filter: BudgetAlertEventFilter,
 ) -> AppResult<Vec<BudgetAlertEvent>> {
     let mut sql = String::from(
@@ -3544,6 +3540,7 @@ pub async fn evaluate_budget_alerts(
         let capacity_hours: f64 = row.try_get("", "capacity_hours")?;
         team_capacity_map.insert((team_id, month), capacity_hours);
     }
+    let txn = db.begin().await?;
 
     let mut emitted_count = 0_i64;
     let mut deduped_count = 0_i64;
@@ -3649,7 +3646,7 @@ pub async fn evaluate_budget_alerts(
                 "budget:{}:{}:{}:{}:{}",
                 row.budget_version_id, row.cost_center_id, period_key, row.budget_bucket, config.alert_type
             );
-            let duplicate = db
+            let duplicate = txn
                 .query_one(Statement::from_sql_and_values(
                     DbBackend::Sqlite,
                     "SELECT id FROM budget_alert_events
@@ -3668,13 +3665,15 @@ pub async fn evaluate_budget_alerts(
             let mut notification_event_id: Option<i64> = None;
             let mut notification_id: Option<i64> = None;
             if emit_notifications && config.recipient_user_id.is_some() {
-                db.execute(Statement::from_sql_and_values(
+                txn.execute(Statement::from_sql_and_values(
                     DbBackend::Sqlite,
                     "INSERT INTO notification_events
                         (source_module, source_record_id, event_code, category_code, severity, dedupe_key, payload_json)
                      VALUES ('finance_budget', ?, ?, 'budget_control_alert', ?, ?, ?)",
                     [
-                        format!("{}:{}", row.budget_version_id, row.cost_center_id).into(),
+                        // The budget version (a synchronised row); the cost center and bucket are
+                        // in the dedupe key and the alert event.
+                        row.budget_version_id.to_string().into(),
                         config.alert_type.clone().into(),
                         if config.alert_type.contains("threshold") {
                             "warning".to_string()
@@ -3687,7 +3686,7 @@ pub async fn evaluate_budget_alerts(
                     ],
                 ))
                 .await?;
-                let event_id_row = db
+                let event_id_row = txn
                     .query_one(Statement::from_string(
                         DbBackend::Sqlite,
                         "SELECT last_insert_rowid() AS id".to_string(),
@@ -3697,7 +3696,7 @@ pub async fn evaluate_budget_alerts(
                 let created_event_id: i64 = event_id_row.try_get("", "id")?;
                 notification_event_id = Some(created_event_id);
 
-                db.execute(Statement::from_sql_and_values(
+                txn.execute(Statement::from_sql_and_values(
                     DbBackend::Sqlite,
                     "INSERT INTO notifications
                         (notification_event_id, recipient_user_id, recipient_role_id, delivery_state, title, body, action_url)
@@ -3711,7 +3710,7 @@ pub async fn evaluate_budget_alerts(
                     ],
                 ))
                 .await?;
-                let notif_id_row = db
+                let notif_id_row = txn
                     .query_one(Statement::from_string(
                         DbBackend::Sqlite,
                         "SELECT last_insert_rowid() AS id".to_string(),
@@ -3722,7 +3721,7 @@ pub async fn evaluate_budget_alerts(
             }
 
             let event_entity_sync_id = Uuid::new_v4().to_string();
-            db.execute(Statement::from_sql_and_values(
+            txn.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "INSERT INTO budget_alert_events (
                     entity_sync_id,
@@ -3757,33 +3756,12 @@ pub async fn evaluate_budget_alerts(
                 ],
             ))
             .await?;
-            let inserted_event_id_row = db
-                .query_one(Statement::from_string(
-                    DbBackend::Sqlite,
-                    "SELECT last_insert_rowid() AS id".to_string(),
-                ))
-                .await?
-                .ok_or_else(|| AppError::Internal(anyhow::anyhow!("budget alert event id missing")))?;
-            let inserted_event_id: i64 = inserted_event_id_row.try_get("", "id")?;
-            let inserted_event_row = db
-                .query_one(Statement::from_sql_and_values(
-                    DbBackend::Sqlite,
-                    "SELECT ae.*, cc.code AS cost_center_code, cc.name AS cost_center_name
-                     FROM budget_alert_events ae
-                     JOIN cost_centers cc ON cc.id = ae.cost_center_id
-                     WHERE ae.id = ?",
-                    [inserted_event_id.into()],
-                ))
-                .await?
-                .ok_or_else(|| AppError::Internal(anyhow::anyhow!("budget alert event row missing")))?;
-            let staged_event = map_budget_alert_event(&inserted_event_row)?;
-            sync_stage::stage_budget_alert_event(db, &staged_event).await?;
             emitted_count += 1;
         }
     }
 
     let emitted_events = list_budget_alert_events(
-        db,
+        &txn,
         BudgetAlertEventFilter {
             budget_version_id: Some(input.budget_version_id),
             ..BudgetAlertEventFilter::default()
@@ -3793,6 +3771,7 @@ pub async fn evaluate_budget_alerts(
     .into_iter()
     .take(200)
     .collect();
+    txn.commit().await?;
 
     Ok(BudgetAlertEvaluationResult {
         evaluated_at: current_utc_text(),
@@ -3808,7 +3787,8 @@ pub async fn acknowledge_budget_alert(
     actor_user_id: i64,
     input: AcknowledgeBudgetAlertInput,
 ) -> AppResult<BudgetAlertEvent> {
-    let row = db
+    let txn = db.begin().await?;
+    let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, notification_id FROM budget_alert_events WHERE id = ?",
@@ -3821,7 +3801,7 @@ pub async fn acknowledge_budget_alert(
         })?;
     let notification_id: Option<i64> = row.try_get("", "notification_id")?;
     let note = optional_trimmed(&input.note);
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE budget_alert_events
          SET acknowledged_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
@@ -3834,7 +3814,7 @@ pub async fn acknowledge_budget_alert(
     ))
     .await?;
     if let Some(notification_id) = notification_id {
-        db.execute(Statement::from_sql_and_values(
+        txn.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE notifications
              SET delivery_state = 'acknowledged',
@@ -3843,7 +3823,7 @@ pub async fn acknowledge_budget_alert(
             [notification_id.into()],
         ))
         .await?;
-        db.execute(Statement::from_sql_and_values(
+        txn.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO notification_acknowledgements
                 (notification_id, acknowledged_by_id, acknowledgement_note)
@@ -3853,7 +3833,7 @@ pub async fn acknowledge_budget_alert(
         .await?;
     }
     let found = list_budget_alert_events(
-        db,
+        &txn,
         BudgetAlertEventFilter {
             budget_version_id: None,
             cost_center_id: None,
@@ -3868,7 +3848,7 @@ pub async fn acknowledge_budget_alert(
         entity: "BudgetAlertEvent".to_string(),
         id: input.alert_event_id.to_string(),
     })?;
-    sync_stage::stage_budget_alert_event(db, &found).await?;
+    txn.commit().await?;
     Ok(found)
 }
 
@@ -3890,12 +3870,12 @@ pub async fn build_budget_report_pack(
     let mut dashboard_rows = list_budget_dashboard_rows(db, dashboard_filter.clone()).await?;
     let mut drilldown_rows = list_budget_dashboard_drilldown(db, dashboard_filter).await?;
     if let Some(period_start) = filter.period_month_start {
-        dashboard_rows.retain(|row| row.period_month.map_or(true, |month| month >= period_start));
-        drilldown_rows.retain(|row| row.period_month.map_or(true, |month| month >= period_start));
+        dashboard_rows.retain(|row| row.period_month.is_none_or(|month| month >= period_start));
+        drilldown_rows.retain(|row| row.period_month.is_none_or(|month| month >= period_start));
     }
     if let Some(period_end) = filter.period_month_end {
-        dashboard_rows.retain(|row| row.period_month.map_or(true, |month| month <= period_end));
-        drilldown_rows.retain(|row| row.period_month.map_or(true, |month| month <= period_end));
+        dashboard_rows.retain(|row| row.period_month.is_none_or(|month| month <= period_end));
+        drilldown_rows.retain(|row| row.period_month.is_none_or(|month| month <= period_end));
     }
     let reviews = list_budget_variance_reviews(
         db,

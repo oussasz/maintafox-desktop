@@ -4,12 +4,13 @@ use crate::auth::rbac::PermissionScope;
 use crate::errors::AppResult;
 use crate::state::AppState;
 use crate::sync::domain::{
-    ApplySyncBatchInput, ApplySyncBatchResult, ExecuteSyncRepairInput, ListOutboxFilter, ReplaySyncFailuresInput,
-    ReplaySyncFailuresResult, ResolveSyncConflictInput, StageOutboxItemInput, SyncConflictFilter, SyncConflictRecord,
-    SyncInboxItem, SyncObservabilityReport, SyncOutboxItem, SyncPushPayload, SyncRepairActionRecord,
-    SyncRepairExecutionResult, SyncRepairPreview, SyncRepairPreviewInput, SyncReplayRun, SyncStateSummary,
+    ExecuteSyncRepairInput, ListOutboxFilter, ReplaySyncFailuresInput, ReplaySyncFailuresResult,
+    ResolveSyncConflictInput, StageOutboxItemInput, SyncConflictFilter, SyncConflictRecord, SyncInboxItem,
+    SyncObservabilityReport, SyncOutboxItem, SyncRepairActionRecord, SyncRepairExecutionResult, SyncRepairPreview,
+    SyncRepairPreviewInput, SyncReplayRun, SyncStateSummary,
 };
 use crate::sync::queries;
+use crate::sync::transport::{self, SyncCommand, SyncWorkerStatus};
 use crate::{require_permission_allowing_system_admin, require_session, require_step_up};
 
 #[tauri::command]
@@ -42,46 +43,6 @@ pub async fn list_outbox_items(filter: ListOutboxFilter, state: State<'_, AppSta
         PermissionScope::Global
     );
     queries::list_outbox_items(&state.db, filter).await
-}
-
-#[tauri::command]
-pub async fn get_sync_push_payload(limit: Option<i64>, state: State<'_, AppState>) -> AppResult<SyncPushPayload> {
-    let user = require_session!(state);
-    require_permission_allowing_system_admin!(
-        state,
-        &user,
-        crate::rbac::permissions::SYNC_VIEW,
-        PermissionScope::Global
-    );
-    queries::get_sync_push_payload(&state.db, limit).await
-}
-
-#[tauri::command]
-pub async fn apply_sync_batch(
-    input: ApplySyncBatchInput,
-    state: State<'_, AppState>,
-) -> AppResult<ApplySyncBatchResult> {
-    let user = require_session!(state);
-    // Runtime sync exchange is a normal operator flow. Keep it aligned with
-    // `get_sync_push_payload` (`sync.view`) so users with sync visibility can
-    // complete the pull/apply cycle without admin-only `sync.manage`.
-    require_permission_allowing_system_admin!(
-        state,
-        &user,
-        crate::rbac::permissions::SYNC_VIEW,
-        PermissionScope::Global
-    );
-    let result = queries::apply_sync_batch(&state.db, input).await?;
-    tracing::info!(
-        event = "desktop_sync_apply_batch",
-        user_id = user.user_id,
-        acknowledged = result.acknowledged_count,
-        inbound_applied = result.inbound_applied_count,
-        rejected = result.rejected_count,
-        checkpoint = result.checkpoint_token.as_deref().unwrap_or(""),
-        "Sync batch applied"
-    );
-    Ok(result)
 }
 
 #[tauri::command]
@@ -254,4 +215,129 @@ pub async fn get_sync_observability_report(state: State<'_, AppState>) -> AppRes
         "Sync observability report generated"
     );
     Ok(result)
+}
+
+// ── Sync worker (protocol v2 transport, background task `sync`) ─────────────────────────────
+
+/// Current worker status. Changes are also pushed as the `sync-worker-status` event.
+#[tauri::command]
+pub async fn get_sync_worker_status(state: State<'_, AppState>) -> AppResult<SyncWorkerStatus> {
+    let user = require_session!(state);
+    require_permission_allowing_system_admin!(
+        state,
+        &user,
+        crate::rbac::permissions::SYNC_VIEW,
+        PermissionScope::Global
+    );
+    Ok(state.sync_worker.status())
+}
+
+/// Sync now (manual run): same permission as the former manual exchange (`sync.view`).
+#[tauri::command]
+pub async fn run_sync_now(state: State<'_, AppState>) -> AppResult<()> {
+    let user = require_session!(state);
+    require_permission_allowing_system_admin!(
+        state,
+        &user,
+        crate::rbac::permissions::SYNC_VIEW,
+        PermissionScope::Global
+    );
+    state.sync_worker.send(SyncCommand::RunNow);
+    tracing::info!(
+        event = "desktop_sync_run_now",
+        user_id = user.user_id,
+        "Sync requested by operator"
+    );
+    Ok(())
+}
+
+/// Pause sync for this device for `minutes` (1..=1440). Returns the end of the pause.
+#[tauri::command]
+pub async fn pause_sync(minutes: u32, state: State<'_, AppState>) -> AppResult<String> {
+    let user = require_session!(state);
+    require_permission_allowing_system_admin!(
+        state,
+        &user,
+        crate::rbac::permissions::SYNC_MANAGE,
+        PermissionScope::Global
+    );
+    let until = transport::pause_sync(&state.db, &state.sync_worker, minutes).await?;
+    tracing::info!(
+        event = "desktop_sync_paused",
+        user_id = user.user_id,
+        until = until.as_str(),
+        "Sync paused"
+    );
+    Ok(until)
+}
+
+/// End a pause and sync now.
+#[tauri::command]
+pub async fn resume_sync(state: State<'_, AppState>) -> AppResult<()> {
+    let user = require_session!(state);
+    require_permission_allowing_system_admin!(
+        state,
+        &user,
+        crate::rbac::permissions::SYNC_MANAGE,
+        PermissionScope::Global
+    );
+    transport::resume_sync(&state.db, &state.sync_worker).await?;
+    tracing::info!(event = "desktop_sync_resumed", user_id = user.user_id, "Sync resumed");
+    Ok(())
+}
+
+/// The webview saw the network come back (`online` event). Only wakes an offline worker (never
+/// sooner than `SYNC_NETWORK_WAKE_MIN_SPACING` after its last attempt); carries no data, so it needs
+/// no session (the window may be locked).
+#[tauri::command]
+pub async fn report_network_online(state: State<'_, AppState>) -> AppResult<()> {
+    state.sync_worker.send(SyncCommand::NetworkOnline);
+    Ok(())
+}
+
+/// Most file states asked for in one call (an attachment list or a photo gallery).
+const MAX_MEDIA_FILE_STATES: usize = 500;
+
+fn media_root(app: &tauri::AppHandle) -> AppResult<std::path::PathBuf> {
+    use tauri::Manager;
+    app.path()
+        .app_data_dir()
+        .map_err(|e| crate::errors::AppError::Internal(anyhow::anyhow!("app_data_dir: {e}")))
+}
+
+/// Whether the files of attachment rows are on this device (`available`), still coming from
+/// another device (`pending`), given up (`failed`, with the reason) or unknown (`missing`). Only a
+/// session is needed: the answer names no content, and every list that shows the paths already
+/// checked the module permission.
+#[tauri::command]
+pub async fn get_media_file_states(
+    relative_paths: Vec<String>,
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::sync::media::MediaFileState>> {
+    let _user = require_session!(state);
+    if relative_paths.len() > MAX_MEDIA_FILE_STATES {
+        return Err(crate::errors::AppError::ValidationFailed(vec![format!(
+            "At most {MAX_MEDIA_FILE_STATES} files can be checked at once."
+        )]));
+    }
+    crate::sync::media::media_file_states(&state.db, &media_root(&app)?, &relative_paths).await
+}
+
+/// Queue the download of a file received from another device again (after it failed), then wake
+/// the sync worker.
+#[tauri::command]
+pub async fn retry_media_download(relative_path: String, state: State<'_, AppState>) -> AppResult<u64> {
+    let user = require_session!(state);
+    let queued = crate::sync::media::retry_media_download(&state.db, &relative_path).await?;
+    if queued > 0 {
+        state.sync_worker.send(SyncCommand::RunNow);
+    }
+    tracing::info!(
+        event = "desktop_sync_media_download_retry",
+        user_id = user.user_id,
+        queued,
+        "Media download retry requested"
+    );
+    Ok(queued)
 }

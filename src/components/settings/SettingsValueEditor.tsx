@@ -1,11 +1,10 @@
-import { Check, Pencil, X } from "lucide-react";
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { useTheme } from "@/components/ui/ThemeProvider";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -14,6 +13,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { CURRENCY_CODE_OPTIONS } from "@/lib/currency";
+import { applyI18nFallbackLanguage } from "@/lib/i18n-fallback";
+import { cn } from "@/lib/utils";
 import { setSetting } from "@/services/settings-service";
 import { useLocaleStore } from "@/stores/locale-store";
 import type { AppSetting } from "@shared/ipc-types";
@@ -26,6 +28,11 @@ interface SelectOption {
   value: string;
   labelKey: string;
 }
+
+const CURRENCY_SELECT_OPTIONS: SelectOption[] = CURRENCY_CODE_OPTIONS.map((code) => ({
+  value: code,
+  labelKey: `options.currency.${code}`,
+}));
 
 const SELECT_OPTIONS: Record<string, SelectOption[]> = {
   "locale.primary_language": [
@@ -49,6 +56,7 @@ const SELECT_OPTIONS: Record<string, SelectOption[]> = {
     { value: "1", labelKey: "options.weekStart.monday" },
     { value: "0", labelKey: "options.weekStart.sunday" },
   ],
+  "locale.currency_code": CURRENCY_SELECT_OPTIONS,
   "appearance.color_mode": [
     { value: "light", labelKey: "options.colorMode.light" },
     { value: "dark", labelKey: "options.colorMode.dark" },
@@ -77,7 +85,22 @@ const NUMBER_SETTINGS = new Set([
   "backup.retention_weekly",
   "backup.retention_monthly",
   "diagnostics.log_retention_days",
+  "ram.fmeca_rpn_critical_threshold",
+  "wo.reopen_window_days",
 ]);
+
+/** Preferred General-tab category order. */
+const CATEGORY_ORDER = [
+  "localization",
+  "appearance",
+  "system",
+  "work_orders",
+  "reliability",
+  "backup",
+] as const;
+
+/** Complex JSON settings rendered by dedicated panels — never as scalar rows. */
+const COMPLEX_SETTING_KEYS = new Set(["documents.default_header"]);
 
 type SettingType = "select" | "boolean" | "number" | "text";
 
@@ -94,6 +117,24 @@ function parseJsonValue(json: string): unknown {
   } catch {
     return json;
   }
+}
+
+/** Radix Select throws if value is empty or unmatched; normalize seeded JSON (e.g. 1.0 → "1"). */
+function selectControlValue(settingKey: string, parsed: unknown): string | undefined {
+  const options = SELECT_OPTIONS[settingKey] ?? [];
+  if (options.length === 0) return undefined;
+  const raw = String(parsed);
+  if (options.some((o) => o.value === raw)) return raw;
+  if (typeof parsed === "number") {
+    const asInt = String(parsed);
+    if (options.some((o) => o.value === asInt)) return asInt;
+  }
+  return undefined;
+}
+
+function categorySortIndex(category: string): number {
+  const idx = CATEGORY_ORDER.indexOf(category as (typeof CATEGORY_ORDER)[number]);
+  return idx === -1 ? CATEGORY_ORDER.length : idx;
 }
 
 /* ------------------------------------------------------------------ */
@@ -118,18 +159,39 @@ export function SettingsValueEditor({
   const { t } = useTranslation("settings");
   const { setTheme } = useTheme();
   const localeSetLocale = useLocaleStore((s) => s.setLocale);
+  const setCurrencyCode = useLocaleStore((s) => s.setCurrencyCode);
+  const activeLocale = useLocaleStore((s) => s.activeLocale);
 
-  const [editingKey, setEditingKey] = useState<string | null>(null);
-  const [editValue, setEditValue] = useState("");
+  const [draftValues, setDraftValues] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
 
-  /* ---- helpers ---- */
+  const groupedSettings = useMemo(() => {
+    const byCategory = new Map<string, AppSetting[]>();
+    for (const setting of settings) {
+      if (COMPLEX_SETTING_KEYS.has(setting.setting_key)) continue;
+      const list = byCategory.get(setting.category) ?? [];
+      list.push(setting);
+      byCategory.set(setting.category, list);
+    }
+    return [...byCategory.entries()].sort(
+      ([a], [b]) => categorySortIndex(a) - categorySortIndex(b),
+    );
+  }, [settings]);
 
   const settingLabel = useCallback(
     (key: string): string => {
       const labelKey = `keys.${key}` as "keys.locale.primary_language";
       const translated = t(labelKey);
       return translated === labelKey ? key : String(translated);
+    },
+    [t],
+  );
+
+  const categoryLabel = useCallback(
+    (category: string): string => {
+      const labelKey = `categories.${category}` as "categories.localization";
+      const translated = t(labelKey);
+      return translated === labelKey ? category : String(translated);
     },
     [t],
   );
@@ -143,10 +205,9 @@ export function SettingsValueEditor({
           key: setting.setting_key,
           scope: setting.setting_scope,
           value_json: valueJson,
-          change_summary: `Setting '${setting.setting_key}' updated via Settings UI`,
+          change_summary: t("editor.auditUpdated", { key: setting.setting_key }),
         });
 
-        // --- Apply live side-effects ---
         const parsed = parseJsonValue(valueJson);
 
         if (setting.setting_key === "appearance.color_mode") {
@@ -156,6 +217,14 @@ export function SettingsValueEditor({
 
         if (setting.setting_key === "locale.primary_language" && typeof parsed === "string") {
           await localeSetLocale(parsed, true);
+        }
+
+        if (setting.setting_key === "locale.fallback_language" && typeof parsed === "string") {
+          applyI18nFallbackLanguage(parsed);
+        }
+
+        if (setting.setting_key === "locale.currency_code" && typeof parsed === "string") {
+          setCurrencyCode(parsed);
         }
 
         if (setting.setting_key === "appearance.text_scale" && typeof parsed === "number") {
@@ -168,8 +237,11 @@ export function SettingsValueEditor({
         }
 
         onToast({ title: t("editor.saveSuccess"), variant: "success" });
-        setEditingKey(null);
-        setEditValue("");
+        setDraftValues((prev) => {
+          const next = { ...prev };
+          delete next[setting.setting_key];
+          return next;
+        });
         onSettingSaved();
       } catch {
         onToast({ title: t("editor.saveError"), variant: "destructive" });
@@ -177,51 +249,20 @@ export function SettingsValueEditor({
         setSaving(false);
       }
     },
-    [setTheme, localeSetLocale, onSettingSaved, onToast, t],
+    [setTheme, localeSetLocale, setCurrencyCode, onSettingSaved, onToast, t],
   );
-
-  /* ---- inline editing for number / text fallback ---- */
-
-  const startEdit = useCallback((setting: AppSetting) => {
-    setEditingKey(setting.setting_key);
-    const parsed = parseJsonValue(setting.setting_value_json);
-    setEditValue(String(parsed));
-  }, []);
-
-  const cancelEdit = useCallback(() => {
-    setEditingKey(null);
-    setEditValue("");
-  }, []);
-
-  const confirmEdit = useCallback(
-    (setting: AppSetting) => {
-      const type = getSettingType(setting.setting_key);
-      let valueJson: string;
-      if (type === "number") {
-        const num = Number(editValue);
-        if (Number.isNaN(num)) {
-          onToast({ title: t("editor.invalidJson"), variant: "destructive" });
-          return;
-        }
-        valueJson = JSON.stringify(num);
-      } else {
-        valueJson = JSON.stringify(editValue);
-      }
-      void saveValue(setting, valueJson);
-    },
-    [editValue, saveValue, onToast, t],
-  );
-
-  /* ---- select change handler ---- */
 
   const handleSelectChange = useCallback(
     (setting: AppSetting, newVal: string) => {
       const type = getSettingType(setting.setting_key);
       let valueJson: string;
-      if (type === "select" && setting.setting_key === "locale.week_start_day") {
-        valueJson = newVal; // already numeric string like "1"
-      } else if (type === "select" && setting.setting_key === "appearance.text_scale") {
-        valueJson = newVal; // numeric string like "1.15"
+      // Numeric selects are stored as JSON numbers (match seeder), not quoted strings.
+      if (
+        type === "select" &&
+        (setting.setting_key === "locale.week_start_day" ||
+          setting.setting_key === "appearance.text_scale")
+      ) {
+        valueJson = newVal;
       } else {
         valueJson = JSON.stringify(newVal);
       }
@@ -230,8 +271,6 @@ export function SettingsValueEditor({
     [saveValue],
   );
 
-  /* ---- toggle handler ---- */
-
   const handleToggle = useCallback(
     (setting: AppSetting, checked: boolean) => {
       void saveValue(setting, JSON.stringify(checked));
@@ -239,166 +278,184 @@ export function SettingsValueEditor({
     [saveValue],
   );
 
-  /* ---- render ---- */
+  const commitDraft = useCallback(
+    (setting: AppSetting) => {
+      const type = getSettingType(setting.setting_key);
+      const draft = draftValues[setting.setting_key];
+      if (draft === undefined) return;
+
+      const current = String(parseJsonValue(setting.setting_value_json));
+      if (draft === current) {
+        setDraftValues((prev) => {
+          const next = { ...prev };
+          delete next[setting.setting_key];
+          return next;
+        });
+        return;
+      }
+
+      if (type === "number") {
+        const num = Number(draft);
+        if (Number.isNaN(num)) {
+          onToast({ title: t("editor.invalidJson"), variant: "destructive" });
+          return;
+        }
+        void saveValue(setting, JSON.stringify(num));
+        return;
+      }
+
+      void saveValue(setting, JSON.stringify(draft));
+    },
+    [draftValues, saveValue, onToast, t],
+  );
+
+  const resolvedSelectValue = useCallback(
+    (setting: AppSetting, parsed: unknown): string | undefined => {
+      if (setting.setting_key === "locale.primary_language") {
+        if (activeLocale === "fr" || activeLocale === "en") return activeLocale;
+      }
+      return selectControlValue(setting.setting_key, parsed);
+    },
+    [activeLocale],
+  );
 
   if (settings.length === 0) {
     return (
-      <div className="flex flex-1 items-center justify-center text-text-muted">
+      <div className="flex flex-1 items-center justify-center py-8 text-text-muted">
         <p>{t("page.noSettings")}</p>
       </div>
     );
   }
 
+  const renderControl = (s: AppSetting) => {
+    const type = getSettingType(s.setting_key);
+    const parsed = parseJsonValue(s.setting_value_json);
+    const selectValue = type === "select" ? resolvedSelectValue(s, parsed) : undefined;
+    const draft = draftValues[s.setting_key] ?? String(parsed);
+
+    if (type === "select") {
+      return (
+        <Select
+          {...(selectValue !== undefined ? { value: selectValue } : {})}
+          onValueChange={(v) => handleSelectChange(s, v)}
+          disabled={saving}
+        >
+          <SelectTrigger className="h-9 w-full" aria-label={settingLabel(s.setting_key)}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {(SELECT_OPTIONS[s.setting_key] ?? []).map((opt) => (
+              <SelectItem key={opt.value} value={opt.value}>
+                {t(opt.labelKey as "options.language.fr")}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      );
+    }
+
+    if (type === "boolean") {
+      return (
+        <Switch
+          checked={parsed === true}
+          onCheckedChange={(c) => handleToggle(s, c)}
+          disabled={saving}
+          aria-label={settingLabel(s.setting_key)}
+        />
+      );
+    }
+
+    if (type === "number") {
+      return (
+        <Input
+          type="number"
+          value={draft}
+          onChange={(e) => setDraftValues((prev) => ({ ...prev, [s.setting_key]: e.target.value }))}
+          onBlur={() => commitDraft(s)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.currentTarget.blur();
+            }
+            if (e.key === "Escape") {
+              setDraftValues((prev) => {
+                const next = { ...prev };
+                delete next[s.setting_key];
+                return next;
+              });
+            }
+          }}
+          className="h-9 w-full"
+          min={1}
+          disabled={saving}
+          aria-label={settingLabel(s.setting_key)}
+        />
+      );
+    }
+
+    return (
+      <Input
+        value={draft}
+        onChange={(e) => setDraftValues((prev) => ({ ...prev, [s.setting_key]: e.target.value }))}
+        onBlur={() => commitDraft(s)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.currentTarget.blur();
+          }
+          if (e.key === "Escape") {
+            setDraftValues((prev) => {
+              const next = { ...prev };
+              delete next[s.setting_key];
+              return next;
+            });
+          }
+        }}
+        className="h-9 w-full"
+        disabled={saving}
+        aria-label={settingLabel(s.setting_key)}
+      />
+    );
+  };
+
   return (
-    <div className="flex-1 overflow-auto">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b text-left text-text-muted">
-            <th className="pb-2 pr-4 font-medium">{t("table.key")}</th>
-            <th className="pb-2 pr-4 font-medium">{t("table.value")}</th>
-            <th className="pb-2 pr-4 font-medium">{t("table.scope")}</th>
-            <th className="pb-2 pr-4 font-medium">{t("table.risk")}</th>
-            <th className="pb-2 font-medium">{t("table.actions")}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {settings.map((s) => {
-            const type = getSettingType(s.setting_key);
-            const isEditing = editingKey === s.setting_key;
-            const parsed = parseJsonValue(s.setting_value_json);
-
-            return (
-              <tr key={s.id} className="border-b last:border-b-0">
-                {/* Label */}
-                <td className="py-3 pr-4">
-                  <div className="font-medium text-text-primary">{settingLabel(s.setting_key)}</div>
-                  <div className="text-xs text-text-muted">{s.setting_key}</div>
-                </td>
-
-                {/* Value control */}
-                <td className="py-3 pr-4">
-                  {type === "select" && (
-                    <Select
-                      value={String(parsed)}
-                      onValueChange={(v) => handleSelectChange(s, v)}
-                      disabled={saving}
-                    >
-                      <SelectTrigger className="h-8 w-52">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {(SELECT_OPTIONS[s.setting_key] ?? []).map((opt) => (
-                          <SelectItem key={opt.value} value={opt.value}>
-                            {t(opt.labelKey as "options.language.fr")}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  )}
-
-                  {type === "boolean" && (
-                    <Switch
-                      checked={parsed === true}
-                      onCheckedChange={(c) => handleToggle(s, c)}
-                      disabled={saving}
-                    />
-                  )}
-
-                  {type === "number" &&
-                    (isEditing ? (
-                      <Input
-                        type="number"
-                        value={editValue}
-                        onChange={(e) => setEditValue(e.target.value)}
-                        className="h-8 w-28 text-xs"
-                        min={1}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") confirmEdit(s);
-                          if (e.key === "Escape") cancelEdit();
-                        }}
-                        autoFocus
-                      />
-                    ) : (
-                      <code className="rounded bg-muted px-2 py-1 text-xs">{String(parsed)}</code>
-                    ))}
-
-                  {type === "text" &&
-                    (isEditing ? (
-                      <Input
-                        value={editValue}
-                        onChange={(e) => setEditValue(e.target.value)}
-                        className="h-8 w-48 font-mono text-xs"
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") confirmEdit(s);
-                          if (e.key === "Escape") cancelEdit();
-                        }}
-                        autoFocus
-                      />
-                    ) : (
-                      <code className="rounded bg-muted px-2 py-1 text-xs">{String(parsed)}</code>
-                    ))}
-                </td>
-
-                {/* Scope */}
-                <td className="py-3 pr-4">
-                  <Badge variant="outline" className="text-xs">
-                    {t(`scope.${s.setting_scope}` as "scope.tenant")}
-                  </Badge>
-                </td>
-
-                {/* Risk */}
-                <td className="py-3 pr-4">
-                  <Badge
-                    variant={s.setting_risk === "high" ? "destructive" : "secondary"}
-                    className="text-xs"
+    <div className="flex flex-col gap-4">
+      {groupedSettings.map(([category, rows]) => (
+        <Card key={category} className="shadow-none">
+          <CardHeader className="space-y-0 px-5 py-4">
+            <CardTitle className="text-base font-semibold leading-snug tracking-normal">
+              {categoryLabel(category)}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="px-5 pb-4 pt-0">
+            <ul className="divide-y divide-border">
+              {rows.map((s) => {
+                const type = getSettingType(s.setting_key);
+                return (
+                  <li
+                    key={s.id}
+                    className="flex items-center justify-between gap-4 py-3 first:pt-1 last:pb-1"
                   >
-                    {t(`risk.${s.setting_risk}` as "risk.low")}
-                  </Badge>
-                </td>
-
-                {/* Actions — only for number/text types that need edit mode */}
-                <td className="py-3">
-                  {(type === "number" || type === "text") &&
-                    (isEditing ? (
-                      <div className="flex items-center gap-1">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => confirmEdit(s)}
-                          disabled={saving}
-                          className="h-7 w-7 p-0"
-                          aria-label={t("editor.save")}
-                        >
-                          <Check className="h-4 w-4 text-green-600" />
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={cancelEdit}
-                          disabled={saving}
-                          className="h-7 w-7 p-0"
-                          aria-label={t("editor.cancel")}
-                        >
-                          <X className="h-4 w-4 text-red-500" />
-                        </Button>
-                      </div>
-                    ) : (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => startEdit(s)}
-                        className="h-7 w-7 p-0"
-                        aria-label={t("editor.edit")}
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                    ))}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+                    <Label
+                      id={`setting-label-${s.id}`}
+                      className="min-w-0 flex-1 text-sm font-medium leading-snug text-text-primary"
+                    >
+                      {settingLabel(s.setting_key)}
+                    </Label>
+                    <div
+                      className={cn(
+                        "shrink-0",
+                        type === "boolean" ? "flex justify-end" : "w-[min(100%,14rem)]",
+                      )}
+                      aria-labelledby={`setting-label-${s.id}`}
+                    >
+                      {renderControl(s)}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </CardContent>
+        </Card>
+      ))}
     </div>
   );
 }

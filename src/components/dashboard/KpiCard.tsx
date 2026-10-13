@@ -18,6 +18,8 @@ export interface KpiCardProps {
   /** Server-side quality hint (`kpi_definitions::quality_badge::*`). */
   qualityBadge?: string | null | undefined;
   onOpenEvidence?: () => void;
+  /** Override numeric formatting (e.g. currency, decimals). */
+  formatValue?: (value: number) => string;
 }
 
 export function KpiCard({
@@ -30,6 +32,7 @@ export function KpiCard({
   available = true,
   qualityBadge,
   onOpenEvidence,
+  formatValue,
 }: KpiCardProps) {
   const { t } = useTranslation("dashboard");
 
@@ -48,6 +51,7 @@ export function KpiCard({
         : "text-status-success";
 
   const TrendIcon = trendIsNeutral ? Minus : trendIsPositive ? ArrowUp : ArrowDown;
+  const display = formatValue != null ? formatValue(value) : value.toLocaleString();
 
   return (
     <Card className="relative overflow-hidden">
@@ -64,9 +68,7 @@ export function KpiCard({
 
         <div className="mt-2">
           {available ? (
-            <p className="text-3xl font-bold text-text-primary tabular-nums">
-              {value.toLocaleString()}
-            </p>
+            <p className="text-3xl font-bold text-text-primary tabular-nums">{display}</p>
           ) : (
             <p className="text-3xl font-bold text-text-muted" title={t("kpi.notAvailableYet")}>
               —

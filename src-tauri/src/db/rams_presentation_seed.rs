@@ -212,7 +212,7 @@ pub async fn seed_rams_presentation_data(
         let months_ago = failure_count - i;
         let event_anchor = now - Duration::days(months_ago * 28);
         let fail_start = event_anchor - Duration::hours(4);
-        let fail_end = event_anchor + Duration::hours(2 + (i % 3) as i64);
+        let fail_end = event_anchor + Duration::hours(2 + (i % 3));
         let fail_start_s = fail_start.to_rfc3339();
         let fail_end_s = fail_end.to_rfc3339();
 
@@ -308,7 +308,8 @@ async fn finalize_analytics(
             equipment_id,
             period_start: None,
             period_end: None,
-            include_censored: Some(false),
+            include_censored: Some(true),
+            failure_mode_id: None,
         },
     )
     .await
@@ -432,8 +433,8 @@ async fn create_and_close_corrective_wo(db: &DatabaseConnection, ctx: CreateWoSe
             actor_id: ctx.actor_id,
             expected_row_version: wo.row_version,
             planner_id: ctx.actor_id,
-            planned_start: ctx.fail_start.clone(),
-            planned_end: ctx.fail_end.clone(),
+            planned_start: Some(ctx.fail_start.clone()),
+            planned_end: Some(ctx.fail_end.clone()),
             shift: None,
             expected_duration_hours: Some(ctx.repair_hours),
             urgency_id: None,
@@ -459,9 +460,10 @@ async fn create_and_close_corrective_wo(db: &DatabaseConnection, ctx: CreateWoSe
             wo_id: wo.id,
             actor_id: ctx.actor_id,
             expected_row_version: wo.row_version + 1,
-            assigned_group_id: None,
+            assigned_team_id: None,
             primary_responsible_id: Some(ctx.actor_id),
             scheduled_at: Some(ctx.fail_start.clone()),
+            override_reason: "rams presentation seed".to_string(),
         },
     )
     .await?;
@@ -714,9 +716,9 @@ async fn ensure_failure_reference_prerequisites(db: &DatabaseConnection) -> AppR
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "INSERT OR IGNORE INTO reference_values (set_id, parent_id, code, label, sort_order, is_active, created_at) \
-         VALUES (?, NULL, 'MECH.BEARING', 'Roulement défectueux', 1, 1, ?)",
-        [set_id.into(), now.into()],
+        "INSERT OR IGNORE INTO reference_values (entity_sync_id, set_id, parent_id, code, label, sort_order, is_active, created_at) \
+         VALUES (?, ?, NULL, 'MECH.BEARING', 'Roulement défectueux', 1, 1, ?)",
+        [crate::sync::identity::seeded_entity_sync_id("reference_values", "WORK.FAILURE_MODES:MECH.BEARING").into(), set_id.into(), now.into()],
     ))
     .await?;
 
@@ -901,7 +903,7 @@ async fn ensure_demo_verifier_user(db: &DatabaseConnection) -> AppResult<()> {
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO user_accounts
-            (sync_id, username, display_name, identity_mode, password_hash,
+            (entity_sync_id, username, display_name, identity_mode, password_hash,
              is_active, is_admin, force_password_change, failed_login_attempts, created_at, updated_at, row_version)
            VALUES (?, ?, ?, 'local', ?, 1, 0, 0, 0, ?, ?, 1)",
         [

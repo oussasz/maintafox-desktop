@@ -6,7 +6,7 @@
 //! to stay consistent with the codebase's established query pattern.
 
 use crate::errors::{AppError, AppResult};
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
@@ -73,6 +73,9 @@ async fn ensure_default_closeout_validation_policy_id(db: &DatabaseConnection) -
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct WoListFilter {
     pub status_codes: Option<Vec<String>>,
+    /// PRD lifecycle states (`wo::lifecycle`), derived per row.
+    #[serde(default)]
+    pub lifecycle_states: Option<Vec<String>>,
     pub type_codes: Option<Vec<String>>,
     pub equipment_id: Option<i64>,
     pub entity_id: Option<i64>,
@@ -112,7 +115,7 @@ const WO_COLS: &str = "\
     wo.requester_id, wo.source_di_id, wo.source_inspection_anomaly_id, \
     wo.source_ram_ishikawa_diagram_id, wo.source_ishikawa_flow_node_id, wo.source_rca_cause_text, \
     wo.entity_id, \
-    wo.planner_id, wo.approver_id, wo.assigned_group_id, wo.primary_responsible_id, \
+    wo.planner_id, wo.approver_id, wo.assigned_team_id, wo.primary_responsible_id, \
     wo.urgency_id, wo.title, wo.description, \
     wo.planned_start, wo.planned_end, wo.shift, wo.scheduled_at, \
     wo.actual_start, wo.actual_end, \
@@ -140,9 +143,23 @@ const WO_JOIN_COLS: &str = "\
     COALESCE(ur.display_name, ur.username) AS responsible_username, \
     COALESCE(up.display_name, up.username) AS planner_display_name, \
     COALESCE(ur.display_name, ur.username) AS responsible_display_name, \
-    irdi.code AS source_di_code, irdi.title AS source_di_title, irdi.status AS source_di_status";
+    irdi.code AS source_di_code, irdi.title AS source_di_title, irdi.status AS source_di_status, \
+    tm.code AS assigned_team_code, tm.name AS assigned_team_name, \
+    CASE \
+      WHEN tm.code IS NOT NULL AND tm.name IS NOT NULL THEN tm.code || ' — ' || tm.name \
+      ELSE COALESCE(tm.name, tm.code) \
+    END AS assigned_team_label, \
+    (SELECT sc.id FROM schedule_commitments sc \
+      WHERE sc.source_type = 'work_order' AND sc.source_id = wo.id \
+      ORDER BY sc.id DESC LIMIT 1) AS schedule_commitment_id, \
+    CASE WHEN (SELECT sc.frozen_at FROM schedule_commitments sc \
+      WHERE sc.source_type = 'work_order' AND sc.source_id = wo.id \
+      ORDER BY sc.id DESC LIMIT 1) IS NOT NULL THEN 1 ELSE 0 END AS schedule_frozen";
 
 /// JOIN clause used by list and get queries.
+/// Derived lifecycle state (`wo::lifecycle::SQL_CASE`).
+const LIFECYCLE: &str = crate::wo::lifecycle::SQL_CASE;
+
 const WO_JOINS: &str = "\
     LEFT JOIN work_order_statuses wos ON wos.id = wo.status_id \
     LEFT JOIN work_order_types    wot ON wot.id = wo.type_id \
@@ -150,7 +167,8 @@ const WO_JOINS: &str = "\
     LEFT JOIN equipment           ar  ON ar.id  = wo.equipment_id \
     LEFT JOIN user_accounts       up  ON up.id  = wo.planner_id \
     LEFT JOIN user_accounts       ur  ON ur.id  = wo.primary_responsible_id \
-    LEFT JOIN intervention_requests irdi ON irdi.id = wo.source_di_id";
+    LEFT JOIN intervention_requests irdi ON irdi.id = wo.source_di_id \
+    LEFT JOIN teams tm ON tm.id = wo.assigned_team_id AND tm.deleted_at IS NULL";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // A) list_work_orders — paginated, filtered
@@ -167,6 +185,24 @@ pub async fn list_work_orders(db: &DatabaseConnection, filter: WoListFilter) -> 
             where_clauses.push(format!("wos.code IN ({placeholders})"));
             for c in codes {
                 binds.push(c.clone().into());
+            }
+        }
+    }
+
+    // ── Lifecycle filter (derived PRD states) ────────────────────────────
+    if let Some(ref states) = filter.lifecycle_states {
+        if !states.is_empty() {
+            for st in states {
+                if crate::wo::lifecycle::LifecycleState::try_from_str(st).is_none() {
+                    return Err(AppError::ValidationFailed(vec![format!(
+                        "Unknown lifecycle state '{st}'."
+                    )]));
+                }
+            }
+            let placeholders = vec!["?"; states.len()].join(", ");
+            where_clauses.push(format!("{LIFECYCLE} IN ({placeholders})"));
+            for st in states {
+                binds.push(st.clone().into());
             }
         }
     }
@@ -254,11 +290,11 @@ pub async fn list_work_orders(db: &DatabaseConnection, filter: WoListFilter) -> 
         .map_err(|e| AppError::Internal(anyhow::anyhow!("WO count decode: {e}")))?;
 
     // ── Data query with LIMIT/OFFSET ─────────────────────────────────────
-    let row_limit = filter.limit.min(200).max(1);
+    let row_limit = filter.limit.clamp(1, 200);
     let offset = filter.offset.max(0);
 
     let data_sql = format!(
-        "SELECT {WO_COLS}, {WO_JOIN_COLS} \
+        "SELECT {WO_COLS}, {WO_JOIN_COLS}, {LIFECYCLE} AS lifecycle_state \
          FROM work_orders wo \
          {WO_JOINS} \
          WHERE {where_sql} \
@@ -278,9 +314,9 @@ pub async fn list_work_orders(db: &DatabaseConnection, filter: WoListFilter) -> 
 // B) get_work_order — single row by id with full joins
 // ═══════════════════════════════════════════════════════════════════════════════
 
-pub async fn get_work_order(db: &DatabaseConnection, id: i64) -> AppResult<Option<WorkOrder>> {
+pub async fn get_work_order(db: &impl ConnectionTrait, id: i64) -> AppResult<Option<WorkOrder>> {
     let sql = format!(
-        "SELECT {WO_COLS}, {WO_JOIN_COLS} \
+        "SELECT {WO_COLS}, {WO_JOIN_COLS}, {LIFECYCLE} AS lifecycle_state \
          FROM work_orders wo \
          {WO_JOINS} \
          WHERE wo.id = ?"
@@ -303,7 +339,7 @@ pub async fn get_wo_transition_log(db: &DatabaseConnection, wo_id: i64) -> AppRe
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, wo_id, from_status, to_status, action, actor_id, reason_code, notes, acted_at \
+            "SELECT id, wo_id, from_status, to_status, action, actor_id, reason_code, notes, acted_at, lifecycle_state \
              FROM wo_state_transition_log \
              WHERE wo_id = ? \
              ORDER BY acted_at ASC",
@@ -322,11 +358,14 @@ pub async fn create_work_order(db: &DatabaseConnection, input: WoCreateInput) ->
     ensure_work_order_statuses_if_needed(db).await?;
     let default_closeout_policy_id = ensure_default_closeout_validation_policy_id(db).await?;
 
+    // The WO row, its transition log entry and its sync outbox entry commit together.
+    let txn = db.begin().await?;
+
     let equipment_id = input.equipment_id.filter(|&e| e > 0);
     let urgency_id = input.urgency_id.filter(|&u| u > 0);
     let mut entity_id = input.entity_id.filter(|&e| e > 0);
 
-    let creator_ok = db
+    let creator_ok = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id FROM user_accounts WHERE id = ?",
@@ -341,7 +380,7 @@ pub async fn create_work_order(db: &DatabaseConnection, input: WoCreateInput) ->
     }
 
     if let Some(eid) = equipment_id {
-        let ex = db
+        let ex = txn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "SELECT id, installed_at_node_id FROM equipment \
@@ -374,7 +413,7 @@ pub async fn create_work_order(db: &DatabaseConnection, input: WoCreateInput) ->
         ]));
     }
     if let Some(nid) = entity_id {
-        let node_ok = db
+        let node_ok = txn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "SELECT id FROM org_nodes WHERE id = ? AND deleted_at IS NULL",
@@ -389,7 +428,7 @@ pub async fn create_work_order(db: &DatabaseConnection, input: WoCreateInput) ->
     }
 
     if let Some(uid) = urgency_id {
-        let ex = db
+        let ex = txn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "SELECT 1 AS ok FROM urgency_levels WHERE id = ?",
@@ -403,11 +442,11 @@ pub async fn create_work_order(db: &DatabaseConnection, input: WoCreateInput) ->
         }
     }
 
-    let type_id = resolve_work_order_type_id_by_code(db, &input.type_code).await?;
+    let type_id = resolve_work_order_type_id_by_code(&txn, &input.type_code).await?;
 
     // If source_di_id is provided, verify the DI exists
     if let Some(di_id) = input.source_di_id {
-        let di_exists = db
+        let di_exists = txn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "SELECT id FROM intervention_requests WHERE id = ?",
@@ -419,7 +458,7 @@ pub async fn create_work_order(db: &DatabaseConnection, input: WoCreateInput) ->
                 "DI introuvable (source_di_id={di_id})."
             )]));
         }
-        let existing_wo = db
+        let existing_wo = txn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "SELECT wo.id, wo.code \
@@ -440,7 +479,7 @@ pub async fn create_work_order(db: &DatabaseConnection, input: WoCreateInput) ->
     }
 
     if let Some(aid) = input.source_inspection_anomaly_id {
-        let a_exists = db
+        let a_exists = txn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "SELECT id FROM inspection_anomalies WHERE id = ?",
@@ -455,7 +494,7 @@ pub async fn create_work_order(db: &DatabaseConnection, input: WoCreateInput) ->
     }
 
     if let Some(did) = input.source_ram_ishikawa_diagram_id {
-        let d_exists = db
+        let d_exists = txn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "SELECT id FROM ram_ishikawa_diagrams WHERE id = ?",
@@ -470,7 +509,7 @@ pub async fn create_work_order(db: &DatabaseConnection, input: WoCreateInput) ->
     }
 
     // Resolve status_id for 'draft'
-    let draft_row = db
+    let draft_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id FROM work_order_statuses WHERE code = 'draft'",
@@ -496,10 +535,11 @@ pub async fn create_work_order(db: &DatabaseConnection, input: WoCreateInput) ->
         "create_work_order: resolved FK targets before INSERT"
     );
 
-    let code = generate_wo_code(db).await?;
+    let code = generate_wo_code(&txn).await?;
     let now = now_utc_z();
+    let entity_sync_id = crate::sync::identity::new_entity_sync_id();
 
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO work_orders (\
             code, type_id, status_id, equipment_id, location_id, \
@@ -508,9 +548,9 @@ pub async fn create_work_order(db: &DatabaseConnection, input: WoCreateInput) ->
             entity_id, planner_id, requester_id, urgency_id, \
             title, description, notes, \
             planned_start, planned_end, shift, expected_duration_hours, \
-            requires_permit, \
+            requires_permit, entity_sync_id, \
             row_version, created_at, updated_at\
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
         [
             code.clone().into(),
             type_id.into(),
@@ -586,6 +626,7 @@ pub async fn create_work_order(db: &DatabaseConnection, input: WoCreateInput) ->
                 0i64
             })
             .into(),
+            entity_sync_id.into(),
             now.clone().into(),
             now.clone().into(),
         ],
@@ -602,7 +643,7 @@ pub async fn create_work_order(db: &DatabaseConnection, input: WoCreateInput) ->
     })?;
 
     let new_id: i64 = {
-        let row = db
+        let row = txn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "SELECT id FROM work_orders WHERE code = ?",
@@ -614,10 +655,9 @@ pub async fn create_work_order(db: &DatabaseConnection, input: WoCreateInput) ->
             .map_err(|e| AppError::Internal(anyhow::anyhow!("WO id decode: {e}")))?
     };
 
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE work_orders SET \
-         entity_sync_id = lower(hex(randomblob(16))), \
          closeout_validation_profile_id = COALESCE(closeout_validation_profile_id, ?) \
          WHERE id = ?",
         [default_closeout_policy_id.into(), new_id.into()],
@@ -633,20 +673,25 @@ pub async fn create_work_order(db: &DatabaseConnection, input: WoCreateInput) ->
         }
     })?;
 
-    let wo = get_work_order(db, new_id)
+    let wo = get_work_order(&txn, new_id)
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to re-read WO after insert: code={code}")))?;
 
     // Write initial transition log entry
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO wo_state_transition_log \
-         (wo_id, from_status, to_status, action, actor_id, acted_at) \
-         VALUES (?, 'none', 'draft', 'create', ?, ?)",
-        [wo.id.into(), input.creator_id.into(), now.into()],
-    ))
+    crate::wo::workflow::transition::log_transition(
+        &txn,
+        wo.id,
+        "none",
+        "draft",
+        "create",
+        input.creator_id,
+        None,
+        None,
+        &now,
+    )
     .await?;
 
+    txn.commit().await?;
     Ok(wo)
 }
 
@@ -658,11 +703,15 @@ pub async fn update_wo_draft_fields(
     db: &DatabaseConnection,
     input: super::domain::WoDraftUpdateInput,
 ) -> AppResult<WorkOrder> {
+    let txn = db.begin().await?;
+
     // 1. Fetch current row to validate status
-    let current = get_work_order(db, input.id).await?.ok_or_else(|| AppError::NotFound {
-        entity: "WorkOrder".into(),
-        id: input.id.to_string(),
-    })?;
+    let current = get_work_order(&txn, input.id)
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "WorkOrder".into(),
+            id: input.id.to_string(),
+        })?;
 
     // 2. Guard: only allow draft edits
     let status_code = current.status_code.as_deref().unwrap_or("unknown");
@@ -682,7 +731,7 @@ pub async fn update_wo_draft_fields(
         values.push(title.clone().into());
     }
     if let Some(type_code) = input.type_code.as_ref() {
-        let type_id = resolve_work_order_type_id_by_code(db, type_code).await?;
+        let type_id = resolve_work_order_type_id_by_code(&txn, type_code).await?;
         sets.push("type_id = ?".into());
         values.push(type_id.into());
     }
@@ -729,6 +778,7 @@ pub async fn update_wo_draft_fields(
 
     if sets.is_empty() {
         // Nothing to update — return current row
+        txn.commit().await?;
         return Ok(current);
     }
 
@@ -747,7 +797,7 @@ pub async fn update_wo_draft_fields(
         sets.join(", ")
     );
 
-    let result = db
+    let result = txn
         .execute(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
         .await?;
 
@@ -760,10 +810,14 @@ pub async fn update_wo_draft_fields(
     }
 
     // 5. Re-fetch and return updated row
-    get_work_order(db, input.id).await?.ok_or_else(|| AppError::NotFound {
-        entity: "WorkOrder".into(),
-        id: input.id.to_string(),
-    })
+    let wo = get_work_order(&txn, input.id)
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "WorkOrder".into(),
+            id: input.id.to_string(),
+        })?;
+    txn.commit().await?;
+    Ok(wo)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -778,11 +832,15 @@ pub async fn cancel_work_order(db: &DatabaseConnection, input: super::domain::Wo
         ]));
     }
 
+    let txn = db.begin().await?;
+
     // 1. Fetch current row
-    let current = get_work_order(db, input.id).await?.ok_or_else(|| AppError::NotFound {
-        entity: "WorkOrder".into(),
-        id: input.id.to_string(),
-    })?;
+    let current = get_work_order(&txn, input.id)
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "WorkOrder".into(),
+            id: input.id.to_string(),
+        })?;
 
     // 2. Guard: check transition is legal
     let from_code = current.status_code.as_deref().unwrap_or("unknown");
@@ -791,7 +849,7 @@ pub async fn cancel_work_order(db: &DatabaseConnection, input: super::domain::Wo
     guard_wo_transition(&from_status, &WoStatus::Cancelled).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
     // 3. Resolve cancelled status_id
-    let cancelled_row = db
+    let cancelled_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id FROM work_order_statuses WHERE code = 'cancelled'",
@@ -806,7 +864,7 @@ pub async fn cancel_work_order(db: &DatabaseConnection, input: super::domain::Wo
     let now = now_utc_z();
 
     // 4. Update
-    let result = db
+    let result = txn
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE work_orders SET \
@@ -833,24 +891,26 @@ pub async fn cancel_work_order(db: &DatabaseConnection, input: super::domain::Wo
     }
 
     // 5. Write transition log
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO wo_state_transition_log \
-         (wo_id, from_status, to_status, action, actor_id, reason_code, notes, acted_at) \
-         VALUES (?, ?, 'cancelled', 'cancel', ?, NULL, ?, ?)",
-        [
-            input.id.into(),
-            from_code.to_string().into(),
-            input.actor_id.into(),
-            input.cancel_reason.into(),
-            now.into(),
-        ],
-    ))
+    crate::wo::workflow::transition::log_transition(
+        &txn,
+        input.id,
+        from_code,
+        "cancelled",
+        "cancel",
+        input.actor_id,
+        None,
+        Some(input.cancel_reason.as_str()),
+        &now,
+    )
     .await?;
 
     // 6. Re-fetch and return
-    get_work_order(db, input.id).await?.ok_or_else(|| AppError::NotFound {
-        entity: "WorkOrder".into(),
-        id: input.id.to_string(),
-    })
+    let wo = get_work_order(&txn, input.id)
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "WorkOrder".into(),
+            id: input.id.to_string(),
+        })?;
+    txn.commit().await?;
+    Ok(wo)
 }

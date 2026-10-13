@@ -2,7 +2,8 @@
 name = "maintafox"
 version = "0.4.0-dev"
 edition = "2021"
-rust-version = "1.78"
+# Code uses APIs stabilised in 1.80 (LazyLock) and 1.82; declare the real minimum.
+rust-version = "1.82"
 build = "build.rs"
 default-run = "maintafox"
 
@@ -14,6 +15,7 @@ crate-type = ["cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+serde_json = "1"
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "protocol-asset"] }
@@ -22,6 +24,8 @@ tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-updater = "2"
+# OS toasts of notifications, shown from Rust only (no webview permission).
+tauri-plugin-notification = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
@@ -44,6 +48,11 @@ rand = "0.8"
 rand_core = { version = "0.6", features = ["getrandom"] }
 sha2 = "0.10"
 hex = "0.4"
+# Ed25519 verification of entitlement envelopes (already in the tree via rustls).
+ring = "0.17.14"
+# SQLCipher (AES-256 at rest). Feature unification makes sqlx use this build of libsqlite3-sys.
+# Building OpenSSL from source needs Perl (Strawberry Perl on Windows; preinstalled on GitHub runners).
+libsqlite3-sys = { version = "0.30.1", features = ["bundled-sqlcipher-vendored-openssl"] }
 csv = "1"
 hostname = "0.4"
 sys-locale = "0.3"
@@ -53,6 +62,13 @@ cron = "0.12.1"
 rust_xlsxwriter = "0.79.4"
 clap = { version = "4", features = ["derive"] }
 toml = "0.8"
+# Sync worker HTTP transport (Phase 2.3). Same reqwest/rustls(ring) build as tauri-plugin-updater
+# plus `system-proxy` (Windows/macOS proxy settings, as the webview transport had):
+# no native-tls/OpenSSL, no aws-lc. The ring provider is installed in `sync::transport::client`.
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider", "system-proxy"] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+pdf-writer = "0.12"
+ttf-parser = "0.25"
 
 [[bin]]
 name = "rams-readiness-eval"

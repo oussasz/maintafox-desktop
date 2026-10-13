@@ -2,7 +2,10 @@
   "common": {
     "cancel": "Cancel",
     "close": "Close",
-    "loading": "Loading…"
+    "loading": "Loading…",
+    "save": "Save",
+    "saving": "Saving…",
+    "edit": "Edit"
   },
   "page": {
     "title": "Administration",
@@ -50,7 +53,8 @@
       "description": "Define a name and optionally select a template.",
       "template": "Template",
       "noTemplate": "No template",
-      "confirm": "Create"
+      "confirm": "Create",
+      "namePlaceholder": "Field technician"
     },
     "fields": {
       "name": "Name",
@@ -59,7 +63,9 @@
     "errors": {
       "loadFailed": "Failed to load roles",
       "saveFailed": "Failed to save role",
-      "deleteFailed": "Cannot delete this role"
+      "deleteFailed": "Cannot delete this role",
+      "createFailed": "Failed to create role",
+      "loadDetailFailed": "Could not load the role"
     },
     "dependencyWarnings": "Dependency warnings",
     "hardDepErrors": "Missing required dependencies — save blocked",
@@ -74,7 +80,9 @@
       "run": "Simulate",
       "warnings": "Dependency warnings",
       "blocked": "Blocked by"
-    }
+    },
+    "togglePermission": "Toggle {{perm}}",
+    "created": "Role created"
   },
   "users": {
     "search": "Search users…",
@@ -97,13 +105,18 @@
       "allModes": "All modes",
       "local": "Local",
       "sso": "SSO",
-      "hybrid": "Hybrid"
+      "hybrid": "Hybrid",
+      "statusLabel": "Status",
+      "modeLabel": "Mode"
     },
     "fields": {
       "username": "Username",
       "identityMode": "Authentication mode",
       "status": "Status",
-      "lastSeen": "Last seen"
+      "lastSeen": "Last seen",
+      "displayName": "Display name",
+      "email": "Work email",
+      "phone": "Phone number"
     },
     "detail": {
       "identity": "Identity",
@@ -113,15 +126,36 @@
     },
     "actions": {
       "revoke": "Revoke",
-      "deactivate": "Deactivate"
+      "deactivate": "Deactivate",
+      "resetPassword": "Reset password"
     },
+    "resetPassword": {
+      "confirm": "Reset this user's password? A temporary password will be generated and shown once. They must change it on next sign-in.",
+      "success": "Temporary password created",
+      "failed": "Failed to reset password",
+      "ssoUnavailable": "SSO-only accounts do not have a local password",
+      "showOnceTitle": "Temporary password",
+      "showOnceDescription": "Copy this password and give it to the user securely. It will not be shown again.",
+      "showOnceWarning": "This temporary password is shown only once. After you close this dialog it cannot be recovered from the application.",
+      "copy": "Copy password",
+      "copied": "Copied to clipboard",
+      "close": "Close"
+    },
+    "unlocked": "Account unlocked",
     "assignRole": {
       "title": "Assign role",
       "description": "Select a role and scope type.",
       "role": "Role",
       "selectRole": "Choose a role",
       "scope": "Scope",
-      "confirm": "Assign"
+      "confirm": "Assign",
+      "titleWithUser": "Assign role — {{username}}",
+      "replacement": "Previous role → new role",
+      "replacementHint": "Only one assignment per scope at a time: the new role replaces the current one (including an emergency elevation at this level).",
+      "current": "Current role",
+      "emergencyBadge": "(emergency)",
+      "noRoleAtScope": "None",
+      "newLabel": "New role"
     },
     "create": "New user",
     "create.title": "New user",
@@ -157,7 +191,23 @@
     },
     "errors": {
       "loadFailed": "Failed to load users",
-      "deactivateFailed": "Failed to deactivate user"
+      "deactivateFailed": "Failed to deactivate user",
+      "unlockFailed": "Failed to unlock account",
+      "resetPasswordFailed": "Failed to reset password"
+    },
+    "locked": "Locked",
+    "unlock": "Unlock",
+    "create.personnelLocked": "Linked to personnel ID {{id}}",
+    "create.personnelNone": "No personnel linked",
+    "create.usernamePlaceholder": "john.smith",
+    "edit": {
+      "title": "Edit user",
+      "description": "Update account identity and flags. To change permissions, use Assign role (shield) on a user row.",
+      "invalidEmail": "Please enter a valid email address.",
+      "invalidPhone": "Please enter a valid phone number (E.164).",
+      "emailPlaceholder": "name@company.com",
+      "success": "User updated",
+      "error": "Failed to update user"
     }
   },
   "profile": {
@@ -254,7 +304,8 @@
     "noExpiry": "No expiry",
     "save": "Save policy",
     "saving": "Saving...",
-    "saved": "Policy saved successfully."
+    "saved": "Policy saved successfully.",
+    "saveError": "Failed to save password policy."
   },
   "permissions": {
     "domains": "Domains",
@@ -302,6 +353,31 @@
       "requiredBy": "Required by",
       "suggests": "Suggests",
       "suggestedBy": "Suggested by"
+    },
+    "domainLabels": {
+      "eq": "Equipment",
+      "di": "Intervention requests",
+      "ot": "Work orders",
+      "org": "Organization",
+      "per": "Personnel",
+      "ref": "Reference data",
+      "inv": "Inventory",
+      "pm": "Preventive maintenance",
+      "ram": "Reliability / RAMS",
+      "rep": "Reports",
+      "arc": "Archives",
+      "doc": "Documentation",
+      "plan": "Planning",
+      "log": "Activity log",
+      "trn": "Training",
+      "iot": "IoT",
+      "erp": "ERP connector",
+      "ptw": "Work permits",
+      "fin": "Budget / Finance",
+      "ins": "Inspection rounds",
+      "cfg": "Configuration",
+      "adm": "Administration",
+      "cst": "Custom"
     }
   },
   "sessions": {
@@ -463,5 +539,23 @@
       "exportFailed": "Failed to export",
       "importFailed": "Failed to import"
     }
+  },
+  "scope": {
+    "global": "Global",
+    "site": "Site",
+    "department": "Department"
+  },
+  "audit": {
+    "title": "Admin audit timeline",
+    "applied": "Applied",
+    "blocked": "Blocked",
+    "partial": "Partial",
+    "stepUp": "Step-up",
+    "scopeValue": "Scope: {{scope}}",
+    "user": "User #{{id}}",
+    "system": "System",
+    "viewDiff": "View diff",
+    "empty": "No audit events recorded.",
+    "loadError": "Could not load the audit history. {{error}}"
   }
 }

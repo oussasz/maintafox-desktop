@@ -57,7 +57,7 @@ impl ScopeChain {
     /// Whether this chain contains the synthetic tenant root (always true
     /// for a well-formed chain, but useful as a guard).
     pub fn includes_tenant(&self) -> bool {
-        self.nodes.first().map_or(false, |n| n.scope_type == "tenant")
+        self.nodes.first().is_some_and(|n| n.scope_type == "tenant")
     }
 }
 

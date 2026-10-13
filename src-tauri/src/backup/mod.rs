@@ -11,17 +11,25 @@
 //!   the rest of the codebase. No direct `sqlx::SqlitePool` usage.
 //! - `VACUUM INTO` is the WAL-safe approach for hot-copying a `SQLite` database.
 //!   It produces a point-in-time consistent copy without locking other readers.
-//! - Phase 1: `encryption_mode` is always `"plaintext"`. AES-256 requires the
-//!   key management infrastructure delivered in Phase 2 (VPS).
+//! - Backups inherit the live database's SQLCipher encryption (`encryption_mode = "aes256"`);
+//!   validation opens them with this device's key (see `db::encryption`).
 
 use crate::errors::{AppError, AppResult};
-use sea_orm::{ConnectOptions, ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
+pub mod restore;
+pub mod scheduler;
 #[cfg(test)]
 mod tests;
+
+/// `backup_runs.trigger` values.
+pub const TRIGGER_MANUAL: &str = "manual";
+pub const TRIGGER_SCHEDULED: &str = "scheduled";
+pub const TRIGGER_PRE_RESTORE: &str = "pre_restore";
+pub const TRIGGER_PRE_FACTORY_RESET: &str = "pre_factory_reset";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -128,27 +136,30 @@ fn map_backup_run(row: sea_orm::QueryResult) -> AppResult<BackupRunRecord> {
 
 // ─── Manual Backup ────────────────────────────────────────────────────────────
 
-/// Execute a manual backup of the `SQLite` database.
+/// Execute a backup of the `SQLite` database (`trigger` is one of the `TRIGGER_*` constants).
 ///
 /// Algorithm:
 /// 1. Execute `VACUUM INTO '<target_path>'` on the live connection (WAL-safe)
 /// 2. Compute SHA-256 of the output file
 /// 3. Insert a `backup_runs` record with status, checksum, and file size
 ///
-/// Phase 1: `encryption_mode` is always `"plaintext"`. Phase 2 will add AES-256.
+/// `encryption_mode` is `"aes256"`: VACUUM INTO on a SQLCipher database writes an encrypted copy
+/// with the same key (verified; a plaintext output is deleted and the backup fails).
 #[allow(clippy::cast_possible_truncation)]
 pub async fn run_manual_backup(
     db: &DatabaseConnection,
     target_path: &str,
-    initiated_by_id: i32,
+    trigger: &str,
+    initiated_by_id: Option<i32>,
 ) -> AppResult<BackupRunResult> {
     use std::fs;
 
     let started_at = chrono::Utc::now().to_rfc3339();
     tracing::info!(
         target_path = target_path,
-        actor = initiated_by_id,
-        "manual backup started"
+        trigger = trigger,
+        actor = ?initiated_by_id,
+        "backup started"
     );
 
     let target = Path::new(target_path);
@@ -165,6 +176,18 @@ pub async fn run_manual_backup(
     let target_path_sql = target_path.replace('\'', "''");
     db.execute_unprepared(&format!("VACUUM INTO '{target_path_sql}'"))
         .await?;
+
+    // The live database is SQLCipher-encrypted (db::encryption); a backup must never be a
+    // plaintext copy of it. Refuse (and delete) rather than leave readable data on disk.
+    let encryption_mode = match crate::db::encryption::detect_file_state(target)? {
+        crate::db::encryption::DatabaseFileState::Encrypted => "aes256",
+        _ => {
+            fs::remove_file(target).ok();
+            return Err(AppError::Internal(anyhow::anyhow!(
+                "backup output was not encrypted; the file was deleted and the backup aborted"
+            )));
+        }
+    };
 
     // Compute checksum and file size
     let metadata = fs::metadata(target)?;
@@ -191,15 +214,17 @@ pub async fn run_manual_backup(
                (trigger, status, output_path, file_size_bytes, sha256_checksum,
                 encryption_mode, db_schema_version, started_at, completed_at,
                 initiated_by_id)
-               VALUES ('manual', 'success', ?, ?, ?, 'plaintext', ?, ?, ?, ?)",
+               VALUES (?, 'success', ?, ?, ?, ?, ?, ?, ?, ?)",
             [
+                trigger.into(),
                 target_path.into(),
                 file_size_i64.into(),
                 checksum.clone().into(),
+                encryption_mode.into(),
                 db_schema_version.into(),
                 started_at.into(),
                 completed_at.into(),
-                i64::from(initiated_by_id).into(),
+                initiated_by_id.map(i64::from).into(),
             ],
         ))
         .await?;
@@ -210,7 +235,7 @@ pub async fn run_manual_backup(
         run_id = run_id,
         checksum = %checksum,
         file_size_bytes = file_size,
-        "manual backup completed successfully"
+        "backup completed successfully"
     );
 
     Ok(BackupRunResult {
@@ -233,7 +258,14 @@ pub async fn run_manual_backup(
 /// 4. Open a read-only `sea_orm` connection to the temp copy
 /// 5. Run `PRAGMA integrity_check`
 /// 6. Return validation results — never replace the live DB
-pub async fn validate_backup_file(db: &DatabaseConnection, backup_path: &str) -> AppResult<RestoreTestResult> {
+///
+/// `key` is this device's database key (backups are encrypted with it); `None` only for
+/// plaintext files.
+pub async fn validate_backup_file(
+    db: &DatabaseConnection,
+    backup_path: &str,
+    key: Option<&crate::db::encryption::DatabaseKey>,
+) -> AppResult<RestoreTestResult> {
     use std::fs;
 
     let path = Path::new(backup_path);
@@ -260,19 +292,25 @@ pub async fn validate_backup_file(db: &DatabaseConnection, backup_path: &str) ->
     let checksum_match = stored_checksum.as_deref().is_some_and(|s| s == computed_checksum);
 
     // Copy to a temp path for isolated read-only integrity check.
-    // This ensures the live database is never touched.
-    let temp_dir = std::env::temp_dir();
-    let temp_name = format!("maintafox_restore_test_{}.db", chrono::Utc::now().timestamp());
-    let temp_path = temp_dir.join(&temp_name);
-    fs::copy(path, &temp_path)?;
+    // This ensures the live database is never touched. Each check gets its own directory: two
+    // checks in the same second (parallel tests, or two restores in a row) must never open,
+    // overwrite or delete each other's copy, and SQLite's side files go away with the directory.
+    let temp_dir = std::env::temp_dir().join(format!("maintafox_restore_check_{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&temp_dir)?;
+    let temp_path = temp_dir.join("backup.db");
+    if let Err(e) = fs::copy(path, &temp_path) {
+        let _ = fs::remove_dir_all(&temp_dir);
+        return Err(e.into());
+    }
 
     // Open an isolated read-only sea_orm connection to the temp copy
     let integrity_output = {
-        let url = format!("sqlite://{}?mode=ro", temp_path.to_string_lossy());
-        let mut opts = ConnectOptions::new(url);
-        opts.max_connections(1);
-
-        match Database::connect(opts).await {
+        // Encrypted backups are opened with this device's database key (same key as the live DB).
+        let open_key = match crate::db::encryption::detect_file_state(&temp_path)? {
+            crate::db::encryption::DatabaseFileState::Encrypted => key,
+            _ => None,
+        };
+        match crate::db::connect_sqlcipher(&temp_path, open_key, false).await {
             Ok(test_db) => {
                 let result = test_db
                     .query_one(Statement::from_string(
@@ -296,8 +334,8 @@ pub async fn validate_backup_file(db: &DatabaseConnection, backup_path: &str) ->
         }
     };
 
-    // Clean up temp file (non-fatal if removal fails)
-    let _ = fs::remove_file(&temp_path);
+    // Clean up the temp copy and its side files (non-fatal if removal fails)
+    let _ = fs::remove_dir_all(&temp_dir);
 
     let integrity_ok = integrity_output.trim() == "ok";
 

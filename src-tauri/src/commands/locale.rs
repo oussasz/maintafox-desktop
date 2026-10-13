@@ -57,6 +57,12 @@ pub async fn set_locale_preference(
 
     locale::write_locale_config(&state.db, key, &payload.locale).await?;
 
+    // Tenant-wide Settings change must also clear a stale user override so the
+    // admin-selected language actually becomes the active runtime locale.
+    if payload.as_tenant_default.unwrap_or(false) {
+        locale::write_locale_config(&state.db, "locale.user_language", &payload.locale).await?;
+    }
+
     tracing::info!(
         user_id = %user.user_id,
         locale = %payload.locale,

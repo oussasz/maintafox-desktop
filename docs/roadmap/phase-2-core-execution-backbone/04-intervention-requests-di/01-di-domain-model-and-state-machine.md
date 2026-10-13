@@ -115,7 +115,7 @@ CREATE TABLE intervention_requests (
   id                      INTEGER PRIMARY KEY AUTOINCREMENT,
   code                    TEXT    NOT NULL UNIQUE,           -- DI-0001 format
   -- Origin context
-  asset_id                INTEGER NOT NULL REFERENCES asset_registry(id),
+  equipment_id            INTEGER NOT NULL REFERENCES equipment(id),
   sub_asset_ref           TEXT    NULL,
   org_node_id             INTEGER NOT NULL REFERENCES org_nodes(id),
   -- State
@@ -141,7 +141,7 @@ CREATE TABLE intervention_requests (
   observed_at             TEXT    NULL,
   submitted_at            TEXT    NOT NULL,
   -- Review / approval tracking
-  review_team_id          INTEGER NULL REFERENCES org_nodes(id),
+  -- (review_team_id removed — org routing SSOT is org_node_id)
   reviewer_id             INTEGER NULL REFERENCES user_accounts(id),
   screened_at             TEXT    NULL,
   approved_at             TEXT    NULL,
@@ -167,7 +167,7 @@ CREATE TABLE intervention_requests (
 );
 
 CREATE INDEX idx_ir_status     ON intervention_requests(status);
-CREATE INDEX idx_ir_asset      ON intervention_requests(asset_id);
+CREATE INDEX idx_ir_equipment ON intervention_requests(equipment_id);
 CREATE INDEX idx_ir_org_node   ON intervention_requests(org_node_id);
 CREATE INDEX idx_ir_submitter  ON intervention_requests(submitter_id);
 CREATE INDEX idx_ir_reviewer   ON intervention_requests(reviewer_id);
@@ -296,7 +296,7 @@ STEP 1 - CREATE src-tauri/src/di/queries.rs
 Implement the following functions using sqlx and &SqlitePool:
 
 A) `list_intervention_requests(pool, filter: DiListFilter) -> Result<DiListPage>`
-   DiListFilter: status: Option<Vec<String>>, asset_id: Option<i64>,
+   DiListFilter: status: Option<Vec<String>>, equipment_id: Option<i64>,
    org_node_id: Option<i64>, submitter_id: Option<i64>, reviewer_id: Option<i64>,
    origin_type: Option<String>, urgency: Option<String>,
    search: Option<String>, limit: i64, offset: i64
@@ -309,14 +309,14 @@ B) `get_intervention_request(pool, id: i64) -> Result<Option<InterventionRequest
 C) `get_di_transition_log(pool, di_id: i64) -> Result<Vec<DiTransitionRow>>`
    DiTransitionRow: id, from_status, to_status, action, actor_id, reason_code, notes, acted_at.
 
-D) `get_recent_similar_dis(pool, asset_id: i64, symptom_code_id: Option<i64>, days: i64)
+D) `get_recent_similar_dis(pool, equipment_id: i64, symptom_code_id: Option<i64>, days: i64)
    -> Result<Vec<DiSummaryRow>>`
    Find DIs on same asset with same symptom (if provided) in last `days` days.
    Used to surface recurrence context to reviewers.
    Returns up to 5 results ordered by submitted_at DESC.
 
 E) `create_intervention_request(pool, input: DiCreateInput) -> Result<InterventionRequest>`
-   DiCreateInput fields: asset_id, org_node_id, title, description, origin_type,
+   DiCreateInput fields: equipment_id, org_node_id, title, description, origin_type,
    symptom_code_id?, impact_level, production_impact, safety_flag, environmental_flag,
    quality_flag, reported_urgency, observed_at?, submitter_id
    Generates code via generate_di_code(), sets status = 'submitted', submitted_at = now.
@@ -350,7 +350,7 @@ C) `create_di` — requires `di.create` or `di.create.own`
    - title not empty
    - description not empty
    - origin_type is a valid DiOriginType
-   - asset_id resolves in asset_registry
+   - equipment_id resolves in equipment
    - org_node_id resolves in org_nodes
    Output: InterventionRequest
 
@@ -466,7 +466,7 @@ Assigning a string `"invalid_status"` to `DiStatus` type must produce a TypeScri
 Simulate a response missing `code` field from the mock; Zod parse must throw.
 
 **V3 - Store filter merge.**
-Call `setFilter({ status: ["submitted"] })` then `setFilter({ asset_id: 5 })`;
+Call `setFilter({ status: ["submitted"] })` then `setFilter({ equipment_id: 5 })`;
 resulting filter must include both fields.
 
 **V4 - Loading state.**

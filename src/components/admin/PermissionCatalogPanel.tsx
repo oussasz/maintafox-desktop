@@ -28,11 +28,11 @@ import { usePermissions } from "@/hooks/use-permissions";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {
-  listPermissions,
-  getPermissionDependencies,
   createCustomPermission,
+  getPermissionDependencies,
+  listPermissions,
 } from "@/services/rbac-service";
-import type { PermissionWithSystem, PermissionDependencyRow } from "@shared/ipc-types";
+import type { PermissionDependencyRow, PermissionWithSystem } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
 // ── Constants ───────────────────────────────────────────────────────────────
@@ -63,32 +63,8 @@ const DOMAIN_GROUPS = [
   "adm",
 ] as const;
 
-/** Human-readable domain labels (French). */
-const DOMAIN_LABELS: Record<string, string> = {
-  eq: "Équipements",
-  di: "Demandes d'intervention",
-  ot: "Ordres de travail",
-  org: "Organisation",
-  per: "Personnel",
-  ref: "Données de référence",
-  inv: "Inventaire",
-  pm: "Maintenance préventive",
-  ram: "Fiabilité / RAMS",
-  rep: "Rapports",
-  arc: "Archives",
-  doc: "Documentation",
-  plan: "Planification",
-  log: "Journal d'activité",
-  trn: "Formation",
-  iot: "IoT",
-  erp: "Connecteur ERP",
-  ptw: "Permis de travail",
-  fin: "Budget / Finance",
-  ins: "Rondes d'inspection",
-  cfg: "Configuration",
-  adm: "Administration",
-  cst: "Personnalisé",
-};
+/** Domains with a translated label under `admin:permissions.domainLabels.<domain>`. */
+const LABELLED_DOMAINS = new Set<string>([...DOMAIN_GROUPS, "cst"]);
 
 const SYSTEM_PREFIXES = [
   "eq.",
@@ -142,14 +118,14 @@ function CreatePermissionDialog({
   const nameError = useMemo(() => {
     const trimmed = name.trim().toLowerCase();
     if (!trimmed.startsWith("cst.")) {
-      return t("permissions.errors.mustStartWithCst", "Le nom doit commencer par 'cst.'");
+      return t("permissions.errors.mustStartWithCst");
     }
     if (trimmed.length < 5) {
-      return t("permissions.errors.nameTooShort", "Ajoutez au moins un caractère après 'cst.'");
+      return t("permissions.errors.nameTooShort");
     }
     for (const prefix of SYSTEM_PREFIXES) {
       if (trimmed.startsWith(prefix)) {
-        return t("permissions.errors.systemPrefix", "Préfixe système réservé");
+        return t("permissions.errors.systemPrefix");
       }
     }
     return null;
@@ -165,7 +141,7 @@ function CreatePermissionDialog({
         category: "custom",
       });
       toast({
-        title: t("permissions.created", "Permission créée"),
+        title: t("permissions.created"),
         variant: "success",
       });
       onCreated();
@@ -174,7 +150,7 @@ function CreatePermissionDialog({
       setDescription("");
     } catch {
       toast({
-        title: t("permissions.errors.createFailed", "Erreur lors de la création"),
+        title: t("permissions.errors.createFailed"),
         variant: "destructive",
       });
     } finally {
@@ -186,20 +162,13 @@ function CreatePermissionDialog({
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>
-            {t("permissions.create.title", "Créer une permission personnalisée")}
-          </DialogTitle>
-          <DialogDescription>
-            {t(
-              "permissions.create.description",
-              "Les permissions personnalisées utilisent le préfixe 'cst.' et ne peuvent pas être dangereuses.",
-            )}
-          </DialogDescription>
+          <DialogTitle>{t("permissions.create.title")}</DialogTitle>
+          <DialogDescription>{t("permissions.create.description")}</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-2">
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">{t("permissions.fields.name", "Nom")}</label>
+            <label className="text-sm font-medium">{t("permissions.fields.name")}</label>
             <Input
               value={name}
               onChange={(e) => setName(e.target.value)}
@@ -208,26 +177,21 @@ function CreatePermissionDialog({
             {nameError && <p className="text-xs text-red-600">{nameError}</p>}
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">
-              {t("permissions.fields.description", "Description")}
-            </label>
+            <label className="text-sm font-medium">{t("permissions.fields.description")}</label>
             <Input
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder={t(
-                "permissions.create.descPlaceholder",
-                "Brève description de cette permission",
-              )}
+              placeholder={t("permissions.create.descPlaceholder")}
             />
           </div>
         </div>
 
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
-            {t("common.cancel", "Annuler")}
+            {t("common.cancel")}
           </Button>
           <Button onClick={handleCreate} disabled={!!nameError || submitting}>
-            {t("permissions.create.confirm", "Créer")}
+            {t("permissions.create.confirm")}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -263,7 +227,7 @@ function DependencyViewer({
     <div className="w-72 shrink-0 rounded-lg border border-surface-border bg-surface-1 p-4">
       <div className="flex items-center justify-between">
         <h4 className="text-sm font-semibold text-text-primary">
-          {t("permissions.dependencies.title", "Dépendances")}
+          {t("permissions.dependencies.title")}
         </h4>
         <Button variant="ghost" size="sm" onClick={onClose}>
           <X className="h-4 w-4" />
@@ -271,21 +235,17 @@ function DependencyViewer({
       </div>
       <p className="mt-1 font-mono text-xs text-text-secondary">{permissionName}</p>
 
-      {loading && (
-        <p className="mt-3 text-xs text-text-secondary">{t("common.loading", "Chargement…")}</p>
-      )}
+      {loading && <p className="mt-3 text-xs text-text-secondary">{t("common.loading")}</p>}
 
       {!loading && deps.length === 0 && (
-        <p className="mt-3 text-xs text-text-secondary">
-          {t("permissions.dependencies.none", "Aucune dépendance")}
-        </p>
+        <p className="mt-3 text-xs text-text-secondary">{t("permissions.dependencies.none")}</p>
       )}
 
       {!loading && hardDeps.length > 0 && (
         <div className="mt-3 space-y-1">
           <h5 className="flex items-center gap-1 text-xs font-medium text-red-600">
             <AlertTriangle className="h-3.5 w-3.5" />
-            {t("permissions.dependencies.hard", "Obligatoire (hard)")}
+            {t("permissions.dependencies.hard")}
           </h5>
           {hardDeps.map((d) => (
             <div
@@ -294,13 +254,12 @@ function DependencyViewer({
             >
               {d.permission_name === permissionName ? (
                 <span>
-                  {t("permissions.dependencies.requires", "Requiert")}{" "}
+                  {t("permissions.dependencies.requires")}{" "}
                   <strong>{d.required_permission_name}</strong>
                 </span>
               ) : (
                 <span>
-                  {t("permissions.dependencies.requiredBy", "Requis par")}{" "}
-                  <strong>{d.permission_name}</strong>
+                  {t("permissions.dependencies.requiredBy")} <strong>{d.permission_name}</strong>
                 </span>
               )}
             </div>
@@ -312,7 +271,7 @@ function DependencyViewer({
         <div className="mt-3 space-y-1">
           <h5 className="flex items-center gap-1 text-xs font-medium text-orange-600">
             <Info className="h-3.5 w-3.5" />
-            {t("permissions.dependencies.warn", "Recommandé (warn)")}
+            {t("permissions.dependencies.warn")}
           </h5>
           {warnDeps.map((d) => (
             <div
@@ -321,13 +280,12 @@ function DependencyViewer({
             >
               {d.permission_name === permissionName ? (
                 <span>
-                  {t("permissions.dependencies.suggests", "Suggère")}{" "}
+                  {t("permissions.dependencies.suggests")}{" "}
                   <strong>{d.required_permission_name}</strong>
                 </span>
               ) : (
                 <span>
-                  {t("permissions.dependencies.suggestedBy", "Suggéré par")}{" "}
-                  <strong>{d.permission_name}</strong>
+                  {t("permissions.dependencies.suggestedBy")} <strong>{d.permission_name}</strong>
                 </span>
               )}
             </div>
@@ -376,6 +334,9 @@ export function PermissionCatalogPanel() {
   const [showCreate, setShowCreate] = useState(false);
   const [depViewerPerm, setDepViewerPerm] = useState<string | null>(null);
 
+  const domainLabel = (domain: string) =>
+    LABELLED_DOMAINS.has(domain) ? t(`permissions.domainLabels.${domain}`) : domain;
+
   const fetchPermissions = useCallback(async () => {
     setLoading(true);
     try {
@@ -383,7 +344,7 @@ export function PermissionCatalogPanel() {
       setAllPermissions(perms);
     } catch {
       toast({
-        title: t("permissions.errors.loadFailed", "Erreur de chargement des permissions"),
+        title: t("permissions.errors.loadFailed"),
         variant: "destructive",
       });
     } finally {
@@ -433,15 +394,13 @@ export function PermissionCatalogPanel() {
       {/* Left sidebar: domain groups */}
       <div className="w-56 shrink-0 space-y-1">
         <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-text-primary">
-            {t("permissions.domains", "Domaines")}
-          </h3>
+          <h3 className="text-sm font-semibold text-text-primary">{t("permissions.domains")}</h3>
           {can(P.ADM_PERMISSIONS) && (
             <Button
               variant="ghost"
               size="sm"
               onClick={() => exportToCSV(allPermissions)}
-              title={t("permissions.export", "Exporter CSV")}
+              title={t("permissions.export")}
             >
               <Download className="h-4 w-4" />
             </Button>
@@ -474,7 +433,7 @@ export function PermissionCatalogPanel() {
                 >
                   {domain}
                 </span>
-                <span className="truncate text-xs">{DOMAIN_LABELS[domain] ?? domain}</span>
+                <span className="truncate text-xs">{domainLabel(domain)}</span>
               </div>
               <Badge variant="secondary" className="text-[10px]">
                 {count}
@@ -499,7 +458,7 @@ export function PermissionCatalogPanel() {
               >
                 {selectedDomain}
               </span>
-              {DOMAIN_LABELS[selectedDomain] ?? selectedDomain}
+              {domainLabel(selectedDomain)}
             </h3>
           </div>
 
@@ -509,29 +468,25 @@ export function PermissionCatalogPanel() {
               <Input
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder={t("permissions.search", "Rechercher…")}
+                placeholder={t("permissions.search")}
                 className="w-48 pl-8"
               />
             </div>
             {can(P.ADM_PERMISSIONS) && (
               <Button size="sm" onClick={() => setShowCreate(true)}>
                 <Plus className="mr-1.5 h-4 w-4" />
-                {t("permissions.addCustom", "Ajouter")}
+                {t("permissions.addCustom")}
               </Button>
             )}
           </div>
         </div>
 
         {/* Loading */}
-        {loading && (
-          <p className="text-sm text-text-secondary">{t("common.loading", "Chargement…")}</p>
-        )}
+        {loading && <p className="text-sm text-text-secondary">{t("common.loading")}</p>}
 
         {/* Empty state */}
         {!loading && filteredPermissions.length === 0 && (
-          <p className="text-sm text-text-secondary">
-            {t("permissions.empty", "Aucune permission dans ce domaine.")}
-          </p>
+          <p className="text-sm text-text-secondary">{t("permissions.empty")}</p>
         )}
 
         {/* Permission table */}
@@ -540,15 +495,11 @@ export function PermissionCatalogPanel() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-surface-border text-left text-xs font-medium uppercase tracking-wide text-text-secondary">
-                  <th className="px-3 py-2">{t("permissions.table.name", "Nom")}</th>
-                  <th className="px-3 py-2">{t("permissions.table.description", "Description")}</th>
-                  <th className="px-3 py-2 text-center">
-                    {t("permissions.table.dangerous", "Dangereux")}
-                  </th>
-                  <th className="px-3 py-2 text-center">
-                    {t("permissions.table.stepUp", "Step-up")}
-                  </th>
-                  <th className="px-3 py-2 text-center">{t("permissions.table.type", "Type")}</th>
+                  <th className="px-3 py-2">{t("permissions.table.name")}</th>
+                  <th className="px-3 py-2">{t("permissions.table.description")}</th>
+                  <th className="px-3 py-2 text-center">{t("permissions.table.dangerous")}</th>
+                  <th className="px-3 py-2 text-center">{t("permissions.table.stepUp")}</th>
+                  <th className="px-3 py-2 text-center">{t("permissions.table.type")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -566,7 +517,7 @@ export function PermissionCatalogPanel() {
                       {perm.is_dangerous && (
                         <Badge variant="destructive" className="text-[10px]">
                           <ShieldAlert className="mr-1 h-3 w-3" />
-                          {t("permissions.badges.dangerous", "Dangereux")}
+                          {t("permissions.badges.dangerous")}
                         </Badge>
                       )}
                     </td>
@@ -577,7 +528,7 @@ export function PermissionCatalogPanel() {
                           className="border-orange-300 text-[10px] text-orange-600"
                         >
                           <Lock className="mr-1 h-3 w-3" />
-                          {t("permissions.badges.stepUp", "Step-up")}
+                          {t("permissions.badges.stepUp")}
                         </Badge>
                       )}
                     </td>
@@ -587,8 +538,8 @@ export function PermissionCatalogPanel() {
                         className="text-[10px]"
                       >
                         {perm.is_system
-                          ? t("permissions.badges.system", "Système")
-                          : t("permissions.badges.custom", "Personnalisé")}
+                          ? t("permissions.badges.system")
+                          : t("permissions.badges.custom")}
                       </Badge>
                     </td>
                   </tr>

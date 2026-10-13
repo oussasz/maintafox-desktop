@@ -255,7 +255,7 @@ export function PurchaseOrderWorkspace({
 
   const handlePrint = () => {
     if (!detail) return;
-    printPoFiche(
+    void printPoFiche(
       detail,
       (key) =>
         (t as (k: string, o?: { defaultValue?: string }) => string)(key, {

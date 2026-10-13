@@ -81,12 +81,14 @@ describe("formatCurrency()", () => {
   });
 
   it("returns em-dash for NaN", () => {
-    expect(formatCurrency(NaN, "fr")).toBe("\u2014");
+    expect(formatCurrency(NaN, "fr", "DZD")).toBe("\u2014");
   });
 
-  it("defaults to EUR when currency not specified", () => {
-    const result = formatCurrency(100, "fr");
-    expect(result).toContain("\u20AC");
+  it("formats DZD when that currency is passed", () => {
+    const result = formatCurrency(100, "fr", "DZD");
+    expect(result).toMatch(/100/);
+    // Intl may use "DA", "DZD", or a localized name depending on runtime
+    expect(result.length).toBeGreaterThan(3);
   });
 });
 

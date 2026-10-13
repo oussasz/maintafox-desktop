@@ -123,13 +123,15 @@ async fn insert_count_transaction<C: ConnectionTrait>(
     reason: Option<&str>,
     actor_id: Option<i64>,
 ) -> AppResult<i64> {
+    let entity_sync_id = uuid::Uuid::new_v4().to_string();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO inventory_transactions
-            (article_id, warehouse_id, location_id, reservation_id, movement_type, quantity,
-             source_type, source_id, source_ref, reason, performed_by_id, performed_at)
-         VALUES (?, ?, ?, NULL, ?, ?, 'COUNT_SESSION', ?, ?, ?, ?, ?)",
+            (entity_sync_id, article_id, warehouse_id, location_id, reservation_id, movement_type, quantity,
+             source_type, source_id, source_ref, reason, performed_by_id, performed_at, row_version)
+         VALUES (?, ?, ?, ?, NULL, ?, ?, 'COUNT_SESSION', ?, ?, ?, ?, ?, 1)",
         [
+            entity_sync_id.into(),
             article_id.into(),
             warehouse_id.into(),
             location_id.into(),

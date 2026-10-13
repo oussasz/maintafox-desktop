@@ -37,15 +37,12 @@ pub fn load_fmucd_csv(path: &Path, config: &FmucdMappingConfig) -> Result<LoadPr
 
     let mut stats = LoaderRowStats::default();
     let mut assets: HashMap<String, Vec<ReadinessEvent>> = HashMap::new();
-    let mut row_index: i64 = 0;
-
-    for result in reader.records() {
+    for (row_index, result) in (0_i64..).zip(reader.records()) {
         stats.rows_read += 1;
         let record = result.with_context(|| format!("CSV row {}", stats.rows_read + 1))?;
         let row = FmucdRow::from_csv_record(stats.rows_read + 1, &headers, &record);
 
         let (event, outcome) = map_row_to_event(config, &row, row_index)?;
-        row_index += 1;
 
         match outcome {
             MapRowOutcome::SkippedEmptyAsset => {

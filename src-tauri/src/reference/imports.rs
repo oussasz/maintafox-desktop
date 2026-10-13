@@ -211,7 +211,7 @@ async fn get_batch_by_id(db: &impl ConnectionTrait, batch_id: i64) -> AppResult<
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("SELECT {BATCH_SELECT} FROM reference_import_batches WHERE id = ?"),
+            format!("SELECT {BATCH_SELECT} FROM reference_import_batches WHERE id = ?"),
             [batch_id.into()],
         ))
         .await?
@@ -275,7 +275,7 @@ pub async fn create_import_batch(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!(
+            format!(
                 "SELECT {BATCH_SELECT} FROM reference_import_batches \
                  WHERE domain_id = ? AND source_sha256 = ? \
                  ORDER BY id DESC LIMIT 1"
@@ -412,7 +412,7 @@ pub async fn validate_import_batch(
             .try_get("", "normalized_code")
             .map_err(|e| decode_err("normalized_code", e))?;
 
-        let input: ImportRowInput = serde_json::from_str(&raw_json).unwrap_or_else(|_| ImportRowInput {
+        let input: ImportRowInput = serde_json::from_str(&raw_json).unwrap_or(ImportRowInput {
             code: None,
             label: None,
             description: None,
@@ -606,7 +606,7 @@ pub async fn apply_import_batch(
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!(
+            format!(
                 "SELECT id, row_no, raw_json, normalized_code, \
                         validation_status, proposed_action \
                  FROM reference_import_rows \
@@ -645,7 +645,7 @@ pub async fn apply_import_batch(
             }
         };
 
-        let input: ImportRowInput = serde_json::from_str(&raw_json).unwrap_or_else(|_| ImportRowInput {
+        let input: ImportRowInput = serde_json::from_str(&raw_json).unwrap_or(ImportRowInput {
             code: None,
             label: None,
             description: None,
@@ -679,11 +679,11 @@ pub async fn apply_import_batch(
             match txn
                 .execute(Statement::from_sql_and_values(
                     DbBackend::Sqlite,
-                    "INSERT INTO reference_values \
-                     (set_id, parent_id, code, label, description, sort_order, \
+                    "INSERT INTO reference_values (entity_sync_id, set_id, parent_id, code, label, description, sort_order, \
                       color_hex, icon_name, semantic_tag, external_code, is_active, metadata_json) \
-                     VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
+                     VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
                     [
+                        crate::sync::identity::new_entity_sync_id().into(),
                         policy.target_set_id.into(),
                         code.clone().into(),
                         label.into(),

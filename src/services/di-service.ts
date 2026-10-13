@@ -23,7 +23,7 @@ import type {
 const InterventionRequestSchema = z.object({
   id: z.number(),
   code: z.string(),
-  asset_id: z.number(),
+  equipment_id: z.number(),
   sub_asset_ref: z.string().nullable(),
   org_node_id: z.number(),
   status: z.string(),
@@ -41,7 +41,6 @@ const InterventionRequestSchema = z.object({
   validated_urgency: z.string().nullable(),
   observed_at: z.string().nullable(),
   submitted_at: z.string(),
-  review_team_id: z.number().nullable(),
   reviewer_id: z.number().nullable(),
   screened_at: z.string().nullable(),
   approved_at: z.string().nullable(),

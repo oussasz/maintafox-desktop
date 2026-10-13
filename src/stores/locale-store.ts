@@ -1,19 +1,30 @@
 // src/stores/locale-store.ts
 // Zustand store for locale state and direction (RTL readiness).
 // Reads locale preference from the Rust backend via IPC and drives
-// i18next language switching.
+// i18next language switching. Also holds tenant display currency from settings.
 
 import { create } from "zustand";
 
 import { i18n, DEFAULT_LOCALE } from "@/i18n";
+import {
+  FALLBACK_CURRENCY_CODE,
+  LOCALE_CURRENCY_SETTING_KEY,
+  normalizeCurrencyCode,
+} from "@/lib/currency";
+import { applyI18nFallbackLanguage } from "@/lib/i18n-fallback";
 import { invoke } from "@/lib/ipc-invoke";
+import { getSetting } from "@/services/settings-service";
 import { toErrorMessage } from "@/utils/errors";
 import { getLocaleDirection } from "@/utils/formatters";
 import type { LocalePreference } from "@shared/ipc-types";
 
+const FALLBACK_LANGUAGE_SETTING_KEY = "locale.fallback_language";
+
 export interface LocaleState {
   /** Current active locale code ("fr" | "en"). */
   activeLocale: string;
+  /** Tenant display currency (ISO 4217), from `locale.currency_code` setting. */
+  activeCurrencyCode: string;
   /** Text direction for the active locale ("ltr" or "rtl"). */
   direction: "ltr" | "rtl";
   /** True while locale preference is being loaded or changed. */
@@ -22,14 +33,28 @@ export interface LocaleState {
   error: string | null;
   /** Locales supported by the backend. */
   supportedLocales: string[];
-  /** Read locale preference from backend, update i18next. */
+  /** Read locale preference from backend, update i18next; load currency setting. */
   initialize: () => Promise<void>;
   /** Switch locale, persist via backend, update i18next. */
   setLocale: (locale: string, asTenantDefault?: boolean) => Promise<void>;
+  /** Apply currency from Settings (in-memory); persistence is via setSetting. */
+  setCurrencyCode: (code: string) => void;
+  /** Re-read `locale.currency_code` from app_settings. */
+  refreshCurrency: () => Promise<void>;
+}
+
+function parseCurrencyFromSettingJson(json: string | undefined | null): string {
+  if (json == null || json === "") return FALLBACK_CURRENCY_CODE;
+  try {
+    return normalizeCurrencyCode(JSON.parse(json));
+  } catch {
+    return normalizeCurrencyCode(json);
+  }
 }
 
 export const useLocaleStore = create<LocaleState>()((set) => ({
   activeLocale: DEFAULT_LOCALE,
+  activeCurrencyCode: FALLBACK_CURRENCY_CODE,
   direction: "ltr",
   isLoading: true,
   error: null,
@@ -41,8 +66,33 @@ export const useLocaleStore = create<LocaleState>()((set) => ({
       const pref = await invoke<LocalePreference>("get_locale_preference");
       const locale = pref.active_locale;
       await i18n.changeLanguage(locale);
+
+      let currency = FALLBACK_CURRENCY_CODE;
+      try {
+        const row = await getSetting(LOCALE_CURRENCY_SETTING_KEY, "tenant");
+        currency = parseCurrencyFromSettingJson(row?.setting_value_json);
+      } catch {
+        // Settings may be unavailable before auth; keep fallback until refresh.
+      }
+
+      try {
+        const fallbackRow = await getSetting(FALLBACK_LANGUAGE_SETTING_KEY, "tenant");
+        const raw = fallbackRow?.setting_value_json;
+        if (raw != null && raw !== "") {
+          try {
+            const parsed = JSON.parse(raw);
+            if (typeof parsed === "string") applyI18nFallbackLanguage(parsed);
+          } catch {
+            applyI18nFallbackLanguage(raw);
+          }
+        }
+      } catch {
+        // Optional before auth; i18n keeps its configured fallbackLng.
+      }
+
       set({
         activeLocale: locale,
+        activeCurrencyCode: currency,
         direction: getLocaleDirection(locale),
         supportedLocales: pref.supported_locales,
         isLoading: false,
@@ -52,6 +102,7 @@ export const useLocaleStore = create<LocaleState>()((set) => ({
       console.warn("locale-store: failed to read preference, using default", err);
       set({
         activeLocale: DEFAULT_LOCALE,
+        activeCurrencyCode: FALLBACK_CURRENCY_CODE,
         direction: getLocaleDirection(DEFAULT_LOCALE),
         isLoading: false,
         error: toErrorMessage(err),
@@ -77,6 +128,21 @@ export const useLocaleStore = create<LocaleState>()((set) => ({
         isLoading: false,
         error: toErrorMessage(err),
       });
+    }
+  },
+
+  setCurrencyCode: (code: string) => {
+    set({ activeCurrencyCode: normalizeCurrencyCode(code) });
+  },
+
+  refreshCurrency: async () => {
+    try {
+      const row = await getSetting(LOCALE_CURRENCY_SETTING_KEY, "tenant");
+      set({
+        activeCurrencyCode: parseCurrencyFromSettingJson(row?.setting_value_json),
+      });
+    } catch (err) {
+      console.warn("locale-store: failed to refresh currency", err);
     }
   },
 }));

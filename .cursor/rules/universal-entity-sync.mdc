@@ -1,0 +1,37 @@
+---
+description: Universal Entity Sync Standard — every primary domain entity must sync across trusted devices
+alwaysApply: true
+---
+
+# Universal Entity Sync Standard
+
+Every primary domain entity that is tenant operational truth MUST carry:
+
+- `entity_sync_id` (UUID, UNIQUE, never reused)
+- `row_version` (monotonic integer)
+- `updated_at` (RFC3339 UTC)
+- and MUST stage a typed outbox item on every durable mutation
+
+No business domain may remain a local-only island without:
+
+1. a `SYNC_ENTITY` registry key in `src-tauri/src/sync/domain.rs`
+2. a versioned sync payload whose foreign keys are `entity_sync_id` (never local `i64`)
+3. an inbox materialization handler that upserts the real domain table
+
+Canonical identity across machines is `entity_sync_id`. Local INTEGER PKs are device-local. Existing columns named `sync_id` MUST be renamed to `entity_sync_id` in the same schema program (no dual-read aliases).
+
+Desktop trusted machines receive the full tenant operational replica. RBAC and org scope are enforced at command/query time on every device — not by omitting rows from desktop sync (that would fork truth). Mobile (later) may use a device-class filter; records that do sync remain byte-compatible with desktop payloads.
+
+Attachments sync as metadata envelopes plus object-store binaries (`tenant/entity_sync_id/content_sha256`). JSON outbox MUST NOT carry file bytes.
+
+Derived caches, sync-control tables, and device-local secrets (PIN, session keyring) are not primary sync entities.
+
+**SSOT:** `docs/engineering/SYNC_STRATEGY.md`
+
+```text
+❌ BAD — mutate work_orders without stage_outbox_item
+❌ BAD — sync payload with asset_id: 42 (local i64)
+❌ BAD — insert sync_inbox with apply_status='applied' without writing domain tables
+✅ GOOD — entity_sync_id + row_version + outbox + materializer
+✅ GOOD — equipment_entity_sync_id: "<uuid>" in payload; remap to local id on apply
+```

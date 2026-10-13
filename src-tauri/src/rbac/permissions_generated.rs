@@ -57,6 +57,8 @@ pub const OT_VIEW: &str = "ot.view";
 pub const OT_CREATE: &str = "ot.create";
 /// Edit, plan, assign, and execute work orders
 pub const OT_EDIT: &str = "ot.edit";
+/// Emergency reassign crew/technician on a work order without Planning capacity gates
+pub const OT_EMERGENCY_ASSIGN: &str = "ot.emergency_assign";
 /// Approve work orders from draft / planning
 pub const OT_APPROVE: &str = "ot.approve";
 /// Close technically verified work orders
@@ -391,6 +393,15 @@ pub const CATALOG: &[PermissionMeta] = &[
         aliases: &[],
     },
     PermissionMeta {
+        name: OT_EMERGENCY_ASSIGN,
+        description: "Emergency reassign crew/technician on a work order without Planning capacity gates",
+        category: "ot",
+        is_dangerous: true,
+        requires_step_up: false,
+        usage: "both",
+        aliases: &[],
+    },
+    PermissionMeta {
         name: OT_APPROVE,
         description: "Approve work orders from draft / planning",
         category: "ot",
@@ -495,7 +506,7 @@ pub const CATALOG: &[PermissionMeta] = &[
         category: "per",
         is_dangerous: false,
         requires_step_up: false,
-        usage: "catalog-only",
+        usage: "backend",
         aliases: &[],
     },
     PermissionMeta {
@@ -621,7 +632,7 @@ pub const CATALOG: &[PermissionMeta] = &[
         category: "pm",
         is_dangerous: false,
         requires_step_up: false,
-        usage: "catalog-only",
+        usage: "both",
         aliases: &[],
     },
     PermissionMeta {
@@ -954,7 +965,7 @@ pub const CATALOG: &[PermissionMeta] = &[
         category: "fin",
         is_dangerous: true,
         requires_step_up: true,
-        usage: "catalog-only",
+        usage: "both",
         aliases: &[],
     },
     PermissionMeta {
@@ -1242,6 +1253,11 @@ pub const DEPENDENCIES: &[PermissionDep] = &[
         dep_type: "hard",
     },
     PermissionDep {
+        permission: OT_EMERGENCY_ASSIGN,
+        requires: OT_EDIT,
+        dep_type: "hard",
+    },
+    PermissionDep {
         permission: OT_APPROVE,
         requires: OT_VIEW,
         dep_type: "hard",
@@ -1432,6 +1448,11 @@ pub const DEPENDENCIES: &[PermissionDep] = &[
         dep_type: "hard",
     },
     PermissionDep {
+        permission: FIN_APPROVE,
+        requires: FIN_VIEW,
+        dep_type: "hard",
+    },
+    PermissionDep {
         permission: LIC_MANAGE,
         requires: LIC_VIEW,
         dep_type: "hard",
@@ -1517,6 +1538,7 @@ pub const SUPERVISOR_EXCLUSIONS: &[&str] = &[
     LIC_MANAGE,
     ENT_MANAGE,
     ACT_MANAGE,
+    FIN_APPROVE,
 ];
 
 /// Default Operator / Maintenance Technician permission set.
@@ -1529,6 +1551,7 @@ pub const OPERATOR_PERMISSIONS: &[&str] = &[
     OT_VIEW,
     OT_CREATE,
     OT_EDIT,
+    OT_EMERGENCY_ASSIGN,
     OT_CLOSE,
     ORG_VIEW,
     PER_VIEW,
@@ -1562,6 +1585,7 @@ pub const PLANNER_PERMISSIONS: &[&str] = &[
     OT_VIEW,
     OT_CREATE,
     OT_EDIT,
+    OT_EMERGENCY_ASSIGN,
     DI_VIEW,
     DI_CREATE,
     DI_SCREEN,
@@ -1592,13 +1616,32 @@ pub const PLANNER_PERMISSIONS: &[&str] = &[
     CFG_VIEW,
 ];
 
+/// Default Finance Manager permission set (budget preparation and approval).
+pub const FINANCE_MANAGER_PERMISSIONS: &[&str] = &[
+    FIN_VIEW,
+    FIN_BUDGET,
+    FIN_REPORT,
+    FIN_POST,
+    FIN_APPROVE,
+    ORG_VIEW,
+    REF_VIEW,
+    EQ_VIEW,
+    OT_VIEW,
+    INV_VIEW,
+    PM_VIEW,
+    PLAN_VIEW,
+    REP_VIEW,
+    REP_EXPORT,
+    DOC_VIEW,
+];
+
 /// Resolve a permission or alias to its canonical name.
 pub fn canonicalize(name: &str) -> Option<&'static str> {
     for meta in CATALOG {
         if meta.name == name {
             return Some(meta.name);
         }
-        if meta.aliases.iter().any(|a| *a == name) {
+        if meta.aliases.contains(&name) {
             return Some(meta.name);
         }
     }

@@ -8,11 +8,12 @@ use crate::errors::{AppError, AppResult};
 use crate::pm::domain::{
     CreatePmPlanInput, CreatePmPlanVersionInput, ExecutePmOccurrenceInput, ExecutePmOccurrenceResult,
     GeneratePmOccurrencesInput, GeneratePmOccurrencesResult, PmDueMetrics, PmExecution, PmExecutionFilter, PmFinding,
-    PmGovernanceKpiInput, PmGovernanceKpiReport, PmOccurrence, PmOccurrenceFilter, PmPlan, PmPlanFilter, PmPlanVersion,
-    PmPlanningReadinessInput, PmPlanningReadinessProjection, PmRecurringFinding, PmRecurringFindingsInput,
-    PublishPmPlanVersionInput, TransitionPmOccurrenceInput, TransitionPmPlanLifecycleInput, UpdatePmPlanInput,
-    UpdatePmPlanVersionInput,
+    PmGenerationStatus, PmGovernanceKpiInput, PmGovernanceKpiReport, PmOccurrence, PmOccurrenceFilter, PmPlan,
+    PmPlanFilter, PmPlanVersion, PmPlanningReadinessInput, PmPlanningReadinessProjection, PmRecurringFinding,
+    PmRecurringFindingsInput, PublishPmPlanVersionInput, TransitionPmOccurrenceInput, TransitionPmPlanLifecycleInput,
+    UpdatePmGenerationSettingsInput, UpdatePmPlanInput, UpdatePmPlanVersionInput,
 };
+use crate::pm::generation_control;
 use crate::pm::queries;
 use crate::state::AppState;
 use crate::{require_permission, require_session};
@@ -56,7 +57,18 @@ pub async fn transition_pm_plan_lifecycle(
     state: State<'_, AppState>,
 ) -> AppResult<PmPlan> {
     let user = require_session!(state);
-    require_pm_edit_or_manage(&state, &user).await?;
+    let next = input.next_status.trim().to_lowercase();
+    if next == "approved" {
+        require_permission!(
+            state,
+            &user,
+            crate::rbac::permissions::PM_APPROVE,
+            PermissionScope::Global
+        );
+        enforce_pm_capability(&state, &user, crate::rbac::permissions::PM_APPROVE).await?;
+    } else {
+        require_pm_edit_or_manage(&state, &user).await?;
+    }
     queries::transition_pm_plan_lifecycle(&state.db, input).await
 }
 
@@ -117,16 +129,37 @@ pub async fn generate_pm_occurrences(
 ) -> AppResult<GeneratePmOccurrencesResult> {
     let user = require_session!(state);
     require_pm_create_or_manage(&state, &user).await?;
-    queries::generate_pm_occurrences(&state.db, input).await
+    generation_control::run_generation_with_audit(&state.db, input, "manual", false).await
+}
+
+#[tauri::command]
+pub async fn get_pm_generation_status(state: State<'_, AppState>) -> AppResult<PmGenerationStatus> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::PM_VIEW, PermissionScope::Global);
+    generation_control::get_pm_generation_status(&state.db).await
+}
+
+#[tauri::command]
+pub async fn update_pm_generation_settings(
+    input: UpdatePmGenerationSettingsInput,
+    state: State<'_, AppState>,
+) -> AppResult<PmGenerationStatus> {
+    let user = require_session!(state);
+    require_pm_edit_or_manage(&state, &user).await?;
+    let _ = generation_control::update_pm_generation_settings(&state.db, input).await?;
+    generation_control::get_pm_generation_status(&state.db).await
 }
 
 #[tauri::command]
 pub async fn transition_pm_occurrence(
-    input: TransitionPmOccurrenceInput,
+    mut input: TransitionPmOccurrenceInput,
     state: State<'_, AppState>,
 ) -> AppResult<PmOccurrence> {
     let user = require_session!(state);
     require_pm_edit_or_manage(&state, &user).await?;
+    if input.actor_id.is_none() {
+        input.actor_id = Some(i64::from(user.user_id));
+    }
     queries::transition_pm_occurrence(&state.db, input).await
 }
 
@@ -158,11 +191,14 @@ pub async fn get_pm_governance_kpi_report(
 }
 #[tauri::command]
 pub async fn execute_pm_occurrence(
-    input: ExecutePmOccurrenceInput,
+    mut input: ExecutePmOccurrenceInput,
     state: State<'_, AppState>,
 ) -> AppResult<ExecutePmOccurrenceResult> {
     let user = require_session!(state);
     require_pm_edit_or_manage(&state, &user).await?;
+    if input.actor_id.is_none() {
+        input.actor_id = Some(i64::from(user.user_id));
+    }
     queries::execute_pm_occurrence(&state.db, input).await
 }
 

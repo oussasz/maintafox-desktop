@@ -137,14 +137,14 @@ mod tests {
     /// Returns the class id.
     async fn setup_equipment_class(db: &sea_orm::DatabaseConnection) -> i64 {
         let now = chrono::Utc::now().to_rfc3339();
-        let sync_id = uuid::Uuid::new_v4().to_string();
+        let entity_sync_id = uuid::Uuid::new_v4().to_string();
 
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             r"INSERT INTO equipment_classes
-              (sync_id, code, name, parent_id, level, is_active, created_at, updated_at)
+              (entity_sync_id, code, name, parent_id, level, is_active, created_at, updated_at)
               VALUES (?, 'PUMP', 'Pompes', NULL, 'class', 1, ?, ?)",
-            [sync_id.into(), now.clone().into(), now.into()],
+            [entity_sync_id.into(), now.clone().into(), now.into()],
         ))
         .await
         .expect("insert equipment class");
@@ -236,6 +236,9 @@ mod tests {
     #[tokio::test]
     async fn v2_create_asset_with_nonexistent_org_node_rejected() {
         let db = setup().await;
+        // An active structure model must exist, otherwise the guard fails earlier with
+        // ORG_NO_ACTIVE_MODEL and the missing-node path is never exercised.
+        setup_org_node(&db).await;
         setup_equipment_class(&db).await;
 
         // Use a node id that does not exist
@@ -277,14 +280,13 @@ mod tests {
             .expect_err("inactive org node should fail");
 
         match err {
-            AppError::ValidationFailed(msgs) => {
-                let joined = msgs.join(" ");
+            AppError::OrgValidationFailed(issues) => {
                 assert!(
-                    joined.contains("actif") || joined.contains("inactive"),
-                    "error should mention inactive status, got: {joined}"
+                    issues.iter().any(|i| i.code == "ORG_NODE_NOT_ACTIVE"),
+                    "expected ORG_NODE_NOT_ACTIVE, got: {issues:?}"
                 );
             }
-            other => panic!("expected ValidationFailed, got: {other:?}"),
+            other => panic!("expected OrgValidationFailed(ORG_NODE_NOT_ACTIVE), got: {other:?}"),
         }
     }
 

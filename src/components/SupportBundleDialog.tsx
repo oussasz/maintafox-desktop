@@ -1,19 +1,24 @@
 /**
  * SupportBundleDialog.tsx
  *
- * Phase 1 stub. Shows application info and allows copying a diagnostic bundle
- * to the clipboard. Full ticketing integration is a Phase 2 feature.
+ * Shows application info, lets the user copy the sanitized diagnostic bundle, and sends it to
+ * Maintafox support (upload_support_bundle; with a note the server opens a support ticket).
  *
  * Used from: Settings → Support & Diagnostics (Phase 2 UI module)
  * For Phase 1 it is accessible from the developer debug menu only.
  */
 
-import { ClipboardCopy, Download, Loader2, X } from "lucide-react";
+import { ClipboardCopy, Download, Loader2, Send, X } from "lucide-react";
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/utils";
-import { getDiagnosticsInfo, generateSupportBundle } from "@/services/diagnostics-service";
+import {
+  getDiagnosticsInfo,
+  generateSupportBundle,
+  uploadSupportBundle,
+  type SupportBundleUploadResult,
+} from "@/services/diagnostics-service";
 import { toErrorMessage } from "@/utils/errors";
 import type { DiagnosticsAppInfo, SupportBundle } from "@shared/ipc-types";
 
@@ -29,6 +34,24 @@ export function SupportBundleDialog({ open, onClose }: Props) {
   const [isGenerating, setIsGenerating] = useState(false);
   const [copySuccess, setCopySuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState("");
+  const [isSending, setIsSending] = useState(false);
+  const [sent, setSent] = useState<SupportBundleUploadResult | null>(null);
+
+  const handleSend = useCallback(async () => {
+    setIsSending(true);
+    setError(null);
+    setSent(null);
+    try {
+      const trimmed = note.trim();
+      setSent(await uploadSupportBundle(trimmed.length > 0 ? trimmed : null));
+      setNote("");
+    } catch (err) {
+      setError(toErrorMessage(err));
+    } finally {
+      setIsSending(false);
+    }
+  }, [note]);
 
   const handleGenerate = useCallback(async () => {
     setIsGenerating(true);
@@ -116,6 +139,40 @@ export function SupportBundleDialog({ open, onClose }: Props) {
               ))}
             </ul>
           )}
+
+          <section className="space-y-2 rounded-lg border border-surface-border p-3">
+            <h3 className="text-sm font-semibold text-text-primary">{t("sendTitle")}</h3>
+            <p className="text-xs text-text-secondary">{t("sendHint")}</p>
+            <textarea
+              aria-label={t("notePlaceholder")}
+              className="w-full rounded-md border border-surface-border bg-surface-1 p-2 text-sm"
+              rows={3}
+              maxLength={2000}
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder={t("notePlaceholder")}
+            />
+            <button
+              type="button"
+              onClick={() => void handleSend()}
+              disabled={isSending}
+              className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-dark disabled:opacity-50"
+            >
+              {isSending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Send className="h-4 w-4" />
+              )}
+              {isSending ? t("sending") : t("send")}
+            </button>
+            {sent && (
+              <p role="status" className="text-sm text-status-success">
+                {sent.ticket_id
+                  ? t("sentWithTicket", { bundle: sent.bundle_id, ticket: sent.ticket_id })
+                  : t("sent", { bundle: sent.bundle_id })}
+              </p>
+            )}
+          </section>
 
           {error && (
             <p

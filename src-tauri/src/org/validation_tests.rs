@@ -1220,13 +1220,33 @@ mod tests {
 
         let active_hq_id = active_node_id_by_code(&db, "HQ").await;
 
-        // Attach an ops FK to the active HQ node.
+        // Attach an ops FK to the active HQ node (entity_id). team_id must be a crew.
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO teams (entity_sync_id, code, name, team_type, primary_node_id, status, created_at, updated_at)
+             VALUES ('org-test-crew', 'ORG-CREW', 'Org Test Crew', 'maintenance', ?, 'active',
+                     '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            [active_hq_id.into()],
+        ))
+        .await
+        .expect("insert crew for capacity rule");
+        let crew_id: i64 = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT id FROM teams WHERE entity_sync_id = 'org-test-crew'",
+                [],
+            ))
+            .await
+            .expect("query crew")
+            .and_then(|r| r.try_get("", "id").ok())
+            .expect("crew id");
+
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO capacity_rules \
              (entity_id, team_id, effective_start, available_hours_per_day, max_overtime_hours_per_day) \
              VALUES (?, ?, '2026-01-01', 8.0, 0.0)",
-            [active_hq_id.into(), active_hq_id.into()],
+            [active_hq_id.into(), crew_id.into()],
         ))
         .await
         .expect("ops ref");
@@ -1280,8 +1300,7 @@ mod tests {
         let err = db
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "INSERT INTO org_nodes \
-                 (sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status, \
+                "INSERT INTO org_nodes (entity_sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status, \
                   created_at, updated_at, row_version, structure_model_id) \
                  VALUES ('bad-sync', 'UNSCOPED', 'Unscoped', ?, NULL, '/', 0, 'active', \
                          '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 1, NULL)",

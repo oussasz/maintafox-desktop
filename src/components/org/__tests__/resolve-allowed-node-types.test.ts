@@ -5,7 +5,7 @@ import type { OrgNodeType, OrgRelationshipRule } from "@shared/ipc-types";
 
 function type(partial: Partial<OrgNodeType> & Pick<OrgNodeType, "id" | "code">): OrgNodeType {
   return {
-    sync_id: `s-${partial.id}`,
+    entity_sync_id: `s-${partial.id}`,
     structure_model_id: partial.structure_model_id ?? 2,
     label: partial.label ?? partial.code,
     icon_key: null,

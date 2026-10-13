@@ -8,6 +8,10 @@ use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+use crate::analytics::layout::{
+    get_layout as get_analytics_layout, merge_overview_kpis_into_layout, save_layout as save_analytics_layout,
+};
+use crate::analytics::overview_kpis::{build_overview_kpis, OverviewKpisPayload};
 use crate::auth::rbac::{check_permission, PermissionScope};
 use crate::errors::{AppError, AppResult};
 use crate::kpi_definitions;
@@ -99,7 +103,7 @@ pub struct DashboardKpiValidation {
     pub overdue_items_total: i64,
 }
 
-pub const DEFAULT_DASHBOARD_LAYOUT_JSON: &str = r#"{"version":1,"widgets":[{"id":"kpis","order":0,"visible":true},{"id":"workload","order":1,"visible":true},{"id":"di_status","order":2,"visible":true},{"id":"reliability_snapshot","order":3,"visible":true}]}"#;
+pub const DEFAULT_DASHBOARD_LAYOUT_JSON: &str = r#"{"version":1,"widgets":[{"id":"kpis","order":0,"visible":true},{"id":"workload","order":1,"visible":true},{"id":"di_status","order":2,"visible":true},{"id":"reliability_snapshot","order":3,"visible":false}]}"#;
 
 fn validate_dashboard_layout_json(raw: &str) -> AppResult<()> {
     if raw.len() > 48_000 {
@@ -138,10 +142,35 @@ fn validate_dashboard_layout_json(raw: &str) -> AppResult<()> {
             .and_then(|x| x.as_bool())
             .ok_or_else(|| AppError::ValidationFailed(vec!["widget.visible invalid.".into()]))?;
     }
+    if let Some(cards) = obj.get("metric_cards") {
+        let arr = cards
+            .as_array()
+            .ok_or_else(|| AppError::ValidationFailed(vec!["layout_json.metric_cards must be an array.".into()]))?;
+        if arr.len() > 16 {
+            return Err(AppError::ValidationFailed(vec![
+                "layout_json.metric_cards length invalid.".into(),
+            ]));
+        }
+        for w in arr {
+            let wo = w
+                .as_object()
+                .ok_or_else(|| AppError::ValidationFailed(vec!["each metric_card must be an object.".into()]))?;
+            wo.get("id")
+                .and_then(|x| x.as_str())
+                .filter(|s| !s.is_empty() && s.len() <= 64)
+                .ok_or_else(|| AppError::ValidationFailed(vec!["metric_card.id invalid.".into()]))?;
+            wo.get("order")
+                .and_then(|x| x.as_i64())
+                .ok_or_else(|| AppError::ValidationFailed(vec!["metric_card.order invalid.".into()]))?;
+            wo.get("visible")
+                .and_then(|x| x.as_bool())
+                .ok_or_else(|| AppError::ValidationFailed(vec!["metric_card.visible invalid.".into()]))?;
+        }
+    }
     Ok(())
 }
 
-fn kpi_quality_badge(previous_value: i64, value: i64) -> Option<String> {
+pub(crate) fn kpi_quality_badge(previous_value: i64, value: i64) -> Option<String> {
     if previous_value == 0 && value != 0 {
         Some(kpi_definitions::quality_badge::INSUFFICIENT_BASELINE.to_string())
     } else {
@@ -602,33 +631,21 @@ pub async fn get_dashboard_reliability_snapshot_summary(
             total_failure_events: 0,
         });
     }
-    let row = state
-        .db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            r"SELECT COUNT(*) AS snapshot_count,
-                     AVG(data_quality_score) AS avg_dq,
-                     AVG(CASE WHEN mtbf IS NOT NULL AND mtbf > 0 THEN mtbf END) AS avg_mtbf,
-                     SUM(event_count) AS total_ev
-              FROM reliability_kpi_snapshots
-              WHERE datetime(period_end) >= datetime('now', '-365 days')"
-                .to_string(),
-        ))
-        .await?;
-    let Some(r) = row else {
-        return Ok(DashboardReliabilitySnapshotSummary {
-            available: true,
-            snapshot_count: 0,
-            avg_data_quality_score: None,
-            avg_mtbf_hours: None,
-            total_failure_events: 0,
-        });
-    };
-    use sea_orm::TryGetable;
-    let snapshot_count: i64 = i64::try_get(&r, "", "snapshot_count").unwrap_or(0);
-    let avg_dq: Option<f64> = f64::try_get(&r, "", "avg_dq").ok();
-    let avg_mtbf: Option<f64> = f64::try_get(&r, "", "avg_mtbf").ok();
-    let total_ev: i64 = i64::try_get(&r, "", "total_ev").unwrap_or(0);
+    // Pooled fleet ratios over the latest snapshot per equipment (never mean of ratios).
+    let fleet = crate::reliability::fleet::pooled_fleet_kpis(
+        &state.db,
+        crate::reliability::fleet::FleetWindow {
+            since_days: 365,
+            until_days: None,
+        },
+        None,
+        crate::reliability::readiness::DQ_GREEN_THRESHOLD,
+    )
+    .await?;
+    let snapshot_count = fleet.equipment_count;
+    let avg_dq = fleet.mean_data_quality_score;
+    let avg_mtbf = fleet.mtbf_hours;
+    let total_ev = fleet.total_failure_events;
     Ok(DashboardReliabilitySnapshotSummary {
         available: true,
         snapshot_count,
@@ -795,6 +812,52 @@ pub async fn get_dashboard_kpi_validation(state: State<'_, AppState>) -> AppResu
         samples,
         overdue_items_total,
     })
+}
+
+// Overview KPI strip (Vue d'ensemble)
+
+#[derive(Debug, Serialize)]
+pub struct OverviewKpiLayoutPayload {
+    pub layout_json: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SaveOverviewKpiLayoutInput {
+    pub overview_kpis_json: String,
+}
+
+#[tauri::command]
+pub async fn get_overview_kpis(state: State<'_, AppState>) -> AppResult<OverviewKpisPayload> {
+    let user = require_session!(state);
+    let db = &state.db;
+    let uid = user.user_id;
+
+    let can_di = check_permission(db, uid, crate::rbac::permissions::DI_VIEW, &PermissionScope::Global).await?;
+    let can_ot = check_permission(db, uid, crate::rbac::permissions::OT_VIEW, &PermissionScope::Global).await?;
+    let can_eq = check_permission(db, uid, crate::rbac::permissions::EQ_VIEW, &PermissionScope::Global).await?;
+    let can_pm = check_permission(db, uid, crate::rbac::permissions::PM_VIEW, &PermissionScope::Global).await?;
+    let can_rep = check_permission(db, uid, crate::rbac::permissions::REP_VIEW, &PermissionScope::Global).await?;
+    let can_inv = check_permission(db, uid, crate::rbac::permissions::INV_VIEW, &PermissionScope::Global).await?;
+    let can_fin = check_permission(db, uid, crate::rbac::permissions::FIN_VIEW, &PermissionScope::Global).await?;
+
+    build_overview_kpis(db, can_di, can_ot, can_eq, can_pm, can_rep, can_inv, can_fin).await
+}
+
+#[tauri::command]
+pub async fn get_overview_kpi_layout(state: State<'_, AppState>) -> AppResult<OverviewKpiLayoutPayload> {
+    let user = require_session!(state);
+    let layout_json = get_analytics_layout(&state.db, i64::from(user.user_id)).await?;
+    Ok(OverviewKpiLayoutPayload { layout_json })
+}
+
+#[tauri::command]
+pub async fn save_overview_kpi_layout(input: SaveOverviewKpiLayoutInput, state: State<'_, AppState>) -> AppResult<()> {
+    let user = require_session!(state);
+    let overview: serde_json::Value = serde_json::from_str(&input.overview_kpis_json)
+        .map_err(|e| AppError::ValidationFailed(vec![format!("overview_kpis_json: {e}")]))?;
+    let existing = get_analytics_layout(&state.db, i64::from(user.user_id)).await?;
+    let merged = merge_overview_kpis_into_layout(&existing, overview)?;
+    save_analytics_layout(&state.db, i64::from(user.user_id), &merged).await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

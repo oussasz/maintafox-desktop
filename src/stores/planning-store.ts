@@ -1,4 +1,4 @@
-﻿import { create } from "zustand";
+import { create } from "zustand";
 
 import {
   createCapacityRule,
@@ -107,7 +107,11 @@ export const usePlanningStore = create<PlanningStoreState>()((set, get) => ({
   loadBacklog: async () => {
     set({ loading: true, error: null });
     try {
-      const backlog = await getScheduleBacklogSnapshot({ limit: 300 });
+      // Include candidates with open conflicts so Ready + Blocked rails stay populated.
+      const backlog = await getScheduleBacklogSnapshot({
+        limit: 300,
+        include_resolved_conflicts: true,
+      });
       set({ backlog });
     } catch (err) {
       set({ error: toErrorMessage(err) });

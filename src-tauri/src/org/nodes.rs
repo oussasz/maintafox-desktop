@@ -22,14 +22,13 @@ use crate::org::model_scope;
 use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrgNode {
     pub id: i64,
-    pub sync_id: String,
+    pub entity_sync_id: String,
     pub code: String,
     pub name: String,
     pub node_type_id: i64,
@@ -120,7 +119,7 @@ fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
 // ─── Row mapping ──────────────────────────────────────────────────────────────
 
 const NODE_SELECT_COLS: &str = r"
-    n.id, n.sync_id, n.code, n.name, n.node_type_id,
+    n.id, n.entity_sync_id, n.code, n.name, n.node_type_id,
     n.parent_id, n.ancestor_path, n.depth,
     n.description, n.cost_center_code, n.external_reference,
     n.status, n.effective_from, n.effective_to,
@@ -133,9 +132,9 @@ const NODE_SELECT_COLS: &str = r"
 fn map_node(row: &QueryResult) -> AppResult<OrgNode> {
     Ok(OrgNode {
         id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
-        sync_id: row
-            .try_get::<String>("", "sync_id")
-            .map_err(|e| decode_err("sync_id", e))?,
+        entity_sync_id: row
+            .try_get::<String>("", "entity_sync_id")
+            .map_err(|e| decode_err("entity_sync_id", e))?,
         code: row.try_get::<String>("", "code").map_err(|e| decode_err("code", e))?,
         name: row.try_get::<String>("", "name").map_err(|e| decode_err("name", e))?,
         node_type_id: row
@@ -445,20 +444,20 @@ pub async fn create_org_node(
     };
 
     let now = Utc::now().to_rfc3339();
-    let sync_id = Uuid::new_v4().to_string();
+    let entity_sync_id = crate::sync::identity::new_entity_sync_id();
 
     // Insert with a temporary ancestor_path; we'll update once we know the id
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO org_nodes
-          (sync_id, code, name, node_type_id, parent_id,
+          (entity_sync_id, code, name, node_type_id, parent_id,
            ancestor_path, depth, description, cost_center_code,
            external_reference, status, effective_from, effective_to,
            erp_reference, notes, created_at, updated_at, row_version,
            structure_model_id, origin_node_id)
           VALUES (?, ?, ?, ?, ?, '/', ?, ?, ?, ?, 'active', ?, NULL, ?, ?, ?, ?, 1, ?, NULL)",
         [
-            sync_id.clone().into(),
+            entity_sync_id.clone().into(),
             code.into(),
             payload.name.into(),
             payload.node_type_id.into(),
@@ -477,12 +476,12 @@ pub async fn create_org_node(
     ))
     .await?;
 
-    // Retrieve the inserted id via sync_id
+    // Retrieve the inserted id via entity_sync_id
     let id_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id FROM org_nodes WHERE sync_id = ?",
-            [sync_id.into()],
+            "SELECT id FROM org_nodes WHERE entity_sync_id = ?",
+            [entity_sync_id.into()],
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("node created but not found after insert")))?;
@@ -516,7 +515,9 @@ pub async fn update_org_node_metadata(
     db: &DatabaseConnection,
     payload: UpdateOrgNodeMetadataPayload,
 ) -> AppResult<OrgNode> {
-    let node = fetch_node(db, payload.node_id).await?;
+    let txn = db.begin().await?;
+
+    let node = fetch_node(&txn, payload.node_id).await?;
     if node.row_version != payload.expected_row_version {
         return Err(fail_params(
             "ORG_VERSION_CONFLICT",
@@ -534,7 +535,7 @@ pub async fn update_org_node_metadata(
     // If cost_center_code is being set, verify the node type allows it
     // Use the node's own structure_model_id (not always the active model)
     if let Some(Some(_)) = &payload.cost_center_code {
-        let flags = fetch_node_type_flags(db, node.structure_model_id, node.node_type_id).await?;
+        let flags = fetch_node_type_flags(&txn, node.structure_model_id, node.node_type_id).await?;
         if !flags.can_carry_cost_center {
             return Err(fail(
                 "ORG_NODE_TYPE_NO_COST_CENTER",
@@ -577,6 +578,7 @@ pub async fn update_org_node_metadata(
     }
 
     if sets.is_empty() {
+        txn.commit().await?;
         return Ok(node);
     }
 
@@ -594,7 +596,7 @@ pub async fn update_org_node_metadata(
         sets.join(", ")
     );
 
-    let result = db
+    let result = txn
         .execute(Statement::from_sql_and_values(DbBackend::Sqlite, sql, vals))
         .await?;
 
@@ -605,7 +607,9 @@ pub async fn update_org_node_metadata(
         ));
     }
 
-    fetch_node(db, payload.node_id).await
+    let updated = fetch_node(&txn, payload.node_id).await?;
+    txn.commit().await?;
+    Ok(updated)
 }
 
 /// Move an org node to a new parent. Runs inside a transaction.

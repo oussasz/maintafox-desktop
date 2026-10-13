@@ -1,7 +1,8 @@
-use sea_orm::{ConnectionTrait, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, DbBackend, Statement, TransactionTrait};
 use tokio::time::{interval, Duration};
 
-use crate::notifications::{delivery, router, Result, SqlitePool};
+use crate::notifications::{delivery, emitter, router, Result, SqlitePool};
+use crate::sync::capture::{begin_suppression, end_suppression};
 
 pub async fn start_notification_scheduler(pool: SqlitePool) {
     let mut ticker = interval(Duration::from_secs(60));
@@ -19,7 +20,19 @@ pub async fn run_scheduler_tick_for_test(pool: &SqlitePool) -> Result<()> {
     run_scheduler_tick(pool).await
 }
 
+/// Each device runs this sweep over its own copy of the notifications: un-snoozing, escalation and
+/// expiry are not sent (capture suppressed). Escalated notifications get the same id on every
+/// device (`emitter::insert_notification`), so a recipient's acknowledgement reaches all of them.
 async fn run_scheduler_tick(pool: &SqlitePool) -> Result<()> {
+    let txn = pool.begin().await?;
+    begin_suppression(&txn).await?;
+    run_scheduler_tick_in(&txn).await?;
+    end_suppression(&txn).await?;
+    txn.commit().await?;
+    Ok(())
+}
+
+async fn run_scheduler_tick_in(pool: &impl ConnectionTrait) -> Result<()> {
     pool.execute(Statement::from_string(
         DbBackend::Sqlite,
         "UPDATE notifications
@@ -48,7 +61,7 @@ async fn run_scheduler_tick(pool: &SqlitePool) -> Result<()> {
     Ok(())
 }
 
-async fn run_escalation_sweep(pool: &SqlitePool) -> Result<()> {
+async fn run_escalation_sweep(pool: &impl ConnectionTrait) -> Result<()> {
     let rows = pool
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
@@ -154,24 +167,20 @@ async fn run_escalation_sweep(pool: &SqlitePool) -> Result<()> {
         recipients.dedup();
 
         for user_id in recipients {
-            let insert_res = pool
-                .execute(Statement::from_sql_and_values(
-                    DbBackend::Sqlite,
-                    "INSERT INTO notifications
-                        (notification_event_id, recipient_user_id, delivery_state, title, body, action_url, created_at, escalation_level)
-                     VALUES (?, ?, 'pending', ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ','now'), ?)",
-                    [
-                        event_id.into(),
-                        user_id.into(),
-                        title.clone().into(),
-                        body.clone().into(),
-                        action_url.clone().into(),
-                        level_no.into(),
-                    ],
-                ))
-                .await?;
-            let new_notification_id = insert_res.last_insert_id() as i64;
-            if let Err(err) = delivery::schedule_in_app_delivery(pool, new_notification_id).await {
+            let Some(new_notification_id) = emitter::insert_notification(
+                pool,
+                event_id,
+                user_id,
+                &title,
+                body.as_deref(),
+                action_url.as_deref(),
+                level_no,
+            )
+            .await?
+            else {
+                continue;
+            };
+            if let Err(err) = delivery::schedule_deliveries(pool, new_notification_id).await {
                 tracing::error!(
                     notification_id = new_notification_id,
                     error = %err,
@@ -193,7 +202,7 @@ async fn run_escalation_sweep(pool: &SqlitePool) -> Result<()> {
     Ok(())
 }
 
-async fn fetch_expiry_days(pool: &SqlitePool) -> Result<i64> {
+async fn fetch_expiry_days(pool: &impl ConnectionTrait) -> Result<i64> {
     let row = pool
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,

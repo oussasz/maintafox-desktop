@@ -16,12 +16,15 @@
     "cards": "Cards"
   },
   "tabs": {
-    "directory": "Directory",
+    "directory": "Personnel",
     "skillsMatrix": "Skills Matrix",
+    "availability": "Availability",
     "availabilityCalendar": "Availability Calendar",
+    "teams": "Team management",
     "teamCapacity": "Team Capacity",
     "training": "Training & certs",
-    "positions": "Positions"
+    "positions": "Positions",
+    "analytics": "Analytics"
   },
   "training": {
     "heading": "Training & qualifications",
@@ -75,7 +78,7 @@
       "fullName": "Full name",
       "position": "Position",
       "entity": "Entity",
-      "team": "Team",
+      "team": "Crew",
       "status": "Status",
       "employmentType": "Employment type",
       "schedule": "Schedule",
@@ -85,6 +88,7 @@
   "filters": {
     "searchPlaceholder": "Search code, name, email, phone…",
     "entity": "Entity",
+    "team": "Crew",
     "position": "Position",
     "status": "Availability",
     "employmentType": "Employment type",
@@ -96,7 +100,7 @@
   "totalBadge": "{{count}} people",
   "card": {
     "statusLabel": "Status",
-    "teamLabel": "Team",
+    "teamLabel": "Crew",
     "scheduleLabel": "Schedule",
     "companyLabel": "External company",
     "phoneLabel": "Phone",
@@ -104,10 +108,21 @@
   },
   "detail": {
     "title": "Personnel details",
+    "noSelection": "Select a person to show details",
     "placeholder": "Full detail panel will be available in a later release.",
     "contractorBanner": "External profile linked to {{company}}.",
     "available": "available",
     "blocked": "blocked",
+    "photo": {
+      "alt": "Photo of {{name}}",
+      "loadFailed": "Photo unavailable"
+    },
+    "actions": {
+      "edit": "Edit",
+      "close": "Close",
+      "deactivate": "Deactivate",
+      "more": "More actions"
+    },
     "tabs": {
       "identity": "Identity",
       "skills": "Skills",
@@ -125,28 +140,51 @@
       "pendingDi": "Pending DI",
       "di30d": "DI last 30 days"
     },
+    "rates": {
+      "effectiveFrom": "Effective from",
+      "labor": "Labor rate",
+      "overtime": "Overtime rate",
+      "source": "Source",
+      "active": "Active",
+      "empty": "No rate cards yet. Add an hourly labor rate to enable Planning and WO labor cost.",
+      "addTitle": "Add rate card",
+      "add": "Add rate",
+      "saving": "Saving…",
+      "hint": "New cards are effective today. Historical cards are kept for audit.",
+      "overviewMissing": "No active hourly rate",
+      "restricted": "Pay rates are restricted to users with the sensitive personnel data permission."
+    },
     "assignment": {
       "unknown": "Unknown assignment",
       "reason": "Reason",
       "to": "Until",
       "current": "Current"
-    }
+    },
+    "restricted": "Restricted"
   },
   "create": {
     "title": "New personnel",
+    "editTitle": "Edit personnel",
     "submit": "Create",
+    "save": "Save",
     "cancel": "Cancel",
     "section": {
       "identity": "Identity",
       "origin": "Origin & contract",
       "organization": "Organization",
+      "assignment": "Organizational assignment",
       "photo": "Photo",
       "skills": "Skills",
       "certifications": "Certifications",
+      "certs": "Certifications",
       "contact": "Contact",
+      "rates": "Labor rates",
       "account": "MaintaFox account",
+      "access": "Platform access",
       "notes": "Notes"
     },
+    "ratesHint": "Optional. Creates a rate card effective today for Planning and Work Order labor cost.",
+    "rateCardFailed": "Personnel saved, but rate card could not be created: {{msg}}. Add the rate from the Rates tab.",
     "photo": {
       "label": "Profile photo",
       "hint": "Pick a photo (JPEG/PNG, max 5 MB)",
@@ -193,7 +231,7 @@
     "employmentStatus": "Status",
     "position": "Position",
     "entity": "Entity",
-    "team": "Team",
+    "team": "Crew",
     "supervisor": "Supervisor",
     "schedule": "Schedule",
     "status": "Availability",
@@ -205,7 +243,11 @@
     "contractStart": "Contract start",
     "contractEnd": "Contract end",
     "notes": "Notes",
-    "photo": "Photo"
+    "photo": "Photo",
+    "laborRate": "Hourly labor rate",
+    "laborRatePlaceholder": "e.g. 45.00",
+    "overtimeRate": "Overtime rate",
+    "overtimeRatePlaceholder": "Optional — defaults to 0"
   },
   "status": {
     "available": "Available",
@@ -233,7 +275,105 @@
   },
   "validation": {
     "nameRequired": "Name is required",
-    "employmentTypeRequired": "Employment type is required"
+    "employmentTypeRequired": "Employment type is required",
+    "codeRequired": "Employee code is required",
+    "positionRequired": "Position is required",
+    "entityRequired": "Entity is required",
+    "teamRequired": "Crew is required",
+    "noCrewsForEntity": "No active crews for this entity. Create a crew first.",
+    "teamOutOfScope": "Selected crew is not in this entity’s scope.",
+    "scheduleRequired": "Schedule is required",
+    "companyRequired": "External company is required",
+    "laborRateRequiredForOvertime": "Hourly labor rate is required when overtime rate is set",
+    "laborRateInvalid": "Hourly labor rate must be a number ≥ 0",
+    "overtimeRateInvalid": "Overtime rate must be a number ≥ 0"
+  },
+  "crews": {
+    "catalogTitle": "Crew catalog",
+    "empty": "No crews yet. Create a crew to assign people from Directory.",
+    "noCapacityInHorizon": "No capacity data in this horizon.",
+    "list": {
+      "code": "Code",
+      "name": "Name",
+      "members": "Members",
+      "leads": "Leads",
+      "availableMin": "Available (min)",
+      "blockedMin": "Blocked (min)",
+      "availabilityPct": "Availability %"
+    },
+    "detail": {
+      "title": "Crew detail",
+      "notFound": "Crew not found.",
+      "lead": "Lead",
+      "role": "Role",
+      "allocation": "Allocation",
+      "skill": "Skill",
+      "proficiency": "Proficiency",
+      "coverage": "Coverage",
+      "coverageStatus": {
+        "active": "Active",
+        "expired": "Expired",
+        "missing": "Missing"
+      },
+      "skillMapPerson": "Technician",
+      "riskLevel": "Risk",
+      "coverageCount": "Coverage",
+      "reason": "Reason",
+      "workDate": "Date",
+      "availableHours": "Available (h)",
+      "committedHours": "Committed (h)",
+      "utilization": "Utilization",
+      "horizonKpis": "Horizon capacity",
+      "capacitySummary": "{{available}} available min · {{blocked}} blocked min · {{ratio}}% availability",
+      "capacityLoadUnavailable": "Daily capacity load requires planning view permission.",
+      "emptyRoster": "No active members on this crew.",
+      "emptySkills": "No skill coverage rows for this crew.",
+      "emptySuccession": "No succession risks for this crew.",
+      "tabs": {
+        "overview": "Overview",
+        "roster": "Roster",
+        "capacity": "Capacity",
+        "skills": "Skills",
+        "succession": "Succession"
+      }
+    },
+    "actions": {
+      "create": "Create crew",
+      "edit": "Edit",
+      "setLead": "Set as lead",
+      "clearLead": "Clear lead"
+    },
+    "status": {
+      "active": "Active",
+      "inactive": "Inactive",
+      "disbanded": "Disbanded"
+    },
+    "types": {
+      "maintenance": "Maintenance",
+      "inspection": "Inspection",
+      "planning": "Planning",
+      "contractor": "Contractor",
+      "hse": "HSE"
+    },
+    "form": {
+      "createTitle": "Create crew",
+      "editTitle": "Edit crew",
+      "code": "Code",
+      "name": "Name",
+      "type": "Type",
+      "site": "Site / entity",
+      "status": "Status",
+      "description": "Description",
+      "icon": "Crest icon",
+      "iconNone": "Monogram",
+      "accent": "Accent color",
+      "accentNone": "Neutral",
+      "save": "Save",
+      "errors": {
+        "required": "Code and name are required.",
+        "siteRequired": "Site / entity is required."
+      }
+    }
   },
   "position": {
     "panel": {
@@ -300,17 +440,125 @@
     }
   },
   "availability": {
+    "title": "Availability",
     "from": "From",
     "to": "To",
+    "horizonPreset": "{{days}}d",
+    "ungroupedTeam": "No team",
+    "empty": "No technicians match the current filters for this horizon.",
+    "emptyBlocks": "No availability blocks in this horizon.",
+    "filters": {
+      "person": "Person",
+      "blockType": "Block type",
+      "critical": "Critical",
+      "criticalOnly": "Critical only",
+      "searchPlaceholder": "Search technician name or code…"
+    },
+    "actions": {
+      "createBlock": "Create block",
+      "editBlock": "Edit",
+      "endBlock": "End",
+      "refresh": "Refresh",
+      "resetFilters": "Reset",
+      "openPersonnel": "Open in directory",
+      "closeDetail": "Close"
+    },
+    "summary": {
+      "available": "Available technicians",
+      "availableHint": "People whose majority of horizon days are free",
+      "blocked": "Blocked technicians",
+      "blockedHint": "People with at least one blocked or critical day",
+      "critical": "Critical constraints",
+      "criticalHint": "Person-days with a critical availability constraint",
+      "coverageRisk": "Coverage risk days",
+      "coverageRiskHint": "Days with zero free technicians in the filtered scope"
+    },
+    "views": {
+      "chronology": "Chronology",
+      "list": "List"
+    },
+    "matrix": {
+      "person": "Technician"
+    },
+    "cell": {
+      "free": "Free",
+      "partial": "Partial",
+      "blocked": "Blocked",
+      "critical": "Critical",
+      "rest": "Rest"
+    },
+    "list": {
+      "minutesFree": "{{count}} min free"
+    },
+    "badges": {
+      "certExpired": "Qualification expired",
+      "certExpiring": "Certification expiring"
+    },
+    "detail": {
+      "blocks": "Blocks in horizon",
+      "critical": "Critical"
+    },
+    "inspector": {
+      "tabs": {
+        "overview": "Overview",
+        "horizon": "Horizon",
+        "constraint": "Constraint",
+        "skills": "Skills",
+        "workload": "Workload"
+      },
+      "kpi": {
+        "freeDays": "Free days",
+        "partialDays": "Partial days",
+        "blockedDays": "Blocked / critical",
+        "availableMinutes": "Available min"
+      },
+      "state": {
+        "available": "Available",
+        "assigned": "Assigned",
+        "on_leave": "On leave",
+        "in_training": "In training",
+        "blocked": "Blocked"
+      },
+      "overview": {
+        "identity": "Planning context",
+        "team": "Team",
+        "entity": "Entity",
+        "horizon": "Horizon",
+        "assignability": "Assignability now",
+        "status": "Status",
+        "noReasons": "No active constraint reasons."
+      },
+      "horizon": {
+        "title": "Day strip",
+        "hint": "Click a day to seed a new block for that date."
+      },
+      "constraint": {
+        "emptyTitle": "No block selected",
+        "empty": "Select a block on the chronology or from the list below.",
+        "createdBy": "Created by"
+      },
+      "skills": {
+        "title": "Skills (read-only)",
+        "empty": "No skills recorded for this person."
+      },
+      "workload": {
+        "title": "Workload"
+      }
+    },
     "form": {
       "title": "Create availability block",
+      "editTitle": "Edit availability block",
       "personnel": "Personnel",
       "blockType": "Block type",
       "startAt": "Start",
       "endAt": "End",
       "reason": "Reason",
       "isCritical": "Critical (triggers notification)",
+      "criticalForced": "required for this type",
       "submit": "Create block",
+      "save": "Save",
+      "cancel": "Cancel",
+      "confirmOverlap": "Confirm overlap",
       "types": {
         "medical": "Medical",
         "restriction": "Restriction",
@@ -320,7 +568,8 @@
       "errors": {
         "personnelRequired": "Select personnel.",
         "timeRequired": "Start and end are required.",
-        "invalidRange": "End must be after start."
+        "invalidRange": "End must be after start.",
+        "overlapConfirm": "This block overlaps an existing one. Confirm to save anyway."
       }
     }
   },
@@ -330,7 +579,10 @@
     "availableMinutes": "Available minutes: {{count}}",
     "blockedMinutes": "Blocked minutes: {{count}}",
     "ratio": "Availability ratio: {{value}}",
-    "successionRisk": "Succession risk"
+    "successionRisk": "Succession risk",
+    "filters": {
+      "searchPlaceholder": "Search team name or code…"
+    }
   },
   "import": {
     "title": "Personnel import wizard",

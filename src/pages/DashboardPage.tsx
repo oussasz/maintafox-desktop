@@ -1,34 +1,31 @@
-import {
-  AlertTriangle,
-  ClipboardList,
-  LayoutDashboard,
-  Package,
-  Settings2,
-  Wrench,
-} from "lucide-react";
+import { LayoutDashboard, Settings2 } from "lucide-react";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
-import { CHART_COLORS } from "@/components/charts/chart-utils";
 import { DashboardCustomizeDialog } from "@/components/dashboard/DashboardCustomizeDialog";
 import { DashboardDiStatusChart } from "@/components/dashboard/DashboardDiStatusChart";
 import { DashboardDisTriageInboxPanel } from "@/components/dashboard/DashboardDisTriageInboxPanel";
-import { DashboardReliabilitySnapshotCard } from "@/components/dashboard/DashboardReliabilitySnapshotCard";
 import { DashboardWorkloadChart } from "@/components/dashboard/DashboardWorkloadChart";
-import { KpiCard } from "@/components/dashboard/KpiCard";
+import { OverviewMetricCards } from "@/components/dashboard/OverviewMetricCards";
 import { ModulePageShell } from "@/components/layout/ModulePageShell";
 import { Button } from "@/components/ui/button";
 import { usePermissions } from "@/hooks/use-permissions";
 import { isSessionActiveForBackgroundWork } from "@/lib/session-ready";
 import {
   getDashboardKpiValidation,
-  getDashboardKpis,
   getDashboardLayout,
+  getOverviewKpiLayout,
+  getOverviewKpis,
 } from "@/services/dashboard-service";
 import { useAppStore } from "@/store/app-store";
 import { useSessionStore } from "@/store/session-store";
+import {
+  buildRoleDefaultOverviewKpis,
+  parseAnalyticsDashboardLayoutJson,
+  resolveOverviewKpiLayout,
+} from "@shared/analytics-dashboard-layout";
 import {
   DASHBOARD_WIDGET_IDS,
   DASHBOARD_WIDGET_PERMISSION,
@@ -37,8 +34,8 @@ import {
   parseDashboardLayoutJson,
   type DashboardLayoutV1,
 } from "@shared/dashboard-layout";
-import type { DashboardKpiValidation, DashboardKpis } from "@shared/ipc-types";
-import { DASHBOARD_KPI_DRILL_PATH, DASHBOARD_KPI_KEYS } from "@shared/kpi-definitions";
+import type { DashboardKpiValidation, OverviewKpisPayload } from "@shared/ipc-types";
+import type { OverviewKpiLayoutEntry } from "@shared/overview-kpi-registry";
 import { P } from "@shared/rbac/permissions.generated";
 
 const KPI_REFRESH_MS = 5 * 60 * 1000;
@@ -51,7 +48,8 @@ export function DashboardPage() {
   const sessionAuthenticated = useSessionStore((s) => s.info?.is_authenticated === true);
   const sessionLocked = useSessionStore((s) => s.info?.is_locked === true);
 
-  const [kpis, setKpis] = useState<DashboardKpis | null>(null);
+  const [overviewKpis, setOverviewKpis] = useState<OverviewKpisPayload | null>(null);
+  const [overviewKpiLayout, setOverviewKpiLayout] = useState<OverviewKpiLayoutEntry[]>([]);
   const [layout, setLayout] = useState<DashboardLayoutV1>(DEFAULT_DASHBOARD_LAYOUT);
   const [customOpen, setCustomOpen] = useState(false);
   const [kpiValOpen, setKpiValOpen] = useState(false);
@@ -63,10 +61,34 @@ export function DashboardPage() {
     if (!isSessionActiveForBackgroundWork()) {
       return;
     }
-    getDashboardKpis()
-      .then(setKpis)
-      .catch(() => setKpis(null));
+    getOverviewKpis()
+      .then(setOverviewKpis)
+      .catch(() => setOverviewKpis(null));
   }, []);
+
+  const roleDefaultOverviewKpis = useMemo(
+    () =>
+      buildRoleDefaultOverviewKpis({
+        canDi: can(P.DI_VIEW),
+        canOt: can(P.OT_VIEW),
+        canPm: can(P.PM_VIEW),
+        canInv: can(P.INV_VIEW),
+        canFin: can(P.FIN_VIEW),
+        canRam: can(P.RAM_VIEW),
+        canRep: can(P.REP_VIEW),
+        isSupervisorHeavy: can(P.DI_REVIEW) || can(P.OT_CLOSE),
+      }),
+    [can],
+  );
+
+  const resolvedOverviewLayout = useMemo(
+    () =>
+      resolveOverviewKpiLayout(
+        { version: 1, widgets: [], overview_kpis: overviewKpiLayout },
+        roleDefaultOverviewKpis,
+      ),
+    [overviewKpiLayout, roleDefaultOverviewKpis],
+  );
 
   useEffect(() => {
     if (!sessionAuthenticated || sessionLocked) {
@@ -75,14 +97,19 @@ export function DashboardPage() {
 
     const perf = typeof performance !== "undefined" ? performance : undefined;
     perf?.mark?.("dashboard-load-start");
-    void Promise.all([getDashboardKpis(), getDashboardLayout()])
-      .then(([k, layoutPayload]) => {
-        setKpis(k);
+    void Promise.all([getOverviewKpis(), getDashboardLayout(), getOverviewKpiLayout()])
+      .then(([overview, layoutPayload, overviewLayoutPayload]) => {
+        setOverviewKpis(overview);
         setLayout(parseDashboardLayoutJson(layoutPayload.layout_json));
+        const analyticsLayout = parseAnalyticsDashboardLayoutJson(
+          overviewLayoutPayload.layout_json,
+        );
+        setOverviewKpiLayout(analyticsLayout.overview_kpis ?? []);
       })
       .catch(() => {
-        setKpis(null);
+        setOverviewKpis(null);
         setLayout(DEFAULT_DASHBOARD_LAYOUT);
+        setOverviewKpiLayout([]);
       })
       .finally(() => {
         perf?.mark?.("dashboard-load-end");
@@ -125,6 +152,9 @@ export function DashboardPage() {
 
   const canShowWidget = useCallback(
     (id: string) => {
+      if (id === DASHBOARD_WIDGET_IDS.RELIABILITY_SNAPSHOT) {
+        return false;
+      }
       if (id === DASHBOARD_WIDGET_IDS.KPIS || id === DASHBOARD_WIDGET_IDS.WORKLOAD) {
         return canAny(P.DI_VIEW, P.OT_VIEW, P.EQ_VIEW, P.PM_VIEW);
       }
@@ -144,64 +174,11 @@ export function DashboardPage() {
   const renderWidget = (id: string) => {
     switch (id) {
       case DASHBOARD_WIDGET_IDS.KPIS:
-        return (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <KpiCard
-              title={t("kpi.openDis")}
-              value={kpis?.open_dis.value ?? 0}
-              trend={(kpis?.open_dis.value ?? 0) - (kpis?.open_dis.previous_value ?? 0)}
-              icon={ClipboardList}
-              color={CHART_COLORS.primary}
-              trendDirection="up-bad"
-              available={kpis?.open_dis.available ?? true}
-              qualityBadge={kpis?.open_dis.quality_badge}
-              onOpenEvidence={() => navigate(DASHBOARD_KPI_DRILL_PATH[DASHBOARD_KPI_KEYS.OPEN_DIS])}
-            />
-            <KpiCard
-              title={t("kpi.openWos")}
-              value={kpis?.open_wos.value ?? 0}
-              trend={(kpis?.open_wos.value ?? 0) - (kpis?.open_wos.previous_value ?? 0)}
-              icon={Wrench}
-              color={CHART_COLORS.accent}
-              trendDirection="up-bad"
-              available={kpis?.open_wos.available ?? false}
-              qualityBadge={kpis?.open_wos.quality_badge}
-              onOpenEvidence={() => navigate(DASHBOARD_KPI_DRILL_PATH[DASHBOARD_KPI_KEYS.OPEN_WOS])}
-            />
-            <KpiCard
-              title={t("kpi.totalAssets")}
-              value={kpis?.total_assets.value ?? 0}
-              trend={(kpis?.total_assets.value ?? 0) - (kpis?.total_assets.previous_value ?? 0)}
-              icon={Package}
-              color={CHART_COLORS.success}
-              trendDirection="up-good"
-              available={kpis?.total_assets.available ?? true}
-              qualityBadge={kpis?.total_assets.quality_badge}
-              onOpenEvidence={() =>
-                navigate(DASHBOARD_KPI_DRILL_PATH[DASHBOARD_KPI_KEYS.TOTAL_ASSETS])
-              }
-            />
-            <KpiCard
-              title={t("kpi.overdueItems")}
-              value={kpis?.overdue_items.value ?? 0}
-              trend={(kpis?.overdue_items.value ?? 0) - (kpis?.overdue_items.previous_value ?? 0)}
-              icon={AlertTriangle}
-              color={CHART_COLORS.danger}
-              trendDirection="up-bad"
-              available={kpis?.overdue_items.available ?? true}
-              qualityBadge={kpis?.overdue_items.quality_badge}
-              onOpenEvidence={() =>
-                navigate(DASHBOARD_KPI_DRILL_PATH[DASHBOARD_KPI_KEYS.OVERDUE_ITEMS])
-              }
-            />
-          </div>
-        );
+        return <OverviewMetricCards overviewKpis={overviewKpis} layout={resolvedOverviewLayout} />;
       case DASHBOARD_WIDGET_IDS.WORKLOAD:
         return <DashboardWorkloadChart />;
       case DASHBOARD_WIDGET_IDS.DI_STATUS:
         return <DashboardDiStatusChart />;
-      case DASHBOARD_WIDGET_IDS.RELIABILITY_SNAPSHOT:
-        return <DashboardReliabilitySnapshotCard />;
       default:
         return null;
     }
@@ -230,14 +207,50 @@ export function DashboardPage() {
           </Button>
         </>
       }
-      bodyClassName="space-y-6 p-4"
+      bodyClassName="space-y-4 p-4"
     >
       <DashboardCustomizeDialog
         open={customOpen}
         onOpenChange={setCustomOpen}
         layout={layout}
+        overviewKpiLayout={resolvedOverviewLayout}
         onSaved={setLayout}
+        onOverviewKpiSaved={setOverviewKpiLayout}
       />
+
+      <div className="space-y-2">
+        <h2 className="text-sm font-medium text-text-muted">{t("quickActions.title")}</h2>
+        <div className="flex flex-wrap gap-3">
+          <PermissionGate permission={P.DI_CREATE}>
+            <Button variant="outline" size="sm" onClick={() => navigate("/requests?action=create")}>
+              {t("quickActions.newDi")}
+            </Button>
+          </PermissionGate>
+          <PermissionGate permission={P.OT_CREATE}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => navigate("/work-orders?action=create")}
+            >
+              {t("quickActions.newWo")}
+            </Button>
+          </PermissionGate>
+          <PermissionGate permission={P.EQ_MANAGE}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => navigate("/equipment?action=create")}
+            >
+              {t("quickActions.newAsset")}
+            </Button>
+          </PermissionGate>
+          <PermissionGate permission={P.REP_VIEW}>
+            <Button variant="ghost" size="sm" onClick={() => navigate("/analytics")}>
+              {t("quickActions.openAnalytics")}
+            </Button>
+          </PermissionGate>
+        </div>
+      </div>
 
       {visibleWidgets.map((w) => (
         <Fragment key={w.id}>{renderWidget(w.id)}</Fragment>
@@ -274,35 +287,6 @@ export function DashboardPage() {
           ) : null}
         </details>
       ) : null}
-
-      <div className="space-y-2">
-        <h2 className="text-sm font-medium text-text-muted">{t("quickActions.title")}</h2>
-        <div className="flex flex-wrap gap-3">
-          <PermissionGate permission={P.DI_CREATE}>
-            <Button variant="outline" size="sm" onClick={() => navigate("/requests?action=create")}>
-              {t("quickActions.newDi")}
-            </Button>
-          </PermissionGate>
-          <PermissionGate permission={P.OT_CREATE}>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => navigate("/work-orders?action=create")}
-            >
-              {t("quickActions.newWo")}
-            </Button>
-          </PermissionGate>
-          <PermissionGate permission={P.EQ_MANAGE}>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => navigate("/equipment?action=create")}
-            >
-              {t("quickActions.newAsset")}
-            </Button>
-          </PermissionGate>
-        </div>
-      </div>
     </ModulePageShell>
   );
 }

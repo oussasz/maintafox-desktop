@@ -13,7 +13,7 @@
 
 use crate::errors::{AppError, AppResult};
 use crate::wo::time::now_utc_z;
-use sea_orm::{ConnectionTrait, DbBackend, QueryResult, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use uuid::Uuid;
@@ -113,7 +113,7 @@ fn map_attachment(row: &QueryResult) -> AppResult<WoAttachment> {
 /// - Invalid file name
 /// - Disk write failure
 pub async fn save_wo_attachment(
-    db: &impl ConnectionTrait,
+    db: &DatabaseConnection,
     app_data_dir: &Path,
     input: WoAttachmentInput,
 ) -> AppResult<WoAttachment> {
@@ -143,11 +143,18 @@ pub async fn save_wo_attachment(
         return Err(AppError::ValidationFailed(vec!["Nom de fichier invalide.".into()]));
     }
 
+    // Resolved before the transaction: the helper reads through the pool connection.
+    let env = crate::sync::media::resolve_media_deployment_env();
+    let tenant_id = crate::sync::media::resolve_media_tenant_id(db).await;
+
+    // The attachment row, its media metadata row and the media outbox entry commit together.
+    let txn = db.begin().await?;
+
     // ── Verify WO exists and is mutable ───────────────────────────────────
-    let wo_row = db
+    let wo_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT wo.id, wos.code AS status_code \
+            "SELECT wo.id, wo.entity_sync_id, wos.code AS status_code \
              FROM work_orders wo \
              JOIN work_order_statuses wos ON wos.id = wo.status_id \
              WHERE wo.id = ?",
@@ -169,6 +176,14 @@ pub async fn save_wo_attachment(
         ]));
     }
 
+    let parent_entity_sync_id = crate::sync::identity::require_entity_sync_id(
+        "work_orders",
+        input.wo_id,
+        wo_row
+            .try_get::<Option<String>>("", "entity_sync_id")
+            .map_err(|e| decode_err("entity_sync_id", e))?,
+    )?;
+
     // ── Generate unique relative path ─────────────────────────────────────
     let uuid = Uuid::new_v4();
     let relative_path = format!("wo_attachments/{}/{}-{}", input.wo_id, uuid, sanitized_name);
@@ -183,8 +198,10 @@ pub async fn save_wo_attachment(
     // ── Insert DB record ──────────────────────────────────────────────────
     let now = now_utc_z();
     let size_bytes = input.file_bytes.len() as i64;
+    let mime_type = input.mime_type.clone();
+    let file_name = sanitized_name.to_string();
 
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO work_order_attachments \
             (work_order_id, file_name, relative_path, mime_type, size_bytes, \
@@ -192,9 +209,9 @@ pub async fn save_wo_attachment(
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             input.wo_id.into(),
-            sanitized_name.to_string().into(),
+            file_name.clone().into(),
             relative_path.clone().into(),
-            input.mime_type.into(),
+            mime_type.clone().into(),
             size_bytes.into(),
             input.uploaded_by_id.into(),
             now.into(),
@@ -210,8 +227,21 @@ pub async fn save_wo_attachment(
     ))
     .await?;
 
+    let payload = crate::sync::media::build_media_attachment(
+        env,
+        &tenant_id,
+        "work_orders",
+        &parent_entity_sync_id,
+        &file_name,
+        &mime_type,
+        &input.file_bytes,
+        Some(relative_path.clone()),
+        None,
+    )?;
+    crate::sync::media::upsert_media_attachment_row(&txn, &payload).await?;
+
     // ── Re-fetch the inserted row ─────────────────────────────────────────
-    let row = db
+    let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, work_order_id, file_name, relative_path, mime_type, size_bytes, \
@@ -221,8 +251,10 @@ pub async fn save_wo_attachment(
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to re-fetch inserted wo_attachment")))?;
+    let attachment = map_attachment(&row)?;
 
-    map_attachment(&row)
+    txn.commit().await?;
+    Ok(attachment)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -251,11 +283,13 @@ pub async fn list_wo_attachments(db: &impl ConnectionTrait, wo_id: i64) -> AppRe
 
 /// Delete the attachment DB record. Does NOT delete the file from disk.
 /// The caller (command layer) must hold `ot.admin` to invoke this.
-pub async fn delete_wo_attachment_record(db: &impl ConnectionTrait, attachment_id: i64) -> AppResult<()> {
-    let state_row = db
+pub async fn delete_wo_attachment_record(db: &DatabaseConnection, attachment_id: i64) -> AppResult<()> {
+    let txn = db.begin().await?;
+
+    let state_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT wos.code AS status_code \
+            "SELECT wos.code AS status_code, wa.relative_path, wo.entity_sync_id AS parent_entity_sync_id \
              FROM work_order_attachments wa \
              JOIN work_orders wo ON wo.id = wa.work_order_id \
              JOIN work_order_statuses wos ON wos.id = wo.status_id \
@@ -272,9 +306,27 @@ pub async fn delete_wo_attachment_record(db: &impl ConnectionTrait, attachment_i
                 "Suppression interdite: OT cloture/annule (audit trail verrouille).".into(),
             ]));
         }
+        let relative_path: String = row.try_get("", "relative_path").unwrap_or_default();
+        let parent_esid: String = row.try_get("", "parent_entity_sync_id").unwrap_or_default();
+        crate::sync::media::delete_media_attachment_if_found(
+            &txn,
+            Some("work_orders"),
+            if parent_esid.is_empty() {
+                None
+            } else {
+                Some(parent_esid.as_str())
+            },
+            if relative_path.is_empty() {
+                None
+            } else {
+                Some(relative_path.as_str())
+            },
+            None,
+        )
+        .await?;
     }
 
-    let result = db
+    let result = txn
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "DELETE FROM work_order_attachments WHERE id = ?",
@@ -289,5 +341,6 @@ pub async fn delete_wo_attachment_record(db: &impl ConnectionTrait, attachment_i
         });
     }
 
+    txn.commit().await?;
     Ok(())
 }

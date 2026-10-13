@@ -7,21 +7,16 @@ import {
   Users,
   Package,
   CalendarClock,
-  Activity,
   BarChart3,
   Archive,
   BookOpen,
-  Bell,
   HelpCircle,
   Calendar,
-  ScrollText,
   Settings,
-  User,
   GraduationCap,
   ShieldCheck,
   DollarSign,
   CheckSquare,
-  HeartPulse,
 } from "lucide-react";
 
 import type { NavItem } from "@/components/layout/Sidebar";
@@ -106,10 +101,9 @@ export const defaultNavItems: NavItem[] = [
   {
     key: "training",
     labelKey: "nav.training",
-    // Landing is /personnel?tab=training — gated by per.view (same as personnel route).
-    path: "/personnel?tab=training",
+    path: "/training",
     icon: <GraduationCap className="h-4 w-4" />,
-    requiredPermission: P.PER_VIEW,
+    requiredPermission: P.TRN_VIEW,
   },
 
   // ── Inventory ─────────────────────────────────────────────
@@ -141,14 +135,6 @@ export const defaultNavItems: NavItem[] = [
     labelKey: "nav.analytics",
     path: "/analytics",
     icon: <BarChart3 className="h-4 w-4" />,
-    requiredPermission: P.REP_VIEW,
-  },
-  {
-    key: "reliability",
-    labelKey: "nav.reliability",
-    // Parent route PermissionRoute uses rep.view (shared analytics/reliability gate).
-    path: "/reliability/dashboard",
-    icon: <Activity className="h-4 w-4" />,
     requiredPermission: P.REP_VIEW,
   },
   {
@@ -192,12 +178,6 @@ export const defaultNavItems: NavItem[] = [
     requiredPermission: P.REF_VIEW,
   },
   {
-    key: "notifications",
-    labelKey: "nav.notifications",
-    path: "/notifications",
-    icon: <Bell className="h-4 w-4" />,
-  },
-  {
     key: "documentation",
     labelKey: "nav.documentation",
     path: "/documentation",
@@ -212,27 +192,11 @@ export const defaultNavItems: NavItem[] = [
     requiredPermission: P.ARC_VIEW,
   },
   {
-    key: "activity",
-    labelKey: "nav.activity",
-    path: "/activity",
-    icon: <ScrollText className="h-4 w-4" />,
-    requiredPermission: P.LOG_VIEW,
-  },
-  {
     key: "settings",
     labelKey: "nav.settings",
     path: "/settings",
     icon: <Settings className="h-4 w-4" />,
-    requiredPermission: P.ADM_SETTINGS,
   },
-  {
-    key: "diagnostics",
-    labelKey: "nav.diagnostics",
-    path: "/diagnostics",
-    icon: <HeartPulse className="h-4 w-4" />,
-    requiredPermission: P.ADM_SETTINGS,
-  },
-  { key: "profile", labelKey: "nav.profile", path: "/profile", icon: <User className="h-4 w-4" /> },
 ];
 
 /** Flat route list for React Router (excludes group headers) */

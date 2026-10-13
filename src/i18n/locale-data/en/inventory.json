@@ -889,5 +889,28 @@
       "addLocation": "Add location",
       "saveLocation": "Save location"
     }
+  },
+  "unitConversions": {
+    "tab": "Units & conversions",
+    "help": "1 unit on the left = factor × unit on the right. The reverse direction is derived; a conversion for one article takes precedence over the general one.",
+    "from": "From unit",
+    "to": "To unit",
+    "factor": "Factor",
+    "article": "Article",
+    "allArticles": "All articles",
+    "notes": "Notes",
+    "add": "Add conversion",
+    "preview": "1 {{from}} = {{factor}} {{to}}",
+    "quantity": "Quantity",
+    "convert": "Convert",
+    "result": "= {{quantity}} {{unit}} ({{path}})",
+    "path": {
+      "identity": "same unit",
+      "direct": "direct conversion",
+      "inverse": "reverse of a conversion"
+    },
+    "rule": "Conversion",
+    "empty": "No conversion defined yet.",
+    "deactivate": "Deactivate"
   }
 }

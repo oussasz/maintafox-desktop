@@ -5,8 +5,9 @@ use sha2::{Digest, Sha256};
 
 use crate::entitlements::domain::{
     EntitlementCapabilityCheck, EntitlementDiagnostics, EntitlementEnvelope, EntitlementEnvelopeInput,
-    EntitlementRefreshResult, EntitlementSummary, ENTITLEMENT_SIGNATURE_ALG_V1,
+    EntitlementRefreshResult, EntitlementSummary, ENTITLEMENT_SIGNATURE_ALG,
 };
+use crate::entitlements::trusted_keys::{verify_entitlement_signature, SignatureCheck};
 use crate::errors::{AppError, AppResult};
 use crate::license::security::{append_license_trace, register_api_exchange, verify_trust_key, LicenseTraceInput};
 
@@ -14,24 +15,13 @@ fn decode_err(field: &str, err: impl std::fmt::Display) -> AppError {
     AppError::ValidationFailed(vec![format!("Failed to decode entitlement field '{field}': {err}")])
 }
 
-fn trusted_issuer_secrets() -> HashMap<(&'static str, &'static str), &'static str> {
-    HashMap::from([
-        (("maintafox-vps", "key-v1"), "MAINTAFOX_TRUSTED_ISSUER_KEY_V1"),
-        (("maintafox-vps", "key-rotated-v2"), "MAINTAFOX_TRUSTED_ISSUER_KEY_V2"),
-    ])
-}
-
-/// Soft phase: accept control-plane envelopes even when local canonicalization
-/// disagrees with Node `JSON.stringify` (historical serde_json mismatch).
-/// Phase B hard enforcement must set this to false after canon parity is proven.
-const SOFT_ACCEPT_CONTROL_PLANE_ENVELOPES: bool = true;
-
 fn json_str(value: &str) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_string())
 }
 
-/// Canonical payload must match control-plane `JSON.stringify({...})` field order.
-fn canonical_payload(input: &EntitlementEnvelopeInput) -> String {
+/// Canonical payload: byte-identical to the control plane `canonicalPayload` (fixed field order,
+/// JSON string escaping). Proven by the cross-language vector in `testdata/ed25519_vector.json`.
+pub(crate) fn canonical_payload(input: &EntitlementEnvelopeInput) -> String {
     let previous = match &input.previous_envelope_id {
         Some(v) => json_str(v),
         None => "null".to_string(),
@@ -64,16 +54,6 @@ fn payload_hash(input: &EntitlementEnvelopeInput) -> String {
     hex::encode(hasher.finalize())
 }
 
-fn expected_signature(input: &EntitlementEnvelopeInput) -> Option<String> {
-    let issuer_secrets = trusted_issuer_secrets();
-    let secret = issuer_secrets.get(&(input.issuer.as_str(), input.key_id.as_str()))?;
-    let payload_hash = payload_hash(input);
-    let material = format!("{}:{}:{}:{}", input.issuer, input.key_id, payload_hash, secret);
-    let mut hasher = Sha256::new();
-    hasher.update(material);
-    Some(hex::encode(hasher.finalize()))
-}
-
 fn parse_rfc3339(value: &str, field: &str, errors: &mut Vec<String>) {
     if chrono::DateTime::parse_from_rfc3339(value).is_err() {
         errors.push(format!("{field} must be a valid RFC3339 timestamp."));
@@ -91,10 +71,10 @@ fn validate_envelope_input(input: &EntitlementEnvelopeInput) -> AppResult<()> {
     if input.key_id.trim().is_empty() {
         errors.push("key_id is required.".to_string());
     }
-    if input.signature_alg != ENTITLEMENT_SIGNATURE_ALG_V1 {
+    if input.signature_alg != ENTITLEMENT_SIGNATURE_ALG {
         errors.push(format!(
             "Unsupported signature_alg '{}'; supported: {}.",
-            input.signature_alg, ENTITLEMENT_SIGNATURE_ALG_V1
+            input.signature_alg, ENTITLEMENT_SIGNATURE_ALG
         ));
     }
     match input.state.as_str() {
@@ -280,6 +260,22 @@ pub async fn peek_active_envelope_meta(db: &DatabaseConnection) -> AppResult<Opt
     )))
 }
 
+/// key_id that signed the active envelope (used to target compromise responses at the real key).
+pub async fn active_envelope_key_id(db: &DatabaseConnection) -> AppResult<Option<String>> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT e.key_id
+             FROM entitlement_cache_state s
+             JOIN entitlement_envelopes e ON e.id = s.active_envelope_id
+             WHERE s.id = 1",
+            [],
+        ))
+        .await?;
+    row.map(|r| r.try_get::<String>("", "key_id").map_err(|e| decode_err("key_id", e)))
+        .transpose()
+}
+
 fn is_soft_lineage_refresh(input: &EntitlementEnvelopeInput) -> bool {
     input.lineage_version <= 1
         && input
@@ -398,42 +394,23 @@ pub async fn apply_entitlement_envelope(
         )
         .await?;
     }
-    let verification_result = match expected_signature(&input) {
-        Some(expected) if expected == input.signature => "verified".to_string(),
-        Some(_) if SOFT_ACCEPT_CONTROL_PLANE_ENVELOPES => {
-            // #region agent log
-            {
-                let line = format!(
-                    "{{\"sessionId\":\"a6aab3\",\"runId\":\"post-fix\",\"hypothesisId\":\"L-canon\",\"location\":\"entitlements/queries.rs:verify\",\"message\":\"signature mismatch soft-accepted\",\"data\":{{\"envelopeId\":\"{}\",\"tier\":\"{}\"}},\"timestamp\":{}}}\n",
-                    input.envelope_id.replace('"', ""),
-                    input.tier.replace('"', ""),
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_millis())
-                        .unwrap_or(0)
-                );
-                let _ = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(r"c:\Dev\MaintafoxSuite\desktop\maintafox-desktop\debug-a6aab3.log")
-                    .and_then(|mut f| {
-                        use std::io::Write;
-                        f.write_all(line.as_bytes())
-                    });
-            }
-            // #endregion
-            tracing::warn!(
-                event = "desktop_entitlement_signature_soft_accepted",
-                envelope_id = %input.envelope_id,
-                tier = %input.tier,
-                "Entitlement signature mismatch soft-accepted (Phase A)"
-            );
-            "soft_accepted".to_string()
-        }
-        Some(_) => "invalid_signature".to_string(),
-        None => "untrusted_issuer".to_string(),
-    };
-    let verified = verification_result == "verified" || verification_result == "soft_accepted";
+    let check = verify_entitlement_signature(
+        &input.issuer,
+        &input.key_id,
+        canonical_payload(&input).as_bytes(),
+        &input.signature,
+    );
+    if check != SignatureCheck::Verified {
+        tracing::warn!(
+            event = "desktop_entitlement_signature_rejected",
+            envelope_id = %input.envelope_id,
+            key_id = %input.key_id,
+            result = check.as_str(),
+            "Entitlement envelope signature rejected"
+        );
+    }
+    let verification_result = check.as_str().to_string();
+    let verified = check == SignatureCheck::Verified;
     let tx = db.begin().await?;
 
     if input.lineage_version > 1 {
@@ -458,7 +435,7 @@ pub async fn apply_entitlement_envelope(
         }
     }
 
-    let mut active_row_id: i64;
+    let active_row_id: i64;
     let soft_refresh = is_soft_lineage_refresh(&input);
 
     if let Some((row_id, existing_hash)) = existing_same_id {
@@ -489,27 +466,6 @@ pub async fn apply_entitlement_envelope(
             .await?;
             update_envelope_row(&tx, row_id, &input, &payload_hash, &verification_result).await?;
             active_row_id = row_id;
-            // #region agent log
-            {
-                let line = format!(
-                    "{{\"sessionId\":\"a6aab3\",\"runId\":\"post-fix\",\"hypothesisId\":\"M-upsert\",\"location\":\"entitlements/queries.rs:apply\",\"message\":\"soft-lineage envelope superseded in place\",\"data\":{{\"rowId\":{},\"envelopeId\":\"{}\"}},\"timestamp\":{}}}\n",
-                    row_id,
-                    input.envelope_id.replace('"', ""),
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_millis())
-                        .unwrap_or(0)
-                );
-                let _ = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(r"c:\Dev\MaintafoxSuite\desktop\maintafox-desktop\debug-a6aab3.log")
-                    .and_then(|mut f| {
-                        use std::io::Write;
-                        f.write_all(line.as_bytes())
-                    });
-            }
-            // #endregion
         } else {
             tx.execute(Statement::from_sql_and_values(
                 DatabaseBackend::Sqlite,
@@ -674,35 +630,6 @@ pub async fn apply_entitlement_envelope(
 pub async fn get_entitlement_summary(db: &DatabaseConnection) -> AppResult<EntitlementSummary> {
     if let Some(envelope) = active_envelope(db).await? {
         let effective_state = compute_effective_state(&envelope);
-        // #region agent log
-        {
-            let false_count =
-                serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&envelope.capabilities_json)
-                    .ok()
-                    .map(|m| m.values().filter(|v| v.as_bool() == Some(false)).count())
-                    .unwrap_or(0);
-            let line = format!(
-                "{{\"sessionId\":\"a6aab3\",\"runId\":\"pre-fix\",\"hypothesisId\":\"A-D\",\"location\":\"entitlements/queries.rs:get_entitlement_summary\",\"message\":\"active envelope summary\",\"data\":{{\"hasEnvelope\":true,\"envelopeId\":\"{}\",\"tier\":\"{}\",\"effectiveState\":\"{}\",\"capJsonLen\":{},\"falseCapabilityCount\":{}}},\"timestamp\":{}}}\n",
-                envelope.envelope_id.replace('"', ""),
-                envelope.tier.replace('"', ""),
-                effective_state.replace('"', ""),
-                envelope.capabilities_json.len(),
-                false_count,
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_millis())
-                    .unwrap_or(0)
-            );
-            let _ = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(r"c:\Dev\MaintafoxSuite\desktop\maintafox-desktop\debug-a6aab3.log")
-                .and_then(|mut f| {
-                    use std::io::Write;
-                    f.write_all(line.as_bytes())
-                });
-        }
-        // #endregion
         return Ok(EntitlementSummary {
             envelope_id: Some(envelope.envelope_id),
             state: envelope.state,
@@ -717,25 +644,6 @@ pub async fn get_entitlement_summary(db: &DatabaseConnection) -> AppResult<Entit
             feature_flag_map_json: envelope.feature_flags_json,
         });
     }
-    // #region agent log
-    {
-        let line = format!(
-            "{{\"sessionId\":\"a6aab3\",\"runId\":\"pre-fix\",\"hypothesisId\":\"A\",\"location\":\"entitlements/queries.rs:get_entitlement_summary\",\"message\":\"no active envelope; legacy empty map\",\"data\":{{\"hasEnvelope\":false}},\"timestamp\":{}}}\n",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis())
-                .unwrap_or(0)
-        );
-        let _ = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(r"c:\Dev\MaintafoxSuite\desktop\maintafox-desktop\debug-a6aab3.log")
-            .and_then(|mut f| {
-                use std::io::Write;
-                f.write_all(line.as_bytes())
-            });
-    }
-    // #endregion
     // Legacy-safe fallback: allow runtime until first signed entitlement arrives.
     Ok(EntitlementSummary {
         envelope_id: None,
@@ -807,8 +715,10 @@ fn capability_from_permission(permission: &str) -> Option<&'static str> {
         Some("work_orders")
     } else if permission.starts_with("inv.") {
         Some("inventory")
-    } else if permission.starts_with("per.") || permission.starts_with("trn.") {
+    } else if permission.starts_with("per.") {
         Some("personnel")
+    } else if permission.starts_with("trn.") {
+        Some("training")
     } else if permission.starts_with("org.") {
         Some("organization")
     } else if permission.starts_with("ref.") {

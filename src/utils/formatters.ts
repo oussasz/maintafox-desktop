@@ -54,15 +54,11 @@ export function formatDecimal(value: number, locale: string, decimalPlaces = 2):
 }
 
 /**
- * Formats a monetary amount.
- *
- * French:  1 234,56 €    (amount + space + symbol, fr-FR convention)
- * English: $1,234.56     (symbol + amount, en-US convention)
- *
- * Uses Intl.NumberFormat with style: "currency" which handles symbol placement
- * automatically per locale.
+ * Formats a monetary amount using the given ISO 4217 currency code.
+ * Callers must pass the tenant currency from settings — there is no hardcoded default.
+ * UI components should use `useFormatters().formatCurrency` which binds Settings → Localization.
  */
-export function formatCurrency(value: number, locale: string, currency = "EUR"): string {
+export function formatCurrency(value: number, locale: string, currency: string): string {
   if (!Number.isFinite(value)) return "\u2014";
   return new Intl.NumberFormat(toIntlLocale(locale), {
     style: "currency",

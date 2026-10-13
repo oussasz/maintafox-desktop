@@ -9,6 +9,8 @@
 //! This module is the core logic layer. IPC command wrappers live in
 //! `commands::diagnostics` and are session-gated.
 
+pub mod upload;
+
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::Instant;

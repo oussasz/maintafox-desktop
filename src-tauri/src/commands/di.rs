@@ -69,7 +69,7 @@ pub async fn get_di(id: i64, state: State<'_, AppState>) -> AppResult<DiGetRespo
         })?;
 
     let transitions = queries::get_di_transition_log(&state.db, id).await?;
-    let similar = queries::get_recent_similar_dis(&state.db, di.asset_id, di.symptom_code_id, 30).await?;
+    let similar = queries::get_recent_similar_dis(&state.db, di.equipment_id, di.symptom_code_id, 30).await?;
 
     Ok(DiGetResponse {
         di,
@@ -129,11 +129,11 @@ pub async fn create_di(
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id FROM equipment WHERE id = ?",
-            [input.asset_id.into()],
+            [input.equipment_id.into()],
         ))
         .await?;
     if asset_exists.is_none() {
-        errors.push(format!("Équipement introuvable (asset_id={}).", input.asset_id));
+        errors.push(format!("Équipement introuvable (equipment_id={}).", input.equipment_id));
     }
 
     let node_exists = state
@@ -1064,7 +1064,7 @@ mod tests {
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO user_scope_assignments \
-             (sync_id, user_id, role_id, scope_type, created_at, updated_at) \
+             (entity_sync_id, user_id, role_id, scope_type, created_at, updated_at) \
              VALUES ('test-assign-' || ?, ?, \
                (SELECT id FROM roles WHERE name = ?), \
                'tenant', ?, ?)",
@@ -1247,7 +1247,7 @@ mod tests {
         let di = crate::di::queries::create_intervention_request(
             &db,
             crate::di::queries::DiCreateInput {
-                asset_id: 1,
+                equipment_id: 1,
                 org_node_id: 1,
                 title: "Pump vibration".into(),
                 description: "Excessive vibration on pump P-101".into(),
@@ -1285,7 +1285,6 @@ mod tests {
                 actor_id: user_id,
                 expected_row_version: 2,
                 validated_urgency: "high".into(),
-                review_team_id: Some(1),
                 classification_code_id: Some(900001),
                 reviewer_note: Some("Validated".into()),
             },
@@ -1401,7 +1400,6 @@ mod tests {
                 actor_id: 1,
                 expected_row_version: 2,
                 validated_urgency: "high".into(),
-                review_team_id: None,
                 classification_code_id: Some(900001),
                 reviewer_note: Some("Test screen".into()),
             },
@@ -1521,23 +1519,23 @@ mod tests {
 
     async fn seed_fk_data(db: &sea_orm::DatabaseConnection) {
         db.execute(Statement::from_string(DbBackend::Sqlite,
-            "INSERT OR IGNORE INTO equipment (id, sync_id, asset_id_code, name, lifecycle_status, created_at, updated_at) \
+            "INSERT OR IGNORE INTO equipment (id, entity_sync_id, asset_id_code, name, lifecycle_status, created_at, updated_at) \
              VALUES (1, 'eq-001', 'EQ-001', 'Test Equip', 'active_in_service', datetime('now'), datetime('now'))".to_string()
         )).await.expect("equipment");
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "INSERT OR IGNORE INTO org_structure_models (id, sync_id, version_number, status, created_at, updated_at) \
+            "INSERT OR IGNORE INTO org_structure_models (id, entity_sync_id, version_number, status, created_at, updated_at) \
              VALUES (1, 'mdl-001', 1, 'active', datetime('now'), datetime('now'))"
                 .to_string(),
         ))
         .await
         .expect("model");
         db.execute(Statement::from_string(DbBackend::Sqlite,
-            "INSERT OR IGNORE INTO org_node_types (id, sync_id, structure_model_id, code, label, is_active, created_at, updated_at) \
+            "INSERT OR IGNORE INTO org_node_types (id, entity_sync_id, structure_model_id, code, label, is_active, created_at, updated_at) \
              VALUES (1, 'nt-001', 1, 'SITE', 'Site', 1, datetime('now'), datetime('now'))".to_string()
         )).await.expect("node_type");
         db.execute(Statement::from_string(DbBackend::Sqlite,
-            "INSERT OR IGNORE INTO org_nodes (id, sync_id, code, name, node_type_id, structure_model_id, status, created_at, updated_at) \
+            "INSERT OR IGNORE INTO org_nodes (id, entity_sync_id, code, name, node_type_id, structure_model_id, status, created_at, updated_at) \
              VALUES (1, 'on-001', 'SITE-001', 'Test Site', 1, 1, 'active', datetime('now'), datetime('now'))".to_string()
         )).await.expect("org_node");
         db.execute(Statement::from_string(DbBackend::Sqlite,
@@ -1554,8 +1552,8 @@ mod tests {
         .expect("ref_set");
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "INSERT OR IGNORE INTO reference_values (id, set_id, code, label, is_active) \
-             VALUES (900001, 900001, 'MECH', 'Mécanique', 1)"
+            "INSERT OR IGNORE INTO reference_values (id, entity_sync_id, set_id, code, label, is_active) \
+             VALUES (900001, 'test-rv-di-class-mech', 900001, 'MECH', 'Mécanique', 1)"
                 .to_string(),
         ))
         .await
@@ -1570,7 +1568,7 @@ mod tests {
         crate::di::queries::create_intervention_request(
             db,
             crate::di::queries::DiCreateInput {
-                asset_id: 1,
+                equipment_id: 1,
                 org_node_id: 1,
                 submitter_id: 1,
                 title: "Test DI for verification".into(),

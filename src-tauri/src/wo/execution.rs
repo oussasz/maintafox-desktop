@@ -10,7 +10,6 @@ use crate::wo::workflow::events::emit_action_event;
 use crate::wo::workflow::state_machine::{assert_action_allowed, WoAction};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use super::domain::{guard_wo_transition, WoStatus, WorkOrder};
 
@@ -24,8 +23,8 @@ pub struct WoPlanInput {
     pub actor_id: i64,
     pub expected_row_version: i64,
     pub planner_id: i64,
-    pub planned_start: String,
-    pub planned_end: String,
+    pub planned_start: Option<String>,
+    pub planned_end: Option<String>,
     pub shift: Option<String>,
     pub expected_duration_hours: Option<f64>,
     pub urgency_id: Option<i64>,
@@ -37,9 +36,20 @@ pub struct WoAssignInput {
     pub wo_id: i64,
     pub actor_id: i64,
     pub expected_row_version: i64,
-    pub assigned_group_id: Option<i64>,
+    pub assigned_team_id: Option<i64>,
     pub primary_responsible_id: Option<i64>,
     pub scheduled_at: Option<String>,
+    pub override_reason: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct WoEmergencyReassignInput {
+    pub wo_id: i64,
+    pub actor_id: i64,
+    pub expected_row_version: i64,
+    pub assigned_team_id: Option<i64>,
+    pub primary_responsible_id: Option<i64>,
+    pub override_reason: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -147,7 +157,8 @@ async fn resolve_status_id(txn: &impl ConnectionTrait, code: &str) -> AppResult<
     row.try_get::<i64>("", "id").map_err(|e| decode_err("status id", e))
 }
 
-/// Write an entry to the append-only state transition log.
+/// Write an entry to the append-only state transition log (the shared writer also records the
+/// derived lifecycle state and the planning-approval fact).
 async fn log_transition(
     txn: &impl ConnectionTrait,
     wo_id: i64,
@@ -159,28 +170,18 @@ async fn log_transition(
     notes: Option<&str>,
     acted_at: &str,
 ) -> AppResult<()> {
-    txn.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO wo_state_transition_log \
-         (wo_id, from_status, to_status, action, actor_id, reason_code, notes, acted_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        [
-            wo_id.into(),
-            from_status.into(),
-            to_status.into(),
-            action.into(),
-            actor_id.into(),
-            reason_code
-                .map(sea_orm::Value::from)
-                .unwrap_or(sea_orm::Value::from(None::<String>)),
-            notes
-                .map(sea_orm::Value::from)
-                .unwrap_or(sea_orm::Value::from(None::<String>)),
-            acted_at.into(),
-        ],
-    ))
-    .await?;
-    Ok(())
+    crate::wo::workflow::transition::log_transition(
+        txn,
+        wo_id,
+        from_status,
+        to_status,
+        action,
+        actor_id,
+        reason_code,
+        notes,
+        acted_at,
+    )
+    .await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -207,7 +208,7 @@ pub async fn plan_wo(db: &DatabaseConnection, input: WoPlanInput) -> AppResult<W
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// B) assign_wo — assignment save (no status change; Planning / Ready)
+// B) assign_wo / emergency_reassign_wo — assignment save (no status change)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 pub async fn assign_wo(db: &DatabaseConnection, input: WoAssignInput) -> AppResult<WorkOrder> {
@@ -217,9 +218,25 @@ pub async fn assign_wo(db: &DatabaseConnection, input: WoAssignInput) -> AppResu
             wo_id: input.wo_id,
             actor_id: input.actor_id,
             expected_row_version: input.expected_row_version,
-            assigned_group_id: input.assigned_group_id,
+            assigned_team_id: input.assigned_team_id,
             primary_responsible_id: input.primary_responsible_id,
             scheduled_at: input.scheduled_at,
+            override_reason: input.override_reason,
+        },
+    )
+    .await
+}
+
+pub async fn emergency_reassign_wo(db: &DatabaseConnection, input: WoEmergencyReassignInput) -> AppResult<WorkOrder> {
+    crate::wo::workflow::actions::emergency_reassign(
+        db,
+        crate::wo::workflow::actions::WoEmergencyReassignInput {
+            wo_id: input.wo_id,
+            actor_id: input.actor_id,
+            expected_row_version: input.expected_row_version,
+            assigned_team_id: input.assigned_team_id,
+            primary_responsible_id: input.primary_responsible_id,
+            override_reason: input.override_reason,
         },
     )
     .await
@@ -231,6 +248,8 @@ pub async fn assign_wo(db: &DatabaseConnection, input: WoAssignInput) -> AppResu
 
 pub async fn start_wo(db: &DatabaseConnection, input: WoStartInput) -> AppResult<WorkOrder> {
     crate::permit::wo_gate::assert_in_progress_permit_gate(db, input.wo_id).await?;
+    // Read before the transaction: the single pooled connection is held by `txn` afterwards.
+    let linked_permit = crate::permit::queries::get_work_permit_linked_to_work_order(db, input.wo_id).await?;
 
     let txn = db.begin().await?;
 
@@ -294,9 +313,7 @@ pub async fn start_wo(db: &DatabaseConnection, input: WoStartInput) -> AppResult
     )
     .await?;
 
-    txn.commit().await?;
-
-    let wo = queries::get_work_order(db, input.wo_id)
+    let wo = queries::get_work_order(&txn, input.wo_id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "WorkOrder".into(),
@@ -304,17 +321,15 @@ pub async fn start_wo(db: &DatabaseConnection, input: WoStartInput) -> AppResult
         })?;
 
     if wo.requires_permit {
-        let permit = crate::permit::queries::get_work_permit_linked_to_work_order(db, input.wo_id)
-            .await?
-            .ok_or_else(|| {
-                AppError::Internal(anyhow::anyhow!(
-                    "PTW gate passed but no linked permit for WO {}",
-                    input.wo_id
-                ))
-            })?;
-        crate::permit::wo_gate::stage_wo_in_progress_sync_pair(db, &wo, &permit, &Uuid::new_v4().to_string()).await?;
+        linked_permit.ok_or_else(|| {
+            AppError::Internal(anyhow::anyhow!(
+                "PTW gate passed but no linked permit for WO {}",
+                input.wo_id
+            ))
+        })?;
     }
 
+    txn.commit().await?;
     Ok(wo)
 }
 
@@ -323,6 +338,17 @@ pub async fn start_wo(db: &DatabaseConnection, input: WoStartInput) -> AppResult
 // ═══════════════════════════════════════════════════════════════════════════════
 
 pub async fn pause_wo(db: &DatabaseConnection, input: WoPauseInput) -> AppResult<WorkOrder> {
+    hold_wo(db, input, crate::wo::lifecycle::HoldKind::Pause).await
+}
+
+/// in_progress → on_hold, opening a delay segment of the given kind (a pause, or waiting for a
+/// prerequisite: parts, permit, access…). The kind decides the PRD lifecycle state
+/// (`paused` / `waiting_for_prerequisite`, `wo::lifecycle`).
+async fn hold_wo(
+    db: &DatabaseConnection,
+    input: WoPauseInput,
+    hold_kind: crate::wo::lifecycle::HoldKind,
+) -> AppResult<WorkOrder> {
     let txn = db.begin().await?;
 
     let (from_code, current_status, _rv) = load_wo_status(&txn, input.wo_id).await?;
@@ -363,8 +389,8 @@ pub async fn pause_wo(db: &DatabaseConnection, input: WoPauseInput) -> AppResult
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO work_order_delay_segments \
-         (work_order_id, started_at, ended_at, delay_reason_id, comment, entered_by_id) \
-         VALUES (?, ?, NULL, ?, ?, ?)",
+         (work_order_id, started_at, ended_at, delay_reason_id, comment, entered_by_id, hold_kind) \
+         VALUES (?, ?, NULL, ?, ?, ?, ?)",
         [
             input.wo_id.into(),
             now.clone().into(),
@@ -375,6 +401,7 @@ pub async fn pause_wo(db: &DatabaseConnection, input: WoPauseInput) -> AppResult
                 .map(sea_orm::Value::from)
                 .unwrap_or(sea_orm::Value::from(None::<String>)),
             input.actor_id.into(),
+            hold_kind.as_str().into(),
         ],
     ))
     .await?;
@@ -421,14 +448,14 @@ pub async fn pause_wo(db: &DatabaseConnection, input: WoPauseInput) -> AppResult
     )
     .await?;
 
-    txn.commit().await?;
-
-    queries::get_work_order(db, input.wo_id)
+    let wo = queries::get_work_order(&txn, input.wo_id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "WorkOrder".into(),
             id: input.wo_id.to_string(),
-        })
+        })?;
+    txn.commit().await?;
+    Ok(wo)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -437,6 +464,8 @@ pub async fn pause_wo(db: &DatabaseConnection, input: WoPauseInput) -> AppResult
 
 pub async fn resume_wo(db: &DatabaseConnection, input: WoResumeInput) -> AppResult<WorkOrder> {
     crate::permit::wo_gate::assert_in_progress_permit_gate(db, input.wo_id).await?;
+    // Read before the transaction: the single pooled connection is held by `txn` afterwards.
+    let linked_permit = crate::permit::queries::get_work_permit_linked_to_work_order(db, input.wo_id).await?;
 
     let txn = db.begin().await?;
 
@@ -516,9 +545,7 @@ pub async fn resume_wo(db: &DatabaseConnection, input: WoResumeInput) -> AppResu
     )
     .await?;
 
-    txn.commit().await?;
-
-    let wo = queries::get_work_order(db, input.wo_id)
+    let wo = queries::get_work_order(&txn, input.wo_id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "WorkOrder".into(),
@@ -526,17 +553,15 @@ pub async fn resume_wo(db: &DatabaseConnection, input: WoResumeInput) -> AppResu
         })?;
 
     if wo.requires_permit {
-        let permit = crate::permit::queries::get_work_permit_linked_to_work_order(db, input.wo_id)
-            .await?
-            .ok_or_else(|| {
-                AppError::Internal(anyhow::anyhow!(
-                    "PTW gate passed but no linked permit for WO {}",
-                    input.wo_id
-                ))
-            })?;
-        crate::permit::wo_gate::stage_wo_in_progress_sync_pair(db, &wo, &permit, &Uuid::new_v4().to_string()).await?;
+        linked_permit.ok_or_else(|| {
+            AppError::Internal(anyhow::anyhow!(
+                "PTW gate passed but no linked permit for WO {}",
+                input.wo_id
+            ))
+        })?;
     }
 
+    txn.commit().await?;
     Ok(wo)
 }
 
@@ -545,8 +570,8 @@ pub async fn resume_wo(db: &DatabaseConnection, input: WoResumeInput) -> AppResu
 // ═══════════════════════════════════════════════════════════════════════════════
 
 pub async fn set_waiting_for_prerequisite(db: &DatabaseConnection, input: WoHoldInput) -> AppResult<WorkOrder> {
-    // Alias of pause/hold under Option B (single On Hold status).
-    pause_wo(
+    // Same On Hold phase as a pause; the segment records that the WO waits for a prerequisite.
+    hold_wo(
         db,
         WoPauseInput {
             wo_id: input.wo_id,
@@ -555,6 +580,7 @@ pub async fn set_waiting_for_prerequisite(db: &DatabaseConnection, input: WoHold
             delay_reason_id: input.delay_reason_id,
             comment: input.comment,
         },
+        crate::wo::lifecycle::HoldKind::Prerequisite,
     )
     .await
 }
@@ -665,10 +691,8 @@ async fn collect_completion_gates(conn: &impl ConnectionTrait, wo_id: i64) -> Ap
         .map_err(|e| decode_err("parts_actuals_confirmed", e))?;
     let parts_ok = if pending_planned > 0 {
         false
-    } else if planned_count == 0 && used_count == 0 && parts_confirmed == 0 {
-        false
     } else {
-        true
+        !(planned_count == 0 && used_count == 0 && parts_confirmed == 0)
     };
     gates.push(WoCompletionGate {
         code: "PARTS".into(),
@@ -928,12 +952,12 @@ pub async fn complete_wo_mechanically(db: &DatabaseConnection, input: WoMechComp
     )
     .await?;
 
-    txn.commit().await?;
-
-    queries::get_work_order(db, input.wo_id)
+    let wo = queries::get_work_order(&txn, input.wo_id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "WorkOrder".into(),
             id: input.wo_id.to_string(),
-        })
+        })?;
+    txn.commit().await?;
+    Ok(wo)
 }

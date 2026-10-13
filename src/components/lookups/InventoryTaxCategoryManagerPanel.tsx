@@ -146,10 +146,10 @@ export function InventoryTaxCategoryManagerPanel() {
       <div className="flex items-center justify-between border-b border-surface-border px-4 py-3">
         <div className="flex min-w-0 items-center gap-2">
           <span className="truncate text-sm font-semibold text-text-primary">
-            Catégories TVA articles de stock
+            {t("synthetic.taxCategories.title")}
           </span>
           <Badge variant="default" className="text-[10px]">
-            v1 — published
+            {t("synthetic.published")}
           </Badge>
         </div>
         <Button
@@ -163,7 +163,7 @@ export function InventoryTaxCategoryManagerPanel() {
           disabled={!canManage || saving || !!newDraft}
         >
           <Plus className="h-3.5 w-3.5" />
-          Add TVA type
+          {t("synthetic.taxCategories.add")}
         </Button>
       </div>
 
@@ -178,13 +178,23 @@ export function InventoryTaxCategoryManagerPanel() {
         <table className="w-full text-sm">
           <thead className="sticky top-0 z-10 border-b border-surface-border bg-surface-0">
             <tr>
-              <th className="px-3 py-2 text-left font-medium text-text-muted">Code</th>
-              <th className="px-3 py-2 text-left font-medium text-text-muted">Label</th>
-              <th className="px-3 py-2 text-left font-medium text-text-muted">FR</th>
-              <th className="px-3 py-2 text-left font-medium text-text-muted">EN</th>
-              <th className="px-3 py-2 text-left font-medium text-text-muted">Status</th>
+              <th className="px-3 py-2 text-left font-medium text-text-muted">
+                {t("editor.colCode")}
+              </th>
+              <th className="px-3 py-2 text-left font-medium text-text-muted">
+                {t("editor.colLabel")}
+              </th>
+              <th className="px-3 py-2 text-left font-medium text-text-muted">
+                {t("synthetic.taxCategories.colFr")}
+              </th>
+              <th className="px-3 py-2 text-left font-medium text-text-muted">
+                {t("synthetic.taxCategories.colEn")}
+              </th>
+              <th className="px-3 py-2 text-left font-medium text-text-muted">
+                {t("editor.colStatus")}
+              </th>
               <th className="px-3 py-2 text-right align-middle font-medium text-text-muted">
-                Actions
+                {t("editor.colActions")}
               </th>
             </tr>
           </thead>
@@ -193,7 +203,7 @@ export function InventoryTaxCategoryManagerPanel() {
               <tr className="border-b border-surface-border bg-primary/5">
                 <td className="px-3 py-1.5">
                   <Input
-                    placeholder="TVA_20"
+                    placeholder={t("synthetic.taxCategories.codePlaceholder")}
                     value={newDraft.code}
                     onChange={(e) =>
                       setNewDraft((s) => ({ ...(s ?? EMPTY_DRAFT), code: e.target.value }))
@@ -204,7 +214,7 @@ export function InventoryTaxCategoryManagerPanel() {
                 </td>
                 <td className="px-3 py-1.5">
                   <Input
-                    placeholder="TVA 20%"
+                    placeholder={t("synthetic.taxCategories.labelPlaceholder")}
                     value={newDraft.label}
                     onChange={(e) =>
                       setNewDraft((s) => ({ ...(s ?? EMPTY_DRAFT), label: e.target.value }))
@@ -214,7 +224,7 @@ export function InventoryTaxCategoryManagerPanel() {
                 </td>
                 <td className="px-3 py-1.5">
                   <Input
-                    placeholder="TVA 20%"
+                    placeholder={t("synthetic.taxCategories.frPlaceholder")}
                     value={newDraft.fr_label ?? ""}
                     onChange={(e) =>
                       setNewDraft((s) => ({ ...(s ?? EMPTY_DRAFT), fr_label: e.target.value }))
@@ -224,7 +234,7 @@ export function InventoryTaxCategoryManagerPanel() {
                 </td>
                 <td className="px-3 py-1.5">
                   <Input
-                    placeholder="VAT 20%"
+                    placeholder={t("synthetic.taxCategories.enPlaceholder")}
                     value={newDraft.en_label ?? ""}
                     onChange={(e) =>
                       setNewDraft((s) => ({ ...(s ?? EMPTY_DRAFT), en_label: e.target.value }))
@@ -264,13 +274,13 @@ export function InventoryTaxCategoryManagerPanel() {
             {loading ? (
               <tr>
                 <td className="px-3 py-3 text-text-muted" colSpan={6}>
-                  Loading TVA categories...
+                  {t("combobox.loading")}
                 </td>
               </tr>
             ) : taxCategories.length === 0 ? (
               <tr>
                 <td className="px-3 py-3 text-text-muted" colSpan={6}>
-                  No TVA categories yet.
+                  {t("synthetic.taxCategories.empty")}
                 </td>
               </tr>
             ) : (
@@ -404,15 +414,19 @@ export function InventoryTaxCategoryManagerPanel() {
       <Dialog open={deleteTarget !== null} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Deactivate TVA category</DialogTitle>
-            <DialogDescription>{`Deactivate TVA category ${deleteTarget?.code ?? ""}?`}</DialogDescription>
+            <DialogTitle>{t("synthetic.taxCategories.deactivateTitle")}</DialogTitle>
+            <DialogDescription>
+              {t("synthetic.taxCategories.deactivateDescription", {
+                code: deleteTarget?.code ?? "",
+              })}
+            </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteTarget(null)} disabled={saving}>
-              Cancel
+              {t("editor.cancel")}
             </Button>
             <Button variant="destructive" onClick={() => void submitDeactivate()} disabled={saving}>
-              Deactivate
+              {t("editor.deactivate")}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -9,7 +9,7 @@ use serde::Serialize;
 #[derive(Debug, Clone, Serialize, FromQueryResult)]
 pub struct OrgNodeTreeRow {
     pub id: i32,
-    pub sync_id: String,
+    pub entity_sync_id: String,
     pub code: String,
     pub name: String,
     pub parent_id: Option<i32>,
@@ -54,7 +54,7 @@ pub struct OrgNodeFilter {
 pub async fn get_org_tree(db: &DatabaseConnection) -> AppResult<Vec<OrgNodeTreeRow>> {
     let sql = r"
         SELECT
-            n.id, n.sync_id, n.code, n.name, n.parent_id, n.ancestor_path,
+            n.id, n.entity_sync_id, n.code, n.name, n.parent_id, n.ancestor_path,
             n.depth, n.status, n.node_type_id,
             t.code AS node_type_code, t.label AS node_type_label,
             t.can_host_assets, t.can_own_work
@@ -72,7 +72,7 @@ pub async fn get_org_tree(db: &DatabaseConnection) -> AppResult<Vec<OrgNodeTreeR
 pub async fn get_descendants(db: &DatabaseConnection, ancestor_path_prefix: &str) -> AppResult<Vec<OrgNodeTreeRow>> {
     let sql = r"
         SELECT
-            n.id, n.sync_id, n.code, n.name, n.parent_id, n.ancestor_path,
+            n.id, n.entity_sync_id, n.code, n.name, n.parent_id, n.ancestor_path,
             n.depth, n.status, n.node_type_id,
             t.code AS node_type_code, t.label AS node_type_label,
             t.can_host_assets, t.can_own_work
@@ -90,7 +90,7 @@ pub async fn get_descendants(db: &DatabaseConnection, ancestor_path_prefix: &str
 pub async fn get_node_by_id(db: &DatabaseConnection, node_id: i32) -> AppResult<OrgNodeTreeRow> {
     let sql = r"
         SELECT
-            n.id, n.sync_id, n.code, n.name, n.parent_id, n.ancestor_path,
+            n.id, n.entity_sync_id, n.code, n.name, n.parent_id, n.ancestor_path,
             n.depth, n.status, n.node_type_id,
             t.code AS node_type_code, t.label AS node_type_label,
             t.can_host_assets, t.can_own_work

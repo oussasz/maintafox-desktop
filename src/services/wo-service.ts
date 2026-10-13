@@ -9,6 +9,7 @@ import { z } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
 import type {
+  WoEmergencyReassignInput,
   WoApprovePlanningInput,
   WoAssignInput,
   WoCancelInput,
@@ -41,6 +42,8 @@ import type {
   WorkOrderStatusOption,
   WorkOrderTypeOption,
   WorkOrder,
+  WoBacklogHeatmap,
+  WoBacklogHeatmapInput,
 } from "@shared/ipc-types";
 
 // â”€â”€ Zod schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -75,7 +78,7 @@ export const WorkOrderSchema = z.object({
   entity_id: z.number().nullable(),
   planner_id: z.number().nullable(),
   approver_id: z.number().nullable(),
-  assigned_group_id: z.number().nullable(),
+  assigned_team_id: z.number().nullable(),
   primary_responsible_id: z.number().nullable(),
   urgency_id: z.number().nullable(),
   title: z.string(),
@@ -138,6 +141,12 @@ export const WorkOrderSchema = z.object({
   source_di_code: z.string().nullable().optional(),
   source_di_title: z.string().nullable().optional(),
   source_di_status: z.string().nullable().optional(),
+  assigned_team_code: z.string().nullable().optional(),
+  assigned_team_name: z.string().nullable().optional(),
+  assigned_team_label: z.string().nullable().optional(),
+  schedule_commitment_id: z.number().nullable().optional(),
+  schedule_frozen: z.boolean().nullable().optional(),
+  lifecycle_state: z.string().nullable().optional(),
 });
 
 export const WoTransitionRowSchema = z.object({
@@ -150,6 +159,7 @@ export const WoTransitionRowSchema = z.object({
   reason_code: z.string().nullable(),
   notes: z.string().nullable(),
   acted_at: z.string(),
+  lifecycle_state: z.string().nullable().optional(),
 });
 
 const WoListPageSchema = z.object({
@@ -227,16 +237,16 @@ export class CompletionBlockedError extends Error {
 export function normalizePreflightCode(message: string): string {
   const lower = message.toLowerCase();
 
-  if (lower.includes("open labor") || lower.includes("main-d'Å“uvre ouvertes")) {
+  if (lower.includes("open labor") || lower.includes("main-d'œuvre ouvertes")) {
     return "OPEN_LABOR";
   }
-  if (lower.includes("mandatory tasks incomplete") || lower.includes("tÃ¢ches obligatoires")) {
+  if (lower.includes("mandatory tasks incomplete") || lower.includes("tâches obligatoires")) {
     return "INCOMPLETE_TASKS";
   }
-  if (lower.includes("parts actuals") || lower.includes("piÃ¨ces")) {
+  if (lower.includes("parts actuals") || lower.includes("pièces")) {
     return "MISSING_PARTS";
   }
-  if (lower.includes("open downtime") || lower.includes("temps d'arrÃªt ouverts")) {
+  if (lower.includes("open downtime") || lower.includes("temps d'arrêt ouverts")) {
     return "OPEN_DOWNTIME";
   }
 
@@ -356,6 +366,15 @@ export async function planWo(input: WoPlanInput): Promise<WorkOrder> {
 export async function assignWo(input: WoAssignInput): Promise<WorkOrder> {
   try {
     const raw = await invoke<unknown>("assign_wo", { input });
+    return WorkOrderSchema.parse(raw) as WorkOrder;
+  } catch (err) {
+    rethrowIfVersionConflict(err);
+  }
+}
+
+export async function emergencyReassignWo(input: WoEmergencyReassignInput): Promise<WorkOrder> {
+  try {
+    const raw = await invoke<unknown>("emergency_reassign_wo", { input });
     return WorkOrderSchema.parse(raw) as WorkOrder;
   } catch (err) {
     rethrowIfVersionConflict(err);
@@ -514,10 +533,42 @@ const WoStatsSchema = z.object({
   completed: z.number(),
   overdue: z.number(),
   by_status: z.array(z.object({ status: z.string(), count: z.number() })),
+  by_lifecycle: z.array(z.object({ status: z.string(), count: z.number() })),
   by_urgency: z.array(z.object({ urgency: z.string(), count: z.number() })),
   daily_completed: z.array(z.object({ date: z.string(), count: z.number() })),
   by_entity: z.array(z.object({ entity: z.string(), count: z.number() })),
 });
+
+const WoBacklogBucketSchema = z.object({
+  wo_count: z.number(),
+  estimated_hours: z.number(),
+  unestimated_count: z.number(),
+});
+
+const WoBacklogHeatmapSchema = z.object({
+  start_date: z.string(),
+  days: z.array(
+    z.object({
+      date: z.string(),
+      planned_hours: z.number(),
+      wo_count: z.number(),
+      unestimated_count: z.number(),
+      capacity_hours: z.number().nullable(),
+      overloaded: z.boolean(),
+    }),
+  ),
+  capacity_configured: z.boolean(),
+  unscheduled: WoBacklogBucketSchema,
+  overdue: WoBacklogBucketSchema,
+  blocked: z.array(
+    z.object({ category: z.string(), wo_count: z.number(), waiting_hours: z.number() }),
+  ),
+});
+
+export async function getWoBacklogHeatmap(input: WoBacklogHeatmapInput): Promise<WoBacklogHeatmap> {
+  const raw = await invoke<unknown>("get_wo_backlog_heatmap", { input });
+  return WoBacklogHeatmapSchema.parse(raw);
+}
 
 export async function getWoStats(): Promise<WoStatsPayload> {
   const raw = await invoke<unknown>("get_wo_stats", {});
