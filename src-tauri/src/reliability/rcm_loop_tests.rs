@@ -1,7 +1,7 @@
 //! RCM / FMECA → PM loop persistence: decision logic record, PM revision and WO with links,
 //! criticality number.
 
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use sea_orm_migration::MigratorTrait;
 
 use crate::errors::AppError;
@@ -29,7 +29,7 @@ struct Fixture {
 }
 
 async fn setup() -> Fixture {
-    let db = Database::connect("sqlite::memory:").await.expect("in-memory SQLite");
+    let db = crate::db::test_db::connect_in_memory().await.expect("in-memory SQLite");
     crate::migrations::Migrator::up(&db, None).await.expect("migrations");
     crate::db::seeder::seed_system_data(&db).await.expect("seeder");
     for sql in [

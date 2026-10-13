@@ -1,7 +1,7 @@
 //! Computation jobs: persisted lifecycle (pending -> running -> progress -> completed / failed /
 //! cancelled), listing, and the reliability KPI refresh payload the runner stores.
 
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use sea_orm_migration::MigratorTrait;
 
 use crate::jobs::domain::JOB_KIND_RELIABILITY_KPI_REFRESH;
@@ -13,7 +13,7 @@ use crate::jobs::ComputationJob;
 use crate::reliability::domain::RefreshReliabilityKpiSnapshotInput;
 
 async fn setup() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:").await.expect("in-memory SQLite");
+    let db = crate::db::test_db::connect_in_memory().await.expect("in-memory SQLite");
     db.execute_unprepared("PRAGMA foreign_keys = ON")
         .await
         .expect("foreign keys");

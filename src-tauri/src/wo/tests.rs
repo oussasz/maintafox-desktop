@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
     use sea_orm_migration::MigratorTrait;
 
     use crate::di::queries::{create_intervention_request, DiCreateInput};
@@ -26,7 +26,7 @@ mod tests {
     use crate::wo::workflow::actions::submit::{submit_wo, WoSubmitInput};
 
     async fn setup() -> sea_orm::DatabaseConnection {
-        let db = Database::connect("sqlite::memory:")
+        let db = crate::db::test_db::connect_in_memory()
             .await
             .expect("in-memory SQLite should connect");
 

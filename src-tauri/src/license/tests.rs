@@ -1,4 +1,4 @@
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use sea_orm_migration::MigratorTrait;
 
 use crate::activation::domain::{ActivationPolicySnapshot, ApplyMachineActivationInput};
@@ -9,7 +9,7 @@ use crate::license::domain::ApplyAdminLicenseActionInput;
 use crate::license::queries;
 
 async fn setup_db() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:").await.expect("sqlite");
+    let db = crate::db::test_db::connect_in_memory().await.expect("sqlite");
     crate::migrations::Migrator::up(&db, None).await.expect("migrations");
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,

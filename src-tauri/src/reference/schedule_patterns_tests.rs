@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
     use sea_orm_migration::MigratorTrait;
 
     use crate::reference::schedule_patterns::{
@@ -13,7 +13,7 @@ mod tests {
     use crate::reference::values::{create_operational_value, CreateOperationalReferenceValuePayload};
 
     async fn setup() -> sea_orm::DatabaseConnection {
-        let db = Database::connect("sqlite::memory:").await.expect("connect");
+        let db = crate::db::test_db::connect_in_memory().await.expect("connect");
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             "PRAGMA foreign_keys = ON;".to_string(),

@@ -10,6 +10,8 @@ pub mod reference_domains;
 pub mod schema_integration_test;
 pub mod seeder;
 pub mod tenant_bootstrap;
+#[cfg(test)]
+pub mod test_db;
 
 use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement};
 use std::path::Path;

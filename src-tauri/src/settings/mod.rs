@@ -947,7 +947,7 @@ pub async fn list_connection_profiles(db: &DatabaseConnection) -> AppResult<Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sea_orm::{Database, DbBackend, Statement};
+    use sea_orm::{DbBackend, Statement};
     use sea_orm_migration::MigratorTrait;
 
     #[test]
@@ -960,7 +960,7 @@ mod tests {
 
     #[tokio::test]
     async fn load_session_policy_uses_defaults_when_missing() {
-        let db = Database::connect("sqlite::memory:").await.expect("In-memory DB");
+        let db = crate::db::test_db::connect_in_memory().await.expect("In-memory DB");
 
         crate::migrations::Migrator::up(&db, None)
             .await
@@ -972,7 +972,7 @@ mod tests {
 
     #[tokio::test]
     async fn set_setting_writes_setting_and_audit_event() {
-        let db = Database::connect("sqlite::memory:").await.expect("In-memory DB");
+        let db = crate::db::test_db::connect_in_memory().await.expect("In-memory DB");
 
         crate::migrations::Migrator::up(&db, None)
             .await
@@ -1017,7 +1017,7 @@ mod tests {
 
     #[tokio::test]
     async fn set_setting_rejects_invalid_json() {
-        let db = Database::connect("sqlite::memory:").await.expect("In-memory DB");
+        let db = crate::db::test_db::connect_in_memory().await.expect("In-memory DB");
 
         crate::migrations::Migrator::up(&db, None)
             .await
@@ -1039,7 +1039,7 @@ mod tests {
 
     #[tokio::test]
     async fn ensure_default_policies_seeds_active_session_and_backup() {
-        let db = Database::connect("sqlite::memory:").await.expect("In-memory DB");
+        let db = crate::db::test_db::connect_in_memory().await.expect("In-memory DB");
         crate::migrations::Migrator::up(&db, None)
             .await
             .expect("Migrations should apply");
@@ -1078,7 +1078,7 @@ mod tests {
 
     #[tokio::test]
     async fn policy_draft_test_activate_discard_lifecycle() {
-        let db = Database::connect("sqlite::memory:").await.expect("In-memory DB");
+        let db = crate::db::test_db::connect_in_memory().await.expect("In-memory DB");
         crate::migrations::Migrator::up(&db, None)
             .await
             .expect("Migrations should apply");

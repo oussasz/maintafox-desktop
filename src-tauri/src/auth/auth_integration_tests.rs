@@ -14,9 +14,7 @@ mod tests {
 
     /// Helper: create an in-memory DB with all migrations + seeder applied.
     async fn setup_db() -> sea_orm::DatabaseConnection {
-        let db = sea_orm::Database::connect("sqlite::memory:")
-            .await
-            .expect("in-memory SQLite");
+        let db = crate::db::test_db::connect_in_memory().await.expect("in-memory SQLite");
 
         use sea_orm::{ConnectionTrait, DbBackend, Statement};
         db.execute(Statement::from_string(

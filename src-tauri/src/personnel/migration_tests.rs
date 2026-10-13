@@ -30,7 +30,7 @@ mod tests {
     /// V1 — Migration applies cleanly; tables; seeds: 7 positions, ORG.SCHEDULE_CLASS + details.
     #[tokio::test]
     async fn v1_migration_tables_and_seed_counts() {
-        let db = Database::connect("sqlite::memory:").await.expect("connect");
+        let db = crate::db::test_db::connect_in_memory().await.expect("connect");
         setup_migrated_seeded(&db).await;
 
         let expected_tables = [
@@ -204,7 +204,7 @@ mod tests {
     /// V4 — Seed integrity (also covered by V1; explicit rest-day count).
     #[tokio::test]
     async fn v4_seed_positions_and_rest_days() {
-        let db = Database::connect("sqlite::memory:").await.expect("connect");
+        let db = crate::db::test_db::connect_in_memory().await.expect("connect");
         setup_migrated_seeded(&db).await;
 
         let pos: i64 = db

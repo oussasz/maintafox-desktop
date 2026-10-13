@@ -297,12 +297,12 @@ fn compose_payload(input: &NotificationEventInput) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sea_orm::{Database, DbBackend, Statement};
+    use sea_orm::{DbBackend, Statement};
     use sea_orm_migration::MigratorTrait;
 
     #[tokio::test]
     async fn emit_event_dedupe_updates_existing_notification() {
-        let db = Database::connect("sqlite::memory:")
+        let db = crate::db::test_db::connect_in_memory()
             .await
             .expect("connect in-memory db");
         crate::migrations::Migrator::up(&db, None)
@@ -429,7 +429,7 @@ mod tests {
 
     #[tokio::test]
     async fn emit_event_fire_and_log_returns_ok_on_routing_failure() {
-        let db = Database::connect("sqlite::memory:")
+        let db = crate::db::test_db::connect_in_memory()
             .await
             .expect("connect in-memory db");
         crate::migrations::Migrator::up(&db, None)

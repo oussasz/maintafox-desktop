@@ -1,7 +1,7 @@
 //! Inspection rounds: thresholds, evidence rules, automatic anomalies, round lifecycle,
 //! runner view and the visible offline queue (PRD §6.25, Phase 6.2).
 
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use sea_orm_migration::MigratorTrait;
 
 use crate::errors::AppError;
@@ -15,7 +15,7 @@ use crate::inspection::{queries, routing, runner};
 use crate::sync::row_state::{row_sync_states, ROW_SYNC_ERROR, ROW_SYNC_SYNCED, ROW_SYNC_WAITING};
 
 async fn setup() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:").await.expect("in-memory SQLite");
+    let db = crate::db::test_db::connect_in_memory().await.expect("in-memory SQLite");
     db.execute(Statement::from_string(
         DbBackend::Sqlite,
         "PRAGMA foreign_keys = ON;".to_string(),

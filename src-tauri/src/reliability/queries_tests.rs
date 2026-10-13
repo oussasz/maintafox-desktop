@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
+    use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
     use sea_orm_migration::MigratorTrait;
     use serde_json::Value;
     use uuid::Uuid;
@@ -9,7 +9,7 @@ mod tests {
     use crate::reliability::queries;
 
     async fn setup() -> DatabaseConnection {
-        let db = Database::connect("sqlite::memory:").await.expect("in-memory db");
+        let db = crate::db::test_db::connect_in_memory().await.expect("in-memory db");
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             "PRAGMA foreign_keys = ON;".to_string(),

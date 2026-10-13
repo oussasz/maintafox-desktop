@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 
-use sea_orm::{ConnectionTrait, Database, DatabaseBackend, DatabaseConnection, Statement, Value as SqlValue};
+use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement, Value as SqlValue};
 use sea_orm_migration::MigratorTrait;
 
 use super::domain::{
@@ -25,7 +25,7 @@ use super::row_layout::{self, Role, Target};
 
 /// A database as the startup leaves it: migrations, every startup seeder, capture installed.
 pub(crate) async fn started_db() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:").await.expect("in-memory sqlite");
+    let db = crate::db::test_db::connect_in_memory().await.expect("in-memory sqlite");
     db.execute_unprepared("PRAGMA foreign_keys = ON")
         .await
         .expect("foreign keys");

@@ -1,14 +1,14 @@
 //! Backlog heatmap: planned load vs capacity rules, unscheduled / overdue buckets, blocked work.
 
 use chrono::{Duration, Utc};
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use sea_orm_migration::MigratorTrait;
 
 use crate::wo::backlog::{get_wo_backlog_heatmap, WoBacklogHeatmapInput};
 use crate::wo::domain::WoCreateInput;
 
 async fn setup() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:").await.expect("in-memory SQLite");
+    let db = crate::db::test_db::connect_in_memory().await.expect("in-memory SQLite");
     db.execute(Statement::from_string(
         DbBackend::Sqlite,
         "PRAGMA foreign_keys = ON;".to_string(),
