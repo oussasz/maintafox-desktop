@@ -200,12 +200,10 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
             error!("{reason}");
             // Right after an in-app update: put the pre-update backup back and offer the previous
             // version (forward-only migrations; the older version cannot open a half-migrated file).
-            let after_update = update_journal
-                .clone()
-                .filter(|j| {
-                    update_action == crate::updater::journal::StartupAction::VerifyNewVersion
-                        && j.kind == crate::updater::journal::UpdateKind::Upgrade
-                });
+            let after_update = update_journal.clone().filter(|j| {
+                update_action == crate::updater::journal::StartupAction::VerifyNewVersion
+                    && j.kind == crate::updater::journal::UpdateKind::Upgrade
+            });
             if let Some(journal) = after_update {
                 match crate::updater::on_migration_failed(&app, &app_state.db, journal, &reason).await {
                     Ok(view) => emit_event(
@@ -217,7 +215,9 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
                         },
                     ),
                     Err(restore_error) => {
-                        let reason = format!("{reason}. The backup taken before the update could not be prepared: {restore_error}");
+                        let reason = format!(
+                            "{reason}. The backup taken before the update could not be prepared: {restore_error}"
+                        );
                         error!("{reason}");
                         emit_event(&app, StartupEvent::Failed { reason });
                     }

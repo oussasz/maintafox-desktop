@@ -10,12 +10,12 @@ import { create } from "zustand";
 
 import { getProductLicenseOnboardingState } from "@/services/product-license-service";
 import {
+  type UpdateProgressHandler,
   acknowledgeUpdateNotice,
   checkForUpdate,
   getUpdateJournal,
   installPendingUpdate,
   reinstallPreviousVersion,
-  type UpdateProgressHandler,
 } from "@/services/updater-service";
 import type { UpdateInstallPhase } from "@/types";
 import { toErrorMessage } from "@/utils/errors";

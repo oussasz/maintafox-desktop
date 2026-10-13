@@ -19,15 +19,15 @@ import { fixtures, mockInvoke } from "@/test/mocks/tauri";
 import type { UpdateProgressEvent } from "@shared/ipc-types";
 
 import {
+  InstallOutcomeSchema,
+  UpdateCheckResultSchema,
+  UpdateJournalViewSchema,
+  UpdateProgressEventSchema,
   acknowledgeUpdateNotice,
   checkForUpdate,
   getUpdateJournal,
   installPendingUpdate,
-  InstallOutcomeSchema,
   reinstallPreviousVersion,
-  UpdateCheckResultSchema,
-  UpdateJournalViewSchema,
-  UpdateProgressEventSchema,
 } from "../updater-service";
 
 const initialStoreState = useUpdaterStore.getState();

@@ -12,12 +12,12 @@ import {
   getProductLicenseOnboardingState,
 } from "@/services/product-license-service";
 import {
+  type UpdateProgressHandler,
   acknowledgeUpdateNotice,
   checkForUpdate,
   getUpdateJournal,
   installPendingUpdate,
   reinstallPreviousVersion,
-  type UpdateProgressHandler,
 } from "@/services/updater-service";
 import type { InstallOutcome, UpdateCheckResult, UpdateJournalView } from "@shared/ipc-types";
 
