@@ -146,11 +146,19 @@ mod tests {
         let installing = journal(JournalState::Installing);
         assert_eq!(classify(Some(&installing), "1.1.0"), StartupAction::VerifyNewVersion);
         assert_eq!(classify(Some(&installing), "1.0.0"), StartupAction::InstallNotCompleted);
-        assert_eq!(classify(Some(&installing), "2.0.0"), StartupAction::Nothing, "a later manual install");
+        assert_eq!(
+            classify(Some(&installing), "2.0.0"),
+            StartupAction::Nothing,
+            "a later manual install"
+        );
         let failed = journal(JournalState::RollbackRequired);
         assert_eq!(classify(Some(&failed), "1.1.0"), StartupAction::RecoveryPending);
         assert_eq!(classify(Some(&failed), "1.0.0"), StartupAction::ReturnedToPrevious);
-        for done in [JournalState::Completed, JournalState::RolledBack, JournalState::InstallNotCompleted] {
+        for done in [
+            JournalState::Completed,
+            JournalState::RolledBack,
+            JournalState::InstallNotCompleted,
+        ] {
             assert_eq!(classify(Some(&journal(done)), "1.1.0"), StartupAction::Nothing);
             assert_eq!(classify(Some(&journal(done)), "1.0.0"), StartupAction::Nothing);
         }

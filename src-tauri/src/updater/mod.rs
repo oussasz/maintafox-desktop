@@ -65,8 +65,10 @@ pub fn register_plugin<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder
 /// Endpoint template given to the Tauri updater (it fills target, arch and current version).
 pub fn manifest_endpoint(api_base_url: &str) -> AppResult<tauri::Url> {
     let base = api_base_url.trim().trim_end_matches('/');
-    tauri::Url::parse(&format!("{base}/api/v1/updates/{{{{target}}}}/{{{{arch}}}}/{{{{current_version}}}}"))
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("invalid control API URL {base}: {e}")))
+    tauri::Url::parse(&format!(
+        "{base}/api/v1/updates/{{{{target}}}}/{{{{arch}}}}/{{{{current_version}}}}"
+    ))
+    .map_err(|e| AppError::Internal(anyhow::anyhow!("invalid control API URL {base}: {e}")))
 }
 
 /// The `maintafox` object the control API adds to the Tauri manifest.
@@ -83,10 +85,15 @@ pub struct ManifestExtension {
 
 pub fn parse_extension(raw: &serde_json::Value) -> AppResult<ManifestExtension> {
     let ext = raw.get("maintafox").cloned().ok_or_else(|| {
-        AppError::Internal(anyhow::anyhow!("the update server answered without the maintafox release information"))
+        AppError::Internal(anyhow::anyhow!(
+            "the update server answered without the maintafox release information"
+        ))
     })?;
-    serde_json::from_value(ext)
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("the update server's release information is invalid: {e}")))
+    serde_json::from_value(ext).map_err(|e| {
+        AppError::Internal(anyhow::anyhow!(
+            "the update server's release information is invalid: {e}"
+        ))
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -175,7 +182,11 @@ pub async fn ask_manifest(
         return Ok(ManifestAnswer::NotActivated);
     };
     let endpoint = manifest_endpoint(env!("MAINTAFOX_CONTROL_PLANE_API_BASE_URL"))?;
-    let language = if locale.is_some_and(|l| l.to_ascii_lowercase().starts_with("fr")) { "fr" } else { "en" };
+    let language = if locale.is_some_and(|l| l.to_ascii_lowercase().starts_with("fr")) {
+        "fr"
+    } else {
+        "en"
+    };
     let request_err = |e: tauri_plugin_updater::Error| AppError::Internal(anyhow::anyhow!("updater request: {e}"));
     let mut builder = app
         .updater_builder()
@@ -205,15 +216,15 @@ pub async fn ask_manifest(
     }
 }
 
-pub async fn check(
-    app: &AppHandle,
-    db: &sea_orm::DatabaseConnection,
-    locale: Option<&str>,
-) -> UpdateCheckResult {
+pub async fn check(app: &AppHandle, db: &sea_orm::DatabaseConnection, locale: Option<&str>) -> UpdateCheckResult {
     let current = running_version(app);
     match ask_manifest(app, db, locale, None).await {
-        Ok(ManifestAnswer::NotConfigured) => UpdateCheckResult::without_update(CheckStatus::NotConfigured, &current, None),
-        Ok(ManifestAnswer::NotActivated) => UpdateCheckResult::without_update(CheckStatus::NotActivated, &current, None),
+        Ok(ManifestAnswer::NotConfigured) => {
+            UpdateCheckResult::without_update(CheckStatus::NotConfigured, &current, None)
+        }
+        Ok(ManifestAnswer::NotActivated) => {
+            UpdateCheckResult::without_update(CheckStatus::NotActivated, &current, None)
+        }
         Ok(ManifestAnswer::None) => UpdateCheckResult::without_update(CheckStatus::UpToDate, &current, None),
         Ok(ManifestAnswer::Offer(update, ext)) => UpdateCheckResult {
             status: CheckStatus::Available,
@@ -283,7 +294,9 @@ pub fn plan_downgrade(
         return Err(InstallRefusal::RollbackBackupMissing);
     };
     if unsynced_changes > 0 {
-        return Err(InstallRefusal::RollbackUnsyncedChanges { count: unsynced_changes });
+        return Err(InstallRefusal::RollbackUnsyncedChanges {
+            count: unsynced_changes,
+        });
     }
     Ok(DowngradePlan::RestoreBackup { backup_path: path })
 }
@@ -308,7 +321,10 @@ pub async fn applied_migration_count(db: &sea_orm::DatabaseConnection) -> AppRes
 pub enum UpdateProgressEvent {
     BackingUp,
     RestoringBackup,
-    Downloading { downloaded_bytes: u64, total_bytes: Option<u64> },
+    Downloading {
+        downloaded_bytes: u64,
+        total_bytes: Option<u64>,
+    },
     Installing,
 }
 
@@ -317,7 +333,9 @@ pub enum UpdateProgressEvent {
 pub enum InstallOutcome {
     /// The installer runs; this process exits.
     Restarting,
-    Refused { refusal: InstallRefusal },
+    Refused {
+        refusal: InstallRefusal,
+    },
 }
 
 fn backup_dir(app: &AppHandle) -> AppResult<PathBuf> {
@@ -339,7 +357,10 @@ async fn download_and_install(mut update: Update, progress: &(dyn Fn(UpdateProgr
         .download(
             |chunk, total| {
                 downloaded += chunk as u64;
-                progress(UpdateProgressEvent::Downloading { downloaded_bytes: downloaded, total_bytes: total });
+                progress(UpdateProgressEvent::Downloading {
+                    downloaded_bytes: downloaded,
+                    total_bytes: total,
+                });
             },
             || {},
         )
@@ -364,12 +385,20 @@ pub async fn install(
     let (update, ext) = match ask_manifest(app, db, locale, None).await? {
         ManifestAnswer::Offer(update, ext) => (*update, ext),
         ManifestAnswer::NotConfigured => {
-            return Err(AppError::ValidationFailed(vec!["this build has no in-app updates".to_string()]))
+            return Err(AppError::ValidationFailed(vec![
+                "this build has no in-app updates".to_string()
+            ]))
         }
         ManifestAnswer::NotActivated => {
-            return Err(AppError::ValidationFailed(vec!["this device is not activated".to_string()]))
+            return Err(AppError::ValidationFailed(vec![
+                "this device is not activated".to_string()
+            ]))
         }
-        ManifestAnswer::None => return Ok(InstallOutcome::Refused { refusal: InstallRefusal::UpdateWithdrawn }),
+        ManifestAnswer::None => {
+            return Ok(InstallOutcome::Refused {
+                refusal: InstallRefusal::UpdateWithdrawn,
+            })
+        }
     };
     let data_dir = app_data_dir(app)?;
     let previous = journal::load(&data_dir)?;
@@ -393,7 +422,10 @@ pub async fn install(
         UpdateKind::Upgrade => {
             progress(UpdateProgressEvent::BackingUp);
             let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
-            let path = backup_dir(app)?.join(format!("maintafox-pre-update-{running}-to-{}-{stamp}.db", update.version));
+            let path = backup_dir(app)?.join(format!(
+                "maintafox-pre-update-{running}-to-{}-{stamp}.db",
+                update.version
+            ));
             let backup =
                 crate::backup::run_manual_backup(db, &path.to_string_lossy(), crate::backup::TRIGGER_PRE_UPDATE, actor)
                     .await?;
@@ -411,8 +443,15 @@ pub async fn install(
                     let key = crate::db::encryption::load_stored_key()?.ok_or_else(|| {
                         AppError::DatabaseKeyUnavailable("no database key is stored in the OS credential store".into())
                     })?;
-                    crate::backup::restore::stage_restore(db, &live_db_path(app)?, &backup_path, &key, &backup_dir(app)?, actor)
-                        .await?;
+                    crate::backup::restore::stage_restore(
+                        db,
+                        &live_db_path(app)?,
+                        &backup_path,
+                        &key,
+                        &backup_dir(app)?,
+                        actor,
+                    )
+                    .await?;
                     staged_restore = true;
                     entry.backup_path = Some(backup_path.to_string_lossy().to_string());
                 }
@@ -447,19 +486,21 @@ pub async fn reinstall_previous(
 ) -> AppResult<InstallOutcome> {
     let data_dir = app_data_dir(app)?;
     let Some(entry) = journal::load(&data_dir)?.filter(|j| j.state == JournalState::RollbackRequired) else {
-        return Err(AppError::ValidationFailed(vec!["no failed update to roll back".to_string()]));
+        return Err(AppError::ValidationFailed(vec![
+            "no failed update to roll back".to_string()
+        ]));
     };
     match ask_manifest(app, db, locale, Some(&entry.from_version)).await? {
         ManifestAnswer::Offer(update, _) if update.version == entry.from_version => {
             download_and_install(*update, progress).await?;
             Ok(InstallOutcome::Restarting)
         }
-        ManifestAnswer::Offer(..) | ManifestAnswer::None => {
-            Ok(InstallOutcome::Refused { refusal: InstallRefusal::UpdateWithdrawn })
-        }
-        ManifestAnswer::NotConfigured | ManifestAnswer::NotActivated => {
-            Ok(InstallOutcome::Refused { refusal: InstallRefusal::RollbackBackupMissing })
-        }
+        ManifestAnswer::Offer(..) | ManifestAnswer::None => Ok(InstallOutcome::Refused {
+            refusal: InstallRefusal::UpdateWithdrawn,
+        }),
+        ManifestAnswer::NotConfigured | ManifestAnswer::NotActivated => Ok(InstallOutcome::Refused {
+            refusal: InstallRefusal::RollbackBackupMissing,
+        }),
     }
 }
 
@@ -490,7 +531,9 @@ impl From<&UpdateJournal> for UpdateJournalView {
 }
 
 pub fn journal_view(app: &AppHandle) -> AppResult<Option<UpdateJournalView>> {
-    Ok(journal::load(&app_data_dir(app)?)?.as_ref().map(UpdateJournalView::from))
+    Ok(journal::load(&app_data_dir(app)?)?
+        .as_ref()
+        .map(UpdateJournalView::from))
 }
 
 pub fn acknowledge_notice(app: &AppHandle) -> AppResult<()> {
@@ -540,7 +583,10 @@ pub async fn on_migration_failed(
         .as_ref()
         .map(PathBuf::from)
         .filter(|p| p.is_file())
-        .ok_or_else(|| AppError::NotFound { entity: "pre_update_backup".to_string(), id: j.from_version.clone() })?;
+        .ok_or_else(|| AppError::NotFound {
+            entity: "pre_update_backup".to_string(),
+            id: j.from_version.clone(),
+        })?;
     if let Some(expected) = &j.backup_sha256 {
         let actual = crate::backup::file_sha256(&backup)?;
         if &actual != expected {
@@ -550,8 +596,9 @@ pub async fn on_migration_failed(
             )]));
         }
     }
-    let key = crate::db::encryption::load_stored_key()?
-        .ok_or_else(|| AppError::DatabaseKeyUnavailable("no database key is stored in the OS credential store".into()))?;
+    let key = crate::db::encryption::load_stored_key()?.ok_or_else(|| {
+        AppError::DatabaseKeyUnavailable("no database key is stored in the OS credential store".into())
+    })?;
     crate::backup::restore::stage_restore(db, &live_db_path(app)?, &backup, &key, &backup_dir(app)?, None).await?;
     j.state = JournalState::RollbackRequired;
     j.failure = Some(failure.to_string());
@@ -585,9 +632,15 @@ mod tests {
     #[test]
     fn manifest_endpoint_keeps_the_tauri_placeholders() {
         let url = manifest_endpoint("https://api.maintafox.systems/").unwrap().to_string();
-        assert!(url.starts_with("https://api.maintafox.systems/api/v1/updates/"), "{url}");
+        assert!(
+            url.starts_with("https://api.maintafox.systems/api/v1/updates/"),
+            "{url}"
+        );
         // The plugin replaces both the raw and the percent-encoded forms.
-        assert!(url.contains("target") && url.contains("arch") && url.contains("current_version"), "{url}");
+        assert!(
+            url.contains("target") && url.contains("arch") && url.contains("current_version"),
+            "{url}"
+        );
         assert!(manifest_endpoint("not a url").is_err());
     }
 
@@ -602,13 +655,19 @@ mod tests {
         assert_eq!(ext.kind, UpdateKind::Rollback);
         assert!(ext.mandatory);
         assert_eq!(ext.notes_fr, "FR");
-        assert!(parse_extension(&serde_json::json!({ "version": "1.1.0" })).is_err(), "a foreign server is refused");
+        assert!(
+            parse_extension(&serde_json::json!({ "version": "1.1.0" })).is_err(),
+            "a foreign server is refused"
+        );
     }
 
     #[test]
     fn downgrade_keeps_the_database_when_no_migration_ran() {
         let j = completed_upgrade(None, 120);
-        assert_eq!(plan_downgrade(Some(&j), "1.1.0", "1.0.0", 120, 5), Ok(DowngradePlan::KeepDatabase));
+        assert_eq!(
+            plan_downgrade(Some(&j), "1.1.0", "1.0.0", 120, 5),
+            Ok(DowngradePlan::KeepDatabase)
+        );
     }
 
     #[test]
@@ -619,7 +678,9 @@ mod tests {
         let j = completed_upgrade(Some(&backup), 120);
         assert_eq!(
             plan_downgrade(Some(&j), "1.1.0", "1.0.0", 125, 0),
-            Ok(DowngradePlan::RestoreBackup { backup_path: backup.clone() })
+            Ok(DowngradePlan::RestoreBackup {
+                backup_path: backup.clone()
+            })
         );
         assert_eq!(
             plan_downgrade(Some(&j), "1.1.0", "1.0.0", 125, 3),
@@ -631,10 +692,19 @@ mod tests {
     #[test]
     fn downgrade_without_a_matching_backup_is_refused() {
         let dir = tempfile::tempdir().unwrap();
-        assert_eq!(plan_downgrade(None, "1.1.0", "1.0.0", 125, 0), Err(InstallRefusal::RollbackBackupMissing));
+        assert_eq!(
+            plan_downgrade(None, "1.1.0", "1.0.0", 125, 0),
+            Err(InstallRefusal::RollbackBackupMissing)
+        );
         let missing = completed_upgrade(Some(&dir.path().join("gone.db")), 120);
-        assert_eq!(plan_downgrade(Some(&missing), "1.1.0", "1.0.0", 125, 0), Err(InstallRefusal::RollbackBackupMissing));
+        assert_eq!(
+            plan_downgrade(Some(&missing), "1.1.0", "1.0.0", 125, 0),
+            Err(InstallRefusal::RollbackBackupMissing)
+        );
         let other_pair = completed_upgrade(None, 120);
-        assert_eq!(plan_downgrade(Some(&other_pair), "1.2.0", "1.0.0", 120, 0), Err(InstallRefusal::RollbackBackupMissing));
+        assert_eq!(
+            plan_downgrade(Some(&other_pair), "1.2.0", "1.0.0", 120, 0),
+            Err(InstallRefusal::RollbackBackupMissing)
+        );
     }
 }
