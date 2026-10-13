@@ -68,12 +68,42 @@ fn control_plane_api_base_url(root: &Path) -> String {
         .to_string()
 }
 
+/// Folder of the desktop updater public key (master plan Phase 5.1). The owner creates the key pair
+/// with `scripts/release/setup-updater-key.ps1`, which writes the public key there; the private key
+/// never leaves the owner's machine and the GitHub secret `TAURI_SIGNING_PRIVATE_KEY`.
+const UPDATER_KEY_DIR: &str = "updater";
+const UPDATER_PUBLIC_KEY_FILE: &str = "maintafox-updater.pub";
+
+/// The updater public key (base64 text printed by `tauri signer generate`), or None when the owner
+/// has not created it yet: that build has no in-app updates (it says so) instead of a fake key.
+fn updater_public_key(manifest_dir: &Path) -> Option<String> {
+    let dir = manifest_dir.join(UPDATER_KEY_DIR);
+    // The folder (with its README) always exists, so watching it does not rebuild every time.
+    println!("cargo:rerun-if-changed={}", dir.display());
+    let path = dir.join(UPDATER_PUBLIC_KEY_FILE);
+    let text = std::fs::read_to_string(&path).ok()?;
+    let key = text.trim();
+    assert!(
+        !key.is_empty() && !key.contains(char::is_whitespace),
+        "{} must hold only the one-line public key written by `tauri signer generate`",
+        path.display()
+    );
+    Some(key.to_string())
+}
+
 fn main() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = manifest_dir
         .parent()
         .expect("src-tauri has a parent directory")
         .to_path_buf();
     let url = control_plane_api_base_url(&root);
     println!("cargo:rustc-env=MAINTAFOX_CONTROL_PLANE_API_BASE_URL={url}");
+    match updater_public_key(manifest_dir) {
+        Some(key) => println!("cargo:rustc-env=MAINTAFOX_UPDATER_PUBKEY={key}"),
+        None => println!(
+            "cargo:warning=No updater public key ({UPDATER_KEY_DIR}/{UPDATER_PUBLIC_KEY_FILE}): this build has no in-app              updates. The owner creates it with scripts/release/setup-updater-key.ps1."
+        ),
+    }
     tauri_build::build()
 }
