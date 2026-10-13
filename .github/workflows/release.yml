@@ -1,0 +1,218 @@
+# Release workflow (master plan Phase 5.2): builds the Windows NSIS installer, Authenticode-signs it
+# when a code-signing provider is configured (otherwise a loud warning, never a fake signature),
+# signs it for the in-app updater, uploads it to the control API (object storage) and registers
+# the release as a DRAFT. Publishing to customers is done in the console (Updates > Releases).
+#
+# Run it by pushing a tag vX.Y.Z whose X.Y.Z is the version in src-tauri/tauri.conf.json, with
+# release notes in docs/release/notes/X.Y.Z.en.md and X.Y.Z.fr.md. Setup: docs/release/RELEASE_SETUP.md.
+name: Release (Windows)
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  # Manual re-run: choose the tag in "Use workflow from".
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  SQLX_OFFLINE: "true"
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  release-windows:
+    name: Build, sign and register the Windows release
+    runs-on: windows-latest
+    env:
+      MAINTAFOX_CODESIGN_PROVIDER: ${{ vars.MAINTAFOX_CODESIGN_PROVIDER }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Release version and notes
+        id: version
+        shell: pwsh
+        run: |
+          if ("${{ github.ref_type }}" -ne "tag") {
+            Write-Host "::error::Run this workflow on a release tag vX.Y.Z (push the tag, or choose it in 'Use workflow from')."; exit 1
+          }
+          $tag = "${{ github.ref_name }}"
+          if ($tag -notmatch '^v(\d+\.\d+\.\d+)$') { Write-Host "::error::Tag '$tag' is not vX.Y.Z."; exit 1 }
+          $version = $Matches[1]
+          $conf = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          if ($conf -ne $version) {
+            Write-Host "::error::src-tauri/tauri.conf.json has version '$conf' but the tag is $tag. Set the version to $version (tauri.conf.json, src-tauri/Cargo.toml, package.json) before tagging."; exit 1
+          }
+          foreach ($lang in @("en", "fr")) {
+            $notes = "docs/release/notes/$version.$lang.md"
+            if (-not (Test-Path $notes) -or -not (Get-Content $notes -Raw).Trim()) {
+              Write-Host "::error::Release notes $notes are missing or empty (both English and French are required)."; exit 1
+            }
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Required release secrets
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          MAINTAFOX_RELEASE_PUBLISHER_TOKEN: ${{ secrets.MAINTAFOX_RELEASE_PUBLISHER_TOKEN }}
+        run: |
+          $missing = @()
+          if (-not (Test-Path src-tauri/updater/maintafox-updater.pub)) { $missing += "src-tauri/updater/maintafox-updater.pub (run scripts/release/setup-updater-key.ps1)" }
+          if (-not $env:TAURI_SIGNING_PRIVATE_KEY) { $missing += "secret TAURI_SIGNING_PRIVATE_KEY (run scripts/release/setup-updater-key.ps1)" }
+          if (-not $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD) { $missing += "secret TAURI_SIGNING_PRIVATE_KEY_PASSWORD (run scripts/release/setup-updater-key.ps1)" }
+          if (-not $env:MAINTAFOX_RELEASE_PUBLISHER_TOKEN) { $missing += "secret MAINTAFOX_RELEASE_PUBLISHER_TOKEN (Console > Updates > Releases > Release workflow keys)" }
+          if ($missing.Count -gt 0) {
+            foreach ($m in $missing) { Write-Host "::error::Missing: $m" }
+            Write-Host "No release was built: an update without these could not be installed or registered. See docs/release/RELEASE_SETUP.md."
+            exit 1
+          }
+
+      - name: Code signing (Authenticode)
+        id: codesign
+        shell: pwsh
+        env:
+          CODESIGNTOOL_DOWNLOAD_URL: ${{ vars.CODESIGNTOOL_DOWNLOAD_URL }}
+          CODESIGNTOOL_SHA256: ${{ vars.CODESIGNTOOL_SHA256 }}
+          ES_USERNAME: ${{ secrets.ES_USERNAME }}
+          ES_PASSWORD: ${{ secrets.ES_PASSWORD }}
+          ES_CREDENTIAL_ID: ${{ secrets.ES_CREDENTIAL_ID }}
+          ES_TOTP_SECRET: ${{ secrets.ES_TOTP_SECRET }}
+        run: |
+          if (-not $env:MAINTAFOX_CODESIGN_PROVIDER) {
+            $msg = "This installer is NOT code-signed (no code-signing certificate configured). Windows SmartScreen will warn every user. The release is registered with code_signed=false and the console shows it. See docs/release/CODE_SIGNING.md."
+            Write-Host "::warning title=NOT CODE-SIGNED::$msg"
+            "## :warning: NOT CODE-SIGNED`n`n$msg" >> $env:GITHUB_STEP_SUMMARY
+            "signed=false" >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+          if ($env:MAINTAFOX_CODESIGN_PROVIDER -ne "sslcom-esigner") {
+            Write-Host "::error::Unknown MAINTAFOX_CODESIGN_PROVIDER '$($env:MAINTAFOX_CODESIGN_PROVIDER)' (supported: sslcom-esigner)."; exit 1
+          }
+          $need = @("CODESIGNTOOL_DOWNLOAD_URL", "CODESIGNTOOL_SHA256", "ES_USERNAME", "ES_PASSWORD", "ES_CREDENTIAL_ID", "ES_TOTP_SECRET")
+          $missing = $need | Where-Object { -not [Environment]::GetEnvironmentVariable($_) }
+          if ($missing) { Write-Host "::error::Code signing is enabled but these are not set: $($missing -join ', ') (docs/release/CODE_SIGNING.md)."; exit 1 }
+          $zip = Join-Path $env:RUNNER_TEMP "codesigntool.zip"
+          Invoke-WebRequest -Uri $env:CODESIGNTOOL_DOWNLOAD_URL -OutFile $zip
+          $actual = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $env:CODESIGNTOOL_SHA256.Trim().ToLowerInvariant()) {
+            Write-Host "::error::CodeSignTool download checksum $actual does not match CODESIGNTOOL_SHA256."; exit 1
+          }
+          $dir = Join-Path $env:RUNNER_TEMP "codesigntool"
+          Expand-Archive -Path $zip -DestinationPath $dir -Force
+          $bat = Get-ChildItem -Path $dir -Recurse -Filter CodeSignTool.bat | Select-Object -First 1
+          if (-not $bat) { Write-Host "::error::CodeSignTool.bat not found in the downloaded archive."; exit 1 }
+          "CODESIGNTOOL_DIR=$($bat.DirectoryName)" >> $env:GITHUB_ENV
+          $script = (Resolve-Path scripts/release/sign-windows.ps1).Path
+          $config = @{ bundle = @{ windows = @{ signCommand = "powershell -NoProfile -ExecutionPolicy Bypass -File `"$script`" %1" } } } | ConvertTo-Json -Depth 5
+          $configPath = Join-Path $env:RUNNER_TEMP "codesign.conf.json"
+          [System.IO.File]::WriteAllText($configPath, $config)
+          "signed=true" >> $env:GITHUB_OUTPUT
+          "config_path=$configPath" >> $env:GITHUB_OUTPUT
+
+      - name: Install Rust stable (MSVC)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: cargo-win-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-win-release-
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the installer
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          ES_USERNAME: ${{ secrets.ES_USERNAME }}
+          ES_PASSWORD: ${{ secrets.ES_PASSWORD }}
+          ES_CREDENTIAL_ID: ${{ secrets.ES_CREDENTIAL_ID }}
+          ES_TOTP_SECRET: ${{ secrets.ES_TOTP_SECRET }}
+        run: |
+          $extra = @()
+          if ("${{ steps.codesign.outputs.config_path }}") { $extra = @("--config", "${{ steps.codesign.outputs.config_path }}") }
+          pnpm tauri build --bundles nsis @extra
+          if ($LASTEXITCODE -ne 0) { Write-Host "::error::tauri build failed."; exit 1 }
+
+      - name: Check the built installer
+        id: artifacts
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $installer = Get-ChildItem src-tauri/target/release/bundle/nsis -Filter "*_${version}_x64-setup.exe" | Select-Object -First 1
+          if (-not $installer) { Write-Host "::error::No NSIS installer for $version in src-tauri/target/release/bundle/nsis."; exit 1 }
+          $sig = "$($installer.FullName).sig"
+          if (-not (Test-Path $sig)) {
+            Write-Host "::error::The updater signature $sig was not produced: the build did not sign the installer for the updater (check TAURI_SIGNING_PRIVATE_KEY and its password)."; exit 1
+          }
+          if ("${{ steps.codesign.outputs.signed }}" -eq "true") {
+            $auth = Get-AuthenticodeSignature -LiteralPath $installer.FullName
+            if ($auth.Status -ne "Valid") { Write-Host "::error::The installer's Authenticode signature is $($auth.Status)."; exit 1 }
+          }
+          "installer=$($installer.FullName)" >> $env:GITHUB_OUTPUT
+          "signature=$sig" >> $env:GITHUB_OUTPUT
+
+      - name: Register the release (draft) in the control API
+        shell: pwsh
+        env:
+          MAINTAFOX_RELEASE_PUBLISHER_TOKEN: ${{ secrets.MAINTAFOX_RELEASE_PUBLISHER_TOKEN }}
+        run: |
+          # Same API origin the desktop build uses (shared/control-plane.json); a repository variable
+          # MAINTAFOX_RELEASE_API_BASE_URL overrides it (e.g. a staging API).
+          $env:MAINTAFOX_RELEASE_API_BASE_URL = "${{ vars.MAINTAFOX_RELEASE_API_BASE_URL }}"
+          if (-not $env:MAINTAFOX_RELEASE_API_BASE_URL) {
+            $env:MAINTAFOX_RELEASE_API_BASE_URL = (Get-Content shared/control-plane.json -Raw | ConvertFrom-Json).defaultApiBaseUrl
+          }
+          $version = "${{ steps.version.outputs.version }}"
+          node scripts/release/publish-release.mjs `
+            --version $version `
+            --installer "${{ steps.artifacts.outputs.installer }}" `
+            --signature "${{ steps.artifacts.outputs.signature }}" `
+            --notes-en "docs/release/notes/$version.en.md" `
+            --notes-fr "docs/release/notes/$version.fr.md" `
+            --git-commit "${{ github.sha }}" `
+            --code-signed "${{ steps.codesign.outputs.signed }}"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      # Every signed installer is also kept as a GitHub release: the "previous signed artifact" a
+      # support person can reinstall by hand (docs/release/ROLLBACK.md).
+      - name: Archive the installer as a GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $version = "${{ steps.version.outputs.version }}"
+          $files = @("${{ steps.artifacts.outputs.installer }}", "${{ steps.artifacts.outputs.signature }}")
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag @files --clobber
+          } else {
+            gh release create $tag @files --title "Maintafox $version" --notes-file "docs/release/notes/$version.en.md"
+          }
+          if ($LASTEXITCODE -ne 0) { Write-Host "::error::The GitHub release could not be created."; exit 1 }

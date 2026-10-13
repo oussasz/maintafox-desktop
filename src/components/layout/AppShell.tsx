@@ -3,7 +3,8 @@ import { useTranslation } from "react-i18next";
 
 import { AppToastHost } from "@/components/shell/AppToastHost";
 import { DatabaseRecoveryScreen } from "@/components/startup/DatabaseRecoveryScreen";
-import { useStartupBridge } from "@/hooks/use-startup-bridge";
+import { UpdateBanner } from "@/components/updates/UpdateBanner";
+import { useUpdateScheduler } from "@/hooks/use-updater";
 import { invokeSilent } from "@/lib/ipc-invoke";
 import { isSessionActiveForBackgroundWork } from "@/lib/session-ready";
 import { cn } from "@/lib/utils";
@@ -35,8 +36,9 @@ export function AppShell({ children }: AppShellProps) {
   const sessionAuthenticated = useSessionStore((s) => s.info?.is_authenticated === true);
   const sessionLocked = useSessionStore((s) => s.info?.is_locked === true);
 
-  // Bridge Tauri startup events → app store
-  useStartupBridge();
+  // Startup events are bridged to the app store in App (before sign-in). In-app update
+  // checks run here once startup is complete: once now, then periodically.
+  useUpdateScheduler(appStatus === "ready");
 
   useEffect(() => {
     initializeSync();
@@ -111,6 +113,7 @@ export function AppShell({ children }: AppShellProps) {
             collapsed ? "ml-sidebar-sm" : "ml-sidebar",
           )}
         >
+          <UpdateBanner />
           {children}
         </main>
       </div>

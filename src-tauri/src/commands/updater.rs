@@ -1,117 +1,75 @@
-//! Updater IPC commands.
+//! Updater IPC commands (master plan Phase 5.5; the logic is in `crate::updater`).
 //!
-//! `check_for_update`      — runs before login; no session required; graceful on failure.
-//! `install_pending_update` — requires an active authenticated session; app will restart.
-//!
-//! The release channel is read from `app_settings` at check time so an admin can
-//! switch channels through the Settings UI without restarting the application.
-//! Phase 1 always returns `available: false` because the manifest endpoint is a stub.
+//! `check_for_update`           — no session: safe at startup and on the login screen; never fails
+//!                                the app (the result says why there is no update).
+//! `install_pending_update`     — signed-in user: pre-update backup, download with progress,
+//!                                signature check, install (the app restarts).
+//! `reinstall_previous_version` — recovery screen after a failed database update (no session:
+//!                                the database could not be opened by this version).
+//! `get_update_journal` / `acknowledge_update_notice` — the outcome of the last update.
 
-use serde::{Deserialize, Serialize};
-use tauri::State;
-use tauri_plugin_updater::UpdaterExt;
+use tauri::ipc::Channel;
+use tauri::{AppHandle, Manager, State};
 
 use crate::errors::{AppError, AppResult};
 use crate::require_session;
 use crate::state::AppState;
+use crate::updater::{InstallOutcome, UpdateCheckResult, UpdateJournalView, UpdateProgressEvent};
 
-// ─── Response type ───────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UpdateCheckResult {
-    pub available: bool,
-    pub version: Option<String>,
-    pub notes: Option<String>,
-    pub pub_date: Option<String>,
+fn database(app: &AppHandle) -> AppResult<sea_orm::DatabaseConnection> {
+    app.try_state::<AppState>()
+        .map(|s| s.db.clone())
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("the database is not open yet")))
 }
 
-// ─── Commands ─────────────────────────────────────────────────────────────────
-
-/// Check the remote manifest for a newer version.
-///
-/// Does NOT require an active session — safe to call from the startup sequence
-/// or the login screen. Returns `available: false` when no update is found or
-/// when the manifest endpoint is unreachable (graceful degradation: the app
-/// must remain usable without connectivity to the update server).
+/// Asks the control API's manifest whether this device should install another version.
 #[tauri::command]
-pub async fn check_for_update(app: tauri::AppHandle) -> AppResult<UpdateCheckResult> {
-    let updater = app
-        .updater()
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("updater plugin not initialized: {e}")))?;
-
-    match updater.check().await {
-        Ok(Some(update)) => {
-            tracing::info!(new_version = %update.version, "update available");
-            Ok(UpdateCheckResult {
-                available: true,
-                version: Some(update.version.clone()),
-                notes: update.body.clone(),
-                pub_date: update.date.map(|d| d.to_string()),
-            })
-        }
-        Ok(None) => {
-            tracing::debug!("no update available");
-            Ok(UpdateCheckResult {
-                available: false,
-                version: None,
-                notes: None,
-                pub_date: None,
-            })
-        }
-        Err(e) => {
-            // Update-check failures are non-fatal — the application works without updates.
-            tracing::warn!("update check failed (non-fatal): {e}");
-            Ok(UpdateCheckResult {
-                available: false,
-                version: None,
-                notes: None,
-                pub_date: None,
-            })
-        }
-    }
+pub async fn check_for_update(app: AppHandle, locale: Option<String>) -> AppResult<UpdateCheckResult> {
+    let db = database(&app)?;
+    Ok(crate::updater::check(&app, &db, locale.as_deref()).await)
 }
 
-/// Download and install a pending update.
-///
-/// Requires an active authenticated session — the user must be present to
-/// approve an action that will restart the application. The frontend MUST
-/// show a confirmation dialog before invoking this command.
-///
-/// If the cryptographic signature of the downloaded bundle cannot be verified,
-/// `tauri-plugin-updater` aborts the install and returns an error. The current
-/// version continues to run.
+/// Installs the update the manifest offers now. The frontend asks for confirmation first.
 #[tauri::command]
-pub async fn install_pending_update(app: tauri::AppHandle, state: State<'_, AppState>) -> AppResult<()> {
-    let _user = require_session!(state);
-
-    let updater = app
-        .updater()
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("updater plugin not initialized: {e}")))?;
-
-    let update = updater
-        .check()
-        .await
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("failed to check for update before install: {e}")))?;
-
-    match update {
-        Some(update) => {
-            tracing::info!(
-                new_version = %update.version,
-                "installing update — application will restart"
-            );
-            // download_and_install: first closure receives (chunk_bytes, total_bytes?),
-            // second closure fires once installation is about to apply.
-            // If signature verification fails, the plugin returns an error and does NOT
-            // apply the bundle.
-            update
-                .download_and_install(|_chunk, _total| {}, || {})
-                .await
-                .map_err(|e| AppError::Internal(anyhow::anyhow!("update install failed: {e}")))?;
-            Ok(())
+pub async fn install_pending_update(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    locale: Option<String>,
+    on_progress: Channel<UpdateProgressEvent>,
+) -> AppResult<InstallOutcome> {
+    let user = require_session!(state);
+    let progress = move |event: UpdateProgressEvent| {
+        if let Err(e) = on_progress.send(event) {
+            tracing::warn!("update progress could not reach the window: {e}");
         }
-        None => Err(AppError::NotFound {
-            entity: "pending_update".to_string(),
-            id: "current".to_string(),
-        }),
-    }
+    };
+    crate::updater::install(&app, &state.db, locale.as_deref(), Some(user.user_id), &progress).await
+}
+
+/// Reinstalls the version this device ran before a failed database update.
+#[tauri::command]
+pub async fn reinstall_previous_version(
+    app: AppHandle,
+    locale: Option<String>,
+    on_progress: Channel<UpdateProgressEvent>,
+) -> AppResult<InstallOutcome> {
+    let db = database(&app)?;
+    let progress = move |event: UpdateProgressEvent| {
+        if let Err(e) = on_progress.send(event) {
+            tracing::warn!("update progress could not reach the window: {e}");
+        }
+    };
+    crate::updater::reinstall_previous(&app, &db, locale.as_deref(), &progress).await
+}
+
+/// The last update's journal (none when this device never updated in the app).
+#[tauri::command]
+pub fn get_update_journal(app: AppHandle) -> AppResult<Option<UpdateJournalView>> {
+    crate::updater::journal_view(&app)
+}
+
+/// The user has read the outcome notice of the last update.
+#[tauri::command]
+pub fn acknowledge_update_notice(app: AppHandle) -> AppResult<()> {
+    crate::updater::acknowledge_notice(&app)
 }

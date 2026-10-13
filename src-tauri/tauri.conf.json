@@ -39,6 +39,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -50,16 +51,6 @@
   "plugins": {
     "shell": {
       "open": true
-    },
-    "updater": {
-      "pubkey": "PLACEHOLDER_UPDATER_PUBLIC_KEY_REPLACE_IN_PHASE2",
-      "endpoints": [
-        "https://updates.maintafox.local/stub/{{target}}/{{arch}}/{{current_version}}"
-      ],
-      "dialog": false,
-      "windows": {
-        "installMode": "basicUi"
-      }
     }
   }
 }

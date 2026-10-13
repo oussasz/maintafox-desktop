@@ -30,6 +30,8 @@ pub const TRIGGER_MANUAL: &str = "manual";
 pub const TRIGGER_SCHEDULED: &str = "scheduled";
 pub const TRIGGER_PRE_RESTORE: &str = "pre_restore";
 pub const TRIGGER_PRE_FACTORY_RESET: &str = "pre_factory_reset";
+/// Taken by the running version just before it installs an update (`updater`, Phase 5.5).
+pub const TRIGGER_PRE_UPDATE: &str = "pre_update";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -85,6 +87,11 @@ fn compute_file_sha256(path: &Path) -> AppResult<String> {
         hasher.update(&buffer[..n]);
     }
     Ok(format!("{:x}", hasher.finalize()))
+}
+
+/// SHA-256 hex of a backup file (the updater checks a pre-update backup before restoring it).
+pub fn file_sha256(path: &Path) -> AppResult<String> {
+    compute_file_sha256(path)
 }
 
 // ─── Row mapper ───────────────────────────────────────────────────────────────
