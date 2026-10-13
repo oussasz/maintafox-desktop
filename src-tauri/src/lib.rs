@@ -60,6 +60,7 @@ pub mod startup;
 pub mod state;
 pub mod sync;
 pub mod tray;
+pub mod updater;
 pub mod vps;
 pub mod window;
 pub mod wo;
@@ -86,12 +87,16 @@ pub fn run() {
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("maintafox=info")))
         .init();
 
-    tauri::Builder::default()
-        .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
+    // The updater plugin exists only in builds with the owner's updater public key (Phase 5.1).
+    let mut context = tauri::generate_context!();
+    updater::add_plugin_config(&mut context);
+    updater::register_plugin(
+        tauri::Builder::default()
+            .plugin(tauri_plugin_shell::init())
+            .plugin(tauri_plugin_dialog::init())
+            .plugin(tauri_plugin_fs::init())
+            .plugin(tauri_plugin_notification::init()),
+    )
         // Single-instance: focus existing window on second launch
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(w) = app.get_webview_window("main") {
@@ -350,6 +355,9 @@ pub fn run() {
             // Ã¢â€â‚¬Ã¢â€â‚¬ Updater Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
             commands::updater::check_for_update,
             commands::updater::install_pending_update,
+            commands::updater::reinstall_previous_version,
+            commands::updater::get_update_journal,
+            commands::updater::acknowledge_update_notice,
             commands::sync::stage_outbox_item,
             commands::sync::list_outbox_items,
             commands::sync::list_inbox_items,
@@ -1178,7 +1186,7 @@ pub fn run() {
             commands::personnel::list_site_work_weeks,
             commands::personnel::set_site_work_week,
         ])
-        .run(tauri::generate_context!())
+        .run(context)
         // EXPECT: If the Tauri context cannot be loaded, the application binary is corrupt or
         // the tauri.conf.json is missing. Panic at startup is the correct behavior.
         .expect("error while running Maintafox application");

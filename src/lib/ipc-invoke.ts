@@ -237,12 +237,26 @@ export async function invokeSilent<T>(cmd: string, args?: Record<string, unknown
   return await tauriInvoke<T>(cmd, args);
 }
 
-export async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+export interface InvokeOptions {
+  /**
+   * Show the global error toast on failure (default true). Set false when the caller shows
+   * the failure itself (inline, in plain language); session/permission handling still runs.
+   */
+  notifyOnError?: boolean;
+}
+
+export async function invoke<T>(
+  cmd: string,
+  args?: Record<string, unknown>,
+  options?: InvokeOptions,
+): Promise<T> {
   try {
     return await tauriInvoke<T>(cmd, args);
   } catch (e) {
     handleAuthAndPermissionFailures(cmd, e);
-    notifyInvokeFailure(cmd, e);
+    if (options?.notifyOnError !== false) {
+      notifyInvokeFailure(cmd, e);
+    }
     throw e;
   }
 }

@@ -1,65 +1,76 @@
-// useUpdater — React hook for the in-app update notification system.
+// useUpdater — React hooks for in-app updates (master plan Phase 5.5).
 //
-// Performs an initial check on mount, then rechecks at CHECK_INTERVAL_MS.
-// check_for_update does NOT require a session, so this hook is safe to
-// mount on the login screen or the main shell without guarding on auth.
-// install_pending_update DOES require a session — the Rust command enforces
-// this; the UI layer should present a confirmation dialog before calling install().
+// useUpdateScheduler(): performs an initial check (and loads the last update's journal) on
+//   mount, then rechecks at CHECK_INTERVAL_MS. Mount ONCE in the application shell — multiple
+//   mounts would trigger duplicate intervals.
+// useUpdater(): state + actions for update UI (banner, "check for updates" panel). No effects:
+//   safe to use in several components.
 //
-// Usage:
-//   const { available, version, notes, isInstalling, install, dismiss }
-//     = useUpdater();
-//
-// Mount once in the application shell (e.g., App.tsx or MainLayout).
-// Multiple mounts will trigger duplicate intervals — avoid mounting in leaves.
+// check_for_update does NOT require a session. install_pending_update DOES require one — the
+// Rust command enforces this; the UI presents a confirmation dialog before calling install().
+// The current UI locale is passed to the commands so server-side texts match the UI language.
 
-import { useEffect, useCallback } from "react";
+import { useCallback, useEffect } from "react";
 
-import { useUpdaterStore } from "@/stores/updater-store";
+import { useLocaleStore } from "@/stores/locale-store";
+import {
+  isOfferVisible,
+  isUpdateMandatory,
+  pendingUpdateNotice,
+  useUpdaterStore,
+} from "@/stores/updater-store";
 import type { UseUpdaterResult } from "@/types";
 
 // Re-check every 2 hours while the application is running.
-const CHECK_INTERVAL_MS = 2 * 60 * 60 * 1000;
+export const CHECK_INTERVAL_MS = 2 * 60 * 60 * 1000;
+
+function currentLocale(): string {
+  return useLocaleStore.getState().activeLocale;
+}
+
+/** `enabled`: start checking only once the backend has finished starting up. */
+export function useUpdateScheduler(enabled: boolean): void {
+  const check = useUpdaterStore((s) => s.check);
+  const loadJournal = useUpdaterStore((s) => s.loadJournal);
+
+  // check / loadJournal are stable (defined inside zustand create()), so the effect does not
+  // re-register on every render.
+  useEffect(() => {
+    if (!enabled) return;
+    void loadJournal();
+    void check(currentLocale());
+    const id = setInterval(() => void check(currentLocale()), CHECK_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [enabled, check, loadJournal]);
+}
 
 export function useUpdater(): UseUpdaterResult {
-  const {
-    lastCheckResult,
-    isChecking,
-    isInstalling,
-    installComplete,
-    forceRequired,
-    forceReason,
-    error,
-    checkForUpdate,
-    installUpdate,
-    dismissNotification,
-  } = useUpdaterStore();
+  const s = useUpdaterStore();
 
-  // Initial check on mount then periodic interval.
-  // checkForUpdate is stable across renders (defined inside zustand create())
-  // so the effect's dependency is safe and does not re-register on every render.
-  useEffect(() => {
-    void checkForUpdate();
-    const id = setInterval(() => void checkForUpdate(), CHECK_INTERVAL_MS);
-    return () => clearInterval(id);
-  }, [checkForUpdate]);
-
-  const checkNow = useCallback(() => void checkForUpdate(), [checkForUpdate]);
-  const install = useCallback(() => void installUpdate(), [installUpdate]);
-  const dismiss = useCallback(() => dismissNotification(), [dismissNotification]);
+  const { check, install: installAction, dismiss, acknowledgeNotice, clearOutcome } = s;
+  const checkNow = useCallback(() => void check(currentLocale()), [check]);
+  const install = useCallback(() => void installAction(currentLocale()), [installAction]);
+  const acknowledge = useCallback(() => void acknowledgeNotice(), [acknowledgeNotice]);
 
   return {
-    available: lastCheckResult?.available ?? false,
-    version: lastCheckResult?.version ?? null,
-    notes: lastCheckResult?.notes ?? null,
-    forceRequired,
-    forceReason,
-    isChecking,
-    isInstalling,
-    installComplete,
-    error,
+    result: s.lastCheckResult,
+    showOffer: isOfferVisible(s),
+    mandatory: isUpdateMandatory(s),
+    forceRequired: s.forceRequired,
+    forceReason: s.forceReason,
+    isChecking: s.isChecking,
+    checkError: s.checkError,
+    phase: s.phase,
+    downloadedBytes: s.downloadedBytes,
+    totalBytes: s.totalBytes,
+    installTargetVersion: s.installTargetVersion,
+    refusal: s.refusal,
+    error: s.error,
+    notice: pendingUpdateNotice(s),
     checkNow,
     install,
     dismiss,
+    acknowledgeNotice: acknowledge,
+    clearOutcome,
   };
 }

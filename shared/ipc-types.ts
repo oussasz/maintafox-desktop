@@ -24,15 +24,24 @@ export type StartupStage =
   | "ready"
   | "failed"
   /** Encrypted database key missing/wrong: UI asks for the recovery key. */
-  | "database_key_required";
+  | "database_key_required"
+  /**
+   * The installed update could not update the database: the pre-update backup is staged and
+   * the UI offers to reinstall `from_version` (master plan Phase 5.5).
+   */
+  | "update_rollback_required";
 
-export interface StartupEvent {
-  stage: StartupStage;
-  /** Present only for stage = "migrations_complete" */
-  applied?: number;
-  /** Present for stage = "failed" and "database_key_required" */
-  reason?: string;
-}
+/** Payload of the `startup_event` Tauri event (`StartupEvent` in src-tauri/src/startup.rs). */
+export type StartupEvent =
+  | { stage: "db_ready" | "entitlement_cache_loaded" | "ready" }
+  | { stage: "migrations_complete"; applied: number }
+  | { stage: "failed" | "database_key_required"; reason: string }
+  | {
+      stage: "update_rollback_required";
+      from_version: string;
+      to_version: string;
+      reason: string;
+    };
 
 // â”€â”€â”€ App Info â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -1327,13 +1336,71 @@ export interface UpdateRetentionInput {
   requires_legal_hold_check?: boolean;
 }
 
-// â”€â”€â”€ Updater â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Updater ───────────────────────────────────────────────────────────────────
 
+/** Why a check has (or has not) an update (`CheckStatus` in src-tauri/src/updater/mod.rs). */
+export type UpdateCheckStatus =
+  | "available"
+  | "up_to_date"
+  /** This build has no updater public key: in-app updates are not set up yet. */
+  | "not_configured"
+  /** The device is not activated yet: the server cannot tell which releases it may have. */
+  | "not_activated"
+  /** The update server could not be reached or answered wrongly (details in `message`). */
+  | "unreachable";
+
+/** A newer release, or an older signed release after a recall / failed database update. */
+export type UpdateKind = "upgrade" | "rollback";
+
+/** Result of `check_for_update` (`UpdateCheckResult` in src-tauri/src/updater/mod.rs). */
 export interface UpdateCheckResult {
+  status: UpdateCheckStatus;
   available: boolean;
+  current_version: string;
   version: string | null;
   notes: string | null;
   pub_date: string | null;
+  kind: UpdateKind | null;
+  mandatory: boolean;
+  mandatory_reason: string | null;
+  notes_en: string | null;
+  notes_fr: string | null;
+  message: string | null;
+}
+
+/** Progress sent on the `onProgress` channel while installing. */
+export type UpdateProgressEvent =
+  | { event: "backing_up" }
+  | { event: "restoring_backup" }
+  | { event: "downloading"; downloaded_bytes: number; total_bytes: number | null }
+  | { event: "installing" };
+
+/** Why an install was not started (`InstallRefusal` in src-tauri/src/updater/mod.rs). */
+export type InstallRefusal =
+  | { code: "rollback_backup_missing" }
+  | { code: "rollback_unsynced_changes"; count: number }
+  | { code: "update_withdrawn" };
+
+/** Result of `install_pending_update` / `reinstall_previous_version`. */
+export type InstallOutcome =
+  /** The installer runs; the application process exits and restarts. */
+  { outcome: "restarting" } | { outcome: "refused"; refusal: InstallRefusal };
+
+export type UpdateJournalState =
+  | "installing"
+  | "completed"
+  | "rollback_required"
+  | "rolled_back"
+  | "install_not_completed";
+
+/** The last in-app update's journal (`UpdateJournalView` in src-tauri/src/updater/mod.rs). */
+export interface UpdateJournalView {
+  state: UpdateJournalState;
+  kind: UpdateKind;
+  from_version: string;
+  to_version: string;
+  failure: string | null;
+  notice_acknowledged: boolean;
 }
 
 // â”€â”€â”€ Diagnostics â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

@@ -450,5 +450,81 @@
     "errorTitle": "Un problème est survenu sur cet écran",
     "errorBody": "L'écran s'est arrêté à cause d'une erreur inattendue. Vos données sont intactes. Revenez au tableau de bord et réessayez ; si le problème se reproduit, envoyez un dossier de diagnostic depuis les Paramètres.",
     "technicalDetails": "Détails techniques"
+  },
+  "updates": {
+    "banner": {
+      "available": "La version {{version}} est disponible",
+      "rollback": "Cette version a été retirée par Maintafox. La version {{version}} (précédente) va être réinstallée.",
+      "mandatory": "Obligatoire",
+      "mandatoryDefault": "Cette mise à jour est nécessaire pour continuer à utiliser Maintafox.",
+      "forcedNotOffered": "Votre licence exige une version plus récente de Maintafox, mais aucune mise à jour n’est encore proposée à cet ordinateur. Contactez le support Maintafox.",
+      "notes": "Ce qui change",
+      "installNow": "Installer maintenant",
+      "dismiss": "Plus tard",
+      "dismissOutcome": "Fermer ce message",
+      "regionLabel": "Mise à jour de Maintafox"
+    },
+    "confirm": {
+      "title": "Installer la version {{version}} ?",
+      "titleRollback": "Réinstaller la version {{version}} ?",
+      "intro": "Avant de continuer :",
+      "backup": "Une sauvegarde de vos données est faite d’abord.",
+      "restart": "Maintafox se ferme ensuite et redémarre tout seul.",
+      "unsaved": "Le travail non enregistré est perdu : enregistrez ou terminez d’abord ce que vous faites.",
+      "cancel": "Annuler",
+      "confirm": "Installer et redémarrer"
+    },
+    "progress": {
+      "title": "Mise à jour de Maintafox",
+      "backing_up": "Sauvegarde de vos données…",
+      "restoring_backup": "Remise en place de la sauvegarde faite avant la mise à jour…",
+      "downloading": "Téléchargement de la mise à jour…",
+      "installing": "Installation… Maintafox va redémarrer.",
+      "restarting": "Installation… Maintafox va redémarrer.",
+      "percent": "{{percent}} %",
+      "megabytes": "{{downloaded}} Mo téléchargés",
+      "megabytesOfTotal": "{{downloaded}} Mo sur {{total}} Mo",
+      "barLabel": "Progression du téléchargement",
+      "keepOpen": "Laissez l’ordinateur allumé jusqu’au redémarrage de Maintafox."
+    },
+    "refusal": {
+      "update_withdrawn": "Cette mise à jour n’est plus proposée (elle a peut-être été suspendue ou retirée). Rien n’a été modifié.",
+      "rollback_unsynced_changes_one": "{{count}} modification n’est pas encore synchronisée. Synchronisez d’abord, puis réessayez ; sinon elle serait perdue.",
+      "rollback_unsynced_changes_other": "{{count}} modifications ne sont pas encore synchronisées. Synchronisez d’abord, puis réessayez ; sinon elles seraient perdues.",
+      "rollback_backup_missing": "La sauvegarde nécessaire pour revenir à la version {{version}} n’est pas sur cet ordinateur. Contactez le support Maintafox."
+    },
+    "error": {
+      "install": "La mise à jour n’a pas pu être installée. Rien n’a été modifié : Maintafox continue de fonctionner en version {{version}}. Vérifiez la connexion internet et réessayez, ou contactez le support Maintafox.",
+      "check": "La vérification des mises à jour n’a pas pu se faire. Maintafox continue de fonctionner ; il réessaiera plus tard.",
+      "detail": "Détail technique : {{detail}}"
+    },
+    "notice": {
+      "rolledBack": "La mise à jour vers la version {{to}} n’a pas pu mettre à jour vos données. Maintafox est revenu à la version {{from}} et a remis vos données telles qu’elles étaient avant la mise à jour. Les modifications faites depuis sont téléchargées à nouveau depuis le serveur lors de la synchronisation.",
+      "installNotCompleted": "La mise à jour vers {{to}} ne s’est pas terminée. Vous êtes toujours en {{from}} ; rien n’a été modifié.",
+      "acknowledge": "J’ai compris"
+    },
+    "status": {
+      "open": "Mises à jour (version installée {{version}})",
+      "title": "Mises à jour",
+      "currentVersion": "Version installée : {{version}}",
+      "check": "Rechercher des mises à jour",
+      "checking": "Recherche…",
+      "notCheckedYet": "Aucune recherche n’a encore été faite.",
+      "available": "La version {{version}} est disponible. Installez-la depuis le message en haut de la fenêtre.",
+      "up_to_date": "Maintafox est à jour.",
+      "not_configured": "Les mises à jour intégrées ne sont pas encore configurées dans cette version.",
+      "not_activated": "Les mises à jour sont disponibles une fois cet ordinateur activé.",
+      "unreachable": "Le serveur de mises à jour est injoignable. Maintafox continue de fonctionner ; il réessaiera plus tard.",
+      "close": "Fermer"
+    },
+    "recovery": {
+      "title": "La mise à jour n’a pas pu aboutir",
+      "body": "La version {{to}} n’a pas pu mettre à jour vos données. Vos données sont en sécurité : la sauvegarde faite juste avant la mise à jour sera remise en place automatiquement.",
+      "action": "Réinstallez la version {{from}} pour continuer à travailler.",
+      "technical": "Détails techniques",
+      "reinstall": "Réinstaller la version {{from}}",
+      "unavailable": "La version précédente ne peut pas être téléchargée pour le moment. Vérifiez la connexion internet et réessayez, ou contactez le support Maintafox.",
+      "error": "La version {{from}} n’a pas pu être réinstallée. Vérifiez la connexion internet et réessayez, ou contactez le support Maintafox."
+    }
   }
 }
