@@ -1,6 +1,7 @@
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { AuthButton } from "@/components/auth/shell/AuthPrimitives";
 import { MaintafoxWordmark } from "@/components/branding/MaintafoxWordmark";
 import { mfAuth } from "@/design-system/tokens";
 
@@ -249,13 +250,9 @@ export function LockScreen({
               />
             </div>
 
-            <button
-              type="submit"
-              disabled={loading}
-              className="btn-primary w-full py-2 text-sm font-medium"
-            >
+            <AuthButton type="submit" loading={loading} disabled={loading}>
               {loading ? t("session.idleLocked.unlocking") : t("session.idleLocked.unlockAction")}
-            </button>
+            </AuthButton>
           </form>
         )}
 
