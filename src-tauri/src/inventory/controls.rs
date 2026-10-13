@@ -395,7 +395,6 @@ pub async fn post_count_session(
     }
 
     let tx = db.begin().await?;
-    let mut staged_movement_ids: Vec<i64> = Vec::new();
     for line in lines {
         if line.variance_qty.abs() <= f64::EPSILON {
             continue;
@@ -422,7 +421,6 @@ pub async fn post_count_session(
             input.actor_id,
         )
         .await?;
-        staged_movement_ids.push(tx_id);
         tx.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE inventory_count_lines SET posted_transaction_id = ?, row_version = row_version + 1, updated_at = ? WHERE id = ?",
@@ -458,12 +456,6 @@ pub async fn post_count_session(
     ))
     .await?;
     tx.commit().await?;
-    for movement_id in staged_movement_ids {
-        crate::sync::foundation_stage::warn_stage(
-            crate::sync::ops_stage::stage_stock_movement_sync(db, movement_id).await,
-            "stock_movement",
-        );
-    }
     ensure_count_session(db, input.session_id).await
 }
 
@@ -489,7 +481,6 @@ pub async fn reverse_count_session(
     }
     let lines = list_count_lines(db, input.session_id).await?;
     let tx = db.begin().await?;
-    let mut staged_movement_ids: Vec<i64> = Vec::new();
     for line in lines {
         if line.posted_transaction_id.is_none() || line.variance_qty.abs() <= f64::EPSILON {
             continue;
@@ -516,7 +507,6 @@ pub async fn reverse_count_session(
             input.actor_id,
         )
         .await?;
-        staged_movement_ids.push(reverse_tx_id);
         tx.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE inventory_count_lines SET reversed_transaction_id = ?, row_version = row_version + 1, updated_at = ? WHERE id = ?",
@@ -539,12 +529,6 @@ pub async fn reverse_count_session(
     ))
     .await?;
     tx.commit().await?;
-    for movement_id in staged_movement_ids {
-        crate::sync::foundation_stage::warn_stage(
-            crate::sync::ops_stage::stage_stock_movement_sync(db, movement_id).await,
-            "stock_movement",
-        );
-    }
     ensure_count_session(db, input.session_id).await
 }
 

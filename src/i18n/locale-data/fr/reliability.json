@@ -40,7 +40,7 @@
     "scheduleAssigned": "Attribuée",
     "mtbf": "MTBF (h)",
     "mttr": "MTTR (h)",
-    "availability": "Disponibilité",
+    "availability": "Disponibilité opérationnelle A_o",
     "failureRate": "Taux de défaillance",
     "events": "Événements",
     "exposureTitle": "Provenance de l'exposition",
@@ -53,9 +53,9 @@
     "ramsKuField": "Facteur d'utilisation (K_u)",
     "noSnapshot": "Aucun instantané pour ce filtre. Lancez une analyse depuis le socle données ou actualisez.",
     "weibullTitle": "Courbe de fiabilité Weibull R(t)",
-    "weibullHint": "R(t) = exp(−(t/η)^β) à partir du dernier ajustement Weibull stocké.",
+    "weibullHint": "Courbe R(t) = exp(−(t/η)^β) issue du dernier ajustement Weibull en heures d'exposition (MLE avec censure à droite).",
     "weibullRun": "Lancer l’ajustement",
-    "includeCensored": "Inclure les données censurées/suspendues",
+    "includeCensored": "Inclure l'intervalle en cours comme censuré à droite",
     "fleetCompare": "Comparaison flotte",
     "strategyOffset": "Décalage de simulation stratégie",
     "noneOption": "Aucun",
@@ -73,9 +73,9 @@
     "weibullPrereqExposure": "Heures d'exposition : {{hours}} h",
     "weibullPrereqSchedule": "Classe horaire RAMS : {{value}}",
     "weibullPrereqMissing": "non renseigné",
-    "weibullCensoredHint": "Les données censurées ne s'appliquent qu'après un nouvel ajustement.",
-    "weibullFitOk": "Ajustement réussi ({{n}} points) — β={{beta}}, η={{eta}} h.",
-    "weibullFitInadequate": "Échantillon insuffisant ({{n}} points inter-arrivées, 5 minimum) : {{message}}",
+    "weibullCensoredHint": "Le temps depuis la dernière défaillance entre dans la vraisemblance comme survie (censure), jamais comme défaillance. S'applique au prochain ajustement.",
+    "weibullFitOk": "Ajustement réussi ({{failures}} défaillances, {{censored}} censurées) — β={{beta}}, η={{eta}} h.",
+    "weibullFitInadequate": "Échantillon insuffisant ({{failures}} défaillances, 5 minimum ; {{censored}} censurées) : {{message}}",
     "exposureZeroHint": "Exposition = 0 h — R(0) = 1 est normal. Assignez une classe horaire RAMS et des OT clôturés pour obtenir R(t) < 1.",
     "markovError": "Échec du chargement Markov : {{message}}",
     "markovTitle": "Régime permanent Markov",
@@ -84,8 +84,25 @@
     "filterEquip": "Id équipement",
     "refresh": "Actualiser",
     "rulTitle": "RUL prévue",
-    "rulHint": "Durée de vie résiduelle médiane (Weibull et heures d'exposition enregistrées — historique et profil d'utilisation).",
-    "rulEmpty": "Pas d’estimation RUL — lancez un ajustement Weibull et des données d’exposition ou de compteur."
+    "rulHint": "Durée de vie résiduelle médiane issue de l'ajustement Weibull à l'âge actuel : heures d'exposition depuis la dernière remise en service, sur la même horloge que l'ajustement.",
+    "rulEmpty": "Pas d’estimation RUL — lancez un ajustement Weibull et des données d’exposition ou de compteur.",
+    "availabilityInherent": "Disponibilité intrinsèque A_i",
+    "mttf": "MTTF (h)",
+    "readinessTitle": "Contrôle de recevabilité de l'analyse",
+    "readinessAllow": "AUTORISÉ — Weibull, R(t) et RUL peuvent être calculés.",
+    "readinessDeny": "REFUSÉ — Weibull, R(t) et RUL sont bloqués tant que les points ci-dessous ne sont pas corrigés.",
+    "readinessSummary": "{{events}} défaillances éligibles (minimum {{min}}) · {{hours}} h d'exposition · complétude {{completeness}} %",
+    "readinessExposureSource": "Base d'exposition : {{source}}",
+    "readinessNoExposureSource": "Base d'exposition : aucune (ni horaire d'exploitation ni relevé d'heures de marche)",
+    "readinessBlocking": "Motifs bloquants",
+    "readinessWarnings": "Avertissements",
+    "readinessReason": {
+      "MISSING_EXPOSURE": "Aucune exposition gouvernée : affectez un horaire d'exploitation ou saisissez des heures de marche.",
+      "MISSING_FAILURE_MODE": "Des défaillances éligibles n'ont pas de mode de défaillance codé.",
+      "INSUFFICIENT_EVENTS": "Pas assez de défaillances non planifiées éligibles sur les 12 derniers mois.",
+      "LOW_SAMPLE": "Petit échantillon : les estimations sont incertaines.",
+      "MISSING_INSPECTION_COVERAGE": "La couverture des points d'inspection est faible."
+    }
   },
   "lab": {
     "title": "Labo visuel FTA / RBD",
@@ -223,5 +240,467 @@
     "presentationSeedDone": "Démo terminée : {{wo}} OT, β={{beta}}, η={{eta}}, Markov #{{markov}}.",
     "presentationSeedSkipped": "Démo déjà présente — analytique rafraîchie.",
     "presentationSeedPermission": "adm.settings requis pour générer les données démo RAMS."
+  },
+  "rcmLoop": {
+    "openLogic": "Logique RCM",
+    "openActions": "Actions et criticité",
+    "logicTitle": "Logique de décision RCM",
+    "questions": {
+      "failure_evident": "La perte de fonction sera-t-elle évidente pour les opérateurs en conditions normales ?",
+      "safety_or_environmental": "La défaillance peut-elle blesser quelqu'un ou enfreindre une norme environnementale ?",
+      "operational_impact": "Affecte-t-elle la production, la qualité, le service ou les coûts d'exploitation ?",
+      "multiple_failure_affects_safety": "Défaillance cachée : la défaillance multiple aurait-elle des conséquences sécurité ou environnement ?",
+      "on_condition_feasible": "Une tâche conditionnelle est-elle faisable (signe avant-coureur détectable) et rentable ?",
+      "scheduled_restoration_feasible": "Une remise en état systématique est-elle faisable (âge d'usure identifiable) et rentable ?",
+      "scheduled_discard_feasible": "Un remplacement systématique est-il faisable et rentable ?",
+      "failure_finding_feasible": "Défaillance cachée : une tâche de recherche de panne est-elle faisable et rentable ?",
+      "combination_feasible": "Sécurité : une combinaison de tâches ramène-t-elle le risque à un niveau tolérable ?",
+      "weibull_beta": "Forme de Weibull β de ce mode (facultatif)"
+    },
+    "yes": "Oui",
+    "no": "Non",
+    "consequence": "Conséquence",
+    "recommended": "Tactique recommandée",
+    "compulsory": "La reconception est obligatoire.",
+    "path": "Chemin de décision",
+    "retained": "Tactique retenue",
+    "justification": "Justification (obligatoire si différente de la recommandation)",
+    "apply": "Enregistrer la décision",
+    "consequences": {
+      "hidden": "Cachée",
+      "safety_environmental": "Sécurité / environnement",
+      "operational": "Opérationnelle",
+      "non_operational": "Non opérationnelle"
+    },
+    "tactics": {
+      "condition_based": "Conditionnelle",
+      "time_based": "Systématique (remise en état / remplacement)",
+      "failure_finding": "Recherche de panne",
+      "run_to_failure": "Fonctionnement jusqu'à défaillance",
+      "redesign": "Reconception"
+    },
+    "pmRevision": "Créer une révision du plan préventif",
+    "pmPlan": "Plan préventif",
+    "pmPlanPlaceholder": "Choisir un plan préventif",
+    "changeNote": "Motif de la modification du plan",
+    "createRevision": "Créer la version brouillon",
+    "revisionCreated": "Version brouillon {{no}} créée pour {{plan}}.",
+    "woType": "Type d'ordre de travail",
+    "createWo": "Créer un ordre de travail",
+    "woCreated": "Ordre de travail {{code}} créé.",
+    "linkedPm": "Plan préventif lié : {{plan}} v{{no}}",
+    "linkedWo": "Ordre de travail lié : {{code}}",
+    "criticality": "Nombre de criticité (MIL-STD-1629A)",
+    "beta": "Probabilité d'effet β",
+    "betaOptions": {
+      "1": "1,0 — perte certaine",
+      "0.5": "0,5 — perte probable",
+      "0.1": "0,1 — perte possible",
+      "0": "0 — sans effet"
+    },
+    "alpha": "Ratio du mode α",
+    "lambda": "Taux de défaillance λp (par heure)",
+    "hours": "Durée de fonctionnement t (heures)",
+    "evidence": "Historique : {{mode}} défaillances sur {{total}} pour ce mode ; λp issu de l'instantané KPI du {{date}}.",
+    "noEvidence": "Aucun historique pour ce mode : saisissez α et λp.",
+    "compute": "Calculer",
+    "cm": "Criticité du mode Cm = {{cm}} — total de l'analyse Cr = {{cr}}",
+    "invalidNumber": "Saisissez un nombre."
+  },
+  "pareto": {
+    "title": "Pareto des modes de défaillance",
+    "metricLabel": "Classer par",
+    "metric": {
+      "count": "Nombre de défaillances",
+      "cost": "Coût de maintenance",
+      "downtime": "Temps d'arrêt (h)"
+    },
+    "from": "Du",
+    "to": "Au",
+    "allTime": "Toutes les défaillances enregistrées (sans filtre de période)",
+    "loading": "Chargement…",
+    "empty": "Aucune défaillance non planifiée enregistrée pour cet équipement sur la période.",
+    "loadFailed": "Impossible de charger le Pareto : {{message}}",
+    "vitalFew": "{{count}} mode(s) de défaillance sur {{total}} représentent 80 % du total.",
+    "cumulative": "% cumulé",
+    "unclassified": "(sans mode de défaillance)",
+    "col": {
+      "mode": "Mode de défaillance",
+      "failures": "Défaillances",
+      "cost": "Coût",
+      "downtime": "Arrêt (h)",
+      "cumulative": "Cumulé"
+    },
+    "export": {
+      "pdf": "Rapport de fiabilité (PDF)",
+      "xlsx": "Rapport de fiabilité (Excel)"
+    },
+    "exporting": "Export en cours…",
+    "exportFailed": "Échec de l'export : {{message}}"
+  },
+  "page": {
+    "common": {
+      "yes": "oui",
+      "no": "non",
+      "refresh": "Actualiser",
+      "evaluate": "Évaluer",
+      "deleteShort": "Suppr.",
+      "create": "Créer",
+      "saveJson": "Enregistrer JSON",
+      "save": "Enregistrer",
+      "editLower": "éditer",
+      "deleteLower": "supprimer",
+      "deleteShortLower": "suppr.",
+      "linkPmPlan": "Lier plan PM (optionnel)",
+      "rawJson": "JSON brut (avancé)",
+      "filterEquipShort": "filtrer équip.",
+      "titlePlaceholder": "titre",
+      "filterEquipId": "filtrer équipement id",
+      "filterEquipIdShort": "filtrer équip. id",
+      "requires": "Nécessite"
+    },
+    "inputGates": {
+      "title": "Qualification des entrées (avant analyse KPI)",
+      "exposure": "Exposition (h) sur la période : {{hours}} — {{status}}",
+      "ok": "OK",
+      "exposureInsufficient": "insuffisant ou nul",
+      "events": "Événements éligibles : {{eligible}} (seuil min. {{min}}) — {{status}}",
+      "eventsNotMet": "non atteint",
+      "ready": "Jeu de données prêt pour analyse :",
+      "hash": "SHA-256 (canonical) : {{hash}}"
+    },
+    "snapshotPlot": {
+      "title": "Instantané #{{id}}",
+      "titleWithEquip": "Instantané #{{id}} — équip. {{equipment}}",
+      "reopenFilters": "Reprendre les filtres",
+      "exportPng": "Export PNG",
+      "exportSvg": "Export SVG",
+      "hash": "SHA-256 (plot) : {{hash}}",
+      "empty": "Aucune donnée graphique dans ce snapshot (recalculez le KPI pour générer le payload)."
+    },
+    "errors": {
+      "runtimeNumeric": "Équipement et valeur numériques requis.",
+      "kpiEquipRequired": "Équipement KPI requis.",
+      "weibullEquipRequired": "Équipement Weibull requis.",
+      "fmecaRequired": "FMECA : équipement et titre requis.",
+      "sodIntegers": "S, O, D doivent être des entiers.",
+      "sodRange": "S, O, D doivent être entre 1 et 10.",
+      "failureModeIdInvalid": "Mode de défaillance (id) invalide.",
+      "pmPlanInvalid": "Plan PM invalide.",
+      "revisedRpnInvalid": "RPN révisé invalide.",
+      "rcmRequired": "RCM : équipement et titre requis.",
+      "ftaRequired": "FTA : équipement et titre requis.",
+      "rbdRequired": "RBD : équipement et titre requis.",
+      "etaRequired": "ETA : équipement et titre requis.",
+      "guardrailsInvalid": "Garde-fous : nombres invalides.",
+      "mcRequired": "MC : équipement, titre et essais requis.",
+      "mcSeedInvalid": "Graine MC invalide.",
+      "mcTrialsSeedInvalid": "Essais / graine MC invalides.",
+      "markovRequired": "Markov : équipement et titre requis.",
+      "signOffRequired": "Revue : équipement et titre requis.",
+      "signerRequired": "Nom du signataire requis pour la signature."
+    },
+    "tabs": {
+      "kpis": "KPI & analyses",
+      "quality": "Qualité données",
+      "failures": "Défaillances & fondations",
+      "models": "Modèles RAM"
+    },
+    "signOff": {
+      "title": "Revue expert — signalement",
+      "hint": "Enregistrement local signé (ram.manage / ram.view).",
+      "targetRef": "cible ref",
+      "reviewer": "reviseur",
+      "role": "rôle",
+      "create": "Créer fiche",
+      "notes": "notes",
+      "signerName": "Nom complet signataire",
+      "sign": "Signer",
+      "delete": "Supprimer fiche"
+    },
+    "col": {
+      "method": "méthode",
+      "status": "statut",
+      "title": "titre",
+      "signed": "signé",
+      "source": "source",
+      "equip": "équip.",
+      "type": "type",
+      "value": "valeur",
+      "period": "période",
+      "actions": "actions",
+      "code": "code",
+      "name": "nom",
+      "label": "libellé"
+    },
+    "hierarchies": {
+      "title": "Hiérarchies",
+      "inactive": "[inactive]",
+      "name": "Nom",
+      "version": "ver",
+      "add": "Ajouter hiérarchie"
+    },
+    "failureEvents": {
+      "title": "Événements de défaillance (WO fermés)",
+      "colDowntime": "arrêt (h)",
+      "colVerification": "vérif.",
+      "colEligibility": "éligibilité (JSON)"
+    },
+    "runtime": {
+      "title": "Journal d'exposition runtime (h)",
+      "hintPrefix": "PRD §6.10.2 — dénominateur T",
+      "hintSuffix": "(somme des entrées `hours` sur la période).",
+      "valueHours": "valeur (heures)",
+      "colRecorded": "enregistré"
+    },
+    "kpi": {
+      "title": "Instantanés KPI fiabilité",
+      "hint": "MTBF, MTTR, disponibilité, taux de défaillance, répétition — événements éligibles + exposition.",
+      "selectPrompt": "Sélectionnez un équipement et une période pour qualifier les entrées d'analyse.",
+      "refreshList": "Actualiser liste",
+      "compute": "Calculer / mettre à jour",
+      "asyncJob": "Job async (Rust)",
+      "cancelJob": "Annuler job #{{id}}",
+      "jobProgress": "Job {{id}} — {{status}} — {{pct}}%",
+      "colRepeat": "rép.",
+      "colQuality": "qualité",
+      "colFingerprint": "empreinte",
+      "clickRowHint": "Cliquez une ligne pour recharger le snapshot et afficher le graphique."
+    },
+    "weibull": {
+      "title": "Weibull — ajustement (inter-arrivées)",
+      "hint": "PRD 6.10.4 — MLE 2 paramètres ; intervalles asymptotiques si échantillon suffisant.",
+      "periodStart": "période début (optionnel)",
+      "periodEnd": "période fin (optionnel)",
+      "run": "Lancer l'ajustement",
+      "summary": "n={{n}} — adéquat : {{adequate}} — {{message}}",
+      "beta": "β (shape) :",
+      "eta": "η (scale h) :",
+      "empty": "Aucun résultat — lancez un ajustement sur des événements de défaillance."
+    },
+    "fmeca": {
+      "title": "FMECA — analyses et matrice RPN",
+      "hint": "PRD 6.10.5 — CRUD analyses et lignes ; RPN = S×O×D (1–10). Écriture :",
+      "refreshAnalyses": "Actualiser analyses",
+      "analysisTitle": "titre analyse",
+      "boundary": "frontière / périmètre",
+      "createAnalysis": "Créer analyse",
+      "itemsTitle": "Lignes FMECA (analyse #{{id}})",
+      "functionalFailure": "défaillance fonctionnelle",
+      "effect": "effet",
+      "isoModeId": "mode ISO (id)",
+      "rpnPreview": "RPN (aperçu S×O×D) :",
+      "editingRow": " — édition ligne #{{id}}",
+      "recommendedAction": "action recommandée",
+      "currentControl": "contrôle courant",
+      "revisedRpn": "RPN révisé (optionnel)",
+      "saveRow": "Enregistrer ligne",
+      "addRow": "Ajouter ligne",
+      "newRow": "Nouvelle ligne",
+      "colFunctionalFailure": "défaillance f.",
+      "colEffect": "effet",
+      "selectPrompt": "Sélectionnez une analyse dans le tableau pour éditer les lignes."
+    },
+    "rcm": {
+      "title": "RCM — décisions liées au PM",
+      "hintPrefix": "PRD 6.10.6 — tactique (liste blanche) et",
+      "hintSuffix": "optionnel.",
+      "refreshStudies": "Actualiser études",
+      "studyTitle": "titre étude RCM",
+      "createStudy": "Créer étude",
+      "decisionsTitle": "Décisions (étude #{{id}})",
+      "functionDesc": "fonction / fonctionnement",
+      "consequenceCategory": "catégorie de conséquence",
+      "tactic": "Tactique RCM",
+      "justification": "justification",
+      "reviewDue": "revue due (ISO datetime, optionnel)",
+      "editingDecision": "Édition décision #{{id}}",
+      "newDecision": "Nouvelle décision",
+      "saveDecision": "Enregistrer décision",
+      "addDecision": "Ajouter décision",
+      "colTactic": "tactique",
+      "colFunction": "fonction",
+      "selectPrompt": "Sélectionnez une étude pour gérer les décisions RCM."
+    },
+    "graphModels": {
+      "title": "FTA / RBD / arbre d'événements (PRD 6.10)",
+      "hint": "Modèles graphe locaux — FTA (ET/OU + prob. top), RBD (série/parallèle), ETA (séquence).",
+      "evaluateLabel": "Évaluer :",
+      "labTooltip": "Éditeur schématique FTA / RBD",
+      "openLab": "Ouvrir le laboratoire visuel (FTA/RBD)",
+      "graphJson": "Graphe JSON ({{kind}})",
+      "eventTree": "Arbre d'événements",
+      "crudLabel": "; CRUD :"
+    },
+    "advancedModels": {
+      "title": "Monte Carlo, Markov, garde-fous",
+      "hint": "MC : essais + graine reproductible ; Markov : CMTH discrète (puissances). Garde-fous : limites et activation des méthodes.",
+      "guardrailsTitle": "Garde-fous (ram.manage)",
+      "mcEnabled": "Monte Carlo activé",
+      "markovEnabled": "Markov activé",
+      "mcMaxTrials": "MC — essais max",
+      "markovMaxStates": "Markov — états max",
+      "saveGuardrails": "Enregistrer garde-fous"
+    },
+    "mc": {
+      "trials": "essais",
+      "seed": "graine",
+      "uniformTitle": "Échantillonnage uniforme (graph_json)",
+      "min": "min",
+      "max": "max"
+    },
+    "markov": {
+      "discreteTitle": "Chaîne de Markov discrète (2×2)",
+      "state": "État {{n}}"
+    },
+    "dataQuality": {
+      "title": "Qualité des données RAM",
+      "hint": "Badges (vert si score ≥ 0,85 et aucun code bloquant). Drill-through : OT sans mode de défaillance, équipements sans exposition 90j.",
+      "ciNote": "Intervalle de confiance (Wilson, taux de répétition) : phase 2 (placeholder).",
+      "refreshIssues": "Actualiser issues",
+      "loadDrill": "Charger drill-through",
+      "equipmentBadge": "Badge équipement",
+      "refreshBadge": "Actualiser badge",
+      "badgeScore": "{{badge}} — score KPI: {{score}}",
+      "blocking": " — bloquants: {{codes}}",
+      "colSeverity": "gravité",
+      "colLink": "lien",
+      "dismiss": "masquer",
+      "wosTitle": "OT fermés sans mode ISO (drill)",
+      "colWo": "WO",
+      "colClosed": "fermé",
+      "noExposureTitle": "Équipements sans exposition runtime (90 jours)"
+    },
+    "codes": {
+      "title": "Codes ({{hierarchy}})",
+      "add": "Ajouter code",
+      "colActive": "actif",
+      "deactivate": "désactiver"
+    },
+    "shell": {
+      "title": "Fiabilité (RAMS) — taxonomie défaillance",
+      "description": "PRD 6.10.1 — hiérarchies et codes ISO 14224 (aperçu local)."
+    }
+  },
+  "foundationPage": {
+    "refreshing": "Actualisation...",
+    "refresh": "Actualiser",
+    "tabs": {
+      "quality": "Qualité",
+      "events": "Événements",
+      "models": "Modèles mathématiques",
+      "kpis": "KPIs"
+    },
+    "quality": {
+      "dataHealth": "Santé des données",
+      "unknownBadge": "Inconnu",
+      "activeIssues_one": "{{count}} écart qualité actif pour l’équipement #{{equipment}}.",
+      "activeIssues_other": "{{count}} écarts qualité actifs pour l’équipement #{{equipment}}.",
+      "isoTitle": "Complétude ISO 14224",
+      "remediationTitle": "Actions de remédiation",
+      "noIssues": "Aucun écart critique détecté.",
+      "severity": "Sévérité : {{severity}}",
+      "openAction": "Ouvrir l’action"
+    },
+    "notAvailable": "N/A",
+    "iso": {
+      "records": "Enregistrements",
+      "overall": "Global",
+      "equipment": "Équipement",
+      "interval": "Intervalle",
+      "mode": "Mode",
+      "closure": "Clôture corrective"
+    },
+    "noData": "Aucune donnée disponible.",
+    "events": {
+      "title": "Événements de défaillance",
+      "rows_one": "{{count}} ligne",
+      "rows_other": "{{count}} lignes"
+    },
+    "col": {
+      "id": "ID",
+      "source": "Source",
+      "downtime": "Arrêt (h)",
+      "repair": "Réparation (h)",
+      "status": "Statut",
+      "type": "Type",
+      "value": "Valeur",
+      "date": "Date",
+      "title": "Titre",
+      "trials": "Essais"
+    },
+    "exposure": {
+      "title": "Exposition opérationnelle",
+      "readings_one": "{{count}} relevé",
+      "readings_other": "{{count}} relevés"
+    },
+    "models": {
+      "fta": "Arbres de défaillance (FTA)",
+      "manage": "Gérer",
+      "noFta": "Aucun modèle FTA.",
+      "rbd": "Diagrammes de blocs (RBD)",
+      "noRbd": "Aucun modèle RBD.",
+      "monteCarlo": "Monte Carlo",
+      "markov": "Markov (matrice)",
+      "noMarkov": "Aucun modèle Markov.",
+      "status": "Statut : {{status}}"
+    },
+    "kpi": {
+      "latest": "Dernier instantané KPI",
+      "mtbf": "MTBF",
+      "mttr": "MTTR",
+      "availability": "Disponibilité",
+      "failureRate": "Taux de défaillance",
+      "events": "Événements",
+      "quality": "Qualité",
+      "noSnapshot": "Aucun instantané disponible."
+    },
+    "jobs": {
+      "title": "Orchestration des calculs"
+    }
+  },
+  "ramAssumptions": {
+    "title": "Hypothèses par méthode (RAM avancé)",
+    "disclaimer": "Résumé local pour revue — ne remplace pas la norme applicable ni la validation métier.",
+    "weibull": {
+      "title": "Weibull",
+      "line1": "Événements indépendants dans le temps ; inter-arrivées i.i.d. pour l’ajustement.",
+      "line2": "MLE 2 paramètres ; IC asymptotiques — grands échantillons."
+    },
+    "fmeca": {
+      "title": "FMECA",
+      "line1": "S, O, D sur échelle 1–10 ; RPN = S×O×D ; pas de corrélation explicite entre facteurs."
+    },
+    "fta": {
+      "title": "FTA",
+      "line1": "Portes ET/OU ; probabilités indépendantes entre entrées ; pas de dépendances communes modélisées."
+    },
+    "rbd": {
+      "title": "RBD",
+      "line1": "Blocs indépendants ; série = produit des fiabilités ; parallèle = 1−Π(1−Ri)."
+    },
+    "eta": {
+      "title": "Arbre d’événements",
+      "line1": "Graphe orienté sans recombinaison (usage typique) ; probabilités de branche conditionnelles données."
+    },
+    "mc": {
+      "title": "Monte Carlo",
+      "line1": "Échantillonnage avec graine fixée pour reproductibilité ; bornes uniformes et Bernoulli supportées."
+    },
+    "markov": {
+      "title": "Markov (DTMC)",
+      "line1": "Chaîne discrète temps homogène ; matrice stochastique ; régime permanent par itération."
+    }
+  },
+  "markovPanel": {
+    "defaultTitle": "Modèle Markov équipement",
+    "fallbackTitle": "Modèle Markov",
+    "colId": "ID"
+  },
+  "visualLab": {
+    "loadErrorWithMessage": "Chargement des modèles impossible : {{message}}",
+    "stencilDesktopHint": "Utilisez la bibliothèque de symboles en mode desktop (stencil X6).",
+    "emptyCanvasFta": "Canevas FTA vide — créez un modèle pour commencer.",
+    "emptyCanvasRbd": "Canevas RBD vide — créez un modèle pour commencer."
   }
 }

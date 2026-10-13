@@ -9,79 +9,15 @@ fn xlsx_e(e: rust_xlsxwriter::XlsxError) -> AppError {
     AppError::Internal(anyhow!("xlsx: {e}"))
 }
 
-fn pdf_escape(input: &str) -> String {
-    input.replace('\\', "\\\\").replace('(', "\\(").replace(')', "\\)")
-}
-
-fn build_simple_pdf(lines: &[String], paper_size: &str) -> Vec<u8> {
-    let (w, h) = if paper_size.eq_ignore_ascii_case("A3") {
-        (1191, 842)
-    } else {
-        (842, 595)
-    };
-    let mut content = String::from("BT /F1 11 Tf 40 ");
-    content.push_str(&(h - 50).to_string());
-    content.push_str(" Td ");
-    for (idx, line) in lines.iter().enumerate() {
-        if idx > 0 {
-            content.push_str("T* ");
-        }
-        content.push('(');
-        content.push_str(&pdf_escape(line));
-        content.push_str(") Tj ");
-    }
-    content.push_str("ET");
-    let stream = content.into_bytes();
-
-    let mut out = Vec::<u8>::new();
-    out.extend_from_slice(b"%PDF-1.4\n");
-    let mut offsets = vec![0_usize];
-    let push_obj = |buf: &mut Vec<u8>, offsets: &mut Vec<usize>, body: &[u8]| {
-        offsets.push(buf.len());
-        buf.extend_from_slice(body);
-        buf.extend_from_slice(b"\n");
-    };
-
-    push_obj(
-        &mut out,
-        &mut offsets,
-        b"1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj",
-    );
-    push_obj(
-        &mut out,
-        &mut offsets,
-        b"2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj",
-    );
-    let page_obj = format!(
-        "3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 {w} {h}] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >> endobj"
-    );
-    push_obj(&mut out, &mut offsets, page_obj.as_bytes());
-    let stream_head = format!("4 0 obj << /Length {} >> stream\n", stream.len());
-    offsets.push(out.len());
-    out.extend_from_slice(stream_head.as_bytes());
-    out.extend_from_slice(&stream);
-    out.extend_from_slice(b"\nendstream endobj\n");
-    push_obj(
-        &mut out,
-        &mut offsets,
-        b"5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj",
-    );
-
-    let xref_pos = out.len();
-    let object_count = offsets.len();
-    out.extend_from_slice(format!("xref\n0 {}\n", object_count).as_bytes());
-    out.extend_from_slice(b"0000000000 65535 f \n");
-    for off in offsets.iter().skip(1) {
-        out.extend_from_slice(format!("{off:010} 00000 n \n").as_bytes());
-    }
-    out.extend_from_slice(
-        format!(
-            "trailer << /Size {} /Root 1 0 R >>\nstartxref\n{}\n%%EOF\n",
-            object_count, xref_pos
-        )
-        .as_bytes(),
-    );
-    out
+/// Two-column report (label, value) on the PDF engine.
+fn key_value_pdf(title: &str, pairs: &[(String, String)], headers: [&str; 2]) -> AppResult<Vec<u8>> {
+    let font = crate::reports::pdf::load_system_font()?;
+    let mut doc = crate::reports::pdf::PdfDocument::new(&font, crate::reports::pdf::PaperSize::A4Portrait, title)?;
+    doc.heading(title);
+    doc.paragraph(&chrono::Utc::now().format("%Y-%m-%d %H:%M UTC").to_string());
+    let rows: Vec<Vec<String>> = pairs.iter().map(|(k, v)| vec![k.clone(), v.clone()]).collect();
+    doc.table(&headers, &rows, &[3.0, 2.0]);
+    doc.finish()
 }
 
 pub async fn export_report_document(
@@ -108,14 +44,7 @@ pub async fn export_report_document(
 async fn export_dashboard_summary(db: &DatabaseConnection, fmt: &str) -> AppResult<ExportedBinaryDocument> {
     let pairs = fetch_dashboard_summary_pairs(db).await?;
     if fmt == "pdf" {
-        let mut lines = vec![
-            "Maintafox — Dashboard summary".to_string(),
-            chrono::Utc::now().to_rfc3339(),
-        ];
-        for (k, v) in &pairs {
-            lines.push(format!("{k}: {v}"));
-        }
-        let bytes = build_simple_pdf(&lines, "A4");
+        let bytes = key_value_pdf("Maintafox — Dashboard summary", &pairs, ["Metric", "Value"])?;
         return Ok(ExportedBinaryDocument {
             file_name: "dashboard-summary.pdf".to_string(),
             mime_type: "application/pdf".to_string(),
@@ -142,14 +71,8 @@ async fn export_dashboard_summary(db: &DatabaseConnection, fmt: &str) -> AppResu
 async fn export_open_work_orders(db: &DatabaseConnection, fmt: &str) -> AppResult<ExportedBinaryDocument> {
     let rows = fetch_open_wo_by_status(db).await?;
     if fmt == "pdf" {
-        let mut lines = vec![
-            "Maintafox — Open work orders by status".to_string(),
-            chrono::Utc::now().to_rfc3339(),
-        ];
-        for (st, n) in &rows {
-            lines.push(format!("{st}: {n}"));
-        }
-        let bytes = build_simple_pdf(&lines, "A4");
+        let pairs: Vec<(String, String)> = rows.iter().map(|(st, n)| (st.clone(), n.to_string())).collect();
+        let bytes = key_value_pdf("Maintafox — Open work orders by status", &pairs, ["Status", "Count"])?;
         return Ok(ExportedBinaryDocument {
             file_name: "open-work-orders.pdf".to_string(),
             mime_type: "application/pdf".to_string(),

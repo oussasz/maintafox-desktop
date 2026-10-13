@@ -17,7 +17,7 @@ pub struct ActivityEventInput {
     pub visibility_scope: String,
 }
 
-pub async fn emit_activity_event(pool: &SqlitePool, input: ActivityEventInput) -> Result<()> {
+pub async fn emit_activity_event(pool: &impl ConnectionTrait, input: ActivityEventInput) -> Result<()> {
     if let Err(err) = emit_activity_event_inner(pool, input).await {
         tracing::error!(
             error = %err,
@@ -27,7 +27,7 @@ pub async fn emit_activity_event(pool: &SqlitePool, input: ActivityEventInput) -
     Ok(())
 }
 
-async fn emit_activity_event_inner(pool: &SqlitePool, input: ActivityEventInput) -> Result<()> {
+async fn emit_activity_event_inner(pool: &impl ConnectionTrait, input: ActivityEventInput) -> Result<()> {
     let summary_json = input.summary_json.map(|value| value.to_string());
 
     pool.execute(Statement::from_sql_and_values(

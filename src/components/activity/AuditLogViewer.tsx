@@ -1,6 +1,8 @@
 import { Download, ShieldCheck } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
+import { AuditChainCheck } from "@/components/activity/AuditChainCheck";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -26,6 +28,7 @@ interface AuditLogViewerProps {
 }
 
 export function AuditLogViewer({ className }: AuditLogViewerProps) {
+  const { t: tShell } = useTranslation("shell");
   const { can } = usePermissions();
 
   const [items, setItems] = useState<AuditEventSummary[]>([]);
@@ -184,6 +187,8 @@ export function AuditLogViewer({ className }: AuditLogViewerProps) {
           </Button>
         </div>
 
+        {can(P.ADM_AUDIT) && <AuditChainCheck />}
+
         {can(P.LOG_EXPORT) && (
           <div className="rounded-md border p-2">
             <div className="mb-2 text-xs text-muted-foreground">
@@ -292,6 +297,14 @@ export function AuditLogViewer({ className }: AuditLogViewerProps) {
                       <span className="text-muted-foreground">target:</span>{" "}
                       {row.target_type ?? "—"} / {row.target_id ?? "—"}
                     </div>
+                    {row.from_other_device ? (
+                      <div
+                        className="text-muted-foreground"
+                        data-testid="history-from-other-device"
+                      >
+                        {tShell("sync.history.fromOtherDevice")}
+                      </div>
+                    ) : null}
                     <div>
                       <span className="text-muted-foreground">retention:</span>{" "}
                       {row.retention_class}

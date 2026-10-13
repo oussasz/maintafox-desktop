@@ -7,7 +7,7 @@
  */
 
 import { Loader2 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { AssetPicker } from "@/components/assets/AssetPicker";
@@ -93,7 +93,7 @@ function validate(
     else if (!fields.urgencyIdValid) errors.urgencyId = t("form.validation.urgencyInvalid");
   }
   if (opts.requireEquipment && fields.equipmentId == null) {
-    errors.equipment = "Équipement obligatoire.";
+    errors.equipment = t("form.validation.equipmentRequired");
   }
   return errors;
 }
@@ -360,7 +360,9 @@ export function WoCreateForm({
             }}
           >
             <SelectTrigger className="w-full">
-              <SelectValue placeholder={typesLoading ? "Chargement..." : t("form.type.label")} />
+              <SelectValue
+                placeholder={typesLoading ? t("form.type.loading") : t("form.type.label")}
+              />
             </SelectTrigger>
             <SelectContent>
               {woTypes.map((wt) => (

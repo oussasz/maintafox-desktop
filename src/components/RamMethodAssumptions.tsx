@@ -1,64 +1,51 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
-const BLOCKS: { id: string; title: string; lines: string[] }[] = [
+const BLOCKS: { id: string; titleKey: string; lineKeys: string[] }[] = [
   {
     id: "weibull",
-    title: "Weibull",
-    lines: [
-      "Événements indépendants dans le temps ; inter-arrivées i.i.d. pour l’ajustement.",
-      "MLE 2 paramètres ; IC asymptotiques — grands échantillons.",
-    ],
+    titleKey: "ramAssumptions.weibull.title",
+    lineKeys: ["ramAssumptions.weibull.line1", "ramAssumptions.weibull.line2"],
   },
   {
     id: "fmeca",
-    title: "FMECA",
-    lines: [
-      "S, O, D sur échelle 1–10 ; RPN = S×O×D ; pas de corrélation explicite entre facteurs.",
-    ],
+    titleKey: "ramAssumptions.fmeca.title",
+    lineKeys: ["ramAssumptions.fmeca.line1"],
   },
   {
     id: "fta",
-    title: "FTA",
-    lines: [
-      "Portes ET/OU ; probabilités indépendantes entre entrées ; pas de dépendances communes modélisées.",
-    ],
+    titleKey: "ramAssumptions.fta.title",
+    lineKeys: ["ramAssumptions.fta.line1"],
   },
   {
     id: "rbd",
-    title: "RBD",
-    lines: ["Blocs indépendants ; série = produit des fiabilités ; parallèle = 1−Π(1−Ri)."],
+    titleKey: "ramAssumptions.rbd.title",
+    lineKeys: ["ramAssumptions.rbd.line1"],
   },
   {
     id: "eta",
-    title: "Arbre d’événements",
-    lines: [
-      "Graphe orienté sans recombinaison (usage typique) ; probabilités de branche conditionnelles données.",
-    ],
+    titleKey: "ramAssumptions.eta.title",
+    lineKeys: ["ramAssumptions.eta.line1"],
   },
   {
     id: "mc",
-    title: "Monte Carlo",
-    lines: [
-      "Échantillonnage avec graine fixée pour reproductibilité ; bornes uniformes et Bernoulli supportées.",
-    ],
+    titleKey: "ramAssumptions.mc.title",
+    lineKeys: ["ramAssumptions.mc.line1"],
   },
   {
     id: "markov",
-    title: "Markov (DTMC)",
-    lines: [
-      "Chaîne discrète temps homogène ; matrice stochastique ; régime permanent par itération.",
-    ],
+    titleKey: "ramAssumptions.markov.title",
+    lineKeys: ["ramAssumptions.markov.line1"],
   },
 ];
 
 export function RamMethodAssumptions() {
+  const { t } = useTranslation("reliability");
   const [open, setOpen] = useState<string | null>("weibull");
   return (
     <section className="mb-6 rounded border border-border-1 bg-bg-1 p-3">
-      <h2 className="mb-2 font-medium">Hypothèses par méthode (RAM avancé)</h2>
-      <p className="mb-3 text-xs text-fg-2">
-        Résumé local pour revue — ne remplace pas la norme applicable ni la validation métier.
-      </p>
+      <h2 className="mb-2 font-medium">{t("ramAssumptions.title")}</h2>
+      <p className="mb-3 text-xs text-fg-2">{t("ramAssumptions.disclaimer")}</p>
       <ul className="space-y-1">
         {BLOCKS.map((b) => (
           <li key={b.id} className="rounded border border-border-1/60 bg-bg-0">
@@ -67,13 +54,13 @@ export function RamMethodAssumptions() {
               className="flex w-full items-center justify-between px-2 py-1.5 text-left text-xs font-medium text-fg-1"
               onClick={() => setOpen(open === b.id ? null : b.id)}
             >
-              {b.title}
+              {t(b.titleKey)}
               <span className="text-fg-2">{open === b.id ? "−" : "+"}</span>
             </button>
             {open === b.id ? (
               <ul className="list-inside list-disc px-2 pb-2 text-[11px] text-fg-2">
-                {b.lines.map((line) => (
-                  <li key={line}>{line}</li>
+                {b.lineKeys.map((lineKey) => (
+                  <li key={lineKey}>{t(lineKey)}</li>
                 ))}
               </ul>
             ) : null}

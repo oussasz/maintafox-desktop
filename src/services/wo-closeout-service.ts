@@ -189,8 +189,20 @@ export interface WoAnalyticsSnapshot {
   downtime_segment_count: number;
   was_planned: boolean;
   parts_actuals_confirmed: boolean;
+  /** PM occurrence that generated this WO. */
   pm_occurrence_id: number | null;
+  pm_plan_code: string | null;
+  pm_plan_title: string | null;
+  pm_due_at: string | null;
   permit_ids: number[];
+  permits: WoLinkedPermit[];
+}
+
+export interface WoLinkedPermit {
+  id: number;
+  code: string;
+  status: string;
+  permit_type_code: string | null;
 }
 
 // â”€â”€ Blocking error helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

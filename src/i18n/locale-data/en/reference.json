@@ -130,7 +130,26 @@
     "confirmDescription": "This will publish the draft set and supersede the current published version.",
     "confirmProtected": "This is a protected domain. Publishing requires elevated privileges and will be audited.",
     "cancel": "Cancel",
-    "confirm": "Publish"
+    "confirm": "Publish",
+    "removedCodes": "Removed values: {{codes}}",
+    "deactivatedCodes": "Deactivated values: {{codes}}",
+    "impactTable": "{{table}}.{{column}}: {{count}} record(s)",
+    "impactStatus": {
+      "available": "Checked",
+      "no_impact": "No change",
+      "unavailable": "Not checked on the desktop"
+    },
+    "module": {
+      "assets": "Assets",
+      "work_orders": "Work orders",
+      "pm_plans": "Preventive maintenance",
+      "inventory": "Inventory",
+      "reliability_events": "Reliability",
+      "interventions": "Intervention requests",
+      "personnel": "Personnel",
+      "other": "Other records",
+      "external_integrations": "External integrations"
+    }
   },
   "import": {
     "title": "Import Reference Values",

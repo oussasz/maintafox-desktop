@@ -3,10 +3,10 @@
 //! Selects only SQL-filtered breach candidates (past frozen deadline, not yet
 //! notified), emits `di_sla_breach`, then sets persistent notify timestamps.
 
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use tokio::time::{interval, Duration};
 
-use crate::notifications::emitter::{emit_event, NotificationEventInput};
+use crate::notifications::emitter::{emit_device_event, NotificationEventInput};
 
 use super::domain::map_intervention_request;
 use super::sla::{compute_sla_status, mark_resolution_breach_notified, mark_response_breach_notified};
@@ -173,20 +173,37 @@ async fn emit_breach(
         "breach_kind": kind,
     });
 
-    let _ = emit_event(
-        db,
-        NotificationEventInput {
-            source_module: "intervention_requests".into(),
-            source_record_id: Some(di.id.to_string()),
-            event_code: "di_sla_breach".into(),
-            category_code: "di_sla_breach".into(),
-            severity: "warning".into(),
-            dedupe_key: Some(dedupe_key),
-            payload_json: Some(payload.to_string()),
-            title,
-            body: Some(body),
-            action_url: Some(format!("/requests?di={}", di.id)),
-        },
-    )
+    // Every device's poller detects the same breach: the event is kept on each device, with the
+    // same identity everywhere (built from the request's sync id).
+    let result: crate::errors::AppResult<()> = async {
+        let txn = db.begin().await?;
+        crate::sync::capture::begin_suppression(&txn).await?;
+        let identity = crate::sync::identity::optional_entity_sync_id(&txn, "intervention_requests", di.id)
+            .await?
+            .map(|sync_id| format!("di_sla_breach|{kind}|{sync_id}"));
+        emit_device_event(
+            &txn,
+            NotificationEventInput {
+                source_module: "intervention_requests".into(),
+                source_record_id: Some(di.id.to_string()),
+                event_code: "di_sla_breach".into(),
+                category_code: "di_sla_breach".into(),
+                severity: "warning".into(),
+                dedupe_key: Some(dedupe_key),
+                payload_json: Some(payload.to_string()),
+                title,
+                body: Some(body),
+                action_url: Some(format!("/requests?di={}", di.id)),
+            },
+            identity.as_deref(),
+        )
+        .await?;
+        crate::sync::capture::end_suppression(&txn).await?;
+        txn.commit().await?;
+        Ok(())
+    }
     .await;
+    if let Err(err) = result {
+        tracing::error!(di_id = di.id, error = %err, "di::sla_poller breach notification failed");
+    }
 }

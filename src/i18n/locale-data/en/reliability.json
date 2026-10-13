@@ -40,7 +40,7 @@
     "scheduleAssigned": "Assigned",
     "mtbf": "MTBF (h)",
     "mttr": "MTTR (h)",
-    "availability": "Availability",
+    "availability": "Operational availability A_o",
     "failureRate": "Failure rate",
     "events": "Events",
     "exposureTitle": "Exposure provenance",
@@ -53,9 +53,9 @@
     "ramsKuField": "Utilization factor (K_u)",
     "noSnapshot": "No KPI snapshot for this filter. Run an analysis from Asset foundation or refresh snapshots.",
     "weibullTitle": "Weibull reliability curve R(t)",
-    "weibullHint": "Curve R(t) = exp(−(t/η)^β) from the latest stored Weibull fit.",
+    "weibullHint": "Curve R(t) = exp(−(t/η)^β) from the latest exposure-hour Weibull fit (right-censored MLE).",
     "weibullRun": "Run fit",
-    "includeCensored": "Include censored/suspended data",
+    "includeCensored": "Include the running interval as right-censored",
     "fleetCompare": "Fleet comparison",
     "strategyOffset": "Strategy simulation offset",
     "noneOption": "None",
@@ -73,9 +73,9 @@
     "weibullPrereqExposure": "Exposure hours: {{hours}} h",
     "weibullPrereqSchedule": "RAMS schedule class: {{value}}",
     "weibullPrereqMissing": "not set",
-    "weibullCensoredHint": "Censored data only applies after running a new fit.",
-    "weibullFitOk": "Fit succeeded ({{n}} points) — β={{beta}}, η={{eta}} h.",
-    "weibullFitInadequate": "Inadequate sample ({{n}} inter-arrival points, 5 minimum): {{message}}",
+    "weibullCensoredHint": "Time since the last failure enters the likelihood as a survivor (censored), never as a failure. Applies to the next fit.",
+    "weibullFitOk": "Fit succeeded ({{failures}} failures, {{censored}} censored) — β={{beta}}, η={{eta}} h.",
+    "weibullFitInadequate": "Inadequate sample ({{failures}} failures, 5 minimum; {{censored}} censored): {{message}}",
     "exposureZeroHint": "Exposure = 0 h — R(0) = 1 is expected. Assign a RAMS schedule class and closed work orders to get R(t) < 1.",
     "markovError": "Markov load failed: {{message}}",
     "markovTitle": "Markov steady-state",
@@ -84,8 +84,25 @@
     "filterEquip": "Equipment id",
     "refresh": "Refresh",
     "rulTitle": "Predicted RUL",
-    "rulHint": "Median remaining life from the Weibull fit and recorded exposure hours (maintenance history and operating profile).",
-    "rulEmpty": "No RUL estimate. Run a Weibull fit and ensure exposure or meter data exists."
+    "rulHint": "Median remaining life from the Weibull fit at the current age: exposure hours since the last restoration, on the same clock as the fit.",
+    "rulEmpty": "No RUL estimate. Run a Weibull fit and ensure exposure or meter data exists.",
+    "availabilityInherent": "Inherent availability A_i",
+    "mttf": "MTTF (h)",
+    "readinessTitle": "Analysis readiness gate",
+    "readinessAllow": "ALLOW — Weibull, R(t) and RUL may be computed.",
+    "readinessDeny": "DENY — Weibull, R(t) and RUL are blocked until the issues below are fixed.",
+    "readinessSummary": "{{events}} eligible failures (minimum {{min}}) · {{hours}} h exposure · completeness {{completeness}} %",
+    "readinessExposureSource": "Exposure basis: {{source}}",
+    "readinessNoExposureSource": "Exposure basis: none (no operating schedule and no runtime log)",
+    "readinessBlocking": "Blocking reasons",
+    "readinessWarnings": "Warnings",
+    "readinessReason": {
+      "MISSING_EXPOSURE": "No governed exposure: assign an operating schedule or log runtime hours.",
+      "MISSING_FAILURE_MODE": "Some eligible failures have no coded failure mode.",
+      "INSUFFICIENT_EVENTS": "Not enough eligible unplanned failures in the last 12 months.",
+      "LOW_SAMPLE": "Small sample: estimates are uncertain.",
+      "MISSING_INSPECTION_COVERAGE": "Inspection checkpoint coverage is low."
+    }
   },
   "lab": {
     "title": "FTA / RBD visual lab",
@@ -223,5 +240,467 @@
     "presentationSeedDone": "Demo seed complete: {{wo}} WOs, β={{beta}}, η={{eta}}, Markov #{{markov}}.",
     "presentationSeedSkipped": "Demo seed already present — analytics refreshed.",
     "presentationSeedPermission": "adm.settings required to generate demo RAMS data."
+  },
+  "rcmLoop": {
+    "openLogic": "RCM logic",
+    "openActions": "Actions & criticality",
+    "logicTitle": "RCM decision logic",
+    "questions": {
+      "failure_evident": "Will the loss of function be evident to operators under normal circumstances?",
+      "safety_or_environmental": "Could the failure hurt someone or breach an environmental standard?",
+      "operational_impact": "Does it affect output, quality, service or operating cost?",
+      "multiple_failure_affects_safety": "Hidden failure: would the multiple failure have safety or environmental consequences?",
+      "on_condition_feasible": "Is an on-condition task feasible (detectable warning before failure) and worth doing?",
+      "scheduled_restoration_feasible": "Is scheduled restoration feasible (identifiable wear-out age) and worth doing?",
+      "scheduled_discard_feasible": "Is scheduled discard feasible and worth doing?",
+      "failure_finding_feasible": "Hidden failure: is a failure-finding task feasible and worth doing?",
+      "combination_feasible": "Safety: does a combination of tasks bring the risk to a tolerable level?",
+      "weibull_beta": "Weibull shape β of this failure mode (optional)"
+    },
+    "yes": "Yes",
+    "no": "No",
+    "consequence": "Consequence",
+    "recommended": "Recommended tactic",
+    "compulsory": "Redesign is compulsory.",
+    "path": "Decision path",
+    "retained": "Tactic retained",
+    "justification": "Justification (required when different from the recommendation)",
+    "apply": "Record the decision",
+    "consequences": {
+      "hidden": "Hidden",
+      "safety_environmental": "Safety / environment",
+      "operational": "Operational",
+      "non_operational": "Non-operational"
+    },
+    "tactics": {
+      "condition_based": "Condition-based",
+      "time_based": "Time-based (restoration / discard)",
+      "failure_finding": "Failure finding",
+      "run_to_failure": "Run to failure",
+      "redesign": "Redesign"
+    },
+    "pmRevision": "Create a PM plan revision",
+    "pmPlan": "PM plan",
+    "pmPlanPlaceholder": "Choose a PM plan",
+    "changeNote": "Why the plan changes",
+    "createRevision": "Create the draft version",
+    "revisionCreated": "Draft version {{no}} created for {{plan}}.",
+    "woType": "Work order type",
+    "createWo": "Create a work order",
+    "woCreated": "Work order {{code}} created.",
+    "linkedPm": "Linked PM: {{plan}} v{{no}}",
+    "linkedWo": "Linked work order: {{code}}",
+    "criticality": "Criticality number (MIL-STD-1629A)",
+    "beta": "Effect probability β",
+    "betaOptions": {
+      "1": "1.0 — actual loss",
+      "0.5": "0.5 — probable loss",
+      "0.1": "0.1 — possible loss",
+      "0": "0 — no effect"
+    },
+    "alpha": "Failure mode ratio α",
+    "lambda": "Failure rate λp (per hour)",
+    "hours": "Operating time t (hours)",
+    "evidence": "From history: {{mode}} of {{total}} failures for this mode; λp from the KPI snapshot of {{date}}.",
+    "noEvidence": "No failure history for this mode: enter α and λp.",
+    "compute": "Compute",
+    "cm": "Mode criticality Cm = {{cm}} — analysis total Cr = {{cr}}",
+    "invalidNumber": "Enter a number."
+  },
+  "pareto": {
+    "title": "Pareto of failure modes",
+    "metricLabel": "Rank by",
+    "metric": {
+      "count": "Number of failures",
+      "cost": "Maintenance cost",
+      "downtime": "Downtime (h)"
+    },
+    "from": "From",
+    "to": "To",
+    "allTime": "All recorded failures (no period filter)",
+    "loading": "Loading…",
+    "empty": "No unplanned failure recorded for this equipment in the period.",
+    "loadFailed": "Could not load the Pareto: {{message}}",
+    "vitalFew": "{{count}} of {{total}} failure modes account for 80 % of the total.",
+    "cumulative": "Cumulative %",
+    "unclassified": "(no failure mode)",
+    "col": {
+      "mode": "Failure mode",
+      "failures": "Failures",
+      "cost": "Cost",
+      "downtime": "Downtime (h)",
+      "cumulative": "Cumulative"
+    },
+    "export": {
+      "pdf": "Reliability report (PDF)",
+      "xlsx": "Reliability report (Excel)"
+    },
+    "exporting": "Exporting…",
+    "exportFailed": "Export failed: {{message}}"
+  },
+  "page": {
+    "common": {
+      "yes": "yes",
+      "no": "no",
+      "refresh": "Refresh",
+      "evaluate": "Evaluate",
+      "deleteShort": "Del.",
+      "create": "Create",
+      "saveJson": "Save JSON",
+      "save": "Save",
+      "editLower": "edit",
+      "deleteLower": "delete",
+      "deleteShortLower": "del.",
+      "linkPmPlan": "Link PM plan (optional)",
+      "rawJson": "Raw JSON (advanced)",
+      "filterEquipShort": "filter equip.",
+      "titlePlaceholder": "title",
+      "filterEquipId": "filter equipment id",
+      "filterEquipIdShort": "filter equip. id",
+      "requires": "Requires"
+    },
+    "inputGates": {
+      "title": "Input qualification (before KPI analysis)",
+      "exposure": "Exposure (h) over the period: {{hours}} — {{status}}",
+      "ok": "OK",
+      "exposureInsufficient": "insufficient or zero",
+      "events": "Eligible events: {{eligible}} (min. threshold {{min}}) — {{status}}",
+      "eventsNotMet": "not met",
+      "ready": "Dataset ready for analysis:",
+      "hash": "SHA-256 (canonical): {{hash}}"
+    },
+    "snapshotPlot": {
+      "title": "Snapshot #{{id}}",
+      "titleWithEquip": "Snapshot #{{id}} — equip. {{equipment}}",
+      "reopenFilters": "Reapply filters",
+      "exportPng": "Export PNG",
+      "exportSvg": "Export SVG",
+      "hash": "SHA-256 (plot): {{hash}}",
+      "empty": "No chart data in this snapshot (recalculate the KPI to generate the payload)."
+    },
+    "errors": {
+      "runtimeNumeric": "Numeric equipment and value are required.",
+      "kpiEquipRequired": "KPI equipment is required.",
+      "weibullEquipRequired": "Weibull equipment is required.",
+      "fmecaRequired": "FMECA: equipment and title are required.",
+      "sodIntegers": "S, O, D must be integers.",
+      "sodRange": "S, O, D must be between 1 and 10.",
+      "failureModeIdInvalid": "Invalid failure mode (id).",
+      "pmPlanInvalid": "Invalid PM plan.",
+      "revisedRpnInvalid": "Invalid revised RPN.",
+      "rcmRequired": "RCM: equipment and title are required.",
+      "ftaRequired": "FTA: equipment and title are required.",
+      "rbdRequired": "RBD: equipment and title are required.",
+      "etaRequired": "ETA: equipment and title are required.",
+      "guardrailsInvalid": "Guardrails: invalid numbers.",
+      "mcRequired": "MC: equipment, title and trials are required.",
+      "mcSeedInvalid": "Invalid MC seed.",
+      "mcTrialsSeedInvalid": "Invalid MC trials / seed.",
+      "markovRequired": "Markov: equipment and title are required.",
+      "signOffRequired": "Review: equipment and title are required.",
+      "signerRequired": "Signer name is required to sign."
+    },
+    "tabs": {
+      "kpis": "KPIs & analyses",
+      "quality": "Data quality",
+      "failures": "Failures & foundations",
+      "models": "RAM models"
+    },
+    "signOff": {
+      "title": "Expert review — sign-off",
+      "hint": "Signed local record (ram.manage / ram.view).",
+      "targetRef": "target ref",
+      "reviewer": "reviewer",
+      "role": "role",
+      "create": "Create record",
+      "notes": "notes",
+      "signerName": "Signer full name",
+      "sign": "Sign",
+      "delete": "Delete record"
+    },
+    "col": {
+      "method": "method",
+      "status": "status",
+      "title": "title",
+      "signed": "signed",
+      "source": "source",
+      "equip": "equip.",
+      "type": "type",
+      "value": "value",
+      "period": "period",
+      "actions": "actions",
+      "code": "code",
+      "name": "name",
+      "label": "label"
+    },
+    "hierarchies": {
+      "title": "Hierarchies",
+      "inactive": "[inactive]",
+      "name": "Name",
+      "version": "ver",
+      "add": "Add hierarchy"
+    },
+    "failureEvents": {
+      "title": "Failure events (closed WOs)",
+      "colDowntime": "downtime (h)",
+      "colVerification": "verif.",
+      "colEligibility": "eligibility (JSON)"
+    },
+    "runtime": {
+      "title": "Runtime exposure log (h)",
+      "hintPrefix": "PRD §6.10.2 — denominator T",
+      "hintSuffix": "(sum of `hours` entries over the period).",
+      "valueHours": "value (hours)",
+      "colRecorded": "recorded"
+    },
+    "kpi": {
+      "title": "Reliability KPI snapshots",
+      "hint": "MTBF, MTTR, availability, failure rate, repeat — eligible events + exposure.",
+      "selectPrompt": "Select an equipment and a period to qualify the analysis inputs.",
+      "refreshList": "Refresh list",
+      "compute": "Compute / update",
+      "asyncJob": "Async job (Rust)",
+      "cancelJob": "Cancel job #{{id}}",
+      "jobProgress": "Job {{id}} — {{status}} — {{pct}}%",
+      "colRepeat": "rep.",
+      "colQuality": "quality",
+      "colFingerprint": "fingerprint",
+      "clickRowHint": "Click a row to reload the snapshot and display the chart."
+    },
+    "weibull": {
+      "title": "Weibull — fit (inter-arrival times)",
+      "hint": "PRD 6.10.4 — 2-parameter MLE; asymptotic intervals if the sample is sufficient.",
+      "periodStart": "period start (optional)",
+      "periodEnd": "period end (optional)",
+      "run": "Run fit",
+      "summary": "n={{n}} — adequate: {{adequate}} — {{message}}",
+      "beta": "β (shape):",
+      "eta": "η (scale h):",
+      "empty": "No result — run a fit on failure events."
+    },
+    "fmeca": {
+      "title": "FMECA — analyses and RPN matrix",
+      "hint": "PRD 6.10.5 — CRUD for analyses and rows; RPN = S×O×D (1–10). Write:",
+      "refreshAnalyses": "Refresh analyses",
+      "analysisTitle": "analysis title",
+      "boundary": "boundary / scope",
+      "createAnalysis": "Create analysis",
+      "itemsTitle": "FMECA rows (analysis #{{id}})",
+      "functionalFailure": "functional failure",
+      "effect": "effect",
+      "isoModeId": "ISO mode (id)",
+      "rpnPreview": "RPN (S×O×D preview):",
+      "editingRow": " — editing row #{{id}}",
+      "recommendedAction": "recommended action",
+      "currentControl": "current control",
+      "revisedRpn": "revised RPN (optional)",
+      "saveRow": "Save row",
+      "addRow": "Add row",
+      "newRow": "New row",
+      "colFunctionalFailure": "functional f.",
+      "colEffect": "effect",
+      "selectPrompt": "Select an analysis in the table to edit its rows."
+    },
+    "rcm": {
+      "title": "RCM — PM-linked decisions",
+      "hintPrefix": "PRD 6.10.6 — tactic (allow-list) and",
+      "hintSuffix": "(optional).",
+      "refreshStudies": "Refresh studies",
+      "studyTitle": "RCM study title",
+      "createStudy": "Create study",
+      "decisionsTitle": "Decisions (study #{{id}})",
+      "functionDesc": "function / operation",
+      "consequenceCategory": "consequence category",
+      "tactic": "RCM tactic",
+      "justification": "justification",
+      "reviewDue": "review due (ISO datetime, optional)",
+      "editingDecision": "Editing decision #{{id}}",
+      "newDecision": "New decision",
+      "saveDecision": "Save decision",
+      "addDecision": "Add decision",
+      "colTactic": "tactic",
+      "colFunction": "function",
+      "selectPrompt": "Select a study to manage RCM decisions."
+    },
+    "graphModels": {
+      "title": "FTA / RBD / event tree (PRD 6.10)",
+      "hint": "Local graph models — FTA (AND/OR + top prob.), RBD (series/parallel), ETA (sequence).",
+      "evaluateLabel": "Evaluate:",
+      "labTooltip": "FTA / RBD schematic editor",
+      "openLab": "Open the visual lab (FTA/RBD)",
+      "graphJson": "Graph JSON ({{kind}})",
+      "eventTree": "Event tree",
+      "crudLabel": "; CRUD:"
+    },
+    "advancedModels": {
+      "title": "Monte Carlo, Markov, guardrails",
+      "hint": "MC: trials + reproducible seed; Markov: discrete-time chain (matrix powers). Guardrails: method limits and enablement.",
+      "guardrailsTitle": "Guardrails (ram.manage)",
+      "mcEnabled": "Monte Carlo enabled",
+      "markovEnabled": "Markov enabled",
+      "mcMaxTrials": "MC — max trials",
+      "markovMaxStates": "Markov — max states",
+      "saveGuardrails": "Save guardrails"
+    },
+    "mc": {
+      "trials": "trials",
+      "seed": "seed",
+      "uniformTitle": "Uniform sampling (graph_json)",
+      "min": "min",
+      "max": "max"
+    },
+    "markov": {
+      "discreteTitle": "Discrete Markov chain (2×2)",
+      "state": "State {{n}}"
+    },
+    "dataQuality": {
+      "title": "RAM data quality",
+      "hint": "Badges (green if score ≥ 0.85 and no blocking code). Drill-through: WOs without failure mode, equipment without exposure in 90 days.",
+      "ciNote": "Confidence interval (Wilson, repeat rate): phase 2 (placeholder).",
+      "refreshIssues": "Refresh issues",
+      "loadDrill": "Load drill-through",
+      "equipmentBadge": "Equipment badge",
+      "refreshBadge": "Refresh badge",
+      "badgeScore": "{{badge}} — KPI score: {{score}}",
+      "blocking": " — blocking: {{codes}}",
+      "colSeverity": "severity",
+      "colLink": "link",
+      "dismiss": "dismiss",
+      "wosTitle": "Closed WOs without ISO mode (drill)",
+      "colWo": "WO",
+      "colClosed": "closed",
+      "noExposureTitle": "Equipment without runtime exposure (90 days)"
+    },
+    "codes": {
+      "title": "Codes ({{hierarchy}})",
+      "add": "Add code",
+      "colActive": "active",
+      "deactivate": "deactivate"
+    },
+    "shell": {
+      "title": "Reliability (RAMS) — failure taxonomy",
+      "description": "PRD 6.10.1 — ISO 14224 hierarchies and codes (local preview)."
+    }
+  },
+  "foundationPage": {
+    "refreshing": "Refreshing...",
+    "refresh": "Refresh",
+    "tabs": {
+      "quality": "Quality",
+      "events": "Events",
+      "models": "Mathematical models",
+      "kpis": "KPIs"
+    },
+    "quality": {
+      "dataHealth": "Data health",
+      "unknownBadge": "Unknown",
+      "activeIssues_one": "{{count}} active quality issue for equipment #{{equipment}}.",
+      "activeIssues_other": "{{count}} active quality issues for equipment #{{equipment}}.",
+      "isoTitle": "ISO 14224 completeness",
+      "remediationTitle": "Remediation actions",
+      "noIssues": "No critical issue detected.",
+      "severity": "Severity: {{severity}}",
+      "openAction": "Open action"
+    },
+    "notAvailable": "N/A",
+    "iso": {
+      "records": "Records",
+      "overall": "Overall",
+      "equipment": "Equipment",
+      "interval": "Interval",
+      "mode": "Mode",
+      "closure": "Corrective closure"
+    },
+    "noData": "No data available.",
+    "events": {
+      "title": "Failure events",
+      "rows_one": "{{count}} row",
+      "rows_other": "{{count}} rows"
+    },
+    "col": {
+      "id": "ID",
+      "source": "Source",
+      "downtime": "Downtime (h)",
+      "repair": "Repair (h)",
+      "status": "Status",
+      "type": "Type",
+      "value": "Value",
+      "date": "Date",
+      "title": "Title",
+      "trials": "Trials"
+    },
+    "exposure": {
+      "title": "Operational exposure",
+      "readings_one": "{{count}} reading",
+      "readings_other": "{{count}} readings"
+    },
+    "models": {
+      "fta": "Fault trees (FTA)",
+      "manage": "Manage",
+      "noFta": "No FTA model.",
+      "rbd": "Block diagrams (RBD)",
+      "noRbd": "No RBD model.",
+      "monteCarlo": "Monte Carlo",
+      "markov": "Markov (matrix)",
+      "noMarkov": "No Markov model.",
+      "status": "Status: {{status}}"
+    },
+    "kpi": {
+      "latest": "Latest KPI snapshot",
+      "mtbf": "MTBF",
+      "mttr": "MTTR",
+      "availability": "Availability",
+      "failureRate": "Failure rate",
+      "events": "Events",
+      "quality": "Quality",
+      "noSnapshot": "No snapshot available."
+    },
+    "jobs": {
+      "title": "Computation orchestration"
+    }
+  },
+  "ramAssumptions": {
+    "title": "Assumptions by method (advanced RAM)",
+    "disclaimer": "Local summary for review — does not replace the applicable standard or business validation.",
+    "weibull": {
+      "title": "Weibull",
+      "line1": "Events independent in time; i.i.d. inter-arrival times for the fit.",
+      "line2": "2-parameter MLE; asymptotic CIs — large samples."
+    },
+    "fmeca": {
+      "title": "FMECA",
+      "line1": "S, O, D on a 1–10 scale; RPN = S×O×D; no explicit correlation between factors."
+    },
+    "fta": {
+      "title": "FTA",
+      "line1": "AND/OR gates; independent probabilities between inputs; no common-cause dependencies modelled."
+    },
+    "rbd": {
+      "title": "RBD",
+      "line1": "Independent blocks; series = product of reliabilities; parallel = 1−Π(1−Ri)."
+    },
+    "eta": {
+      "title": "Event tree",
+      "line1": "Directed graph without recombination (typical usage); conditional branch probabilities given."
+    },
+    "mc": {
+      "title": "Monte Carlo",
+      "line1": "Sampling with a fixed seed for reproducibility; uniform bounds and Bernoulli supported."
+    },
+    "markov": {
+      "title": "Markov (DTMC)",
+      "line1": "Time-homogeneous discrete chain; stochastic matrix; steady state by iteration."
+    }
+  },
+  "markovPanel": {
+    "defaultTitle": "Equipment Markov model",
+    "fallbackTitle": "Markov model",
+    "colId": "ID"
+  },
+  "visualLab": {
+    "loadErrorWithMessage": "Failed to load models: {{message}}",
+    "stencilDesktopHint": "Use the symbol library in desktop mode (X6 stencil).",
+    "emptyCanvasFta": "FTA empty canvas — create a model to begin.",
+    "emptyCanvasRbd": "RBD empty canvas — create a model to begin."
   }
 }

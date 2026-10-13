@@ -1,6 +1,6 @@
 use std::collections::{BTreeSet, HashMap};
 
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde_json::{json, Value};
 
 use crate::errors::{AppError, AppResult};
@@ -211,7 +211,7 @@ fn parse_string_array(input: Option<&str>) -> Vec<String> {
         .collect()
 }
 
-async fn get_candidate(db: &DatabaseConnection, candidate_id: i64) -> AppResult<ScheduleCandidate> {
+async fn get_candidate(db: &impl ConnectionTrait, candidate_id: i64) -> AppResult<ScheduleCandidate> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -304,7 +304,7 @@ pub async fn list_scheduling_conflicts(
     rows.iter().map(map_conflict).collect()
 }
 
-async fn refresh_from_work_orders(db: &DatabaseConnection, limit: i64) -> AppResult<(i64, i64)> {
+async fn refresh_from_work_orders(db: &impl ConnectionTrait, limit: i64) -> AppResult<(i64, i64)> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -377,9 +377,9 @@ async fn refresh_from_work_orders(db: &DatabaseConnection, limit: i64) -> AppRes
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "INSERT INTO schedule_candidates
-                    (source_type, source_id, source_di_id, assigned_personnel_id, assigned_team_id, window_start, window_end, estimated_duration_hours, prerequisite_status, permit_status, shutdown_requirement)
+                    (entity_sync_id, source_type, source_id, source_di_id, assigned_personnel_id, assigned_team_id, window_start, window_end, estimated_duration_hours, prerequisite_status, permit_status, shutdown_requirement)
                  VALUES
-                    ('work_order', ?, ?, ?, ?, ?, ?, ?, ?, 'unknown', NULL)
+                    (?, 'work_order', ?, ?, ?, ?, ?, ?, ?, ?, 'unknown', NULL)
                  ON CONFLICT(source_type, source_id) DO UPDATE SET
                     source_di_id = excluded.source_di_id,
                     assigned_personnel_id = excluded.assigned_personnel_id,
@@ -391,6 +391,7 @@ async fn refresh_from_work_orders(db: &DatabaseConnection, limit: i64) -> AppRes
                     row_version = schedule_candidates.row_version + 1,
                     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')",
                 [
+                    candidate_sync_id(db, "work_order", "work_orders", source_id).await?.into(),
                     source_id.into(),
                     source_di_id.into(),
                     assigned_personnel_id.into(),
@@ -412,7 +413,7 @@ async fn refresh_from_work_orders(db: &DatabaseConnection, limit: i64) -> AppRes
     Ok((inserted, updated))
 }
 
-async fn refresh_from_pm_occurrences(db: &DatabaseConnection, limit: i64) -> AppResult<(i64, i64)> {
+async fn refresh_from_pm_occurrences(db: &impl ConnectionTrait, limit: i64) -> AppResult<(i64, i64)> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -507,9 +508,9 @@ async fn refresh_from_pm_occurrences(db: &DatabaseConnection, limit: i64) -> App
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "INSERT INTO schedule_candidates
-                    (source_type, source_id, source_di_id, assigned_personnel_id, assigned_team_id, window_start, window_end, estimated_duration_hours, prerequisite_status, permit_status, shutdown_requirement, required_skill_set_json)
+                    (entity_sync_id, source_type, source_id, source_di_id, assigned_personnel_id, assigned_team_id, window_start, window_end, estimated_duration_hours, prerequisite_status, permit_status, shutdown_requirement, required_skill_set_json)
                  VALUES
-                    ('pm_occurrence', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (?, 'pm_occurrence', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT(source_type, source_id) DO UPDATE SET
                     source_di_id = excluded.source_di_id,
                     assigned_personnel_id = excluded.assigned_personnel_id,
@@ -524,6 +525,7 @@ async fn refresh_from_pm_occurrences(db: &DatabaseConnection, limit: i64) -> App
                     row_version = schedule_candidates.row_version + 1,
                     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')",
                 [
+                    candidate_sync_id(db, "pm_occurrence", "pm_occurrences", source_id).await?.into(),
                     source_id.into(),
                     source_di_id.into(),
                     assigned_personnel_id.into(),
@@ -548,7 +550,7 @@ async fn refresh_from_pm_occurrences(db: &DatabaseConnection, limit: i64) -> App
     Ok((inserted, updated))
 }
 
-async fn refresh_from_approved_di(db: &DatabaseConnection, limit: i64) -> AppResult<(i64, i64)> {
+async fn refresh_from_approved_di(db: &impl ConnectionTrait, limit: i64) -> AppResult<(i64, i64)> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -586,9 +588,9 @@ async fn refresh_from_approved_di(db: &DatabaseConnection, limit: i64) -> AppRes
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "INSERT INTO schedule_candidates
-                    (source_type, source_id, source_di_id, window_start, window_end, estimated_duration_hours, prerequisite_status, permit_status)
+                    (entity_sync_id, source_type, source_id, source_di_id, window_start, window_end, estimated_duration_hours, prerequisite_status, permit_status)
                  VALUES
-                    ('inspection_follow_up', ?, ?, ?, ?, ?, ?, 'unknown')
+                    (?, 'inspection_follow_up', ?, ?, ?, ?, ?, ?, 'unknown')
                  ON CONFLICT(source_type, source_id) DO UPDATE SET
                     source_di_id = excluded.source_di_id,
                     window_start = excluded.window_start,
@@ -598,6 +600,7 @@ async fn refresh_from_approved_di(db: &DatabaseConnection, limit: i64) -> AppRes
                     row_version = schedule_candidates.row_version + 1,
                     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')",
                 [
+                    candidate_sync_id(db, "inspection_follow_up", "intervention_requests", source_id).await?.into(),
                     source_id.into(),
                     Some(source_id).into(),
                     window_start.into(),
@@ -616,7 +619,7 @@ async fn refresh_from_approved_di(db: &DatabaseConnection, limit: i64) -> AppRes
     Ok((inserted, updated))
 }
 
-async fn evaluate_candidate(db: &DatabaseConnection, candidate_id: i64) -> AppResult<(String, f64, i64)> {
+async fn evaluate_candidate(db: &impl ConnectionTrait, candidate_id: i64) -> AppResult<(String, f64, i64)> {
     let candidate = get_candidate(db, candidate_id).await?;
     let mut conflicts: Vec<EvaluatedConflict> = Vec::new();
 
@@ -1083,8 +1086,44 @@ async fn evaluate_candidate(db: &DatabaseConnection, candidate_id: i64) -> AppRe
     Ok((readiness_status.to_string(), readiness_score, conflicts.len() as i64))
 }
 
+/// Identity of the scheduling candidate of a work item: every device that derives the candidate of
+/// the same source gives it the same `entity_sync_id`.
+///
+/// A source without sync identity (database without sync capture) gives no identity: the capture
+/// insert trigger, when installed, assigns one.
+async fn candidate_sync_id(
+    db: &impl ConnectionTrait,
+    source_type: &str,
+    source_table: &str,
+    source_id: i64,
+) -> AppResult<Option<String>> {
+    Ok(
+        crate::sync::identity::optional_entity_sync_id(db, source_table, source_id)
+            .await?
+            .map(|source| {
+                crate::sync::identity::seeded_entity_sync_id("schedule_candidates", &format!("{source_type}:{source}"))
+            }),
+    )
+}
+
+/// Rebuild the scheduling candidates from the open work. Candidates are derived on every device
+/// from synchronised work orders, PM occurrences and requests, so the refresh is not captured; a
+/// candidate travels when a person commits it to the schedule (`create_schedule_commitment`).
 pub async fn refresh_schedule_candidates(
     db: &DatabaseConnection,
+    input: RefreshScheduleCandidatesInput,
+) -> AppResult<RefreshScheduleCandidatesResult> {
+    let tx = db.begin().await?;
+    crate::sync::capture::begin_suppression(&tx).await?;
+    let result = refresh_schedule_candidates_in(&tx, input).await;
+    crate::sync::capture::end_suppression(&tx).await?;
+    let result = result?;
+    tx.commit().await?;
+    Ok(result)
+}
+
+async fn refresh_schedule_candidates_in(
+    db: &impl ConnectionTrait,
     input: RefreshScheduleCandidatesInput,
 ) -> AppResult<RefreshScheduleCandidatesResult> {
     let limit = input.limit_per_source.unwrap_or(300).clamp(1, 1_000);

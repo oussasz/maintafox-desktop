@@ -1,12 +1,8 @@
 use chrono::{Duration, Utc};
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use uuid::Uuid;
 
 use crate::errors::{AppError, AppResult};
-use crate::sync::domain::{
-    InspectionReliabilitySignalSyncPayload, StageOutboxItemInput, SYNC_ENTITY_INSPECTION_RELIABILITY_SIGNALS,
-};
-use crate::sync::queries::stage_outbox_item;
 
 use super::domain::{
     InspectionReliabilitySignal, InspectionReliabilitySignalsFilter, RefreshInspectionReliabilitySignalsInput,
@@ -42,43 +38,17 @@ fn map_signal(row: &sea_orm::QueryResult) -> AppResult<InspectionReliabilitySign
         row_version: row
             .try_get("", "row_version")
             .map_err(|e| decode_err("row_version", e))?,
+        asset_code: row.try_get("", "asset_code").map_err(|e| decode_err("asset_code", e))?,
+        asset_name: row.try_get("", "asset_name").map_err(|e| decode_err("asset_name", e))?,
     })
 }
 
-async fn stage_signal(db: &DatabaseConnection, row: &InspectionReliabilitySignal) -> AppResult<()> {
-    let payload = InspectionReliabilitySignalSyncPayload {
-        id: row.id,
-        entity_sync_id: row.entity_sync_id.clone(),
-        row_version: row.row_version,
-        equipment_id: row.equipment_id,
-        period_start: row.period_start.clone(),
-        period_end: row.period_end.clone(),
-        warning_count: row.warning_count,
-        fail_count: row.fail_count,
-        anomaly_open_count: row.anomaly_open_count,
-        checkpoint_coverage_ratio: row.checkpoint_coverage_ratio,
-    };
-    let payload_json = serde_json::to_string(&payload)?;
-    stage_outbox_item(
-        db,
-        StageOutboxItemInput {
-            idempotency_key: format!(
-                "inspection_reliability_signals:{}:{}:v{}",
-                row.entity_sync_id, row.period_start, row.row_version
-            ),
-            entity_type: SYNC_ENTITY_INSPECTION_RELIABILITY_SIGNALS.to_string(),
-            entity_sync_id: row.entity_sync_id.clone(),
-            operation: "upsert".to_string(),
-            row_version: row.row_version,
-            payload_json,
-            origin_machine_id: None,
-        },
-    )
-    .await?;
-    Ok(())
-}
+const SIGNAL_SELECT: &str = "SELECT s.id, s.entity_sync_id, s.equipment_id, s.period_start, s.period_end, \
+     s.warning_count, s.fail_count, s.anomaly_open_count, s.checkpoint_coverage_ratio, s.row_version, \
+     e.asset_id_code AS asset_code, e.name AS asset_name \
+     FROM inspection_reliability_signals s LEFT JOIN equipment e ON e.id = s.equipment_id";
 
-async fn count_i64(db: &DatabaseConnection, sql: &str, binds: Vec<sea_orm::Value>) -> AppResult<i64> {
+async fn count_i64(db: &impl ConnectionTrait, sql: &str, binds: Vec<sea_orm::Value>) -> AppResult<i64> {
     let row = db
         .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, sql, binds))
         .await?
@@ -96,15 +66,16 @@ pub async fn refresh_inspection_reliability_signals(
     let start = end - Duration::days(days);
     let period_start = start.to_rfc3339();
     let period_end = end.to_rfc3339();
+    let txn = db.begin().await?;
 
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "DELETE FROM inspection_reliability_signals WHERE period_start = ? AND period_end = ?",
         [period_start.clone().into(), period_end.clone().into()],
     ))
     .await?;
 
-    let eq_rows = db
+    let eq_rows = txn
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
             "SELECT DISTINCT asset_id AS equipment_id FROM inspection_checkpoints WHERE asset_id IS NOT NULL ORDER BY asset_id ASC"
@@ -120,7 +91,7 @@ pub async fn refresh_inspection_reliability_signals(
             .map_err(|e| decode_err("equipment_id", e))?;
 
         let warning_count = count_i64(
-            db,
+            &txn,
             "SELECT COUNT(*) AS c FROM inspection_results ir \
              INNER JOIN inspection_checkpoints cp ON cp.id = ir.checkpoint_id \
              WHERE cp.asset_id = ? AND ir.recorded_at >= ? AND ir.recorded_at <= ? AND ir.result_status = 'warning'",
@@ -133,7 +104,7 @@ pub async fn refresh_inspection_reliability_signals(
         .await?;
 
         let fail_count = count_i64(
-            db,
+            &txn,
             "SELECT COUNT(*) AS c FROM inspection_results ir \
              INNER JOIN inspection_checkpoints cp ON cp.id = ir.checkpoint_id \
              WHERE cp.asset_id = ? AND ir.recorded_at >= ? AND ir.recorded_at <= ? AND ir.result_status = 'fail'",
@@ -146,7 +117,7 @@ pub async fn refresh_inspection_reliability_signals(
         .await?;
 
         let anomaly_open_count = count_i64(
-            db,
+            &txn,
             "SELECT COUNT(*) AS c FROM inspection_anomalies a \
              INNER JOIN inspection_results ir ON ir.id = a.result_id \
              INNER JOIN inspection_checkpoints cp ON cp.id = ir.checkpoint_id \
@@ -161,7 +132,7 @@ pub async fn refresh_inspection_reliability_signals(
         .await?;
 
         let expected_slots = count_i64(
-            db,
+            &txn,
             "SELECT COUNT(*) AS c FROM inspection_rounds r \
              INNER JOIN inspection_checkpoints cp ON cp.template_version_id = r.template_version_id AND cp.asset_id = ? \
              WHERE r.scheduled_at IS NOT NULL AND r.scheduled_at >= ? AND r.scheduled_at <= ?",
@@ -174,7 +145,7 @@ pub async fn refresh_inspection_reliability_signals(
         .await?;
 
         let actual_slots = count_i64(
-            db,
+            &txn,
             "SELECT COUNT(*) AS c FROM ( \
              SELECT DISTINCT ir.round_id, ir.checkpoint_id FROM inspection_results ir \
              INNER JOIN inspection_checkpoints cp ON cp.id = ir.checkpoint_id \
@@ -197,7 +168,7 @@ pub async fn refresh_inspection_reliability_signals(
         };
 
         let entity_sync_id = Uuid::new_v4().to_string();
-        db.execute(Statement::from_sql_and_values(
+        txn.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO inspection_reliability_signals (\
                 entity_sync_id, equipment_id, period_start, period_end, \
@@ -216,7 +187,7 @@ pub async fn refresh_inspection_reliability_signals(
         ))
         .await?;
 
-        let id_row = db
+        let id_row = txn
             .query_one(Statement::from_string(
                 DbBackend::Sqlite,
                 "SELECT last_insert_rowid() AS id".to_string(),
@@ -225,21 +196,19 @@ pub async fn refresh_inspection_reliability_signals(
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
         let id: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
 
-        let row = db
+        let row = txn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT id, entity_sync_id, equipment_id, period_start, period_end, \
-                 warning_count, fail_count, anomaly_open_count, checkpoint_coverage_ratio, row_version \
-                 FROM inspection_reliability_signals WHERE id = ?",
+                format!("{SIGNAL_SELECT} WHERE s.id = ?"),
                 [id.into()],
             ))
             .await?
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("re-read signal")))?;
         let sig = map_signal(&row)?;
-        stage_signal(db, &sig).await?;
         out.push(sig);
     }
 
+    txn.commit().await?;
     Ok(out)
 }
 
@@ -250,19 +219,14 @@ pub async fn list_inspection_reliability_signals(
     let rows = if let Some(eid) = filter.equipment_id {
         db.query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, entity_sync_id, equipment_id, period_start, period_end, \
-             warning_count, fail_count, anomaly_open_count, checkpoint_coverage_ratio, row_version \
-             FROM inspection_reliability_signals WHERE equipment_id = ? ORDER BY period_end DESC, equipment_id ASC",
+            format!("{SIGNAL_SELECT} WHERE s.equipment_id = ? ORDER BY s.period_end DESC, s.equipment_id ASC"),
             [eid.into()],
         ))
         .await?
     } else {
         db.query_all(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT id, entity_sync_id, equipment_id, period_start, period_end, \
-             warning_count, fail_count, anomaly_open_count, checkpoint_coverage_ratio, row_version \
-             FROM inspection_reliability_signals ORDER BY period_end DESC, equipment_id ASC"
-                .to_string(),
+            format!("{SIGNAL_SELECT} ORDER BY s.period_end DESC, s.equipment_id ASC"),
         ))
         .await?
     };

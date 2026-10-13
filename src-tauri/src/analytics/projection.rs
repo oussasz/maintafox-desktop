@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::errors::AppResult;
 use crate::kpi_definitions;
+use crate::reliability::fleet::{pooled_fleet_kpis, pooled_fleet_series, FleetWindow};
+use crate::reliability::readiness::DQ_GREEN_THRESHOLD;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AnalyticsExecutiveFilter {
@@ -230,8 +232,11 @@ pub async fn build_executive_dashboard(
                    AND po.due_at IS NOT NULL
                    AND po.due_at < datetime('now')
                    AND (? IS NULL OR e.installed_at_node_id = ?)";
-            total += count_i64(db, pm_sql, vec![org_bind.clone(), org_bind.clone()]).await?;
-            prev_total += total; // stable baseline when no shifted PM definition
+            let pm_overdue_now = count_i64(db, pm_sql, vec![org_bind.clone(), org_bind.clone()]).await?;
+            total += pm_overdue_now;
+            // No shifted PM definition: the PM part of the baseline is the current PM count
+            // (adding `total` here counted the requests twice).
+            prev_total += pm_overdue_now;
         }
         int_kpi("overdue_items", total, prev_total, None)
     } else {
@@ -312,67 +317,41 @@ pub async fn build_executive_dashboard(
         reliability_snapshot_count,
         reliability_total_events,
     ) = if can_rep {
-        let horizon_shift = format!("-{horizon} days");
-        let row = db
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT COUNT(*) AS snapshot_count,
-                        AVG(CASE WHEN s.mtbf IS NOT NULL AND s.mtbf > 0 THEN s.mtbf END) AS avg_mtbf,
-                        AVG(CASE WHEN s.mttr IS NOT NULL AND s.mttr > 0 THEN s.mttr END) AS avg_mttr,
-                        AVG(CASE WHEN s.availability IS NOT NULL THEN s.availability END) AS avg_avail,
-                        AVG(s.data_quality_score) AS avg_dq,
-                        COALESCE(SUM(s.event_count), 0) AS total_ev
-                 FROM reliability_kpi_snapshots s
-                 LEFT JOIN equipment e ON e.id = s.equipment_id
-                 WHERE datetime(s.period_end) >= datetime('now', ?)
-                   AND (? IS NULL OR e.installed_at_node_id = ?)",
-                [horizon_shift.clone().into(), org_bind.clone(), org_bind.clone()],
-            ))
-            .await?;
-        let prev_shift = format!("-{} days", horizon * 2);
-        let prev_row = db
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT AVG(CASE WHEN s.mtbf IS NOT NULL AND s.mtbf > 0 THEN s.mtbf END) AS avg_mtbf,
-                        AVG(CASE WHEN s.mttr IS NOT NULL AND s.mttr > 0 THEN s.mttr END) AS avg_mttr,
-                        AVG(CASE WHEN s.availability IS NOT NULL THEN s.availability END) AS avg_avail,
-                        AVG(s.data_quality_score) AS avg_dq
-                 FROM reliability_kpi_snapshots s
-                 LEFT JOIN equipment e ON e.id = s.equipment_id
-                 WHERE datetime(s.period_end) >= datetime('now', ?)
-                   AND datetime(s.period_end) < datetime('now', ?)
-                   AND (? IS NULL OR e.installed_at_node_id = ?)",
-                [
-                    prev_shift.into(),
-                    horizon_shift.into(),
-                    org_bind.clone(),
-                    org_bind.clone(),
-                ],
-            ))
-            .await?;
-
-        let (snap_n, mtbf, mttr, avail, dq, ev) = if let Some(r) = row {
-            (
-                i64::try_get(&r, "", "snapshot_count").unwrap_or(0),
-                f64::try_get(&r, "", "avg_mtbf").ok(),
-                f64::try_get(&r, "", "avg_mttr").ok(),
-                f64::try_get(&r, "", "avg_avail").ok(),
-                f64::try_get(&r, "", "avg_dq").ok(),
-                i64::try_get(&r, "", "total_ev").unwrap_or(0),
-            )
-        } else {
-            (0, None, None, None, None, 0)
-        };
-        let (p_mtbf, p_mttr, p_avail, p_dq) = if let Some(r) = prev_row {
-            (
-                f64::try_get(&r, "", "avg_mtbf").ok(),
-                f64::try_get(&r, "", "avg_mttr").ok(),
-                f64::try_get(&r, "", "avg_avail").ok(),
-                f64::try_get(&r, "", "avg_dq").ok(),
-            )
-        } else {
-            (None, None, None, None)
-        };
+        // Pooled ratios over the latest snapshot per equipment (never mean of ratios).
+        let cur = pooled_fleet_kpis(
+            db,
+            FleetWindow {
+                since_days: horizon,
+                until_days: None,
+            },
+            org,
+            DQ_GREEN_THRESHOLD,
+        )
+        .await?;
+        let prev = pooled_fleet_kpis(
+            db,
+            FleetWindow {
+                since_days: horizon * 2,
+                until_days: Some(horizon),
+            },
+            org,
+            DQ_GREEN_THRESHOLD,
+        )
+        .await?;
+        let (snap_n, mtbf, mttr, avail, dq, ev) = (
+            cur.equipment_count,
+            cur.mtbf_hours,
+            cur.mttr_hours,
+            cur.availability_operational,
+            cur.mean_data_quality_score,
+            cur.total_failure_events,
+        );
+        let (p_mtbf, p_mttr, p_avail, p_dq) = (
+            prev.mtbf_hours,
+            prev.mttr_hours,
+            prev.availability_operational,
+            prev.mean_data_quality_score,
+        );
         (
             float_kpi("avg_mtbf_hours", mtbf, p_mtbf, Some(kpi_definitions::catalog::MTBF)),
             float_kpi("avg_mttr_hours", mttr, p_mttr, Some(kpi_definitions::catalog::MTTR)),
@@ -574,42 +553,32 @@ pub async fn build_executive_dashboard(
         Vec::new()
     };
 
-    // ── RAMS series (fleet averages by snapshot date) + closed-WO cost by day ─
+    // ── RAMS series (pooled fleet ratios by snapshot date) + closed-WO cost by day ─
     let mut reliability_series: Vec<AnalyticsReliabilitySeriesPoint> = Vec::new();
     if can_rep {
         let horizon_shift = format!("-{horizon} days");
-        let rows = db
-            .query_all(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT date(s.period_end) AS d,
-                        AVG(CASE WHEN s.mtbf IS NOT NULL AND s.mtbf > 0 THEN s.mtbf END) AS avg_mtbf,
-                        AVG(CASE WHEN s.mttr IS NOT NULL AND s.mttr > 0 THEN s.mttr END) AS avg_mttr,
-                        AVG(CASE WHEN s.availability IS NOT NULL THEN s.availability END) AS avg_avail,
-                        AVG(s.data_quality_score) AS avg_dq
-                 FROM reliability_kpi_snapshots s
-                 LEFT JOIN equipment e ON e.id = s.equipment_id
-                 WHERE datetime(s.period_end) >= datetime('now', ?)
-                   AND (? IS NULL OR e.installed_at_node_id = ?)
-                 GROUP BY date(s.period_end)
-                 ORDER BY d",
-                [horizon_shift.clone().into(), org_bind.clone(), org_bind.clone()],
-            ))
-            .await?;
         use std::collections::BTreeMap;
         let mut by_date: BTreeMap<String, AnalyticsReliabilitySeriesPoint> = BTreeMap::new();
-        for r in rows {
-            let date: String = r.try_get("", "d").unwrap_or_default();
-            if date.is_empty() {
-                continue;
-            }
+        // Pooled per date over the latest snapshot per equipment on that date.
+        for (date, k) in pooled_fleet_series(
+            db,
+            FleetWindow {
+                since_days: horizon,
+                until_days: None,
+            },
+            org,
+            DQ_GREEN_THRESHOLD,
+        )
+        .await?
+        {
             by_date.insert(
                 date.clone(),
                 AnalyticsReliabilitySeriesPoint {
                     date,
-                    avg_mtbf: f64::try_get(&r, "", "avg_mtbf").ok(),
-                    avg_mttr: f64::try_get(&r, "", "avg_mttr").ok(),
-                    avg_availability: f64::try_get(&r, "", "avg_avail").ok(),
-                    avg_data_quality: f64::try_get(&r, "", "avg_dq").ok(),
+                    avg_mtbf: k.mtbf_hours,
+                    avg_mttr: k.mttr_hours,
+                    avg_availability: k.availability_operational,
+                    avg_data_quality: k.mean_data_quality_score,
                     maintenance_cost: None,
                 },
             );

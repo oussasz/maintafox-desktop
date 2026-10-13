@@ -619,6 +619,7 @@ pub async fn seed_reference_demo_data(db: &DatabaseConnection) -> AppResult<()> 
                 seed_ref_values(
                     db,
                     set_id,
+                    code,
                     &[
                         ("POMPES", "Pompes", None, 1, None),
                         ("MOTEURS", "Moteurs électriques", None, 2, None),
@@ -635,6 +636,7 @@ pub async fn seed_reference_demo_data(db: &DatabaseConnection) -> AppResult<()> 
                 seed_ref_values(
                     db,
                     set_id,
+                    code,
                     &[
                         ("POMPES.CENTRIFUGES", "Pompes centrifuges", Some(parent), 1, None),
                         ("POMPES.ENGRENAGES", "Pompes à engrenages", Some(parent), 2, None),
@@ -648,6 +650,7 @@ pub async fn seed_reference_demo_data(db: &DatabaseConnection) -> AppResult<()> 
                 seed_ref_values(
                     db,
                     set_id,
+                    code,
                     &[
                         ("ROTATING", "Machines tournantes", None, 1, None),
                         ("STATIC", "Équipements statiques", None, 2, None),
@@ -662,6 +665,7 @@ pub async fn seed_reference_demo_data(db: &DatabaseConnection) -> AppResult<()> 
                 seed_ref_values(
                     db,
                     set_id,
+                    code,
                     &[
                         ("IN_SERVICE", "En service", None, 1, Some("#198754")),
                         ("OUT_OF_SERVICE", "Hors service", None, 2, Some("#dc3545")),
@@ -676,6 +680,7 @@ pub async fn seed_reference_demo_data(db: &DatabaseConnection) -> AppResult<()> 
                 seed_ref_values(
                     db,
                     set_id,
+                    code,
                     &[
                         ("P1_CRITICAL", "P1 – Critique", None, 1, Some("#dc3545")),
                         ("P2_HIGH", "P2 – Haute", None, 2, Some("#fd7e14")),
@@ -690,6 +695,7 @@ pub async fn seed_reference_demo_data(db: &DatabaseConnection) -> AppResult<()> 
                 seed_ref_values(
                     db,
                     set_id,
+                    code,
                     &[
                         ("MECHANICAL", "Défaillance mécanique", None, 1, None),
                         ("ELECTRICAL", "Défaillance électrique", None, 2, None),
@@ -704,6 +710,7 @@ pub async fn seed_reference_demo_data(db: &DatabaseConnection) -> AppResult<()> 
                 seed_ref_values(
                     db,
                     set_id,
+                    code,
                     &[
                         ("MECH.BEARING", "Roulement défectueux", Some(mech), 1, None),
                         ("MECH.VIBRATION", "Vibration excessive", Some(mech), 2, None),
@@ -717,6 +724,7 @@ pub async fn seed_reference_demo_data(db: &DatabaseConnection) -> AppResult<()> 
                 seed_ref_values(
                     db,
                     set_id,
+                    code,
                     &[
                         ("MECH_GENERAL", "Mécanique générale", None, 1, None),
                         ("ELEC_INDUSTRIAL", "Électricité industrielle", None, 2, None),
@@ -732,6 +740,7 @@ pub async fn seed_reference_demo_data(db: &DatabaseConnection) -> AppResult<()> 
                 seed_ref_values(
                     db,
                     set_id,
+                    code,
                     &[
                         ("ELEC_HAB", "Habilitation électrique", None, 1, None),
                         ("HEIGHT_CERT", "Travail en hauteur", None, 2, None),
@@ -747,6 +756,7 @@ pub async fn seed_reference_demo_data(db: &DatabaseConnection) -> AppResult<()> 
                 seed_ref_values(
                     db,
                     set_id,
+                    code,
                     &[
                         ("DAY_SHIFT", "Journée normale", None, 1, None),
                         ("NIGHT_SHIFT", "Équipe de nuit", None, 2, None),
@@ -792,7 +802,14 @@ pub async fn seed_reference_demo_data(db: &DatabaseConnection) -> AppResult<()> 
             }
             _ => {
                 // ORG.POSITIONS — minimal seed
-                seed_ref_values(db, set_id, &[("DEFAULT", "Valeur par défaut", None, 1, None)], &now).await?;
+                seed_ref_values(
+                    db,
+                    set_id,
+                    code,
+                    &[("DEFAULT", "Valeur par défaut", None, 1, None)],
+                    &now,
+                )
+                .await?;
             }
         }
 
@@ -817,6 +834,7 @@ pub async fn seed_reference_demo_data(db: &DatabaseConnection) -> AppResult<()> 
 async fn seed_ref_values(
     db: &DatabaseConnection,
     set_id: i64,
+    domain_code: &str,
     values: &[(&str, &str, Option<i64>, i32, Option<&str>)],
     now: &str,
 ) -> AppResult<()> {
@@ -824,9 +842,11 @@ async fn seed_ref_values(
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             r"INSERT INTO reference_values
-                (set_id, parent_id, code, label, sort_order, color_hex, is_active, created_at)
-              VALUES (?, ?, ?, ?, ?, ?, 1, ?)",
+                (entity_sync_id, set_id, parent_id, code, label, sort_order, color_hex, is_active, created_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)",
             [
+                crate::sync::identity::seeded_entity_sync_id("reference_values", &format!("{domain_code}:{code}"))
+                    .into(),
                 set_id.into(),
                 parent_id.map_or(sea_orm::Value::String(None), |v| v.into()),
                 (*code).into(),
@@ -1155,13 +1175,14 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             r"INSERT INTO work_orders (
-                code, type_id, status_id, equipment_id, entity_id,
+                entity_sync_id, code, type_id, status_id, equipment_id, entity_id,
                 requester_id, planner_id, urgency_id,
                 title, description,
                 planned_start, planned_end, expected_duration_hours,
                 row_version, created_at, updated_at
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
             [
+                crate::sync::identity::new_entity_sync_id().into(),
                 code.into(),
                 (*type_id).into(),
                 (*sid).into(),
@@ -1208,10 +1229,9 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
             ] {
                 db.execute(Statement::from_sql_and_values(
                     DbBackend::Sqlite,
-                    "INSERT INTO work_order_tasks \
-                     (work_order_id, task_description, sequence_order, is_mandatory, is_completed) \
-                     VALUES (?, ?, ?, ?, 0)",
-                    [wo_id.into(), task_desc.into(), seq.into(), (mandatory as i32).into()],
+                    "INSERT INTO work_order_tasks (entity_sync_id, work_order_id, task_description, sequence_order, is_mandatory, is_completed) \
+                     VALUES (?, ?, ?, ?, ?, 0)",
+                    [crate::sync::identity::new_entity_sync_id().into(), wo_id.into(), task_desc.into(), seq.into(), (mandatory as i32).into()],
                 ))
                 .await?;
             }
@@ -1229,10 +1249,9 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
             // Labor / intervener
             db.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "INSERT INTO work_order_interveners \
-                 (work_order_id, intervener_id, started_at, hours_worked, hourly_rate, notes) \
-                 VALUES (?, ?, '2026-04-12T08:00:00Z', 4.0, 45.0, 'Diagnostic mécanique en cours')",
-                [wo_id.into(), admin_id.into()],
+                "INSERT INTO work_order_interveners (entity_sync_id, work_order_id, intervener_id, started_at, hours_worked, hourly_rate, notes) \
+                 VALUES (?, ?, ?, '2026-04-12T08:00:00Z', 4.0, 45.0, 'Diagnostic mécanique en cours')",
+                [crate::sync::identity::new_entity_sync_id().into(), wo_id.into(), admin_id.into()],
             ))
             .await?;
         }
@@ -1249,10 +1268,9 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
             ] {
                 db.execute(Statement::from_sql_and_values(
                     DbBackend::Sqlite,
-                    "INSERT INTO work_order_tasks \
-                     (work_order_id, task_description, sequence_order, is_mandatory, is_completed, completed_by_id, completed_at) \
-                     VALUES (?, ?, ?, 1, 1, ?, '2026-04-06T14:00:00Z')",
-                    [wo_id.into(), task_desc.into(), seq.into(), admin_id.into()],
+                    "INSERT INTO work_order_tasks (entity_sync_id, work_order_id, task_description, sequence_order, is_mandatory, is_completed, completed_by_id, completed_at) \
+                     VALUES (?, ?, ?, ?, 1, 1, ?, '2026-04-06T14:00:00Z')",
+                    [crate::sync::identity::new_entity_sync_id().into(), wo_id.into(), task_desc.into(), seq.into(), admin_id.into()],
                 ))
                 .await?;
             }
@@ -1283,10 +1301,9 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
             // Labor
             db.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "INSERT INTO work_order_interveners \
-                 (work_order_id, intervener_id, started_at, ended_at, hours_worked, hourly_rate, notes) \
-                 VALUES (?, ?, '2026-04-05T08:00:00Z', '2026-04-06T16:00:00Z', 12.0, 45.0, 'Remplacement complet roulement + alignement')",
-                [wo_id.into(), admin_id.into()],
+                "INSERT INTO work_order_interveners (entity_sync_id, work_order_id, intervener_id, started_at, ended_at, hours_worked, hourly_rate, notes) \
+                 VALUES (?, ?, ?, '2026-04-05T08:00:00Z', '2026-04-06T16:00:00Z', 12.0, 45.0, 'Remplacement complet roulement + alignement')",
+                [crate::sync::identity::new_entity_sync_id().into(), wo_id.into(), admin_id.into()],
             ))
             .await?;
 
@@ -1315,27 +1332,24 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
         if *demo_key == "demo_009" {
             db.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "INSERT INTO work_order_tasks \
-                 (work_order_id, task_description, sequence_order, is_mandatory, is_completed, completed_by_id, completed_at) \
-                 VALUES (?, 'Démonter vanne et remplacer garniture', 1, 1, 1, ?, '2026-04-08T14:00:00Z')",
-                [wo_id.into(), admin_id.into()],
+                "INSERT INTO work_order_tasks (entity_sync_id, work_order_id, task_description, sequence_order, is_mandatory, is_completed, completed_by_id, completed_at) \
+                 VALUES (?, ?, 'Démonter vanne et remplacer garniture', 1, 1, 1, ?, '2026-04-08T14:00:00Z')",
+                [crate::sync::identity::new_entity_sync_id().into(), wo_id.into(), admin_id.into()],
             ))
             .await?;
             db.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "INSERT INTO work_order_tasks \
-                 (work_order_id, task_description, sequence_order, is_mandatory, is_completed) \
-                 VALUES (?, 'Test étanchéité sous pression', 2, 1, 0)",
-                [wo_id.into()],
+                "INSERT INTO work_order_tasks (entity_sync_id, work_order_id, task_description, sequence_order, is_mandatory, is_completed) \
+                 VALUES (?, ?, 'Test étanchéité sous pression', 2, 1, 0)",
+                [crate::sync::identity::new_entity_sync_id().into(), wo_id.into()],
             ))
             .await?;
 
             db.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "INSERT INTO work_order_interveners \
-                 (work_order_id, intervener_id, started_at, ended_at, hours_worked, hourly_rate) \
-                 VALUES (?, ?, '2026-04-08T08:00:00Z', '2026-04-08T15:00:00Z', 5.0, 45.0)",
-                [wo_id.into(), admin_id.into()],
+                "INSERT INTO work_order_interveners (entity_sync_id, work_order_id, intervener_id, started_at, ended_at, hours_worked, hourly_rate) \
+                 VALUES (?, ?, ?, '2026-04-08T08:00:00Z', '2026-04-08T15:00:00Z', 5.0, 45.0)",
+                [crate::sync::identity::new_entity_sync_id().into(), wo_id.into(), admin_id.into()],
             ))
             .await?;
 
@@ -1353,26 +1367,23 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
         if *demo_key == "demo_011" {
             db.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "INSERT INTO work_order_tasks \
-                 (work_order_id, task_description, sequence_order, is_mandatory, is_completed, completed_by_id, completed_at) \
-                 VALUES (?, 'Vidanger huile usagée', 1, 1, 1, ?, '2026-04-01T09:30:00Z')",
-                [wo_id.into(), admin_id.into()],
+                "INSERT INTO work_order_tasks (entity_sync_id, work_order_id, task_description, sequence_order, is_mandatory, is_completed, completed_by_id, completed_at) \
+                 VALUES (?, ?, 'Vidanger huile usagée', 1, 1, 1, ?, '2026-04-01T09:30:00Z')",
+                [crate::sync::identity::new_entity_sync_id().into(), wo_id.into(), admin_id.into()],
             ))
             .await?;
             db.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "INSERT INTO work_order_tasks \
-                 (work_order_id, task_description, sequence_order, is_mandatory, is_completed, completed_by_id, completed_at) \
-                 VALUES (?, 'Remplacer filtre huile', 2, 1, 1, ?, '2026-04-01T10:00:00Z')",
-                [wo_id.into(), admin_id.into()],
+                "INSERT INTO work_order_tasks (entity_sync_id, work_order_id, task_description, sequence_order, is_mandatory, is_completed, completed_by_id, completed_at) \
+                 VALUES (?, ?, 'Remplacer filtre huile', 2, 1, 1, ?, '2026-04-01T10:00:00Z')",
+                [crate::sync::identity::new_entity_sync_id().into(), wo_id.into(), admin_id.into()],
             ))
             .await?;
             db.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "INSERT INTO work_order_tasks \
-                 (work_order_id, task_description, sequence_order, is_mandatory, is_completed, completed_by_id, completed_at) \
-                 VALUES (?, 'Remplir huile neuve et vérifier niveau', 3, 1, 1, ?, '2026-04-01T10:30:00Z')",
-                [wo_id.into(), admin_id.into()],
+                "INSERT INTO work_order_tasks (entity_sync_id, work_order_id, task_description, sequence_order, is_mandatory, is_completed, completed_by_id, completed_at) \
+                 VALUES (?, ?, 'Remplir huile neuve et vérifier niveau', 3, 1, 1, ?, '2026-04-01T10:30:00Z')",
+                [crate::sync::identity::new_entity_sync_id().into(), wo_id.into(), admin_id.into()],
             ))
             .await?;
 
@@ -1395,10 +1406,9 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
 
             db.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "INSERT INTO work_order_interveners \
-                 (work_order_id, intervener_id, started_at, ended_at, hours_worked, hourly_rate) \
-                 VALUES (?, ?, '2026-04-01T08:00:00Z', '2026-04-01T11:00:00Z', 3.0, 45.0)",
-                [wo_id.into(), admin_id.into()],
+                "INSERT INTO work_order_interveners (entity_sync_id, work_order_id, intervener_id, started_at, ended_at, hours_worked, hourly_rate) \
+                 VALUES (?, ?, ?, '2026-04-01T08:00:00Z', '2026-04-01T11:00:00Z', 3.0, 45.0)",
+                [crate::sync::identity::new_entity_sync_id().into(), wo_id.into(), admin_id.into()],
             ))
             .await?;
 
@@ -1561,11 +1571,12 @@ async fn insert_di(
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO intervention_requests
-            (code, equipment_id, org_node_id, status, title, description, origin_type,
+            (entity_sync_id, code, equipment_id, org_node_id, status, title, description, origin_type,
              impact_level, production_impact, safety_flag, environmental_flag, quality_flag,
              reported_urgency, submitted_at, submitter_id, row_version, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, 'unknown', 0, ?, 0, 0, ?, ?, ?, 1, ?, ?)",
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'unknown', 0, ?, 0, 0, ?, ?, ?, 1, ?, ?)",
         [
+            crate::sync::identity::new_entity_sync_id().into(),
             code.into(),
             asset_id.into(),
             org_node_id.into(),

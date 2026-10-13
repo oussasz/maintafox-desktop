@@ -271,10 +271,10 @@ function SyncIndicator({
       <span
         className="flex items-center gap-1 rounded px-2 py-1 text-xs
                    bg-status-warning/10 text-status-warning"
-        title={t("sync.error")}
+        title={t("sync.indicator.degradedTitle")}
       >
         <AlertCircle className="h-3.5 w-3.5" />
-        <span className="hidden sm:inline">Degraded</span>
+        <span className="hidden sm:inline">{t("sync.indicator.degraded")}</span>
       </span>
     );
   }
@@ -284,10 +284,14 @@ function SyncIndicator({
       <span
         className="flex items-center gap-1 rounded px-2 py-1 text-xs
                    bg-status-warning/10 text-status-warning"
-        title={state === "paused" ? "Sync paused by operator policy" : "Sync blocked by policy"}
+        title={
+          state === "paused" ? t("sync.indicator.pausedTitle") : t("sync.indicator.blockedTitle")
+        }
       >
         <AlertCircle className="h-3.5 w-3.5" />
-        <span className="hidden sm:inline">{state === "paused" ? "Paused" : "Blocked"}</span>
+        <span className="hidden sm:inline">
+          {state === "paused" ? t("sync.indicator.paused") : t("sync.indicator.blocked")}
+        </span>
       </span>
     );
   }

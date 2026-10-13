@@ -24,6 +24,7 @@
 pub mod aliases;
 pub mod domains;
 pub mod governance;
+pub mod impact;
 pub mod imports;
 pub mod migrations;
 pub mod protected;
@@ -41,6 +42,8 @@ mod aliases_tests;
 mod domains_tests;
 #[cfg(test)]
 mod governance_tests;
+#[cfg(test)]
+mod impact_tests;
 #[cfg(test)]
 mod imports_tests;
 #[cfg(test)]

@@ -631,33 +631,21 @@ pub async fn get_dashboard_reliability_snapshot_summary(
             total_failure_events: 0,
         });
     }
-    let row = state
-        .db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            r"SELECT COUNT(*) AS snapshot_count,
-                     AVG(data_quality_score) AS avg_dq,
-                     AVG(CASE WHEN mtbf IS NOT NULL AND mtbf > 0 THEN mtbf END) AS avg_mtbf,
-                     SUM(event_count) AS total_ev
-              FROM reliability_kpi_snapshots
-              WHERE datetime(period_end) >= datetime('now', '-365 days')"
-                .to_string(),
-        ))
-        .await?;
-    let Some(r) = row else {
-        return Ok(DashboardReliabilitySnapshotSummary {
-            available: true,
-            snapshot_count: 0,
-            avg_data_quality_score: None,
-            avg_mtbf_hours: None,
-            total_failure_events: 0,
-        });
-    };
-    use sea_orm::TryGetable;
-    let snapshot_count: i64 = i64::try_get(&r, "", "snapshot_count").unwrap_or(0);
-    let avg_dq: Option<f64> = f64::try_get(&r, "", "avg_dq").ok();
-    let avg_mtbf: Option<f64> = f64::try_get(&r, "", "avg_mtbf").ok();
-    let total_ev: i64 = i64::try_get(&r, "", "total_ev").unwrap_or(0);
+    // Pooled fleet ratios over the latest snapshot per equipment (never mean of ratios).
+    let fleet = crate::reliability::fleet::pooled_fleet_kpis(
+        &state.db,
+        crate::reliability::fleet::FleetWindow {
+            since_days: 365,
+            until_days: None,
+        },
+        None,
+        crate::reliability::readiness::DQ_GREEN_THRESHOLD,
+    )
+    .await?;
+    let snapshot_count = fleet.equipment_count;
+    let avg_dq = fleet.mean_data_quality_score;
+    let avg_mtbf = fleet.mtbf_hours;
+    let total_ev = fleet.total_failure_events;
     Ok(DashboardReliabilitySnapshotSummary {
         available: true,
         snapshot_count,

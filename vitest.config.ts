@@ -9,16 +9,16 @@ export default defineConfig({
     include: ["src/**/*.{test,spec}.{ts,tsx}"],
     coverage: {
       provider: "v8",
-      include: ["src/services/**", "src/hooks/**", "src/store/**"],
+      include: ["src/services/**", "src/hooks/**", "src/store/**", "src/stores/**"],
       exclude: ["src/test/**", "**/*.d.ts"],
-      // Ratchet, not target: floors at measured coverage (2026-10-10: lines/statements 31.9%,
-      // functions 24.65%, branches 81.77%) so coverage cannot regress. The 70/60/60/70 goal was
-      // never met (CI never reached this job before). Raise these as tests are added.
+      // Ratchet, not target: floors at measured coverage so it cannot regress. 2026-10-12, with
+      // src/stores (the zustand stores) now included and tested: lines/statements 62.49%,
+      // functions 55.24%, branches 93.27%. Raise these as tests are added; never lower them.
       thresholds: {
-        lines: 31,
-        functions: 24,
-        branches: 80,
-        statements: 31,
+        lines: 62,
+        functions: 55,
+        branches: 93,
+        statements: 62,
       },
       reporter: ["text", "lcov"],
     },

@@ -183,7 +183,10 @@ mod tests {
 
         let mut codes = vec![c1, c2];
         codes.sort();
-        assert_eq!(codes, vec!["PER-0001".to_string(), "PER-0002".to_string()]);
+        let dev = crate::sync::device_code::this_device_code(&db_a)
+            .await
+            .expect("device code");
+        assert_eq!(codes, vec![format!("PER-{dev}-0001"), format!("PER-{dev}-0002")]);
 
         let n: i64 = db_a
             .query_one(Statement::from_string(

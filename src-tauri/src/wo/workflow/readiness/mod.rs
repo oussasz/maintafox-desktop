@@ -182,7 +182,7 @@ async fn load_material_readiness_snapshot(
     Ok((total, missing == 0, ready_pct, reserved_pct, missing, expected_arrival))
 }
 
-async fn load_approval_policy(db: &impl ConnectionTrait) -> AppResult<bool> {
+pub(crate) async fn load_approval_policy(db: &impl ConnectionTrait) -> AppResult<bool> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,

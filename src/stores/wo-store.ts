@@ -8,11 +8,12 @@
 
 import { create } from "zustand";
 
+import { createLatestRequestGuard } from "@/lib/latest-request";
 import { closeWo } from "@/services/wo-closeout-service";
 import {
+  CompletionBlockedError,
   assignWo,
   cancelWo,
-  CompletionBlockedError,
   completeWoMechanically,
   createWo,
   getWo,
@@ -49,6 +50,8 @@ export interface WoDetailPayload {
 }
 
 const DEFAULT_FILTER: WoListFilter = { limit: 50, offset: 0 };
+
+const requests = createLatestRequestGuard();
 
 interface WoStoreState {
   // List
@@ -122,6 +125,8 @@ export const useWoStore = create<WoStoreState>()((set, get) => ({
   },
 
   closeActiveWo: () => {
+    // A detail still loading must not reopen the dialog that was just closed.
+    requests.invalidate("openWo");
     set({ activeWo: null, detailLoading: false, openingWoId: null });
   },
 
@@ -144,18 +149,21 @@ export const useWoStore = create<WoStoreState>()((set, get) => ({
   },
 
   loadWos: async () => {
+    // Filters change faster than the list loads: only the latest list may land.
+    const isCurrent = requests.begin("loadWos");
     set({ loading: true, error: null });
     try {
       const page = await listWos(get().filter);
-      set({ items: page.items, total: page.total });
+      if (!isCurrent()) return;
+      set({ items: page.items, total: page.total, loading: false });
     } catch (err) {
-      set({ error: toErrorMessage(err) });
-    } finally {
-      set({ loading: false });
+      if (!isCurrent()) return;
+      set({ error: toErrorMessage(err), loading: false });
     }
   },
 
   openWo: async (id) => {
+    const isCurrent = requests.begin("openWo");
     const current = get().activeWo;
     const keepCurrent = current?.wo.id === id;
     set({
@@ -166,12 +174,14 @@ export const useWoStore = create<WoStoreState>()((set, get) => ({
     });
     try {
       const resp = await getWo(id);
+      if (!isCurrent()) return;
       set({
         activeWo: { wo: resp.wo, transitions: resp.transitions },
         detailLoading: false,
         openingWoId: null,
       });
     } catch (err) {
+      if (!isCurrent()) return;
       set({
         error: toErrorMessage(err),
         detailLoading: false,

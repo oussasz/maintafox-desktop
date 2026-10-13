@@ -25,7 +25,6 @@ use crate::errors::{AppError, AppResult};
 use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -801,7 +800,7 @@ pub async fn create_asset(db: &DatabaseConnection, payload: CreateAssetPayload, 
     // (Full class-policy enforcement deferred to File 04.)
 
     let now = Utc::now().to_rfc3339();
-    let entity_sync_id = Uuid::new_v4().to_string();
+    let entity_sync_id = crate::sync::identity::new_entity_sync_id();
 
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -868,10 +867,6 @@ pub async fn create_asset(db: &DatabaseConnection, payload: CreateAssetPayload, 
     txn.commit().await?;
 
     tracing::info!(asset_id, "asset created");
-    crate::sync::foundation_stage::warn_stage(
-        crate::wo::sync_stage::stage_equipment_sync(db, asset_id).await,
-        "equipment create",
-    );
     Ok(asset)
 }
 
@@ -1127,10 +1122,6 @@ pub async fn update_asset_identity(
     txn.commit().await?;
 
     tracing::info!(asset_id, "asset identity updated");
-    crate::sync::foundation_stage::warn_stage(
-        crate::wo::sync_stage::stage_equipment_sync(db, asset_id).await,
-        "equipment update",
-    );
     Ok(asset)
 }
 

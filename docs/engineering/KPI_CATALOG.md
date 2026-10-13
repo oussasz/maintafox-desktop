@@ -1312,11 +1312,12 @@ Module:
 Reliability / RAMS & Analytics
 
 Description:
-Average operating exposure hours between eligible failure events for an equipment (or fleet aggregate of snapshot MTBF values). Core RAMS reliability indicator for the Analytics hub.
+Operating exposure (uptime) hours per eligible unplanned failure for a repairable equipment. Core RAMS reliability indicator for the Analytics hub. Non-repairable equipment (`equipment.rams_is_repairable = 0`) report MTTF instead (same ratio, stored in `reliability_kpi_snapshots.mttf`; `mtbf` is NULL).
 
 Formula:
 MTBF_hours = t_exp_hours / eligible_failure_count
-(Fleet hub widget may average non-null positive snapshot MTBF over a horizon)
+Fleet: pooled ratio over the latest snapshot per equipment in the horizon whose data_quality_score ≥ 0.85 (`DQ_GREEN_THRESHOLD`):
+Fleet_MTBF = Σ exposure_hours / Σ event_count (repairable equipment only). Never an average of per-asset MTBF values. See `reliability/fleet.rs`.
 
 Inputs:
 - `runtime_exposure_logs` / inferred exposure hours
@@ -1349,6 +1350,7 @@ Average active repair hours per repair-eligible failure event.
 
 Formula:
 MTTR_hours = sum(active_repair_hours) / repair_event_count
+Fleet: Σ active_repair_hours_total / Σ repair_event_count over the latest qualified snapshot per equipment (pooled, not averaged).
 
 Inputs:
 - Repair duration on eligible failure / WO closeout events
@@ -1369,24 +1371,29 @@ Partial
 # KPI-035
 
 Nom:
-Operational Availability %
+Operational Availability % (A_o)
 
 Module:
 Reliability / RAMS & Analytics
 
 Description:
-Share of exposure time that the asset was available (not in counted downtime) over the analysis window.
+Operational availability A_o (PRD §6.10.2, MIL-HDBK-911 aligned): uptime over uptime plus all downtime, where downtime is the wall-clock equipment-down time of eligible failures and therefore already includes waiting / logistics / administrative delay incurred while down. `t_exp_hours` is governed operating exposure, i.e. uptime, so downtime is added to the denominator — it is never subtracted from exposure (the pre-v2 formula `(t_exp − downtime) / t_exp` double-counted it).
+
+Inherent availability A_i is reported alongside (not under this id): A_i = t_exp / (t_exp + Σ active_repair_hours) — corrective repair time only, no logistics delay (equivalent to MTBF / (MTBF + MTTR)).
 
 Formula:
-Availability = (t_exp_hours - downtime_hours) / t_exp_hours
+A_o = t_exp_hours / (t_exp_hours + downtime_hours)
+A_i = t_exp_hours / (t_exp_hours + active_repair_hours)
+Fleet: Σ exposure_hours / (Σ exposure_hours + Σ downtime_hours_total) over the latest qualified snapshot per equipment (pooled).
 
 Inputs:
-- Exposure hours and downtime hours used by `reliability/compute.rs`
-- `reliability_kpi_snapshots.availability`
+- Exposure hours and downtime hours used by `reliability/compute.rs` (`algorithm_version = reliability_kpi_v2`)
+- `reliability_kpi_snapshots.availability_operational` (also written to `availability` for existing consumers)
+- `reliability_kpi_snapshots.availability_inherent`
 
 Required fields:
-- `t_exp_hours`, downtime hours
-- `reliability_kpi_snapshots.availability`
+- `t_exp_hours`, downtime hours, active repair hours
+- `reliability_kpi_snapshots.availability_operational`, `availability_inherent`, `exposure_hours`, `downtime_hours_total`
 
 Displayed:
 - Deep RAMS KPI snapshots; planned Executive Dashboards (M1)

@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
-use crate::notifications::{Result, SqlitePool};
+use crate::notifications::Result;
 
 #[derive(Debug, Clone, Default)]
 pub struct RoutingResult {
@@ -11,7 +11,7 @@ pub struct RoutingResult {
 }
 
 pub async fn resolve_recipients(
-    pool: &SqlitePool,
+    pool: &impl ConnectionTrait,
     routing_mode: &str,
     payload: &serde_json::Value,
 ) -> Result<RoutingResult> {
@@ -301,7 +301,7 @@ fn as_i64(value: &serde_json::Value) -> Option<i64> {
 }
 
 async fn query_optional_i64<const N: usize>(
-    pool: &SqlitePool,
+    pool: &impl ConnectionTrait,
     sql: &str,
     values: [sea_orm::Value; N],
     col: &str,

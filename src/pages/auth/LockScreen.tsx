@@ -42,9 +42,7 @@ export function LockScreen({
   useEffect(() => {
     if (pinDisabled && mode === "pin") {
       setMode("password");
-      setError(
-        t("session.pin.tooManyAttempts", "Trop de tentatives. Utilisez votre mot de passe."),
-      );
+      setError(t("session.pin.tooManyAttempts"));
     }
   }, [pinDisabled, mode, t]);
 
@@ -81,8 +79,7 @@ export function LockScreen({
       try {
         await onUnlockWithPin(pin);
       } catch (err) {
-        const message =
-          err instanceof Error ? err.message : t("session.pin.invalid", "PIN incorrect.");
+        const message = err instanceof Error ? err.message : t("session.pin.invalid");
 
         if (
           message.toLowerCase().includes("pin désactivé") ||
@@ -181,9 +178,7 @@ export function LockScreen({
         {/* PIN mode */}
         {mode === "pin" && (
           <div className="mt-6 space-y-4">
-            <p className="text-sm text-text-secondary">
-              {t("session.pin.enterPin", "Entrez votre PIN")}
-            </p>
+            <p className="text-sm text-text-secondary">{t("session.pin.enterPin")}</p>
             <input
               ref={pinInputRef}
               type="text"
@@ -195,7 +190,7 @@ export function LockScreen({
               onChange={(e) => handlePinInput(e.target.value)}
               disabled={loading || pinDisabled}
               className="sr-only"
-              aria-label={t("session.pin.enterPin", "Entrez votre PIN")}
+              aria-label={t("session.pin.enterPin")}
             />
             <div
               role="button"
@@ -208,7 +203,7 @@ export function LockScreen({
                 }
               }}
               className="flex justify-center gap-2"
-              aria-label={t("session.pin.enterPin", "Entrez votre PIN")}
+              aria-label={t("session.pin.enterPin")}
             >
               {Array.from({ length: MAX_PIN_LENGTH }).map((_, i) => (
                 <div
@@ -220,9 +215,7 @@ export function LockScreen({
                 </div>
               ))}
             </div>
-            <p className="text-xs text-text-muted">
-              {t("session.pin.hint", "PIN à 4-6 chiffres. Saisie auto-détectée.")}
-            </p>
+            <p className="text-xs text-text-muted">{t("session.pin.hint")}</p>
             {loading && (
               <div className="flex justify-center">
                 <div className="h-4 w-4 animate-spin rounded-full border-2 border-surface-3 border-t-primary" />
@@ -283,9 +276,7 @@ export function LockScreen({
             }}
             className="mt-4 text-xs text-primary hover:text-primary/80 transition-colors"
           >
-            {mode === "pin"
-              ? t("session.pin.usePassword", "Utiliser le mot de passe")
-              : t("session.pin.usePin", "Utiliser le PIN")}
+            {mode === "pin" ? t("session.pin.usePassword") : t("session.pin.usePin")}
           </button>
         )}
 

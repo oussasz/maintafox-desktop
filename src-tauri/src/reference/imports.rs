@@ -679,11 +679,11 @@ pub async fn apply_import_batch(
             match txn
                 .execute(Statement::from_sql_and_values(
                     DbBackend::Sqlite,
-                    "INSERT INTO reference_values \
-                     (set_id, parent_id, code, label, description, sort_order, \
+                    "INSERT INTO reference_values (entity_sync_id, set_id, parent_id, code, label, description, sort_order, \
                       color_hex, icon_name, semantic_tag, external_code, is_active, metadata_json) \
-                     VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
+                     VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
                     [
+                        crate::sync::identity::new_entity_sync_id().into(),
                         policy.target_set_id.into(),
                         code.clone().into(),
                         label.into(),

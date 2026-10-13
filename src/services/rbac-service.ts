@@ -570,6 +570,8 @@ const AdminChangeEventDetailSchema = z.object({
   diff_json: z.string().nullable(),
   step_up_used: z.boolean(),
   apply_result: z.string(),
+  /** Received from another device before history ids travelled as sync ids: ids in it are that device's. */
+  from_other_device: z.boolean().default(false),
 });
 
 export async function listAdminEvents(filter: AdminEventFilter): Promise<AdminChangeEventDetail[]> {

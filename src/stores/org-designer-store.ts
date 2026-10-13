@@ -8,6 +8,7 @@
 
 import { create } from "zustand";
 
+import { createLatestRequestGuard } from "@/lib/latest-request";
 import { getOrgDesignerSnapshot, previewOrgChange } from "@/services/org-designer-service";
 import { formatOrgIpcError } from "@/utils/errors";
 import type {
@@ -17,6 +18,8 @@ import type {
 } from "@shared/ipc-types";
 
 export type OrgDesignerWorkspaceMode = "published" | "draft";
+
+const requests = createLatestRequestGuard();
 
 /** Editable “design the draft” session: a draft must exist and the user must have switched to Draft. */
 export function isOrgStructureDesignMode(
@@ -66,10 +69,13 @@ export const useOrgDesignerStore = create<OrgDesignerStoreState>()((set, get) =>
   error: null,
 
   loadSnapshot: async () => {
+    // Switching published/draft quickly reloads twice: only the latest snapshot may land.
+    const isCurrent = requests.begin("snapshot");
     set({ loading: true, error: null });
     try {
       const preferDraft = get().workspaceMode === "draft";
       const snapshot = await getOrgDesignerSnapshot(preferDraft);
+      if (!isCurrent()) return;
       set((st) => {
         const prev = st.snapshot;
         let workspaceMode = st.workspaceMode;
@@ -86,12 +92,11 @@ export const useOrgDesignerStore = create<OrgDesignerStoreState>()((set, get) =>
             workspaceMode = st.workspaceMode;
           }
         }
-        return { snapshot, workspaceMode, error: null };
+        return { snapshot, workspaceMode, error: null, loading: false };
       });
     } catch (err) {
-      set({ error: formatOrgIpcError(err) });
-    } finally {
-      set({ loading: false });
+      if (!isCurrent()) return;
+      set({ error: formatOrgIpcError(err), loading: false });
     }
   },
 
@@ -109,20 +114,26 @@ export const useOrgDesignerStore = create<OrgDesignerStoreState>()((set, get) =>
   setSelectedNodeId: (nodeId) => set({ selectedNodeId: nodeId }),
 
   openPreview: async (payload) => {
+    // Only the preview of the latest request may fill the drawer; a closed drawer stays empty.
+    const isCurrent = requests.begin("preview");
     set({ previewLoading: true, previewOpen: true, preview: null, previewPayload: payload });
     try {
       const preview = await previewOrgChange(payload);
-      set({ preview });
+      if (!isCurrent()) return;
+      set({ preview, previewLoading: false });
     } catch (err) {
+      if (!isCurrent()) return;
       set({
         error: formatOrgIpcError(err),
         previewOpen: false,
         previewPayload: null,
+        previewLoading: false,
       });
-    } finally {
-      set({ previewLoading: false });
     }
   },
 
-  closePreview: () => set({ preview: null, previewPayload: null, previewOpen: false }),
+  closePreview: () => {
+    requests.invalidate("preview");
+    set({ preview: null, previewPayload: null, previewOpen: false, previewLoading: false });
+  },
 }));

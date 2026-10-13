@@ -13,7 +13,7 @@
 //!   - `remove_labor_entry` is only allowed while the WO is in draft, planned, or assigned.
 
 use crate::errors::{AppError, AppResult};
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
 use super::domain::WoStatus;
@@ -119,7 +119,7 @@ const LABOR_SELECT: &str = "\
  LEFT JOIN reference_values rv ON rv.id = woi.skill_id";
 
 /// Load the WO status code for a guard check.
-async fn load_wo_status_code(db: &DatabaseConnection, wo_id: i64) -> AppResult<String> {
+async fn load_wo_status_code(db: &impl ConnectionTrait, wo_id: i64) -> AppResult<String> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -162,7 +162,8 @@ fn elapsed_hours(start: &str, end: &str) -> Option<f64> {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 pub async fn add_labor_entry(db: &DatabaseConnection, input: AddLaborInput) -> AppResult<WoIntervener> {
-    let status_code = load_wo_status_code(db, input.wo_id).await?;
+    let txn = db.begin().await?;
+    let status_code = load_wo_status_code(&txn, input.wo_id).await?;
     let status = WoStatus::try_from_str(&status_code).map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
     if status.is_terminal() {
         return Err(AppError::ValidationFailed(vec![format!(
@@ -179,7 +180,7 @@ pub async fn add_labor_entry(db: &DatabaseConnection, input: AddLaborInput) -> A
     let (resolved_rate, rate_source) = if let Some(rate) = input.hourly_rate {
         (Some(rate), "provided".to_string())
     } else {
-        let personnel_id = db
+        let personnel_id = txn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "SELECT personnel_id FROM user_accounts WHERE id = ? AND deleted_at IS NULL",
@@ -189,7 +190,7 @@ pub async fn add_labor_entry(db: &DatabaseConnection, input: AddLaborInput) -> A
             .and_then(|row| row.try_get::<Option<i64>>("", "personnel_id").ok())
             .flatten();
         match personnel_id {
-            Some(pid) => match crate::personnel::queries::resolve_active_labor_rate(db, pid).await? {
+            Some(pid) => match crate::personnel::queries::resolve_active_labor_rate(&txn, pid).await? {
                 Some(rate) => (Some(rate), "rate_card".to_string()),
                 None => (None, "missing".to_string()),
             },
@@ -197,7 +198,7 @@ pub async fn add_labor_entry(db: &DatabaseConnection, input: AddLaborInput) -> A
         }
     };
 
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO work_order_interveners \
          (work_order_id, intervener_id, skill_id, started_at, ended_at, hours_worked, hourly_rate, notes, entity_sync_id) \
@@ -230,13 +231,13 @@ pub async fn add_labor_entry(db: &DatabaseConnection, input: AddLaborInput) -> A
                 .clone()
                 .map(sea_orm::Value::from)
                 .unwrap_or(sea_orm::Value::from(None::<String>)),
-            uuid::Uuid::new_v4().to_string().into(),
+            crate::sync::identity::new_entity_sync_id().into(),
         ],
     ))
     .await?;
 
     // Return the inserted row
-    let row = db
+    let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             format!("{LABOR_SELECT} WHERE woi.rowid = last_insert_rowid()"),
@@ -246,10 +247,7 @@ pub async fn add_labor_entry(db: &DatabaseConnection, input: AddLaborInput) -> A
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to re-read labor entry after insert")))?;
     let mut entry = map_intervener(&row)?;
     entry.rate_source = rate_source;
-    crate::sync::foundation_stage::warn_stage(
-        crate::wo::sync_stage::stage_work_order_intervener_sync(db, entry.id).await,
-        "wo_labor",
-    );
+    txn.commit().await?;
     Ok(entry)
 }
 
@@ -263,8 +261,10 @@ pub async fn close_labor_entry(
     ended_at: String,
     _actor_id: i64,
 ) -> AppResult<WoIntervener> {
+    let txn = db.begin().await?;
+
     // Load the entry to validate it's open and compute elapsed hours
-    let row = db
+    let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             format!("{LABOR_SELECT} WHERE woi.id = ?"),
@@ -291,7 +291,7 @@ pub async fn close_labor_entry(
         .and_then(|s| elapsed_hours(s, &ended_at))
         .or(entry.hours_worked);
 
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE work_order_interveners SET ended_at = ?, hours_worked = ? WHERE id = ?",
         [
@@ -305,7 +305,7 @@ pub async fn close_labor_entry(
     .await?;
 
     // Return updated row
-    let updated = db
+    let updated = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             format!("{LABOR_SELECT} WHERE woi.id = ?"),
@@ -317,10 +317,7 @@ pub async fn close_labor_entry(
             id: intervener_id.to_string(),
         })?;
     let entry = map_intervener(&updated)?;
-    crate::sync::foundation_stage::warn_stage(
-        crate::wo::sync_stage::stage_work_order_intervener_sync(db, entry.id).await,
-        "wo_labor",
-    );
+    txn.commit().await?;
     Ok(entry)
 }
 

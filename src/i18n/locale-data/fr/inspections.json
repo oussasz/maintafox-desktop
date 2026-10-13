@@ -1,1 +1,205 @@
-{}
+{
+  "page": {
+    "title": "Rondes d'inspection",
+    "description": "Check-lists terrain : planifier les rondes, saisir les relevés, traiter les constats."
+  },
+  "tabs": {
+    "rounds": "Rondes",
+    "templates": "Modèles",
+    "signals": "Signaux fiabilité"
+  },
+  "status": {
+    "scheduled": "Planifiée",
+    "released": "Lancée",
+    "in_progress": "En cours",
+    "completed": "Terminée",
+    "completed_with_findings": "Terminée avec constats",
+    "reviewed": "Revue",
+    "missed": "Manquée",
+    "cancelled": "Annulée"
+  },
+  "filters": {
+    "todo": "À faire",
+    "toReview": "À revoir",
+    "done": "Terminées",
+    "all": "Toutes"
+  },
+  "rounds": {
+    "empty": "Aucune ronde dans cette liste.",
+    "schedule": "Planifier une ronde",
+    "start": "Démarrer",
+    "continue": "Reprendre",
+    "open": "Ouvrir",
+    "review": "Revoir",
+    "scheduledFor": "Prévue le {{date}}",
+    "notScheduled": "Sans date",
+    "assignedTo": "Affectée à {{name}}",
+    "unassigned": "Non affectée",
+    "progress": "{{done}} / {{total}} contrôles",
+    "exceptions_one": "{{count}} écart",
+    "exceptions_other": "{{count}} écarts",
+    "openAnomalies_one": "{{count}} anomalie ouverte",
+    "openAnomalies_other": "{{count}} anomalies ouvertes",
+    "pendingSync_one": "{{count}} modification en attente de synchronisation",
+    "pendingSync_other": "{{count}} modifications en attente de synchronisation"
+  },
+  "schedule": {
+    "title": "Planifier une ronde",
+    "template": "Check-list",
+    "templatePlaceholder": "Choisir une check-list",
+    "when": "Prévue le",
+    "assignee": "Technicien",
+    "assigneeSearch": "Rechercher une personne (nom ou matricule)",
+    "assigneeNone": "Personne trouvée.",
+    "assigneeSearchError": "La recherche a échoué : {{message}}",
+    "clearAssignee": "Retirer",
+    "submit": "Planifier",
+    "noTemplate": "Créez d'abord une check-list (onglet Modèles)."
+  },
+  "runner": {
+    "back": "Retour aux rondes",
+    "checkOf": "Contrôle {{index}} sur {{total}}",
+    "previous": "Précédent",
+    "next": "Suivant",
+    "save": "Enregistrer",
+    "saveAndNext": "Enregistrer et continuer",
+    "saved": "Enregistré",
+    "complete": "Terminer la ronde",
+    "completeHint": "Chaque contrôle doit avoir une réponse, et sa photo ou son commentaire s'ils sont exigés.",
+    "readOnly": "Cette ronde est « {{status}} » : les résultats ne peuvent plus être modifiés.",
+    "asset": "Équipement",
+    "limits": "Limites",
+    "normal": "Normal",
+    "warning": "Alerte",
+    "below": "≤ {{value}}",
+    "above": "≥ {{value}}",
+    "between": "{{min}} – {{max}}",
+    "reading": "Relevé",
+    "readingPlaceholder": "Saisir la valeur",
+    "predicted": "Ce relevé sera enregistré comme : {{status}}",
+    "invalidNumber": "Saisissez un nombre.",
+    "observation": "Observation",
+    "comment": "Commentaire",
+    "commentRequired": "Un commentaire est obligatoire pour cette réponse.",
+    "commentPlaceholder": "Qu'avez-vous constaté ?",
+    "reason": "Motif (obligatoire)",
+    "photo": "Ajouter une photo",
+    "photoRequired": "Une photo est obligatoire pour ce contrôle.",
+    "photos_one": "{{count}} photo",
+    "photos_other": "{{count}} photos",
+    "photoTooLarge": "La photo dépasse {{mb}} Mo.",
+    "photoAdded": "Photo enregistrée",
+    "recordFirst": "Enregistrez une réponse avant d'ajouter une photo.",
+    "missing": {
+      "result": "Sans réponse",
+      "photo": "Photo manquante",
+      "comment": "Commentaire manquant"
+    },
+    "answers": {
+      "pass": "Conforme",
+      "fail": "Non conforme",
+      "warning": "À surveiller",
+      "yes": "Oui",
+      "no": "Non",
+      "not_accessible": "Inaccessible",
+      "not_done": "Non réalisé"
+    },
+    "anomalyOpen": "Anomalie à traiter : {{description}}"
+  },
+  "result": {
+    "pass": "Conforme",
+    "warning": "Alerte",
+    "fail": "Non conforme",
+    "not_accessible": "Inaccessible",
+    "not_done": "Non réalisé"
+  },
+  "sync": {
+    "title": "File hors ligne",
+    "allSynced": "Tout ce qui a été saisi ici est arrivé au serveur.",
+    "waiting_one": "{{count}} résultat enregistré sur cet appareil, en attente de synchronisation.",
+    "waiting_other": "{{count}} résultats enregistrés sur cet appareil, en attente de synchronisation.",
+    "errors_one": "{{count}} résultat a été refusé par le serveur : voir le centre de synchronisation.",
+    "errors_other": "{{count}} résultats ont été refusés par le serveur : voir le centre de synchronisation.",
+    "state": {
+      "not_recorded": "Non saisi",
+      "waiting": "Enregistré ici, en attente de synchronisation",
+      "synced": "Synchronisé",
+      "error": "Erreur de synchronisation",
+      "conflict": "Conflit de synchronisation"
+    }
+  },
+  "review": {
+    "title": "Constats à traiter",
+    "none": "Aucune anomalie ouverte.",
+    "toDi": "Créer une demande",
+    "toWo": "Créer un ordre de travail",
+    "woType": "Type d'ordre de travail",
+    "defer": "Reporter",
+    "note": "Note de revue",
+    "notePlaceholder": "Décisions, suites à donner…",
+    "submit": "Marquer comme revue",
+    "severity": "Gravité {{level}}",
+    "reviewedBy": "Revue par {{name}} le {{date}}",
+    "anomalyType": {
+      "threshold_breach": "Hors tolérance",
+      "missing_mandatory_photo": "Photo obligatoire manquante"
+    }
+  },
+  "templates": {
+    "empty": "Aucune check-list pour le moment.",
+    "new": "Nouvelle check-list",
+    "newVersion": "Nouvelle version",
+    "version": "Version {{no}}",
+    "checkpoints_one": "{{count}} contrôle",
+    "checkpoints_other": "{{count}} contrôles",
+    "inactive": "Inactive",
+    "builderTitle": "Check-list",
+    "builderVersionTitle": "Nouvelle version de {{name}}",
+    "code": "Code",
+    "name": "Nom",
+    "duration": "Durée estimée (min)",
+    "requiresReview": "Les rondes exigent toujours une revue du superviseur",
+    "checks": "Contrôles",
+    "addCheck": "Ajouter un contrôle",
+    "remove": "Supprimer",
+    "moveUp": "Monter",
+    "moveDown": "Descendre",
+    "checkCode": "Code du contrôle",
+    "checkDescription": "Consigne pour le technicien",
+    "checkType": "Type de réponse",
+    "unit": "Unité",
+    "normalMin": "Min normal",
+    "normalMax": "Max normal",
+    "warningMin": "Min alerte",
+    "warningMax": "Max alerte",
+    "requiresPhoto": "Photo obligatoire",
+    "commentOnException": "Commentaire exigé si non conforme",
+    "save": "Enregistrer la check-list",
+    "publish": "Publier la version",
+    "needOneCheck": "Ajoutez au moins un contrôle.",
+    "invalidNumber": "Ce n'est pas un nombre",
+    "types": {
+      "pass_fail": "Conforme / Non conforme",
+      "boolean": "Oui / Non",
+      "numeric": "Mesure",
+      "observation": "Observation"
+    },
+    "required": "Obligatoire"
+  },
+  "signals": {
+    "description": "Par équipement, sur une fenêtre glissante : alertes et défauts relevés, anomalies ouvertes et couverture des check-lists.",
+    "window": "Fenêtre (jours)",
+    "refresh": "Recalculer",
+    "empty": "Aucun signal calculé pour le moment.",
+    "equipment": "Équipement",
+    "period": "Période",
+    "warnings": "Alertes",
+    "fails": "Défauts",
+    "openAnomalies": "Anomalies ouvertes",
+    "coverage": "Couverture",
+    "invalidWindow": "Saisissez un nombre de jours (1 ou plus)."
+  },
+  "errors": {
+    "load": "Chargement impossible : {{message}}"
+  }
+}

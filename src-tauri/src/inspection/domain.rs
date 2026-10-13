@@ -37,6 +37,8 @@ pub struct InspectionCheckpoint {
     pub asset_id: Option<i64>,
     pub component_id: Option<i64>,
     pub checkpoint_code: String,
+    /// Instruction shown to the technician in the field.
+    pub description: Option<String>,
     pub check_type: String,
     pub measurement_unit: Option<String>,
     pub normal_min: Option<f64>,
@@ -57,6 +59,12 @@ pub struct InspectionRound {
     pub scheduled_at: Option<String>,
     pub assigned_to_id: Option<i64>,
     pub status: String,
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
+    pub reviewed_at: Option<String>,
+    pub reviewed_by_id: Option<i64>,
+    pub review_note: Option<String>,
+    pub completion_percentage: Option<f64>,
     pub row_version: i64,
 }
 
@@ -66,6 +74,8 @@ pub struct InspectionCheckpointDraft {
     pub asset_id: Option<i64>,
     pub component_id: Option<i64>,
     pub checkpoint_code: String,
+    #[serde(default)]
+    pub description: Option<String>,
     pub check_type: String,
     pub measurement_unit: Option<String>,
     pub normal_min: Option<f64>,
@@ -161,14 +171,6 @@ pub struct InspectionAnomaly {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct InspectionOfflineQueueItem {
-    pub id: i64,
-    pub payload_json: String,
-    pub local_temp_id: String,
-    pub sync_status: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecordInspectionResultInput {
     pub round_id: i64,
     pub checkpoint_id: i64,
@@ -215,12 +217,6 @@ pub struct InspectionAnomaliesFilter {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EnqueueInspectionOfflineInput {
-    pub payload_json: String,
-    pub local_temp_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InspectionReliabilitySignal {
     pub id: i64,
     pub entity_sync_id: String,
@@ -232,6 +228,8 @@ pub struct InspectionReliabilitySignal {
     pub anomaly_open_count: i64,
     pub checkpoint_coverage_ratio: f64,
     pub row_version: i64,
+    pub asset_code: Option<String>,
+    pub asset_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -242,4 +240,70 @@ pub struct InspectionReliabilitySignalsFilter {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RefreshInspectionReliabilitySignalsInput {
     pub window_days: i64,
+}
+
+// ── Field runner (Phase 6.2) ─────────────────────────────────────────────────────────────
+
+/// A round as listed for people: labels resolved, never raw ids in the UI.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InspectionRoundSummary {
+    pub round: InspectionRound,
+    pub template_code: String,
+    pub template_name: String,
+    pub version_no: i64,
+    /// The version asks for a supervisor review even after a clean round.
+    pub requires_review: bool,
+    pub assigned_to_name: Option<String>,
+    pub reviewed_by_name: Option<String>,
+    pub checkpoint_count: i64,
+    pub recorded_count: i64,
+    pub exception_count: i64,
+    pub open_anomaly_count: i64,
+    /// Rows of this round saved on this device and not yet accepted by the server.
+    pub pending_sync_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct InspectionRoundSummaryFilter {
+    #[serde(default)]
+    pub statuses: Option<Vec<String>>,
+    #[serde(default)]
+    pub limit: Option<i64>,
+}
+
+/// One checkpoint in the runner, with its labels, current result and sync state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InspectionRunnerCheckpoint {
+    pub checkpoint: InspectionCheckpoint,
+    pub asset_code: Option<String>,
+    pub asset_name: Option<String>,
+    pub result: Option<InspectionResult>,
+    pub evidence: Vec<InspectionEvidence>,
+    pub open_anomalies: Vec<InspectionAnomaly>,
+    /// `not_recorded`, `waiting` (saved here, not yet accepted by the server), `sent` or `error`.
+    pub sync_state: String,
+    /// What is still required before the round can be completed (machine codes).
+    pub missing: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InspectionRoundRunner {
+    pub summary: InspectionRoundSummary,
+    pub checkpoints: Vec<InspectionRunnerCheckpoint>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InspectionRoundActionInput {
+    pub round_id: i64,
+    pub expected_row_version: i64,
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AddInspectionPhotoInput {
+    pub result_id: i64,
+    pub file_name: String,
+    pub mime_type: String,
+    pub file_bytes: Vec<u8>,
 }

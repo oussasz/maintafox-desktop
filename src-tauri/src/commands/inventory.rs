@@ -1445,3 +1445,93 @@ pub async fn suggest_inventory_internal_transfer(
     );
     queries::suggest_internal_transfer(&state.db, article_id, target_warehouse_id).await
 }
+
+// ── Unit conversions (Phase 6.8) ────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn list_unit_conversions(
+    article_id: Option<i64>,
+    include_inactive: Option<bool>,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::inventory::unit_conversions::UnitConversion>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INV_VIEW,
+        PermissionScope::Global
+    );
+    crate::inventory::unit_conversions::list_unit_conversions(&state.db, article_id, include_inactive.unwrap_or(false))
+        .await
+}
+
+#[tauri::command]
+pub async fn create_unit_conversion(
+    input: crate::inventory::unit_conversions::CreateUnitConversionInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::inventory::unit_conversions::UnitConversion> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INV_MANAGE,
+        PermissionScope::Global
+    );
+    crate::inventory::unit_conversions::create_unit_conversion(&state.db, i64::from(user.user_id), input).await
+}
+
+#[tauri::command]
+pub async fn update_unit_conversion(
+    input: crate::inventory::unit_conversions::UpdateUnitConversionInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::inventory::unit_conversions::UnitConversion> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INV_MANAGE,
+        PermissionScope::Global
+    );
+    crate::inventory::unit_conversions::update_unit_conversion(&state.db, input).await
+}
+
+#[tauri::command]
+pub async fn deactivate_unit_conversion(
+    id: i64,
+    expected_row_version: i64,
+    state: State<'_, AppState>,
+) -> AppResult<crate::inventory::unit_conversions::UnitConversion> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INV_MANAGE,
+        PermissionScope::Global
+    );
+    crate::inventory::unit_conversions::deactivate_unit_conversion(&state.db, id, expected_row_version).await
+}
+
+#[tauri::command]
+pub async fn convert_unit_quantity(
+    quantity: f64,
+    from_unit_value_id: i64,
+    to_unit_value_id: i64,
+    article_id: Option<i64>,
+    state: State<'_, AppState>,
+) -> AppResult<crate::inventory::unit_conversions::ConvertedQuantity> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INV_VIEW,
+        PermissionScope::Global
+    );
+    crate::inventory::unit_conversions::convert_quantity(
+        &state.db,
+        quantity,
+        from_unit_value_id,
+        to_unit_value_id,
+        article_id,
+    )
+    .await
+}

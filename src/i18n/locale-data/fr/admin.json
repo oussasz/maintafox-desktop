@@ -2,7 +2,10 @@
   "common": {
     "cancel": "Annuler",
     "close": "Fermer",
-    "loading": "Chargement…"
+    "loading": "Chargement…",
+    "save": "Enregistrer",
+    "saving": "Enregistrement…",
+    "edit": "Modifier"
   },
   "page": {
     "title": "Administration",
@@ -50,7 +53,8 @@
       "description": "Définissez un nom et sélectionnez éventuellement un modèle.",
       "template": "Modèle",
       "noTemplate": "Sans modèle",
-      "confirm": "Créer"
+      "confirm": "Créer",
+      "namePlaceholder": "Technicien terrain"
     },
     "fields": {
       "name": "Nom",
@@ -59,7 +63,9 @@
     "errors": {
       "loadFailed": "Erreur de chargement des rôles",
       "saveFailed": "Erreur de sauvegarde",
-      "deleteFailed": "Impossible de supprimer ce rôle"
+      "deleteFailed": "Impossible de supprimer ce rôle",
+      "createFailed": "Erreur de création",
+      "loadDetailFailed": "Impossible de charger le rôle"
     },
     "dependencyWarnings": "Avertissements de dépendance",
     "hardDepErrors": "Dépendances obligatoires manquantes — sauvegarde bloquée",
@@ -74,7 +80,9 @@
       "run": "Simuler",
       "warnings": "Avertissements de dépendance",
       "blocked": "Bloqué par"
-    }
+    },
+    "togglePermission": "Activer ou désactiver {{perm}}",
+    "created": "Rôle créé"
   },
   "users": {
     "search": "Rechercher un utilisateur…",
@@ -97,13 +105,18 @@
       "allModes": "Tous modes",
       "local": "Local",
       "sso": "SSO",
-      "hybrid": "Hybride"
+      "hybrid": "Hybride",
+      "statusLabel": "Statut",
+      "modeLabel": "Mode"
     },
     "fields": {
       "username": "Identifiant",
       "identityMode": "Mode d'authentification",
       "status": "Statut",
-      "lastSeen": "Dernière connexion"
+      "lastSeen": "Dernière connexion",
+      "displayName": "Nom affiché",
+      "email": "E-mail professionnel",
+      "phone": "Numéro de téléphone"
     },
     "detail": {
       "identity": "Identité",
@@ -135,7 +148,14 @@
       "role": "Rôle",
       "selectRole": "Choisir un rôle",
       "scope": "Périmètre",
-      "confirm": "Assigner"
+      "confirm": "Assigner",
+      "titleWithUser": "Assigner un rôle — {{username}}",
+      "replacement": "Ancien rôle → nouveau rôle",
+      "replacementHint": "Pour ce périmètre, une seule attribution à la fois : le nouveau rôle remplace l’actuel (y compris une élévation d’urgence à ce niveau).",
+      "current": "Rôle actuel",
+      "emergencyBadge": "(urgence)",
+      "noRoleAtScope": "Aucun",
+      "newLabel": "Nouveau rôle"
     },
     "create": "Nouvel utilisateur",
     "create.title": "Nouvel utilisateur",
@@ -174,6 +194,20 @@
       "deactivateFailed": "Erreur lors de la désactivation",
       "unlockFailed": "Erreur lors du déverrouillage",
       "resetPasswordFailed": "Erreur lors de la réinitialisation du mot de passe"
+    },
+    "locked": "Verrouillé",
+    "unlock": "Déverrouiller",
+    "create.personnelLocked": "Lié au personnel n° {{id}}",
+    "create.personnelNone": "Aucun personnel lié",
+    "create.usernamePlaceholder": "jean.dupont",
+    "edit": {
+      "title": "Modifier l'utilisateur",
+      "description": "Mettez à jour l'identité et les options du compte. Pour modifier les permissions, utilisez « Assigner un rôle » (bouclier) sur la ligne de l'utilisateur.",
+      "invalidEmail": "Veuillez saisir une adresse e-mail valide.",
+      "invalidPhone": "Veuillez saisir un numéro de téléphone valide (E.164).",
+      "emailPlaceholder": "nom@entreprise.com",
+      "success": "Utilisateur mis à jour",
+      "error": "Échec de la mise à jour de l'utilisateur"
     }
   },
   "profile": {
@@ -319,6 +353,31 @@
       "requiredBy": "Requis par",
       "suggests": "Suggère",
       "suggestedBy": "Suggéré par"
+    },
+    "domainLabels": {
+      "eq": "Équipements",
+      "di": "Demandes d'intervention",
+      "ot": "Ordres de travail",
+      "org": "Organisation",
+      "per": "Personnel",
+      "ref": "Données de référence",
+      "inv": "Inventaire",
+      "pm": "Maintenance préventive",
+      "ram": "Fiabilité / RAMS",
+      "rep": "Rapports",
+      "arc": "Archives",
+      "doc": "Documentation",
+      "plan": "Planification",
+      "log": "Journal d'activité",
+      "trn": "Formation",
+      "iot": "IoT",
+      "erp": "Connecteur ERP",
+      "ptw": "Permis de travail",
+      "fin": "Budget / Finance",
+      "ins": "Rondes d'inspection",
+      "cfg": "Configuration",
+      "adm": "Administration",
+      "cst": "Personnalisé"
     }
   },
   "sessions": {
@@ -480,5 +539,23 @@
       "exportFailed": "Erreur lors de l'export",
       "importFailed": "Erreur lors de l'import"
     }
+  },
+  "scope": {
+    "global": "Global",
+    "site": "Site",
+    "department": "Département"
+  },
+  "audit": {
+    "title": "Chronologie d'audit de l'administration",
+    "applied": "Appliqué",
+    "blocked": "Bloqué",
+    "partial": "Partiel",
+    "stepUp": "Step-up",
+    "scopeValue": "Périmètre : {{scope}}",
+    "user": "Utilisateur n° {{id}}",
+    "system": "Système",
+    "viewDiff": "Voir le diff",
+    "empty": "Aucun événement d'audit enregistré.",
+    "loadError": "Impossible de charger l'historique d'audit. {{error}}"
   }
 }

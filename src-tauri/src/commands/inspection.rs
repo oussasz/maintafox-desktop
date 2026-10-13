@@ -2,22 +2,23 @@
 
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use serde::Deserialize;
-use tauri::State;
+use tauri::{Manager, State};
 
 use crate::auth::rbac::PermissionScope;
 use crate::errors::{AppError, AppResult};
 use crate::inspection::domain::{
-    AddInspectionEvidenceInput, CreateInspectionTemplateInput, EnqueueInspectionOfflineInput,
-    InspectionAnomaliesFilter, InspectionAnomaly, InspectionCheckpoint, InspectionCheckpointsFilter,
-    InspectionEvidence, InspectionEvidenceFilter, InspectionOfflineQueueItem, InspectionReliabilitySignal,
-    InspectionReliabilitySignalsFilter, InspectionResult, InspectionResultsFilter, InspectionRound, InspectionTemplate,
-    InspectionTemplateVersion, InspectionTemplateVersionsFilter, PublishInspectionTemplateVersionInput,
-    RecordInspectionResultInput, RefreshInspectionReliabilitySignalsInput, ScheduleInspectionRoundInput,
-    UpdateInspectionAnomalyInput,
+    AddInspectionEvidenceInput, AddInspectionPhotoInput, CreateInspectionTemplateInput, InspectionAnomaliesFilter,
+    InspectionAnomaly, InspectionCheckpoint, InspectionCheckpointsFilter, InspectionEvidence, InspectionEvidenceFilter,
+    InspectionReliabilitySignal, InspectionReliabilitySignalsFilter, InspectionResult, InspectionResultsFilter,
+    InspectionRound, InspectionRoundActionInput, InspectionRoundRunner, InspectionRoundSummary,
+    InspectionRoundSummaryFilter, InspectionTemplate, InspectionTemplateVersion, InspectionTemplateVersionsFilter,
+    PublishInspectionTemplateVersionInput, RecordInspectionResultInput, RefreshInspectionReliabilitySignalsInput,
+    ScheduleInspectionRoundInput, UpdateInspectionAnomalyInput,
 };
 use crate::inspection::queries;
 use crate::inspection::results;
 use crate::inspection::routing;
+use crate::inspection::runner;
 use crate::inspection::signals;
 use crate::state::AppState;
 use crate::wo::audit;
@@ -54,7 +55,10 @@ async fn actor_personnel_id(state: &State<'_, AppState>, user_id: i32) -> AppRes
             [user_id.into()],
         ))
         .await?;
-    Ok(row.and_then(|r| r.try_get("", "personnel_id").ok()).flatten())
+    row.map(|r| r.try_get::<Option<i64>>("", "personnel_id"))
+        .transpose()
+        .map(Option::flatten)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("personnel_id decode: {e}")))
 }
 
 #[tauri::command]
@@ -253,22 +257,10 @@ pub async fn update_inspection_anomaly(
 }
 
 #[tauri::command]
-pub async fn enqueue_inspection_offline(
-    input: EnqueueInspectionOfflineInput,
+pub async fn list_inspection_round_summaries(
+    filter: InspectionRoundSummaryFilter,
     state: State<'_, AppState>,
-) -> AppResult<i64> {
-    let user = require_session!(state);
-    require_permission!(
-        state,
-        &user,
-        crate::rbac::permissions::INS_EXECUTE,
-        PermissionScope::Global
-    );
-    results::enqueue_inspection_offline(&state.db, input).await
-}
-
-#[tauri::command]
-pub async fn list_inspection_offline_queue(state: State<'_, AppState>) -> AppResult<Vec<InspectionOfflineQueueItem>> {
+) -> AppResult<Vec<InspectionRoundSummary>> {
     let user = require_session!(state);
     require_permission!(
         state,
@@ -276,11 +268,29 @@ pub async fn list_inspection_offline_queue(state: State<'_, AppState>) -> AppRes
         crate::rbac::permissions::INS_VIEW,
         PermissionScope::Global
     );
-    results::list_inspection_offline_queue(&state.db).await
+    runner::list_inspection_round_summaries(&state.db, filter).await
 }
 
 #[tauri::command]
-pub async fn mark_inspection_offline_synced(queue_id: i64, state: State<'_, AppState>) -> AppResult<()> {
+pub async fn get_inspection_round_runner(
+    round_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<InspectionRoundRunner> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INS_VIEW,
+        PermissionScope::Global
+    );
+    runner::get_inspection_round_runner(&state.db, round_id).await
+}
+
+#[tauri::command]
+pub async fn start_inspection_round(
+    input: InspectionRoundActionInput,
+    state: State<'_, AppState>,
+) -> AppResult<InspectionRoundSummary> {
     let user = require_session!(state);
     require_permission!(
         state,
@@ -288,7 +298,58 @@ pub async fn mark_inspection_offline_synced(queue_id: i64, state: State<'_, AppS
         crate::rbac::permissions::INS_EXECUTE,
         PermissionScope::Global
     );
-    results::mark_inspection_offline_synced(&state.db, queue_id).await
+    runner::start_inspection_round(&state.db, input).await
+}
+
+#[tauri::command]
+pub async fn complete_inspection_round(
+    input: InspectionRoundActionInput,
+    state: State<'_, AppState>,
+) -> AppResult<InspectionRoundSummary> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INS_EXECUTE,
+        PermissionScope::Global
+    );
+    runner::complete_inspection_round(&state.db, input).await
+}
+
+/// Supervisor review of a round with findings (every anomaly must have a decision).
+#[tauri::command]
+pub async fn review_inspection_round(
+    input: InspectionRoundActionInput,
+    state: State<'_, AppState>,
+) -> AppResult<InspectionRoundSummary> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INS_ADMIN,
+        PermissionScope::Global
+    );
+    runner::review_inspection_round(&state.db, input, i64::from(user.user_id)).await
+}
+
+#[tauri::command]
+pub async fn add_inspection_photo_evidence(
+    app: tauri::AppHandle,
+    input: AddInspectionPhotoInput,
+    state: State<'_, AppState>,
+) -> AppResult<InspectionEvidence> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INS_EXECUTE,
+        PermissionScope::Global
+    );
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("app_data_dir: {e}")))?;
+    runner::add_inspection_photo_evidence(&state.db, &app_data_dir, input).await
 }
 
 #[tauri::command]

@@ -192,6 +192,15 @@ pub struct ReliabilityKpiSnapshot {
     pub analysis_input_spec_json: String,
     pub plot_payload_json: String,
     pub row_version: i64,
+    /// `reliability_kpi_v2` and later; legacy rows carry `reliability_kpi_v1`.
+    pub algorithm_version: Option<String>,
+    pub exposure_hours: Option<f64>,
+    pub repair_event_count: Option<i64>,
+    pub active_repair_hours_total: Option<f64>,
+    pub downtime_hours_total: Option<f64>,
+    pub availability_inherent: Option<f64>,
+    pub availability_operational: Option<f64>,
+    pub mttf: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

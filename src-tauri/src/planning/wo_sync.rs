@@ -127,6 +127,8 @@ pub async fn sync_work_order_from_commitment(
     ))
     .await?;
 
+    // Staged on the planning transaction so the WO outbox entry commits with the commitment.
+
     Ok(WoSyncOutcome { wo_id })
 }
 
@@ -159,7 +161,6 @@ pub async fn record_wo_sync_audit(db: &DatabaseConnection, actor_id: i64, wo_id:
         },
     )
     .await;
-    crate::wo::sync_stage::warn_stage_wo(db, wo_id).await;
 }
 
 async fn resolve_personnel_user_id(tx: &impl ConnectionTrait, personnel_id: Option<i64>) -> AppResult<Option<i64>> {

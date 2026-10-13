@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 use crate::activity::emitter::{emit_activity_event, ActivityEventInput};
 use crate::di::queries::{create_intervention_request, DiCreateInput};
 use crate::errors::{AppError, AppResult};
-use crate::notifications::emitter::{emit_event as emit_notification_event, NotificationEventInput};
+use crate::notifications::emitter::{emit_device_event, emit_event as emit_notification_event, NotificationEventInput};
 use crate::pm::domain::{
     CreatePmPlanInput, CreatePmPlanVersionInput, ExecutePmOccurrenceInput, ExecutePmOccurrenceResult,
     GeneratePmOccurrencesInput, GeneratePmOccurrencesResult, PmDueMetrics, PmEffortVarianceKpi, PmExecution,
@@ -358,11 +358,12 @@ pub async fn create_pm_plan(db: &DatabaseConnection, input: CreatePmPlanInput) -
     if let Some(team_id) = input.assigned_team_id {
         crate::repository::team_repository::assert_active_crew_exists(db, team_id).await?;
     }
-    db.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
+    let tx = db.begin().await?;
+    tx.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
         "INSERT INTO pm_plans (entity_sync_id,code,title,description,asset_scope_type,asset_scope_id,strategy_type,criticality_value_id,assigned_team_id,requires_shutdown,requires_permit,is_active,lifecycle_status,row_version)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', 1)",
-        [uuid::Uuid::new_v4().to_string().into(),code.clone().into(),title.into(),input.description.into(),asset_scope_type.into(),input.asset_scope_id.into(),strategy_type.into(),input.criticality_value_id.into(),input.assigned_team_id.into(),i64::from(input.requires_shutdown).into(),i64::from(input.requires_permit).into(),parse_bool_to_i64(input.is_active,true).into()])).await?;
-    let row = db
+        [crate::sync::identity::new_entity_sync_id().into(),code.clone().into(),title.into(),input.description.into(),asset_scope_type.into(),input.asset_scope_id.into(),strategy_type.into(),input.criticality_value_id.into(),input.assigned_team_id.into(),i64::from(input.requires_shutdown).into(),i64::from(input.requires_permit).into(),parse_bool_to_i64(input.is_active,true).into()])).await?;
+    let row = tx
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id FROM pm_plans WHERE code = ?",
@@ -371,12 +372,8 @@ pub async fn create_pm_plan(db: &DatabaseConnection, input: CreatePmPlanInput) -
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("created pm plan not found")))?;
     let plan_id: i64 = row.try_get("", "id")?;
-    let plan = get_pm_plan(db, plan_id).await?;
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::ops_stage::stage_pm_plan_sync(db, plan_id).await,
-        "pm_plan create",
-    );
-    Ok(plan)
+    tx.commit().await?;
+    get_pm_plan(db, plan_id).await
 }
 
 pub async fn update_pm_plan(
@@ -403,19 +400,16 @@ pub async fn update_pm_plan(
     if let Some(team_id) = assigned_team_id {
         crate::repository::team_repository::assert_active_crew_exists(db, team_id).await?;
     }
-    let result = db.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
+    let tx = db.begin().await?;
+    let result = tx.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
         "UPDATE pm_plans SET title=?,description=?,asset_scope_type=?,asset_scope_id=?,strategy_type=?,criticality_value_id=?,assigned_team_id=?,requires_shutdown=?,requires_permit=?,is_active=?,row_version=row_version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
          WHERE id=? AND row_version=?",
         [title.into(),input.description.or(current.description).into(),asset_scope_type.into(),input.asset_scope_id.or(current.asset_scope_id).into(),strategy_type.into(),criticality_value_id.into(),assigned_team_id.into(),i64::from(input.requires_shutdown.unwrap_or(current.requires_shutdown==1)).into(),i64::from(input.requires_permit.unwrap_or(current.requires_permit==1)).into(),i64::from(input.is_active.unwrap_or(current.is_active==1)).into(),plan_id.into(),expected_row_version.into()])).await?;
     if result.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec!["PM plan update failed.".to_string()]));
     }
-    let plan = get_pm_plan(db, plan_id).await?;
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::ops_stage::stage_pm_plan_sync(db, plan_id).await,
-        "pm_plan update",
-    );
-    Ok(plan)
+    tx.commit().await?;
+    get_pm_plan(db, plan_id).await
 }
 
 pub async fn transition_pm_plan_lifecycle(
@@ -440,15 +434,12 @@ pub async fn transition_pm_plan_lifecycle(
             "Cannot activate PM plan without a published current version.".to_string(),
         ]));
     }
-    db.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
+    let tx = db.begin().await?;
+    tx.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
         "UPDATE pm_plans SET lifecycle_status=?,row_version=row_version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=? AND row_version=?",
         [next.into(), input.plan_id.into(), input.expected_row_version.into()])).await?;
-    let plan = get_pm_plan(db, input.plan_id).await?;
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::ops_stage::stage_pm_plan_sync(db, input.plan_id).await,
-        "pm_plan lifecycle",
-    );
-    Ok(plan)
+    tx.commit().await?;
+    get_pm_plan(db, input.plan_id).await
 }
 
 pub async fn list_pm_plan_versions(db: &DatabaseConnection, pm_plan_id: i64) -> AppResult<Vec<PmPlanVersion>> {
@@ -476,12 +467,13 @@ pub async fn create_pm_plan_version(
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("next version not found")))?;
     let next_no: i64 = version_no_row.try_get("", "next_no")?;
-    let version_entity_sync_id = uuid::Uuid::new_v4().to_string();
-    db.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
+    let version_entity_sync_id = crate::sync::identity::new_entity_sync_id();
+    let tx = db.begin().await?;
+    tx.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
         "INSERT INTO pm_plan_versions (entity_sync_id,pm_plan_id,version_no,status,effective_from,effective_to,trigger_definition_json,task_package_json,required_parts_json,required_skills_json,required_tools_json,estimated_duration_hours,estimated_labor_cost,estimated_parts_cost,estimated_service_cost,change_reason)
          VALUES (?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [version_entity_sync_id.into(),pm_plan_id.into(),next_no.into(),input.effective_from.into(),input.effective_to.into(),input.trigger_definition_json.into(),input.task_package_json.into(),input.required_parts_json.into(),input.required_skills_json.into(),input.required_tools_json.into(),input.estimated_duration_hours.into(),input.estimated_labor_cost.into(),input.estimated_parts_cost.into(),input.estimated_service_cost.into(),input.change_reason.into()])).await?;
-    let row = db
+    let row = tx
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id FROM pm_plan_versions WHERE pm_plan_id = ? AND version_no = ?",
@@ -490,13 +482,10 @@ pub async fn create_pm_plan_version(
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("created version not found")))?;
     let id: i64 = row.try_get("", "id")?;
-    let row = db.query_one(Statement::from_sql_and_values(DbBackend::Sqlite, "SELECT id,pm_plan_id,version_no,status,effective_from,effective_to,trigger_definition_json,task_package_json,required_parts_json,required_skills_json,required_tools_json,estimated_duration_hours,estimated_labor_cost,estimated_parts_cost,estimated_service_cost,change_reason,row_version,created_at,updated_at FROM pm_plan_versions WHERE id = ?", [id.into()])).await?
+    let row = tx.query_one(Statement::from_sql_and_values(DbBackend::Sqlite, "SELECT id,pm_plan_id,version_no,status,effective_from,effective_to,trigger_definition_json,task_package_json,required_parts_json,required_skills_json,required_tools_json,estimated_duration_hours,estimated_labor_cost,estimated_parts_cost,estimated_service_cost,change_reason,row_version,created_at,updated_at FROM pm_plan_versions WHERE id = ?", [id.into()])).await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("created version missing")))?;
     let version = decode_pm_plan_version_row(&row)?;
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::ops_stage::stage_pm_plan_version_sync(db, id).await,
-        "pm_plan_version create",
-    );
+    tx.commit().await?;
     Ok(version)
 }
 
@@ -540,16 +529,14 @@ pub async fn update_pm_plan_version(
     validate_trigger_definition(db, &plan.strategy_type, &trigger_definition_json).await?;
     let required_skills_json = input.required_skills_json.or(row.try_get("", "required_skills_json")?);
     validate_required_skills_json(db, required_skills_json.as_deref()).await?;
-    db.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
+    let tx = db.begin().await?;
+    tx.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
         "UPDATE pm_plan_versions SET effective_from=?,effective_to=?,trigger_definition_json=?,task_package_json=?,required_parts_json=?,required_skills_json=?,required_tools_json=?,estimated_duration_hours=?,estimated_labor_cost=?,estimated_parts_cost=?,estimated_service_cost=?,change_reason=?,row_version=row_version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=? AND row_version=?",
         [effective_from.into(),effective_to.into(),trigger_definition_json.into(),input.task_package_json.or(row.try_get("", "task_package_json")?).into(),input.required_parts_json.or(row.try_get("", "required_parts_json")?).into(),required_skills_json.into(),input.required_tools_json.or(row.try_get("", "required_tools_json")?).into(),input.estimated_duration_hours.or(row.try_get("", "estimated_duration_hours")?).into(),input.estimated_labor_cost.or(row.try_get("", "estimated_labor_cost")?).into(),input.estimated_parts_cost.or(row.try_get("", "estimated_parts_cost")?).into(),input.estimated_service_cost.or(row.try_get("", "estimated_service_cost")?).into(),input.change_reason.or(row.try_get("", "change_reason")?).into(),version_id.into(),expected_row_version.into()])).await?;
-    let row = db.query_one(Statement::from_sql_and_values(DbBackend::Sqlite, "SELECT id,pm_plan_id,version_no,status,effective_from,effective_to,trigger_definition_json,task_package_json,required_parts_json,required_skills_json,required_tools_json,estimated_duration_hours,estimated_labor_cost,estimated_parts_cost,estimated_service_cost,change_reason,row_version,created_at,updated_at FROM pm_plan_versions WHERE id = ?", [version_id.into()])).await?
+    let row = tx.query_one(Statement::from_sql_and_values(DbBackend::Sqlite, "SELECT id,pm_plan_id,version_no,status,effective_from,effective_to,trigger_definition_json,task_package_json,required_parts_json,required_skills_json,required_tools_json,estimated_duration_hours,estimated_labor_cost,estimated_parts_cost,estimated_service_cost,change_reason,row_version,created_at,updated_at FROM pm_plan_versions WHERE id = ?", [version_id.into()])).await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("updated version missing")))?;
     let version = decode_pm_plan_version_row(&row)?;
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::ops_stage::stage_pm_plan_version_sync(db, version_id).await,
-        "pm_plan_version update",
-    );
+    tx.commit().await?;
     Ok(version)
 }
 
@@ -593,16 +580,7 @@ pub async fn publish_pm_plan_version(
     tx.commit().await?;
     let row = db.query_one(Statement::from_sql_and_values(DbBackend::Sqlite, "SELECT id,pm_plan_id,version_no,status,effective_from,effective_to,trigger_definition_json,task_package_json,required_parts_json,required_skills_json,required_tools_json,estimated_duration_hours,estimated_labor_cost,estimated_parts_cost,estimated_service_cost,change_reason,row_version,created_at,updated_at FROM pm_plan_versions WHERE id = ?", [input.version_id.into()])).await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("published version missing")))?;
-    let version = decode_pm_plan_version_row(&row)?;
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::ops_stage::stage_pm_plan_version_sync(db, input.version_id).await,
-        "pm_plan_version publish",
-    );
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::ops_stage::stage_pm_plan_sync(db, plan_id).await,
-        "pm_plan after version publish",
-    );
-    Ok(version)
+    decode_pm_plan_version_row(&row)
 }
 
 const OCCURRENCE_STATUSES: &[&str] = &[
@@ -723,7 +701,7 @@ fn decode_pm_occurrence_row(row: &sea_orm::QueryResult) -> AppResult<PmOccurrenc
     })
 }
 
-async fn get_pm_occurrence_by_id(db: &DatabaseConnection, occurrence_id: i64) -> AppResult<PmOccurrence> {
+async fn get_pm_occurrence_by_id(db: &impl ConnectionTrait, occurrence_id: i64) -> AppResult<PmOccurrence> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -745,7 +723,7 @@ async fn get_pm_occurrence_by_id(db: &DatabaseConnection, occurrence_id: i64) ->
 }
 
 async fn occurrence_exists(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     pm_plan_id: i64,
     plan_version_id: i64,
     due_basis: &str,
@@ -778,7 +756,7 @@ async fn occurrence_exists(
 }
 
 async fn insert_trigger_event(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     pm_plan_id: i64,
     plan_version_id: i64,
     trigger_type: &str,
@@ -808,25 +786,53 @@ async fn insert_trigger_event(
     Ok(())
 }
 
+/// The occurrence already exists: same natural key (idempotency index) or same deterministic
+/// identity (`occurrence_sync_id`).
 fn is_occurrence_idempotency_conflict(err: &AppError) -> bool {
-    matches!(err, AppError::Database(db_err) if db_err.to_string().contains("idx_pm_occurrence_idempotency"))
+    matches!(err, AppError::Database(db_err) if {
+        let text = db_err.to_string();
+        text.contains("idx_pm_occurrence_idempotency") || text.contains("pm_occurrences.entity_sync_id")
+    })
+}
+
+/// Identity of a generated occurrence: every device that generates the same occurrence of the
+/// same plan version (same due basis, which carries the due date or the meter threshold) gives it
+/// the same `entity_sync_id`.
+///
+/// Without sync identity on the plan (database without sync capture) a random one is used.
+async fn occurrence_sync_id(
+    db: &impl ConnectionTrait,
+    pm_plan_id: i64,
+    plan_version_id: i64,
+    due_basis: &str,
+) -> AppResult<String> {
+    use crate::sync::identity::{new_entity_sync_id, optional_entity_sync_id, seeded_entity_sync_id};
+    let plan = optional_entity_sync_id(db, "pm_plans", pm_plan_id).await?;
+    let version = optional_entity_sync_id(db, "pm_plan_versions", plan_version_id).await?;
+    Ok(match (plan, version) {
+        (Some(plan), Some(version)) => {
+            seeded_entity_sync_id("pm_occurrences", &format!("{plan}|{version}|{due_basis}"))
+        }
+        _ => new_entity_sync_id(),
+    })
 }
 
 async fn insert_occurrence(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     pm_plan_id: i64,
     plan_version_id: i64,
     due_basis: &str,
     due_at: Option<String>,
     due_meter_value: Option<f64>,
 ) -> AppResult<Option<i64>> {
+    let entity_sync_id = occurrence_sync_id(db, pm_plan_id, plan_version_id, due_basis).await?;
     let insert_result = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO pm_occurrences (entity_sync_id, pm_plan_id, plan_version_id, due_basis, due_at, due_meter_value, status)
              VALUES (?, ?, ?, ?, ?, ?, 'generated')",
             [
-                uuid::Uuid::new_v4().to_string().into(),
+                entity_sync_id.into(),
                 pm_plan_id.into(),
                 plan_version_id.into(),
                 due_basis.to_string().into(),
@@ -1372,6 +1378,11 @@ pub async fn generate_pm_occurrences(
         .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, binds))
         .await?;
 
+    let tx = db.begin().await?;
+    // Occurrences are derived by every device from the synchronised plans (each device runs the
+    // generator): they get a deterministic identity (`occurrence_sync_id`) and are not captured
+    // here. A person's later action on an occurrence is captured and sent with the full row.
+    crate::sync::capture::begin_suppression(&tx).await?;
     let mut generated_count = 0_i64;
     let mut skipped_count = 0_i64;
     let mut trigger_events_recorded = 0_i64;
@@ -1403,11 +1414,12 @@ pub async fn generate_pm_occurrences(
                 while due <= horizon_end {
                     let due_at = due.format("%Y-%m-%dT%H:%M:%SZ").to_string();
                     let due_basis = format!("fixed:{}", due_at);
-                    let exists = occurrence_exists(db, pm_plan_id, version_id, &due_basis, Some(&due_at), None).await?;
+                    let exists =
+                        occurrence_exists(&tx, pm_plan_id, version_id, &due_basis, Some(&due_at), None).await?;
                     if exists {
                         skipped_count += 1;
                         insert_trigger_event(
-                            db,
+                            &tx,
                             pm_plan_id,
                             version_id,
                             "fixed",
@@ -1420,13 +1432,13 @@ pub async fn generate_pm_occurrences(
                         .await?;
                     } else {
                         if let Some(occurrence_id) =
-                            insert_occurrence(db, pm_plan_id, version_id, &due_basis, Some(due_at.clone()), None)
+                            insert_occurrence(&tx, pm_plan_id, version_id, &due_basis, Some(due_at.clone()), None)
                                 .await?
                         {
                             generated_count += 1;
                             occurrence_ids.push(occurrence_id);
                             insert_trigger_event(
-                                db,
+                                &tx,
                                 pm_plan_id,
                                 version_id,
                                 "fixed",
@@ -1440,7 +1452,7 @@ pub async fn generate_pm_occurrences(
                         } else {
                             skipped_count += 1;
                             insert_trigger_event(
-                                db,
+                                &tx,
                                 pm_plan_id,
                                 version_id,
                                 "fixed",
@@ -1459,7 +1471,7 @@ pub async fn generate_pm_occurrences(
             }
             "floating" => {
                 let interval = parse_interval(trigger_obj)?;
-                let base_row = db
+                let base_row = tx
                     .query_one(Statement::from_sql_and_values(
                         DbBackend::Sqlite,
                         "SELECT due_at, updated_at
@@ -1488,11 +1500,12 @@ pub async fn generate_pm_occurrences(
                 if due <= horizon_end {
                     let due_at = due.format("%Y-%m-%dT%H:%M:%SZ").to_string();
                     let due_basis = format!("floating:{}", due_at);
-                    let exists = occurrence_exists(db, pm_plan_id, version_id, &due_basis, Some(&due_at), None).await?;
+                    let exists =
+                        occurrence_exists(&tx, pm_plan_id, version_id, &due_basis, Some(&due_at), None).await?;
                     if exists {
                         skipped_count += 1;
                         insert_trigger_event(
-                            db,
+                            &tx,
                             pm_plan_id,
                             version_id,
                             "floating",
@@ -1505,13 +1518,13 @@ pub async fn generate_pm_occurrences(
                         .await?;
                     } else {
                         if let Some(occurrence_id) =
-                            insert_occurrence(db, pm_plan_id, version_id, &due_basis, Some(due_at.clone()), None)
+                            insert_occurrence(&tx, pm_plan_id, version_id, &due_basis, Some(due_at.clone()), None)
                                 .await?
                         {
                             generated_count += 1;
                             occurrence_ids.push(occurrence_id);
                             insert_trigger_event(
-                                db,
+                                &tx,
                                 pm_plan_id,
                                 version_id,
                                 "floating",
@@ -1525,7 +1538,7 @@ pub async fn generate_pm_occurrences(
                         } else {
                             skipped_count += 1;
                             insert_trigger_event(
-                                db,
+                                &tx,
                                 pm_plan_id,
                                 version_id,
                                 "floating",
@@ -1556,7 +1569,7 @@ pub async fn generate_pm_occurrences(
                 let current_reading: f64;
 
                 if meter_id > 0 && threshold_value > 0.0 {
-                    let meter_row = db
+                    let meter_row = tx
                         .query_one(Statement::from_sql_and_values(
                             DbBackend::Sqlite,
                             "SELECT current_reading FROM equipment_meters WHERE id = ? AND is_active = 1",
@@ -1591,7 +1604,7 @@ pub async fn generate_pm_occurrences(
                     } else {
                         "HOURS"
                     };
-                    let plan_scope_row = db
+                    let plan_scope_row = tx
                         .query_one(Statement::from_sql_and_values(
                             DbBackend::Sqlite,
                             "SELECT asset_scope_type, asset_scope_id FROM pm_plans WHERE id = ?",
@@ -1610,7 +1623,7 @@ pub async fn generate_pm_occurrences(
                         ]));
                     }
                     let equipment_id = asset_scope_id.unwrap_or_default();
-                    let meter_row = db
+                    let meter_row = tx
                         .query_one(Statement::from_sql_and_values(
                             DbBackend::Sqlite,
                             "SELECT id, current_reading
@@ -1632,17 +1645,24 @@ pub async fn generate_pm_occurrences(
                     threshold_value = current_reading + interval_value;
                 }
 
-                let due_basis = format!("meter:{}:{:.4}", meter_id, threshold_value);
+                // The meter is named by its sync identity, so the same occurrence has the same
+                // due basis (and identity) on every device.
+                // (A database without sync capture may hold a meter without identity: its local id
+                // is used there.)
+                let meter_ref = crate::sync::identity::optional_entity_sync_id(&tx, "equipment_meters", meter_id)
+                    .await?
+                    .unwrap_or_else(|| meter_id.to_string());
+                let due_basis = format!("meter:{}:{:.4}", meter_ref, threshold_value);
                 let should_generate = current_reading >= threshold_value;
                 let mut generated_occurrence_id: Option<i64> = None;
                 if should_generate {
                     let exists =
-                        occurrence_exists(db, pm_plan_id, version_id, &due_basis, None, Some(threshold_value)).await?;
+                        occurrence_exists(&tx, pm_plan_id, version_id, &due_basis, None, Some(threshold_value)).await?;
                     if exists {
                         skipped_count += 1;
                     } else {
                         if let Some(occurrence_id) = insert_occurrence(
-                            db,
+                            &tx,
                             pm_plan_id,
                             version_id,
                             &due_basis,
@@ -1660,7 +1680,7 @@ pub async fn generate_pm_occurrences(
                     }
                 }
                 insert_trigger_event(
-                    db,
+                    &tx,
                     pm_plan_id,
                     version_id,
                     "meter",
@@ -1688,12 +1708,13 @@ pub async fn generate_pm_occurrences(
                 let due_basis = format!("event:{}:{}", event_code, as_of_dt.format("%Y-%m-%d"));
                 let mut generated_occurrence_id: Option<i64> = None;
                 if event_codes.contains(&event_code) {
-                    let exists = occurrence_exists(db, pm_plan_id, version_id, &due_basis, Some(&as_of), None).await?;
+                    let exists = occurrence_exists(&tx, pm_plan_id, version_id, &due_basis, Some(&as_of), None).await?;
                     if exists {
                         skipped_count += 1;
                     } else {
                         if let Some(occurrence_id) =
-                            insert_occurrence(db, pm_plan_id, version_id, &due_basis, Some(as_of.clone()), None).await?
+                            insert_occurrence(&tx, pm_plan_id, version_id, &due_basis, Some(as_of.clone()), None)
+                                .await?
                         {
                             generated_count += 1;
                             occurrence_ids.push(occurrence_id);
@@ -1704,7 +1725,7 @@ pub async fn generate_pm_occurrences(
                     }
                 }
                 insert_trigger_event(
-                    db,
+                    &tx,
                     pm_plan_id,
                     version_id,
                     "event",
@@ -1732,12 +1753,13 @@ pub async fn generate_pm_occurrences(
                 let due_basis = format!("condition:{}:{}", condition_code, as_of_dt.format("%Y-%m-%d"));
                 let mut generated_occurrence_id: Option<i64> = None;
                 if condition_codes.contains(&condition_code) {
-                    let exists = occurrence_exists(db, pm_plan_id, version_id, &due_basis, Some(&as_of), None).await?;
+                    let exists = occurrence_exists(&tx, pm_plan_id, version_id, &due_basis, Some(&as_of), None).await?;
                     if exists {
                         skipped_count += 1;
                     } else {
                         if let Some(occurrence_id) =
-                            insert_occurrence(db, pm_plan_id, version_id, &due_basis, Some(as_of.clone()), None).await?
+                            insert_occurrence(&tx, pm_plan_id, version_id, &due_basis, Some(as_of.clone()), None)
+                                .await?
                         {
                             generated_count += 1;
                             occurrence_ids.push(occurrence_id);
@@ -1748,7 +1770,7 @@ pub async fn generate_pm_occurrences(
                     }
                 }
                 insert_trigger_event(
-                    db,
+                    &tx,
                     pm_plan_id,
                     version_id,
                     "condition",
@@ -1769,12 +1791,10 @@ pub async fn generate_pm_occurrences(
             }
         }
     }
+    crate::sync::capture::end_suppression(&tx).await?;
+    tx.commit().await?;
     for occurrence_id in &occurrence_ids {
         let _ = emit_pm_due_event(db, *occurrence_id).await;
-        crate::sync::foundation_stage::warn_stage(
-            crate::sync::ops_stage::stage_pm_occurrence_sync(db, *occurrence_id).await,
-            "pm_occurrence generate",
-        );
     }
 
     Ok(GeneratePmOccurrencesResult {
@@ -1917,7 +1937,8 @@ pub async fn transition_pm_occurrence(
         None
     };
 
-    let update = db
+    let tx = db.begin().await?;
+    let update = tx
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE pm_occurrences
@@ -1945,7 +1966,7 @@ pub async fn transition_pm_occurrence(
         ]));
     }
 
-    db.execute(Statement::from_sql_and_values(
+    tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO pm_occurrence_transitions (pm_occurrence_id, from_status, to_status, reason_code, note, actor_id)
          VALUES (?, ?, ?, ?, ?, ?)",
@@ -1960,11 +1981,9 @@ pub async fn transition_pm_occurrence(
     ))
     .await?;
 
+    tx.commit().await?;
+
     let updated = get_pm_occurrence_by_id(db, input.occurrence_id).await?;
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::ops_stage::stage_pm_occurrence_sync(db, input.occurrence_id).await,
-        "pm_occurrence transition",
-    );
     if updated.status == "missed" {
         let _ = emit_pm_missed_event(db, &updated, input.reason_code.clone()).await;
     } else if updated.status == "deferred" {
@@ -2069,7 +2088,10 @@ fn bounded_period(input_from: Option<&str>, input_to: Option<&str>) -> AppResult
         to.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
     ))
 }
-async fn load_pm_routing_context(db: &DatabaseConnection, occurrence_id: i64) -> AppResult<(Option<i64>, Option<i64>)> {
+async fn load_pm_routing_context(
+    db: &impl ConnectionTrait,
+    occurrence_id: i64,
+) -> AppResult<(Option<i64>, Option<i64>)> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -2092,7 +2114,7 @@ async fn load_pm_routing_context(db: &DatabaseConnection, occurrence_id: i64) ->
 }
 
 async fn emit_pm_occurrence_activity(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     occurrence: &PmOccurrence,
     event_code: &str,
     actor_id: Option<i64>,
@@ -2106,6 +2128,11 @@ async fn emit_pm_occurrence_activity(
         "linked_work_order_id": occurrence.linked_work_order_id,
     });
 
+    // Correlates the events of one occurrence on every device: by sync id, not the local id.
+    let correlation = crate::sync::identity::optional_entity_sync_id(db, "pm_occurrences", occurrence.id)
+        .await?
+        // Every row gets a sync id at insert; a row without one keeps a device-marked key.
+        .unwrap_or_else(|| format!("local-{}", occurrence.id));
     let _ = emit_activity_event(
         db,
         ActivityEventInput {
@@ -2122,7 +2149,7 @@ async fn emit_pm_occurrence_activity(
                 "info".to_string()
             },
             summary_json: Some(summary_json),
-            correlation_id: Some(format!("pm-occ-{}", occurrence.id)),
+            correlation_id: Some(format!("pm-occ-{correlation}")),
             visibility_scope: "entity".to_string(),
         },
     )
@@ -2131,14 +2158,26 @@ async fn emit_pm_occurrence_activity(
     Ok(())
 }
 
+/// Who produces a PM notification event.
+enum PmEventOrigin {
+    /// A person's action on this device: the event is sent to the other devices.
+    Person,
+    /// Generated by every device for itself (`emitter::emit_device_event`), with the identity
+    /// basis built from sync ids (`None` when the occurrence has no sync identity).
+    EachDevice(Option<String>),
+}
+
+/// Notification about an occurrence.
+#[allow(clippy::too_many_arguments)]
 async fn emit_pm_notification(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     occurrence: &PmOccurrence,
     event_code: &str,
     category_code: &str,
     severity: &str,
     dedupe_key: Option<String>,
     reason_code: Option<String>,
+    origin: PmEventOrigin,
 ) -> AppResult<()> {
     let (assigned_team_id, org_node_id) = load_pm_routing_context(db, occurrence.id).await?;
     let payload = json!({
@@ -2155,47 +2194,57 @@ async fn emit_pm_notification(
         "reason_code": reason_code,
     });
 
-    let _ = emit_notification_event(
-        db,
-        NotificationEventInput {
-            source_module: "pm".to_string(),
-            source_record_id: Some(occurrence.id.to_string()),
-            event_code: event_code.to_string(),
-            category_code: category_code.to_string(),
-            severity: severity.to_string(),
-            dedupe_key,
-            payload_json: Some(payload.to_string()),
-            title: format!("PM {}", event_code),
-            body: Some(format!(
-                "PM occurrence {} for plan {} is {}.",
-                occurrence.id,
-                occurrence
-                    .plan_code
-                    .clone()
-                    .unwrap_or_else(|| occurrence.pm_plan_id.to_string()),
-                occurrence.status
-            )),
-            action_url: Some(format!("/pm?occurrence={}", occurrence.id)),
-        },
-    )
-    .await;
+    let input = NotificationEventInput {
+        source_module: "pm".to_string(),
+        source_record_id: Some(occurrence.id.to_string()),
+        event_code: event_code.to_string(),
+        category_code: category_code.to_string(),
+        severity: severity.to_string(),
+        dedupe_key,
+        payload_json: Some(payload.to_string()),
+        title: format!("PM {}", event_code),
+        body: Some(format!(
+            "PM occurrence {} for plan {} is {}.",
+            occurrence.id,
+            occurrence
+                .plan_code
+                .clone()
+                .unwrap_or_else(|| occurrence.pm_plan_id.to_string()),
+            occurrence.status
+        )),
+        action_url: Some(format!("/pm?occurrence={}", occurrence.id)),
+    };
+    match origin {
+        PmEventOrigin::EachDevice(identity) => emit_device_event(db, input, identity.as_deref()).await?,
+        PmEventOrigin::Person => emit_notification_event(db, input).await?,
+    }
 
     Ok(())
 }
 
+/// Due occurrences are generated by the PM scheduler of every device (deterministic occurrence
+/// ids), so is their notification and activity entry: kept on each device, not sent.
 async fn emit_pm_due_event(db: &DatabaseConnection, occurrence_id: i64) -> AppResult<()> {
-    let occurrence = get_pm_occurrence_by_id(db, occurrence_id).await?;
+    let txn = db.begin().await?;
+    crate::sync::capture::begin_suppression(&txn).await?;
+    let occurrence = get_pm_occurrence_by_id(&txn, occurrence_id).await?;
+    let identity = crate::sync::identity::optional_entity_sync_id(&txn, "pm_occurrences", occurrence.id)
+        .await?
+        .map(|sync_id| format!("pm.due|{sync_id}"));
     emit_pm_notification(
-        db,
+        &txn,
         &occurrence,
         "pm.due",
         "pm_due",
         "info",
         Some(format!("pm-due-{}-{}", occurrence.id, occurrence.due_basis)),
         None,
+        PmEventOrigin::EachDevice(identity),
     )
     .await?;
-    emit_pm_occurrence_activity(db, &occurrence, "pm.occurrence.generated", None, None).await?;
+    emit_pm_occurrence_activity(&txn, &occurrence, "pm.occurrence.generated", None, None).await?;
+    crate::sync::capture::end_suppression(&txn).await?;
+    txn.commit().await?;
     Ok(())
 }
 
@@ -2212,6 +2261,7 @@ async fn emit_pm_missed_event(
         "warning",
         Some(format!("pm-missed-open-{}", occurrence.id)),
         reason_code.clone(),
+        PmEventOrigin::Person,
     )
     .await?;
     emit_pm_occurrence_activity(db, occurrence, "pm.occurrence.missed", None, reason_code).await?;
@@ -2231,6 +2281,7 @@ async fn emit_pm_deferred_event(
         "warning",
         Some(format!("pm-deferred-open-{}", occurrence.id)),
         reason_code.clone(),
+        PmEventOrigin::Person,
     )
     .await?;
     emit_pm_occurrence_activity(db, occurrence, "pm.occurrence.deferred", None, reason_code).await?;
@@ -2684,6 +2735,7 @@ pub async fn execute_pm_occurrence(
                 "info",
                 None,
                 None,
+                PmEventOrigin::Person,
             )
             .await;
             let _ = emit_pm_occurrence_activity(db, &occurrence, "pm.finding.follow_up_created", Some(actor_id), None)

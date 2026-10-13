@@ -335,7 +335,7 @@ Work is on branch `phase0/security-hardening` in both repos. Each side has a bas
 | No server-side RBAC: every vendor operator has every permission | API | 4.3 |
 | Licence key stored in plain text in `app_settings` (`license_key_plaintext`) | desktop | 1.2: move to the OS keyring |
 | Unauthenticated licence actions write `changed_by_id = 0` (fake user) into settings audit | desktop | 1.5: system-actor support in `settings::set_setting` |
-| `get_product_activation_token` / `run_integrity_check` are pre-auth by design | desktop | 2.5: once transport is in Rust, the token never leaves Rust |
+| `get_product_activation_token` / `run_integrity_check` are pre-auth by design | desktop | 2.3 done for sync: the sync worker reads the token in Rust and `get_control_plane_activation_bearer_token` is removed. Still open: the licence checks (tenant status, policy refresh) run in the webview with `get_product_activation_token`; moving them to Rust removes the last command that returns the token |
 | "Show in folder" uses `shell.open` on a folder path; the default shell scope only allows URLs, so it is probably broken | desktop | 6.9: switch to the opener plugin's reveal |
 | Double-encoded UTF-8 (mojibake) in at least 20 files on develop, some user-visible | desktop | 6.9: encoding sweep |
 | `style-src 'unsafe-inline'` still in the CSP (needed by the current UI libraries) | desktop | 6.9: evaluate nonce/hash |
@@ -491,6 +491,298 @@ Work is on branch `phase0/security-hardening` in both repos. Each side has a bas
   - The variance review commentary sent by BudgetPage is a fixed string (pre-existing).
   - `fin.post` is marked `requires_step_up` but `require_fin_post` doesn't enforce step-up
     (pre-existing).
+
+### Phase 2.2 — Desktop sync foundations (2026-10-10)
+
+- **Registry:** `src-tauri/src/sync/registry.rs` lists 201 replicated tables (scope, stager,
+  materializer, conflict policy, parents → apply order) and 46 local-only tables. Exported to
+  `shared/sync/entity-registry.json` for the server allowlist. CI tests fail on a table in neither
+  list, a parent cycle, an undeclared FK parent, a staged type missing from the server allowlist
+  copy, and any raw INSERT into a synchronised table without `entity_sync_id`.
+- **Identity:** every insert sets `entity_sync_id`; seeded system rows (roles) use a deterministic
+  id; stagers never invent ids. Migration 160 backfills missing ids.
+- **Transactional staging:** `warn_stage` is gone; every stager runs in the business transaction and
+  a failed stage fails the write (≈90 call sites, incl. finance, permits, inspections,
+  qualification, reliability).
+- **Outbox/inbox model (migration 160):** base_row_version, owner, origin replica id, attempts,
+  in_flight / dead_letter / superseded; inbox deferred state; per-entity server version.
+- **Inbound:** unknown or not-yet-applied types stay `deferred` (rows wrongly marked applied before
+  were re-flagged); children wait for parents; conflicts (concurrent edit, stale, equal-version
+  divergence, materialize error) are written to `sync_conflicts` and counted in the summary.
+- **Conflicts:** keep mine re-stages on the server version; take theirs applies the server payload.
+  Sync Center shows the kind and versions (FR/EN).
+- **Open for 2.3/2.4:** see `docs/engineering/SYNC_STRATEGY.md` and the session notes: seeded
+  catalog rows created by old migrations still have per-database ids; delivery-failure hook not
+  wired to the transport; deletes mostly not staged; legacy payloads keep local integer FKs.
+
+### Phase 2.3 — Rust sync worker (2026-10-11)
+
+- **Transport in Rust:** `src-tauri/src/sync/transport/` runs as background task `sync` in
+  `BackgroundTaskSupervisor`, speaking protocol v2 only (exchange, paged snapshot bootstrap,
+  `has_more` paging, `user_snapshot_required` user snapshots, media manifest + presigned upload).
+  `reqwest` with rustls/ring, already in the dependency tree through the updater (no OpenSSL);
+  its `system-proxy` feature (one new crate, `windows-registry`) keeps following the Windows proxy
+  settings like the webview did. The webview transport (`sync-vps-transport-service.ts`), its scheduling core
+  and the commands it used (`get_control_plane_activation_bearer_token`, `get_sync_push_payload`,
+  `apply_sync_batch`, `materialize_sync_inbox`) are removed: the webview can no longer read the
+  activation token for sync or inject sync batches.
+- **Crash safety:** each request (idempotency key, exact body, outbox ids) is stored in
+  `sync_transport_state` (migration 161) before it is sent and resent unchanged after a failure or a
+  restart; the checkpoint is stored with the applied answer. Acks now store `server_seq` and
+  `duplicate`.
+- **Reliability:** offline / 429 (`Retry-After`) / 5xx / 401–403 / checkpoint refusal / 409 handled
+  as listed in `SYNC_STRATEGY.md` §3; exponential backoff with jitter (2 s → 5 min), no retry budget
+  to exhaust; transport failures go through `record_outbox_delivery_failure` (dead letter after 25);
+  a refused activation stops sync until the token changes and makes the UI run a licence check.
+- **Runs with the window closed:** closing the window already hid it in the tray; the worker lives in
+  the Rust process, so sync continues until the app is quit from the tray.
+- **Sync Center (FR/EN):** status card (state, reason, last success, pending, conflicts, next
+  attempt, media, last error) with sync now / pause (15 min–24 h, persisted) / resume, in the Sync
+  Center and in Settings; top bar and status bar labels translated. The simulated "entitlement /
+  bandwidth" selectors of the old panel are gone.
+- **API base URL:** one default in `shared/control-plane.json`, read by the webview and by
+  `src-tauri/build.rs`; `VITE_ADMIN_API_BASE_URL` overrides both.
+- **Fixed on the way:** "reset local tenant data" deleted the `sync_replica_identity` row, after
+  which every business write failed at staging; the reset now re-creates it (and the transport row).
+- **Tests:** `cargo test --lib -- sync::transport` (worker against an in-process HTTP stub, 21 tests).
+- **Not verified here / open:** no end-to-end run against a local vendor-console API (Phase 2.5);
+  media download from other devices (`presign-get`) not implemented (2.4); a database restored from a backup keeps its old
+  checkpoint, so rows written after the backup are not re-sent by the server (2.5: force a snapshot
+  after restore).
+
+### Phase 2.4 — Coverage of every domain (2026-10-11)
+
+- **One generic engine instead of hand-written stagers and materializers**
+  (`src-tauri/src/sync/`: `capture.rs`, `row_spec.rs`, `row_layout.rs`, `row_codec.rs`,
+  `apply_hooks.rs`, `seeded_identity.rs`). SQLite triggers capture every change inside the
+  business transaction; a rule per table (`RowSpec`) says how each local id travels (as the
+  target's sync id, as a catalog key, through JSON paths or URL parameters, or not at all);
+  inbound rows are applied by one materializer that defers a row whose parent has not arrived.
+  Migrations 162 (capture tables, `entity_sync_id` on 111 tables, seeded identities), 163 (PM meter
+  due basis by sync id), 164 (last foreign keys on the legacy `users` stub moved to
+  `user_accounts`; planning/PM writes with real user ids failed before).
+- **Coverage:** every table in the registry syncs (test `registry_flags_match_stager_and_materializer_dispatch`):
+  foundation, inventory/procurement (a received movement updates stock balances), WO and DI, PM and
+  planning, finance, personnel and qualification, inspections and permits, RAMS, data integrity,
+  analytics contract, settings, history logs, notifications, reports, and per-user items
+  (notification preferences, saved filters, dashboard layouts, RAMS dismissals, notification read
+  state) delivered only to the devices where their owner is signed in. Domain commits: 97a6ebf9,
+  72af1028, 78a015d0, cdb82568, 0b6a500b, ada22034.
+- **Data each device makes for itself** (PM occurrences, schedule candidates, data-integrity
+  findings, automatic notifications, escalation) is generated with capture off and with ids built
+  from sync ids, so a person's action on it (waive, read, acknowledge) reaches the same row on the
+  other devices. Projections recomputed per device are local-only (scheduling conflicts,
+  readiness snapshots, training expiry alerts, inspection signals, reliability KPI snapshots), as
+  are archives, event links and library documents (no transfer path for their files yet).
+- **Server allowlist:** 133 types appended to `maintafox-vendor-console/shared/sync-entity-registry.v2.json`
+  (vendor commits 4a95b48, 19178ef, add7d5e, 38ac625); `test:sync-v2` passes. **To deploy** with the
+  API. Server entries the desktop no longer sends: `user_role_assignments` (no desktop table),
+  `reliability_kpi_snapshots`, `personnel_readiness_snapshots`, `training_expiry_alert_events`,
+  `inspection_reliability_signals` (left in place: the registry file is append-only from this side).
+- **Fixed on the way:** an update of device-local columns only (login time, SLA "notified" stamp)
+  was sent, so every device's SLA poller pushed the same request (false conflicts); the baseline
+  skipped 1 in 16 rows whose id had a prefix (`failure_event:<uuid>`); `PO_GR` movements pointed to a
+  goods receipt or a PO line depending on the path (now always the receipt).
+- **Known limits:** local ids remain inside some history texts (audit `target_id`, activity and
+  change event summaries, notification event payload fields other than the routing ids); WO/DI
+  code numbering is per device and can collide; media files received from another device are not
+  downloaded; the same notification read on two devices before they sync is a conflict for the
+  person (no silent last-write-wins); a user's report schedule runs on each of that user's devices.
+
+### Phase 2.5 — Proof (2026-10-11)
+
+- **Registry-wide round trip:** `every_registered_type_round_trips` (`sync/row_sync_tests.rs`)
+  takes every type from the registry, fails if one is in no domain round trip, and sends all of them
+  between two devices (create, edit, delete). Passes (19 s).
+- **Multi-device harness:** `pnpm sync:harness` (`scripts/sync-harness.mjs`,
+  `src-tauri/src/sync/harness_tests.rs`). The real control API from `../maintafox-vendor-console`
+  on embedded PostgreSQL 16, three desktop databases syncing through the real Rust worker over
+  HTTP, everything on 127.0.0.1. Nine scenarios pass: create; concurrent edit shown as a conflict
+  and resolved keeping mine and taking theirs; offline then reconnect; per-user rows only where the
+  owner is signed in; delete (tombstone); snapshot bootstrap of a new device; answer lost after the
+  server committed, resent once and applied once; backup restore; revoked device refused.
+- **Backup restore (2.3 gap closed):** after a restore is swapped in, startup drops the sync
+  checkpoint and unanswered request (`transport::store::forget_server_position`), so the worker
+  re-bootstraps from a snapshot and gets back the rows this device wrote after the backup.
+- **Tests:** full `cargo test --lib`: 1013 passed, 0 failed, 1 ignored (the harness, which needs
+  the API; run through `pnpm sync:harness`), 88 min. `cargo clippy --lib -- -D warnings` clean,
+  `pnpm typecheck` clean, vendor `test:sync-v2` passes.
+- **Not verified here:** the harness runs the API on this machine, not on the VPS; nothing was
+  deployed. Media download, two people editing at once through the real UI, and very large
+  tenants (snapshot size, time) are not covered by the harness.
+
+### Phase 2 leftovers — files, numbers, history ids, large tenants (2026-10-11)
+
+- **1. Files from other devices** (desktop `235304c8`, vendor `1ff8562`): received
+  `media_attachments` rows queue a download (migration 165); the sync worker fetches the file
+  through `presign-get`, checks size and SHA-256 while streaming, and only then moves it into
+  place; retries with backoff, never blocks sync. WO/DI attachments, asset photos and library
+  documents show "not downloaded yet / download failed, retry / not on this device" (FR/EN). The
+  document library now syncs (row + file); archives stay device-local (no production writer).
+  Fixed on the way: asset photo upload re-read the wrong row. Server: `library_documents` added to
+  the registry (deploy).
+- **2. Record numbers** (see SYNC_STRATEGY §6a): new WO/DI/personnel/permit numbers carry a
+  4-character device code (`OT-7KQ2-0001`), so devices never hand out the same number; old numbers
+  unchanged. A clash (old numbers, or two devices sharing a code) is a `CODE_CLASH` conflict with
+  one action, "renumber the record on this device"; never renamed silently. Migration 166 re-types
+  clashes already recorded as technical errors.
+- **3. History ids** (SYNC_STRATEGY §6b): audit targets/details, activity summaries, admin
+  scope/diff, request and schedule change details and notification payloads travel as sync ids;
+  rows received before this version are marked and shown as "from another device" (migration 167).
+  Fixed on the way: article stock state events could not be sent (unmapped type); notification
+  de-duplication keys no longer travel (they would suppress unrelated events on another device).
+- **4. Large tenant:** measured with `pnpm sync:harness --large N` (SYNC_STRATEGY §12). Before:
+  a bootstrap of even 4 000 rows left almost every row unapplied (waiting rows blocked the queue),
+  and a snapshot over ~60 000 rows could never finish (server 429 restarted it from page 1). After:
+  100 008 work orders (333 574 rows) bootstrap in 15.5 min on the development PC (671 MB received,
+  peak memory 202 MB, device file 1.47 GB, 0 conflicts); the server's snapshot page query takes
+  ~6.5 ms; one change in steady state travels in < 50 ms. Fixes are desktop-only (apply order,
+  chunked transactions, two indexes, resumable snapshot, 1 000-row pages); no server change.
+  Follow-up: compact applied inbox rows (they double the device file during a bootstrap).
+- **Tests:** full `cargo test --lib`: 1022 passed, 0 failed, 2 ignored (the two
+  harness tests, run through `pnpm sync:harness`), 91 min; `pnpm sync:harness`: 11 scenarios
+  pass (incl. 9 files through object storage, 10 number clash); `cargo clippy --lib -- -D
+  warnings` clean; `pnpm typecheck` clean; vitest (sync, activity, admin, stores): 39 passed;
+  vendor `test:sync-v2` passes. Commits: desktop 235304c8, 52c82684, 8201a98a; vendor 1ff8562
+  (deploy: registry gains `library_documents`).
+- **Not verified here:** uploads/downloads against real MinIO (the harness uses a local
+  S3-compatible stand-in that checks the presigned query but not the signature); the new UI states
+  in the running app (covered by component tests only); timings on a field PC.
+
+### Phase 6 — Desktop module completion (2026-10-11/12)
+
+Branch `claude/phase6-modules-0aceae`, PR #21 into `phase0/security-hardening`. Migrations 169–175.
+
+- **6.1 Permits / LOTO** (`35f53838`): merged from `claude/clever-bouman-6fae8e` and adapted to
+  the sync rules (writes in one transaction, device-coded `PTW-…` numbers, isolation removal
+  verifier, lock removal blocked while the linked WO is in progress). 22 Rust tests.
+- **6.3 Reliability** (`66503804`, `25b929e5`): merged from `claude/musing-mclaren-862f78`
+  (right-censored Weibull checked against SciPy, availability, readiness gate, failure ingest in
+  the close-out transaction, minimum-sample floor); FTA evaluated through minimal cut sets.
+- **6.2 Inspections** (`b9991933`): round runner with pickers (no raw ids), large touch targets,
+  photo evidence, round start/complete/review, visible offline queue (sync outbox state);
+  qualification checks fail closed. Rust + component tests.
+- **6.4 Work orders** (`cf47df91`, `9df91c38`): reopen within a configurable window keeping the
+  verification evidence; backlog heatmap; QR on the print sheet; real PM/permit links in the
+  analytics feed. PRD 12-state lifecycle **derived** from the WO's own facts (option B, see
+  SYNC_STRATEGY §13; deliberate deviation from "12 stored statuses"): 8 phases stay stored,
+  migration 175 adds `planning_approval_required`, `hold_kind`, and a lifecycle snapshot in the
+  transition log; SQL and TypeScript mirrors checked on all 768 fact combinations. WO dashboard
+  stats, which always failed (wrong table/column), fixed.
+- **6.5 RCM / FMECA → PM** (`64ea1563`): RCM II decision logic with recommended tactic and
+  decision path; FMECA/RCM actions create a PM plan revision or a WO linked back; MIL-STD-1629A
+  criticality number.
+- **6.6 Analytics / exports** (`42536d94`): real PDF engine (embedded system TrueType font,
+  multi-page, Unicode, tables, charts) for planning, report and reliability exports; failure-mode
+  Pareto by count, cost or downtime; reliability report (KPIs, Weibull, FMECA, Pareto) as PDF or
+  Excel.
+- **6.7 Notifications / audit** (`8c9dd75b`, `dc698138`): hash-chained audit trail per device
+  with an integrity check that other devices can run on received chains; OS toasts (Rust plugin,
+  webview permissions unchanged); email through `POST /api/v1/notifications/email` (contract in
+  `notifications/email.rs`, never SMTP), shown as not available until the entitlement capability
+  `notifications.email` is explicitly enabled.
+- **6.8 Reference data** (`67d1f2eb`): publish impact counted through every foreign key to
+  `reference_values`/`lookup_values`, per module (work orders, inventory, reliability, …);
+  `unit_conversions` (new synced type, tenant).
+- **6.9 Quality** (`e962ca1d`, `d8ac5a67`): i18n sweep (hardcoded strings 258 → 3 flagged lines,
+  all justified), locale BOMs removed, store tests for all 21 zustand stores, vitest coverage now
+  includes `src/stores` with thresholds raised 31/24/80/31 → 62/55/93/62; 45 Rust tests for
+  analytics, jobs and data integrity (one analytics bug fixed); dead code removed; e2e plan in
+  `docs/engineering/E2E_SMOKE_SUITE.md` (not built).
+- **Tests:** full `cargo test --lib`: 1183 passed, 2 failed, 3 ignored (119 min); the two
+  failures (seeder settings count; audit events with a target type sync does not map could not
+  be written once chained) were fixed in `77599b0a` and their tests rerun green with the audit
+  suite (12 passed). `pnpm sync:harness`: 11 scenarios pass. `cargo clippy --lib -- -D
+  warnings` clean, `cargo fmt --check` clean, `pnpm typecheck` clean, vitest 98 files / 1027
+  tests pass (5 skipped = documented bugs), coverage 62.51 / 93.27 / 55.24 / 62.51
+  (lines / branches / functions / statements); i18n parity 24 namespaces, 0 mismatches.
+- **Server side to do:** add `{"entity_type":"unit_conversions","scope":"tenant"}` to
+  `maintafox-vendor-console/shared/sync-entity-registry.v2.json` (desktop copy already updated;
+  `scripts/sync-allowlist-append.mjs`); implement `POST /api/v1/notifications/email` and then
+  grant the `notifications.email` capability; store and forward the new columns unchanged
+  (`audit_events.chain_*`, `work_orders.planning_approval_required`,
+  `work_order_delay_segments.hold_kind`, `wo_state_transition_log.lifecycle_state`).
+- **Leftovers fixed:** `d6f17e2d` `FK_ORPHAN_FAILURE_MODE` checks the governed list
+  `WORK.FAILURE_MODES`, and its repair re-checks and refuses unless the value is provably
+  dangling; `21b23884` latest-request guard in the WO, reference search, org designer and sync
+  stores, plus step-up detection; `3be6f03e` daily digest (background task
+  `notification_digest`, migration 176). **Open:** WebDriver e2e not built.
+
+### Phase 3 — Control plane hardening (2026-10-12)
+
+Vendor console commits (branch phase0/security-hardening): f8bc541 3.5, 66309f5 3.6, 11eea48 3.1,
+300ae9c 3.2, 72c6805 3.3, b6fbdd3 3.4, e6da4b1 `unit_conversions`, 43cdc6a notification email
+(+ CI fixes e32d6da, 73d27fe). Desktop: 8cdc8630 (send support bundle). CI on 43cdc6a: all 7 jobs green.
+
+- **3.5 Backups:** nightly `pg_dump` + `pg_basebackup`, continuous WAL archiving (15 min), local
+  retention, MinIO bucket versioning, monthly automatic restore drill (row counts per table vs the
+  dump, migrations, audit chain), every run in `backup_runs`. Off-site copy to any S3 bucket, age-
+  encrypted to the owner's key, **disabled until the owner buys a bucket** (local copies only).
+  Drill verified locally with real PostgreSQL 16 (backup, drill, corrupt/tampered refusals,
+  point-in-time recovery both ways) and in CI. Runbook `deploy/BACKUP_AND_RESTORE.md`.
+- **3.6 CI:** lint (new ESLint), typecheck, console tests, build, `test:all` on Postgres 16,
+  backup drill, off-site + bundle upload against an S3 server, Docker images, `pnpm audit`
+  (high), gitleaks full history. Fixed on the way: audit findings (vite, overrides), lint findings,
+  a stale tenant-selection closure in the console, an embedded-Postgres orphan process on Windows.
+- **3.1:** `index.ts` (4,500 lines) split into 11 route modules + `app/` helpers; route
+  inventory identical; `test:all` before/after.
+- **3.2:** Postgres row-level security on every tenant table (role `mfx_app`, per-transaction
+  tenant/operator scope, operator access recorded); `user_accounts` payloads and stored exchange
+  responses AES-256-GCM encrypted at rest, delivery byte-exact. Test proves no-scope sees nothing
+  and tenant A cannot read/update/insert B.
+- **3.3:** ops figures measured from the sync store (per-device lag and checkpoint age, rejection
+  rate, dead letters, conflicts, retries); heuristics and invented services removed; Prometheus
+  endpoint `/api/v1/ops/metrics`.
+- **3.4:** support tickets (operator and device), diagnostic bundles uploaded from the desktop to
+  object storage (presigned, verified by size + SHA-256) and downloadable from the console
+  (audited), editable runbooks with real procedures, readiness computed; seed fixtures removed.
+- **Queued:** registry `unit_conversions`; `POST /api/v1/notifications/email` (SMTP from env,
+  capability `notifications.email` off by default).
+- **Found:** `minio/minio` and `minio/mc` images can no longer be pulled (Docker Hub, quay.io); the
+  VPS runs from its cache. Owner decision needed (`deploy/CI.md`).
+- **Not deployed.** New env: `PG_WAL_ARCHIVE_TIMEOUT_SECONDS`, `BACKUP_*`,
+  `MINIO_NONCURRENT_VERSION_RETENTION_DAYS`, `SYNC_PAYLOAD_ENCRYPTION_KEY`,
+  `OPERATOR_ACCESS_LOG_RETENTION_DAYS`, `EMAIL_DELIVERY_MODE` (+ optional `METRICS_SCRAPE_TOKEN`,
+  `SMTP_*`). Migrations 006–010.
+
+### Phase 4 — Vendor console completion (2026-10-13)
+
+Vendor console commits (branch phase0/security-hardening): 0a2d018 4.1, 7b160b3 4.2, 07caa24 4.3,
+70ed286 4.4, 027ec9b 4.5, 8e8ecc1 4.6, 1255498 + 39b1d66 + 23ab6fc 4.7, f9a94ad + 663c31b console
+redesign (approved mockups). Desktop: unchanged (every new server answer is one today's desktop
+already handles).
+
+- **4.1 Vendor auth:** access token in memory, rotating httpOnly refresh cookie with reuse
+  detection, logout / logout everywhere, mandatory TOTP with 10 recovery codes, step-up token bound
+  to the action kind (catalog `shared/step-up-actions.v1.json`, CI drift check against the Rust
+  enum), audited CLI reset for a lost authenticator. TOTP secrets sealed with an HKDF subkey of
+  `SYNC_PAYLOAD_ENCRYPTION_KEY` (label `maintafox/vendor-totp/v1`; rotating that key means operators
+  enrol again).
+- **4.2:** slot release, rebind, policy refresh, soft suspend/resume, tenant delete (step-up + typed
+  slug), rollout pause/resume/recall: real server effects, audited. Pause/recall act on devices only
+  once the Phase 5 updater exists (the console says so).
+- **4.3:** roles owner / operations / support / auditor enforced server-side on every route (fail
+  closed; a test checks every route has a permission). Operators admin page, own password.
+- **4.4:** subscription view, payment history as stored, SlickPay reconciliation (applies a payment
+  only when SlickPay says paid), audited licence edits.
+- **4.5:** per-device sync timeline; repair = full resynchronisation (step-up `sync_repair`). Replay
+  of refused items stays a desktop action (the server keeps no payloads).
+- **4.6:** `packages/contracts` generated from the desktop `shared/ipc-types.ts`; CI drift checks
+  (types, sync registry, step-up kinds) against desktop branch phase0/security-hardening.
+- **4.7:** French selectable; no English in components (AST guard test); API errors shown as
+  translated sentences; panel tests; Playwright e2e in CI (sign-in + TOTP enrolment, every section,
+  suspend with step-up, history, API failure, French). Found by the e2e and fixed: the Audit page
+  failed on every record category written since 4.1 (`shared/audit-action-categories.v1.json`).
+- **Console redesign:** navy sidebar with 7 sections + Settings & team; Overview (4 figures, "needs
+  your attention" from real signals, health summary, customers), customer page with tabs, System
+  health in plain words. New read-only endpoints `/api/v1/console/overview` and `/console/health`.
+- **Found, not fixed (owner decisions):** the billing amount comes from the console (price not
+  checked server-side); SlickPay settings have defaults in compose; until the owner enrols, whoever
+  knows the seeded password first could enrol; the secret-scan job fails on a commit of the
+  replace-minio branch (object storage scope).
+- **Not deployed.** Migrations 011–015; no new setting (compose passes the existing
+  `BACKUP_LOCAL_RETENTION_DAYS` to the API). Checklist and rollback: vendor console
+  `deploy/PHASE4_DEPLOY.md`.
 
 ## 6. Risks and open points
 

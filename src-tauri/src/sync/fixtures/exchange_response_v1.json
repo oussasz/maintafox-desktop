@@ -10,7 +10,7 @@
       "entity_sync_id": "eq-fixture-inbound-1",
       "operation": "upsert",
       "row_version": 1,
-      "payload_json": "{\"entity_sync_id\":\"eq-fixture-inbound-1\",\"row_version\":1,\"asset_code\":\"EQ-IN-1\",\"asset_name\":\"Inbound Fixture\",\"status_code\":\"active_in_service\"}"
+      "payload_json": "{\"_sync_format\":\"row.v1\",\"asset_id_code\":\"EQ-IN-1\",\"name\":\"Inbound Fixture\",\"lifecycle_status\":\"active_in_service\",\"created_at\":\"2026-01-01T00:00:00Z\",\"updated_at\":\"2026-01-01T00:00:00Z\"}"
     }
   ],
   "policy_metadata_json": null

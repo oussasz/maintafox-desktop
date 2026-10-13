@@ -1300,8 +1300,7 @@ mod tests {
         let err = db
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "INSERT INTO org_nodes \
-                 (entity_sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status, \
+                "INSERT INTO org_nodes (entity_sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status, \
                   created_at, updated_at, row_version, structure_model_id) \
                  VALUES ('bad-sync', 'UNSCOPED', 'Unscoped', ?, NULL, '/', 0, 'active', \
                          '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 1, NULL)",

@@ -58,9 +58,8 @@ pub async fn insert_contract_version(
 ) -> AppResult<i64> {
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "INSERT INTO analytics_contract_versions \
-         (entity_sync_id, row_version, contract_id, version_semver, content_sha256) \
-         VALUES (?, 1, ?, ?, ?)",
+        "INSERT INTO analytics_contract_versions (entity_sync_id, row_version, contract_id, \
+         version_semver, content_sha256) VALUES (?, 1, ?, ?, ?)",
         [
             entity_sync_id.into(),
             contract_id.into(),

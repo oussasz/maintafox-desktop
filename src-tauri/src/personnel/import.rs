@@ -288,11 +288,12 @@ pub async fn apply_import_batch(
                 txn.execute(Statement::from_sql_and_values(
                     DbBackend::Sqlite,
                     "INSERT INTO personnel (
-                        employee_code, full_name, employment_type, position_id, primary_entity_id, primary_team_id,
+                        entity_sync_id, employee_code, full_name, employment_type, position_id, primary_entity_id, primary_team_id,
                         supervisor_id, availability_status, hire_date, email, phone, hr_external_id, external_company_id,
                         notes, row_version, created_at, updated_at
-                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
                     [
+                        crate::sync::identity::new_entity_sync_id().into(),
                         generated_code.into(),
                         full_name.into(),
                         employment_type.into(),
@@ -419,29 +420,26 @@ pub async fn apply_import_batch(
     ))
     .await?;
 
-    txn.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO audit_events (
-            action_code, target_type, target_id, actor_id, auth_context, result,
-            retention_class, details_json, happened_at
-         ) VALUES (
-            'personnel.import.apply', 'personnel_import_batch', ?, ?, 'step_up', 'success',
-            'standard', ?, ?
-         )",
-        [
-            batch_id.to_string().into(),
-            actor_id.into(),
-            serde_json::json!({
+    crate::audit::writer::write_audit_event_in(
+        &txn,
+        crate::audit::writer::AuditEventInput {
+            action_code: "personnel.import.apply".to_string(),
+            target_type: Some("personnel_import_batch".to_string()),
+            target_id: Some(batch_id.to_string()),
+            actor_id,
+            auth_context: "step_up".to_string(),
+            result: "success".to_string(),
+            before_hash: None,
+            after_hash: None,
+            retention_class: "standard".to_string(),
+            details_json: Some(serde_json::json!({
                 "created": created,
                 "updated": updated,
                 "skipped": skipped,
                 "protected_ignored": protected_ignored
-            })
-            .to_string()
-            .into(),
-            now.into(),
-        ],
-    ))
+            })),
+        },
+    )
     .await?;
 
     txn.commit().await?;

@@ -60,7 +60,9 @@ import { needsPlanningApproval, useWoLifecycleActions } from "@/hooks/use-wo-lif
 import { evaluateWoCompletionGates } from "@/services/wo-service";
 import { pushAppToast } from "@/store/app-toast-store";
 import { useWoStore } from "@/stores/wo-store";
+import { toErrorMessage } from "@/utils/errors";
 import { formatDate } from "@/utils/format-date";
+import { isWoLifecycleState } from "@/utils/wo-lifecycle";
 import { statusToI18nKey, STATUS_STYLE, URGENCY_STYLE } from "@/utils/wo-status";
 import type { WoCompletionGate, WoStatus, WorkOrder } from "@shared/ipc-types";
 import { P, type PermissionName } from "@shared/rbac/permissions.generated";
@@ -131,13 +133,20 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
 
   const closeoutProgress = useMemo(() => completionGatesProgress(closeoutGates), [closeoutGates]);
 
+  const [printError, setPrintError] = useState<string | null>(null);
   const handlePrint = useCallback(() => {
-    if (wo) void printWoFiche(wo, t, i18n.resolvedLanguage || i18n.language || "fr");
+    if (!wo) return;
+    setPrintError(null);
+    printWoFiche(wo, t, i18n.resolvedLanguage || i18n.language || "fr").catch((err: unknown) =>
+      setPrintError(toErrorMessage(err)),
+    );
   }, [wo, t, i18n.resolvedLanguage, i18n.language]);
 
   const canEditWo = can(P.OT_EDIT);
   const canUploadAttachments =
     canEditWo && wo != null && !ATTACHMENT_UPLOAD_DENY.has(wo.status_code ?? "");
+  // `delete_wo_attachment` requires ot.admin (backend), not the edit right used for upload.
+  const canDeleteAttachments = canUploadAttachments && can(P.OT_ADMIN);
 
   const computedDefaultTab = useMemo(() => {
     if (!wo) return "plan";
@@ -210,6 +219,11 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
                 <DialogDescription className="text-sm text-muted-foreground line-clamp-2">
                   {wo.description}
                 </DialogDescription>
+                {printError ? (
+                  <p role="alert" className="text-sm text-status-danger">
+                    {t("print.failed", { message: printError })}
+                  </p>
+                ) : null}
               </div>
               <div className="flex items-center gap-1.5 shrink-0 pt-0.5">
                 <Badge
@@ -218,6 +232,16 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
                 >
                   {t(`status.${statusKey}` as const)}
                 </Badge>
+                {isWoLifecycleState(wo.lifecycle_state) ? (
+                  <Badge
+                    variant="outline"
+                    className="text-xs"
+                    title={t("lifecycle.title")}
+                    data-testid="wo-lifecycle-badge"
+                  >
+                    {t(`lifecycle.${wo.lifecycle_state}`)}
+                  </Badge>
+                ) : null}
                 {wo.urgency_id != null && (
                   <Badge
                     variant="outline"
@@ -368,7 +392,7 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
                 <WoAttachmentPanel
                   woId={wo.id}
                   canUpload={canUploadAttachments}
-                  canDelete={canUploadAttachments}
+                  canDelete={canDeleteAttachments}
                 />
               </TabsContent>
             </Tabs>

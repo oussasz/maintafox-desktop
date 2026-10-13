@@ -5,8 +5,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use super::queries::{get_finding, last_insert_rowid, DataIntegrityFindingRow};
-use super::sync_stage::{stage_finding_sync, stage_repair_action_sync};
+use super::queries::{get_finding, DataIntegrityFindingRow};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct WaiveDataIntegrityFindingInput {
@@ -78,25 +77,11 @@ async fn update_finding_repaired(txn: &impl ConnectionTrait, id: i64, expected_r
     Ok(())
 }
 
-async fn reload_and_stage_finding(txn: &impl ConnectionTrait, id: i64) -> AppResult<DataIntegrityFindingRow> {
+async fn reload_finding(txn: &impl ConnectionTrait, id: i64) -> AppResult<DataIntegrityFindingRow> {
     let f = get_finding(txn, id).await?.ok_or_else(|| AppError::NotFound {
         entity: "data_integrity_findings".into(),
         id: id.to_string(),
     })?;
-    stage_finding_sync(
-        txn,
-        f.id,
-        &f.entity_sync_id,
-        f.row_version,
-        &f.severity,
-        &f.domain,
-        &f.record_class,
-        f.record_id,
-        &f.finding_code,
-        &f.details_json,
-        &f.status,
-    )
-    .await?;
     Ok(f)
 }
 
@@ -112,8 +97,8 @@ async fn insert_repair_audit(
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "INSERT INTO data_integrity_repair_actions \
-         (entity_sync_id, row_version, finding_id, action, actor_id, performed_at, before_json, after_json) \
+        "INSERT INTO data_integrity_repair_actions (entity_sync_id, row_version, finding_id, action, \
+         actor_id, performed_at, before_json, after_json) \
          VALUES (?, 1, ?, ?, ?, ?, ?, ?)",
         [
             esid.clone().into(),
@@ -126,19 +111,7 @@ async fn insert_repair_audit(
         ],
     ))
     .await?;
-    let rid = last_insert_rowid(txn).await?;
-    stage_repair_action_sync(
-        txn,
-        rid,
-        &esid,
-        1,
-        finding_id,
-        action,
-        actor_id,
-        before_json,
-        after_json,
-    )
-    .await
+    Ok(())
 }
 
 pub async fn waive_data_integrity_finding(
@@ -189,7 +162,7 @@ pub async fn waive_data_integrity_finding(
     )
     .await?;
 
-    let f1 = reload_and_stage_finding(&txn, input.finding_id).await?;
+    let f1 = reload_finding(&txn, input.finding_id).await?;
     let after_json = json!({ "finding": serde_json::to_value(&f1)? }).to_string();
 
     insert_repair_audit(&txn, input.finding_id, "waive", actor_id, &before_json, &after_json).await?;
@@ -198,6 +171,50 @@ pub async fn waive_data_integrity_finding(
     get_finding(db, input.finding_id)
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("finding missing after waive")))
+}
+
+/// The failure mode of a failure detail may only be cleared when it is provably dangling: not a
+/// value of the governed list (checked again now, not trusted from the finding) and not an older
+/// `failure_codes` entry either (a legacy code needs a person to map it, not deletion). The
+/// cleared id is kept in the repair audit row (`before`), so it can be restored.
+async fn ensure_failure_mode_is_dangling(txn: &impl ConnectionTrait, fd_id: i64) -> AppResult<()> {
+    let row = txn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT fd.failure_mode_id, {} AS governed, \
+                 EXISTS (SELECT 1 FROM failure_codes fc WHERE fc.id = fd.failure_mode_id) AS legacy \
+                 FROM work_order_failure_details fd WHERE fd.id = ?",
+                crate::data_integrity::detectors::governed_failure_mode_sql("fd.failure_mode_id")
+            ),
+            [fd_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "work_order_failure_details".into(),
+            id: fd_id.to_string(),
+        })?;
+    let mode: Option<i64> = row
+        .try_get("", "failure_mode_id")
+        .map_err(|e| map_err("failure_mode_id", e))?;
+    let governed: i64 = row.try_get("", "governed").map_err(|e| map_err("governed", e))?;
+    let legacy: i64 = row.try_get("", "legacy").map_err(|e| map_err("legacy", e))?;
+    let refusal = match (mode, governed != 0, legacy != 0) {
+        (None, _, _) => Some("the failure detail has no failure mode any more"),
+        (Some(_), true, _) => {
+            Some("the failure mode is a value of the governed list WORK.FAILURE_MODES, so it is valid")
+        }
+        (Some(_), false, true) => {
+            Some("the failure mode is a legacy failure code: map it to a governed failure mode instead of clearing it")
+        }
+        (Some(_), false, false) => None,
+    };
+    match refusal {
+        Some(why) => Err(AppError::ValidationFailed(vec![format!(
+            "Repair refused, the failure mode is not provably orphaned: {why}."
+        )])),
+        None => Ok(()),
+    }
 }
 
 pub async fn apply_data_integrity_repair(
@@ -227,6 +244,7 @@ pub async fn apply_data_integrity_repair(
     let (before_extra, after_extra, action_label) = match (f0.finding_code.as_str(), input.repair_kind.as_str()) {
         ("FK_ORPHAN_FAILURE_MODE", "clear_failure_mode") => {
             let fd_id = f0.record_id;
+            ensure_failure_mode_is_dangling(&txn, fd_id).await?;
             let row = txn
                 .query_one(Statement::from_sql_and_values(
                     DbBackend::Sqlite,
@@ -414,7 +432,7 @@ pub async fn apply_data_integrity_repair(
 
     update_finding_repaired(&txn, input.finding_id, input.expected_row_version).await?;
 
-    let f1 = reload_and_stage_finding(&txn, input.finding_id).await?;
+    let f1 = reload_finding(&txn, input.finding_id).await?;
     let after_json = json!({
         "finding": serde_json::to_value(&f1)?,
         "target": after_extra,

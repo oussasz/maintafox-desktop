@@ -1,6 +1,6 @@
 //! Personnel domain types and code generation (PRD §6.6).
 
-use crate::errors::{AppError, AppResult};
+use crate::errors::AppResult;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use serde::{Deserialize, Serialize};
 
@@ -862,55 +862,43 @@ impl Default for PersonnelListFilter {
 // Personnel code generator — `PER-NNNN`
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Next sequential code for rows with `employee_code` like `PER-%`.
+/// Next code `PER-<device>-NNNN` (`sync::device_code`): the sequence counts only this device's
+/// codes, so two devices never hand out the same one. Codes made before device codes existed
+/// (`PER-NNNN`) are kept as they are.
 ///
-/// Uses numeric suffix after the `PER-` prefix (substring from column 5). This is a **read
-/// only**; pairing it with a separate `INSERT` in two steps can race under concurrent writers.
-/// For allocation + insert inside a transaction, pass a [`sea_orm::Transaction`] as `db`.
+/// This is a **read only**; pairing it with a separate `INSERT` in two steps can race under
+/// concurrent writers. For allocation + insert, pass the inserting [`sea_orm::Transaction`].
 pub async fn generate_personnel_code(db: &impl ConnectionTrait) -> AppResult<String> {
-    let row = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT COALESCE(MAX(CAST(SUBSTR(employee_code, 5) AS INTEGER)), 0) + 1 AS next_seq \
-             FROM personnel WHERE employee_code LIKE 'PER-%'"
-                .to_string(),
-        ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Personnel code sequence query returned no rows")))?;
-
-    let next_seq: i64 = row
-        .try_get::<i64>("", "next_seq")
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("Personnel code decode error: {e}")))?;
-
-    Ok(format!("PER-{next_seq:04}"))
+    crate::sync::code_clash::PERSONNEL.next_number(db).await
 }
 
-/// Inserts a personnel row with an auto-generated `PER-NNNN` code.
+/// Inserts a personnel row with an auto-generated `PER-<device>-NNNN` code.
 ///
 /// Uses a single `INSERT … SELECT … RETURNING` statement so allocation is atomic under
 /// concurrent writers (unlike calling [`generate_personnel_code`] and inserting in two steps).
 pub async fn insert_personnel_with_auto_code(db: &DatabaseConnection, full_name: &str) -> AppResult<String> {
-    let name_esc = full_name.replace('\'', "''");
-    let sql = format!(
-        "INSERT INTO personnel (employee_code, full_name, employment_type, availability_status, row_version) \
-         SELECT \
-           'PER-' || printf('%04d', COALESCE((SELECT MAX(CAST(SUBSTR(employee_code, 5) AS INTEGER)) \
-             FROM personnel WHERE employee_code LIKE 'PER-%'), 0) + 1), \
-           '{name_esc}', 'employee', 'available', 1 \
-         RETURNING employee_code"
-    );
+    let entity_sync_id = crate::sync::identity::new_entity_sync_id();
+    let stem = crate::sync::device_code::device_stem(db, &crate::sync::code_clash::PERSONNEL.prefix()).await?;
+    let (next, next_values) = crate::sync::device_code::next_number_sql("personnel", "employee_code", &stem, 4);
+    let mut values: Vec<sea_orm::Value> = vec![entity_sync_id.into()];
+    values.extend(next_values);
+    values.push(full_name.into());
     let row = db
-        .query_one(Statement::from_string(DbBackend::Sqlite, sql))
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "INSERT INTO personnel (entity_sync_id, employee_code, full_name, employment_type, availability_status, row_version)                  SELECT ?, {next}, ?, 'employee', 'available', 1                  RETURNING employee_code"
+            ),
+            values,
+        ))
         .await?
         .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
+            crate::errors::AppError::Internal(anyhow::anyhow!(
                 "INSERT personnel with auto code: RETURNING returned no row"
             ))
         })?;
-    let code: String = row
-        .try_get::<String>("", "employee_code")
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("employee_code decode: {e}")))?;
-    Ok(code)
+    row.try_get::<String>("", "employee_code")
+        .map_err(|e| crate::errors::AppError::Internal(anyhow::anyhow!("employee_code decode: {e}")))
 }
 
 #[cfg(test)]
@@ -1058,24 +1046,30 @@ mod tests {
     #[tokio::test]
     async fn generate_personnel_code_first_is_per_0001() {
         let db = setup_migrated_db().await;
+        let dev = crate::sync::device_code::this_device_code(&db)
+            .await
+            .expect("device code");
         let code = generate_personnel_code(&db).await.expect("code gen");
-        assert_eq!(code, "PER-0001");
+        assert_eq!(code, format!("PER-{dev}-0001"));
         let code2 = generate_personnel_code(&db).await.expect("code gen 2");
-        assert_eq!(code2, "PER-0001", "no PER rows yet; max still 1");
+        assert_eq!(code2, format!("PER-{dev}-0001"), "no PER rows yet; max still 1");
     }
 
     #[tokio::test]
     async fn generate_personnel_code_increments_after_insert() {
         let db = setup_migrated_db().await;
 
-        db.execute_unprepared(
-            "INSERT INTO personnel (employee_code, full_name, employment_type, availability_status, row_version) \
-             VALUES ('PER-0001', 'Test User', 'employee', 'available', 1)",
-        )
+        let dev = crate::sync::device_code::this_device_code(&db)
+            .await
+            .expect("device code");
+        db.execute_unprepared(&format!(
+            "INSERT INTO personnel (entity_sync_id, employee_code, full_name, employment_type, availability_status, row_version) \
+             VALUES ('test-personnel-per-0001', 'PER-{dev}-0001', 'Test User', 'employee', 'available', 1)"
+        ))
         .await
         .expect("insert personnel");
 
         let next = generate_personnel_code(&db).await.expect("next code");
-        assert_eq!(next, "PER-0002");
+        assert_eq!(next, format!("PER-{dev}-0002"));
     }
 }

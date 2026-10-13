@@ -1,14 +1,8 @@
 use chrono::{Duration, NaiveDate, Utc};
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use uuid::Uuid;
 
 use crate::errors::{AppError, AppResult};
-use crate::sync::domain::{
-    CertificationTypeSyncPayload, PersonnelCertificationSyncPayload, QualificationRequirementProfileSyncPayload,
-    StageOutboxItemInput, SYNC_ENTITY_CERTIFICATION_TYPES, SYNC_ENTITY_PERSONNEL_CERTIFICATIONS,
-    SYNC_ENTITY_QUALIFICATION_REQUIREMENT_PROFILES,
-};
-use crate::sync::queries::stage_outbox_item;
 
 use super::domain::{
     CertificationType, CertificationTypeUpsertInput, PersonnelCertification, PersonnelCertificationListFilter,
@@ -16,6 +10,9 @@ use super::domain::{
 };
 
 const VERIFICATION: &[&str] = &["pending", "verified", "rejected"];
+
+/// Renewal warning window used when a certification type has no `renewal_lead_days`.
+pub(crate) const DEFAULT_RENEWAL_LEAD_DAYS: i64 = 30;
 
 fn decode_err(field: &str, err: impl std::fmt::Display) -> AppError {
     AppError::SyncError(format!("Failed to decode qualification field '{field}': {err}"))
@@ -31,12 +28,30 @@ fn opt_string(v: Option<String>) -> sea_orm::Value {
         .unwrap_or_else(|| sea_orm::Value::from(None::<String>))
 }
 
-fn parse_iso_date(s: &str) -> Option<NaiveDate> {
+pub(crate) fn parse_iso_date(s: &str) -> Option<NaiveDate> {
     let prefix: String = s.chars().take(10).collect();
     NaiveDate::parse_from_str(&prefix, "%Y-%m-%d").ok()
 }
 
-fn readiness_status(verification_status: &str, expires_at: &Option<String>, renewal_lead_days: Option<i64>) -> String {
+/// Accepts `YYYY-MM-DD` or an RFC 3339 timestamp; returns the calendar day.
+fn validate_cert_date(field: &str, value: Option<&str>) -> AppResult<Option<NaiveDate>> {
+    let Some(raw) = value.map(str::trim).filter(|v| !v.is_empty()) else {
+        return Ok(None);
+    };
+    let day = NaiveDate::parse_from_str(raw, "%Y-%m-%d")
+        .ok()
+        .or_else(|| chrono::DateTime::parse_from_rfc3339(raw).ok().map(|d| d.date_naive()))
+        .ok_or_else(|| AppError::ValidationFailed(vec![format!("{field} must be a date (YYYY-MM-DD).")]))?;
+    Ok(Some(day))
+}
+
+/// Readiness of one certificate. A verified certificate whose expiry date cannot be read is
+/// treated as expired (fail closed): it must never count as valid.
+pub(crate) fn readiness_status(
+    verification_status: &str,
+    expires_at: &Option<String>,
+    renewal_lead_days: Option<i64>,
+) -> String {
     match verification_status {
         "rejected" => "rejected".to_string(),
         "pending" => "pending".to_string(),
@@ -45,13 +60,13 @@ fn readiness_status(verification_status: &str, expires_at: &Option<String>, rene
                 return "valid".to_string();
             };
             let Some(exp_d) = parse_iso_date(exp) else {
-                return "valid".to_string();
+                return "expired".to_string();
             };
             let today = Utc::now().date_naive();
             if exp_d < today {
                 return "expired".to_string();
             }
-            let lead = renewal_lead_days.unwrap_or(30).max(0);
+            let lead = renewal_lead_days.unwrap_or(DEFAULT_RENEWAL_LEAD_DAYS).max(0);
             let window_end = today + Duration::days(lead);
             if exp_d <= window_end {
                 "expiring_soon".to_string()
@@ -71,8 +86,12 @@ fn map_cert_type(row: &sea_orm::QueryResult) -> AppResult<CertificationType> {
             .map_err(|e| decode_err("entity_sync_id", e))?,
         code: row.try_get("", "code").map_err(|e| decode_err("code", e))?,
         name: row.try_get("", "name").map_err(|e| decode_err("name", e))?,
-        default_validity_months: row.try_get("", "default_validity_months").ok(),
-        renewal_lead_days: row.try_get("", "renewal_lead_days").ok(),
+        default_validity_months: row
+            .try_get("", "default_validity_months")
+            .map_err(|e| decode_err("default_validity_months", e))?,
+        renewal_lead_days: row
+            .try_get("", "renewal_lead_days")
+            .map_err(|e| decode_err("renewal_lead_days", e))?,
         row_version: row
             .try_get("", "row_version")
             .map_err(|e| decode_err("row_version", e))?,
@@ -109,7 +128,7 @@ fn map_personnel_cert(
     let verification_status: String = row
         .try_get("", "verification_status")
         .map_err(|e| decode_err("verification_status", e))?;
-    let expires_at: Option<String> = row.try_get("", "expires_at").ok();
+    let expires_at: Option<String> = row.try_get("", "expires_at").map_err(|e| decode_err("expires_at", e))?;
     let rs = readiness_status(&verification_status, &expires_at, lead);
     Ok(PersonnelCertification {
         id: row.try_get("", "id").map_err(|e| decode_err("id", e))?,
@@ -122,10 +141,14 @@ fn map_personnel_cert(
         certification_type_id: row
             .try_get("", "certification_type_id")
             .map_err(|e| decode_err("certification_type_id", e))?,
-        issued_at: row.try_get("", "issued_at").ok(),
+        issued_at: row.try_get("", "issued_at").map_err(|e| decode_err("issued_at", e))?,
         expires_at,
-        issuing_body: row.try_get("", "issuing_body").ok(),
-        certificate_ref: row.try_get("", "certificate_ref").ok(),
+        issuing_body: row
+            .try_get("", "issuing_body")
+            .map_err(|e| decode_err("issuing_body", e))?,
+        certificate_ref: row
+            .try_get("", "certificate_ref")
+            .map_err(|e| decode_err("certificate_ref", e))?,
         verification_status,
         row_version: row
             .try_get("", "row_version")
@@ -134,96 +157,6 @@ fn map_personnel_cert(
         certification_type_code: type_code,
         certification_type_name: type_name,
     })
-}
-
-async fn stage_certification_type(db: &DatabaseConnection, row: &CertificationType) -> AppResult<()> {
-    let payload = CertificationTypeSyncPayload {
-        id: row.id,
-        entity_sync_id: row.entity_sync_id.clone(),
-        row_version: row.row_version,
-        code: row.code.clone(),
-        name: row.name.clone(),
-        default_validity_months: row.default_validity_months,
-        renewal_lead_days: row.renewal_lead_days,
-    };
-    let payload_json = serde_json::to_string(&payload)?;
-    stage_outbox_item(
-        db,
-        StageOutboxItemInput {
-            idempotency_key: format!("certification_types:{}:v{}", row.entity_sync_id, row.row_version),
-            entity_type: SYNC_ENTITY_CERTIFICATION_TYPES.to_string(),
-            entity_sync_id: row.entity_sync_id.clone(),
-            operation: "upsert".to_string(),
-            row_version: row.row_version,
-            payload_json,
-            origin_machine_id: None,
-        },
-    )
-    .await?;
-    Ok(())
-}
-
-async fn stage_personnel_certification(db: &DatabaseConnection, row: &PersonnelCertification) -> AppResult<()> {
-    let payload = PersonnelCertificationSyncPayload {
-        id: row.id,
-        entity_sync_id: row.entity_sync_id.clone(),
-        row_version: row.row_version,
-        personnel_id: row.personnel_id,
-        certification_type_id: row.certification_type_id,
-        issued_at: row.issued_at.clone(),
-        expires_at: row.expires_at.clone(),
-        issuing_body: row.issuing_body.clone(),
-        certificate_ref: row.certificate_ref.clone(),
-        verification_status: row.verification_status.clone(),
-    };
-    let payload_json = serde_json::to_string(&payload)?;
-    stage_outbox_item(
-        db,
-        StageOutboxItemInput {
-            idempotency_key: format!("personnel_certifications:{}:v{}", row.entity_sync_id, row.row_version),
-            entity_type: SYNC_ENTITY_PERSONNEL_CERTIFICATIONS.to_string(),
-            entity_sync_id: row.entity_sync_id.clone(),
-            operation: "upsert".to_string(),
-            row_version: row.row_version,
-            payload_json,
-            origin_machine_id: None,
-        },
-    )
-    .await?;
-    Ok(())
-}
-
-async fn stage_qualification_profile(db: &DatabaseConnection, row: &QualificationRequirementProfile) -> AppResult<()> {
-    let ids: Vec<i64> = serde_json::from_str(&row.required_certification_type_ids_json)
-        .map_err(|e| AppError::ValidationFailed(vec![format!("required_certification_type_ids_json: {e}")]))?;
-    let codes: Vec<String> = serde_json::from_str(&row.applies_to_permit_type_codes_json)
-        .map_err(|e| AppError::ValidationFailed(vec![format!("applies_to_permit_type_codes_json: {e}")]))?;
-    let payload = QualificationRequirementProfileSyncPayload {
-        id: row.id,
-        entity_sync_id: row.entity_sync_id.clone(),
-        row_version: row.row_version,
-        profile_name: row.profile_name.clone(),
-        required_certification_type_ids: ids,
-        applies_to_permit_type_codes: codes,
-    };
-    let payload_json = serde_json::to_string(&payload)?;
-    stage_outbox_item(
-        db,
-        StageOutboxItemInput {
-            idempotency_key: format!(
-                "qualification_requirement_profiles:{}:v{}",
-                row.entity_sync_id, row.row_version
-            ),
-            entity_type: SYNC_ENTITY_QUALIFICATION_REQUIREMENT_PROFILES.to_string(),
-            entity_sync_id: row.entity_sync_id.clone(),
-            operation: "upsert".to_string(),
-            row_version: row.row_version,
-            payload_json,
-            origin_machine_id: None,
-        },
-    )
-    .await?;
-    Ok(())
 }
 
 fn validate_verification(s: &str) -> AppResult<()> {
@@ -280,7 +213,7 @@ pub async fn list_certification_types(db: &DatabaseConnection) -> AppResult<Vec<
 }
 
 pub(crate) async fn get_certification_type_by_id(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     id: i64,
 ) -> AppResult<Option<CertificationType>> {
     let row = db
@@ -304,19 +237,20 @@ pub async fn upsert_certification_type(
     if input.code.trim().is_empty() || input.name.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec!["code and name are required.".into()]));
     }
+    let txn = db.begin().await?;
 
     if let Some(id) = input.id {
         if id <= 0 {
             return Err(AppError::ValidationFailed(vec!["id must be positive.".into()]));
         }
-        let current = get_certification_type_by_id(db, id)
+        let current = get_certification_type_by_id(&txn, id)
             .await?
             .ok_or_else(|| AppError::NotFound {
                 entity: "CertificationType".into(),
                 id: id.to_string(),
             })?;
         let new_rv = current.row_version + 1;
-        let affected = db
+        let affected = txn
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "UPDATE certification_types SET code = ?, name = ?, default_validity_months = ?, \
@@ -338,13 +272,13 @@ pub async fn upsert_certification_type(
                 "Concurrent update on certification_types.".into(),
             ]));
         }
-        let updated = get_certification_type_by_id(db, id).await?.expect("row");
-        stage_certification_type(db, &updated).await?;
+        let updated = get_certification_type_by_id(&txn, id).await?.expect("row");
+        txn.commit().await?;
         return Ok(updated);
     }
 
     let entity_sync_id = Uuid::new_v4().to_string();
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO certification_types (entity_sync_id, code, name, default_validity_months, renewal_lead_days, \
          row_version) VALUES (?, ?, ?, ?, ?, 1)",
@@ -357,7 +291,7 @@ pub async fn upsert_certification_type(
         ],
     ))
     .await?;
-    let id_row = db
+    let id_row = txn
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
             "SELECT last_insert_rowid() AS id".to_string(),
@@ -365,8 +299,8 @@ pub async fn upsert_certification_type(
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
     let new_id: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
-    let created = get_certification_type_by_id(db, new_id).await?.expect("row");
-    stage_certification_type(db, &created).await?;
+    let created = get_certification_type_by_id(&txn, new_id).await?.expect("row");
+    txn.commit().await?;
     Ok(created)
 }
 
@@ -407,7 +341,7 @@ pub async fn list_profile_skill_ids(db: &DatabaseConnection, profile_id: i64) ->
 /// Replace `qualification_profile_skills` rows for a profile.
 /// Call inside a transaction to keep the cert JSON and skills in sync.
 pub async fn replace_profile_skills(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     profile_id: i64,
     skill_reference_value_ids: &[i64],
 ) -> AppResult<()> {
@@ -431,7 +365,7 @@ pub async fn replace_profile_skills(
     Ok(())
 }
 
-async fn get_profile_by_id(db: &DatabaseConnection, id: i64) -> AppResult<Option<QualificationRequirementProfile>> {
+async fn get_profile_by_id(db: &impl ConnectionTrait, id: i64) -> AppResult<Option<QualificationRequirementProfile>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -456,17 +390,18 @@ pub async fn upsert_qualification_requirement_profile(
     }
     validate_profile_json_ids(&input.required_certification_type_ids_json)?;
     validate_profile_json_codes(&input.applies_to_permit_type_codes_json)?;
+    let txn = db.begin().await?;
 
     if let Some(id) = input.id {
         if id <= 0 {
             return Err(AppError::ValidationFailed(vec!["id must be positive.".into()]));
         }
-        let current = get_profile_by_id(db, id).await?.ok_or_else(|| AppError::NotFound {
+        let current = get_profile_by_id(&txn, id).await?.ok_or_else(|| AppError::NotFound {
             entity: "QualificationRequirementProfile".into(),
             id: id.to_string(),
         })?;
         let new_rv = current.row_version + 1;
-        let affected = db
+        let affected = txn
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "UPDATE qualification_requirement_profiles SET profile_name = ?, \
@@ -487,18 +422,18 @@ pub async fn upsert_qualification_requirement_profile(
                 "Concurrent update on qualification_requirement_profiles.".into(),
             ]));
         }
-        let updated = get_profile_by_id(db, id).await?.expect("row");
-        stage_qualification_profile(db, &updated).await?;
+        let updated = get_profile_by_id(&txn, id).await?.expect("row");
         // Sync skills if provided
         if let Some(ref skill_ids) = input.skill_reference_value_ids {
-            replace_profile_skills(db, id, skill_ids).await?;
+            replace_profile_skills(&txn, id, skill_ids).await?;
         }
+        txn.commit().await?;
         return Ok(updated);
     }
 
     let entity_sync_id = Uuid::new_v4().to_string();
     let skill_ids_snap = input.skill_reference_value_ids.clone();
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO qualification_requirement_profiles (entity_sync_id, profile_name, \
          required_certification_type_ids_json, applies_to_permit_type_codes_json, row_version) \
@@ -511,7 +446,7 @@ pub async fn upsert_qualification_requirement_profile(
         ],
     ))
     .await?;
-    let id_row = db
+    let id_row = txn
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
             "SELECT last_insert_rowid() AS id".to_string(),
@@ -520,10 +455,10 @@ pub async fn upsert_qualification_requirement_profile(
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
     let new_id: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
     if let Some(ref skill_ids) = skill_ids_snap {
-        replace_profile_skills(db, new_id, skill_ids).await?;
+        replace_profile_skills(&txn, new_id, skill_ids).await?;
     }
-    let created = get_profile_by_id(db, new_id).await?.expect("row");
-    stage_qualification_profile(db, &created).await?;
+    let created = get_profile_by_id(&txn, new_id).await?.expect("row");
+    txn.commit().await?;
     Ok(created)
 }
 
@@ -561,7 +496,7 @@ pub async fn list_personnel_certifications(
     Ok(out)
 }
 
-async fn get_personnel_cert_by_id(db: &DatabaseConnection, id: i64) -> AppResult<Option<PersonnelCertification>> {
+async fn get_personnel_cert_by_id(db: &impl ConnectionTrait, id: i64) -> AppResult<Option<PersonnelCertification>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -585,11 +520,24 @@ async fn get_personnel_cert_by_id(db: &DatabaseConnection, id: i64) -> AppResult
     }
 }
 
-pub async fn upsert_personnel_certification(
-    db: &DatabaseConnection,
+pub async fn upsert_personnel_certification<C>(
+    db: &C,
     input: PersonnelCertificationUpsertInput,
-) -> AppResult<PersonnelCertification> {
+) -> AppResult<PersonnelCertification>
+where
+    C: ConnectionTrait + TransactionTrait,
+{
     validate_verification(&input.verification_status)?;
+    let issued = validate_cert_date("issued_at", input.issued_at.as_deref())?;
+    let expires = validate_cert_date("expires_at", input.expires_at.as_deref())?;
+    if let (Some(i), Some(e)) = (issued, expires) {
+        if e < i {
+            return Err(AppError::ValidationFailed(vec![
+                "expires_at must not be before issued_at.".into(),
+            ]));
+        }
+    }
+    let txn = db.begin().await?;
 
     if let Some(id) = input.id {
         if id <= 0 {
@@ -598,7 +546,7 @@ pub async fn upsert_personnel_certification(
         let ev = input
             .expected_row_version
             .ok_or_else(|| AppError::ValidationFailed(vec!["expected_row_version required for update.".into()]))?;
-        let current = get_personnel_cert_by_id(db, id)
+        let current = get_personnel_cert_by_id(&txn, id)
             .await?
             .ok_or_else(|| AppError::NotFound {
                 entity: "PersonnelCertification".into(),
@@ -608,7 +556,7 @@ pub async fn upsert_personnel_certification(
             return Err(AppError::ValidationFailed(vec!["Row version mismatch.".into()]));
         }
         let new_rv = current.row_version + 1;
-        let affected = db
+        let affected = txn
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "UPDATE personnel_certifications SET personnel_id = ?, certification_type_id = ?, \
@@ -634,13 +582,13 @@ pub async fn upsert_personnel_certification(
                 "Concurrent update on personnel_certifications.".into(),
             ]));
         }
-        let updated = get_personnel_cert_by_id(db, id).await?.expect("row");
-        stage_personnel_certification(db, &updated).await?;
+        let updated = get_personnel_cert_by_id(&txn, id).await?.expect("row");
+        txn.commit().await?;
         return Ok(updated);
     }
 
     let entity_sync_id = Uuid::new_v4().to_string();
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO personnel_certifications (entity_sync_id, personnel_id, certification_type_id, \
          issued_at, expires_at, issuing_body, certificate_ref, verification_status, row_version) \
@@ -657,7 +605,7 @@ pub async fn upsert_personnel_certification(
         ],
     ))
     .await?;
-    let id_row = db
+    let id_row = txn
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
             "SELECT last_insert_rowid() AS id".to_string(),
@@ -665,7 +613,7 @@ pub async fn upsert_personnel_certification(
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
     let new_id: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
-    let created = get_personnel_cert_by_id(db, new_id).await?.expect("row");
-    stage_personnel_certification(db, &created).await?;
+    let created = get_personnel_cert_by_id(&txn, new_id).await?.expect("row");
+    txn.commit().await?;
     Ok(created)
 }

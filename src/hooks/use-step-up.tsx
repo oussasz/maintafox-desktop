@@ -1,6 +1,7 @@
 import { type ReactElement, useCallback, useRef, useState } from "react";
 
 import { StepUpDialog } from "@/components/auth/StepUpDialog";
+import { isStepUpRequiredError } from "@/utils/errors";
 
 interface UseStepUpReturn {
   /** Wraps an async action that may need step-up. Shows dialog if backend returns StepUpRequired. */
@@ -31,17 +32,7 @@ export function useStepUp(): UseStepUpReturn {
       action()
         .then(resolve)
         .catch((err: unknown) => {
-          // Check if the error indicates step-up is required
-          const errStr =
-            typeof err === "object" && err !== null
-              ? JSON.stringify(err)
-              : err instanceof Error
-                ? err.message
-                : String(err);
-          const isStepUpRequired =
-            errStr.includes("STEP_UP_REQUIRED") || errStr.includes("StepUpRequired");
-
-          if (isStepUpRequired) {
+          if (isStepUpRequiredError(err)) {
             // Store pending action and open dialog
             pendingRef.current = {
               action: action as () => Promise<unknown>,

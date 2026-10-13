@@ -7,3 +7,6 @@ dev-data/
 
 # Generated RBAC artifacts (must match rbac:generate byte-for-byte)
 shared/rbac/permissions.generated.ts
+
+# Generated sync registry export and the vendored server allowlist (compared by tests)
+shared/sync/

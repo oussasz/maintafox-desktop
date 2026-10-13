@@ -5,9 +5,9 @@
  * Phase 2 – Sub-phase 04 – File 03 – Sprint S3.
  */
 
-import { CheckCircle2, XCircle, Loader2, AlertCircle } from "lucide-react";
+import { AlertCircle, CheckCircle2, Loader2, XCircle } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
-import { useTranslation } from "react-i18next";
+import { Trans, useTranslation } from "react-i18next";
 
 import {
   Button,
@@ -101,17 +101,23 @@ export function WoConversionModal({ di, onConverted, onClose }: WoConversionModa
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Convertir en ordre de travail</DialogTitle>
+          <DialogTitle>{t("woConversion.title")}</DialogTitle>
           <DialogDescription>
-            La DI <span className="font-medium">{di.code}</span> sera convertie en ordre de travail.
-            Cette action est irréversible.
+            <Trans
+              t={t}
+              i18nKey="woConversion.description"
+              values={{ code: di.code }}
+              components={{ bold: <span className="font-medium" /> }}
+            />
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-2">
           {/* Checklist */}
           <div className="space-y-2">
-            <p className="text-sm font-medium text-text-primary">Prérequis de conversion</p>
+            <p className="text-sm font-medium text-text-primary">
+              {t("woConversion.prerequisites")}
+            </p>
             <ul className="space-y-1.5">
               {checklist.map((item) => (
                 <li key={item.label} className="flex items-center gap-2 text-sm">
@@ -132,12 +138,12 @@ export function WoConversionModal({ di, onConverted, onClose }: WoConversionModa
 
           {/* Step-up PIN */}
           <div className="space-y-1.5">
-            <Label htmlFor="step-up-pin">Code de confirmation (step-up)</Label>
+            <Label htmlFor="step-up-pin">{t("woConversion.stepUpLabel")}</Label>
             <Input
               id="step-up-pin"
               type="password"
               autoComplete="off"
-              placeholder="Saisir votre code PIN"
+              placeholder={t("woConversion.stepUpPlaceholder")}
               value={stepUpPin}
               onChange={(e) => setStepUpPin(e.target.value)}
               disabled={saving}
@@ -146,10 +152,10 @@ export function WoConversionModal({ di, onConverted, onClose }: WoConversionModa
 
           {/* Notes */}
           <div className="space-y-1.5">
-            <Label htmlFor="conversion-notes">Notes de conversion (optionnel)</Label>
+            <Label htmlFor="conversion-notes">{t("woConversion.notesLabel")}</Label>
             <Textarea
               id="conversion-notes"
-              placeholder="Commentaires pour la conversion…"
+              placeholder={t("woConversion.notesPlaceholder")}
               rows={2}
               value={conversionNotes}
               onChange={(e) => setConversionNotes(e.target.value)}
@@ -168,16 +174,16 @@ export function WoConversionModal({ di, onConverted, onClose }: WoConversionModa
 
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={saving}>
-            Annuler
+            {t("woConversion.cancel")}
           </Button>
           <Button onClick={handleConvert} disabled={!canConvert}>
             {saving ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Conversion…
+                {t("woConversion.converting")}
               </>
             ) : (
-              "Convertir en OT"
+              t("woConversion.confirm")
             )}
           </Button>
         </DialogFooter>

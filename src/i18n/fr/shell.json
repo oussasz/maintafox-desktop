@@ -38,9 +38,118 @@
     "syncCenterTitle": "Centre de synchronisation",
     "syncCenterConflicts": "Conflits non résolus",
     "syncCenterRejected": "Éléments rejetés (file d'attente)",
-    "resolveLocal": "Conserver la version locale",
-    "resolveRemote": "Conserver la version serveur",
-    "noConflicts": "Aucun élément à traiter."
+    "resolveLocal": "Garder la version de cet appareil",
+    "resolveRemote": "Prendre la version du serveur",
+    "noConflicts": "Aucun élément à traiter.",
+    "dismissConflict": "Ignorer",
+    "conflictVersions": "Cet appareil : {{local}} · Serveur : {{remote}}",
+    "versionUnknown": "inconnue",
+    "deferredInbox": "{{count}} modification(s) reçue(s) attendent des données liées ou une version plus récente de l'application. Elles seront appliquées automatiquement.",
+    "resolveFailed": "Le choix n'a pas pu être appliqué : {{message}}",
+    "codeClash": "Le numéro {{number}} est déjà utilisé sur cet appareil par un autre enregistrement (numéroté sur deux appareils avant les codes d'appareil, ou deux appareils partagent un code). Renuméroter donne à l'enregistrement de cet appareil un nouveau numéro de cet appareil ; l'enregistrement reçu garde {{number}}. Rien n'est renommé sans votre choix.",
+    "renumberLocal": "Renuméroter l'enregistrement de cet appareil",
+    "conflictKind": {
+      "CONCURRENT_EDIT": "Modifié sur cet appareil et sur un autre appareil",
+      "SERVER_CONFLICT": "Le serveur possède déjà une version plus récente",
+      "STALE_INBOUND": "Le serveur a envoyé une version plus ancienne que celle-ci",
+      "EQUAL_VERSION_DIVERGENCE": "Même numéro de version avec un contenu différent",
+      "CODE_CLASH": "Le même numéro est déjà utilisé ici par un autre enregistrement",
+      "MATERIALIZE_ERROR": "Une modification reçue n'a pas pu être appliquée",
+      "INVALID_INBOUND_PAYLOAD": "Une modification reçue était invalide",
+      "OUTBOX_DEAD_LETTER": "Une modification locale n'a pas pu être envoyée après plusieurs tentatives",
+      "AUTHORITY_MISMATCH": "Le serveur a refusé une modification protégée",
+      "other": "À examiner"
+    },
+    "history": {
+      "fromOtherDevice": "D'un autre appareil (enregistré avant cette version) : les numéros de cette entrée sont les identifiants de cet appareil et ne désignent pas les enregistrements d'ici."
+    },
+    "mediaFile": {
+      "pending": "Pas encore téléchargé",
+      "pendingHint": "Ce fichier a été ajouté sur un autre poste. Il est téléchargé automatiquement lors de la synchronisation.",
+      "failed": "Échec du téléchargement",
+      "failedHint": "Le fichier n'a pas pu être téléchargé : {{message}}",
+      "missing": "Fichier absent de ce poste",
+      "missingHint": "Ce fichier n'est pas enregistré sur ce poste et aucun téléchargement n'est prévu.",
+      "retry": "Réessayer",
+      "retryQueued": "Téléchargement relancé.",
+      "retryNothing": "Rien à télécharger pour ce fichier."
+    },
+    "worker": {
+      "title": "Synchronisation",
+      "runsInBackground": "La synchronisation continue quand la fenêtre est fermée (Maintafox reste dans la zone de notification).",
+      "state": {
+        "starting": "Démarrage…",
+        "idle": "À jour",
+        "running": "Synchronisation en cours…",
+        "paused": "En pause",
+        "offline": "Hors ligne : nouvel essai automatique",
+        "retrying": "Nouvel essai prévu",
+        "blocked": "Arrêtée",
+        "error": "Erreur"
+      },
+      "blocker": {
+        "not_licensed": "La synchronisation n'est pas incluse dans la licence de cet appareil.",
+        "not_activated": "Cet appareil n'est pas activé.",
+        "activation_refused": "Le serveur a refusé l'activation de cet appareil. La licence est en cours de vérification.",
+        "tenant_config_mismatch": "Les données de cet appareil appartiennent à une autre organisation que son activation. Contactez votre administrateur.",
+        "not_configured": "La synchronisation n'est pas configurée sur cet appareil.",
+        "other": "La synchronisation est arrêtée."
+      },
+      "lastSuccess": "Dernière synchronisation réussie",
+      "never": "Jamais",
+      "nextAttempt": "Prochain essai : {{time}}",
+      "pausedUntil": "En pause jusqu'à {{time}}",
+      "pending": "Modifications en attente d'envoi",
+      "conflicts": "Conflits à examiner",
+      "media": "Fichiers en attente d'envoi : {{pending}} · en échec : {{failed}}",
+      "mediaDownloads": "Fichiers d'autres postes en attente de téléchargement : {{pending}} · en échec : {{failed}}",
+      "deadLetter": "{{count}} modification(s) n'ont pas pu être envoyées après plusieurs tentatives : voir les conflits.",
+      "lastError": "Dernière erreur : {{message}}",
+      "syncNow": "Synchroniser maintenant",
+      "pause": "Mettre en pause",
+      "pauseDuration": "Durée de la pause",
+      "pauseOption": {
+        "m15": "15 minutes",
+        "h1": "1 heure",
+        "h4": "4 heures",
+        "h24": "24 heures"
+      },
+      "resume": "Reprendre",
+      "actionFailed": "L'action n'a pas abouti : {{message}}"
+    },
+    "indicator": {
+      "idle": "À jour",
+      "scheduled": "Démarrage de la synchronisation",
+      "running": "Synchronisation",
+      "degraded": "Attention requise",
+      "paused": "En pause",
+      "blocked": "Arrêtée",
+      "error": "Erreur de sync",
+      "pausedTitle": "La synchronisation a été mise en pause par un opérateur",
+      "blockedTitle": "La synchronisation est arrêtée",
+      "degradedTitle": "La synchronisation demande votre attention (nouvel essai prévu ou conflits à examiner)",
+      "statusBar": "Sync : {{state}}"
+    },
+    "panel": {
+      "title": "Diagnostic de synchronisation",
+      "description": "État du service de synchronisation de cet appareil, actions de reprise et conflits à examiner.",
+      "replay": "Rejouer les éléments en échec",
+      "export": "Exporter le diagnostic",
+      "support": "Transmettre au support",
+      "conflictsTitle": "Conflits à examiner",
+      "recommended": "Recommandé : {{action}}",
+      "apply": "Appliquer",
+      "resolutionNote": "Résolu par un opérateur avec l'action « {{action}} ».",
+      "action": {
+        "accept_local": "Garder la version de cet appareil",
+        "accept_remote": "Prendre la version du serveur",
+        "renumber_local": "Renuméroter l'enregistrement de cet appareil",
+        "retry_later": "Réessayer plus tard",
+        "escalate": "Escalader",
+        "dismiss": "Ignorer",
+        "review": "Examiner"
+      }
+    }
   },
   "status": {
     "online": "En ligne",

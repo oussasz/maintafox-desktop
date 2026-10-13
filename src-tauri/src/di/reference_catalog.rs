@@ -264,10 +264,9 @@ mod tests {
         // Insert an extra published origin (Category B open catalog).
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "INSERT INTO reference_values \
-             (set_id, parent_id, code, label, description, sort_order, color_hex, icon_name, \
+            "INSERT INTO reference_values (entity_sync_id, set_id, parent_id, code, label, description, sort_order, color_hex, icon_name, \
               semantic_tag, external_code, is_active, metadata_json) \
-             SELECT rs.id, NULL, 'contractor', 'Sous-traitant', NULL, 99, NULL, NULL, \
+             SELECT 'test-rv-di-origin-contractor', rs.id, NULL, 'contractor', 'Sous-traitant', NULL, 99, NULL, NULL, \
                     'di_origin', NULL, 1, '{}' \
                FROM reference_domains d \
                JOIN reference_sets rs ON rs.domain_id = d.id AND rs.status = 'published' \

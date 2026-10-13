@@ -14,6 +14,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { WoPermitGateCard } from "@/components/permits/WoPermitGateCard";
 import { ReferenceCombobox } from "@/components/reference/ReferenceCombobox";
 import { Timeline } from "@/components/timeline";
 import { Badge } from "@/components/ui/badge";
@@ -934,6 +935,10 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
         {!loggingEnabled && (
           <p className="text-sm text-muted-foreground">{t("execution.loggingOnlyInProgress")}</p>
         )}
+
+        {wo.requires_permit && !["closed", "cancelled"].includes(statusCode) ? (
+          <WoPermitGateCard workOrderId={wo.id} refreshKey={rowVersion} />
+        ) : null}
 
         {/* Delay form (pause / hold) */}
         {delayIntent && (

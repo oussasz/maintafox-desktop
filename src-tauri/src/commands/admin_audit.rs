@@ -84,6 +84,9 @@ pub struct AdminChangeEventDetail {
     pub diff_json: Option<String>,
     pub step_up_used: bool,
     pub apply_result: String,
+    /// Received from another device before history ids travelled as sync ids: the ids inside
+    /// this row (target, scope, summary/detail ids) are that device's local ids, not this one's.
+    pub from_other_device: bool,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -157,6 +160,7 @@ fn parse_event_row(r: &sea_orm::QueryResult) -> AppResult<AdminChangeEventDetail
         apply_result: r
             .try_get::<String>("", "apply_result")
             .unwrap_or_else(|_| "applied".to_string()),
+        from_other_device: r.try_get::<bool>("", "from_other_device").unwrap_or(false),
     })
 }
 
@@ -216,6 +220,7 @@ pub async fn list_admin_events(
                ace.target_role_id, ace.acted_at, ace.scope_type, \
                ace.scope_reference, ace.summary, ace.diff_json, \
                ace.step_up_used, ace.apply_result, \
+               EXISTS (SELECT 1 FROM sync_history_foreign_rows f WHERE f.entity_type = 'admin_change_events' AND f.entity_sync_id = ace.entity_sync_id) AS from_other_device, \
                ua_actor.username  AS actor_username, \
                ua_target.username AS target_username, \
                r_target.name     AS target_role_name \
@@ -342,6 +347,7 @@ pub async fn get_admin_event(state: State<'_, AppState>, event_id: i64) -> AppRe
                ace.target_role_id, ace.acted_at, ace.scope_type, \
                ace.scope_reference, ace.summary, ace.diff_json, \
                ace.step_up_used, ace.apply_result, \
+               EXISTS (SELECT 1 FROM sync_history_foreign_rows f WHERE f.entity_type = 'admin_change_events' AND f.entity_sync_id = ace.entity_sync_id) AS from_other_device, \
                ua_actor.username  AS actor_username, \
                ua_target.username AS target_username, \
                r_target.name     AS target_role_name \

@@ -1,1 +1,42 @@
-{}
+{
+  "bell": {
+    "title": "Notifications",
+    "aria": "Notifications ({{count}})",
+    "unread": "{{count}} unread"
+  },
+  "osToast": {
+    "summaryTitle_one": "{{count}} new notification",
+    "summaryTitle_other": "{{count}} new notifications",
+    "summaryBody_one": "{{first}}",
+    "summaryBody_other": "{{first}} and {{rest}} more"
+  },
+  "preferences": {
+    "title": "Notification preferences",
+    "loading": "Loading preferences…",
+    "categories_one": "{{count}} category",
+    "categories_other": "{{count}} categories",
+    "systemManaged": "Managed by the system",
+    "col": {
+      "category": "Category",
+      "inApp": "In-app",
+      "os": "OS toast",
+      "email": "Email",
+      "sms": "SMS",
+      "digest": "Digest",
+      "muteUntil": "Mute until"
+    },
+    "digest": {
+      "instant": "Instant",
+      "daily_digest": "Daily digest",
+      "off": "In-app only"
+    },
+    "digestHelp": "Instant: shown and sent as soon as it happens. Daily digest: kept in the inbox, then one summary of the day's unread notifications the next day (shown as a toast and emailed like the \"Daily Digest\" category). In-app only: kept in the inbox, no toast, email or summary. Days follow this computer's time zone.",
+    "emailUnavailable": {
+      "server_endpoint_not_enabled": "Email is not available yet: the Maintafox server has not enabled email sending for your organisation.",
+      "licence_blocked": "Email is not available: your licence does not allow it in its current state.",
+      "device_not_activated": "Email is not available: this device is not activated.",
+      "unknown": "Email is not available: {{message}}"
+    },
+    "smsUnavailable": "SMS is not available in this version."
+  }
+}

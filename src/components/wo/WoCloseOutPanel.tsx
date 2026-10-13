@@ -42,6 +42,7 @@ import { usePermissions } from "@/hooks/use-permissions";
 import { useSession } from "@/hooks/use-session";
 import { useStepUp } from "@/hooks/use-step-up";
 import { formatPersonLabel } from "@/lib/display";
+import { getSetting } from "@/services/settings-service";
 import {
   saveFailureDetail,
   saveVerification,
@@ -51,6 +52,7 @@ import {
   updateServiceCost,
   getWoAnalyticsSnapshot,
   CloseoutBlockingError,
+  type WoAnalyticsSnapshot,
 } from "@/services/wo-closeout-service";
 import { evaluateWoCompletionGates } from "@/services/wo-service";
 import { useWoStore } from "@/stores/wo-store";
@@ -73,7 +75,8 @@ type RepairType = "temporary" | "permanent" | "na";
 /** Option B: verification and closure available from completed */
 const VERIFIABLE_STATUSES = new Set(["completed"]);
 const CLOSEABLE_STATUSES = new Set(["completed"]);
-const REOPENABLE_STATUSES = new Set(["completed"]);
+/** Tenant setting holding the reopen window after closure (days), PRD §6.5. */
+const REOPEN_WINDOW_SETTING = "wo.reopen_window_days";
 
 function SectionHeader({ icon, title }: { icon: React.ReactNode; title: string }) {
   return (
@@ -111,7 +114,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
   const { withStepUp, StepUpDialogElement } = useStepUp();
   const refreshActiveWo = useWoStore((s) => s.refreshActiveWo);
   const woItems = useWoStore((s) => s.items);
-  const canReopen = can(P.OT_ADMIN);
+  const canReopen = can(P.OT_REOPEN);
 
   // Track current WO state (gets updated after transitions)
   const [currentWo, setCurrentWo] = useState<WorkOrder>(wo);
@@ -152,12 +155,18 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
   const [fmecaOverrideSignerId, setFmecaOverrideSignerId] = useState("");
   const [fmecaOverrideSignerPassword, setFmecaOverrideSignerPassword] = useState("");
 
-  // ── Reopen (completed only) ───────────────────────────────────────────
+  // ── Reopen (completed, or closed within the tenant reopen window) ──────
+  const [reopenWindowDays, setReopenWindowDays] = useState<number | null>(null);
+  const [reopenWindowError, setReopenWindowError] = useState<string | null>(null);
   const [reopening, setReopening] = useState(false);
   const [reopenReason, setReopenReason] = useState("");
   const [reopenTarget, setReopenTarget] = useState<"in_progress" | "planning">("in_progress");
   const [reopenError, setReopenError] = useState<string | null>(null);
   const [completionGates, setCompletionGates] = useState<WoCompletionGate[]>([]);
+  const [links, setLinks] = useState<Pick<
+    WoAnalyticsSnapshot,
+    "pm_plan_code" | "pm_plan_title" | "pm_due_at" | "permits"
+  > | null>(null);
 
   const signerOptions = useMemo(() => {
     const dedup = new Map<string, string>();
@@ -193,6 +202,12 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
     void getWoAnalyticsSnapshot(wo.id)
       .then((snap) => {
         if (cancelled) return;
+        setLinks({
+          pm_plan_code: snap.pm_plan_code,
+          pm_plan_title: snap.pm_plan_title,
+          pm_due_at: snap.pm_due_at,
+          permits: snap.permits,
+        });
         const fd = snap.failure_details[0];
         if (fd) {
           setSymptomId(fd.symptom_id);
@@ -208,8 +223,8 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
         if (snap.corrective_action_summary) setCorrectiveAction(snap.corrective_action_summary);
         if (snap.service_cost > 0) setServiceCost(String(snap.service_cost));
       })
-      .catch(() => {
-        // Analytics not available yet — continue with empty form
+      .catch((err: unknown) => {
+        if (!cancelled) setDetailError(toErrorMessage(err));
       });
     return () => {
       cancelled = true;
@@ -425,6 +440,40 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
   // ── Render ──────────────────────────────────────────────────────────────
 
   const isDetailEditable = canEdit && !["closed", "cancelled"].includes(statusCode);
+
+  useEffect(() => {
+    if (statusCode !== "closed") return;
+    let cancelled = false;
+    getSetting(REOPEN_WINDOW_SETTING, "tenant")
+      .then((setting) => {
+        if (cancelled) return;
+        const days = setting ? Number(JSON.parse(setting.setting_value_json)) : Number.NaN;
+        if (Number.isFinite(days) && days >= 0) {
+          setReopenWindowDays(days);
+          setReopenWindowError(null);
+        } else {
+          setReopenWindowDays(null);
+          setReopenWindowError(t("closeout.reopenWindowMissing"));
+        }
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setReopenWindowError(toErrorMessage(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [statusCode, t]);
+
+  const closedDaysAgo =
+    currentWo.closed_at != null
+      ? (Date.now() - new Date(currentWo.closed_at).getTime()) / 86_400_000
+      : null;
+  const closedWithinWindow =
+    statusCode === "closed" &&
+    reopenWindowDays != null &&
+    closedDaysAgo != null &&
+    closedDaysAgo <= reopenWindowDays;
+  const canOfferReopen = statusCode === "completed" || closedWithinWindow;
   const closeoutProgress = completionGatesProgress(completionGates);
 
   return (
@@ -833,13 +882,49 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
           </div>
         )}
 
-        {REOPENABLE_STATUSES.has(statusCode) && canEdit && canReopen && (
+        {links && (links.pm_plan_code || links.permits.length > 0) ? (
+          <div
+            className="rounded-md border border-surface-border p-3 text-sm"
+            data-testid="wo-links"
+          >
+            {links.pm_plan_code ? (
+              <p>
+                {t("closeout.linkedPm", {
+                  code: links.pm_plan_code,
+                  title: links.pm_plan_title ?? "",
+                })}
+              </p>
+            ) : null}
+            {links.permits.length > 0 ? (
+              <p>
+                {t("closeout.linkedPermits", {
+                  list: links.permits.map((p) => `${p.code} (${p.status})`).join(", "),
+                })}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+
+        {statusCode === "closed" && canReopen && !closedWithinWindow ? (
+          <p className="text-sm text-muted-foreground">
+            {reopenWindowError ??
+              (reopenWindowDays != null
+                ? t("closeout.reopenWindowPassed", { days: reopenWindowDays })
+                : null)}
+          </p>
+        ) : null}
+
+        {canOfferReopen && canEdit && canReopen && (
           <div className="space-y-3 rounded-md border border-surface-border p-4">
             <h4 className="flex items-center gap-2 text-sm font-medium text-text-primary">
               <RotateCcw className="h-4 w-4" />
               {t("closeout.reopenTitle")}
             </h4>
-            <p className="text-sm text-muted-foreground">{t("closeout.reopenHint")}</p>
+            <p className="text-sm text-muted-foreground">
+              {statusCode === "closed"
+                ? t("closeout.reopenClosedHint", { days: reopenWindowDays ?? 0 })
+                : t("closeout.reopenHint")}
+            </p>
             <div className="grid gap-3 md:grid-cols-2">
               <div className="space-y-1">
                 <Label>{t("closeout.reopenTarget")}</Label>

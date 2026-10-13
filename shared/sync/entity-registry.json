@@ -1,0 +1,2172 @@
+{
+  "$comment": "Generated from src-tauri/src/sync/registry.rs by the test `registry_export_matches_shared_file`. Do not edit by hand.",
+  "registry_version": 1,
+  "entities": [
+    {
+      "entity_type": "activity_events",
+      "scope": "tenant",
+      "conflict_policy": "append_only",
+      "apply_priority": 4,
+      "parents": [
+        "user_accounts",
+        "org_nodes"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "admin_change_events",
+      "scope": "tenant",
+      "conflict_policy": "append_only",
+      "apply_priority": 1,
+      "parents": [
+        "roles",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "analytics_contract_versions",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 0,
+      "parents": [],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "app_settings",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 1,
+      "parents": [
+        "user_accounts"
+      ],
+      "sync_status": "synced",
+      "note": "Mixes device and tenant settings (setting_scope); step 2.4 must sync only tenant-scoped keys."
+    },
+    {
+      "entity_type": "article_cost_profiles",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 4,
+      "parents": [
+        "external_companies",
+        "lookup_values",
+        "articles"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "article_families",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 0,
+      "parents": [],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "articles",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 3,
+      "parents": [
+        "stock_locations",
+        "warehouses",
+        "lookup_values",
+        "article_families"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "asset_document_links",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 5,
+      "parents": [
+        "equipment",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "asset_external_ids",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 5,
+      "parents": [
+        "equipment"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "asset_meter_readings",
+      "scope": "tenant",
+      "conflict_policy": "append_only",
+      "apply_priority": 6,
+      "parents": [
+        "equipment_meters",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "asset_photos",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 5,
+      "parents": [
+        "user_accounts",
+        "equipment"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "audit_events",
+      "scope": "tenant",
+      "conflict_policy": "append_only",
+      "apply_priority": 1,
+      "parents": [
+        "user_accounts"
+      ],
+      "sync_status": "synced",
+      "note": "Device audit trail; step 2.4 decides between append-only sync and a dedicated audit channel."
+    },
+    {
+      "entity_type": "budget_actuals",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 11,
+      "parents": [
+        "teams",
+        "personnel",
+        "user_accounts",
+        "equipment",
+        "work_orders",
+        "cost_centers",
+        "budget_versions"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "budget_alert_configs",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 5,
+      "parents": [
+        "roles",
+        "user_accounts",
+        "cost_centers",
+        "budget_versions"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "budget_alert_events",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 6,
+      "parents": [
+        "user_accounts",
+        "notifications",
+        "notification_events",
+        "cost_centers",
+        "budget_versions",
+        "budget_alert_configs"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "budget_commitments",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 11,
+      "parents": [
+        "work_orders",
+        "cost_centers",
+        "budget_versions",
+        "purchase_orders"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "budget_erp_cost_center_master",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 5,
+      "parents": [
+        "cost_centers"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "budget_forecast_runs",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 2,
+      "parents": [
+        "user_accounts",
+        "budget_versions"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "budget_forecasts",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 5,
+      "parents": [
+        "cost_centers",
+        "budget_versions",
+        "budget_forecast_runs"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "budget_lines",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 5,
+      "parents": [
+        "teams",
+        "cost_centers",
+        "budget_versions"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "budget_variance_reviews",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 5,
+      "parents": [
+        "user_accounts",
+        "cost_centers",
+        "budget_versions"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "budget_versions",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 1,
+      "parents": [
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "capacity_rules",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 5,
+      "parents": [
+        "teams",
+        "org_nodes"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "certification_types",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 0,
+      "parents": [],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "closeout_validation_policies",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 4,
+      "parents": [
+        "org_nodes"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "cost_centers",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 4,
+      "parents": [
+        "user_accounts",
+        "org_nodes"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "data_integrity_findings",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 12,
+      "parents": [
+        "user_accounts",
+        "work_order_failure_details",
+        "work_order_downtime_segments",
+        "work_orders"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "data_integrity_repair_actions",
+      "scope": "tenant",
+      "conflict_policy": "append_only",
+      "apply_priority": 13,
+      "parents": [
+        "user_accounts",
+        "data_integrity_findings"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "delay_reason_codes",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 0,
+      "parents": [],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "delegated_admin_policies",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 5,
+      "parents": [
+        "roles",
+        "org_nodes",
+        "teams"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "di_attachments",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 10,
+      "parents": [
+        "intervention_requests",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "di_change_events",
+      "scope": "tenant",
+      "conflict_policy": "append_only",
+      "apply_priority": 0,
+      "parents": [],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "di_review_events",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 10,
+      "parents": [
+        "intervention_requests"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "di_sla_rules",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 0,
+      "parents": [],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "di_state_transition_log",
+      "scope": "tenant",
+      "conflict_policy": "append_only",
+      "apply_priority": 0,
+      "parents": [],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "document_acknowledgements",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 6,
+      "parents": [
+        "personnel"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "equipment",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 4,
+      "parents": [
+        "reference_values",
+        "org_nodes",
+        "equipment_classes",
+        "lookup_values"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "equipment_classes",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 0,
+      "parents": [],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "equipment_hierarchy",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 5,
+      "parents": [
+        "equipment"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "equipment_lifecycle_events",
+      "scope": "tenant",
+      "conflict_policy": "append_only",
+      "apply_priority": 0,
+      "parents": [],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "equipment_meters",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 5,
+      "parents": [
+        "equipment"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "event_tree_models",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 5,
+      "parents": [
+        "equipment",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "external_companies",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 0,
+      "parents": [],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "external_company_contacts",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 1,
+      "parents": [
+        "external_companies"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "failure_codes",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 1,
+      "parents": [
+        "failure_hierarchies"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "failure_events",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 11,
+      "parents": [
+        "failure_codes",
+        "equipment",
+        "work_orders",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "failure_hierarchies",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 0,
+      "parents": [],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "fmeca_analyses",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 5,
+      "parents": [
+        "equipment",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "fmeca_item_parts",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 12,
+      "parents": [
+        "articles",
+        "fmeca_items"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "fmeca_items",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 11,
+      "parents": [
+        "fmeca_analyses",
+        "pm_plan_versions",
+        "pm_plans",
+        "ram_ishikawa_diagrams",
+        "reference_values",
+        "work_orders"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "fta_models",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 5,
+      "parents": [
+        "equipment",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "goods_receipt_lines",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 14,
+      "parents": [
+        "stock_locations",
+        "articles",
+        "purchase_order_lines",
+        "goods_receipts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "goods_receipts",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 8,
+      "parents": [
+        "purchase_orders",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "inspection_anomalies",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 8,
+      "parents": [
+        "inspection_results",
+        "inspection_rounds"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "inspection_checkpoints",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 6,
+      "parents": [
+        "equipment",
+        "inspection_template_versions"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "inspection_evidence",
+      "scope": "tenant",
+      "conflict_policy": "append_only",
+      "apply_priority": 8,
+      "parents": [
+        "inspection_results"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "inspection_results",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 7,
+      "parents": [
+        "personnel",
+        "inspection_checkpoints",
+        "inspection_rounds"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "inspection_rounds",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 6,
+      "parents": [
+        "personnel",
+        "inspection_template_versions",
+        "inspection_templates",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "inspection_template_versions",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 5,
+      "parents": [
+        "inspection_templates"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "inspection_templates",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 4,
+      "parents": [
+        "org_nodes"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "integration_exceptions",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 12,
+      "parents": [
+        "posted_export_batches",
+        "budget_actuals",
+        "budget_forecasts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "intervention_requests",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 9,
+      "parents": [
+        "inspection_anomalies",
+        "equipment",
+        "org_nodes",
+        "user_accounts",
+        "reference_values",
+        "di_sla_rules"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "inventory_article_equivalents",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 4,
+      "parents": [
+        "articles"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "inventory_count_lines",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 16,
+      "parents": [
+        "inventory_transactions",
+        "stock_locations",
+        "warehouses",
+        "articles",
+        "inventory_count_sessions",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "inventory_count_sessions",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 2,
+      "parents": [
+        "stock_locations",
+        "warehouses",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "inventory_document_links",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 15,
+      "parents": [
+        "inventory_suppliers",
+        "purchase_orders",
+        "repairable_orders",
+        "articles",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "inventory_mutation_audit_links",
+      "scope": "tenant",
+      "conflict_policy": "append_only",
+      "apply_priority": 17,
+      "parents": [
+        "inventory_transactions",
+        "inventory_count_lines",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "inventory_reconciliation_findings",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 4,
+      "parents": [
+        "stock_locations",
+        "warehouses",
+        "articles",
+        "inventory_reconciliation_runs"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "inventory_reconciliation_runs",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 1,
+      "parents": [
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "inventory_state_events",
+      "scope": "tenant",
+      "conflict_policy": "append_only",
+      "apply_priority": 0,
+      "parents": [],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "inventory_supplier_article_sources",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 7,
+      "parents": [
+        "articles",
+        "inventory_suppliers"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "inventory_supplier_contacts",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 7,
+      "parents": [
+        "inventory_suppliers"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "inventory_supplier_prices",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 7,
+      "parents": [
+        "articles",
+        "inventory_suppliers",
+        "lookup_values"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "inventory_suppliers",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 6,
+      "parents": [
+        "external_companies",
+        "lookup_values",
+        "personnel"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "inventory_transactions",
+      "scope": "tenant",
+      "conflict_policy": "append_only",
+      "apply_priority": 15,
+      "parents": [
+        "lookup_values",
+        "stock_reservations",
+        "stock_locations",
+        "warehouses",
+        "articles",
+        "work_orders",
+        "goods_receipts",
+        "inventory_count_sessions",
+        "repairable_orders",
+        "user_accounts"
+      ],
+      "sync_status": "synced",
+      "note": "Materializer inserts movements but does not update stock_balances (derived); step 2.4 must rebuild balances on apply."
+    },
+    {
+      "entity_type": "inventory_valuation_policies",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 4,
+      "parents": [
+        "lookup_values",
+        "articles",
+        "article_families",
+        "warehouses"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "library_documents",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 5,
+      "parents": [
+        "equipment",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "lookup_domains",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 1,
+      "parents": [
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "lookup_value_aliases",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 3,
+      "parents": [
+        "lookup_values"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "lookup_values",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 2,
+      "parents": [
+        "lookup_domains"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "loto_card_print_jobs",
+      "scope": "tenant",
+      "conflict_policy": "append_only",
+      "apply_priority": 13,
+      "parents": [
+        "work_permits",
+        "permit_isolations",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "markov_models",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 5,
+      "parents": [
+        "equipment",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "mc_models",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 5,
+      "parents": [
+        "equipment",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "media_attachments",
+      "scope": "tenant",
+      "conflict_policy": "append_only",
+      "apply_priority": 11,
+      "parents": [
+        "equipment",
+        "intervention_requests",
+        "work_orders"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "notification_acknowledgements",
+      "scope": "user",
+      "conflict_policy": "operator_review",
+      "apply_priority": 2,
+      "parents": [
+        "user_accounts",
+        "notifications"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "notification_categories",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 0,
+      "parents": [],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "notification_escalation_policies",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 0,
+      "parents": [],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "notification_escalation_steps",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 5,
+      "parents": [
+        "notification_escalation_policies",
+        "teams",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "notification_events",
+      "scope": "tenant",
+      "conflict_policy": "append_only",
+      "apply_priority": 0,
+      "parents": [],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "notification_preferences",
+      "scope": "user",
+      "conflict_policy": "operator_review",
+      "apply_priority": 1,
+      "parents": [
+        "notification_categories",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "notification_rules",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 1,
+      "parents": [
+        "notification_categories",
+        "notification_escalation_policies"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "notifications",
+      "scope": "user",
+      "conflict_policy": "operator_review",
+      "apply_priority": 1,
+      "parents": [
+        "roles",
+        "user_accounts",
+        "notification_events"
+      ],
+      "sync_status": "synced",
+      "note": "Role-targeted rows (recipient_user_id NULL) have no owner; step 2.4 must fan them out per user or keep them tenant-wide."
+    },
+    {
+      "entity_type": "org_change_events",
+      "scope": "tenant",
+      "conflict_policy": "append_only",
+      "apply_priority": 0,
+      "parents": [],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "org_entity_bindings",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 4,
+      "parents": [
+        "org_nodes"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "org_node_responsibilities",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 6,
+      "parents": [
+        "org_nodes",
+        "personnel",
+        "teams"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "org_node_types",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 2,
+      "parents": [
+        "org_structure_models"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "org_nodes",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 3,
+      "parents": [
+        "org_structure_models",
+        "org_node_types"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "org_structure_models",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 1,
+      "parents": [
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "org_type_relationship_rules",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 3,
+      "parents": [
+        "org_structure_models",
+        "org_node_types"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "permit_handover_logs",
+      "scope": "tenant",
+      "conflict_policy": "append_only",
+      "apply_priority": 12,
+      "parents": [
+        "work_permits"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "permit_isolations",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 12,
+      "parents": [
+        "work_permits",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "permit_suspensions",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 12,
+      "parents": [
+        "work_permits",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "permit_types",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 0,
+      "parents": [],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "personnel",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 5,
+      "parents": [
+        "external_companies",
+        "reference_values",
+        "teams",
+        "org_nodes",
+        "positions"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "personnel_assignment_history",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 6,
+      "parents": [
+        "reference_values",
+        "personnel",
+        "positions",
+        "teams",
+        "org_nodes"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "personnel_authorizations",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 6,
+      "parents": [
+        "personnel",
+        "certification_types"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "personnel_availability_blocks",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 6,
+      "parents": [
+        "user_accounts",
+        "personnel"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "personnel_certifications",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 6,
+      "parents": [
+        "certification_types",
+        "personnel"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "personnel_rate_cards",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 6,
+      "parents": [
+        "personnel",
+        "cost_centers"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "personnel_skills",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 6,
+      "parents": [
+        "personnel",
+        "reference_values"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "personnel_team_assignments",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 6,
+      "parents": [
+        "teams",
+        "personnel"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "planning_windows",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 4,
+      "parents": [
+        "org_nodes"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "pm_executions",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 12,
+      "parents": [
+        "user_accounts",
+        "work_orders",
+        "pm_occurrences"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "pm_findings",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 13,
+      "parents": [
+        "work_orders",
+        "intervention_requests",
+        "pm_executions"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "pm_occurrence_transitions",
+      "scope": "tenant",
+      "conflict_policy": "append_only",
+      "apply_priority": 12,
+      "parents": [
+        "user_accounts",
+        "pm_occurrences"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "pm_occurrences",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 11,
+      "parents": [
+        "work_orders",
+        "pm_plan_versions",
+        "pm_plans"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "pm_plan_versions",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 6,
+      "parents": [
+        "pm_plans"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "pm_plans",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 5,
+      "parents": [
+        "lookup_values",
+        "teams",
+        "equipment"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "pm_trigger_events",
+      "scope": "tenant",
+      "conflict_policy": "append_only",
+      "apply_priority": 12,
+      "parents": [
+        "pm_occurrences",
+        "pm_plan_versions",
+        "pm_plans"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "policy_snapshots",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 1,
+      "parents": [
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "position_change_events",
+      "scope": "tenant",
+      "conflict_policy": "append_only",
+      "apply_priority": 3,
+      "parents": [
+        "positions"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "positions",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 2,
+      "parents": [
+        "qualification_requirement_profiles"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "posted_export_batches",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 0,
+      "parents": [],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "procurement_requisition_lines",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 12,
+      "parents": [
+        "lookup_values",
+        "stock_reservations",
+        "stock_locations",
+        "articles",
+        "procurement_requisitions"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "procurement_requisitions",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 1,
+      "parents": [
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "purchase_order_lines",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 13,
+      "parents": [
+        "stock_reservations",
+        "articles",
+        "procurement_requisition_lines",
+        "purchase_orders"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "purchase_orders",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 7,
+      "parents": [
+        "inventory_suppliers",
+        "external_companies",
+        "procurement_requisitions",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "qualification_profile_skills",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 3,
+      "parents": [
+        "reference_values",
+        "qualification_requirement_profiles"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "qualification_requirement_profiles",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 1,
+      "parents": [
+        "certification_types"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "ram_advanced_guardrails",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 0,
+      "parents": [],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "ram_expert_sign_offs",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 5,
+      "parents": [
+        "equipment",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "ram_ishikawa_diagrams",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 5,
+      "parents": [
+        "equipment"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "rbac_settings",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 0,
+      "parents": [],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "rbd_models",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 5,
+      "parents": [
+        "equipment",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "rcm_decisions",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 11,
+      "parents": [
+        "pm_plan_versions",
+        "pm_plans",
+        "rcm_studies",
+        "reference_values",
+        "work_orders"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "rcm_studies",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 5,
+      "parents": [
+        "equipment",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "reference_aliases",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 3,
+      "parents": [
+        "reference_values"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "reference_domains",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 0,
+      "parents": [],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "reference_sets",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 1,
+      "parents": [
+        "reference_domains",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "reference_validation_reports",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 2,
+      "parents": [
+        "reference_sets",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "reference_value_migrations",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 0,
+      "parents": [],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "reference_values",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 2,
+      "parents": [
+        "reference_sets"
+      ],
+      "sync_status": "synced",
+      "note": "Seeded catalog rows got per-replica ids in migration 148; step 2.4 must align seeded ids across replicas (identity::seeded_entity_sync_id)."
+    },
+    {
+      "entity_type": "reliability_beta_benchmarks",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 0,
+      "parents": [],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "reliability_dashboard_policies",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 0,
+      "parents": [],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "repairable_orders",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 14,
+      "parents": [
+        "inventory_suppliers",
+        "stock_reservations",
+        "purchase_order_lines",
+        "stock_locations",
+        "articles",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "report_schedules",
+      "scope": "user",
+      "conflict_policy": "operator_review",
+      "apply_priority": 1,
+      "parents": [
+        "report_templates",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "report_templates",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 0,
+      "parents": [],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "retention_policies",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 0,
+      "parents": [],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "role_permissions",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 1,
+      "parents": [
+        "roles",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "role_templates",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 0,
+      "parents": [],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "roles",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 0,
+      "parents": [],
+      "sync_status": "synced",
+      "note": "System roles are seeded on every replica; seeded rows must use identity::seeded_entity_sync_id."
+    },
+    {
+      "entity_type": "runtime_exposure_logs",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 5,
+      "parents": [
+        "equipment"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "saved_activity_filters",
+      "scope": "user",
+      "conflict_policy": "operator_review",
+      "apply_priority": 1,
+      "parents": [
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "schedule_break_ins",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 14,
+      "parents": [
+        "personnel",
+        "schedule_commitments",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "schedule_candidates",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 12,
+      "parents": [
+        "teams",
+        "personnel",
+        "urgency_levels",
+        "intervention_requests",
+        "work_orders",
+        "pm_occurrences"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "schedule_change_log",
+      "scope": "tenant",
+      "conflict_policy": "append_only",
+      "apply_priority": 14,
+      "parents": [
+        "schedule_commitments",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "schedule_commitments",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 13,
+      "parents": [
+        "personnel",
+        "teams",
+        "schedule_candidates",
+        "work_orders",
+        "pm_occurrences",
+        "intervention_requests",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "schedule_details",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 3,
+      "parents": [
+        "reference_values"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "settings_change_events",
+      "scope": "tenant",
+      "conflict_policy": "append_only",
+      "apply_priority": 0,
+      "parents": [],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "skill_categories",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 0,
+      "parents": [],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "skill_definitions",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 1,
+      "parents": [
+        "skill_categories"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "stock_locations",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 1,
+      "parents": [
+        "warehouses"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "stock_reservations",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 11,
+      "parents": [
+        "stock_locations",
+        "warehouses",
+        "articles",
+        "work_orders",
+        "user_accounts"
+      ],
+      "sync_status": "synced",
+      "note": "Work order link is resolved by sync id; the row is deferred until that work order is present."
+    },
+    {
+      "entity_type": "team_skill_requirements",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 5,
+      "parents": [
+        "teams",
+        "skill_definitions"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "teams",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 4,
+      "parents": [
+        "org_nodes"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "training_attendance",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 7,
+      "parents": [
+        "personnel",
+        "training_sessions"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "training_sessions",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 6,
+      "parents": [
+        "certification_types",
+        "personnel"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "unit_conversions",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 4,
+      "parents": [
+        "lookup_values",
+        "articles",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "urgency_levels",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 0,
+      "parents": [],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "user_accounts",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 0,
+      "parents": [],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "user_analytics_dashboard_layouts",
+      "scope": "user",
+      "conflict_policy": "operator_review",
+      "apply_priority": 1,
+      "parents": [
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "user_dashboard_layouts",
+      "scope": "user",
+      "conflict_policy": "operator_review",
+      "apply_priority": 1,
+      "parents": [
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "user_dismissals",
+      "scope": "user",
+      "conflict_policy": "operator_review",
+      "apply_priority": 5,
+      "parents": [
+        "equipment",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "user_scope_assignments",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 5,
+      "parents": [
+        "user_accounts",
+        "roles",
+        "org_nodes",
+        "teams"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "warehouses",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 0,
+      "parents": [],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "weibull_fit_results",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 5,
+      "parents": [
+        "equipment",
+        "failure_codes",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "wo_action_events",
+      "scope": "tenant",
+      "conflict_policy": "append_only",
+      "apply_priority": 11,
+      "parents": [
+        "work_orders"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "wo_change_events",
+      "scope": "tenant",
+      "conflict_policy": "append_only",
+      "apply_priority": 0,
+      "parents": [],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "wo_state_transition_log",
+      "scope": "tenant",
+      "conflict_policy": "append_only",
+      "apply_priority": 0,
+      "parents": [],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "work_order_attachments",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 11,
+      "parents": [
+        "user_accounts",
+        "work_orders"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "work_order_delay_segments",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 11,
+      "parents": [
+        "user_accounts",
+        "reference_values",
+        "work_orders"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "work_order_downtime_segments",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 11,
+      "parents": [
+        "work_orders"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "work_order_execution_events",
+      "scope": "tenant",
+      "conflict_policy": "append_only",
+      "apply_priority": 11,
+      "parents": [
+        "user_accounts",
+        "work_orders"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "work_order_failure_details",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 11,
+      "parents": [
+        "failure_codes",
+        "reference_values",
+        "work_orders"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "work_order_interveners",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 11,
+      "parents": [
+        "user_accounts",
+        "work_orders",
+        "reference_values"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "work_order_parts",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 12,
+      "parents": [
+        "reference_values",
+        "lookup_values",
+        "stock_reservations",
+        "work_orders",
+        "articles",
+        "stock_locations"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "work_order_statuses",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 0,
+      "parents": [],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "work_order_tasks",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 11,
+      "parents": [
+        "user_accounts",
+        "work_orders"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "work_order_tools",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 11,
+      "parents": [
+        "work_orders"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "work_order_types",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 0,
+      "parents": [],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "work_order_verifications",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 11,
+      "parents": [
+        "user_accounts",
+        "work_orders"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "work_orders",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 10,
+      "parents": [
+        "user_accounts",
+        "ram_ishikawa_diagrams",
+        "closeout_validation_policies",
+        "inspection_anomalies",
+        "equipment",
+        "teams",
+        "intervention_requests",
+        "work_order_types",
+        "work_order_statuses",
+        "org_nodes",
+        "urgency_levels"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "work_permits",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 11,
+      "parents": [
+        "work_orders",
+        "permit_types",
+        "equipment",
+        "org_nodes"
+      ],
+      "sync_status": "synced"
+    }
+  ],
+  "local_only_tables": {
+    "app_sessions": "session_or_device",
+    "archive_actions": "device_archive",
+    "archive_items": "device_archive",
+    "archive_payloads": "device_archive",
+    "asset_import_batches": "import_staging",
+    "asset_import_events": "import_staging",
+    "asset_import_staging": "import_staging",
+    "backup_policies": "backup",
+    "backup_runs": "backup",
+    "computation_jobs": "job_queue",
+    "connection_profiles": "secrets",
+    "entitlement_cache_state": "licensing",
+    "entitlement_envelopes": "licensing",
+    "event_export_runs": "job_queue",
+    "event_links": "derived_projection",
+    "inspection_offline_queue": "job_queue",
+    "inspection_reliability_signals": "derived_projection",
+    "license_admin_actions": "licensing",
+    "license_api_exchange_guard": "licensing",
+    "license_enforcement_state": "licensing",
+    "license_event_traces": "licensing",
+    "licensing_trust_keys": "licensing",
+    "machine_activation_contracts": "licensing",
+    "machine_activation_lineage": "licensing",
+    "machine_activation_state": "licensing",
+    "notification_deliveries": "job_queue",
+    "permission_dependencies": "app_catalog",
+    "permissions": "app_catalog",
+    "personnel_import_batches": "import_staging",
+    "personnel_import_rows": "import_staging",
+    "personnel_readiness_snapshots": "derived_projection",
+    "pm_generation_control": "job_queue",
+    "pm_generation_runs": "job_queue",
+    "reference_import_batches": "import_staging",
+    "reference_import_rows": "import_staging",
+    "reliability_kpi_snapshots": "derived_projection",
+    "report_artifacts": "job_queue",
+    "report_runs": "job_queue",
+    "scheduling_conflicts": "derived_projection",
+    "seaql_migrations": "sync_control",
+    "secure_secret_refs": "secrets",
+    "stock_balances": "derived_projection",
+    "sync_capture_baseline": "sync_control",
+    "sync_capture_journal": "sync_control",
+    "sync_capture_suppression": "sync_control",
+    "sync_checkpoint": "sync_control",
+    "sync_conflicts": "sync_control",
+    "sync_entity_state": "sync_control",
+    "sync_history_foreign_rows": "sync_control",
+    "sync_inbox": "sync_control",
+    "sync_media_downloads": "sync_control",
+    "sync_media_uploads": "sync_control",
+    "sync_outbox": "sync_control",
+    "sync_pending_refs": "sync_control",
+    "sync_rejections": "sync_control",
+    "sync_repair_actions": "sync_control",
+    "sync_replay_runs": "sync_control",
+    "sync_replica_identity": "sync_control",
+    "sync_transport_state": "sync_control",
+    "system_config": "session_or_device",
+    "training_expiry_alert_events": "derived_projection",
+    "trusted_devices": "session_or_device",
+    "users": "legacy"
+  }
+}

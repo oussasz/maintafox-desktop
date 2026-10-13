@@ -7,6 +7,9 @@ pub struct WeibullFitRunInput {
     pub period_end: Option<String>,
     #[serde(default)]
     pub include_censored: Option<bool>,
+    /// Restrict the dataset to one failure mode (competing modes are otherwise pooled).
+    #[serde(default)]
+    pub failure_mode_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -29,6 +32,17 @@ pub struct WeibullFitRecord {
     pub row_version: i64,
     pub created_at: String,
     pub created_by_id: Option<i64>,
+    /// Estimator tag (`weibull_fit::WEIBULL_ALGORITHM_VERSION`); legacy rows: `weibull_mle_complete_calendar_v1`.
+    pub algorithm_version: Option<String>,
+    pub dataset_hash_sha256: Option<String>,
+    /// `exposure_hours` (current) or `calendar_hours` (legacy, never reused for R(t)/RUL).
+    pub time_base: Option<String>,
+    pub failure_mode_id: Option<i64>,
+    pub n_failures: Option<i64>,
+    pub n_censored: Option<i64>,
+    /// `[{"hours": f64, "censored": bool}]` — the exact sample the MLE saw.
+    pub observations_json: Option<String>,
+    pub exposure_source: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -247,6 +261,10 @@ pub struct ReliabilityRulIndicator {
     pub predicted_rul_hours: Option<f64>,
     pub t_hours: Option<f64>,
     pub message: String,
+    /// Readiness gate decision (`ALLOW` / `DENY`) for the RUL window.
+    pub readiness_decision: String,
+    /// Blocking reason codes when DENY; R(t) / RUL are withheld.
+    pub blocking_reasons: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -293,6 +311,9 @@ pub struct WeibullDashboardPayload {
     pub rul_live_hours: Option<f64>,
     pub danger_threshold_r: f64,
     pub pm_threshold_r: f64,
+    /// Readiness gate decision (`ALLOW` / `DENY`); curves and live values are withheld on DENY.
+    pub readiness_decision: String,
+    pub blocking_reasons: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

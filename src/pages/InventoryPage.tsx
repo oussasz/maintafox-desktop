@@ -17,6 +17,7 @@ import {
   ProcurementRepairablePanel,
   type ProcurementRepairablePanelHandle,
 } from "@/components/inventory/ProcurementRepairablePanel";
+import { UnitConversionsPanel } from "@/components/inventory/UnitConversionsPanel";
 import {
   WarehouseLocationPanel,
   type WarehouseLocationPanelHandle,
@@ -506,6 +507,7 @@ export function InventoryPage() {
           <TabsTrigger value="topology">Warehouses & locations</TabsTrigger>
           <TabsTrigger value="procurement">Procurement & repairables</TabsTrigger>
           <TabsTrigger value="controls">Controls & reconciliation</TabsTrigger>
+          <TabsTrigger value="units">{t("unitConversions.tab")}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="master" className="mt-4 min-h-0 flex-1 data-[state=inactive]:hidden">
@@ -548,6 +550,10 @@ export function InventoryPage() {
               )}
             </div>
           </div>
+        </TabsContent>
+
+        <TabsContent value="units" className="mt-4 data-[state=inactive]:hidden">
+          <UnitConversionsPanel unitOptions={unitOptions} articles={articles} />
         </TabsContent>
 
         <TabsContent value="topology" className="mt-4 min-h-0 flex-1 data-[state=inactive]:hidden">

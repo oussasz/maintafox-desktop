@@ -109,13 +109,16 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
     info!("startup: initialising database");
     let db_path = resolve_db_path(&app)?;
     // A restore staged by `restore_from_backup` is swapped in before the database is opened.
-    if let Err(e) = crate::backup::restore::apply_pending_restore(std::path::Path::new(&db_path)) {
-        let reason = format!("Restore from backup failed: {e}");
-        error!("{reason}");
-        emit_event(&app, StartupEvent::Failed { reason });
-        window.show().ok();
-        return Err(e);
-    }
+    let restored = match crate::backup::restore::apply_pending_restore(std::path::Path::new(&db_path)) {
+        Ok(restored) => restored,
+        Err(e) => {
+            let reason = format!("Restore from backup failed: {e}");
+            error!("{reason}");
+            emit_event(&app, StartupEvent::Failed { reason });
+            window.show().ok();
+            return Err(e);
+        }
+    };
     match crate::db::init_db(&db_path).await {
         Ok(conn) => {
             let state = crate::state::AppState::new(conn);
@@ -142,6 +145,15 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
     // Phase 2: schema migrations
     info!("startup: running migrations");
     let app_state = app.state::<crate::state::AppState>();
+    // Sync capture is off while migrations and the startup seeders run: rows every device seeds
+    // itself are never sent. It is installed again before the sync worker starts (Phase 4b).
+    if let Err(e) = crate::sync::capture::suspend_capture(&app_state.db).await {
+        let reason = format!("Sync capture could not be suspended before migrations: {e}");
+        error!("{reason}");
+        emit_event(&app, StartupEvent::Failed { reason });
+        window.show().ok();
+        return Err(e);
+    }
     match crate::db::run_migrations(&app_state.db).await {
         Ok(()) => {
             info!(
@@ -157,6 +169,18 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
             window.show().ok();
             return Err(e);
         }
+    }
+
+    if restored {
+        // The restored database resumes sync from a full snapshot (`forget_server_position`).
+        if let Err(e) = crate::sync::transport::store::forget_server_position(&app_state.db).await {
+            let reason = format!("Sync position could not be reset after the restore: {e}");
+            error!("{reason}");
+            emit_event(&app, StartupEvent::Failed { reason });
+            window.show().ok();
+            return Err(e);
+        }
+        info!("startup: restored backup will resynchronise from a snapshot");
     }
 
     // Phase 3: seed system data (idempotent — INSERT OR IGNORE)
@@ -239,6 +263,27 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
     );
     emit_event(&app, StartupEvent::EntitlementCacheLoaded);
 
+    // Phase 4a: change capture for every synchronised table. Without it local changes would not
+    // reach the outbox, so a failure stops the startup.
+    match crate::sync::capture::install_capture(&app_state.db).await {
+        Ok(report) => info!(
+            entity_types = report.entity_types,
+            baseline_rows = report.baseline_rows,
+            "startup: sync capture installed"
+        ),
+        Err(e) => {
+            let reason = format!("Sync capture could not be installed: {e}");
+            error!("{reason}");
+            emit_event(&app, StartupEvent::Failed { reason });
+            window.show().ok();
+            return Err(e);
+        }
+    }
+
+    // Phase 4b: sync worker (protocol v2), background task `sync`. Closing the main window only
+    // hides it in the tray (window.rs), so the process and the worker keep running.
+    start_sync_worker(&app, &app_state).await;
+
     // Phase 5: notification scheduler background loop (non-fatal)
     {
         let scheduler_db = app_state.db.clone();
@@ -246,6 +291,31 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
             crate::notifications::scheduler::start_notification_scheduler(scheduler_db).await;
         });
         info!("startup: notification scheduler started");
+    }
+
+    // Phase 5a: notification emails through the control API (non-fatal; `notifications::email`)
+    {
+        let email_db = app_state.db.clone();
+        tauri::async_runtime::spawn(async move {
+            crate::notifications::email::start_email_dispatcher(
+                email_db,
+                env!("MAINTAFOX_CONTROL_PLANE_API_BASE_URL").to_string(),
+            )
+            .await;
+        });
+        info!("startup: notification email dispatcher started");
+    }
+
+    // Daily digest of notifications (`notifications::digest`), supervised background task.
+    {
+        let digest_db = app_state.db.clone();
+        app_state
+            .tasks
+            .spawn("notification_digest", move |cancel| {
+                crate::notifications::digest::run_digest_job(digest_db, cancel)
+            })
+            .await;
+        info!("startup: notification daily digest started");
     }
 
     // Phase 5b: DI SLA breach poller (non-fatal)
@@ -320,6 +390,69 @@ pub(crate) fn resolve_db_path(app: &AppHandle) -> AppResult<String> {
         .to_str()
         .map(String::from)
         .ok_or_else(|| crate::errors::AppError::Internal(anyhow::anyhow!("Non-UTF8 app data path")))
+}
+
+/// Start the sync worker as background task `sync` and forward its status to the webview.
+async fn start_sync_worker(app: &AppHandle, state: &crate::state::AppState) {
+    use crate::sync::transport::{
+        LicenseSyncAccess, SyncTiming, SyncWorker, SyncWorkerConfig, SYNC_STATUS_EVENT, SYNC_TASK_ID,
+    };
+
+    let handle = state.sync_worker.clone();
+    {
+        let mut status = handle.subscribe();
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            while status.changed().await.is_ok() {
+                let current = status.borrow_and_update().clone();
+                if let Err(e) = app.emit(SYNC_STATUS_EVENT, current) {
+                    warn!("startup: cannot forward sync status to the window: {e}");
+                }
+            }
+        });
+    }
+
+    let media_root = match app.path().app_data_dir() {
+        Ok(dir) => dir,
+        Err(e) => {
+            let message = format!("App data directory unavailable: {e}");
+            error!("startup: sync worker not started: {message}");
+            handle.publish_not_configured(&message);
+            return;
+        }
+    };
+    match crate::sync::media::backfill_library_document_media(&state.db, &media_root).await {
+        Ok(0) => {}
+        Ok(added) => tracing::info!(added, "startup: library documents queued for file sync"),
+        Err(e) => warn!("startup: library documents could not be queued for file sync: {e}"),
+    }
+    let config = SyncWorkerConfig {
+        api_base_url: env!("MAINTAFOX_CONTROL_PLANE_API_BASE_URL").to_string(),
+        media_root,
+        timing: SyncTiming::production(),
+    };
+    let worker = match SyncWorker::new(
+        state.db.clone(),
+        handle.clone(),
+        config,
+        std::sync::Arc::new(LicenseSyncAccess),
+    ) {
+        Ok(worker) => worker,
+        Err(message) => {
+            error!("startup: sync worker not started: {message}");
+            handle.publish_not_configured(&message);
+            return;
+        }
+    };
+    let Some(commands) = handle.take_receiver() else {
+        warn!("startup: sync worker already started");
+        return;
+    };
+    state
+        .tasks
+        .spawn(SYNC_TASK_ID, move |cancel| worker.run(commands, cancel))
+        .await;
+    info!("startup: sync worker started");
 }
 
 fn emit_event(app: &AppHandle, event: StartupEvent) {

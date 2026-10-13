@@ -1,8 +1,19 @@
-// ADR-003: all invoke() calls for work permits (PRD Â§6.23) live here.
+// ADR-003: all invoke() calls for work permits (PRD §6.23) live here.
 
 import { z } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
+import type {
+  PermitHandoverLogInput,
+  PermitIsolationActionInput,
+  PermitIsolationUpsertInput,
+  PermitSuspendInput,
+  PermitTypeUpsertInput,
+  WorkPermitCreateInput,
+  WorkPermitListFilter,
+  WorkPermitStatusInput,
+  WorkPermitUpdateInput,
+} from "@shared/ipc-types";
 
 const PermitTypeSchema = z.object({
   id: z.number(),
@@ -35,6 +46,11 @@ const WorkPermitSchema = z.object({
   closed_at: z.string().nullable(),
   handed_back_at: z.string().nullable(),
   row_version: z.number(),
+  permit_type_code: z.string().nullable(),
+  permit_type_name: z.string().nullable(),
+  asset_code: z.string().nullable(),
+  asset_label: z.string().nullable(),
+  linked_work_order_code: z.string().nullable(),
 });
 
 const PermitSuspensionSchema = z.object({
@@ -48,6 +64,8 @@ const PermitSuspensionSchema = z.object({
   reinstated_at: z.string().nullable(),
   reactivation_conditions: z.string(),
   row_version: z.number(),
+  suspended_by_name: z.string().nullable(),
+  reinstated_by_name: z.string().nullable(),
 });
 
 const PermitHandoverLogSchema = z.object({
@@ -74,7 +92,11 @@ const PermitIsolationSchema = z.object({
   applied_at: z.string().nullable(),
   verified_at: z.string().nullable(),
   removal_verified_at: z.string().nullable(),
+  removal_verified_by_id: z.number().nullable(),
   row_version: z.number(),
+  applied_by_name: z.string().nullable(),
+  verified_by_name: z.string().nullable(),
+  removal_verified_by_name: z.string().nullable(),
 });
 
 const LotoCardViewSchema = z.object({
@@ -118,12 +140,7 @@ export async function listPermitTypes(): Promise<PermitTypeRecord[]> {
   return z.array(PermitTypeSchema).parse(raw);
 }
 
-export async function listWorkPermits(filter: {
-  status?: string;
-  permit_type_id?: number;
-  asset_id?: number;
-  limit?: number;
-}): Promise<WorkPermitRecord[]> {
+export async function listWorkPermits(filter: WorkPermitListFilter): Promise<WorkPermitRecord[]> {
   const raw = await invoke<unknown>("list_work_permits", { filter });
   return z.array(WorkPermitSchema).parse(raw);
 }
@@ -154,7 +171,6 @@ export async function getLotoCardView(
 export async function recordLotoCardPrint(input: {
   permit_id: number;
   isolation_id: number;
-  printed_by_id: number;
 }): Promise<LotoCardPrintJobRecord> {
   const raw = await invoke<unknown>("record_loto_card_print", { input });
   return LotoCardPrintJobSchema.parse(raw);
@@ -168,4 +184,89 @@ export async function listOpenPermitsReport(): Promise<WorkPermitRecord[]> {
 export async function permitComplianceKpi30d(): Promise<PermitComplianceKpi30dRecord> {
   const raw = await invoke<unknown>("permit_compliance_kpi_30d");
   return PermitComplianceKpi30dSchema.parse(raw);
+}
+
+// ── Writes ────────────────────────────────────────────────────────────────
+
+export async function getWorkPermit(id: number): Promise<WorkPermitRecord> {
+  const raw = await invoke<unknown>("get_work_permit", { id });
+  return WorkPermitSchema.parse(raw);
+}
+
+export const TERMINAL_PERMIT_STATUSES: ReadonlySet<string> = new Set([
+  "closed",
+  "handed_back",
+  "cancelled",
+  "expired",
+]);
+
+/** Returns the permit the WO gate evaluates (active first, then newest open). */
+export async function getPermitForWorkOrder(workOrderId: number): Promise<WorkPermitRecord | null> {
+  const rows = await listWorkPermits({ linked_work_order_id: workOrderId, limit: 50 });
+  const rank = (p: WorkPermitRecord): number =>
+    p.status === "active" ? 0 : TERMINAL_PERMIT_STATUSES.has(p.status) ? 2 : 1;
+  return [...rows].sort((a, b) => rank(a) - rank(b) || b.id - a.id)[0] ?? null;
+}
+
+export async function upsertPermitType(input: PermitTypeUpsertInput): Promise<PermitTypeRecord> {
+  const raw = await invoke<unknown>("upsert_permit_type", { input });
+  return PermitTypeSchema.parse(raw);
+}
+
+export async function createWorkPermit(input: WorkPermitCreateInput): Promise<WorkPermitRecord> {
+  const raw = await invoke<unknown>("create_work_permit", { input });
+  return WorkPermitSchema.parse(raw);
+}
+
+export async function updateWorkPermit(input: WorkPermitUpdateInput): Promise<WorkPermitRecord> {
+  const raw = await invoke<unknown>("update_work_permit", { input });
+  return WorkPermitSchema.parse(raw);
+}
+
+export async function setWorkPermitStatus(input: WorkPermitStatusInput): Promise<WorkPermitRecord> {
+  const raw = await invoke<unknown>("set_work_permit_status", { input });
+  return WorkPermitSchema.parse(raw);
+}
+
+export async function suspendWorkPermit(
+  input: PermitSuspendInput,
+): Promise<{ permit: WorkPermitRecord; suspension: PermitSuspensionRecord }> {
+  const raw = await invoke<unknown>("suspend_work_permit", { input });
+  const [permit, suspension] = z.tuple([WorkPermitSchema, PermitSuspensionSchema]).parse(raw);
+  return { permit, suspension };
+}
+
+export async function appendPermitHandoverLog(
+  input: PermitHandoverLogInput,
+): Promise<PermitHandoverLogRecord> {
+  const raw = await invoke<unknown>("append_permit_handover_log", { input });
+  return PermitHandoverLogSchema.parse(raw);
+}
+
+export async function upsertPermitIsolation(
+  input: PermitIsolationUpsertInput,
+): Promise<PermitIsolationRecord> {
+  const raw = await invoke<unknown>("upsert_permit_isolation", { input });
+  return PermitIsolationSchema.parse(raw);
+}
+
+export async function applyPermitIsolation(
+  input: PermitIsolationActionInput,
+): Promise<PermitIsolationRecord> {
+  const raw = await invoke<unknown>("apply_permit_isolation", { input });
+  return PermitIsolationSchema.parse(raw);
+}
+
+export async function verifyPermitIsolation(
+  input: PermitIsolationActionInput,
+): Promise<PermitIsolationRecord> {
+  const raw = await invoke<unknown>("verify_permit_isolation", { input });
+  return PermitIsolationSchema.parse(raw);
+}
+
+export async function verifyPermitIsolationRemoval(
+  input: PermitIsolationActionInput,
+): Promise<PermitIsolationRecord> {
+  const raw = await invoke<unknown>("verify_permit_isolation_removal", { input });
+  return PermitIsolationSchema.parse(raw);
 }

@@ -189,6 +189,8 @@ mod tests {
             "reason_code",
             "notes",
             "acted_at",
+            // Sync identity (migration 162).
+            "entity_sync_id",
         ];
 
         for expected in &expected_columns {
@@ -337,8 +339,11 @@ mod tests {
         let db = setup().await;
 
         let code = generate_di_code(&db).await.expect("code generation should succeed");
+        let dev = crate::sync::device_code::this_device_code(&db)
+            .await
+            .expect("device code");
 
-        assert_eq!(code, "DI-0001", "First DI code must be DI-0001");
+        assert_eq!(code, format!("DI-{dev}-0001"), "first DI code of this device");
     }
 
     #[tokio::test]
@@ -349,20 +354,23 @@ mod tests {
         // We need prerequisite rows for FK constraints.
         seed_minimal_fk_data(&db).await;
 
+        let dev = crate::sync::device_code::this_device_code(&db)
+            .await
+            .expect("device code");
         let code1 = generate_di_code(&db).await.expect("first code gen");
-        assert_eq!(code1, "DI-0001");
+        assert_eq!(code1, format!("DI-{dev}-0001"));
 
         // Insert the first DI with code1
         insert_stub_di(&db, &code1).await;
 
         let code2 = generate_di_code(&db).await.expect("second code gen");
-        assert_eq!(code2, "DI-0002");
+        assert_eq!(code2, format!("DI-{dev}-0002"));
 
         // Insert the second DI with code2
         insert_stub_di(&db, &code2).await;
 
         let code3 = generate_di_code(&db).await.expect("third code gen");
-        assert_eq!(code3, "DI-0003");
+        assert_eq!(code3, format!("DI-{dev}-0003"));
 
         // Verify uniqueness: all three are distinct
         assert_ne!(code1, code2);
@@ -375,15 +383,21 @@ mod tests {
         let db = setup().await;
         seed_minimal_fk_data(&db).await;
 
-        // Insert DI-0001
-        insert_stub_di(&db, "DI-0001").await;
-        // Insert DI-0005 (simulating a gap from import or manual)
-        insert_stub_di(&db, "DI-0005").await;
+        let dev = crate::sync::device_code::this_device_code(&db)
+            .await
+            .expect("device code");
+        insert_stub_di(&db, &format!("DI-{dev}-0001")).await;
+        // A gap (import or manual), and numbers of before device codes and of another device,
+        // which never feed this device's sequence.
+        insert_stub_di(&db, &format!("DI-{dev}-0005")).await;
+        insert_stub_di(&db, "DI-0042").await;
+        insert_stub_di(&db, "DI-ZZZZ-0077").await;
 
         let next = generate_di_code(&db).await.expect("code gen after gap");
         assert_eq!(
-            next, "DI-0006",
-            "Next code must follow the highest existing sequence, not fill gaps"
+            next,
+            format!("DI-{dev}-0006"),
+            "Next code must follow this device's highest sequence, not fill gaps"
         );
     }
 

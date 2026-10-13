@@ -288,12 +288,12 @@ async fn transfer_safety_preserves_reserved_and_blocks_double_consumption() {
     let article_id = create_test_article(&db, "INV-XFER").await;
     let main_loc = main_location_id(&db).await;
 
-    db.execute(Statement::from_string(
+    db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "INSERT INTO stock_locations (warehouse_id, code, name, is_default, is_active)
-         SELECT warehouse_id, 'AUX-BIN', 'Aux bin', 0, 1
-         FROM stock_locations WHERE id = (SELECT id FROM stock_locations WHERE code = 'MAIN-BIN' LIMIT 1)"
-            .to_string(),
+        "INSERT INTO stock_locations (entity_sync_id, warehouse_id, code, name, is_default, is_active)
+         SELECT ?, warehouse_id, 'AUX-BIN', 'Aux bin', 0, 1
+         FROM stock_locations WHERE id = (SELECT id FROM stock_locations WHERE code = 'MAIN-BIN' LIMIT 1)",
+        [crate::sync::identity::new_entity_sync_id().into()],
     ))
     .await
     .expect("insert aux location");

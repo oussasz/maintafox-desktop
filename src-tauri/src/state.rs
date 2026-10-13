@@ -12,6 +12,7 @@ use crate::auth::session_manager::SessionManager;
 use crate::background::BackgroundTaskSupervisor;
 use crate::jobs::ComputationJobRunner;
 use crate::rbac::cache::PermissionCache;
+use crate::sync::transport::SyncWorkerHandle;
 
 /// Database connection pool managed by sea-orm.
 /// Concrete type is `sea_orm::DatabaseConnection`; `SQLite` in WAL mode.
@@ -56,6 +57,8 @@ pub struct AppState {
     /// In-memory permission cache with TTL-based expiry.
     /// Invalidated by RBAC mutation commands (`assign_role_scope`, `update_role`, …).
     pub permission_cache: Arc<RwLock<PermissionCache>>,
+    /// Sync worker status and control (the worker itself runs as background task `sync`).
+    pub sync_worker: SyncWorkerHandle,
 }
 
 impl AppState {
@@ -68,6 +71,7 @@ impl AppState {
             tasks: BackgroundTaskSupervisor::new(),
             computation_jobs: ComputationJobRunner::new(),
             permission_cache: Arc::new(RwLock::new(PermissionCache::default())),
+            sync_worker: SyncWorkerHandle::new(),
         }
     }
 }

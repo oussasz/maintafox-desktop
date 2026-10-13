@@ -1021,6 +1021,7 @@ mod password_recovery_contacts_tests {
             DbBackend::Sqlite,
             r"CREATE TABLE user_accounts (
                 id INTEGER PRIMARY KEY,
+                entity_sync_id TEXT,
                 username TEXT NOT NULL,
                 display_name TEXT,
                 email TEXT,
@@ -1031,6 +1032,7 @@ mod password_recovery_contacts_tests {
               );
               CREATE TABLE roles (
                 id INTEGER PRIMARY KEY,
+                entity_sync_id TEXT,
                 name TEXT NOT NULL,
                 deleted_at TEXT
               );
@@ -1051,11 +1053,11 @@ mod password_recovery_contacts_tests {
         let db = setup_db().await;
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            r"INSERT INTO user_accounts (id, username, display_name, email, phone, is_admin, is_active)
+            r"INSERT INTO user_accounts (id, entity_sync_id, username, display_name, email, phone, is_admin, is_active)
               VALUES
-                (1, 'alice', 'Alice Admin', 'alice@example.com', NULL, 1, 1),
-                (2, 'bob', 'Bob Inactive', 'bob@example.com', NULL, 1, 0),
-                (3, 'carol', 'Carol User', NULL, NULL, 0, 1);",
+                (1, 'test-user-alice', 'alice', 'Alice Admin', 'alice@example.com', NULL, 1, 1),
+                (2, 'test-user-bob', 'bob', 'Bob Inactive', 'bob@example.com', NULL, 1, 0),
+                (3, 'test-user-carol', 'carol', 'Carol User', NULL, NULL, 0, 1);",
         ))
         .await
         .unwrap();
@@ -1077,9 +1079,9 @@ mod password_recovery_contacts_tests {
         let db = setup_db().await;
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            r"INSERT INTO user_accounts (id, username, display_name, email, phone, is_admin, is_active)
-              VALUES (10, 'dave', 'Dave RoleAdmin', NULL, '+33123456789', 0, 1);
-              INSERT INTO roles (id, name) VALUES (1, 'Administrator');
+            r"INSERT INTO user_accounts (id, entity_sync_id, username, display_name, email, phone, is_admin, is_active)
+              VALUES (10, 'test-user-dave', 'dave', 'Dave RoleAdmin', NULL, '+33123456789', 0, 1);
+              INSERT INTO roles (id, entity_sync_id, name) VALUES (1, 'test-role-administrator', 'Administrator');
               INSERT INTO user_scope_assignments (id, user_id, role_id) VALUES (1, 10, 1);",
         ))
         .await
@@ -1097,10 +1099,10 @@ mod password_recovery_contacts_tests {
         let db = setup_db().await;
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            r"INSERT INTO user_accounts (id, username, display_name, email, phone, is_admin, is_active, deleted_at)
+            r"INSERT INTO user_accounts (id, entity_sync_id, username, display_name, email, phone, is_admin, is_active, deleted_at)
               VALUES
-                (1, 'gone', 'Gone Admin', 'gone@example.com', NULL, 1, 1, '2026-01-01T00:00:00Z'),
-                (2, 'nameless_admin', NULL, NULL, NULL, 1, 1, NULL);",
+                (1, 'test-user-gone', 'gone', 'Gone Admin', 'gone@example.com', NULL, 1, 1, '2026-01-01T00:00:00Z'),
+                (2, 'test-user-nameless', 'nameless_admin', NULL, NULL, NULL, 1, 1, NULL);",
         ))
         .await
         .unwrap();

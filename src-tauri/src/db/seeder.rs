@@ -1,7 +1,6 @@
 use crate::errors::{AppError, AppResult};
 use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, Value};
-use uuid::Uuid;
 
 /// Current version of the system seed data set.
 /// Increment this when adding new system domains or values in a release.
@@ -11,6 +10,8 @@ pub const SEED_SCHEMA_VERSION: i32 = 2;
 /// Tuple format: (`setting_key`, category, `setting_scope`, `setting_value_json`)
 const DEFAULT_SETTINGS: &[(&str, &str, &str, &str)] = &[
     ("ram.fmeca_rpn_critical_threshold", "reliability", "tenant", r"150"),
+    // PRD §6.5: a closed WO may be reopened within this many days of its closure.
+    ("wo.reopen_window_days", "work_orders", "tenant", r"30"),
     ("locale.primary_language", "localization", "tenant", r#""fr""#),
     ("locale.fallback_language", "localization", "tenant", r#""en""#),
     ("locale.date_format", "localization", "tenant", r#""DD/MM/YYYY""#),
@@ -2427,7 +2428,8 @@ async fn seed_domain(
     is_extensible: bool,
 ) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
-    let entity_sync_id = Uuid::new_v4().to_string();
+    // Seeded on every device: identity from the natural key (`sync::seeded_identity`).
+    let entity_sync_id = crate::sync::identity::seeded_entity_sync_id("lookup_domains", domain_key);
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT OR IGNORE INTO lookup_domains
@@ -2481,7 +2483,20 @@ async fn seed_value(
     is_system: bool,
 ) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
-    let entity_sync_id = Uuid::new_v4().to_string();
+    // Seeded on every device: identity from `domain_key:code` (`sync::seeded_identity`).
+    let domain_key: String = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT domain_key FROM lookup_domains WHERE id = ?",
+            [domain_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "lookup_domain".into(),
+            id: domain_id.to_string(),
+        })?
+        .try_get("", "domain_key")?;
+    let entity_sync_id = crate::sync::identity::seeded_entity_sync_id("lookup_values", &format!("{domain_key}:{code}"));
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT OR IGNORE INTO lookup_values
@@ -2593,7 +2608,9 @@ async fn seed_system_roles(db: &DatabaseConnection) -> AppResult<()> {
     ];
 
     for (name, desc, is_system, role_type) in baseline_roles {
-        let entity_sync_id = Uuid::new_v4().to_string();
+        // Every device seeds these roles on its own: the id is derived from the role name
+        // so the same baseline role has the same sync identity on every device.
+        let entity_sync_id = crate::sync::identity::seeded_entity_sync_id("roles", name);
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             r"INSERT OR IGNORE INTO roles
@@ -2821,7 +2838,8 @@ async fn seed_admin_account(db: &DatabaseConnection) -> AppResult<()> {
     let password_hash = hash_password("Admin#2026!")?;
 
     let now = Utc::now().to_rfc3339();
-    let entity_sync_id = Uuid::new_v4().to_string();
+    // Every device seeds this account: identity from the username (`sync::seeded_identity`).
+    let entity_sync_id = crate::sync::identity::seeded_entity_sync_id("user_accounts", "admin");
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -2854,7 +2872,9 @@ async fn seed_admin_account(db: &DatabaseConnection) -> AppResult<()> {
 /// Idempotent — uses INSERT OR IGNORE.
 async fn ensure_admin_role_assignment(db: &DatabaseConnection) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
-    let entity_sync_id = Uuid::new_v4().to_string();
+    // Every device seeds this assignment (`sync::seeded_identity`).
+    let entity_sync_id =
+        crate::sync::identity::seeded_entity_sync_id("user_scope_assignments", "admin:Administrator:tenant");
 
     // Resolve user_id for 'admin' and role_id for 'Administrator'
     let result = db
@@ -2915,8 +2935,8 @@ mod tests {
     fn default_settings_count_is_expected() {
         assert_eq!(
             DEFAULT_SETTINGS.len(),
-            // +locale.currency_code, +ram.fmeca_rpn_critical_threshold
-            17,
+            // +locale.currency_code, +ram.fmeca_rpn_critical_threshold, +wo.reopen_window_days
+            18,
             "Default settings count changed; update migration and verification checks"
         );
     }

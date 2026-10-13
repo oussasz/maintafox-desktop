@@ -1963,17 +1963,29 @@ export interface ReferencePublishReadiness {
   impact_preview_available: boolean;
 }
 
+export interface ImpactTable {
+  table: string;
+  column: string;
+  count: number;
+}
+
 export interface ModuleImpact {
   module: string;
   status: string;
   affected_count: number;
   details: string | null;
+  /** Where the affected records are (table and column that use a changed value). */
+  tables: ImpactTable[];
 }
 
 export interface ReferenceImpactSummary {
   set_id: number;
   domain_id: number;
   domain_code: string;
+  /** Codes of the published set that the candidate removes. */
+  removed_codes: string[];
+  /** Codes that the candidate deactivates. */
+  deactivated_codes: string[];
   total_affected: number;
   dimensions: ModuleImpact[];
   computed_at: string;
@@ -4295,6 +4307,8 @@ export interface AssetPhoto {
   asset_id: number;
   file_name: string;
   file_path: string;
+  /** Storage location under the app data directory (key of the file's sync state). */
+  relative_path: string;
   mime_type: string;
   file_size_bytes: number;
   caption: string | null;
@@ -4618,6 +4632,8 @@ export interface WorkOrder {
   /** Latest Planning commitment for this WO (source_type=work_order). */
   schedule_commitment_id?: number | null;
   schedule_frozen?: boolean | null;
+  /** PRD §6.5 lifecycle state derived from the WO's facts (Rust `wo::lifecycle`). */
+  lifecycle_state?: string | null;
 }
 
 export interface WoTransitionRow {
@@ -4630,6 +4646,8 @@ export interface WoTransitionRow {
   reason_code: string | null;
   notes: string | null;
   acted_at: string;
+  /** Lifecycle state right after the transition (null before Phase 6.4). */
+  lifecycle_state?: string | null;
 }
 
 export interface WorkOrderTypeOption {
@@ -4730,6 +4748,8 @@ export interface WoDraftUpdateInput {
 
 export interface WoListFilter {
   status_codes?: string[] | null;
+  /** Derived PRD lifecycle states (see `src/utils/wo-lifecycle.ts`). */
+  lifecycle_states?: string[] | null;
   type_codes?: string[] | null;
   equipment_id?: number | null;
   entity_id?: number | null;
@@ -5136,12 +5156,51 @@ export interface WoDowntimeSegment {
   classification_code?: string | null;
 }
 
+/** Backlog heatmap (PRD §6.5): planned load per day vs crew capacity. */
+export interface WoBacklogHeatmapInput {
+  start_date?: string | null;
+  weeks: number;
+}
+
+export interface WoBacklogDay {
+  date: string;
+  planned_hours: number;
+  wo_count: number;
+  unestimated_count: number;
+  /** null when no capacity rule is configured. */
+  capacity_hours: number | null;
+  overloaded: boolean;
+}
+
+export interface WoBacklogBucket {
+  wo_count: number;
+  estimated_hours: number;
+  unestimated_count: number;
+}
+
+export interface WoBlockedCategory {
+  category: string;
+  wo_count: number;
+  waiting_hours: number;
+}
+
+export interface WoBacklogHeatmap {
+  start_date: string;
+  days: WoBacklogDay[];
+  capacity_configured: boolean;
+  unscheduled: WoBacklogBucket;
+  overdue: WoBacklogBucket;
+  blocked: WoBlockedCategory[];
+}
+
 export interface WoStatsPayload {
   total: number;
   in_progress: number;
   completed: number;
   overdue: number;
   by_status: { status: string; count: number }[];
+  /** Counts per derived PRD lifecycle state, in PRD order. */
+  by_lifecycle: { status: string; count: number }[];
   by_urgency: { urgency: string; count: number }[];
   daily_completed: { date: string; count: number }[];
   by_entity: { entity: string; count: number }[];
@@ -5585,6 +5644,8 @@ export interface AdminChangeEventDetail {
   diff_json: string | null;
   step_up_used: boolean;
   apply_result: string;
+  /** Received from another device before history ids travelled as sync ids. */
+  from_other_device: boolean;
 }
 
 // â”€â”€â”€ Activity Feed & Audit Log (SP07-F03) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -6630,6 +6691,19 @@ export interface ReliabilityKpiSnapshot {
   analysis_input_spec_json: string;
   plot_payload_json: string;
   row_version: number;
+  /** `reliability_kpi_v2`+; legacy rows `reliability_kpi_v1`. */
+  algorithm_version: string | null;
+  /** Governed exposure (uptime) hours used as the KPI denominator. */
+  exposure_hours: number | null;
+  repair_event_count: number | null;
+  active_repair_hours_total: number | null;
+  downtime_hours_total: number | null;
+  /** Inherent availability A_i = T / (T + Σ active repair). */
+  availability_inherent: number | null;
+  /** Operational availability A_o = T / (T + Σ downtime) — KPI-035. */
+  availability_operational: number | null;
+  /** Non-repairable equipment only. */
+  mttf: number | null;
 }
 
 export interface ReliabilityAnalysisInputEvaluation {
@@ -6682,6 +6756,7 @@ export interface WeibullFitRunInput {
   period_start?: string | null;
   period_end?: string | null;
   include_censored?: boolean | null;
+  failure_mode_id?: number | null;
 }
 
 export interface WeibullFitRecord {
@@ -6703,6 +6778,16 @@ export interface WeibullFitRecord {
   row_version: number;
   created_at: string;
   created_by_id: number | null;
+  algorithm_version: string | null;
+  dataset_hash_sha256: string | null;
+  /** `exposure_hours` (current) or `calendar_hours` (legacy). */
+  time_base: string | null;
+  failure_mode_id: number | null;
+  n_failures: number | null;
+  n_censored: number | null;
+  /** JSON `[{hours, censored}]` — the exact sample the MLE used. */
+  observations_json: string | null;
+  exposure_source: string | null;
 }
 
 export interface WeibullDashboardInput {
@@ -6742,6 +6827,8 @@ export interface WeibullDashboardPayload {
   rul_live_hours: number | null;
   danger_threshold_r: number;
   pm_threshold_r: number;
+  readiness_decision: ReliabilityReadinessDecision;
+  blocking_reasons: string[];
 }
 
 export interface FmecaAnalysis {
@@ -6886,6 +6973,35 @@ export interface ReliabilityRulIndicator {
   predicted_rul_hours: number | null;
   t_hours: number | null;
   message: string;
+  readiness_decision: ReliabilityReadinessDecision;
+  blocking_reasons: string[];
+}
+
+export type ReliabilityReadinessDecision = "ALLOW" | "DENY";
+
+export interface ReliabilityReadinessInput {
+  equipment_id: number;
+  period_start?: string | null;
+  period_end?: string | null;
+  min_sample_n?: number | null;
+}
+
+/** StrictRam readiness gate — guards Weibull fits, R(t) and RUL. */
+export interface ReliabilityReadinessGate {
+  equipment_id: number;
+  period_start: string;
+  period_end: string;
+  decision: ReliabilityReadinessDecision;
+  /** `MISSING_EXPOSURE` | `MISSING_FAILURE_MODE` | `INSUFFICIENT_EVENTS` */
+  blocking_reasons: string[];
+  warnings: string[];
+  eligible_event_count: number;
+  min_sample_n: number;
+  exposure_hours: number;
+  exposure_source: string | null;
+  data_quality_score: number;
+  completeness_percent: number;
+  badge: string;
 }
 
 export interface RamIshikawaDiagram {
@@ -6940,6 +7056,136 @@ export interface UpdateRcmStudyInput {
 export interface RcmStudiesFilter {
   equipment_id?: number | null;
   limit?: number | null;
+}
+
+/** Answers to the RCM decision diagram for one failure mode (Phase 6.5). */
+export interface RcmAnswers {
+  failure_evident: boolean;
+  safety_or_environmental: boolean;
+  operational_impact: boolean;
+  multiple_failure_affects_safety: boolean;
+  on_condition_feasible: boolean;
+  scheduled_restoration_feasible: boolean;
+  scheduled_discard_feasible: boolean;
+  failure_finding_feasible: boolean;
+  combination_feasible: boolean;
+  weibull_beta: number | null;
+}
+
+export interface RcmRecommendation {
+  consequence_category: string;
+  recommended_tactic: string;
+  redesign_compulsory: boolean;
+  path: string[];
+}
+
+export interface ApplyRcmLogicInput {
+  decision_id: number;
+  expected_row_version: number;
+  answers: RcmAnswers;
+  selected_tactic?: string | null;
+  justification?: string | null;
+}
+
+export interface RcmDecisionLogic {
+  decision_id: number;
+  row_version: number;
+  selected_tactic: string;
+  consequence_category: string;
+  justification: string;
+  recommended_tactic: string | null;
+  answers: RcmAnswers | null;
+  /** Ordered `step:yes|no` codes of the decision path. */
+  path: string[];
+  linked_pm_plan_id: number | null;
+  linked_pm_plan_version_id: number | null;
+  pm_plan_code: string | null;
+  pm_version_no: number | null;
+  linked_work_order_id: number | null;
+  work_order_code: string | null;
+}
+
+export type RamsActionSourceType = "fmeca_item" | "rcm_decision";
+
+export interface PmRevisionFromSourceInput {
+  source_type: RamsActionSourceType;
+  source_id: number;
+  pm_plan_id: number;
+  trigger_definition_json?: string | null;
+  change_note: string;
+}
+
+export interface WoFromSourceInput {
+  source_type: RamsActionSourceType;
+  source_id: number;
+  type_code: string;
+  title?: string | null;
+}
+
+export interface RamsSourceAction {
+  source_type: RamsActionSourceType;
+  source_id: number;
+  pm_plan_version_id: number | null;
+  pm_version_no: number | null;
+  work_order_id: number | null;
+  work_order_code: string | null;
+}
+
+export interface FmecaCriticalityEvidence {
+  mode_failures: number;
+  total_failures: number;
+  mode_ratio: number | null;
+  failure_rate_per_hour: number | null;
+  kpi_period_end: string | null;
+}
+
+/** Ranking metric of the failure-mode Pareto. */
+export type FailureModeParetoMetric = "count" | "cost" | "downtime";
+
+export interface FailureModeParetoInput {
+  metric: FailureModeParetoMetric;
+  period_start?: string | null;
+  period_end?: string | null;
+  equipment_id?: number | null;
+}
+
+export interface FailureModeParetoRow {
+  /** null for failures recorded without a failure mode. */
+  failure_mode_id: number | null;
+  mode_code: string | null;
+  mode_label: string | null;
+  failure_count: number;
+  total_cost: number;
+  downtime_hours: number;
+  value: number;
+  share: number;
+  cumulative_share: number;
+}
+
+export interface FailureModePareto {
+  metric: FailureModeParetoMetric;
+  total: number;
+  rows: FailureModeParetoRow[];
+}
+
+export interface FmecaCriticalityInput {
+  item_id: number;
+  expected_row_version: number;
+  effect_probability: number;
+  mode_ratio?: number | null;
+  failure_rate_per_hour?: number | null;
+  operating_hours: number;
+}
+
+export interface FmecaCriticality {
+  item_id: number;
+  row_version: number;
+  effect_probability: number;
+  mode_ratio: number;
+  failure_rate_per_hour: number;
+  operating_hours: number;
+  criticality_number: number;
+  analysis_criticality: number;
 }
 
 export interface RcmDecision {
@@ -7313,6 +7559,8 @@ export interface InspectionCheckpoint {
   asset_id: number | null;
   component_id: number | null;
   checkpoint_code: string;
+  /** Instruction shown to the technician in the field. */
+  description: string | null;
   check_type: string;
   measurement_unit: string | null;
   normal_min: number | null;
@@ -7332,6 +7580,12 @@ export interface InspectionRound {
   scheduled_at: string | null;
   assigned_to_id: number | null;
   status: string;
+  started_at: string | null;
+  completed_at: string | null;
+  reviewed_at: string | null;
+  reviewed_by_id: number | null;
+  review_note: string | null;
+  completion_percentage: number | null;
   row_version: number;
 }
 
@@ -7340,6 +7594,7 @@ export interface InspectionCheckpointDraft {
   asset_id?: number | null;
   component_id?: number | null;
   checkpoint_code: string;
+  description?: string | null;
   check_type: string;
   measurement_unit?: string | null;
   normal_min?: number | null;
@@ -7445,13 +7700,6 @@ export interface DeferInspectionAnomalyInput {
   expected_row_version: number;
 }
 
-export interface InspectionOfflineQueueItem {
-  id: number;
-  payload_json: string;
-  local_temp_id: string;
-  sync_status: string;
-}
-
 export interface RecordInspectionResultInput {
   round_id: number;
   checkpoint_id: number;
@@ -7492,9 +7740,60 @@ export interface InspectionAnomaliesFilter {
   round_id?: number | null;
 }
 
-export interface EnqueueInspectionOfflineInput {
-  payload_json: string;
-  local_temp_id: string;
+/** Per-row sync state shown in the field runner (the visible offline queue). */
+export type InspectionRowSyncState = "not_recorded" | "waiting" | "synced" | "error" | "conflict";
+
+/** A round as listed for people: labels resolved, never raw ids. */
+export interface InspectionRoundSummary {
+  round: InspectionRound;
+  template_code: string;
+  template_name: string;
+  version_no: number;
+  /** The version asks for a supervisor review even after a clean round. */
+  requires_review: boolean;
+  assigned_to_name: string | null;
+  reviewed_by_name: string | null;
+  checkpoint_count: number;
+  recorded_count: number;
+  exception_count: number;
+  open_anomaly_count: number;
+  /** Rows of this round saved on this device and not yet accepted by the server. */
+  pending_sync_count: number;
+}
+
+export interface InspectionRoundSummaryFilter {
+  statuses?: string[] | null;
+  limit?: number | null;
+}
+
+export interface InspectionRunnerCheckpoint {
+  checkpoint: InspectionCheckpoint;
+  asset_code: string | null;
+  asset_name: string | null;
+  result: InspectionResult | null;
+  evidence: InspectionEvidence[];
+  open_anomalies: InspectionAnomaly[];
+  sync_state: InspectionRowSyncState;
+  /** What is still required before the round can be completed: result, photo, comment. */
+  missing: string[];
+}
+
+export interface InspectionRoundRunner {
+  summary: InspectionRoundSummary;
+  checkpoints: InspectionRunnerCheckpoint[];
+}
+
+export interface InspectionRoundActionInput {
+  round_id: number;
+  expected_row_version: number;
+  note?: string | null;
+}
+
+export interface AddInspectionPhotoInput {
+  result_id: number;
+  file_name: string;
+  mime_type: string;
+  file_bytes: number[];
 }
 
 export interface InspectionReliabilitySignal {
@@ -7508,6 +7807,8 @@ export interface InspectionReliabilitySignal {
   anomaly_open_count: number;
   checkpoint_coverage_ratio: number;
   row_version: number;
+  asset_code: string | null;
+  asset_name: string | null;
 }
 
 export interface InspectionReliabilitySignalsFilter {
@@ -8839,6 +9140,13 @@ export interface SyncOutboxItem {
   rejection_code: string | null;
   rejection_message: string | null;
   origin_machine_id: string | null;
+  /** Server version this change was made on; null when the row was created on this device. */
+  base_row_version: number | null;
+  /** Owning user for user-scoped entities. */
+  owner_user_sync_id: string | null;
+  attempt_count: number;
+  last_attempt_at: string | null;
+  last_error: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -8853,9 +9161,14 @@ export interface SyncInboxItem {
   row_version: number;
   payload_json: string;
   payload_hash: string;
+  /** pending | applied | deferred | conflict | rejected | superseded */
   apply_status: string;
   rejection_code: string | null;
   rejection_message: string | null;
+  server_seq: number | null;
+  owner_user_sync_id: string | null;
+  attempt_count: number;
+  last_attempt_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -8870,94 +9183,17 @@ export interface SyncCheckpoint {
   updated_at: string;
 }
 
+/** The outbox assigns the idempotency key, versions, owner and origin. */
 export interface StageOutboxItemInput {
-  idempotency_key: string;
   entity_type: string;
   entity_sync_id: string;
   operation: "create" | "update" | "delete" | "upsert" | "archive";
-  row_version: number;
   payload_json: string;
-  origin_machine_id?: string | null;
 }
 
 export interface ListOutboxFilter {
   status?: string | null;
   limit?: number | null;
-}
-
-export interface SyncAckInput {
-  idempotency_key: string;
-  entity_sync_id: string;
-  operation: "create" | "update" | "delete" | "upsert" | "archive";
-}
-
-export interface SyncRejectedItemInput {
-  idempotency_key: string;
-  entity_sync_id: string;
-  operation: "create" | "update" | "delete" | "upsert" | "archive";
-  rejection_code: string;
-  rejection_message: string;
-}
-
-export interface SyncInboundItemInput {
-  entity_type: string;
-  entity_sync_id: string;
-  operation: "create" | "update" | "delete" | "upsert" | "archive";
-  row_version: number;
-  payload_json: string;
-}
-
-export interface ApplySyncBatchInput {
-  protocol_version: string;
-  server_batch_id: string;
-  checkpoint_token: string;
-  acknowledged_items: SyncAckInput[];
-  rejected_items: SyncRejectedItemInput[];
-  inbound_items: SyncInboundItemInput[];
-  policy_metadata_json?: string | null;
-}
-
-export interface SyncTypedRejection {
-  scope: string;
-  entity_sync_id: string;
-  operation: string;
-  rejection_code: string;
-  rejection_message: string;
-}
-
-export interface ApplySyncBatchResult {
-  protocol_version: string;
-  checkpoint_token: string | null;
-  checkpoint_advanced: boolean;
-  acknowledged_count: number;
-  rejected_count: number;
-  inbound_applied_count: number;
-  inbound_duplicate_count: number;
-  typed_rejections: SyncTypedRejection[];
-}
-
-/** Device tenant context echoed with sync exchange for isolation auditing (optional). */
-export interface TenantConfigSyncPayload {
-  tenant_id: string;
-  is_activated: boolean;
-  company_display_name: string | null;
-}
-
-export interface SyncPushPayload {
-  protocol_version: string;
-  checkpoint_token: string | null;
-  outbox_batch: SyncOutboxItem[];
-  /** Optional tenant metadata on sync exchange (control-plane observability / policy); ignored by mirror apply when unused. */
-  tenant_config?: TenantConfigSyncPayload | null;
-  /** Additive v1 field — desktop always receives full tenant replica; mobile may filter later. */
-  device_class?: "desktop" | "mobile";
-  /** Optional media object keys pending upload/download (binaries are not in payload_json). */
-  media_manifest?: Array<{
-    entity_sync_id: string;
-    content_sha256: string;
-    object_key: string;
-    byte_size: number;
-  }> | null;
 }
 
 export interface SyncStateSummary {
@@ -8966,15 +9202,64 @@ export interface SyncStateSummary {
   pending_outbox_count: number;
   rejected_outbox_count: number;
   inbox_error_count: number;
+  /** Sent but not acknowledged yet (sent again on the next exchange). */
+  in_flight_outbox_count: number;
+  /** Gave up after repeated delivery failures; listed as conflicts. */
+  dead_letter_outbox_count: number;
+  /** Inbound rows waiting for a parent row or a newer app version. */
+  deferred_inbox_count: number;
+  /** Inbound rows waiting for a person. */
+  inbox_conflict_count: number;
+  /** Conflicts not resolved yet (all sources). */
+  unresolved_conflict_count: number;
 }
 
-/** Result of applying pending sync_inbox rows to domain tables. */
-export interface MaterializeInboxResult {
-  processed: number;
-  applied: number;
-  conflicts: number;
-  skipped: number;
-  errors: string[];
+/** Sync worker state (Rust background task `sync`, protocol v2). */
+export type SyncWorkerState =
+  | "starting"
+  | "idle"
+  | "running"
+  | "paused"
+  | "offline"
+  | "retrying"
+  | "blocked"
+  | "error";
+
+export interface SyncWorkerError {
+  /** Server error code (e.g. `rate_limited`), `offline`, `interrupted` or `local_error`. */
+  code: string;
+  message: string;
+  http_status: number | null;
+  at: string;
+}
+
+/** `get_sync_worker_status` and the `sync-worker-status` event. */
+export interface SyncWorkerStatus {
+  state: SyncWorkerState;
+  /** `not_licensed` | `not_activated` | `activation_refused` | `tenant_config_mismatch` | `not_configured`. */
+  blocker: string | null;
+  paused_until: string | null;
+  last_success_at: string | null;
+  last_attempt_at: string | null;
+  next_attempt_at: string | null;
+  pending_outbox_count: number;
+  dead_letter_outbox_count: number;
+  unresolved_conflict_count: number;
+  media_pending_count: number;
+  media_failed_count: number;
+  /** Files received from other devices not stored here yet / given up. */
+  media_download_pending_count: number;
+  media_download_failed_count: number;
+  consecutive_failures: number;
+  last_error: SyncWorkerError | null;
+}
+
+/** Availability of a synchronised file on this device (`get_media_file_states`). */
+export interface MediaFileState {
+  relativePath: string;
+  state: "available" | "pending" | "failed" | "missing";
+  lastError: string | null;
+  attemptCount: number;
 }
 
 export interface SyncConflictFilter {
@@ -9008,6 +9293,8 @@ export interface SyncConflictRecord {
   resolved_by_id: number | null;
   resolved_at: string | null;
   row_version: number;
+  local_row_version: number | null;
+  inbound_row_version: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -9015,10 +9302,15 @@ export interface SyncConflictRecord {
 export interface ResolveSyncConflictInput {
   conflict_id: number;
   expected_row_version: number;
+  /**
+   * accept_local = keep this device's version; accept_remote = take the server's version;
+   * renumber_local = number clash: give the record on this device a new number, then apply the
+   * received one.
+   */
   action:
     | "accept_local"
     | "accept_remote"
-    | "merge_fields"
+    | "renumber_local"
     | "retry_later"
     | "escalate"
     | "dismiss";
@@ -9277,4 +9569,98 @@ export interface RegisterAnalyticsContractVersionInput {
   contract_id: string;
   version_semver: string;
   content_sha256: string;
+}
+
+// ── Work permits / LOTO (PRD §6.23, WP-04) ─────────────────────────────────
+// Actors (applier, verifier, suspender, reinstater, printer) are always the
+// session user on the backend; they are never sent from the UI.
+
+export interface PermitTypeUpsertInput {
+  id: number | null;
+  code: string;
+  name: string;
+  description: string | null;
+  requires_hse_approval: boolean;
+  requires_operations_approval: boolean;
+  requires_atmospheric_test: boolean;
+  max_duration_hours: number | null;
+  mandatory_ppe_ids_json: string | null;
+  mandatory_control_rules_json: string | null;
+}
+
+export interface WorkPermitCreateInput {
+  permit_type_id: number;
+  /** Omit when `linked_work_order_id` is set: the WO equipment is used. */
+  asset_id: number | null;
+  /** Omit to derive from the WO entity or the asset installation node. */
+  entity_id: number | null;
+  linked_work_order_id: number | null;
+  /** RFC 3339, must be in the future. */
+  expires_at: string | null;
+}
+
+export interface WorkPermitUpdateInput {
+  id: number;
+  linked_work_order_id: number | null;
+  asset_id: number | null;
+  entity_id: number | null;
+  expires_at: string | null;
+  expected_row_version: number;
+}
+
+export type WorkPermitStatus =
+  | "draft"
+  | "pending_review"
+  | "approved"
+  | "issued"
+  | "active"
+  | "suspended"
+  | "revalidation_required"
+  | "closed"
+  | "handed_back"
+  | "cancelled"
+  | "expired";
+
+export interface WorkPermitStatusInput {
+  id: number;
+  status: WorkPermitStatus;
+  expected_row_version: number;
+}
+
+export interface PermitSuspendInput {
+  permit_id: number;
+  expected_row_version: number;
+  reason: string;
+  reactivation_conditions: string | null;
+}
+
+export interface PermitHandoverLogInput {
+  permit_id: number;
+  handed_from_role: string;
+  handed_to_role: string;
+  confirmation_note: string;
+}
+
+export interface PermitIsolationUpsertInput {
+  id: number | null;
+  permit_id: number;
+  isolation_point: string;
+  energy_type: string;
+  isolation_method: string;
+  lock_number: string | null;
+}
+
+export interface PermitIsolationActionInput {
+  isolation_id: number;
+  expected_row_version: number;
+  /** Only used by apply: lock number fitted at application time. */
+  lock_number: string | null;
+}
+
+export interface WorkPermitListFilter {
+  status?: string;
+  permit_type_id?: number;
+  asset_id?: number;
+  linked_work_order_id?: number;
+  limit?: number;
 }

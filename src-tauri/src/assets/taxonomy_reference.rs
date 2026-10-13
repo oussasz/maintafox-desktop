@@ -5,7 +5,6 @@ use crate::errors::{AppError, AppResult};
 use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use serde::Serialize;
-use uuid::Uuid;
 
 pub const DOMAIN_CLASS: &str = "EQUIPMENT.CLASS";
 pub const DOMAIN_CRITICALITY: &str = "EQUIPMENT.CRITICALITY";
@@ -112,6 +111,12 @@ pub struct EquipmentTaxonomyCatalog {
     pub subfamilies: Vec<EquipmentTaxonomyOption>,
 }
 
+/// Every replica seeds these system rows itself, so their sync identity is derived from the
+/// `domain:code` natural key and agrees across machines.
+fn seeded_reference_value_sync_id(domain_code: &str, value_code: &str) -> String {
+    crate::sync::identity::seeded_entity_sync_id("reference_values", &format!("{domain_code}:{value_code}"))
+}
+
 async fn published_set_id(db: &DatabaseConnection, domain_code: &str) -> AppResult<i64> {
     let row = db
         .query_one(Statement::from_sql_and_values(
@@ -189,15 +194,15 @@ pub async fn ensure_required_equipment_status_values(db: &DatabaseConnection) ->
     for &(code, label, sort, color) in REQUIRED_STATUS {
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "INSERT INTO reference_values \
-             (set_id, parent_id, code, label, description, sort_order, color_hex, icon_name, semantic_tag, external_code, is_active, metadata_json) \
-             VALUES (?, NULL, ?, ?, NULL, ?, ?, NULL, NULL, NULL, 1, ?) \
+            "INSERT INTO reference_values (entity_sync_id, set_id, parent_id, code, label, description, sort_order, color_hex, icon_name, semantic_tag, external_code, is_active, metadata_json) \
+             VALUES (?, ?, NULL, ?, ?, NULL, ?, ?, NULL, NULL, NULL, 1, ?) \
              ON CONFLICT(set_id, code) DO UPDATE SET \
                 label = excluded.label, \
                 sort_order = excluded.sort_order, \
                 color_hex = excluded.color_hex, \
                 metadata_json = excluded.metadata_json",
             [
+                seeded_reference_value_sync_id(DOMAIN_STATUS, code).into(),
                 set_id.into(),
                 code.into(),
                 label.into(),
@@ -219,15 +224,15 @@ pub async fn ensure_required_equipment_criticality_values(db: &DatabaseConnectio
     for &(code, label, sort, color) in REQUIRED_CRITICALITY {
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "INSERT INTO reference_values \
-             (set_id, parent_id, code, label, description, sort_order, color_hex, icon_name, semantic_tag, external_code, is_active, metadata_json) \
-             VALUES (?, NULL, ?, ?, NULL, ?, ?, NULL, NULL, NULL, 1, ?) \
+            "INSERT INTO reference_values (entity_sync_id, set_id, parent_id, code, label, description, sort_order, color_hex, icon_name, semantic_tag, external_code, is_active, metadata_json) \
+             VALUES (?, ?, NULL, ?, ?, NULL, ?, ?, NULL, NULL, NULL, 1, ?) \
              ON CONFLICT(set_id, code) DO UPDATE SET \
                 label = excluded.label, \
                 sort_order = excluded.sort_order, \
                 color_hex = excluded.color_hex, \
                 metadata_json = excluded.metadata_json",
             [
+                seeded_reference_value_sync_id(DOMAIN_CRITICALITY, code).into(),
                 set_id.into(),
                 code.into(),
                 label.into(),
@@ -249,14 +254,14 @@ pub async fn ensure_required_equipment_class_values(db: &DatabaseConnection) -> 
     for &(code, label, sort) in REQUIRED_CLASS {
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "INSERT INTO reference_values \
-             (set_id, parent_id, code, label, description, sort_order, color_hex, icon_name, semantic_tag, external_code, is_active, metadata_json) \
-             VALUES (?, NULL, ?, ?, NULL, ?, NULL, NULL, 'equipment_class', NULL, 1, ?) \
+            "INSERT INTO reference_values (entity_sync_id, set_id, parent_id, code, label, description, sort_order, color_hex, icon_name, semantic_tag, external_code, is_active, metadata_json) \
+             VALUES (?, ?, NULL, ?, ?, NULL, ?, NULL, NULL, 'equipment_class', NULL, 1, ?) \
              ON CONFLICT(set_id, code) DO UPDATE SET \
                 label = excluded.label, \
                 sort_order = excluded.sort_order, \
                 metadata_json = excluded.metadata_json",
             [
+                seeded_reference_value_sync_id(DOMAIN_CLASS, code).into(),
                 set_id.into(),
                 code.into(),
                 label.into(),
@@ -295,9 +300,8 @@ pub async fn ensure_required_equipment_family_values(db: &DatabaseConnection) ->
         let class_parent_id = resolve_published_value_id(db, DOMAIN_CLASS, class_code).await?;
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "INSERT INTO reference_values \
-             (set_id, parent_id, code, label, description, sort_order, color_hex, icon_name, semantic_tag, external_code, is_active, metadata_json) \
-             VALUES (?, ?, ?, ?, NULL, ?, NULL, NULL, 'equipment_family', NULL, 1, ?) \
+            "INSERT INTO reference_values (entity_sync_id, set_id, parent_id, code, label, description, sort_order, color_hex, icon_name, semantic_tag, external_code, is_active, metadata_json) \
+             VALUES (?, ?, ?, ?, ?, NULL, ?, NULL, NULL, 'equipment_family', NULL, 1, ?) \
              ON CONFLICT(set_id, code) DO UPDATE SET \
                 parent_id = excluded.parent_id, \
                 label = excluded.label, \
@@ -305,6 +309,7 @@ pub async fn ensure_required_equipment_family_values(db: &DatabaseConnection) ->
                 metadata_json = excluded.metadata_json, \
                 is_active = 1",
             [
+                seeded_reference_value_sync_id(DOMAIN_FAMILY, code).into(),
                 set_id.into(),
                 class_parent_id.into(),
                 code.into(),
@@ -325,9 +330,8 @@ pub async fn ensure_required_equipment_subfamily_values(db: &DatabaseConnection)
         let family_parent_id = resolve_published_value_id(db, DOMAIN_FAMILY, family_code).await?;
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "INSERT INTO reference_values \
-             (set_id, parent_id, code, label, description, sort_order, color_hex, icon_name, semantic_tag, external_code, is_active, metadata_json) \
-             VALUES (?, ?, ?, ?, NULL, ?, NULL, NULL, 'equipment_subfamily', NULL, 1, ?) \
+            "INSERT INTO reference_values (entity_sync_id, set_id, parent_id, code, label, description, sort_order, color_hex, icon_name, semantic_tag, external_code, is_active, metadata_json) \
+             VALUES (?, ?, ?, ?, ?, NULL, ?, NULL, NULL, 'equipment_subfamily', NULL, 1, ?) \
              ON CONFLICT(set_id, code) DO UPDATE SET \
                 parent_id = excluded.parent_id, \
                 label = excluded.label, \
@@ -335,6 +339,7 @@ pub async fn ensure_required_equipment_subfamily_values(db: &DatabaseConnection)
                 metadata_json = excluded.metadata_json, \
                 is_active = 1",
             [
+                seeded_reference_value_sync_id(DOMAIN_SUBFAMILY, code).into(),
                 set_id.into(),
                 family_parent_id.into(),
                 code.into(),
@@ -428,7 +433,9 @@ pub async fn sync_equipment_classes_from_published_reference(db: &DatabaseConnec
             ))
             .await?;
         } else {
-            let entity_sync_id = Uuid::new_v4().to_string();
+            // Derived from the published catalog on every device: identity from the class code
+            // (`sync::seeded_identity`), so all devices agree.
+            let entity_sync_id = crate::sync::identity::seeded_entity_sync_id("equipment_classes", &code);
             db.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "INSERT INTO equipment_classes \

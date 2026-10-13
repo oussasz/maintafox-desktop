@@ -626,6 +626,10 @@ async fn reset_local_tenant_runtime_data_impl(state: &State<'_, AppState>) -> Ap
         "Runtime reset table selection"
     );
 
+    // The wipe and the reseed below are local maintenance, not changes for other devices: capture
+    // is off until it is installed again at the end.
+    crate::sync::capture::suspend_capture(&state.db).await?;
+
     // SQLite ignores (or cannot toggle) foreign_keys inside an active transaction. Run OFF on the
     // connection first, then delete inside a transaction, then restore ON. Requires a single-connection
     // pool (see init_db) so this pragma applies to the same connection as `begin()`.
@@ -660,12 +664,21 @@ async fn reset_local_tenant_runtime_data_impl(state: &State<'_, AppState>) -> Ap
         );
     }
 
-    let wiped_rows_total = wipe_result?;
-
-    crate::db::seeder::seed_system_data(&state.db).await?;
-    // Migrations are not re-run after wipe (seaql_migrations kept). Restore system
-    // reference_* catalogs that seed_system_data does not cover (lookup_* only).
-    crate::reference::system_catalog_integrity::ensure_system_reference_catalog_integrity(&state.db).await?;
+    let reseeded: AppResult<u64> = async {
+        let wiped_rows_total = wipe_result?;
+        crate::db::seeder::seed_system_data(&state.db).await?;
+        // Without these rows every outbox staging (so every business write) and the sync worker fail.
+        crate::sync::queries::ensure_sync_control_rows(&state.db).await?;
+        // Migrations are not re-run after wipe (seaql_migrations kept). Restore system
+        // reference_* catalogs that seed_system_data does not cover (lookup_* only).
+        crate::reference::system_catalog_integrity::ensure_system_reference_catalog_integrity(&state.db).await?;
+        Ok(wiped_rows_total)
+    }
+    .await;
+    // Capture comes back whatever happened above, so later business writes are never missed.
+    let installed = crate::sync::capture::install_capture(&state.db).await;
+    let wiped_rows_total = reseeded?;
+    installed?;
     tracing::warn!(
         event = "desktop_tenant_runtime_reset_complete",
         wiped_rows_total,
@@ -1386,13 +1399,11 @@ pub async fn reset_local_tenant_runtime_data(state: State<'_, AppState>) -> AppR
     Ok(wiped_rows)
 }
 
-/// Bearer token from the last successful activation claim (`/api/v1/activation/claim`).
-/// Used by the control-plane sync transport; requires an authenticated desktop session.
-#[tauri::command]
-pub async fn get_control_plane_activation_bearer_token(state: State<'_, AppState>) -> AppResult<Option<String>> {
-    let _session = require_session!(state);
-    let record = load_state_record(&state).await?;
-    let Some(rec) = record else {
+/// Bearer token from the last successful activation claim (`/api/v1/activation/claim`) for the
+/// Rust sync worker. Never exposed as a command: the sync token stays in Rust. `None` unless the
+/// activation is currently active.
+pub async fn sync_activation_bearer_token(db: &DatabaseConnection) -> AppResult<Option<String>> {
+    let Some(rec) = load_state_record_from_db(db).await? else {
         return Ok(None);
     };
     if effective_status(&rec, Utc::now()) != ProductLicenseActivationStatus::Active {
@@ -1605,4 +1616,39 @@ mod lifecycle_tests {
         assert_eq!(view.deny_reason_code.as_deref(), Some(OFFLINE_GRACE_EXPIRED_CODE));
         assert!(view.pending_online_validation, "must keep retrying when back online");
     }
+}
+
+/// Tests and the multi-device harness: record a complete activation claim for `tenant_id`, as a
+/// successful activation does, so tenant scoping (media object keys, `tenant_config`) is real.
+#[cfg(test)]
+pub(crate) async fn record_activation_claim_for_tests(
+    db: &DatabaseConnection,
+    tenant_id: &str,
+    machine_fingerprint: &str,
+    activation_token: &str,
+) -> AppResult<()> {
+    let record = serde_json::json!({
+        "schema_version": 1,
+        "key_sha256": "test",
+        "submitted_at": Utc::now().to_rfc3339(),
+        "status": "active",
+        "pending_online_validation": false,
+        "activation_claim": {
+            "tenant_id": tenant_id,
+            "license_id": "test-licence",
+            "machine_fingerprint": machine_fingerprint,
+            "activation_token": activation_token,
+        },
+        "reconciliation": { "retry_attempt": 0 },
+        "diagnostics": [],
+    });
+    settings::set_setting(
+        db,
+        PRODUCT_LICENSE_ONBOARDING_KEY,
+        PRODUCT_LICENSE_SCOPE,
+        &record.to_string(),
+        None,
+        "test activation",
+    )
+    .await
 }

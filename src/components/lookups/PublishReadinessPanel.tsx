@@ -209,21 +209,47 @@ export function PublishReadinessPanel({ setId, isProtected }: PublishReadinessPa
               <p className="text-sm">
                 {t("publish.totalAffected", { count: impactSummary.total_affected })}
               </p>
+              {impactSummary.removed_codes.length > 0 ? (
+                <p className="text-xs text-text-secondary">
+                  {t("publish.removedCodes", { codes: impactSummary.removed_codes.join(", ") })}
+                </p>
+              ) : null}
+              {impactSummary.deactivated_codes.length > 0 ? (
+                <p className="text-xs text-text-secondary">
+                  {t("publish.deactivatedCodes", {
+                    codes: impactSummary.deactivated_codes.join(", "),
+                  })}
+                </p>
+              ) : null}
               {impactSummary.dimensions.map((dim) => (
-                <div
-                  key={dim.module}
-                  className="flex items-center justify-between text-sm border-b border-surface-border pb-2"
-                >
-                  <span className="text-text-secondary">{dim.module}</span>
-                  <div className="flex items-center gap-2">
-                    <Badge
-                      variant={dim.status === "ok" ? "default" : "secondary"}
-                      className="text-[10px]"
-                    >
-                      {dim.status}
-                    </Badge>
-                    <span className="font-mono text-xs">{dim.affected_count}</span>
+                <div key={dim.module} className="border-b border-surface-border pb-2 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="text-text-secondary">
+                      {t(`publish.module.${dim.module}`, { defaultValue: dim.module })}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <Badge
+                        variant={dim.affected_count > 0 ? "default" : "secondary"}
+                        className="text-[10px]"
+                      >
+                        {t(`publish.impactStatus.${dim.status}`, { defaultValue: dim.status })}
+                      </Badge>
+                      <span className="font-mono text-xs">{dim.affected_count}</span>
+                    </div>
                   </div>
+                  {dim.tables.length > 0 ? (
+                    <ul className="mt-1 space-y-0.5 text-xs text-text-muted">
+                      {dim.tables.map((tb) => (
+                        <li key={`${tb.table}.${tb.column}`} className="font-mono">
+                          {t("publish.impactTable", {
+                            table: tb.table,
+                            column: tb.column,
+                            count: tb.count,
+                          })}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
                 </div>
               ))}
             </div>
