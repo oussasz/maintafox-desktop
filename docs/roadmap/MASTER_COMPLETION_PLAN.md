@@ -745,6 +745,45 @@ Vendor console commits (branch phase0/security-hardening): f8bc541 3.5, 66309f5 
   `OPERATOR_ACCESS_LOG_RETENTION_DAYS`, `EMAIL_DELIVERY_MODE` (+ optional `METRICS_SCRAPE_TOKEN`,
   `SMTP_*`). Migrations 006–010.
 
+### Phase 4 — Vendor console completion (2026-10-13)
+
+Vendor console commits (branch phase0/security-hardening): 0a2d018 4.1, 7b160b3 4.2, 07caa24 4.3,
+70ed286 4.4, 027ec9b 4.5, 8e8ecc1 4.6, 1255498 + 39b1d66 + 23ab6fc 4.7, f9a94ad + 663c31b console
+redesign (approved mockups). Desktop: unchanged (every new server answer is one today's desktop
+already handles).
+
+- **4.1 Vendor auth:** access token in memory, rotating httpOnly refresh cookie with reuse
+  detection, logout / logout everywhere, mandatory TOTP with 10 recovery codes, step-up token bound
+  to the action kind (catalog `shared/step-up-actions.v1.json`, CI drift check against the Rust
+  enum), audited CLI reset for a lost authenticator. TOTP secrets sealed with an HKDF subkey of
+  `SYNC_PAYLOAD_ENCRYPTION_KEY` (label `maintafox/vendor-totp/v1`; rotating that key means operators
+  enrol again).
+- **4.2:** slot release, rebind, policy refresh, soft suspend/resume, tenant delete (step-up + typed
+  slug), rollout pause/resume/recall: real server effects, audited. Pause/recall act on devices only
+  once the Phase 5 updater exists (the console says so).
+- **4.3:** roles owner / operations / support / auditor enforced server-side on every route (fail
+  closed; a test checks every route has a permission). Operators admin page, own password.
+- **4.4:** subscription view, payment history as stored, SlickPay reconciliation (applies a payment
+  only when SlickPay says paid), audited licence edits.
+- **4.5:** per-device sync timeline; repair = full resynchronisation (step-up `sync_repair`). Replay
+  of refused items stays a desktop action (the server keeps no payloads).
+- **4.6:** `packages/contracts` generated from the desktop `shared/ipc-types.ts`; CI drift checks
+  (types, sync registry, step-up kinds) against desktop branch phase0/security-hardening.
+- **4.7:** French selectable; no English in components (AST guard test); API errors shown as
+  translated sentences; panel tests; Playwright e2e in CI (sign-in + TOTP enrolment, every section,
+  suspend with step-up, history, API failure, French). Found by the e2e and fixed: the Audit page
+  failed on every record category written since 4.1 (`shared/audit-action-categories.v1.json`).
+- **Console redesign:** navy sidebar with 7 sections + Settings & team; Overview (4 figures, "needs
+  your attention" from real signals, health summary, customers), customer page with tabs, System
+  health in plain words. New read-only endpoints `/api/v1/console/overview` and `/console/health`.
+- **Found, not fixed (owner decisions):** the billing amount comes from the console (price not
+  checked server-side); SlickPay settings have defaults in compose; until the owner enrols, whoever
+  knows the seeded password first could enrol; the secret-scan job fails on a commit of the
+  replace-minio branch (object storage scope).
+- **Not deployed.** Migrations 011–015; no new setting (compose passes the existing
+  `BACKUP_LOCAL_RETENTION_DAYS` to the API). Checklist and rollback: vendor console
+  `deploy/PHASE4_DEPLOY.md`.
+
 ## 6. Risks and open points
 
 - **D2 departs from the PRD.** The server would use a generic current-state table instead of typed per-entity tables, so the PRD needs an update if you approve it.
