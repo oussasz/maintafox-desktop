@@ -242,9 +242,17 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
         warn!("startup: org structure_model_id invariant violated after heal (non-fatal): {e}");
     }
 
-    // Phase 3c removed: RAMS demo seed is DEMO-ONLY and must never run in the
-    // production app flow (startup, equipment create, login, onboarding, migrations).
-    // Explicit developer entry points only:
+    // Phase 3c: developer demo plant (debug builds only, opt-in with MAINTAFOX_SEED_DEMO=1).
+    // Never part of the production flow: release builds do not compile it.
+    // Each seeder no-ops once a product licence is activated (tenant data isolation).
+    #[cfg(debug_assertions)]
+    if std::env::var("MAINTAFOX_SEED_DEMO").as_deref() == Ok("1") {
+        seed_developer_demo_plant(&app_state.db).await;
+    }
+
+    // RAMS demo seed is DEMO-ONLY and must never run in the production app flow
+    // (startup, equipment create, login, onboarding, migrations).
+    // Explicit developer entry points only (plus the debug-only opt-in above):
     //   - seed_rams_sql_demo_data
     //   - seed_rams_presentation_data
 
@@ -375,6 +383,39 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
         .map_err(|e| crate::errors::AppError::Internal(anyhow::anyhow!("{e}")))?;
 
     Ok(())
+}
+
+/// Developer demo plant: org tree, equipment, reference data, requests, work orders, test
+/// users and RAMS failure history. Debug builds only; every seeder is idempotent and no-ops on
+/// an activated (tenant) database. Failures are logged and never stop the startup.
+#[cfg(debug_assertions)]
+async fn seed_developer_demo_plant(db: &sea_orm::DatabaseConnection) {
+    use crate::db::demo_seeder;
+    info!("startup: seeding developer demo plant (MAINTAFOX_SEED_DEMO=1)");
+    if let Err(e) = demo_seeder::seed_demo_data(db).await {
+        warn!("startup: demo seed returned error (non-fatal): {e}");
+    }
+    if let Err(e) = demo_seeder::seed_reference_demo_data(db).await {
+        warn!("startup: reference demo seed returned error (non-fatal): {e}");
+    }
+    if let Err(e) = demo_seeder::seed_test_viewer_user(db).await {
+        warn!("startup: viewer user seed returned error (non-fatal): {e}");
+    }
+    if let Err(e) = demo_seeder::seed_technicien_user(db).await {
+        warn!("startup: technician user seed returned error (non-fatal): {e}");
+    }
+    if let Err(e) = demo_seeder::seed_demo_work_orders(db).await {
+        warn!("startup: work order demo seed returned error (non-fatal): {e}");
+    }
+    match crate::commands::product_license::is_product_activation_complete(db).await {
+        Ok(false) => {
+            if let Err(e) = crate::db::rams_presentation_seed::run_explicit_rams_demo_seed(db).await {
+                warn!("startup: RAMS demo seed returned error (non-fatal): {e}");
+            }
+        }
+        Ok(true) => info!("startup: RAMS demo seed skipped (licence activated)"),
+        Err(e) => warn!("startup: licence state unreadable, RAMS demo seed skipped: {e}"),
+    }
 }
 
 /// Resolve the database file path inside the Tauri app data directory.
