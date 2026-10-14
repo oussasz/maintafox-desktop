@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -21,21 +22,30 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useFormatters } from "@/hooks/use-formatters";
-import { listAssetMeters } from "@/services/asset-lifecycle-service";
 import type { PmPlanRow as PmPlan } from "@/services/pm-service";
 import type {
-  AssetMeter,
   CreatePmPlanVersionInput,
   PmPlanVersion,
   UpdatePmPlanVersionInput,
 } from "@shared/ipc-types";
 
+import {
+  PmMeterSpecFields,
+  PmPartsPicker,
+  PmSkillsPicker,
+  PmToleranceFields,
+} from "./PmVersionPickers";
 import { pmUnreportedErrorText } from "./pm-errors";
 import {
   PM_TRIGGER_FORM_START,
+  type PmMeterSpec,
+  type PmRequiredPart,
   type PmTriggerFields,
   buildTriggerJson,
+  parseCodeList,
+  parseRequiredParts,
   parseTriggerJson,
+  requiredPartsJson,
 } from "./pm-model";
 
 interface PmVersionFormDialogProps {
@@ -62,29 +72,8 @@ function csvToJsonArray(raw: string): string | null {
   return JSON.stringify(parts);
 }
 
-/** Shows plain codes and `{article_code, quantity}` entries as an editable comma list. */
 function jsonArrayToCsv(raw: string | null | undefined): string {
-  if (!raw) return "";
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (Array.isArray(parsed)) {
-      return parsed
-        .map((item: unknown) => {
-          if (typeof item === "string") return item;
-          if (item && typeof item === "object") {
-            const obj = item as Record<string, unknown>;
-            const code = obj["article_code"] ?? obj["code"] ?? obj["description"];
-            return typeof code === "string" ? code : "";
-          }
-          return "";
-        })
-        .filter(Boolean)
-        .join(", ");
-    }
-  } catch {
-    return raw;
-  }
-  return "";
+  return parseCodeList(raw).join(", ");
 }
 
 function taskPackageToLines(raw: string | null | undefined): string {
@@ -130,6 +119,13 @@ function optionalNumber(raw: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+const NEW_OR_METER: PmMeterSpec = {
+  assetMeterId: null,
+  meterType: null,
+  interval: PM_TRIGGER_FORM_START.meter.interval,
+  startReading: null,
+};
+
 export function PmVersionFormDialog({
   open,
   mode,
@@ -141,59 +137,38 @@ export function PmVersionFormDialog({
   onUpdate,
 }: PmVersionFormDialogProps) {
   const { t } = useTranslation("pm");
-  const { formatCurrency, formatNumber } = useFormatters();
+  const { formatCurrency } = useFormatters();
   const [effectiveFrom, setEffectiveFrom] = useState("");
   const [effectiveTo, setEffectiveTo] = useState("");
   const [trigger, setTrigger] = useState<PmTriggerFields>(PM_TRIGGER_FORM_START);
-  const [startReadingText, setStartReadingText] = useState("");
   const [taskLines, setTaskLines] = useState("");
-  const [partsCsv, setPartsCsv] = useState("");
-  const [skillsCsv, setSkillsCsv] = useState("");
+  const [parts, setParts] = useState<PmRequiredPart[]>([]);
+  const [skills, setSkills] = useState<string[]>([]);
   const [toolsCsv, setToolsCsv] = useState("");
   const [duration, setDuration] = useState("");
   const [laborCost, setLaborCost] = useState("");
   const [partsCost, setPartsCost] = useState("");
   const [serviceCost, setServiceCost] = useState("");
   const [changeReason, setChangeReason] = useState("");
-  const [meters, setMeters] = useState<AssetMeter[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const isMeter = plan.strategy_type === "meter";
-  const meterAssetId =
+  const strategy = plan.strategy_type;
+  const isCalendar = strategy === "fixed" || strategy === "floating";
+  const isMeter = strategy === "meter";
+  const planAssetId =
     plan.asset_scope_type === "equipment" && plan.asset_scope_id != null
       ? plan.asset_scope_id
       : null;
 
   useEffect(() => {
-    if (!open || !isMeter || meterAssetId == null) {
-      setMeters(null);
-      return;
-    }
-    let cancelled = false;
-    listAssetMeters(meterAssetId)
-      .then((rows) => {
-        if (!cancelled) setMeters(rows.filter((m) => m.is_active));
-      })
-      .catch(() => {
-        // The global IPC toast reports the failure; no meter can be chosen.
-        if (!cancelled) setMeters([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [open, isMeter, meterAssetId]);
-
-  useEffect(() => {
     if (!open) return;
     if (mode === "edit" && version) {
-      const parsed = parseTriggerJson(plan.strategy_type, version.trigger_definition_json);
       setEffectiveFrom(version.effective_from.slice(0, 10));
       setEffectiveTo(version.effective_to ? version.effective_to.slice(0, 10) : "");
-      setTrigger(parsed);
-      setStartReadingText(parsed.startReading != null ? String(parsed.startReading) : "");
+      setTrigger(parseTriggerJson(strategy, version.trigger_definition_json));
       setTaskLines(taskPackageToLines(version.task_package_json));
-      setPartsCsv(jsonArrayToCsv(version.required_parts_json));
-      setSkillsCsv(jsonArrayToCsv(version.required_skills_json));
+      setParts(parseRequiredParts(version.required_parts_json));
+      setSkills(parseCodeList(version.required_skills_json));
       setToolsCsv(jsonArrayToCsv(version.required_tools_json));
       setDuration(
         version.estimated_duration_hours != null ? String(version.estimated_duration_hours) : "",
@@ -212,10 +187,9 @@ export function PmVersionFormDialog({
       setEffectiveFrom(new Date().toISOString().slice(0, 10));
       setEffectiveTo("");
       setTrigger(PM_TRIGGER_FORM_START);
-      setStartReadingText("");
       setTaskLines("");
-      setPartsCsv("");
-      setSkillsCsv("");
+      setParts([]);
+      setSkills([]);
       setToolsCsv("");
       setDuration("");
       setLaborCost("");
@@ -224,68 +198,48 @@ export function PmVersionFormDialog({
       setChangeReason("");
     }
     setError(null);
-  }, [open, mode, version, plan.strategy_type]);
+  }, [open, mode, version, strategy]);
 
-  const selectedMeter = useMemo(
-    () => meters?.find((m) => m.id === trigger.assetMeterId) ?? null,
-    [meters, trigger.assetMeterId],
-  );
-  const unit = selectedMeter?.unit?.trim() || null;
-
-  function chooseMeter(id: string) {
-    const meter = meters?.find((m) => String(m.id) === id) ?? null;
-    setTrigger((prev) => ({ ...prev, assetMeterId: meter?.id ?? null }));
-    // Start counting from the meter's current reading unless the planner already stated one.
-    if (meter && !startReadingText.trim()) setStartReadingText(String(meter.current_reading));
-  }
-
-  function keepOrRebuild(csv: string, stored: string | null | undefined): string | null {
-    if (mode === "edit" && stored != null && csv === jsonArrayToCsv(stored)) return stored;
-    return csvToJsonArray(csv);
+  function meterSpecError(spec: PmMeterSpec): string | null {
+    if (planAssetId != null && spec.assetMeterId == null) return t("errors.meterRequired");
+    if (planAssetId == null && !spec.meterType) return t("errors.meterTypeRequired");
+    if (spec.startReading != null && spec.startReading < 0) return t("errors.startReadingRequired");
+    return null;
   }
 
   async function handleSubmit() {
     setError(null);
-    if (plan.strategy_type === "event" && !trigger.eventCode.trim()) {
+    if (strategy === "event" && !trigger.eventCode.trim()) {
       setError(t("errors.eventCodeRequired"));
       return;
     }
-    if (plan.strategy_type === "condition" && !trigger.conditionCode.trim()) {
+    if (strategy === "condition" && !trigger.conditionCode.trim()) {
       setError(t("errors.conditionCodeRequired"));
       return;
     }
-    const startReading = optionalNumber(startReadingText);
-    if (isMeter) {
-      if (trigger.assetMeterId == null) {
-        setError(t("errors.meterRequired"));
-        return;
-      }
-      if (startReading == null || startReading < 0) {
-        setError(t("errors.startReadingRequired"));
-        return;
-      }
+    const meterError = isMeter
+      ? meterSpecError(trigger.meter)
+      : isCalendar && trigger.orMeter
+        ? meterSpecError(trigger.orMeter)
+        : null;
+    if (meterError) {
+      setError(meterError);
+      return;
     }
-    const trigger_definition_json = buildTriggerJson({
-      ...trigger,
-      startReading,
-      strategy: plan.strategy_type,
-    });
     const payload = {
       effective_from: `${effectiveFrom}T00:00:00Z`,
       effective_to: effectiveTo ? `${effectiveTo}T23:59:59Z` : null,
-      trigger_definition_json,
+      trigger_definition_json: buildTriggerJson({ ...trigger, strategy }),
       task_package_json: linesToTaskPackage(taskLines),
-      // An untouched list keeps its stored JSON (structured entries such as quantities included).
-      required_parts_json: keepOrRebuild(partsCsv, version?.required_parts_json),
-      required_skills_json: keepOrRebuild(skillsCsv, version?.required_skills_json),
-      required_tools_json: keepOrRebuild(toolsCsv, version?.required_tools_json),
+      required_parts_json: requiredPartsJson(parts),
+      required_skills_json: skills.length > 0 ? JSON.stringify(skills) : null,
+      required_tools_json: csvToJsonArray(toolsCsv),
       estimated_duration_hours: optionalNumber(duration),
       estimated_labor_cost: optionalNumber(laborCost),
       estimated_parts_cost: optionalNumber(partsCost),
       estimated_service_cost: optionalNumber(serviceCost),
       change_reason: changeReason.trim() || null,
     };
-
     try {
       if (mode === "create") {
         await onCreate(plan.id, payload);
@@ -335,7 +289,7 @@ export function PmVersionFormDialog({
               onChange={(e) => setEffectiveTo(e.target.value)}
             />
           </div>
-          {(plan.strategy_type === "fixed" || plan.strategy_type === "floating") && (
+          {isCalendar ? (
             <>
               <div className="grid gap-1">
                 <Label htmlFor="pm-version-unit">{t("fields.intervalUnit")}</Label>
@@ -367,82 +321,34 @@ export function PmVersionFormDialog({
                   }
                 />
               </div>
-            </>
-          )}
-          {isMeter && (
-            <>
-              {meterAssetId == null ? (
-                <p className="text-sm text-tone-warning-fg md:col-span-2">
-                  {t("hints.meterNeedsAsset")}
-                </p>
-              ) : meters != null && meters.length === 0 ? (
-                <p className="text-sm text-tone-warning-fg md:col-span-2">{t("hints.noMeters")}</p>
-              ) : (
-                <div className="grid gap-1 md:col-span-2">
-                  <Label htmlFor="pm-version-meter">{t("fields.meter")}</Label>
-                  <Select
-                    value={trigger.assetMeterId != null ? String(trigger.assetMeterId) : ""}
-                    onValueChange={chooseMeter}
-                  >
-                    <SelectTrigger id="pm-version-meter">
-                      <SelectValue placeholder={t("errors.meterRequired")} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {(meters ?? []).map((m) => (
-                        <SelectItem key={m.id} value={String(m.id)}>
-                          {m.name}
-                          {m.unit ? ` (${m.unit})` : ""}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {selectedMeter ? (
-                    <p className="text-xs text-text-muted">
-                      {t("fields.meterCurrent", {
-                        value: formatNumber(selectedMeter.current_reading),
-                        unit: unit ?? "",
-                      })}
-                    </p>
-                  ) : trigger.assetMeterId == null && mode === "edit" ? (
-                    <p className="text-xs text-text-muted">
-                      {t("hints.meterLegacy", {
-                        type: t(`options.meterSource.${trigger.meterSource}`, {
-                          defaultValue: trigger.meterSource,
-                        }),
-                      })}
-                    </p>
-                  ) : null}
-                </div>
-              )}
-              <div className="grid gap-1">
-                <Label htmlFor="pm-version-meter-interval">
-                  {unit ? t("fields.meterInterval", { unit }) : t("fields.meterIntervalNoUnit")}
-                </Label>
-                <Input
-                  id="pm-version-meter-interval"
-                  type="number"
-                  min={1}
-                  value={trigger.meterInterval}
-                  onChange={(e) =>
-                    setTrigger((p) => ({ ...p, meterInterval: Number(e.target.value) || 1 }))
+              <label className="flex min-h-9 items-center gap-2 text-sm md:col-span-2">
+                <Checkbox
+                  checked={trigger.orMeter != null}
+                  onCheckedChange={(checked) =>
+                    setTrigger((p) => ({ ...p, orMeter: checked === true ? NEW_OR_METER : null }))
                   }
                 />
-              </div>
-              <div className="grid gap-1">
-                <Label htmlFor="pm-version-start-reading">
-                  {unit ? t("fields.startReading", { unit }) : t("fields.startReadingNoUnit")}
-                </Label>
-                <Input
-                  id="pm-version-start-reading"
-                  type="number"
-                  min={0}
-                  value={startReadingText}
-                  onChange={(e) => setStartReadingText(e.target.value)}
+                {t("fields.whicheverFirst")}
+              </label>
+              {trigger.orMeter ? (
+                <PmMeterSpecFields
+                  idPrefix="pm-version-or"
+                  value={trigger.orMeter}
+                  equipmentId={planAssetId}
+                  onChange={(orMeter) => setTrigger((p) => ({ ...p, orMeter }))}
                 />
-              </div>
+              ) : null}
             </>
-          )}
-          {plan.strategy_type === "event" && (
+          ) : null}
+          {isMeter ? (
+            <PmMeterSpecFields
+              idPrefix="pm-version-meter"
+              value={trigger.meter}
+              equipmentId={planAssetId}
+              onChange={(meter) => setTrigger((p) => ({ ...p, meter }))}
+            />
+          ) : null}
+          {strategy === "event" ? (
             <div className="grid gap-1 md:col-span-2">
               <Label htmlFor="pm-version-event">{t("fields.eventCode")}</Label>
               <Input
@@ -451,8 +357,8 @@ export function PmVersionFormDialog({
                 onChange={(e) => setTrigger((p) => ({ ...p, eventCode: e.target.value }))}
               />
             </div>
-          )}
-          {plan.strategy_type === "condition" && (
+          ) : null}
+          {strategy === "condition" ? (
             <div className="grid gap-1 md:col-span-2">
               <Label htmlFor="pm-version-condition">{t("fields.conditionCode")}</Label>
               <Input
@@ -461,7 +367,12 @@ export function PmVersionFormDialog({
                 onChange={(e) => setTrigger((p) => ({ ...p, conditionCode: e.target.value }))}
               />
             </div>
-          )}
+          ) : null}
+          <PmToleranceFields
+            value={trigger.tolerance}
+            percentAllowed={isCalendar || isMeter}
+            onChange={(tolerance) => setTrigger((p) => ({ ...p, tolerance }))}
+          />
           <div className="grid gap-1 md:col-span-2">
             <Label htmlFor="pm-version-tasks">{t("fields.taskPackage")}</Label>
             <Textarea
@@ -471,23 +382,8 @@ export function PmVersionFormDialog({
               onChange={(e) => setTaskLines(e.target.value)}
             />
           </div>
-          <div className="grid gap-1 md:col-span-2">
-            <Label htmlFor="pm-version-parts">{t("fields.requiredParts")}</Label>
-            <Input
-              id="pm-version-parts"
-              value={partsCsv}
-              onChange={(e) => setPartsCsv(e.target.value)}
-            />
-            <p className="text-xs text-text-muted">{t("hints.partsFormat")}</p>
-          </div>
-          <div className="grid gap-1 md:col-span-2">
-            <Label htmlFor="pm-version-skills">{t("fields.requiredSkills")}</Label>
-            <Input
-              id="pm-version-skills"
-              value={skillsCsv}
-              onChange={(e) => setSkillsCsv(e.target.value)}
-            />
-          </div>
+          <PmPartsPicker value={parts} onChange={setParts} />
+          <PmSkillsPicker value={skills} onChange={setSkills} />
           <div className="grid gap-1 md:col-span-2">
             <Label htmlFor="pm-version-tools">{t("fields.requiredTools")}</Label>
             <Input

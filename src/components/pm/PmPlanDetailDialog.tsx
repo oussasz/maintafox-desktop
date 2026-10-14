@@ -1,5 +1,5 @@
 import type { ColumnDef } from "@tanstack/react-table";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
@@ -26,10 +26,9 @@ import {
   toneOf,
 } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
-import type { PmOccurrenceRow, PmPlanRow } from "@/services/pm-service";
+import type { PmExecutionRow, PmOccurrenceRow, PmPlanRow } from "@/services/pm-service";
 import { PM_RECURRING_FINDINGS_WINDOW_DAYS } from "@/stores/pm-store";
 import type {
-  PmExecution,
   PmFinding,
   PmGovernanceKpiReport,
   PmPlanVersion,
@@ -39,7 +38,13 @@ import type {
 } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
-import { PmAssetCell, PmDueLabel, PmOccurrenceStatus, formatPmAsset } from "./pm-cells";
+import {
+  PmAssetCell,
+  PmDueLabel,
+  PmOccurrenceStatus,
+  PmTimingChip,
+  formatPmAsset,
+} from "./pm-cells";
 import {
   PM_READINESS_BLOCKERS,
   PUBLISHABLE_PLAN_LIFECYCLES,
@@ -54,7 +59,7 @@ interface PmPlanDetailDialogProps {
   plan: PmPlanRow | null;
   versions: PmPlanVersion[];
   occurrences: PmOccurrenceRow[];
-  executions: PmExecution[];
+  executions: PmExecutionRow[];
   findingsByExecutionId: Record<number, PmFinding[]>;
   recurringFindings: PmRecurringFinding[];
   planningReadiness: PmPlanningReadinessProjection | null;
@@ -74,6 +79,10 @@ interface PmPlanDetailDialogProps {
   onTransitionOccurrence: (occurrence: PmOccurrenceRow) => void;
   onExecuteOccurrence: (occurrence: PmOccurrenceRow) => void;
   onLoadFindings: (executionId: number) => void;
+  /** "Revise the plan" from a finding (draft version); resolves when created. */
+  onReviseFromFinding: (finding: PmFinding) => Promise<void>;
+  /** Occurrence to show first (deep link `/pm?occurrence=<id>`). */
+  focusOccurrenceId?: number | null;
 }
 
 const KNOWN_BLOCKERS = new Set<string>(PM_READINESS_BLOCKERS);
@@ -103,12 +112,23 @@ export function PmPlanDetailDialog({
   onTransitionOccurrence,
   onExecuteOccurrence,
   onLoadFindings,
+  onReviseFromFinding,
+  focusOccurrenceId,
 }: PmPlanDetailDialogProps) {
   const { t } = useTranslation("pm");
   const { formatDate, formatDateTime, formatNumber, formatPercent } = useFormatters();
   const findingTypeLabel = usePmFindingTypeLabel();
   const [tab, setTab] = useState("overview");
   const [findingsFor, setFindingsFor] = useState<number | null>(null);
+  const [revising, setRevising] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (focusOccurrenceId != null) setTab("occurrences");
+  }, [focusOccurrenceId]);
+  const focused =
+    focusOccurrenceId != null
+      ? (occurrences.find((o) => o.id === focusOccurrenceId) ?? null)
+      : null;
 
   const lifecycleTargets = plan ? allowedPlanLifecycleTargets(plan.lifecycle_status) : [];
 
@@ -203,6 +223,13 @@ export function PmPlanDetailDialog({
         cell: ({ row }) => <PmDueLabel occurrence={row.original} />,
       },
       {
+        id: "asset",
+        header: t("table.asset"),
+        cell: ({ row }) => (
+          <PmAssetCell code={row.original.asset_code} name={row.original.asset_name} />
+        ),
+      },
+      {
         accessorKey: "status",
         header: t("table.status"),
         cell: ({ row }) => <PmOccurrenceStatus occurrence={row.original} />,
@@ -248,7 +275,7 @@ export function PmPlanDetailDialog({
     [t, onTransitionOccurrence, onExecuteOccurrence],
   );
 
-  const executionColumns: ColumnDef<PmExecution>[] = useMemo(
+  const executionColumns: ColumnDef<PmExecutionRow>[] = useMemo(
     () => [
       {
         accessorKey: "executed_at",
@@ -266,6 +293,16 @@ export function PmPlanDetailDialog({
             tone={toneOf(PM_EXECUTION_RESULT_TONE, row.original.execution_result)}
           />
         ),
+      },
+      {
+        id: "timing",
+        header: t("table.timing"),
+        cell: ({ row }) =>
+          row.original.timing_status ? (
+            <PmTimingChip timing={row.original.timing_status} />
+          ) : (
+            <span className="text-xs text-text-muted">{t("labels.none")}</span>
+          ),
       },
       {
         id: "wo",
@@ -394,7 +431,19 @@ export function PmPlanDetailDialog({
                 </dd>
                 <dt className="text-text-muted">{t("fields.asset")}</dt>
                 <dd>
-                  <PmAssetCell code={plan.asset_code} name={plan.asset_name} />
+                  {plan.asset_scope_type === "equipment" ? (
+                    <PmAssetCell code={plan.asset_code} name={plan.asset_name} />
+                  ) : (
+                    <span>
+                      {t("labels.scopeOf", {
+                        scope: t(`scope.${plan.asset_scope_type}`, {
+                          defaultValue: plan.asset_scope_type,
+                        }),
+                        value: plan.asset_scope_label ?? t("labels.none"),
+                      })}
+                      <span className="block text-xs text-text-muted">{t("hints.fanOut")}</span>
+                    </span>
+                  )}
                 </dd>
                 <dt className="text-text-muted">{t("fields.criticality")}</dt>
                 <dd>{plan.criticality_label || t("labels.none")}</dd>
@@ -476,6 +525,44 @@ export function PmPlanDetailDialog({
             </TabsContent>
 
             <TabsContent value="occurrences" className="space-y-3">
+              {focused ? (
+                <section
+                  className="space-y-2 rounded-lg border border-tone-info-border bg-tone-info-bg p-3"
+                  aria-label={t("sections.focusedOccurrence")}
+                >
+                  <h4 className="text-sm font-medium">{t("sections.focusedOccurrence")}</h4>
+                  <div className="flex flex-wrap items-center gap-3 text-sm">
+                    <PmDueLabel occurrence={focused} />
+                    <PmAssetCell code={focused.asset_code} name={focused.asset_name} />
+                    <PmOccurrenceStatus occurrence={focused} />
+                    <LinkedEntityBadge
+                      entity="work_order"
+                      code={focused.linked_work_order_code}
+                      entityId={focused.linked_work_order_id}
+                    />
+                    <PermissionGate permission={P.PM_EDIT}>
+                      {allowedOccurrenceTargets(focused.status).length > 0 ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => onTransitionOccurrence(focused)}
+                        >
+                          {t("actions.transitionOccurrence")}
+                        </Button>
+                      ) : null}
+                      {canLogExecution(focused) ? (
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => onExecuteOccurrence(focused)}
+                        >
+                          {t("actions.logExecution")}
+                        </Button>
+                      ) : null}
+                    </PermissionGate>
+                  </div>
+                </section>
+              ) : null}
               <DataTable columns={occurrenceColumns} data={occurrences} />
               {occurrences.length === 0 && !detailLoading ? (
                 <p className="text-sm text-text-muted">{t("empty.noOccurrences")}</p>
@@ -506,6 +593,31 @@ export function PmPlanDetailDialog({
                             ) : null}
                           </div>
                           <p className="whitespace-pre-line text-text-muted">{f.description}</p>
+                          <PermissionGate permission={P.PM_CREATE}>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={
+                                saving || revising === f.id || plan.lifecycle_status === "retired"
+                              }
+                              title={
+                                plan.lifecycle_status === "retired"
+                                  ? t("hints.reviseRetired")
+                                  : t("hints.reviseFromFinding")
+                              }
+                              onClick={() => {
+                                setRevising(f.id);
+                                onReviseFromFinding(f)
+                                  .then(() => setTab("versions"))
+                                  .catch(() => {
+                                    // Reported by the global IPC toast.
+                                  })
+                                  .finally(() => setRevising(null));
+                              }}
+                            >
+                              {t("actions.revisePlan")}
+                            </Button>
+                          </PermissionGate>
                           {f.follow_up_di_code || f.follow_up_work_order_code ? (
                             <div className="flex flex-wrap items-center gap-2">
                               <span className="text-xs text-text-muted">

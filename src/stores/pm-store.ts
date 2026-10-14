@@ -13,14 +13,18 @@
 import { create } from "zustand";
 
 import {
+  type PmComplianceReport,
+  type PmExecutionRow,
   type PmOccurrenceRow,
   type PmPlanRow,
   createPmPlan,
+  createPmRevisionFromFinding,
   createPmPlanVersion,
   deletePmPlan,
   deletePmPlanVersion,
   executePmOccurrence,
   generatePmOccurrences,
+  getPmCompliance,
   getPmDueMetrics,
   getPmGenerationStatus,
   getPmGovernanceKpiReport,
@@ -46,7 +50,6 @@ import type {
   GeneratePmOccurrencesInput,
   GeneratePmOccurrencesResult,
   PmDueMetrics,
-  PmExecution,
   PmFinding,
   PmGenerationStatus,
   PmGovernanceKpiInput,
@@ -64,6 +67,8 @@ import type {
 
 /** Recurring findings look back over this many days (shown in the section title). */
 export const PM_RECURRING_FINDINGS_WINDOW_DAYS = 90;
+/** Compliance period offered first on the PM page (days back from today). */
+export const PM_COMPLIANCE_DEFAULT_DAYS = 90;
 /** Upper bound of readiness candidates loaded for one plan (backend maximum is 1000). */
 const PM_READINESS_LIMIT = 200;
 
@@ -73,13 +78,16 @@ interface PmStoreState {
   occurrences: PmOccurrenceRow[];
   dueOccurrences: PmOccurrenceRow[];
   calendarOccurrences: PmOccurrenceRow[];
-  executions: PmExecution[];
+  executions: PmExecutionRow[];
   findingsByExecutionId: Record<number, PmFinding[]>;
   recurringFindings: PmRecurringFinding[];
   planningReadiness: PmPlanningReadinessProjection | null;
   governanceKpis: PmGovernanceKpiReport | null;
   metrics: PmDueMetrics | null;
   generationStatus: PmGenerationStatus | null;
+  /** PM compliance over the last `complianceDays` days (KPI tile). */
+  compliance: PmComplianceReport | null;
+  complianceDays: number;
   activePlanId: number | null;
   loading: boolean;
   detailLoading: boolean;
@@ -96,6 +104,10 @@ interface PmStoreState {
   loadOccurrences: (filter?: PmOccurrenceFilter) => Promise<void>;
   loadDueMetrics: () => Promise<void>;
   loadGenerationStatus: () => Promise<void>;
+  /** Loads compliance for the last `days` days (remembered for refreshes). */
+  loadCompliance: (days?: number) => Promise<void>;
+  /** Draft version of the finding's plan with the finding as change reason; opens that plan. */
+  reviseFromFinding: (findingId: number, planId: number) => Promise<PmPlanVersion>;
   updateGenerationSettings: (input: UpdatePmGenerationSettingsInput) => Promise<PmGenerationStatus>;
   loadExecutions: (pmPlanId?: number | null, occurrenceId?: number | null) => Promise<void>;
   loadFindings: (executionId: number) => Promise<void>;
@@ -184,6 +196,8 @@ export const usePmStore = create<PmStoreState>()((set, get) => ({
   governanceKpis: null,
   metrics: null,
   generationStatus: null,
+  compliance: null,
+  complianceDays: PM_COMPLIANCE_DEFAULT_DAYS,
   activePlanId: null,
   loading: false,
   detailLoading: false,
@@ -269,6 +283,26 @@ export const usePmStore = create<PmStoreState>()((set, get) => ({
     const generationStatus = await getPmGenerationStatus();
     set({ generationStatus });
   },
+
+  loadCompliance: async (days) => {
+    const span = days ?? get().complianceDays;
+    const to = new Date();
+    const from = new Date(to.getTime() - span * 86_400_000);
+    set({ complianceDays: span });
+    const compliance = await getPmCompliance({
+      from: from.toISOString(),
+      to: to.toISOString(),
+      pm_plan_id: null,
+    });
+    set({ compliance });
+  },
+
+  reviseFromFinding: (findingId, planId) =>
+    withSaving(async () => {
+      const version = await createPmRevisionFromFinding(findingId);
+      await refreshPlanAfterMutation(get, planId);
+      return version;
+    }),
 
   updateGenerationSettings: (input) =>
     withSaving(async () => {

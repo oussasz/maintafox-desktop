@@ -4,8 +4,8 @@
  * The backend writes several link shapes over time; each page reads its own query parameter:
  *  - Requests page reads `?openDi=<id>`        (DI notifications already use it; SLA used `?di=`)
  *  - Work orders page reads `?openWo=<id>`     (`/work-orders/<id>`, `/wo/<id>` are older forms)
- *  - PM page reads only `?planId=<id>`; a PM notification carries the *occurrence* id, which the
- *    page cannot open yet, so `/pm?occurrence=<id>` opens the PM module.
+ *  - PM page reads `?planId=<id>` (a plan) and `?occurrence=<id>` (an occurrence, opened in its
+ *    plan; PM notifications carry the occurrence id).
  *  - Budget lives at `/budget` (finance alerts wrote `/finance/budget`).
  * This is the one place that knows those forms. Anything that is not an in-app route (external
  * URLs, `javascript:` …) is refused.
@@ -55,6 +55,10 @@ export function resolveNotificationLink(
 
   // Preventive maintenance
   if (segments[0] === "pm") {
+    const occurrence = params.get("occurrence");
+    if (occurrence && ID.test(occurrence)) {
+      return { path: withParam("/pm", "occurrence", occurrence), exact: true };
+    }
     const planId = params.get("planId");
     if (planId && ID.test(planId)) return { path: withParam("/pm", "planId", planId), exact: true };
     return { path: "/pm", exact: false };

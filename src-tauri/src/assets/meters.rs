@@ -89,6 +89,71 @@ pub struct MeterReading {
     pub created_at: String,
 }
 
+/// How a reading continues the meter's lifetime count (migration 183).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MeterReadingKind {
+    /// Same physical counter, value at or above the previous one.
+    Normal,
+    /// The counter passed its `rollover_value` and restarted from zero.
+    Rollover,
+    /// A new physical meter was fitted; the reading is the new meter's value.
+    Replacement,
+}
+
+impl MeterReadingKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Normal => "normal",
+            Self::Rollover => "rollover",
+            Self::Replacement => "replacement",
+        }
+    }
+}
+
+/// Offset to add to the raw reading so the lifetime value never goes back, and the kind of the
+/// reading. `requested` is what the user stated (`None` = let the meter decide: a lower value on
+/// a meter with a `rollover_value` is a rollover, otherwise it is refused).
+pub fn next_meter_offset(
+    previous_raw: Option<f64>,
+    current_offset: f64,
+    reading: f64,
+    rollover_value: Option<f64>,
+    requested: Option<MeterReadingKind>,
+) -> AppResult<(MeterReadingKind, f64)> {
+    let Some(prev) = previous_raw else {
+        return Ok((MeterReadingKind::Normal, current_offset));
+    };
+    match requested {
+        Some(MeterReadingKind::Replacement) => Ok((MeterReadingKind::Replacement, current_offset + prev - reading)),
+        Some(MeterReadingKind::Rollover) => {
+            let Some(rv) = rollover_value else {
+                return Err(AppError::ValidationFailed(vec![
+                    "Ce compteur n'a pas de valeur de retournement (rollover_value) : un retour \
+                     a zero ne peut pas etre enregistre."
+                        .into(),
+                ]));
+            };
+            if reading >= prev {
+                return Err(AppError::ValidationFailed(vec![format!(
+                    "Un retournement suppose un releve ({reading}) inferieur au precedent ({prev})."
+                )]));
+            }
+            Ok((MeterReadingKind::Rollover, current_offset + rv))
+        }
+        Some(MeterReadingKind::Normal) | None if reading >= prev => Ok((MeterReadingKind::Normal, current_offset)),
+        None if rollover_value.is_some() => Ok((
+            MeterReadingKind::Rollover,
+            current_offset + rollover_value.unwrap_or_default(),
+        )),
+        _ => Err(AppError::ValidationFailed(vec![format!(
+            "Le releve ({reading}) est inferieur au precedent ({prev}). Indiquez s'il s'agit d'un \
+             retour a zero du compteur (valeur de retournement configuree) ou d'un remplacement \
+             du compteur."
+        )])),
+    }
+}
+
 /// Payload for recording a meter reading.
 #[derive(Debug, Deserialize)]
 pub struct RecordMeterReadingPayload {
@@ -441,6 +506,17 @@ pub async fn record_meter_reading(
     payload: RecordMeterReadingPayload,
     actor_id: i32,
 ) -> AppResult<MeterReading> {
+    record_meter_reading_of_kind(db, payload, None, actor_id).await
+}
+
+/// [`record_meter_reading`] with the user's statement of a rollover or a meter replacement
+/// (`kind`); the lifetime value of the meter stays continuous (migration 183).
+pub async fn record_meter_reading_of_kind(
+    db: &DatabaseConnection,
+    payload: RecordMeterReadingPayload,
+    kind: Option<MeterReadingKind>,
+    actor_id: i32,
+) -> AppResult<MeterReading> {
     let txn = db.begin().await?;
 
     // ── 1. Validate meter exists and is active ───────────────────────────
@@ -468,6 +544,20 @@ pub async fn record_meter_reading(
     let now = Utc::now().to_rfc3339();
     let reading_at = payload.reading_at.unwrap_or_else(|| now.clone());
 
+    let current_offset: f64 = txn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT reading_offset FROM equipment_meters WHERE id = ?",
+            [payload.meter_id.into()],
+        ))
+        .await?
+        .map(|r| r.try_get::<f64>("", "reading_offset"))
+        .transpose()
+        .map_err(|e| decode_err("reading_offset", e))?
+        .unwrap_or(0.0);
+    let mut reading_kind = MeterReadingKind::Normal;
+    let mut new_offset = current_offset;
+
     // ── 5. Monotonic timestamp check (skip for corrections) ──────────────
     if quality_flag != "corrected" {
         let latest = txn
@@ -491,28 +581,28 @@ pub async fn record_meter_reading(
                 )]));
             }
 
-            // Validate monotonic value unless rollover is configured
+            // A lower value is a rollover or a meter replacement (see `next_meter_offset`).
             let prev_val: f64 = prev_row
                 .try_get("", "reading_value")
                 .map_err(|e| decode_err("reading_value", e))?;
-            if payload.reading_value < prev_val && rollover_value.is_none() {
-                return Err(AppError::ValidationFailed(vec![format!(
-                    "Le releve ({}) est inferieur au precedent ({prev_val}). \
-                     Si le compteur se remet a zero, configurez une valeur \
-                     de retournement (rollover_value).",
-                    payload.reading_value
-                )]));
-            }
+            (reading_kind, new_offset) =
+                next_meter_offset(Some(prev_val), current_offset, payload.reading_value, rollover_value, kind)?;
+        } else if kind == Some(MeterReadingKind::Rollover) {
+            return Err(AppError::ValidationFailed(vec![
+                "Un retournement suppose un releve precedent.".into(),
+            ]));
         }
     }
+    let lifetime_value = payload.reading_value + new_offset;
 
     // ── 6. Insert the reading row ────────────────────────────────────────
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO asset_meter_readings \
          (meter_id, reading_value, reading_at, source_type, \
-          source_reference, quality_flag, created_by_id, created_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+          source_reference, quality_flag, created_by_id, created_at, \
+          reading_kind, lifetime_value) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             payload.meter_id.into(),
             payload.reading_value.into(),
@@ -522,6 +612,8 @@ pub async fn record_meter_reading(
             quality_flag.clone().into(),
             (actor_id as i64).into(),
             now.clone().into(),
+            reading_kind.as_str().into(),
+            lifetime_value.into(),
         ],
     ))
     .await?;
@@ -531,11 +623,12 @@ pub async fn record_meter_reading(
     if quality_flag != "corrected" {
         txn.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "UPDATE equipment_meters SET current_reading = ?, \
+            "UPDATE equipment_meters SET current_reading = ?, reading_offset = ?, \
              last_read_at = ?, updated_at = ? \
              WHERE id = ?",
             [
                 payload.reading_value.into(),
+                new_offset.into(),
                 reading_at.into(),
                 now.clone().into(),
                 payload.meter_id.into(),

@@ -13,6 +13,9 @@ use crate::pm::domain::{
     PmRecurringFindingsInput, PublishPmPlanVersionInput, TransitionPmOccurrenceInput, TransitionPmPlanLifecycleInput,
     UpdatePmGenerationSettingsInput, UpdatePmPlanInput, UpdatePmPlanVersionInput,
 };
+use crate::pm::domain::{
+    PmAssetMeter, PmComplianceInput, PmComplianceReport, PmScopeAsset, PmScopeOption, RecordPmMeterReadingInput,
+};
 use crate::pm::generation_control;
 use crate::pm::queries;
 use crate::state::AppState;
@@ -224,6 +227,65 @@ pub async fn list_pm_recurring_findings(
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::PM_VIEW, PermissionScope::Global);
     queries::list_pm_recurring_findings(&state.db, input).await
+}
+
+#[tauri::command]
+pub async fn get_pm_occurrence(occurrence_id: i64, state: State<'_, AppState>) -> AppResult<PmOccurrence> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::PM_VIEW, PermissionScope::Global);
+    queries::get_pm_occurrence_by_id(&state.db, occurrence_id).await
+}
+
+/// PM compliance % (SMRP 5.4.1 style) for a period; also read by analytics.
+#[tauri::command]
+pub async fn get_pm_compliance(input: PmComplianceInput, state: State<'_, AppState>) -> AppResult<PmComplianceReport> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::PM_VIEW, PermissionScope::Global);
+    crate::pm::compliance::get_pm_compliance(&state.db, input).await
+}
+
+#[tauri::command]
+pub async fn list_pm_scope_options(scope_type: String, state: State<'_, AppState>) -> AppResult<Vec<PmScopeOption>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::PM_VIEW, PermissionScope::Global);
+    crate::pm::plan_tools::list_pm_scope_options(&state.db, &scope_type).await
+}
+
+#[tauri::command]
+pub async fn preview_pm_scope_assets(
+    scope_type: String,
+    scope_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<PmScopeAsset>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::PM_VIEW, PermissionScope::Global);
+    crate::pm::plan_tools::preview_pm_scope_assets(&state.db, &scope_type, scope_id).await
+}
+
+#[tauri::command]
+pub async fn list_pm_asset_meters(equipment_id: i64, state: State<'_, AppState>) -> AppResult<Vec<PmAssetMeter>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::PM_VIEW, PermissionScope::Global);
+    crate::pm::plan_tools::list_pm_asset_meters(&state.db, equipment_id).await
+}
+
+/// Meter reading entered from the PM workspace (rollover / replacement stated by the user).
+#[tauri::command]
+pub async fn record_pm_meter_reading(
+    input: RecordPmMeterReadingInput,
+    state: State<'_, AppState>,
+) -> AppResult<PmAssetMeter> {
+    let user = require_session!(state);
+    require_pm_edit_or_manage(&state, &user).await?;
+    crate::pm::plan_tools::record_pm_meter_reading(&state.db, input, user.user_id).await
+}
+
+/// "Revise the plan" from a finding: draft version with the finding as change reason.
+#[tauri::command]
+pub async fn create_pm_revision_from_finding(finding_id: i64, state: State<'_, AppState>) -> AppResult<PmPlanVersion> {
+    let user = require_session!(state);
+    require_pm_create_or_manage(&state, &user).await?;
+    crate::pm::plan_tools::create_pm_revision_from_finding(&state.db, finding_id).await
 }
 
 async fn enforce_pm_capability(state: &State<'_, AppState>, user: &AuthenticatedUser, perm: &str) -> AppResult<()> {

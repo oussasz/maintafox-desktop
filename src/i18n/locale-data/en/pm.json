@@ -39,7 +39,10 @@
     "deleteVersion": "Delete version",
     "confirmDelete": "Delete permanently",
     "runForecast": "Run forecast",
-    "retry": "Retry"
+    "retry": "Retry",
+    "removePart": "Remove {{code}}",
+    "revisePlan": "Revise the plan",
+    "recordReading": "Record a meter reading"
   },
   "views": {
     "plans": "Plans",
@@ -94,7 +97,6 @@
     "meterIntervalNoUnit": "Every (meter units)",
     "startReading": "Reading at last service ({{unit}})",
     "startReadingNoUnit": "Reading at last service",
-    "meterCurrent": "Current reading: {{value}} {{unit}}",
     "eventCode": "Event code",
     "conditionCode": "Condition code",
     "eventCodesOptional": "Event codes (optional)",
@@ -105,8 +107,8 @@
     "forecastAllPlans": "All eligible plans",
     "forecastSelectedPlan": "Selected plan only",
     "taskPackage": "Task package (one step per line)",
-    "requiredParts": "Required parts (article codes, comma-separated)",
-    "requiredSkills": "Required skills (codes, comma-separated)",
+    "requiredParts": "Required parts",
+    "requiredSkills": "Required skills",
     "requiredTools": "Required tools (comma-separated)",
     "estimatedDurationHours": "Estimated duration (h)",
     "estimatedLaborCost": "Estimated labor cost",
@@ -119,7 +121,20 @@
     "findingDescription": "Finding description",
     "dueWindow": "Due window",
     "status": "Status",
-    "note": "Note"
+    "note": "Note",
+    "meterType": "Meter type (on each asset)",
+    "meterLifetime": "Lifetime: {{value}} {{unit}}",
+    "meterLastReading": "Last reading: {{value}} {{unit}} ({{at}})",
+    "available": "{{value}} {{unit}} available",
+    "quantity": "Quantity",
+    "quantityOf": "Quantity of {{code}}",
+    "addPart": "Add an article",
+    "articleSearchPlaceholder": "Article code or name (2 characters or more)",
+    "whicheverFirst": "Or on the meter, whichever comes first",
+    "readingValue": "Reading ({{unit}})",
+    "readingValueNoUnit": "Reading",
+    "readingAt": "Read on",
+    "readingKind": "This reading is"
   },
   "sections": {
     "overview": "Overview",
@@ -131,7 +146,8 @@
     "recurringFindings": "Recurring findings ({{days}} days)",
     "readiness": "Planning readiness",
     "kpis": "Governance KPIs",
-    "archive": "Retired plans"
+    "archive": "Retired plans",
+    "focusedOccurrence": "Occurrence from the notification"
   },
   "strategy": {
     "fixed": "Fixed calendar",
@@ -214,7 +230,9 @@
     "dueAtReading": "At {{value}} on the meter",
     "lastSeenOn": "Last seen {{date}}",
     "followUps": "Follow-ups",
-    "otherAssetScope": "{{scope}} scope"
+    "window": "Window {{from}} – {{to}}",
+    "meterWindow": "Meter window {{from}} – {{to}}",
+    "scopeOf": "{{scope}}: {{value}}"
   },
   "reasons": {
     "capacity_constraint": "Capacity constraint",
@@ -245,7 +263,13 @@
     "overdueHint": "Open, due date passed",
     "dueTodayHint": "Open, due today",
     "next7dHint": "Open, due within 7 days",
-    "readyHint": "Waiting to be scheduled"
+    "readyHint": "Waiting to be scheduled",
+    "compliance": "PM compliance",
+    "complianceHint": "{{onTime}} on time of {{due}} due",
+    "complianceDefinition": "Work done in its window ÷ PM due",
+    "compliancePeriod": "Compliance period",
+    "lastDays_one": "Last {{count}} day",
+    "lastDays_other": "Last {{count}} days"
   },
   "kpi": {
     "compliance": "PM compliance",
@@ -283,7 +307,8 @@
     "count": "Count",
     "lastSeen": "Last seen",
     "actions": "Actions",
-    "readiness": "Readiness"
+    "readiness": "Readiness",
+    "timing": "Timing"
   },
   "dialogs": {
     "newPlan": {
@@ -323,6 +348,10 @@
     "deleteVersion": {
       "title": "Delete PM version",
       "description": "Delete version v{{version}}? Allowed only for draft versions without occurrences."
+    },
+    "meterReading": {
+      "title": "Record a meter reading",
+      "description": "Usage-based plans count on the lifetime value of the meter, which a rollover or a meter replacement does not reset."
     }
   },
   "guidance": {
@@ -342,7 +371,9 @@
     "noFindings": "No findings for this execution.",
     "noArchive": "No retired plans.",
     "noReadiness": "No readiness candidates for this plan.",
-    "noKpis": "No governance KPI data."
+    "noKpis": "No governance KPI data.",
+    "noParts": "No part required.",
+    "noSkills": "No skill in the catalogue."
   },
   "hints": {
     "publishBlockedByLifecycle": "To publish, set plan status to approved, active, or suspended.",
@@ -356,9 +387,18 @@
     "readyCreatesWo": "Moving to ready for scheduling creates the preventive work order with the version's tasks, tools, parts, duration and permit requirement.",
     "meterNeedsAsset": "A meter plan counts on one equipment's meter: set the plan scope to an equipment first.",
     "noMeters": "This equipment has no active meter. Add one on the equipment to plan by usage.",
-    "meterLegacy": "This version uses the first {{type}} meter of the equipment. Choose the meter to plan explicitly.",
-    "partsFormat": "Parts whose code matches an article are listed on the work order; quantities are not planned from this list.",
-    "findingTypeFromCatalog": "Types come from the request symptom catalogue."
+    "findingTypeFromCatalog": "Types come from the request symptom catalogue.",
+    "meterTypePerAsset": "Each asset of the plan counts on its own meter of this type (primary meter first).",
+    "startReadingOptional": "Leave empty to count from the reading when the version takes effect.",
+    "partNoQuantity": "No quantity: listed on the work order, not planned.",
+    "partsReserved": "Parts with a quantity are planned on the work order and reserved where stock covers them.",
+    "unknownSkills": "Skills no longer in the catalogue: {{codes}}",
+    "scopeAssets_one": "{{count}} asset covered: {{list}}",
+    "scopeAssets_other": "{{count}} assets covered: {{list}}",
+    "scopeNoAssets": "No asset in service is covered yet.",
+    "fanOut": "One occurrence per asset in service, each with its own due date and meter.",
+    "reviseFromFinding": "Create a draft version of this plan with this finding as the reason for change.",
+    "reviseRetired": "A retired plan cannot be revised."
   },
   "messages": {
     "generationStarted": "Refreshing forecast…",
@@ -369,7 +409,9 @@
     "lifecycleUpdated": "Plan status updated.",
     "occurrenceUpdated": "Occurrence status updated.",
     "executionLogged": "Execution logged.",
-    "versionPublished": "Version v{{version}} published."
+    "versionPublished": "Version v{{version}} published.",
+    "revisionCreated": "Draft version v{{version}} created from the finding.",
+    "readingRecorded": "Meter reading recorded; the forecast of the asset was updated."
   },
   "archive": {
     "title": "Retired plans",
@@ -399,6 +441,34 @@
     "findingRequired": "Enter the finding type and its description.",
     "meterRequired": "Choose the meter of the equipment.",
     "startReadingRequired": "Enter the meter reading at the last service.",
-    "responseUnreadable": "The application could not read the server response."
+    "responseUnreadable": "The application could not read the server response.",
+    "meterTypeRequired": "Choose the meter type counted on each asset.",
+    "scopeRequired": "Choose what the plan covers.",
+    "readingRequired": "Enter a reading of 0 or more for a meter.",
+    "readingLower": "The reading is lower than the last one: say whether the counter rolled over or the meter was replaced."
+  },
+  "tolerance": {
+    "title": "Tolerance window",
+    "hint": "Work done inside the window is on time; before it is early, after it is late (PM compliance).",
+    "unit": "Unit",
+    "none": "None (by the end of the due day)",
+    "days": "Days",
+    "percent": "% of the interval",
+    "early": "Early by",
+    "late": "Late by"
+  },
+  "timing": {
+    "on_time": "On time",
+    "early": "Early",
+    "late": "Late"
+  },
+  "readingKind": {
+    "normal": "A normal reading",
+    "normalHint": "Same meter, value at or above the last reading.",
+    "rollover": "A rollover",
+    "rolloverHint": "The counter passed its maximum ({{max}}) and restarted from zero.",
+    "rolloverUnavailable": "No maximum value is set on this meter.",
+    "replacement": "A meter replacement",
+    "replacementHint": "A new meter was fitted; enter the new meter's reading."
   }
 }

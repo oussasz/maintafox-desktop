@@ -163,6 +163,7 @@ function renderDialog(overrides: Partial<Parameters<typeof PmPlanDetailDialog>[0
     onTransitionOccurrence: vi.fn(),
     onExecuteOccurrence: vi.fn(),
     onLoadFindings: vi.fn(),
+    onReviseFromFinding: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
   render(
@@ -208,6 +209,51 @@ describe("PmPlanDetailDialog", () => {
     expect(screen.queryByText("WO_TASK_NOK")).not.toBeInTheDocument();
     expect(screen.getByText("linkedEntity.di:DI-2026-0012")).toBeInTheDocument();
     expect(screen.getByText("linkedEntity.work_order:OT-2026-0150")).toBeInTheDocument();
+  });
+
+  it("revises the plan from a finding and shows the versions", async () => {
+    const props = renderDialog();
+    openTab("Executions");
+    fireEvent.click(screen.getByRole("button", { name: "View findings" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Revise the plan" })[1] as HTMLElement);
+    expect(props.onReviseFromFinding).toHaveBeenCalledWith(expect.objectContaining({ id: 2 }));
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: "Versions" })).toHaveAttribute("data-state", "active"),
+    );
+  });
+
+  it("opens on the occurrence named by a notification", () => {
+    const occurrence = {
+      id: 31,
+      pm_plan_id: 1,
+      plan_version_id: 100,
+      due_basis: "fixed:x",
+      due_at: "2099-03-10T00:00:00Z",
+      due_meter_value: null,
+      generated_at: TS,
+      status: "scheduled",
+      linked_work_order_id: null,
+      linked_work_order_code: null,
+      deferral_reason: null,
+      missed_reason: null,
+      row_version: 1,
+      created_at: TS,
+      updated_at: TS,
+      plan_code: "PM-PUMP",
+      plan_title: "Graissage pompe",
+      strategy_type: "fixed",
+      asset_code: "P-101",
+      asset_name: "Pompe de reprise",
+      window_start_at: "2099-03-09T00:00:00Z",
+      window_end_at: "2099-03-12T23:59:59Z",
+    };
+    renderDialog({ occurrences: [occurrence], focusOccurrenceId: 31 });
+    const focus = screen.getByRole("region", { name: "Occurrence from the notification" });
+    expect(focus).toHaveTextContent(/Window/);
+    expect(screen.getByRole("tab", { name: "Occurrences" })).toHaveAttribute(
+      "data-state",
+      "active",
+    );
   });
 
   it("labels the governance KPIs in the app language", () => {

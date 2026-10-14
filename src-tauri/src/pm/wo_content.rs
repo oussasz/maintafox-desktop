@@ -73,6 +73,7 @@ struct Headings {
     tasks: &'static str,
     parts: &'static str,
     tools: &'static str,
+    skills: &'static str,
     shutdown: &'static str,
 }
 
@@ -82,6 +83,7 @@ fn headings(locale: &str) -> Headings {
             tasks: "Tasks",
             parts: "Required parts",
             tools: "Required tools",
+            skills: "Required skills",
             shutdown: "Equipment shutdown required.",
         }
     } else {
@@ -89,6 +91,7 @@ fn headings(locale: &str) -> Headings {
             tasks: "Tâches",
             parts: "Pièces requises",
             tools: "Outillage requis",
+            skills: "Compétences requises",
             shutdown: "Arrêt de l'équipement requis.",
         }
     }
@@ -229,6 +232,7 @@ pub fn compose_description(
     tasks: &[PmWoTask],
     parts: &[PmWoPartLine],
     tools: &[String],
+    skills: &[String],
     requires_shutdown: bool,
 ) -> Option<String> {
     let h = headings(locale);
@@ -267,6 +271,10 @@ pub fn compose_description(
         let lines: Vec<String> = tools.iter().map(|t| format!("- {t}")).collect();
         sections.push(format!("{}{}\n{}", h.tools, sep(locale), lines.join("\n")));
     }
+    if !skills.is_empty() {
+        let lines: Vec<String> = skills.iter().map(|t| format!("- {t}")).collect();
+        sections.push(format!("{}{}\n{}", h.skills, sep(locale), lines.join("\n")));
+    }
     if sections.is_empty() {
         None
     } else {
@@ -296,6 +304,48 @@ pub fn compose_title(plan_title: &str, asset_code: Option<&str>) -> String {
 pub async fn tenant_text_locale(db: &DatabaseConnection) -> AppResult<String> {
     let pref = crate::locale::resolve_locale_preference(db).await?;
     Ok(pref.tenant_locale.unwrap_or(pref.active_locale))
+}
+
+/// Labels of the required skill codes (PERSONNEL.SKILLS), the code when it has no label.
+async fn skill_labels(db: &impl ConnectionTrait, codes: Vec<String>) -> AppResult<Vec<String>> {
+    let mut out = Vec::with_capacity(codes.len());
+    for code in codes {
+        let row = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT rv.label FROM reference_values rv
+                 JOIN reference_sets rs ON rs.id = rv.set_id
+                 JOIN reference_domains rd ON rd.id = rs.domain_id
+                 WHERE rd.code = 'PERSONNEL.SKILLS' AND rs.status = 'published' AND rv.code = ?
+                 LIMIT 1",
+                [code.clone().into()],
+            ))
+            .await?;
+        out.push(match row {
+            Some(r) => r.try_get::<String>("", "label")?,
+            None => code,
+        });
+    }
+    Ok(out)
+}
+
+/// Stock location holding enough available stock for the whole quantity (most stock first), so
+/// the planned part is reserved there; `None` = no location covers it (no reservation; the
+/// shortage stays visible on the OT and in planning readiness).
+async fn reservable_location(db: &impl ConnectionTrait, article_id: i64, quantity: f64) -> AppResult<Option<i64>> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT location_id FROM stock_balances
+             WHERE article_id = ? AND on_hand_qty - reserved_qty >= ?
+             ORDER BY on_hand_qty - reserved_qty DESC, location_id ASC LIMIT 1",
+            [article_id.into(), quantity.into()],
+        ))
+        .await?;
+    Ok(match row {
+        Some(r) => Some(r.try_get("", "location_id")?),
+        None => None,
+    })
 }
 
 async fn resolve_part_lines(db: &impl ConnectionTrait, parts: Vec<PmRequiredPart>) -> AppResult<Vec<PmWoPartLine>> {
@@ -328,20 +378,29 @@ async fn resolve_part_lines(db: &impl ConnectionTrait, parts: Vec<PmRequiredPart
 }
 
 /// Reads the plan and the occurrence's version and builds the OT content.
+/// `occurrence_equipment_id`: the occurrence's own asset (fanned-out plans); the plan's asset
+/// is used otherwise.
 pub async fn build_pm_work_order_content(
     db: &DatabaseConnection,
     pm_plan_id: i64,
     plan_version_id: i64,
+    occurrence_equipment_id: Option<i64>,
 ) -> AppResult<PmWoContent> {
     let plan = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT p.title, p.description, p.asset_scope_type, p.asset_scope_id,
+            "SELECT p.title, p.description,
+                    COALESCE(?, CASE WHEN p.asset_scope_type = 'equipment' THEN p.asset_scope_id END) AS asset_scope_id,
                     p.requires_permit, p.requires_shutdown, eq.asset_id_code AS asset_code
              FROM pm_plans p
-             LEFT JOIN equipment eq ON eq.id = p.asset_scope_id AND p.asset_scope_type = 'equipment'
+             LEFT JOIN equipment eq ON eq.id =
+                 COALESCE(?, CASE WHEN p.asset_scope_type = 'equipment' THEN p.asset_scope_id END)
              WHERE p.id = ?",
-            [pm_plan_id.into()],
+            [
+                occurrence_equipment_id.into(),
+                occurrence_equipment_id.into(),
+                pm_plan_id.into(),
+            ],
         ))
         .await?
         .ok_or_else(|| AppError::NotFound {
@@ -351,7 +410,8 @@ pub async fn build_pm_work_order_content(
     let version = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT task_package_json, required_parts_json, required_tools_json, estimated_duration_hours
+            "SELECT task_package_json, required_parts_json, required_skills_json, required_tools_json,
+                    estimated_duration_hours
              FROM pm_plan_versions WHERE id = ?",
             [plan_version_id.into()],
         ))
@@ -363,7 +423,6 @@ pub async fn build_pm_work_order_content(
 
     let plan_title: String = plan.try_get("", "title")?;
     let plan_description: Option<String> = plan.try_get("", "description")?;
-    let asset_scope_type: String = plan.try_get("", "asset_scope_type")?;
     let asset_scope_id: Option<i64> = plan.try_get("", "asset_scope_id")?;
     let requires_permit: i64 = plan.try_get("", "requires_permit")?;
     let requires_shutdown: i64 = plan.try_get("", "requires_shutdown")?;
@@ -372,10 +431,12 @@ pub async fn build_pm_work_order_content(
     let task_package_json: Option<String> = version.try_get("", "task_package_json")?;
     let required_parts_json: Option<String> = version.try_get("", "required_parts_json")?;
     let required_tools_json: Option<String> = version.try_get("", "required_tools_json")?;
+    let required_skills_json: Option<String> = version.try_get("", "required_skills_json")?;
     let estimated_duration_hours: Option<f64> = version.try_get("", "estimated_duration_hours")?;
 
     let tasks = parse_task_package(task_package_json.as_deref());
     let tools = parse_label_list(required_tools_json.as_deref());
+    let skills = skill_labels(db, parse_label_list(required_skills_json.as_deref())).await?;
     let parts = resolve_part_lines(db, parse_required_parts(required_parts_json.as_deref())).await?;
     let locale = tenant_text_locale(db).await?;
 
@@ -387,15 +448,12 @@ pub async fn build_pm_work_order_content(
             &tasks,
             &parts,
             &tools,
+            &skills,
             requires_shutdown == 1,
         ),
         expected_duration_hours: estimated_duration_hours.filter(|h| *h > 0.0),
         requires_permit: requires_permit == 1,
-        equipment_id: if asset_scope_type == "equipment" {
-            asset_scope_id
-        } else {
-            None
-        },
+        equipment_id: asset_scope_id,
         tasks,
         tools,
         parts,
@@ -438,6 +496,7 @@ pub async fn apply_pm_content_to_work_order(
     }
     for part in &content.parts {
         if let Some((article_id, quantity)) = part.plannable() {
+            let stock_location_id = reservable_location(db, article_id, quantity).await?;
             crate::wo::parts::add_planned_part(
                 db,
                 crate::wo::parts::AddPartInput {
@@ -446,8 +505,9 @@ pub async fn apply_pm_content_to_work_order(
                     article_ref: Some(part.code.clone()),
                     quantity_planned: quantity,
                     unit_cost: None,
-                    stock_location_id: None,
-                    auto_reserve: None,
+                    // With a location, `add_planned_part` reserves the stock (inventory reservation).
+                    stock_location_id,
+                    auto_reserve: Some(stock_location_id.is_some()),
                     notes: None,
                     origin: None,
                 },
@@ -518,6 +578,7 @@ mod tests {
             &tasks,
             &parts,
             &["Clé dynamométrique".into()],
+            &["Mécanicien".into()],
             true,
         )
         .expect("description");
@@ -526,8 +587,8 @@ mod tests {
         assert!(fr.contains("- BRG-6204 — Roulement × 2"));
         assert!(fr.contains("Outillage requis :\n- Clé dynamométrique"));
         assert!(fr.contains("Arrêt de l'équipement requis."));
-        let en = compose_description("en", None, &tasks, &[], &[], false).expect("description");
+        let en = compose_description("en", None, &tasks, &[], &[], &[], false).expect("description");
         assert_eq!(en, "Tasks:\n1. Graisser\n2. Contrôler");
-        assert!(compose_description("fr", None, &[], &[], &[], false).is_none());
+        assert!(compose_description("fr", None, &[], &[], &[], &[], false).is_none());
     }
 }

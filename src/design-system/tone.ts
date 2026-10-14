@@ -335,3 +335,10 @@ export const ARCHIVE_ACTION_RESULT_TONE: Record<string, Tone> = {
   failed: "danger",
   blocked: "danger",
 };
+
+/** Timing of completed PM work against its tolerance window → tone. */
+export const PM_TIMING_TONE: Record<string, Tone> = {
+  on_time: "success",
+  early: "warning",
+  late: "danger",
+};

@@ -2,7 +2,7 @@
 import { useTranslation } from "react-i18next";
 
 import { StatusChip } from "@/components/ui/status-chip";
-import { PM_OCCURRENCE_STATUS_TONE, toneOf } from "@/design-system/tone";
+import { PM_OCCURRENCE_STATUS_TONE, PM_TIMING_TONE, toneOf } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
 import type { PmOccurrenceRow } from "@/services/pm-service";
 
@@ -37,19 +37,60 @@ export function formatPmAsset(
   return code || name || null;
 }
 
-/** Due date, or the meter reading the occurrence is due at. */
+/** Due date (and meter threshold), with the tolerance window when it is wider than the day. */
 export function PmDueLabel({ occurrence }: { occurrence: PmOccurrenceRow }) {
   const { t } = useTranslation("pm");
   const { formatDate, formatNumber } = useFormatters();
-  if (occurrence.due_at) return <span className="text-xs">{formatDate(occurrence.due_at)}</span>;
-  if (occurrence.due_meter_value != null) {
-    return (
-      <span className="text-xs">
-        {t("labels.dueAtReading", { value: formatNumber(occurrence.due_meter_value) })}
-      </span>
+  const lines: string[] = [];
+  if (occurrence.window_start_meter != null && occurrence.window_end_meter != null) {
+    lines.push(
+      t("labels.meterWindow", {
+        from: formatNumber(occurrence.window_start_meter),
+        to: formatNumber(occurrence.window_end_meter),
+      }),
     );
   }
-  return <span className="text-xs text-text-muted">{t("labels.none")}</span>;
+  if (occurrence.window_start_at && occurrence.window_end_at) {
+    lines.push(
+      t("labels.window", {
+        from: formatDate(occurrence.window_start_at),
+        to: formatDate(occurrence.window_end_at),
+      }),
+    );
+  }
+  const main = occurrence.due_at
+    ? formatDate(occurrence.due_at)
+    : occurrence.due_meter_value != null
+      ? t("labels.dueAtReading", { value: formatNumber(occurrence.due_meter_value) })
+      : null;
+  if (!main) return <span className="text-xs text-text-muted">{t("labels.none")}</span>;
+  return (
+    <div className="text-xs">
+      <div>{main}</div>
+      {occurrence.due_at && occurrence.due_meter_value != null ? (
+        <div className="text-text-muted">
+          {t("labels.dueAtReading", { value: formatNumber(occurrence.due_meter_value) })}
+        </div>
+      ) : null}
+      {lines.map((line) => (
+        <div key={line} className="text-text-muted">
+          {line}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** On time / early / late chip of completed work. */
+export function PmTimingChip({ timing }: { timing: string | null | undefined }) {
+  const { t } = useTranslation("pm");
+  if (!timing) return null;
+  return (
+    <StatusChip
+      label={t(`timing.${timing}`, { defaultValue: timing })}
+      tone={toneOf(PM_TIMING_TONE, timing)}
+    />
+  );
 }
 
 /** Occurrence status chip, plus an "Overdue" chip for an open occurrence past its due date. */
@@ -64,6 +105,9 @@ export function PmOccurrenceStatus({ occurrence }: { occurrence: PmOccurrenceRow
       />
       {isOccurrenceOverdue(occurrence) ? (
         <StatusChip label={t("labels.overdue")} tone="danger" />
+      ) : null}
+      {occurrence.status === "completed" ? (
+        <PmTimingChip timing={occurrence.timing_status} />
       ) : null}
     </div>
   );

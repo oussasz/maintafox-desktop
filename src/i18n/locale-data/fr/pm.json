@@ -39,7 +39,10 @@
     "deleteVersion": "Supprimer la version",
     "confirmDelete": "Supprimer définitivement",
     "runForecast": "Lancer la prévision",
-    "retry": "Réessayer"
+    "retry": "Réessayer",
+    "removePart": "Retirer {{code}}",
+    "revisePlan": "Réviser le plan",
+    "recordReading": "Saisir un relevé compteur"
   },
   "views": {
     "plans": "Plans",
@@ -94,7 +97,6 @@
     "meterIntervalNoUnit": "Tous les (unités du compteur)",
     "startReading": "Relevé au dernier entretien ({{unit}})",
     "startReadingNoUnit": "Relevé au dernier entretien",
-    "meterCurrent": "Relevé actuel : {{value}} {{unit}}",
     "eventCode": "Code événement",
     "conditionCode": "Code condition",
     "eventCodesOptional": "Codes événement (facultatif)",
@@ -105,8 +107,8 @@
     "forecastAllPlans": "Tous les plans éligibles",
     "forecastSelectedPlan": "Plan sélectionné uniquement",
     "taskPackage": "Gamme (une étape par ligne)",
-    "requiredParts": "Pièces requises (codes article, séparés par des virgules)",
-    "requiredSkills": "Compétences requises (codes, séparés par des virgules)",
+    "requiredParts": "Pièces requises",
+    "requiredSkills": "Compétences requises",
     "requiredTools": "Outillage requis (séparé par des virgules)",
     "estimatedDurationHours": "Durée estimée (h)",
     "estimatedLaborCost": "Coût main-d'œuvre estimé",
@@ -119,7 +121,20 @@
     "findingDescription": "Description du constat",
     "dueWindow": "Fenêtre d'échéance",
     "status": "Statut",
-    "note": "Note"
+    "note": "Note",
+    "meterType": "Type de compteur (sur chaque équipement)",
+    "meterLifetime": "Cumul : {{value}} {{unit}}",
+    "meterLastReading": "Dernier relevé : {{value}} {{unit}} ({{at}})",
+    "available": "{{value}} {{unit}} disponible(s)",
+    "quantity": "Quantité",
+    "quantityOf": "Quantité de {{code}}",
+    "addPart": "Ajouter un article",
+    "articleSearchPlaceholder": "Code ou nom d'article (2 caractères ou plus)",
+    "whicheverFirst": "Ou au compteur, au premier des deux atteint",
+    "readingValue": "Relevé ({{unit}})",
+    "readingValueNoUnit": "Relevé",
+    "readingAt": "Relevé le",
+    "readingKind": "Ce relevé est"
   },
   "sections": {
     "overview": "Vue d'ensemble",
@@ -131,7 +146,8 @@
     "recurringFindings": "Constats récurrents ({{days}} jours)",
     "readiness": "Préparation à la planification",
     "kpis": "Indicateurs de gouvernance",
-    "archive": "Plans retirés"
+    "archive": "Plans retirés",
+    "focusedOccurrence": "Occurrence de la notification"
   },
   "strategy": {
     "fixed": "Calendrier fixe",
@@ -214,7 +230,9 @@
     "dueAtReading": "À {{value}} au compteur",
     "lastSeenOn": "Dernière fois le {{date}}",
     "followUps": "Suites",
-    "otherAssetScope": "Portée : {{scope}}"
+    "window": "Fenêtre {{from}} – {{to}}",
+    "meterWindow": "Fenêtre compteur {{from}} – {{to}}",
+    "scopeOf": "{{scope}} : {{value}}"
   },
   "reasons": {
     "capacity_constraint": "Manque de capacité",
@@ -245,7 +263,13 @@
     "overdueHint": "Ouvertes, échéance dépassée",
     "dueTodayHint": "Ouvertes, échéance aujourd'hui",
     "next7dHint": "Ouvertes, échéance sous 7 jours",
-    "readyHint": "En attente de planification"
+    "readyHint": "En attente de planification",
+    "compliance": "Conformité PM",
+    "complianceHint": "{{onTime}} à l'heure sur {{due}} dues",
+    "complianceDefinition": "Travaux faits dans leur fenêtre ÷ PM dues",
+    "compliancePeriod": "Période de conformité",
+    "lastDays_one": "{{count}} dernier jour",
+    "lastDays_other": "{{count}} derniers jours"
   },
   "kpi": {
     "compliance": "Conformité PM",
@@ -283,7 +307,8 @@
     "count": "Nombre",
     "lastSeen": "Dernière occurrence",
     "actions": "Actions",
-    "readiness": "Préparation"
+    "readiness": "Préparation",
+    "timing": "Délai"
   },
   "dialogs": {
     "newPlan": {
@@ -323,6 +348,10 @@
     "deleteVersion": {
       "title": "Supprimer la version PM",
       "description": "Supprimer la version v{{version}} ? Possible uniquement pour une version brouillon sans occurrence."
+    },
+    "meterReading": {
+      "title": "Saisir un relevé compteur",
+      "description": "Les plans à l'usage comptent sur la valeur cumulée du compteur, qu'un retour à zéro ou un remplacement du compteur ne remet pas à zéro."
     }
   },
   "guidance": {
@@ -342,7 +371,9 @@
     "noFindings": "Aucun constat pour cette exécution.",
     "noArchive": "Aucun plan retiré.",
     "noReadiness": "Aucune occurrence à préparer pour ce plan.",
-    "noKpis": "Aucune donnée d'indicateur."
+    "noKpis": "Aucune donnée d'indicateur.",
+    "noParts": "Aucune pièce requise.",
+    "noSkills": "Aucune compétence au catalogue."
   },
   "hints": {
     "publishBlockedByLifecycle": "Pour publier, passez le plan en approuvé, actif ou suspendu.",
@@ -356,9 +387,18 @@
     "readyCreatesWo": "Passer en « prête à planifier » crée l'OT préventif avec les tâches, l'outillage, les pièces, la durée et l'exigence de permis de la version.",
     "meterNeedsAsset": "Un plan sur compteur compte sur le compteur d'un équipement : définissez d'abord la portée du plan sur un équipement.",
     "noMeters": "Cet équipement n'a aucun compteur actif. Ajoutez-en un sur l'équipement pour planifier à l'usage.",
-    "meterLegacy": "Cette version utilise le premier compteur « {{type}} » de l'équipement. Choisissez le compteur pour planifier explicitement.",
-    "partsFormat": "Les pièces dont le code correspond à un article sont listées sur l'OT ; les quantités ne sont pas planifiées depuis cette liste.",
-    "findingTypeFromCatalog": "Les types proviennent du catalogue des symptômes des demandes."
+    "findingTypeFromCatalog": "Les types proviennent du catalogue des symptômes des demandes.",
+    "meterTypePerAsset": "Chaque équipement du plan compte sur son propre compteur de ce type (compteur principal d'abord).",
+    "startReadingOptional": "Laissez vide pour compter à partir du relevé à la prise d'effet de la version.",
+    "partNoQuantity": "Sans quantité : listée sur l'OT, non planifiée.",
+    "partsReserved": "Les pièces avec quantité sont planifiées sur l'OT et réservées là où le stock les couvre.",
+    "unknownSkills": "Compétences absentes du catalogue : {{codes}}",
+    "scopeAssets_one": "{{count}} équipement couvert : {{list}}",
+    "scopeAssets_other": "{{count}} équipements couverts : {{list}}",
+    "scopeNoAssets": "Aucun équipement en service n'est encore couvert.",
+    "fanOut": "Une occurrence par équipement en service, chacune avec son échéance et son compteur.",
+    "reviseFromFinding": "Créer une version brouillon de ce plan avec ce constat comme motif de modification.",
+    "reviseRetired": "Un plan retiré ne peut pas être révisé."
   },
   "messages": {
     "generationStarted": "Rafraîchissement de la prévision…",
@@ -369,7 +409,9 @@
     "lifecycleUpdated": "Statut du plan mis à jour.",
     "occurrenceUpdated": "Statut de l'occurrence mis à jour.",
     "executionLogged": "Exécution enregistrée.",
-    "versionPublished": "Version v{{version}} publiée."
+    "versionPublished": "Version v{{version}} publiée.",
+    "revisionCreated": "Version brouillon v{{version}} créée à partir du constat.",
+    "readingRecorded": "Relevé enregistré ; la prévision de l'équipement a été mise à jour."
   },
   "archive": {
     "title": "Plans retirés",
@@ -399,6 +441,34 @@
     "findingRequired": "Indiquez le type de constat et sa description.",
     "meterRequired": "Choisissez le compteur de l'équipement.",
     "startReadingRequired": "Indiquez le relevé du compteur au dernier entretien.",
-    "responseUnreadable": "L'application n'a pas pu lire la réponse du serveur."
+    "responseUnreadable": "L'application n'a pas pu lire la réponse du serveur.",
+    "meterTypeRequired": "Choisissez le type de compteur suivi sur chaque équipement.",
+    "scopeRequired": "Choisissez ce que couvre le plan.",
+    "readingRequired": "Saisissez un relevé positif ou nul pour un compteur.",
+    "readingLower": "Le relevé est inférieur au précédent : indiquez s'il s'agit d'un retour à zéro du compteur ou d'un remplacement du compteur."
+  },
+  "tolerance": {
+    "title": "Fenêtre de tolérance",
+    "hint": "Le travail fait dans la fenêtre est à l'heure ; avant, il est en avance ; après, en retard (conformité PM).",
+    "unit": "Unité",
+    "none": "Aucune (au plus tard le jour d'échéance)",
+    "days": "Jours",
+    "percent": "% de l'intervalle",
+    "early": "Avance admise",
+    "late": "Retard admis"
+  },
+  "timing": {
+    "on_time": "À l'heure",
+    "early": "En avance",
+    "late": "En retard"
+  },
+  "readingKind": {
+    "normal": "Un relevé normal",
+    "normalHint": "Même compteur, valeur supérieure ou égale au dernier relevé.",
+    "rollover": "Un retour à zéro",
+    "rolloverHint": "Le compteur a dépassé sa valeur maximale ({{max}}) et est reparti de zéro.",
+    "rolloverUnavailable": "Aucune valeur maximale n'est définie sur ce compteur.",
+    "replacement": "Un remplacement du compteur",
+    "replacementHint": "Un nouveau compteur a été posé ; saisissez le relevé du nouveau compteur."
   }
 }

@@ -146,6 +146,20 @@ function routeInvoke() {
         };
       case "delete_pm_plan":
         return null;
+      case "get_pm_occurrence":
+        return occurrence(1, "2020-01-01T00:00:00Z", "PM-LATE");
+      case "get_pm_compliance":
+        return {
+          from: TS,
+          to: TS,
+          pm_plan_id: null,
+          due_count: 4,
+          on_time_count: 3,
+          early_count: 0,
+          late_count: 1,
+          not_done_count: 0,
+          compliance_pct: 75,
+        };
       default:
         return null;
     }
@@ -198,6 +212,26 @@ describe("PmPage", () => {
       }),
     );
     confirmSpy.mockRestore();
+  });
+
+  it("shows PM compliance for the chosen period", async () => {
+    renderPage();
+    expect(await screen.findByText("3 on time of 4 due")).toBeInTheDocument();
+    expect(mockInvoke).toHaveBeenCalledWith(
+      "get_pm_compliance",
+      expect.objectContaining({ input: expect.objectContaining({ pm_plan_id: null }) }),
+    );
+  });
+
+  it("opens the plan of an occurrence named in the link", async () => {
+    renderPage("/pm?occurrence=1");
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith("get_pm_occurrence", { occurrenceId: 1 }),
+    );
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith("list_pm_plan_versions", { pmPlanId: 1 }),
+    );
   });
 
   it("replaces the content with an error state and retries when the workspace fails to load", async () => {

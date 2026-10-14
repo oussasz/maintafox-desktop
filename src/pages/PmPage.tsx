@@ -5,8 +5,10 @@ import {
   CalendarDays,
   CalendarRange,
   ClipboardCheck,
+  Gauge,
   List,
   Plus,
+  ShieldCheck,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -28,6 +30,7 @@ import { PmAutopilotStrip } from "@/components/pm/PmAutopilotStrip";
 import { PmCalendarView } from "@/components/pm/PmCalendarView";
 import { PmDueQueueView } from "@/components/pm/PmDueQueueView";
 import { PmExecutionDialog } from "@/components/pm/PmExecutionDialog";
+import { PmMeterReadingDialog } from "@/components/pm/PmMeterReadingDialog";
 import { PmOccurrenceTransitionDialog } from "@/components/pm/PmOccurrenceTransitionDialog";
 import { PmPlanDetailDialog } from "@/components/pm/PmPlanDetailDialog";
 import { PmPlanFormDialog } from "@/components/pm/PmPlanFormDialog";
@@ -49,15 +52,26 @@ import {
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState } from "@/components/ui/data-state";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { mfLayout } from "@/design-system/tokens";
 import { useFormatters } from "@/hooks/use-formatters";
-import type { PmOccurrenceRow } from "@/services/pm-service";
+import { type PmOccurrenceRow, getPmOccurrence } from "@/services/pm-service";
 import { pushAppToast } from "@/store/app-toast-store";
 import { usePmStore } from "@/stores/pm-store";
 import type { PmPlanVersion } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
 type PmViewMode = "plans" | "due" | "calendar";
+
+/** Periods offered for the PM compliance tile (days back from today). */
+const COMPLIANCE_PERIODS = [30, 90, 365] as const;
 
 function isPmViewMode(value: string | null): value is PmViewMode {
   return value === "plans" || value === "due" || value === "calendar";
@@ -85,7 +99,7 @@ type PendingDelete =
 
 export function PmPage() {
   const { t } = useTranslation("pm");
-  const { formatNumber } = useFormatters();
+  const { formatNumber, formatPercent } = useFormatters();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const plans = usePmStore((s) => s.plans);
@@ -120,6 +134,10 @@ export function PmPage() {
   const transitionOccurrence = usePmStore((s) => s.transitionOccurrence);
   const executeOccurrence = usePmStore((s) => s.executeOccurrence);
   const loadFindings = usePmStore((s) => s.loadFindings);
+  const compliance = usePmStore((s) => s.compliance);
+  const complianceDays = usePmStore((s) => s.complianceDays);
+  const loadCompliance = usePmStore((s) => s.loadCompliance);
+  const reviseFromFinding = usePmStore((s) => s.reviseFromFinding);
 
   const [view, setView] = useState<PmViewMode>(() => {
     const raw = readStorage("pm-view-mode");
@@ -142,6 +160,8 @@ export function PmPage() {
   const [transitionOcc, setTransitionOcc] = useState<PmOccurrenceRow | null>(null);
   const [executeOcc, setExecuteOcc] = useState<PmOccurrenceRow | null>(null);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
+  const [focusOccurrenceId, setFocusOccurrenceId] = useState<number | null>(null);
+  const [meterReadingOpen, setMeterReadingOpen] = useState(false);
 
   const activePlan = useMemo(
     () => plans.find((p) => p.id === activePlanId) ?? null,
@@ -151,6 +171,43 @@ export function PmPage() {
   useEffect(() => {
     void loadWorkspace();
   }, [loadWorkspace]);
+
+  const refreshCompliance = useCallback(
+    (days?: number) => {
+      loadCompliance(days).catch(() => {
+        // Reported by the global IPC toast; the tile shows "—".
+      });
+    },
+    [loadCompliance],
+  );
+
+  useEffect(() => {
+    refreshCompliance();
+  }, [refreshCompliance]);
+
+  // Notification deep link: `/pm?occurrence=<id>` opens that occurrence in its plan.
+  useEffect(() => {
+    const raw = searchParams.get("occurrence");
+    if (!raw) return;
+    const id = Number(raw);
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("occurrence");
+        return next;
+      },
+      { replace: true },
+    );
+    if (!Number.isFinite(id) || id <= 0) return;
+    getPmOccurrence(id)
+      .then((occ) => {
+        setFocusOccurrenceId(occ.id);
+        return openPlan(occ.pm_plan_id);
+      })
+      .catch(() => {
+        // Reported by the global IPC toast (occurrence not found or no access).
+      });
+  }, [searchParams, openPlan, setSearchParams]);
 
   useEffect(() => {
     const raw = searchParams.get("planId");
@@ -365,19 +422,35 @@ export function PmPage() {
               {t("actions.refreshForecast")}
             </Button>
           </PermissionGate>
+          <PermissionGate permission={P.PM_EDIT}>
+            <Button
+              variant="outline"
+              className="min-h-11"
+              onClick={() => setMeterReadingOpen(true)}
+            >
+              <Gauge className="h-4 w-4" aria-hidden />
+              {t("actions.recordReading")}
+            </Button>
+          </PermissionGate>
           <ViewToggle value={view} options={viewOptions} onChange={setViewMode} />
           <FilterToggleButton
             open={showFilters}
             onToggle={toggleFilters}
             activeCount={activeFilterCount}
           />
-          <RefreshButton onRefresh={() => void loadWorkspace()} loading={loading} />
+          <RefreshButton
+            onRefresh={() => {
+              void loadWorkspace();
+              refreshCompliance();
+            }}
+            loading={loading}
+          />
         </>
       }
       filterBar={
         <>
           <PmAutopilotStrip />
-          <div className="grid gap-3 px-4 pt-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-3 px-4 pt-3 sm:grid-cols-2 xl:grid-cols-5">
             <KpiTile
               label={t("metrics.overdue")}
               value={metrics ? formatNumber(metrics.overdue_count) : "—"}
@@ -411,6 +484,46 @@ export function PmPage() {
               icon={ClipboardCheck}
               onOpen={() => openDueList("all", "ready_for_scheduling")}
             />
+            <div className="grid gap-1">
+              <KpiTile
+                label={t("metrics.compliance")}
+                value={
+                  compliance?.compliance_pct != null
+                    ? formatPercent(compliance.compliance_pct)
+                    : "—"
+                }
+                hint={
+                  compliance
+                    ? t("metrics.complianceHint", {
+                        onTime: formatNumber(compliance.on_time_count),
+                        due: formatNumber(compliance.due_count),
+                      })
+                    : t("metrics.complianceDefinition")
+                }
+                icon={ShieldCheck}
+                {...(compliance?.compliance_pct != null && compliance.late_count > 0
+                  ? { tone: "warning" as const }
+                  : {})}
+              />
+              <Label htmlFor="pm-compliance-period" className="sr-only">
+                {t("metrics.compliancePeriod")}
+              </Label>
+              <Select
+                value={String(complianceDays)}
+                onValueChange={(v) => refreshCompliance(Number(v))}
+              >
+                <SelectTrigger id="pm-compliance-period" className="h-9 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {COMPLIANCE_PERIODS.map((days) => (
+                    <SelectItem key={days} value={String(days)}>
+                      {t("metrics.lastDays", { count: days })}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
           {showFilters ? (
             <div className="px-4 pt-3">
@@ -482,7 +595,10 @@ export function PmPage() {
         onRetryDetail={() => {
           if (activePlanId != null) void openPlan(activePlanId);
         }}
-        onClose={closePlan}
+        onClose={() => {
+          setFocusOccurrenceId(null);
+          closePlan();
+        }}
         onEditPlan={() => {
           setPlanFormMode("edit");
           setPlanFormOpen(true);
@@ -534,6 +650,24 @@ export function PmPage() {
         onTransitionOccurrence={setTransitionOcc}
         onExecuteOccurrence={setExecuteOcc}
         onLoadFindings={(id) => void loadFindings(id)}
+        focusOccurrenceId={focusOccurrenceId}
+        onReviseFromFinding={async (finding) => {
+          if (activePlanId == null) return;
+          const draft = await reviseFromFinding(finding.id, activePlanId);
+          pushAppToast({
+            title: t("messages.revisionCreated", { version: draft.version_no }),
+            variant: "success",
+          });
+        }}
+      />
+
+      <PmMeterReadingDialog
+        open={meterReadingOpen}
+        onClose={() => setMeterReadingOpen(false)}
+        onRecorded={() => {
+          pushAppToast({ title: t("messages.readingRecorded"), variant: "success" });
+          void loadWorkspace();
+        }}
       />
 
       <ConfirmDialog

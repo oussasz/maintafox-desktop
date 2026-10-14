@@ -21,8 +21,13 @@ describe("resolveNotificationLink", () => {
     expect(resolveNotificationLink("/work-orders?openWo=3")?.path).toBe("/work-orders?openWo=3");
   });
 
-  it("opens the PM module for an occurrence link (the PM page reads only planId)", () => {
-    expect(resolveNotificationLink("/pm?occurrence=9")).toEqual({ path: "/pm", exact: false });
+  it("opens the PM occurrence or plan named by the link", () => {
+    expect(resolveNotificationLink("/pm?occurrence=9")).toEqual({
+      path: "/pm?occurrence=9",
+      exact: true,
+    });
+    expect(resolveNotificationLink("/pm?occurrence=abc")).toEqual({ path: "/pm", exact: false });
+    expect(resolveNotificationLink("/pm")).toEqual({ path: "/pm", exact: false });
     expect(resolveNotificationLink("/pm?planId=4")).toEqual({
       path: "/pm?planId=4",
       exact: true,

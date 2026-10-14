@@ -565,6 +565,12 @@ async fn on_work_order_closed_for_pm_inner(
         strategy_type: None,
         asset_code: None,
         asset_name: None,
+        equipment_id: None,
+        window_start_at: None,
+        window_end_at: None,
+        window_start_meter: None,
+        window_end_meter: None,
+        timing_status: None,
     };
 
     let occurrence = advance_occurrence_to_in_progress(db, occurrence, actor_id).await?;

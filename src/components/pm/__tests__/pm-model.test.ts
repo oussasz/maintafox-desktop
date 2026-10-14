@@ -7,7 +7,9 @@ import {
   buildTriggerJson,
   canLogExecution,
   matchesDueWindow,
+  parseRequiredParts,
   parseTriggerJson,
+  requiredPartsJson,
 } from "@/components/pm/pm-model";
 import type { PmOccurrenceRow } from "@/services/pm-service";
 
@@ -41,9 +43,7 @@ describe("pm-model", () => {
     const json = buildTriggerJson({
       ...PM_TRIGGER_FORM_START,
       strategy: "meter",
-      assetMeterId: 7,
-      meterInterval: 250,
-      startReading: 1000,
+      meter: { assetMeterId: 7, meterType: null, interval: 250, startReading: 1000 },
     });
     expect(JSON.parse(json)).toEqual({
       asset_meter_id: 7,
@@ -51,8 +51,55 @@ describe("pm-model", () => {
       start_reading: 1000,
     });
     const back = parseTriggerJson("meter", json);
-    expect(back.assetMeterId).toBe(7);
-    expect(back.meterInterval).toBe(250);
-    expect(back.startReading).toBe(1000);
+    expect(back.meter).toEqual({
+      assetMeterId: 7,
+      meterType: null,
+      interval: 250,
+      startReading: 1000,
+    });
+  });
+
+  it("writes tolerance and the whichever-comes-first meter block of a calendar version", () => {
+    const json = buildTriggerJson({
+      ...PM_TRIGGER_FORM_START,
+      strategy: "floating",
+      intervalUnit: "month",
+      intervalValue: 1,
+      orMeter: { assetMeterId: null, meterType: "HOURS", interval: 500, startReading: null },
+      tolerance: { unit: "percent", early: 10, late: 10 },
+    });
+    expect(JSON.parse(json)).toEqual({
+      interval_unit: "month",
+      interval_value: 1,
+      meter: { meter_type: "HOURS", interval_value: 500 },
+      tolerance: { unit: "percent", early: 10, late: 10 },
+    });
+    const back = parseTriggerJson("floating", json);
+    expect(back.orMeter?.meterType).toBe("HOURS");
+    expect(back.tolerance).toEqual({ unit: "percent", early: 10, late: 10 });
+    // Legacy operating-hours versions read as the HOURS meter type.
+    expect(
+      parseTriggerJson("meter", '{"meter_source":"operating_hours","interval_value":100}').meter,
+    ).toMatchObject({ meterType: "HOURS", interval: 100 });
+  });
+
+  it("keeps quantities of structured required parts and plain codes of older versions", () => {
+    const parts = parseRequiredParts('[{"article_code":"FLT-10","quantity":2},"GRAISSE"]');
+    expect(parts).toEqual([
+      { articleCode: "FLT-10", quantity: 2 },
+      { articleCode: "GRAISSE", quantity: null },
+    ]);
+    expect(requiredPartsJson(parts)).toBe('[{"article_code":"FLT-10","quantity":2},"GRAISSE"]');
+    expect(requiredPartsJson([])).toBeNull();
+  });
+
+  it("counts an occurrence as overdue only past its tolerance window", () => {
+    const occ = {
+      due_at: "2026-10-13T00:00:00Z",
+      window_end_at: "2026-10-16T23:59:59Z",
+      status: "scheduled",
+    } as PmOccurrenceRow;
+    expect(matchesDueWindow(occ, "overdue", NOW)).toBe(false);
+    expect(matchesDueWindow(occ, "overdue", new Date("2026-10-17T08:00:00Z"))).toBe(true);
   });
 });

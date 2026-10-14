@@ -180,6 +180,81 @@ async fn validate_required_skills_json(db: &DatabaseConnection, input: Option<&s
     Ok(())
 }
 
+/// Checks a usage (meter) specification: a chosen active `asset_meter_id`, or a meter type
+/// (`meter_type`, legacy `meter_source`) resolved per asset at generation time; with an absolute
+/// `threshold_value` (chosen meter only) or a recurring `interval_value`.
+async fn validate_meter_spec(
+    db: &DatabaseConnection,
+    spec: &serde_json::Map<String, Value>,
+    allow_absolute: bool,
+) -> AppResult<()> {
+    let meter_id = spec.get("asset_meter_id").and_then(Value::as_i64).unwrap_or(0);
+    let threshold_value = spec.get("threshold_value").and_then(Value::as_f64).unwrap_or(0.0);
+    let interval_value = spec.get("interval_value").and_then(Value::as_f64).unwrap_or(0.0);
+    if let Some(start) = spec.get("start_reading") {
+        if !start.is_null() && start.as_f64().map(|r| r < 0.0).unwrap_or(true) {
+            return Err(AppError::ValidationFailed(vec![
+                "start_reading must be a number >= 0.".to_string()
+            ]));
+        }
+    }
+    if meter_id > 0 {
+        let exists = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT id FROM equipment_meters WHERE id = ? AND is_active = 1",
+                [meter_id.into()],
+            ))
+            .await?;
+        if exists.is_none() {
+            return Err(AppError::ValidationFailed(vec![
+                "Meter trigger references unknown or inactive asset meter.".to_string(),
+            ]));
+        }
+        if interval_value > 0.0 || (allow_absolute && threshold_value > 0.0) {
+            return Ok(());
+        }
+        return Err(AppError::ValidationFailed(vec![
+            "Meter trigger on an asset meter requires interval_value > 0 (or threshold_value > 0).".to_string(),
+        ]));
+    }
+    let meter_type = spec
+        .get("meter_type")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|t| !t.is_empty());
+    let meter_source = spec
+        .get("meter_source")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_lowercase();
+    let has_type = meter_type.is_some() || matches!(meter_source.as_str(), "odometer" | "operating_hours");
+    if !has_type || interval_value <= 0.0 {
+        return Err(AppError::ValidationFailed(vec![
+            "Meter trigger requires an asset meter or a meter type, and interval_value > 0.".to_string(),
+        ]));
+    }
+    if let Some(meter_type) = meter_type {
+        let known = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT lv.id FROM lookup_values lv
+                 JOIN lookup_domains ld ON ld.id = lv.domain_id
+                 WHERE ld.domain_key = 'equipment.meter_type' AND UPPER(lv.code) = UPPER(?)
+                   AND lv.deleted_at IS NULL",
+                [meter_type.to_string().into()],
+            ))
+            .await?;
+        if known.is_none() {
+            return Err(AppError::ValidationFailed(vec![format!(
+                "Unknown meter type '{meter_type}'."
+            )]));
+        }
+    }
+    Ok(())
+}
+
 async fn validate_trigger_definition(
     db: &DatabaseConnection,
     strategy_type: &str,
@@ -192,72 +267,20 @@ async fn validate_trigger_definition(
             "trigger_definition_json must be an object.".to_string(),
         ]));
     };
+    crate::pm::schedule::parse_tolerance(obj)?;
     match strategy_type {
         "fixed" | "floating" => {
-            let unit = obj.get("interval_unit").and_then(Value::as_str).unwrap_or_default();
-            let value = obj.get("interval_value").and_then(Value::as_f64).unwrap_or(0.0);
-            if unit.trim().is_empty() || value <= 0.0 {
-                return Err(AppError::ValidationFailed(vec![
-                    "Calendar/floating trigger requires interval_unit and interval_value > 0.".to_string(),
-                ]));
+            crate::pm::schedule::parse_recurrence(obj)?;
+            if let Some(meter) = obj.get("meter").filter(|m| !m.is_null()) {
+                let Some(meter) = meter.as_object() else {
+                    return Err(AppError::ValidationFailed(vec![
+                        "meter (whichever comes first) must be an object.".to_string(),
+                    ]));
+                };
+                validate_meter_spec(db, meter, false).await?;
             }
         }
-        "meter" => {
-            let meter_id = obj.get("asset_meter_id").and_then(Value::as_i64).unwrap_or(0);
-            let threshold_value = obj.get("threshold_value").and_then(Value::as_f64).unwrap_or(0.0);
-            if meter_id > 0 && threshold_value > 0.0 {
-                let exists = db
-                    .query_one(Statement::from_sql_and_values(
-                        DbBackend::Sqlite,
-                        "SELECT id FROM equipment_meters WHERE id = ? AND is_active = 1",
-                        [meter_id.into()],
-                    ))
-                    .await?;
-                if exists.is_none() {
-                    return Err(AppError::ValidationFailed(vec![
-                        "Meter trigger references unknown or inactive asset meter.".to_string(),
-                    ]));
-                }
-            } else if meter_id > 0 {
-                // Recurring on a chosen asset meter: every `interval_value` units counted from
-                // `start_reading` (the reading at the last service, stated by the planner).
-                let interval_value = obj.get("interval_value").and_then(Value::as_f64).unwrap_or(0.0);
-                let start_reading = obj.get("start_reading").and_then(Value::as_f64);
-                if interval_value <= 0.0 || start_reading.map(|r| r < 0.0).unwrap_or(true) {
-                    return Err(AppError::ValidationFailed(vec![
-                        "Meter trigger on an asset meter requires interval_value > 0 and start_reading >= 0."
-                            .to_string(),
-                    ]));
-                }
-                let exists = db
-                    .query_one(Statement::from_sql_and_values(
-                        DbBackend::Sqlite,
-                        "SELECT id FROM equipment_meters WHERE id = ? AND is_active = 1",
-                        [meter_id.into()],
-                    ))
-                    .await?;
-                if exists.is_none() {
-                    return Err(AppError::ValidationFailed(vec![
-                        "Meter trigger references unknown or inactive asset meter.".to_string(),
-                    ]));
-                }
-            } else {
-                let meter_source = obj
-                    .get("meter_source")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .trim()
-                    .to_lowercase();
-                let interval_value = obj.get("interval_value").and_then(Value::as_f64).unwrap_or(0.0);
-                if !matches!(meter_source.as_str(), "odometer" | "operating_hours") || interval_value <= 0.0 {
-                    return Err(AppError::ValidationFailed(vec![
-                        "Meter trigger requires either (asset_meter_id + threshold_value) or (meter_source + interval_value > 0).".to_string(),
-                    ]));
-                }
-                // Constructor mode: meter resolution happens at generation time from plan asset scope.
-                return Ok(());
-            }
-        }
+        "meter" => validate_meter_spec(db, obj, true).await?,
         "event" => {
             let code = obj.get("event_code").and_then(Value::as_str).unwrap_or_default();
             if code.trim().is_empty() {
@@ -305,6 +328,7 @@ fn decode_pm_plan_row(row: &sea_orm::QueryResult) -> AppResult<PmPlan> {
         updated_at: row.try_get("", "updated_at")?,
         asset_code: row.try_get("", "asset_code")?,
         asset_name: row.try_get("", "asset_name")?,
+        asset_scope_label: row.try_get("", "asset_scope_label")?,
     })
 }
 
@@ -342,7 +366,12 @@ pub async fn list_pm_plans(db: &DatabaseConnection, _filter: PmPlanFilter) -> Ap
                   ELSE COALESCE(tm.name, tm.code)
                 END AS assigned_team_label,
                 p.requires_shutdown,p.requires_permit,p.is_active,p.lifecycle_status,p.current_version_id,p.row_version,p.created_at,p.updated_at,
-                eq.asset_id_code AS asset_code, eq.name AS asset_name
+                eq.asset_id_code AS asset_code, eq.name AS asset_name,
+                CASE p.asset_scope_type
+                  WHEN 'family' THEN (SELECT rv.label FROM reference_values rv WHERE rv.id = p.asset_scope_id)
+                  WHEN 'location' THEN (SELECT n.name FROM org_nodes n WHERE n.id = p.asset_scope_id)
+                  WHEN 'criticality_group' THEN (SELECT lv2.label FROM lookup_values lv2 WHERE lv2.id = p.asset_scope_id)
+                END AS asset_scope_label
          FROM pm_plans p
          LEFT JOIN lookup_values lv ON lv.id = p.criticality_value_id
          LEFT JOIN teams tm ON tm.id = p.assigned_team_id AND tm.deleted_at IS NULL
@@ -361,7 +390,12 @@ pub async fn get_pm_plan(db: &DatabaseConnection, plan_id: i64) -> AppResult<PmP
                   ELSE COALESCE(tm.name, tm.code)
                 END AS assigned_team_label,
                 p.requires_shutdown,p.requires_permit,p.is_active,p.lifecycle_status,p.current_version_id,p.row_version,p.created_at,p.updated_at,
-                eq.asset_id_code AS asset_code, eq.name AS asset_name
+                eq.asset_id_code AS asset_code, eq.name AS asset_name,
+                CASE p.asset_scope_type
+                  WHEN 'family' THEN (SELECT rv.label FROM reference_values rv WHERE rv.id = p.asset_scope_id)
+                  WHEN 'location' THEN (SELECT n.name FROM org_nodes n WHERE n.id = p.asset_scope_id)
+                  WHEN 'criticality_group' THEN (SELECT lv2.label FROM lookup_values lv2 WHERE lv2.id = p.asset_scope_id)
+                END AS asset_scope_label
          FROM pm_plans p
          LEFT JOIN lookup_values lv ON lv.id = p.criticality_value_id
          LEFT JOIN teams tm ON tm.id = p.assigned_team_id AND tm.deleted_at IS NULL
@@ -668,7 +702,7 @@ fn now_rfc3339() -> String {
     Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
-fn parse_as_of_or_now(as_of: Option<&str>) -> AppResult<DateTime<Utc>> {
+pub(crate) fn parse_as_of_or_now(as_of: Option<&str>) -> AppResult<DateTime<Utc>> {
     match as_of {
         Some(raw) => {
             let parsed = DateTime::parse_from_rfc3339(raw).map_err(|_| {
@@ -677,33 +711,6 @@ fn parse_as_of_or_now(as_of: Option<&str>) -> AppResult<DateTime<Utc>> {
             Ok(parsed.with_timezone(&Utc))
         }
         None => Ok(Utc::now()),
-    }
-}
-
-fn parse_interval(trigger_obj: &serde_json::Map<String, Value>) -> AppResult<Duration> {
-    let unit = trigger_obj
-        .get("interval_unit")
-        .and_then(Value::as_str)
-        .unwrap_or("day")
-        .trim()
-        .to_lowercase();
-    let value = trigger_obj.get("interval_value").and_then(Value::as_f64).unwrap_or(0.0);
-    if value <= 0.0 {
-        return Err(AppError::ValidationFailed(vec![
-            "interval_value must be > 0 for fixed/floating strategies.".to_string(),
-        ]));
-    }
-
-    let amount = value.round() as i64;
-    match unit.as_str() {
-        "hour" | "hours" => Ok(Duration::hours(amount)),
-        "day" | "days" => Ok(Duration::days(amount)),
-        "week" | "weeks" => Ok(Duration::weeks(amount)),
-        "month" | "months" => Ok(Duration::days(amount * 30)),
-        "year" | "years" => Ok(Duration::days(amount * 365)),
-        _ => Err(AppError::ValidationFailed(vec![
-            "interval_unit must be one of: hour, day, week, month, year.".to_string(),
-        ])),
     }
 }
 
@@ -724,6 +731,21 @@ pub(crate) fn next_meter_threshold(start: f64, interval: f64, current: f64, last
     }
     threshold
 }
+
+/// Columns of a PM occurrence read model (`po`, `pp` plan, `wo` linked OT, `eq` asset).
+const OCCURRENCE_COLUMNS: &str =
+    "po.id, po.pm_plan_id, po.plan_version_id, po.due_basis, po.due_at, po.due_meter_value,
+                po.generated_at, po.status, po.linked_work_order_id, wo.code AS linked_work_order_code,
+                po.deferral_reason, po.missed_reason, po.row_version, po.created_at, po.updated_at,
+                pp.code AS plan_code, pp.title AS plan_title, pp.strategy_type,
+                eq.id AS equipment_id, eq.asset_id_code AS asset_code, eq.name AS asset_name,
+                po.window_start_at, po.window_end_at, po.window_start_meter, po.window_end_meter,
+                (SELECT pe.timing_status FROM pm_executions pe WHERE pe.pm_occurrence_id = po.id
+                 ORDER BY pe.id DESC LIMIT 1) AS timing_status";
+
+/// Asset of an occurrence: its own (per-asset occurrence), else the one-equipment plan's.
+const OCCURRENCE_ASSET: &str =
+    "COALESCE(po.equipment_id, CASE WHEN pp.asset_scope_type = 'equipment' THEN pp.asset_scope_id END)";
 
 fn decode_pm_occurrence_row(row: &sea_orm::QueryResult) -> AppResult<PmOccurrence> {
     Ok(PmOccurrence {
@@ -747,22 +769,27 @@ fn decode_pm_occurrence_row(row: &sea_orm::QueryResult) -> AppResult<PmOccurrenc
         strategy_type: row.try_get("", "strategy_type")?,
         asset_code: row.try_get("", "asset_code")?,
         asset_name: row.try_get("", "asset_name")?,
+        equipment_id: row.try_get("", "equipment_id")?,
+        window_start_at: row.try_get("", "window_start_at")?,
+        window_end_at: row.try_get("", "window_end_at")?,
+        window_start_meter: row.try_get("", "window_start_meter")?,
+        window_end_meter: row.try_get("", "window_end_meter")?,
+        timing_status: row.try_get("", "timing_status")?,
     })
 }
 
-async fn get_pm_occurrence_by_id(db: &impl ConnectionTrait, occurrence_id: i64) -> AppResult<PmOccurrence> {
+pub async fn get_pm_occurrence_by_id(db: &impl ConnectionTrait, occurrence_id: i64) -> AppResult<PmOccurrence> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT po.id, po.pm_plan_id, po.plan_version_id, po.due_basis, po.due_at, po.due_meter_value, po.generated_at, po.status,
-                    po.linked_work_order_id, wo.code AS linked_work_order_code, po.deferral_reason, po.missed_reason, po.row_version,
-                    po.created_at, po.updated_at, pp.code AS plan_code, pp.title AS plan_title, pp.strategy_type,
-                    eq.asset_id_code AS asset_code, eq.name AS asset_name
+            format!(
+                "SELECT {OCCURRENCE_COLUMNS}
              FROM pm_occurrences po
              JOIN pm_plans pp ON pp.id = po.pm_plan_id
-         LEFT JOIN equipment eq ON eq.id = pp.asset_scope_id AND pp.asset_scope_type = 'equipment'
+         LEFT JOIN equipment eq ON eq.id = {OCCURRENCE_ASSET}
              LEFT JOIN work_orders wo ON wo.id = po.linked_work_order_id
-             WHERE po.id = ?",
+             WHERE po.id = ?"
+            ),
             [occurrence_id.into()],
         ))
         .await?
@@ -773,7 +800,7 @@ async fn get_pm_occurrence_by_id(db: &impl ConnectionTrait, occurrence_id: i64) 
     decode_pm_occurrence_row(&row)
 }
 
-async fn occurrence_exists(
+pub(crate) async fn occurrence_exists(
     db: &impl ConnectionTrait,
     pm_plan_id: i64,
     plan_version_id: i64,
@@ -806,7 +833,7 @@ async fn occurrence_exists(
     Ok(count > 0)
 }
 
-async fn insert_trigger_event(
+pub(crate) async fn insert_trigger_event(
     db: &impl ConnectionTrait,
     pm_plan_id: i64,
     plan_version_id: i64,
@@ -839,7 +866,7 @@ async fn insert_trigger_event(
 
 /// The occurrence already exists: same natural key (idempotency index) or same deterministic
 /// identity (`occurrence_sync_id`).
-fn is_occurrence_idempotency_conflict(err: &AppError) -> bool {
+pub(crate) fn is_occurrence_idempotency_conflict(err: &AppError) -> bool {
     matches!(err, AppError::Database(db_err) if {
         let text = db_err.to_string();
         text.contains("idx_pm_occurrence_idempotency") || text.contains("pm_occurrences.entity_sync_id")
@@ -851,7 +878,7 @@ fn is_occurrence_idempotency_conflict(err: &AppError) -> bool {
 /// the same `entity_sync_id`.
 ///
 /// Without sync identity on the plan (database without sync capture) a random one is used.
-async fn occurrence_sync_id(
+pub(crate) async fn occurrence_sync_id(
     db: &impl ConnectionTrait,
     pm_plan_id: i64,
     plan_version_id: i64,
@@ -868,60 +895,12 @@ async fn occurrence_sync_id(
     })
 }
 
-async fn insert_occurrence(
-    db: &impl ConnectionTrait,
-    pm_plan_id: i64,
-    plan_version_id: i64,
-    due_basis: &str,
-    due_at: Option<String>,
-    due_meter_value: Option<f64>,
-) -> AppResult<Option<i64>> {
-    let entity_sync_id = occurrence_sync_id(db, pm_plan_id, plan_version_id, due_basis).await?;
-    let insert_result = db
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "INSERT INTO pm_occurrences (entity_sync_id, pm_plan_id, plan_version_id, due_basis, due_at, due_meter_value, status)
-             VALUES (?, ?, ?, ?, ?, ?, 'generated')",
-            [
-                entity_sync_id.into(),
-                pm_plan_id.into(),
-                plan_version_id.into(),
-                due_basis.to_string().into(),
-                due_at.into(),
-                due_meter_value.into(),
-            ],
-        ))
-        .await;
-
-    if let Err(db_err) = insert_result {
-        let app_err = AppError::Database(db_err);
-        if is_occurrence_idempotency_conflict(&app_err) {
-            return Ok(None);
-        }
-        return Err(app_err);
-    }
-
-    let row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT id FROM pm_occurrences WHERE rowid = last_insert_rowid()",
-            [],
-        ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to read inserted PM occurrence")))?;
-    let id: i64 = row.try_get("", "id")?;
-    Ok(Some(id))
-}
-
 pub async fn list_pm_occurrences(db: &DatabaseConnection, filter: PmOccurrenceFilter) -> AppResult<Vec<PmOccurrence>> {
-    let mut sql = String::from(
-        "SELECT po.id, po.pm_plan_id, po.plan_version_id, po.due_basis, po.due_at, po.due_meter_value, po.generated_at, po.status,
-                po.linked_work_order_id, wo.code AS linked_work_order_code, po.deferral_reason, po.missed_reason, po.row_version,
-                po.created_at, po.updated_at, pp.code AS plan_code, pp.title AS plan_title, pp.strategy_type,
-                    eq.asset_id_code AS asset_code, eq.name AS asset_name
+    let mut sql = format!(
+        "SELECT {OCCURRENCE_COLUMNS}
          FROM pm_occurrences po
          JOIN pm_plans pp ON pp.id = po.pm_plan_id
-         LEFT JOIN equipment eq ON eq.id = pp.asset_scope_id AND pp.asset_scope_type = 'equipment'
+         LEFT JOIN equipment eq ON eq.id = {OCCURRENCE_ASSET}
          LEFT JOIN work_orders wo ON wo.id = po.linked_work_order_id
          WHERE 1 = 1",
     );
@@ -963,7 +942,7 @@ pub async fn get_pm_due_metrics(db: &DatabaseConnection) -> AppResult<PmDueMetri
             "SELECT COUNT(*) AS cnt FROM pm_occurrences
              WHERE status NOT IN ('completed','cancelled','missed')
                AND due_at IS NOT NULL
-               AND due_at < ?",
+               AND COALESCE(window_end_at, due_at) < ?",
             [as_of.clone().into()],
         ))
         .await?
@@ -1030,15 +1009,12 @@ pub async fn list_pm_planning_readiness(
     let include_linked_work_orders = input.include_linked_work_orders.unwrap_or(false);
     let limit = input.limit.unwrap_or(200).clamp(1, 1000);
 
-    let mut sql = String::from(
-        "SELECT po.id, po.pm_plan_id, po.plan_version_id, po.due_basis, po.due_at, po.due_meter_value, po.generated_at, po.status,
-                po.linked_work_order_id, wo.code AS linked_work_order_code, po.deferral_reason, po.missed_reason, po.row_version,
-                po.created_at, po.updated_at, pp.code AS plan_code, pp.title AS plan_title, pp.strategy_type,
-                    eq.asset_id_code AS asset_code, eq.name AS asset_name,
+    let mut sql = format!(
+        "SELECT {OCCURRENCE_COLUMNS},
                 pv.required_parts_json, pv.required_skills_json, pp.requires_permit, pp.requires_shutdown
          FROM pm_occurrences po
          JOIN pm_plans pp ON pp.id = po.pm_plan_id
-         LEFT JOIN equipment eq ON eq.id = pp.asset_scope_id AND pp.asset_scope_type = 'equipment'
+         LEFT JOIN equipment eq ON eq.id = {OCCURRENCE_ASSET}
          JOIN pm_plan_versions pv ON pv.id = po.plan_version_id
          LEFT JOIN work_orders wo ON wo.id = po.linked_work_order_id
          WHERE po.status IN ('generated','ready_for_scheduling','deferred')",
@@ -1389,518 +1365,12 @@ pub async fn get_pm_governance_kpi_report(
         ],
     })
 }
+/// Forecast run: see `pm::generation` (targets, strategies, windows).
 pub async fn generate_pm_occurrences(
     db: &DatabaseConnection,
     input: GeneratePmOccurrencesInput,
 ) -> AppResult<GeneratePmOccurrencesResult> {
-    let as_of_dt = parse_as_of_or_now(input.as_of.as_deref())?;
-    let as_of = as_of_dt.format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let horizon_days = input.horizon_days.unwrap_or(30).clamp(1, 365);
-    let horizon_end = as_of_dt + Duration::days(horizon_days);
-
-    let event_codes: std::collections::HashSet<String> = input
-        .event_codes
-        .unwrap_or_default()
-        .into_iter()
-        .map(|v| v.trim().to_uppercase())
-        .collect();
-    let condition_codes: std::collections::HashSet<String> = input
-        .condition_codes
-        .unwrap_or_default()
-        .into_iter()
-        .map(|v| v.trim().to_uppercase())
-        .collect();
-
-    let mut sql = String::from(
-        "SELECT p.id AS pm_plan_id, p.code AS plan_code, p.title AS plan_title, p.strategy_type, p.asset_scope_type, p.asset_scope_id,
-                pv.id AS version_id, pv.effective_from, pv.effective_to, pv.trigger_definition_json
-         FROM pm_plans p
-         JOIN pm_plan_versions pv ON pv.id = p.current_version_id
-         WHERE p.is_active = 1
-           AND p.lifecycle_status IN ('active', 'suspended')
-           AND pv.status = 'published'",
-    );
-    let mut binds: Vec<sea_orm::Value> = Vec::new();
-    if let Some(plan_id) = input.pm_plan_id {
-        sql.push_str(" AND p.id = ?");
-        binds.push(plan_id.into());
-    }
-    if let Some(equipment_id) = input.equipment_id {
-        sql.push_str(" AND p.asset_scope_type = 'equipment' AND p.asset_scope_id = ?");
-        binds.push(equipment_id.into());
-    }
-    let rows = db
-        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, binds))
-        .await?;
-
-    let tx = db.begin().await?;
-    // Occurrences are derived by every device from the synchronised plans (each device runs the
-    // generator): they get a deterministic identity (`occurrence_sync_id`) and are not captured
-    // here. A person's later action on an occurrence is captured and sent with the full row.
-    crate::sync::capture::begin_suppression(&tx).await?;
-    let mut generated_count = 0_i64;
-    let mut skipped_count = 0_i64;
-    let mut trigger_events_recorded = 0_i64;
-    let mut occurrence_ids: Vec<i64> = Vec::new();
-
-    for row in rows {
-        let pm_plan_id: i64 = row.try_get("", "pm_plan_id")?;
-        let version_id: i64 = row.try_get("", "version_id")?;
-        let strategy_type: String = row.try_get("", "strategy_type")?;
-        let effective_from: String = row.try_get("", "effective_from")?;
-        let trigger_definition_json: String = row.try_get("", "trigger_definition_json")?;
-        let trigger_value = serde_json::from_str::<Value>(&trigger_definition_json)
-            .map_err(|_| AppError::ValidationFailed(vec!["trigger_definition_json must be valid JSON.".to_string()]))?;
-        let Some(trigger_obj) = trigger_value.as_object() else {
-            return Err(AppError::ValidationFailed(vec![
-                "trigger_definition_json must be a JSON object.".to_string(),
-            ]));
-        };
-
-        match strategy_type.as_str() {
-            "fixed" => {
-                let interval = parse_interval(trigger_obj)?;
-                let mut due = DateTime::parse_from_rfc3339(&effective_from)
-                    .map_err(|_| AppError::ValidationFailed(vec!["effective_from must be RFC3339.".to_string()]))?
-                    .with_timezone(&Utc);
-                while due < as_of_dt {
-                    due += interval;
-                }
-                while due <= horizon_end {
-                    let due_at = due.format("%Y-%m-%dT%H:%M:%SZ").to_string();
-                    let due_basis = format!("fixed:{}", due_at);
-                    let exists =
-                        occurrence_exists(&tx, pm_plan_id, version_id, &due_basis, Some(&due_at), None).await?;
-                    if exists {
-                        skipped_count += 1;
-                        insert_trigger_event(
-                            &tx,
-                            pm_plan_id,
-                            version_id,
-                            "fixed",
-                            Some(due_basis),
-                            None,
-                            None,
-                            false,
-                            None,
-                        )
-                        .await?;
-                    } else {
-                        if let Some(occurrence_id) =
-                            insert_occurrence(&tx, pm_plan_id, version_id, &due_basis, Some(due_at.clone()), None)
-                                .await?
-                        {
-                            generated_count += 1;
-                            occurrence_ids.push(occurrence_id);
-                            insert_trigger_event(
-                                &tx,
-                                pm_plan_id,
-                                version_id,
-                                "fixed",
-                                Some(due_basis),
-                                None,
-                                None,
-                                true,
-                                Some(occurrence_id),
-                            )
-                            .await?;
-                        } else {
-                            skipped_count += 1;
-                            insert_trigger_event(
-                                &tx,
-                                pm_plan_id,
-                                version_id,
-                                "fixed",
-                                Some(due_basis),
-                                None,
-                                None,
-                                false,
-                                None,
-                            )
-                            .await?;
-                        }
-                    }
-                    trigger_events_recorded += 1;
-                    due += interval;
-                }
-            }
-            "floating" => {
-                let interval = parse_interval(trigger_obj)?;
-                let base_row = tx
-                    .query_one(Statement::from_sql_and_values(
-                        DbBackend::Sqlite,
-                        "SELECT due_at, updated_at
-                         FROM pm_occurrences
-                         WHERE pm_plan_id = ? AND plan_version_id = ? AND status = 'completed'
-                         ORDER BY updated_at DESC
-                         LIMIT 1",
-                        [pm_plan_id.into(), version_id.into()],
-                    ))
-                    .await?;
-                let base_ts = if let Some(base_row) = base_row {
-                    let completed_due_at: Option<String> = base_row.try_get("", "due_at")?;
-                    completed_due_at.unwrap_or(base_row.try_get("", "updated_at")?)
-                } else {
-                    effective_from.clone()
-                };
-                let mut due = DateTime::parse_from_rfc3339(&base_ts)
-                    .map_err(|_| {
-                        AppError::ValidationFailed(vec!["floating trigger base timestamp is invalid.".to_string()])
-                    })?
-                    .with_timezone(&Utc)
-                    + interval;
-                while due < as_of_dt {
-                    due += interval;
-                }
-                if due <= horizon_end {
-                    let due_at = due.format("%Y-%m-%dT%H:%M:%SZ").to_string();
-                    let due_basis = format!("floating:{}", due_at);
-                    let exists =
-                        occurrence_exists(&tx, pm_plan_id, version_id, &due_basis, Some(&due_at), None).await?;
-                    if exists {
-                        skipped_count += 1;
-                        insert_trigger_event(
-                            &tx,
-                            pm_plan_id,
-                            version_id,
-                            "floating",
-                            Some(due_basis),
-                            None,
-                            None,
-                            false,
-                            None,
-                        )
-                        .await?;
-                    } else {
-                        if let Some(occurrence_id) =
-                            insert_occurrence(&tx, pm_plan_id, version_id, &due_basis, Some(due_at.clone()), None)
-                                .await?
-                        {
-                            generated_count += 1;
-                            occurrence_ids.push(occurrence_id);
-                            insert_trigger_event(
-                                &tx,
-                                pm_plan_id,
-                                version_id,
-                                "floating",
-                                Some(due_basis),
-                                None,
-                                None,
-                                true,
-                                Some(occurrence_id),
-                            )
-                            .await?;
-                        } else {
-                            skipped_count += 1;
-                            insert_trigger_event(
-                                &tx,
-                                pm_plan_id,
-                                version_id,
-                                "floating",
-                                Some(due_basis),
-                                None,
-                                None,
-                                false,
-                                None,
-                            )
-                            .await?;
-                        }
-                    }
-                    trigger_events_recorded += 1;
-                }
-            }
-            "meter" => {
-                let legacy_meter_id = trigger_obj
-                    .get("asset_meter_id")
-                    .and_then(Value::as_i64)
-                    .unwrap_or_default();
-                let legacy_threshold = trigger_obj
-                    .get("threshold_value")
-                    .and_then(Value::as_f64)
-                    .unwrap_or_default();
-
-                let mut meter_id = legacy_meter_id;
-                let mut threshold_value = legacy_threshold;
-                let current_reading: f64;
-
-                if meter_id > 0 && threshold_value > 0.0 {
-                    let meter_row = tx
-                        .query_one(Statement::from_sql_and_values(
-                            DbBackend::Sqlite,
-                            "SELECT current_reading FROM equipment_meters WHERE id = ? AND is_active = 1",
-                            [meter_id.into()],
-                        ))
-                        .await?
-                        .ok_or_else(|| {
-                            AppError::ValidationFailed(vec![
-                                "Meter trigger references unknown or inactive asset meter.".to_string(),
-                            ])
-                        })?;
-                    current_reading = meter_row.try_get("", "current_reading")?;
-                } else if meter_id > 0 {
-                    // Recurring on a chosen asset meter (see `validate_trigger_definition`).
-                    let interval_value = trigger_obj
-                        .get("interval_value")
-                        .and_then(Value::as_f64)
-                        .unwrap_or_default();
-                    let start_reading = trigger_obj.get("start_reading").and_then(Value::as_f64);
-                    let Some(start_reading) = start_reading.filter(|_| interval_value > 0.0) else {
-                        return Err(AppError::ValidationFailed(vec![
-                            "Meter trigger on an asset meter requires interval_value > 0 and start_reading."
-                                .to_string(),
-                        ]));
-                    };
-                    let meter_row = tx
-                        .query_one(Statement::from_sql_and_values(
-                            DbBackend::Sqlite,
-                            "SELECT current_reading FROM equipment_meters WHERE id = ? AND is_active = 1",
-                            [meter_id.into()],
-                        ))
-                        .await?
-                        .ok_or_else(|| {
-                            AppError::ValidationFailed(vec![
-                                "Meter trigger references unknown or inactive asset meter.".to_string(),
-                            ])
-                        })?;
-                    current_reading = meter_row.try_get("", "current_reading")?;
-                    let meter_ref = crate::sync::identity::optional_entity_sync_id(&tx, "equipment_meters", meter_id)
-                        .await?
-                        .unwrap_or_else(|| meter_id.to_string());
-                    let last_row = tx
-                        .query_one(Statement::from_sql_and_values(
-                            DbBackend::Sqlite,
-                            "SELECT MAX(due_meter_value) AS last_threshold FROM pm_occurrences
-                             WHERE pm_plan_id = ? AND due_basis LIKE ?",
-                            [pm_plan_id.into(), format!("meter:{meter_ref}:%").into()],
-                        ))
-                        .await?;
-                    let last_threshold: Option<f64> = match last_row {
-                        Some(row) => row.try_get("", "last_threshold")?,
-                        None => None,
-                    };
-                    threshold_value =
-                        next_meter_threshold(start_reading, interval_value, current_reading, last_threshold);
-                } else {
-                    let meter_source = trigger_obj
-                        .get("meter_source")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .trim()
-                        .to_lowercase();
-                    let interval_value = trigger_obj
-                        .get("interval_value")
-                        .and_then(Value::as_f64)
-                        .unwrap_or_default();
-                    if !matches!(meter_source.as_str(), "odometer" | "operating_hours") || interval_value <= 0.0 {
-                        return Err(AppError::ValidationFailed(vec![
-                            "meter trigger requires either asset_meter_id/threshold_value or meter_source/interval_value > 0.".to_string(),
-                        ]));
-                    }
-
-                    let meter_type_code = if meter_source == "odometer" {
-                        "DISTANCE"
-                    } else {
-                        "HOURS"
-                    };
-                    let plan_scope_row = tx
-                        .query_one(Statement::from_sql_and_values(
-                            DbBackend::Sqlite,
-                            "SELECT asset_scope_type, asset_scope_id FROM pm_plans WHERE id = ?",
-                            [pm_plan_id.into()],
-                        ))
-                        .await?
-                        .ok_or_else(|| AppError::NotFound {
-                            entity: "pm_plan".to_string(),
-                            id: pm_plan_id.to_string(),
-                        })?;
-                    let asset_scope_type: String = plan_scope_row.try_get("", "asset_scope_type")?;
-                    let asset_scope_id: Option<i64> = plan_scope_row.try_get("", "asset_scope_id")?;
-                    if asset_scope_type != "equipment" || asset_scope_id.unwrap_or_default() <= 0 {
-                        return Err(AppError::ValidationFailed(vec![
-                            "meter_source constructor requires PM plan asset scope type 'equipment' with a valid asset_scope_id.".to_string(),
-                        ]));
-                    }
-                    let equipment_id = asset_scope_id.unwrap_or_default();
-                    let meter_row = tx
-                        .query_one(Statement::from_sql_and_values(
-                            DbBackend::Sqlite,
-                            "SELECT id, current_reading
-                             FROM equipment_meters
-                             WHERE equipment_id = ? AND is_active = 1 AND UPPER(meter_type) = ?
-                             ORDER BY is_primary DESC, id ASC
-                             LIMIT 1",
-                            [equipment_id.into(), meter_type_code.to_string().into()],
-                        ))
-                        .await?
-                        .ok_or_else(|| {
-                            AppError::ValidationFailed(vec![format!(
-                                "No active {} meter found on equipment {} for meter-based PM trigger.",
-                                meter_type_code, equipment_id
-                            )])
-                        })?;
-                    meter_id = meter_row.try_get("", "id")?;
-                    current_reading = meter_row.try_get("", "current_reading")?;
-                    threshold_value = current_reading + interval_value;
-                }
-
-                // The meter is named by its sync identity, so the same occurrence has the same
-                // due basis (and identity) on every device.
-                // (A database without sync capture may hold a meter without identity: its local id
-                // is used there.)
-                let meter_ref = crate::sync::identity::optional_entity_sync_id(&tx, "equipment_meters", meter_id)
-                    .await?
-                    .unwrap_or_else(|| meter_id.to_string());
-                let due_basis = format!("meter:{}:{:.4}", meter_ref, threshold_value);
-                let should_generate = current_reading >= threshold_value;
-                let mut generated_occurrence_id: Option<i64> = None;
-                if should_generate {
-                    let exists =
-                        occurrence_exists(&tx, pm_plan_id, version_id, &due_basis, None, Some(threshold_value)).await?;
-                    if exists {
-                        skipped_count += 1;
-                    } else {
-                        if let Some(occurrence_id) = insert_occurrence(
-                            &tx,
-                            pm_plan_id,
-                            version_id,
-                            &due_basis,
-                            Some(as_of.clone()),
-                            Some(threshold_value),
-                        )
-                        .await?
-                        {
-                            generated_count += 1;
-                            occurrence_ids.push(occurrence_id);
-                            generated_occurrence_id = Some(occurrence_id);
-                        } else {
-                            skipped_count += 1;
-                        }
-                    }
-                }
-                insert_trigger_event(
-                    &tx,
-                    pm_plan_id,
-                    version_id,
-                    "meter",
-                    Some(format!("asset_meter:{}", meter_id)),
-                    Some(current_reading),
-                    Some(threshold_value),
-                    generated_occurrence_id.is_some(),
-                    generated_occurrence_id,
-                )
-                .await?;
-                trigger_events_recorded += 1;
-            }
-            "event" => {
-                let event_code = trigger_obj
-                    .get("event_code")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .trim()
-                    .to_uppercase();
-                if event_code.is_empty() {
-                    return Err(AppError::ValidationFailed(vec![
-                        "event trigger requires event_code.".to_string()
-                    ]));
-                }
-                let due_basis = format!("event:{}:{}", event_code, as_of_dt.format("%Y-%m-%d"));
-                let mut generated_occurrence_id: Option<i64> = None;
-                if event_codes.contains(&event_code) {
-                    let exists = occurrence_exists(&tx, pm_plan_id, version_id, &due_basis, Some(&as_of), None).await?;
-                    if exists {
-                        skipped_count += 1;
-                    } else {
-                        if let Some(occurrence_id) =
-                            insert_occurrence(&tx, pm_plan_id, version_id, &due_basis, Some(as_of.clone()), None)
-                                .await?
-                        {
-                            generated_count += 1;
-                            occurrence_ids.push(occurrence_id);
-                            generated_occurrence_id = Some(occurrence_id);
-                        } else {
-                            skipped_count += 1;
-                        }
-                    }
-                }
-                insert_trigger_event(
-                    &tx,
-                    pm_plan_id,
-                    version_id,
-                    "event",
-                    Some(event_code),
-                    None,
-                    None,
-                    generated_occurrence_id.is_some(),
-                    generated_occurrence_id,
-                )
-                .await?;
-                trigger_events_recorded += 1;
-            }
-            "condition" => {
-                let condition_code = trigger_obj
-                    .get("condition_code")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .trim()
-                    .to_uppercase();
-                if condition_code.is_empty() {
-                    return Err(AppError::ValidationFailed(vec![
-                        "condition trigger requires condition_code.".to_string(),
-                    ]));
-                }
-                let due_basis = format!("condition:{}:{}", condition_code, as_of_dt.format("%Y-%m-%d"));
-                let mut generated_occurrence_id: Option<i64> = None;
-                if condition_codes.contains(&condition_code) {
-                    let exists = occurrence_exists(&tx, pm_plan_id, version_id, &due_basis, Some(&as_of), None).await?;
-                    if exists {
-                        skipped_count += 1;
-                    } else {
-                        if let Some(occurrence_id) =
-                            insert_occurrence(&tx, pm_plan_id, version_id, &due_basis, Some(as_of.clone()), None)
-                                .await?
-                        {
-                            generated_count += 1;
-                            occurrence_ids.push(occurrence_id);
-                            generated_occurrence_id = Some(occurrence_id);
-                        } else {
-                            skipped_count += 1;
-                        }
-                    }
-                }
-                insert_trigger_event(
-                    &tx,
-                    pm_plan_id,
-                    version_id,
-                    "condition",
-                    Some(condition_code),
-                    None,
-                    None,
-                    generated_occurrence_id.is_some(),
-                    generated_occurrence_id,
-                )
-                .await?;
-                trigger_events_recorded += 1;
-            }
-            _ => {
-                return Err(AppError::ValidationFailed(vec![format!(
-                    "Unsupported PM strategy type '{}'.",
-                    strategy_type
-                )]));
-            }
-        }
-    }
-    crate::sync::capture::end_suppression(&tx).await?;
-    tx.commit().await?;
-    for occurrence_id in &occurrence_ids {
-        let _ = emit_pm_due_event(db, *occurrence_id).await;
-    }
-
-    Ok(GeneratePmOccurrencesResult {
-        generated_count,
-        skipped_count,
-        trigger_events_recorded,
-        occurrence_ids,
-    })
+    crate::pm::generation::generate(db, input).await
 }
 
 async fn resolve_preventive_work_order_type_id(
@@ -1963,8 +1433,13 @@ pub async fn transition_pm_occurrence(
     if input.generate_work_order == Some(true) && linked_work_order_id.is_none() {
         // The OT receives what the PM version prescribes (title, tasks, tools, parts, duration,
         // permit). See `pm::wo_content` for the mapping rules.
-        let content =
-            crate::pm::wo_content::build_pm_work_order_content(db, current.pm_plan_id, current.plan_version_id).await?;
+        let content = crate::pm::wo_content::build_pm_work_order_content(
+            db,
+            current.pm_plan_id,
+            current.plan_version_id,
+            current.equipment_id,
+        )
+        .await?;
 
         let wo_type_id = resolve_preventive_work_order_type_id(db, input.work_order_type_id).await?;
         let wo_type_code = resolve_work_order_type_code_by_id(db, wo_type_id).await?;
@@ -2093,6 +1568,8 @@ fn decode_pm_execution_row(row: &sea_orm::QueryResult) -> AppResult<PmExecution>
         actual_duration_hours: row.try_get("", "actual_duration_hours")?,
         actual_labor_hours: row.try_get("", "actual_labor_hours")?,
         created_at: row.try_get("", "created_at")?,
+        meter_reading: row.try_get("", "meter_reading")?,
+        timing_status: row.try_get("", "timing_status")?,
     })
 }
 
@@ -2304,7 +1781,7 @@ async fn emit_pm_notification(
 
 /// Due occurrences are generated by the PM scheduler of every device (deterministic occurrence
 /// ids), so is their notification and activity entry: kept on each device, not sent.
-async fn emit_pm_due_event(db: &DatabaseConnection, occurrence_id: i64) -> AppResult<()> {
+pub(crate) async fn emit_pm_due_event(db: &DatabaseConnection, occurrence_id: i64) -> AppResult<()> {
     let txn = db.begin().await?;
     crate::sync::capture::begin_suppression(&txn).await?;
     let occurrence = get_pm_occurrence_by_id(&txn, occurrence_id).await?;
@@ -2540,7 +2017,8 @@ async fn create_follow_up_wo_from_finding(
 pub async fn list_pm_executions(db: &DatabaseConnection, filter: PmExecutionFilter) -> AppResult<Vec<PmExecution>> {
     let mut sql = String::from(
         "SELECT pe.id, pe.pm_occurrence_id, pe.work_order_id, wo.code AS work_order_code, pe.execution_result,
-                pe.executed_at, pe.notes, pe.actor_id, pe.actual_duration_hours, pe.actual_labor_hours, pe.created_at
+                pe.executed_at, pe.notes, pe.actor_id, pe.actual_duration_hours, pe.actual_labor_hours, pe.created_at,
+                pe.meter_reading, pe.timing_status
          FROM pm_executions pe
          LEFT JOIN work_orders wo ON wo.id = pe.work_order_id
          LEFT JOIN pm_occurrences po ON po.id = pe.pm_occurrence_id
@@ -2648,6 +2126,36 @@ pub async fn list_pm_recurring_findings(
     Ok(out)
 }
 
+/// Lifetime reading of the meter the occurrence's version counts on (meter strategy, or the
+/// `meter` block of a "whichever comes first" version), on the occurrence's asset.
+async fn occurrence_meter_reading(db: &DatabaseConnection, occurrence: &PmOccurrence) -> AppResult<Option<f64>> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT trigger_definition_json FROM pm_plan_versions WHERE id = ?",
+            [occurrence.plan_version_id.into()],
+        ))
+        .await?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let raw: String = row.try_get("", "trigger_definition_json")?;
+    let Ok(Value::Object(trigger)) = serde_json::from_str::<Value>(&raw) else {
+        return Ok(None);
+    };
+    let spec = if occurrence.strategy_type.as_deref() == Some("meter") {
+        Some(trigger.clone())
+    } else {
+        trigger.get("meter").and_then(Value::as_object).cloned()
+    };
+    let Some(spec) = spec else {
+        return Ok(None);
+    };
+    Ok(crate::pm::generation::resolve_meter(db, &spec, occurrence.equipment_id)
+        .await?
+        .map(|m| m.lifetime))
+}
+
 pub async fn execute_pm_occurrence(
     db: &DatabaseConnection,
     input: ExecutePmOccurrenceInput,
@@ -2733,21 +2241,46 @@ pub async fn execute_pm_occurrence(
         actual_labor_hours = wo_row.try_get("", "active_labor_hours")?;
     }
 
+    // Completed work: lifetime meter reading (anchor of the next meter cycle) and timing against
+    // the occurrence's tolerance window.
+    let executed_at = now_rfc3339();
+    let (meter_reading, timing_status) = if matches!(
+        execution_result.as_str(),
+        "completed_no_findings" | "completed_with_findings"
+    ) {
+        let reading = occurrence_meter_reading(db, &occurrence).await?;
+        let window = crate::pm::schedule::OccurrenceWindow {
+            start_at: occurrence.window_start_at.clone(),
+            end_at: occurrence.window_end_at.clone(),
+            start_meter: occurrence.window_start_meter,
+            end_meter: occurrence.window_end_meter,
+        };
+        let timing = parse_as_of_or_now(Some(&executed_at))
+            .ok()
+            .and_then(|at| crate::pm::schedule::classify_timing(&window, at, reading));
+        (reading, timing.map(str::to_string))
+    } else {
+        (None, None)
+    };
+
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO pm_executions
-            (pm_occurrence_id, work_order_id, execution_result, executed_at, completed_by_id, notes, actor_id, actual_duration_hours, actual_labor_hours, created_at)
-         VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)",
+            (pm_occurrence_id, work_order_id, execution_result, executed_at, completed_by_id, notes, actor_id,
+             actual_duration_hours, actual_labor_hours, created_at, meter_reading, timing_status)
+         VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)",
         [
             occurrence.id.into(),
             work_order_id.into(),
             execution_result.clone().into(),
-            now_rfc3339().into(),
+            executed_at.clone().into(),
             input.note.clone().into(),
             actor_id.into(),
             actual_duration_hours.into(),
             actual_labor_hours.into(),
-            now_rfc3339().into(),
+            executed_at.clone().into(),
+            meter_reading.into(),
+            timing_status.clone().into(),
         ],
     ))
     .await?;
@@ -2756,7 +2289,8 @@ pub async fn execute_pm_occurrence(
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT pe.id, pe.pm_occurrence_id, pe.work_order_id, wo.code AS work_order_code, pe.execution_result,
-                    pe.executed_at, pe.notes, pe.actor_id, pe.actual_duration_hours, pe.actual_labor_hours, pe.created_at
+                    pe.executed_at, pe.notes, pe.actor_id, pe.actual_duration_hours, pe.actual_labor_hours, pe.created_at,
+                pe.meter_reading, pe.timing_status
              FROM pm_executions pe
              LEFT JOIN work_orders wo ON wo.id = pe.work_order_id
              WHERE pe.rowid = last_insert_rowid()",

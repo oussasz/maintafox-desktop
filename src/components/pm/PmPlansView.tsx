@@ -43,10 +43,11 @@ export function PmPlansView({ plans, loading, onOpenPlan }: PmPlansViewProps) {
             <PmAssetCell code={row.original.asset_code} name={row.original.asset_name} />
           ) : (
             <span className="text-xs text-text-muted">
-              {t("labels.otherAssetScope", {
+              {t("labels.scopeOf", {
                 scope: t(`scope.${row.original.asset_scope_type}`, {
                   defaultValue: row.original.asset_scope_type,
                 }),
+                value: row.original.asset_scope_label ?? t("labels.none"),
               })}
             </span>
           ),
