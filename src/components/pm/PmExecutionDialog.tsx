@@ -1,6 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
+import { ReferenceCombobox } from "@/components/reference/ReferenceCombobox";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -11,7 +13,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -21,13 +22,17 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import type { ExecutePmOccurrenceInput, PmOccurrence } from "@shared/ipc-types";
+import type { PmOccurrenceRow } from "@/services/pm-service";
+import type { ExecutePmOccurrenceInput } from "@shared/ipc-types";
 
-import { PM_EXECUTION_RESULTS, PM_REASON_CODES } from "./pm-labels";
+import { formatPmAsset } from "./pm-cells";
+import { pmUnreportedErrorText } from "./pm-errors";
+import { PM_EXECUTION_RESULTS, PM_FINDING_SEVERITIES, PM_REASON_CODES } from "./pm-labels";
+import { allowedExecutionResults } from "./pm-model";
 
 interface PmExecutionDialogProps {
   open: boolean;
-  occurrence: PmOccurrence | null;
+  occurrence: PmOccurrenceRow | null;
   saving?: boolean;
   onClose: () => void;
   onSubmit: (input: ExecutePmOccurrenceInput) => Promise<void>;
@@ -41,11 +46,15 @@ export function PmExecutionDialog({
   onSubmit,
 }: PmExecutionDialogProps) {
   const { t } = useTranslation("pm");
-  const [result, setResult] = useState("completed_no_findings");
+  const results = useMemo(
+    () => (occurrence ? allowedExecutionResults(occurrence.status, PM_EXECUTION_RESULTS) : []),
+    [occurrence],
+  );
+  const [result, setResult] = useState("");
   const [reasonCode, setReasonCode] = useState("");
   const [note, setNote] = useState("");
-  const [findingType, setFindingType] = useState("");
-  const [severity, setSeverity] = useState("medium");
+  const [findingType, setFindingType] = useState<string | null>(null);
+  const [severity, setSeverity] = useState("");
   const [findingDescription, setFindingDescription] = useState("");
   const [followUpDi, setFollowUpDi] = useState(false);
   const [followUpWo, setFollowUpWo] = useState(false);
@@ -53,29 +62,29 @@ export function PmExecutionDialog({
 
   useEffect(() => {
     if (!open) return;
-    setResult("completed_no_findings");
+    setResult(results[0] ?? "");
     setReasonCode("");
     setNote("");
-    setFindingType("");
-    setSeverity("medium");
+    setFindingType(null);
+    setSeverity("");
     setFindingDescription("");
     setFollowUpDi(false);
     setFollowUpWo(false);
     setError(null);
-  }, [open, occurrence?.id]);
+  }, [open, results]);
 
   const needsReason = result === "deferred" || result === "missed";
   const needsFinding = result === "completed_with_findings";
 
   async function handleSubmit() {
-    if (!occurrence) return;
+    if (!occurrence || !result) return;
     setError(null);
     if (needsReason && !reasonCode) {
-      setError(t("fields.reasonCode"));
+      setError(t("errors.reasonRequired"));
       return;
     }
-    if (needsFinding && (!findingType.trim() || !findingDescription.trim())) {
-      setError(t("fields.findingDescription"));
+    if (needsFinding && (!findingType || !findingDescription.trim())) {
+      setError(t("errors.findingRequired"));
       return;
     }
     try {
@@ -88,45 +97,54 @@ export function PmExecutionDialog({
         work_order_id: occurrence.linked_work_order_id,
         defer_reason_code: result === "deferred" ? reasonCode : null,
         miss_reason_code: result === "missed" ? reasonCode : null,
-        findings: needsFinding
-          ? [
-              {
-                finding_type: findingType.trim(),
-                severity,
-                description: findingDescription.trim(),
-                create_follow_up_di: followUpDi,
-                create_follow_up_work_order: followUpWo,
-              },
-            ]
-          : null,
+        findings:
+          needsFinding && findingType
+            ? [
+                {
+                  finding_type: findingType,
+                  severity: severity || null,
+                  description: findingDescription.trim(),
+                  create_follow_up_di: followUpDi,
+                  create_follow_up_work_order: followUpWo,
+                },
+              ]
+            : null,
       });
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(pmUnreportedErrorText(err));
     }
   }
 
+  const asset = occurrence ? formatPmAsset(occurrence.asset_code, occurrence.asset_name) : null;
+
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{t("dialogs.execution.title")}</DialogTitle>
           <DialogDescription>{t("dialogs.execution.description")}</DialogDescription>
         </DialogHeader>
         {occurrence ? (
           <div className="grid gap-3 py-2">
-            <p className="text-sm">
+            <div className="flex flex-wrap items-center gap-2 text-sm">
               <span className="font-mono">{occurrence.plan_code}</span>
-              {occurrence.linked_work_order_code ? ` · ${occurrence.linked_work_order_code}` : ""}
-            </p>
+              {occurrence.plan_title ? <span>{occurrence.plan_title}</span> : null}
+              {asset ? <span className="text-text-muted">· {asset}</span> : null}
+              <LinkedEntityBadge
+                entity="work_order"
+                code={occurrence.linked_work_order_code}
+                entityId={occurrence.linked_work_order_id}
+              />
+            </div>
             <div className="grid gap-1">
-              <Label>{t("fields.executionResult")}</Label>
+              <Label htmlFor="pm-exec-result">{t("fields.executionResult")}</Label>
               <Select value={result} onValueChange={setResult}>
-                <SelectTrigger>
+                <SelectTrigger id="pm-exec-result">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {PM_EXECUTION_RESULTS.map((r) => (
+                  {results.map((r) => (
                     <SelectItem key={r} value={r}>
                       {t(`executionResult.${r}`)}
                     </SelectItem>
@@ -136,10 +154,10 @@ export function PmExecutionDialog({
             </div>
             {needsReason ? (
               <div className="grid gap-1">
-                <Label>{t("fields.reasonCode")}</Label>
+                <Label htmlFor="pm-exec-reason">{t("fields.reasonCode")}</Label>
                 <Select value={reasonCode} onValueChange={setReasonCode}>
-                  <SelectTrigger>
-                    <SelectValue />
+                  <SelectTrigger id="pm-exec-reason">
+                    <SelectValue placeholder={t("errors.reasonRequired")} />
                   </SelectTrigger>
                   <SelectContent>
                     {PM_REASON_CODES.map((r) => (
@@ -152,46 +170,59 @@ export function PmExecutionDialog({
               </div>
             ) : null}
             <div className="grid gap-1">
-              <Label>{t("fields.note")}</Label>
-              <Textarea rows={3} value={note} onChange={(e) => setNote(e.target.value)} />
+              <Label htmlFor="pm-exec-note">{t("fields.note")}</Label>
+              <Textarea
+                id="pm-exec-note"
+                rows={3}
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+              />
             </div>
             {needsFinding ? (
               <>
                 <div className="grid gap-1">
-                  <Label>{t("fields.findingType")}</Label>
-                  <Input value={findingType} onChange={(e) => setFindingType(e.target.value)} />
+                  <ReferenceCombobox
+                    referenceType="di.symptom"
+                    label={t("fields.findingType")}
+                    value={findingType}
+                    onChange={setFindingType}
+                    valueMode="code"
+                    allowCreate={false}
+                  />
+                  <p className="text-xs text-text-muted">{t("hints.findingTypeFromCatalog")}</p>
                 </div>
                 <div className="grid gap-1">
-                  <Label>{t("fields.severity")}</Label>
+                  <Label htmlFor="pm-exec-severity">{t("fields.severity")}</Label>
                   <Select value={severity} onValueChange={setSeverity}>
-                    <SelectTrigger>
-                      <SelectValue />
+                    <SelectTrigger id="pm-exec-severity">
+                      <SelectValue placeholder={t("labels.none")} />
                     </SelectTrigger>
                     <SelectContent>
-                      {["low", "medium", "high", "critical"].map((s) => (
+                      {PM_FINDING_SEVERITIES.map((s) => (
                         <SelectItem key={s} value={s}>
-                          {s}
+                          {t(`severity.${s}`)}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="grid gap-1">
-                  <Label>{t("fields.findingDescription")}</Label>
+                  <Label htmlFor="pm-exec-finding">{t("fields.findingDescription")}</Label>
                   <Textarea
+                    id="pm-exec-finding"
                     rows={3}
                     value={findingDescription}
                     onChange={(e) => setFindingDescription(e.target.value)}
                   />
                 </div>
-                <label className="flex items-center gap-2 text-sm">
+                <label className="flex min-h-9 items-center gap-2 text-sm">
                   <Checkbox
                     checked={followUpDi}
                     onCheckedChange={(v) => setFollowUpDi(v === true)}
                   />
                   {t("actions.createFollowUpDi")}
                 </label>
-                <label className="flex items-center gap-2 text-sm">
+                <label className="flex min-h-9 items-center gap-2 text-sm">
                   <Checkbox
                     checked={followUpWo}
                     onCheckedChange={(v) => setFollowUpWo(v === true)}
@@ -200,14 +231,18 @@ export function PmExecutionDialog({
                 </label>
               </>
             ) : null}
-            {error ? <p className="text-sm text-destructive">{error}</p> : null}
+            {error ? (
+              <p role="alert" className="text-sm text-tone-danger-fg">
+                {error}
+              </p>
+            ) : null}
           </div>
         ) : null}
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
             {t("actions.cancel")}
           </Button>
-          <Button disabled={saving} onClick={() => void handleSubmit()}>
+          <Button disabled={saving || !result} onClick={() => void handleSubmit()}>
             {t("actions.logExecution")}
           </Button>
         </DialogFooter>

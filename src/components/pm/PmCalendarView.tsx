@@ -8,10 +8,11 @@ import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { calendarOccurrenceTone, PM_CALENDAR_TONE_BORDER } from "@/components/pm/pm-model";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import type { PmOccurrenceRow as PmOccurrence } from "@/services/pm-service";
 import { intlLocaleForLanguage } from "@/utils/format-date";
-import type { PmOccurrence } from "@shared/ipc-types";
+
+import { formatPmAsset, PmOccurrenceStatus } from "./pm-cells";
 
 type CalendarMode = "month" | "week" | "day";
 
@@ -51,16 +52,29 @@ function dueAtLocalKey(dueAt: string): string | null {
   return dateKey(d);
 }
 
+/** Chips shown in a month cell before the "+N more" link to the day list. */
 const MAX_CHIPS = 3;
-const DAY_NAMES_FR = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
-const DAY_NAMES_EN = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+/** Monday-first short weekday names in the app language. */
+function weekdayNames(locale: string): string[] {
+  // 2024-01-01 is a Monday.
+  return Array.from({ length: 7 }, (_, i) =>
+    new Date(2024, 0, 1 + i).toLocaleDateString(locale, { weekday: "short" }),
+  );
+}
 
 function chipBorderClass(occ: PmOccurrence): string {
-  return PM_CALENDAR_TONE_BORDER[calendarOccurrenceTone(occ)] ?? "border-l-gray-300";
+  return PM_CALENDAR_TONE_BORDER[calendarOccurrenceTone(occ)];
 }
 
 function chipLabel(occ: PmOccurrence): string {
-  return occ.plan_code?.trim() || occ.plan_title?.trim() || "PM";
+  return occ.plan_code?.trim() || occ.plan_title?.trim() || "";
+}
+
+function chipTitle(occ: PmOccurrence): string {
+  return [occ.plan_title, formatPmAsset(occ.asset_code, occ.asset_name)]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 export function PmCalendarView({ occurrences, loading, onChipClick }: PmCalendarViewProps) {
@@ -69,7 +83,12 @@ export function PmCalendarView({ occurrences, loading, onChipClick }: PmCalendar
   const [mode, setMode] = useState<CalendarMode>("month");
   const [cursor, setCursor] = useState(() => new Date());
 
-  const dayNames = i18n.language === "fr" ? DAY_NAMES_FR : DAY_NAMES_EN;
+  const dayNames = useMemo(() => weekdayNames(dateLocale), [dateLocale]);
+
+  const openDay = useCallback((day: Date) => {
+    setCursor(day);
+    setMode("day");
+  }, []);
 
   const byDate = useMemo(() => {
     const map = new Map<string, PmOccurrence[]>();
@@ -134,14 +153,28 @@ export function PmCalendarView({ occurrences, loading, onChipClick }: PmCalendar
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b border-surface-border px-4 py-2">
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" className="h-7 px-2" onClick={goPrev}>
-            <ChevronLeft className="h-3.5 w-3.5" />
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-9 w-9 p-0"
+            onClick={goPrev}
+            aria-label={t("calendar.previous")}
+            title={t("calendar.previous")}
+          >
+            <ChevronLeft className="h-3.5 w-3.5" aria-hidden />
           </Button>
-          <Button variant="outline" size="sm" className="h-7 px-3 text-xs" onClick={goToday}>
+          <Button variant="outline" size="sm" className="h-9 px-3 text-xs" onClick={goToday}>
             {t("calendar.today")}
           </Button>
-          <Button variant="outline" size="sm" className="h-7 px-2" onClick={goNext}>
-            <ChevronRight className="h-3.5 w-3.5" />
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-9 w-9 p-0"
+            onClick={goNext}
+            aria-label={t("calendar.next")}
+            title={t("calendar.next")}
+          >
+            <ChevronRight className="h-3.5 w-3.5" aria-hidden />
           </Button>
           <span className="text-sm font-semibold capitalize text-text-primary">
             {mode === "day"
@@ -158,13 +191,14 @@ export function PmCalendarView({ occurrences, loading, onChipClick }: PmCalendar
           ) : null}
         </div>
 
-        <div className="flex items-center gap-0.5 rounded-md border p-0.5">
+        <div className="flex items-center gap-0.5 rounded-md border p-0.5" role="group">
           {(["month", "week", "day"] as CalendarMode[]).map((m) => (
             <Button
               key={m}
               variant={mode === m ? "default" : "ghost"}
               size="sm"
-              className="h-6 px-2 text-xs"
+              className="h-8 px-2 text-xs"
+              aria-pressed={mode === m}
               onClick={() => setMode(m)}
             >
               {t(`calendar.mode.${m}`)}
@@ -174,15 +208,8 @@ export function PmCalendarView({ occurrences, loading, onChipClick }: PmCalendar
       </div>
 
       <div className="flex flex-wrap gap-3 border-b border-surface-border px-4 py-1.5 text-[10px] text-muted-foreground">
-        {(
-          [
-            ["overdue", "border-l-red-500"],
-            ["today", "border-l-orange-500"],
-            ["pipeline", "border-l-blue-500"],
-            ["completed", "border-l-green-500"],
-          ] as const
-        ).map(([key, border]) => (
-          <span key={key} className={`border-l-2 pl-1.5 ${border}`}>
+        {(["overdue", "today", "pipeline", "completed"] as const).map((key) => (
+          <span key={key} className={`border-l-2 pl-1.5 ${PM_CALENDAR_TONE_BORDER[key]}`}>
             {t(`calendar.legend.${key}`)}
           </span>
         ))}
@@ -209,7 +236,7 @@ export function PmCalendarView({ occurrences, loading, onChipClick }: PmCalendar
                   className={`min-h-[80px] bg-surface-0 p-1 ${!isCurrentMonth ? "opacity-40" : ""}`}
                 >
                   <span
-                    className={`text-[10px] font-medium ${isToday ? "rounded-full bg-brand-primary px-1.5 py-0.5 text-white" : "text-text-muted"}`}
+                    className={`text-[10px] font-medium ${isToday ? "rounded-full bg-primary px-1.5 py-0.5 text-primary-foreground" : "text-text-muted"}`}
                   >
                     {day.getDate()}
                   </span>
@@ -220,15 +247,26 @@ export function PmCalendarView({ occurrences, loading, onChipClick }: PmCalendar
                         type="button"
                         className={`w-full cursor-pointer truncate rounded border-l-2 bg-surface-1 px-1 py-0.5 text-left text-[9px] hover:bg-surface-2 ${chipBorderClass(occ)}`}
                         onClick={() => onChipClick(occ)}
-                        title={occ.plan_title ?? chipLabel(occ)}
+                        title={chipTitle(occ)}
                       >
                         {chipLabel(occ)}
                       </button>
                     ))}
                     {items.length > MAX_CHIPS ? (
-                      <span className="text-[9px] text-text-muted">
+                      <button
+                        type="button"
+                        className="text-[10px] text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        onClick={() => openDay(day)}
+                        aria-label={t("calendar.moreAria", {
+                          count: items.length,
+                          date: day.toLocaleDateString(dateLocale, {
+                            day: "numeric",
+                            month: "long",
+                          }),
+                        })}
+                      >
                         {t("calendar.more", { count: items.length - MAX_CHIPS })}
-                      </span>
+                      </button>
                     ) : null}
                   </div>
                 </div>
@@ -248,7 +286,7 @@ export function PmCalendarView({ occurrences, loading, onChipClick }: PmCalendar
               return (
                 <div key={key} className="min-h-[200px] rounded border border-surface-border p-2">
                   <div
-                    className={`mb-2 text-xs font-medium ${isToday ? "text-brand-primary" : "text-text-muted"}`}
+                    className={`mb-2 text-xs font-medium ${isToday ? "text-primary" : "text-text-muted"}`}
                   >
                     {day.toLocaleDateString(dateLocale, { weekday: "short", day: "numeric" })}
                   </div>
@@ -259,6 +297,7 @@ export function PmCalendarView({ occurrences, loading, onChipClick }: PmCalendar
                         type="button"
                         className={`w-full cursor-pointer rounded border-l-2 bg-surface-1 px-1.5 py-1 text-left text-[10px] hover:bg-surface-2 ${chipBorderClass(occ)}`}
                         onClick={() => onChipClick(occ)}
+                        title={chipTitle(occ)}
                       >
                         <span className="font-mono">{chipLabel(occ)}</span>
                         {occ.plan_title ? (
@@ -283,6 +322,15 @@ export function PmCalendarView({ occurrences, loading, onChipClick }: PmCalendar
               <p className="py-8 text-center text-sm text-text-muted">{t("calendar.empty")}</p>
             ) : (
               <div className="space-y-2">
+                <h2 className="text-sm font-medium text-text-primary">
+                  {t("calendar.dayListTitle", {
+                    date: cursor.toLocaleDateString(dateLocale, {
+                      day: "numeric",
+                      month: "long",
+                      year: "numeric",
+                    }),
+                  })}
+                </h2>
                 {items.map((occ) => (
                   <button
                     key={occ.id}
@@ -292,11 +340,14 @@ export function PmCalendarView({ occurrences, loading, onChipClick }: PmCalendar
                   >
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-mono text-xs text-text-muted">{chipLabel(occ)}</span>
-                      <Badge variant="outline" className="border-0 bg-surface-1 text-[10px]">
-                        {t(`occurrenceStatus.${occ.status}`, { defaultValue: occ.status })}
-                      </Badge>
+                      <PmOccurrenceStatus occurrence={occ} />
                     </div>
                     {occ.plan_title ? <p className="mt-1 text-sm">{occ.plan_title}</p> : null}
+                    {formatPmAsset(occ.asset_code, occ.asset_name) ? (
+                      <p className="text-xs text-text-muted">
+                        {formatPmAsset(occ.asset_code, occ.asset_name)}
+                      </p>
+                    ) : null}
                   </button>
                 ))}
               </div>

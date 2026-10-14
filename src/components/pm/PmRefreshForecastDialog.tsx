@@ -19,7 +19,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import type { GeneratePmOccurrencesInput, PmPlan } from "@shared/ipc-types";
+import type { PmPlanRow as PmPlan } from "@/services/pm-service";
+import type { GeneratePmOccurrencesInput } from "@shared/ipc-types";
+
+import { pmUnreportedErrorText } from "./pm-errors";
+
+/** Forecast horizon offered by default and its bounds (backend clamps to 1–365). */
+const DEFAULT_HORIZON_DAYS = 30;
+const MAX_HORIZON_DAYS = 365;
 
 interface PmRefreshForecastDialogProps {
   open: boolean;
@@ -47,7 +54,7 @@ export function PmRefreshForecastDialog({
 
   useEffect(() => {
     if (!open) return;
-    setHorizonDays(30);
+    setHorizonDays(DEFAULT_HORIZON_DAYS);
     setScope(activePlanId != null ? "selected" : "all");
     setEventCodes("");
     setConditionCodes("");
@@ -83,7 +90,7 @@ export function PmRefreshForecastDialog({
       });
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(pmUnreportedErrorText(err));
     }
   }
 
@@ -96,19 +103,22 @@ export function PmRefreshForecastDialog({
         </DialogHeader>
         <div className="grid gap-3 py-2">
           <div className="grid gap-1">
-            <Label>{t("fields.horizonDays")}</Label>
+            <Label htmlFor="pm-forecast-horizon">{t("fields.horizonDays")}</Label>
             <Input
+              id="pm-forecast-horizon"
               type="number"
               min={1}
-              max={365}
+              max={MAX_HORIZON_DAYS}
               value={horizonDays}
-              onChange={(e) => setHorizonDays(Number(e.target.value) || 30)}
+              onChange={(e) =>
+                setHorizonDays(Math.min(MAX_HORIZON_DAYS, Math.max(1, Number(e.target.value) || 1)))
+              }
             />
           </div>
           <div className="grid gap-1">
-            <Label>{t("fields.forecastScope")}</Label>
+            <Label htmlFor="pm-forecast-scope">{t("fields.forecastScope")}</Label>
             <Select value={scope} onValueChange={(v) => setScope(v as "all" | "selected")}>
-              <SelectTrigger>
+              <SelectTrigger id="pm-forecast-scope">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -118,25 +128,33 @@ export function PmRefreshForecastDialog({
                 </SelectItem>
               </SelectContent>
             </Select>
-            <p className="text-xs text-muted-foreground">{eligible.length} eligible plan(s)</p>
+            <p className="text-xs text-text-muted">
+              {t("dialogs.refreshForecast.eligiblePlans", { count: eligible.length })}
+            </p>
           </div>
           <div className="grid gap-1">
-            <Label>{t("fields.eventCodesOptional")}</Label>
+            <Label htmlFor="pm-forecast-events">{t("fields.eventCodesOptional")}</Label>
             <Input
+              id="pm-forecast-events"
               value={eventCodes}
               onChange={(e) => setEventCodes(e.target.value)}
-              placeholder="CODE_A, CODE_B"
+              placeholder={t("fields.codesPlaceholder")}
             />
           </div>
           <div className="grid gap-1">
-            <Label>{t("fields.conditionCodesOptional")}</Label>
+            <Label htmlFor="pm-forecast-conditions">{t("fields.conditionCodesOptional")}</Label>
             <Input
+              id="pm-forecast-conditions"
               value={conditionCodes}
               onChange={(e) => setConditionCodes(e.target.value)}
-              placeholder="CODE_A, CODE_B"
+              placeholder={t("fields.codesPlaceholder")}
             />
           </div>
-          {error ? <p className="text-sm text-destructive">{error}</p> : null}
+          {error ? (
+            <p role="alert" className="text-sm text-tone-danger-fg">
+              {error}
+            </p>
+          ) : null}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>

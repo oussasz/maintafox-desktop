@@ -1,6 +1,20 @@
+/**
+ * pm-store — preventive-maintenance workspace (plans, due queue, calendar, plan detail).
+ *
+ * Error contract (design system §4):
+ *  - `error`: the workspace lists could not be loaded or refreshed → the page shows `ErrorState`
+ *    with a retry in place of the content.
+ *  - `detailError`: the open plan's detail could not be loaded → shown inside the detail dialog.
+ *  - A failed mutation (save, transition, delete…) is NOT stored: the global IPC toast already
+ *    reports it, and the action rejects so the calling dialog stays open for a retry.
+ *  - When a mutation succeeded but the refresh after it failed, the mutation still resolves
+ *    (retrying it would duplicate the change); the refresh failure lands in `error`/`detailError`.
+ */
 import { create } from "zustand";
 
 import {
+  type PmOccurrenceRow,
+  type PmPlanRow,
   createPmPlan,
   createPmPlanVersion,
   deletePmPlan,
@@ -14,8 +28,8 @@ import {
   listPmFindings,
   listPmOccurrences,
   listPmPlanVersions,
-  listPmPlans,
   listPmPlanningReadiness,
+  listPmPlans,
   listPmRecurringFindings,
   publishPmPlanVersion,
   transitionPmOccurrence,
@@ -24,7 +38,6 @@ import {
   updatePmPlan,
   updatePmPlanVersion,
 } from "@/services/pm-service";
-import { toErrorMessage } from "@/utils/errors";
 import type {
   CreatePmPlanInput,
   CreatePmPlanVersionInput,
@@ -33,14 +46,12 @@ import type {
   GeneratePmOccurrencesInput,
   GeneratePmOccurrencesResult,
   PmDueMetrics,
+  PmExecution,
+  PmFinding,
   PmGenerationStatus,
   PmGovernanceKpiInput,
   PmGovernanceKpiReport,
-  PmExecution,
-  PmFinding,
-  PmOccurrence,
   PmOccurrenceFilter,
-  PmPlan,
   PmPlanVersion,
   PmPlanningReadinessProjection,
   PmRecurringFinding,
@@ -51,12 +62,17 @@ import type {
   UpdatePmPlanVersionInput,
 } from "@shared/ipc-types";
 
+/** Recurring findings look back over this many days (shown in the section title). */
+export const PM_RECURRING_FINDINGS_WINDOW_DAYS = 90;
+/** Upper bound of readiness candidates loaded for one plan (backend maximum is 1000). */
+const PM_READINESS_LIMIT = 200;
+
 interface PmStoreState {
-  plans: PmPlan[];
+  plans: PmPlanRow[];
   versions: PmPlanVersion[];
-  occurrences: PmOccurrence[];
-  dueOccurrences: PmOccurrence[];
-  calendarOccurrences: PmOccurrence[];
+  occurrences: PmOccurrenceRow[];
+  dueOccurrences: PmOccurrenceRow[];
+  calendarOccurrences: PmOccurrenceRow[];
   executions: PmExecution[];
   findingsByExecutionId: Record<number, PmFinding[]>;
   recurringFindings: PmRecurringFinding[];
@@ -66,8 +82,12 @@ interface PmStoreState {
   generationStatus: PmGenerationStatus | null;
   activePlanId: number | null;
   loading: boolean;
+  detailLoading: boolean;
   saving: boolean;
-  error: string | null;
+  /** Workspace lists failed to load (raw failure, rendered through `describeAppError`). */
+  error: unknown;
+  /** Open plan detail failed to load. */
+  detailError: unknown;
   loadWorkspace: () => Promise<void>;
   openPlan: (planId: number) => Promise<void>;
   closePlan: () => void;
@@ -83,15 +103,15 @@ interface PmStoreState {
   loadPlanningReadiness: (pmPlanId?: number | null) => Promise<void>;
   loadGovernanceKpis: (input?: PmGovernanceKpiInput) => Promise<void>;
   generateOccurrences: (input: GeneratePmOccurrencesInput) => Promise<GeneratePmOccurrencesResult>;
-  transitionOccurrence: (input: TransitionPmOccurrenceInput) => Promise<PmOccurrence>;
+  transitionOccurrence: (input: TransitionPmOccurrenceInput) => Promise<PmOccurrenceRow>;
   executeOccurrence: (input: ExecutePmOccurrenceInput) => Promise<ExecutePmOccurrenceResult>;
-  createPlan: (input: CreatePmPlanInput) => Promise<PmPlan>;
+  createPlan: (input: CreatePmPlanInput) => Promise<PmPlanRow>;
   updatePlan: (
     planId: number,
     expectedRowVersion: number,
     input: UpdatePmPlanInput,
-  ) => Promise<PmPlan>;
-  transitionPlanLifecycle: (input: TransitionPmPlanLifecycleInput) => Promise<PmPlan>;
+  ) => Promise<PmPlanRow>;
+  transitionPlanLifecycle: (input: TransitionPmPlanLifecycleInput) => Promise<PmPlanRow>;
   createVersion: (pmPlanId: number, input: CreatePmPlanVersionInput) => Promise<PmPlanVersion>;
   updateVersion: (
     versionId: number,
@@ -103,10 +123,10 @@ interface PmStoreState {
   deleteVersion: (versionId: number, expectedRowVersion: number) => Promise<void>;
 }
 
-async function refreshActivePlanDetail(get: () => PmStoreState, planId: number | null) {
-  if (planId == null) {
-    return;
-  }
+type Get = () => PmStoreState;
+
+/** Loads everything the plan detail dialog shows (throws on the first failure). */
+async function loadPlanDetail(get: Get, planId: number): Promise<void> {
   const versions = await listPmPlanVersions(planId);
   usePmStore.setState({ versions });
   await get().loadOccurrences({ pm_plan_id: planId, include_completed: true });
@@ -114,6 +134,41 @@ async function refreshActivePlanDetail(get: () => PmStoreState, planId: number |
   await get().loadRecurringFindings(planId);
   await get().loadPlanningReadiness(planId);
   await get().loadGovernanceKpis({ pm_plan_id: planId });
+}
+
+/** Refreshes the due queue, calendar and due KPIs (throws on the first failure). */
+async function loadOperationalLists(get: Get): Promise<void> {
+  await get().loadDueOccurrences();
+  await get().loadCalendarOccurrences();
+  await get().loadDueMetrics();
+}
+
+/** Refresh after a successful mutation: a failure is recorded, never thrown (see header). */
+async function refreshAfterMutation(
+  step: () => Promise<void>,
+  target: "error" | "detailError",
+): Promise<void> {
+  try {
+    await step();
+  } catch (err) {
+    usePmStore.setState(target === "error" ? { error: err } : { detailError: err });
+  }
+}
+
+async function refreshPlanAfterMutation(get: Get, planId: number | null): Promise<void> {
+  if (planId == null) return;
+  usePmStore.setState({ detailError: null });
+  await refreshAfterMutation(() => loadPlanDetail(get, planId), "detailError");
+}
+
+/** Mutation wrapper: `saving` while in flight; failures propagate to the caller. */
+async function withSaving<T>(run: () => Promise<T>): Promise<T> {
+  usePmStore.setState({ saving: true });
+  try {
+    return await run();
+  } finally {
+    usePmStore.setState({ saving: false });
+  }
 }
 
 export const usePmStore = create<PmStoreState>()((set, get) => ({
@@ -131,26 +186,26 @@ export const usePmStore = create<PmStoreState>()((set, get) => ({
   generationStatus: null,
   activePlanId: null,
   loading: false,
+  detailLoading: false,
   saving: false,
   error: null,
+  detailError: null,
 
   loadWorkspace: async () => {
     set({ loading: true, error: null });
     try {
       const plans = await listPmPlans({});
       set({ plans });
-      await get().loadDueOccurrences();
-      await get().loadCalendarOccurrences();
-      await get().loadDueMetrics();
+      await loadOperationalLists(get);
       await get().loadGenerationStatus();
-      const activePlanId = get().activePlanId;
-      if (activePlanId != null && plans.some((p) => p.id === activePlanId)) {
-        await refreshActivePlanDetail(get, activePlanId);
-      }
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: err });
     } finally {
       set({ loading: false });
+    }
+    const activePlanId = get().activePlanId;
+    if (activePlanId != null && get().plans.some((p) => p.id === activePlanId)) {
+      await refreshPlanAfterMutation(get, activePlanId);
     }
   },
 
@@ -158,13 +213,21 @@ export const usePmStore = create<PmStoreState>()((set, get) => ({
     set({
       activePlanId: planId,
       versions: [],
+      occurrences: [],
+      executions: [],
+      recurringFindings: [],
+      planningReadiness: null,
+      governanceKpis: null,
       findingsByExecutionId: {},
-      error: null,
+      detailError: null,
+      detailLoading: true,
     });
     try {
-      await refreshActivePlanDetail(get, planId);
+      await loadPlanDetail(get, planId);
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ detailError: err });
+    } finally {
+      set({ detailLoading: false });
     }
   },
 
@@ -178,82 +241,48 @@ export const usePmStore = create<PmStoreState>()((set, get) => ({
       recurringFindings: [],
       planningReadiness: null,
       governanceKpis: null,
+      detailError: null,
     });
   },
 
   loadDueOccurrences: async () => {
-    try {
-      const dueOccurrences = await listPmOccurrences({
-        include_completed: false,
-      });
-      set({ dueOccurrences });
-    } catch (err) {
-      set({ error: toErrorMessage(err) });
-    }
+    const dueOccurrences = await listPmOccurrences({ include_completed: false });
+    set({ dueOccurrences });
   },
 
   loadCalendarOccurrences: async () => {
-    try {
-      const calendarOccurrences = await listPmOccurrences({
-        include_completed: true,
-      });
-      set({ calendarOccurrences });
-    } catch (err) {
-      set({ error: toErrorMessage(err) });
-    }
+    const calendarOccurrences = await listPmOccurrences({ include_completed: true });
+    set({ calendarOccurrences });
   },
 
   loadOccurrences: async (filter = {}) => {
-    try {
-      const occurrences = await listPmOccurrences(filter);
-      set({ occurrences });
-    } catch (err) {
-      set({ error: toErrorMessage(err) });
-    }
+    const occurrences = await listPmOccurrences(filter);
+    set({ occurrences });
   },
 
   loadDueMetrics: async () => {
-    try {
-      const metrics = await getPmDueMetrics();
-      set({ metrics });
-    } catch (err) {
-      set({ error: toErrorMessage(err) });
-    }
+    const metrics = await getPmDueMetrics();
+    set({ metrics });
   },
 
   loadGenerationStatus: async () => {
-    try {
-      const generationStatus = await getPmGenerationStatus();
-      set({ generationStatus });
-    } catch (err) {
-      set({ error: toErrorMessage(err) });
-    }
+    const generationStatus = await getPmGenerationStatus();
+    set({ generationStatus });
   },
 
-  updateGenerationSettings: async (input) => {
-    set({ saving: true, error: null });
-    try {
+  updateGenerationSettings: (input) =>
+    withSaving(async () => {
       const generationStatus = await updatePmGenerationSettings(input);
       set({ generationStatus });
       return generationStatus;
-    } catch (err) {
-      set({ error: toErrorMessage(err) });
-      throw err;
-    } finally {
-      set({ saving: false });
-    }
-  },
+    }),
 
   loadExecutions: async (pmPlanId, occurrenceId) => {
-    try {
-      const executions = await listPmExecutions({
-        pm_plan_id: pmPlanId ?? null,
-        occurrence_id: occurrenceId ?? null,
-      });
-      set({ executions });
-    } catch (err) {
-      set({ error: toErrorMessage(err) });
-    }
+    const executions = await listPmExecutions({
+      pm_plan_id: pmPlanId ?? null,
+      occurrence_id: occurrenceId ?? null,
+    });
+    set({ executions });
   },
 
   loadFindings: async (executionId) => {
@@ -266,177 +295,100 @@ export const usePmStore = create<PmStoreState>()((set, get) => ({
         },
       }));
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ detailError: err });
     }
   },
 
   loadRecurringFindings: async (pmPlanId) => {
-    try {
-      const recurringFindings = await listPmRecurringFindings({
-        pm_plan_id: pmPlanId ?? null,
-        days_window: 90,
-      });
-      set({ recurringFindings });
-    } catch (err) {
-      set({ error: toErrorMessage(err) });
-    }
+    const recurringFindings = await listPmRecurringFindings({
+      pm_plan_id: pmPlanId ?? null,
+      days_window: PM_RECURRING_FINDINGS_WINDOW_DAYS,
+    });
+    set({ recurringFindings });
   },
 
   loadPlanningReadiness: async (pmPlanId) => {
-    try {
-      const planningReadiness = await listPmPlanningReadiness({
-        pm_plan_id: pmPlanId ?? null,
-        limit: 200,
-      });
-      set({ planningReadiness });
-    } catch (err) {
-      set({ error: toErrorMessage(err) });
-    }
+    const planningReadiness = await listPmPlanningReadiness({
+      pm_plan_id: pmPlanId ?? null,
+      limit: PM_READINESS_LIMIT,
+    });
+    set({ planningReadiness });
   },
 
   loadGovernanceKpis: async (input = {}) => {
-    try {
-      const governanceKpis = await getPmGovernanceKpiReport(input);
-      set({ governanceKpis });
-    } catch (err) {
-      set({ error: toErrorMessage(err) });
-    }
+    const governanceKpis = await getPmGovernanceKpiReport(input);
+    set({ governanceKpis });
   },
 
-  generateOccurrences: async (input) => {
-    set({ saving: true, error: null });
-    try {
+  generateOccurrences: (input) =>
+    withSaving(async () => {
       const result = await generatePmOccurrences(input);
-      await get().loadDueOccurrences();
-      await get().loadCalendarOccurrences();
-      await get().loadDueMetrics();
-      await get().loadGenerationStatus();
-      const planId = get().activePlanId;
-      if (planId != null) {
-        await refreshActivePlanDetail(get, planId);
-      }
+      await refreshAfterMutation(async () => {
+        await loadOperationalLists(get);
+        await get().loadGenerationStatus();
+      }, "error");
+      await refreshPlanAfterMutation(get, get().activePlanId);
       return result;
-    } catch (err) {
-      set({ error: toErrorMessage(err) });
-      throw err;
-    } finally {
-      set({ saving: false });
-    }
-  },
+    }),
 
-  transitionOccurrence: async (input) => {
-    set({ saving: true, error: null });
-    try {
+  transitionOccurrence: (input) =>
+    withSaving(async () => {
       const occurrence = await transitionPmOccurrence(input);
-      await get().loadDueOccurrences();
-      await get().loadCalendarOccurrences();
-      await get().loadDueMetrics();
-      const planId = get().activePlanId ?? occurrence.pm_plan_id;
-      await refreshActivePlanDetail(get, planId);
+      await refreshAfterMutation(() => loadOperationalLists(get), "error");
+      await refreshPlanAfterMutation(get, get().activePlanId);
       return occurrence;
-    } catch (err) {
-      set({ error: toErrorMessage(err) });
-      throw err;
-    } finally {
-      set({ saving: false });
-    }
-  },
+    }),
 
-  executeOccurrence: async (input) => {
-    set({ saving: true, error: null });
-    try {
+  executeOccurrence: (input) =>
+    withSaving(async () => {
       const result = await executePmOccurrence(input);
-      await get().loadDueOccurrences();
-      await get().loadCalendarOccurrences();
-      await get().loadDueMetrics();
-      const planId = get().activePlanId ?? result.occurrence.pm_plan_id;
-      await refreshActivePlanDetail(get, planId);
-      await get().loadFindings(result.execution.id);
+      await refreshAfterMutation(() => loadOperationalLists(get), "error");
+      const planId = get().activePlanId;
+      await refreshPlanAfterMutation(get, planId);
+      if (planId != null) await get().loadFindings(result.execution.id);
       return result;
-    } catch (err) {
-      set({ error: toErrorMessage(err) });
-      throw err;
-    } finally {
-      set({ saving: false });
-    }
-  },
+    }),
 
-  createPlan: async (input) => {
-    set({ saving: true, error: null });
-    try {
+  createPlan: (input) =>
+    withSaving(async () => {
       const plan = await createPmPlan(input);
       await get().loadWorkspace();
       await get().openPlan(plan.id);
       return plan;
-    } catch (err) {
-      set({ error: toErrorMessage(err) });
-      throw err;
-    } finally {
-      set({ saving: false });
-    }
-  },
+    }),
 
-  updatePlan: async (planId, expectedRowVersion, input) => {
-    set({ saving: true, error: null });
-    try {
+  updatePlan: (planId, expectedRowVersion, input) =>
+    withSaving(async () => {
       const plan = await updatePmPlan(planId, expectedRowVersion, input);
       await get().loadWorkspace();
       await get().openPlan(plan.id);
       return plan;
-    } catch (err) {
-      set({ error: toErrorMessage(err) });
-      throw err;
-    } finally {
-      set({ saving: false });
-    }
-  },
+    }),
 
-  transitionPlanLifecycle: async (input) => {
-    set({ saving: true, error: null });
-    try {
+  transitionPlanLifecycle: (input) =>
+    withSaving(async () => {
       const plan = await transitionPmPlanLifecycle(input);
       await get().loadWorkspace();
       await get().openPlan(plan.id);
       return plan;
-    } catch (err) {
-      set({ error: toErrorMessage(err) });
-      throw err;
-    } finally {
-      set({ saving: false });
-    }
-  },
+    }),
 
-  createVersion: async (pmPlanId, input) => {
-    set({ saving: true, error: null });
-    try {
+  createVersion: (pmPlanId, input) =>
+    withSaving(async () => {
       const version = await createPmPlanVersion(pmPlanId, input);
       await get().openPlan(pmPlanId);
       return version;
-    } catch (err) {
-      set({ error: toErrorMessage(err) });
-      throw err;
-    } finally {
-      set({ saving: false });
-    }
-  },
+    }),
 
-  updateVersion: async (versionId, expectedRowVersion, input) => {
-    set({ saving: true, error: null });
-    try {
+  updateVersion: (versionId, expectedRowVersion, input) =>
+    withSaving(async () => {
       const version = await updatePmPlanVersion(versionId, expectedRowVersion, input);
       await get().openPlan(version.pm_plan_id);
       return version;
-    } catch (err) {
-      set({ error: toErrorMessage(err) });
-      throw err;
-    } finally {
-      set({ saving: false });
-    }
-  },
+    }),
 
-  publishVersion: async (versionId, expectedRowVersion) => {
-    set({ saving: true, error: null });
-    try {
+  publishVersion: (versionId, expectedRowVersion) =>
+    withSaving(async () => {
       const version = await publishPmPlanVersion({
         version_id: versionId,
         expected_row_version: expectedRowVersion,
@@ -444,43 +396,23 @@ export const usePmStore = create<PmStoreState>()((set, get) => ({
       await get().loadWorkspace();
       await get().openPlan(version.pm_plan_id);
       return version;
-    } catch (err) {
-      set({ error: toErrorMessage(err) });
-      throw err;
-    } finally {
-      set({ saving: false });
-    }
-  },
+    }),
 
-  deletePlan: async (planId, expectedRowVersion) => {
-    set({ saving: true, error: null });
-    try {
+  deletePlan: (planId, expectedRowVersion) =>
+    withSaving(async () => {
       await deletePmPlan(planId, expectedRowVersion);
       if (get().activePlanId === planId) {
         get().closePlan();
       }
       await get().loadWorkspace();
-    } catch (err) {
-      set({ error: toErrorMessage(err) });
-      throw err;
-    } finally {
-      set({ saving: false });
-    }
-  },
+    }),
 
-  deleteVersion: async (versionId, expectedRowVersion) => {
-    set({ saving: true, error: null });
-    try {
+  deleteVersion: (versionId, expectedRowVersion) =>
+    withSaving(async () => {
       await deletePmPlanVersion(versionId, expectedRowVersion);
       const planId = get().activePlanId;
       if (planId != null) {
         await get().openPlan(planId);
       }
-    } catch (err) {
-      set({ error: toErrorMessage(err) });
-      throw err;
-    } finally {
-      set({ saving: false });
-    }
-  },
+    }),
 }));

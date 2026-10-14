@@ -19,8 +19,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import type { PmOccurrence, TransitionPmOccurrenceInput } from "@shared/ipc-types";
+import type { PmOccurrenceRow as PmOccurrence } from "@/services/pm-service";
+import type { TransitionPmOccurrenceInput } from "@shared/ipc-types";
 
+import { formatPmAsset } from "./pm-cells";
+import { pmUnreportedErrorText } from "./pm-errors";
 import { PM_REASON_CODES, allowedOccurrenceTargets } from "./pm-labels";
 
 interface PmOccurrenceTransitionDialogProps {
@@ -63,7 +66,7 @@ export function PmOccurrenceTransitionDialog({
     if (!occurrence || !nextStatus) return;
     setError(null);
     if (needsReason && !reasonCode) {
-      setError(t("fields.reasonCode"));
+      setError(t("errors.reasonRequired"));
       return;
     }
     try {
@@ -79,7 +82,7 @@ export function PmOccurrenceTransitionDialog({
       });
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(pmUnreportedErrorText(err));
     }
   }
 
@@ -94,13 +97,17 @@ export function PmOccurrenceTransitionDialog({
           <div className="grid gap-3 py-2">
             <p className="text-sm">
               <span className="font-mono">{occurrence.plan_code}</span>
+              {occurrence.plan_title ? ` ${occurrence.plan_title}` : ""}
+              {formatPmAsset(occurrence.asset_code, occurrence.asset_name)
+                ? ` · ${formatPmAsset(occurrence.asset_code, occurrence.asset_name)}`
+                : ""}
               {" · "}
               {t(`occurrenceStatus.${occurrence.status}`, { defaultValue: occurrence.status })}
             </p>
             <div className="grid gap-1">
-              <Label>{t("fields.status")}</Label>
+              <Label htmlFor="pm-transition-status">{t("fields.status")}</Label>
               <Select value={nextStatus} onValueChange={setNextStatus}>
-                <SelectTrigger>
+                <SelectTrigger id="pm-transition-status">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -111,16 +118,16 @@ export function PmOccurrenceTransitionDialog({
                   ))}
                 </SelectContent>
               </Select>
-              {generateWo ? (
+              {generateWo && occurrence.linked_work_order_id == null ? (
                 <p className="text-xs text-muted-foreground">{t("hints.readyCreatesWo")}</p>
               ) : null}
             </div>
             {needsReason ? (
               <div className="grid gap-1">
-                <Label>{t("fields.reasonCode")}</Label>
+                <Label htmlFor="pm-transition-reason">{t("fields.reasonCode")}</Label>
                 <Select value={reasonCode} onValueChange={setReasonCode}>
-                  <SelectTrigger>
-                    <SelectValue />
+                  <SelectTrigger id="pm-transition-reason">
+                    <SelectValue placeholder={t("errors.reasonRequired")} />
                   </SelectTrigger>
                   <SelectContent>
                     {PM_REASON_CODES.map((r) => (
@@ -133,10 +140,19 @@ export function PmOccurrenceTransitionDialog({
               </div>
             ) : null}
             <div className="grid gap-1">
-              <Label>{t("fields.note")}</Label>
-              <Textarea rows={3} value={note} onChange={(e) => setNote(e.target.value)} />
+              <Label htmlFor="pm-transition-note">{t("fields.note")}</Label>
+              <Textarea
+                id="pm-transition-note"
+                rows={3}
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+              />
             </div>
-            {error ? <p className="text-sm text-destructive">{error}</p> : null}
+            {error ? (
+              <p role="alert" className="text-sm text-tone-danger-fg">
+                {error}
+              </p>
+            ) : null}
           </div>
         ) : null}
         <DialogFooter>

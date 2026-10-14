@@ -24,6 +24,12 @@ pub struct PmPlan {
     pub row_version: i64,
     pub created_at: String,
     pub updated_at: String,
+    /// Equipment code (`equipment.asset_id_code`) when the plan targets one asset; read-only join.
+    #[serde(default)]
+    pub asset_code: Option<String>,
+    /// Equipment name when the plan targets one asset; read-only join.
+    #[serde(default)]
+    pub asset_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -151,6 +157,12 @@ pub struct PmOccurrence {
     pub plan_code: Option<String>,
     pub plan_title: Option<String>,
     pub strategy_type: Option<String>,
+    /// Equipment code of the plan's target asset (read-only join, never stored on the occurrence).
+    #[serde(default)]
+    pub asset_code: Option<String>,
+    /// Equipment name of the plan's target asset (read-only join).
+    #[serde(default)]
+    pub asset_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

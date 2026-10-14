@@ -24,13 +24,11 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { listActiveTeams } from "@/services/personnel-service";
-import type {
-  AssetSearchResult,
-  CreatePmPlanInput,
-  PmPlan,
-  UpdatePmPlanInput,
-} from "@shared/ipc-types";
+import type { PmPlanRow as PmPlan } from "@/services/pm-service";
+import type { AssetSearchResult, CreatePmPlanInput, UpdatePmPlanInput } from "@shared/ipc-types";
 
+import { formatPmAsset } from "./pm-cells";
+import { pmUnreportedErrorText } from "./pm-errors";
 import { PM_SCOPE_TYPES, PM_STRATEGY_TYPES } from "./pm-labels";
 
 interface PmPlanFormDialogProps {
@@ -71,7 +69,10 @@ export function PmPlanFormDialog({
     if (!open) return;
     void listActiveTeams()
       .then((rows) => setTeams(rows.map((r) => ({ id: r.id, code: r.code, name: r.name }))))
-      .catch(() => setTeams([]));
+      .catch(() => {
+        // The global IPC toast reports the failure; the crew list stays empty.
+        setTeams([]);
+      });
   }, [open]);
 
   useEffect(() => {
@@ -148,7 +149,7 @@ export function PmPlanFormDialog({
       }
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(pmUnreportedErrorText(err));
     }
   }
 
@@ -168,17 +169,18 @@ export function PmPlanFormDialog({
         <div className="grid gap-3 py-2">
           {mode === "create" ? (
             <div className="grid gap-1">
-              <Label>{t("fields.code")}</Label>
-              <Input value={code} onChange={(e) => setCode(e.target.value)} />
+              <Label htmlFor="pm-plan-code">{t("fields.code")}</Label>
+              <Input id="pm-plan-code" value={code} onChange={(e) => setCode(e.target.value)} />
             </div>
           ) : null}
           <div className="grid gap-1">
-            <Label>{t("fields.title")}</Label>
-            <Input value={title} onChange={(e) => setTitle(e.target.value)} />
+            <Label htmlFor="pm-plan-title">{t("fields.title")}</Label>
+            <Input id="pm-plan-title" value={title} onChange={(e) => setTitle(e.target.value)} />
           </div>
           <div className="grid gap-1">
-            <Label>{t("fields.description")}</Label>
+            <Label htmlFor="pm-plan-description">{t("fields.description")}</Label>
             <Textarea
+              id="pm-plan-description"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={3}
@@ -219,8 +221,13 @@ export function PmPlanFormDialog({
               <Label>{t("fields.asset")}</Label>
               <AssetPicker value={asset} onChange={setAsset} />
               {mode === "edit" && plan?.asset_scope_id != null && !asset ? (
-                <p className="text-xs text-muted-foreground">
-                  {t("labels.none")} — select to change bound asset
+                <p className="text-xs text-text-muted">
+                  {formatPmAsset(plan.asset_code, plan.asset_name)
+                    ? `${t("fields.currentAsset", {
+                        asset: formatPmAsset(plan.asset_code, plan.asset_name),
+                      })} — `
+                    : ""}
+                  {t("fields.currentAssetHint")}
                 </p>
               ) : null}
             </div>
@@ -271,7 +278,11 @@ export function PmPlanFormDialog({
             <Checkbox checked={isActive} onCheckedChange={(v) => setIsActive(v === true)} />
             {t("fields.isActive")}
           </label>
-          {error ? <p className="text-sm text-destructive">{error}</p> : null}
+          {error ? (
+            <p role="alert" className="text-sm text-tone-danger-fg">
+              {error}
+            </p>
+          ) : null}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>

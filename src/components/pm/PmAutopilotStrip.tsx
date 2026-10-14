@@ -3,7 +3,6 @@ import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,13 +14,20 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { StatusChip } from "@/components/ui/status-chip";
 import { Switch } from "@/components/ui/switch";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePmStore } from "@/stores/pm-store";
 import { P } from "@shared/rbac/permissions.generated";
 
+import { pmUnreportedErrorText } from "./pm-errors";
+
+/** Six-field cron (second minute hour day month weekday) of the two schedule presets. */
 const CRON_DAILY_MIDNIGHT = "0 0 0 * * *";
 const CRON_DAILY_06 = "0 0 6 * * *";
+/** Starting horizon before the control row is read (the form opens from the stored value). */
+const DEFAULT_HORIZON_DAYS = 30;
+const MAX_HORIZON_DAYS = 365;
 
 function cronPreset(cron: string): "midnight" | "morning" | "custom" {
   if (cron.trim() === CRON_DAILY_MIDNIGHT) return "midnight";
@@ -41,7 +47,8 @@ export function PmAutopilotStrip() {
   const [enabled, setEnabled] = useState(true);
   const [preset, setPreset] = useState<"midnight" | "morning" | "custom">("midnight");
   const [customCron, setCustomCron] = useState(CRON_DAILY_MIDNIGHT);
-  const [horizonDays, setHorizonDays] = useState(30);
+  const [horizonDays, setHorizonDays] = useState(DEFAULT_HORIZON_DAYS);
+  const [error, setError] = useState<string | null>(null);
 
   const lastRunLabel = useMemo(() => {
     if (!control?.last_run_at) return t("autopilot.neverRun");
@@ -55,6 +62,7 @@ export function PmAutopilotStrip() {
     setPreset(p);
     setCustomCron(control.cron_expr);
     setHorizonDays(control.horizon_days);
+    setError(null);
     setOpen(true);
   };
 
@@ -65,20 +73,28 @@ export function PmAutopilotStrip() {
         : preset === "morning"
           ? CRON_DAILY_06
           : customCron.trim();
-    await updateGenerationSettings({
-      enabled,
-      cron_expr,
-      horizon_days: horizonDays,
-    });
-    setOpen(false);
+    setError(null);
+    try {
+      await updateGenerationSettings({
+        enabled,
+        cron_expr,
+        horizon_days: horizonDays,
+      });
+      setOpen(false);
+    } catch (err) {
+      // Reported by the global toast when it came from the backend; the popover stays open.
+      setError(pmUnreportedErrorText(err));
+    }
   };
 
   return (
     <div className="mx-4 mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-border bg-card px-3 py-2 text-sm">
-      <Badge variant={control?.enabled ? "default" : "secondary"}>
-        {control?.enabled ? t("autopilot.autoOn") : t("autopilot.autoOff")}
-      </Badge>
-      <span className="text-muted-foreground">
+      <StatusChip
+        label={control?.enabled ? t("autopilot.autoOn") : t("autopilot.autoOff")}
+        tone={control?.enabled ? "success" : "neutral"}
+        dot
+      />
+      <span className="text-text-muted">
         {t("autopilot.lastRun")}: <span className="text-foreground">{lastRunLabel}</span>
         {control?.last_generated_count != null || control?.last_skipped_count != null ? (
           <span className="ml-2 tabular-nums">
@@ -105,12 +121,12 @@ export function PmAutopilotStrip() {
               <Switch id="pm-autopilot-enabled" checked={enabled} onCheckedChange={setEnabled} />
             </div>
             <div className="space-y-1.5">
-              <Label>{t("autopilot.schedule")}</Label>
+              <Label htmlFor="pm-autopilot-schedule">{t("autopilot.schedule")}</Label>
               <Select
                 value={preset}
                 onValueChange={(v) => setPreset(v as "midnight" | "morning" | "custom")}
               >
-                <SelectTrigger>
+                <SelectTrigger id="pm-autopilot-schedule">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -120,11 +136,14 @@ export function PmAutopilotStrip() {
                 </SelectContent>
               </Select>
               {preset === "custom" ? (
-                <Input
-                  value={customCron}
-                  onChange={(e) => setCustomCron(e.target.value)}
-                  placeholder="0 0 0 * * *"
-                />
+                <>
+                  <Input
+                    aria-label={t("autopilot.cronCustom")}
+                    value={customCron}
+                    onChange={(e) => setCustomCron(e.target.value)}
+                  />
+                  <p className="text-xs text-text-muted">{t("autopilot.cronCustomHint")}</p>
+                </>
               ) : null}
             </div>
             <div className="space-y-1.5">
@@ -133,11 +152,20 @@ export function PmAutopilotStrip() {
                 id="pm-autopilot-horizon"
                 type="number"
                 min={1}
-                max={365}
+                max={MAX_HORIZON_DAYS}
                 value={horizonDays}
-                onChange={(e) => setHorizonDays(Number(e.target.value) || 30)}
+                onChange={(e) =>
+                  setHorizonDays(
+                    Math.min(MAX_HORIZON_DAYS, Math.max(1, Number(e.target.value) || 1)),
+                  )
+                }
               />
             </div>
+            {error ? (
+              <p role="alert" className="text-sm text-tone-danger-fg">
+                {error}
+              </p>
+            ) : null}
             <Button
               size="sm"
               className="w-full"

@@ -155,3 +155,183 @@ export function toneChipMap(map: Record<string, Tone>): Record<string, string> {
     Object.entries(map).map(([code, tone]) => [code, `border ${mfTone[tone].chip}`]),
   );
 }
+
+/** Work permit (PTW / LOTO) status → tone. */
+export const PERMIT_STATUS_TONE: Record<string, Tone> = {
+  draft: "neutral",
+  pending_review: "attention",
+  approved: "info",
+  issued: "info",
+  active: "success",
+  suspended: "danger",
+  revalidation_required: "warning",
+  closed: "neutral",
+  handed_back: "neutral",
+  cancelled: "danger",
+  expired: "danger",
+};
+
+// ── Inventory & procurement ──────────────────────────────────────────────────
+
+/** Purchase requisition / purchase order / goods receipt status → tone (procurement FSM codes). */
+export const PROCUREMENT_STATUS_TONE: Record<string, Tone> = {
+  DRAFT: "neutral",
+  SUBMITTED: "attention",
+  APPROVED: "info",
+  PARTIALLY_RECEIVED: "progress",
+  RECEIVED: "success",
+  RECEIVED_CLOSED: "success",
+  CLOSED: "neutral",
+  REJECTED: "danger",
+  CANCELLED: "danger",
+};
+
+/** Purchase priority (`inventory.purchase_priority` lookup) → tone. */
+export const PURCHASE_PRIORITY_TONE: Record<string, Tone> = {
+  LOW: "neutral",
+  NORMAL: "info",
+  HIGH: "attention",
+  EMERGENCY: "danger",
+};
+
+/** Repairable (send-for-repair) order status → tone. */
+export const REPAIRABLE_STATUS_TONE: Record<string, Tone> = {
+  REQUESTED: "info",
+  RELEASED: "info",
+  SENT_FOR_REPAIR: "progress",
+  RETURNED_FROM_REPAIR: "attention",
+  CLOSED: "success",
+  SCRAPPED: "danger",
+  CANCELLED: "neutral",
+};
+
+/** Stock reservation status → tone. */
+export const RESERVATION_STATUS_TONE: Record<string, Tone> = {
+  active: "info",
+  partial: "progress",
+  consumed: "success",
+  released: "neutral",
+};
+
+/** Cycle-count session status → tone. */
+export const COUNT_SESSION_STATUS_TONE: Record<string, Tone> = {
+  draft: "neutral",
+  counting: "progress",
+  submitted: "attention",
+  approved: "info",
+  posted: "success",
+  reversed: "warning",
+  cancelled: "danger",
+};
+
+/** ERP posting state of procurement documents → tone. */
+export const POSTING_STATE_TONE: Record<string, Tone> = {
+  PENDING_POSTING: "info",
+  POSTED: "success",
+  POSTING_FAILED: "danger",
+  RECONCILED: "success",
+};
+
+/** Supplier qualification status → tone. */
+export const SUPPLIER_STATUS_TONE: Record<string, Tone> = {
+  PREFERRED: "success",
+  APPROVED: "info",
+  UNDER_EVALUATION: "attention",
+  BLOCKED: "danger",
+};
+
+// ── Preventive maintenance ───────────────────────────────────────────────────
+
+/** PM occurrence status → tone (overdue is computed separately from the due date). */
+export const PM_OCCURRENCE_STATUS_TONE: Record<string, Tone> = {
+  forecasted: "neutral",
+  generated: "info",
+  ready_for_scheduling: "info",
+  scheduled: "info",
+  in_progress: "progress",
+  completed: "success",
+  deferred: "warning",
+  missed: "danger",
+  cancelled: "neutral",
+};
+
+/** PM plan lifecycle status → tone. */
+export const PM_PLAN_LIFECYCLE_TONE: Record<string, Tone> = {
+  draft: "neutral",
+  proposed: "attention",
+  approved: "info",
+  active: "success",
+  suspended: "warning",
+  retired: "neutral",
+};
+
+/** PM plan version status → tone. */
+export const PM_VERSION_STATUS_TONE: Record<string, Tone> = {
+  draft: "neutral",
+  published: "success",
+  superseded: "neutral",
+};
+
+/** PM execution result → tone. */
+export const PM_EXECUTION_RESULT_TONE: Record<string, Tone> = {
+  completed_no_findings: "success",
+  completed_with_findings: "attention",
+  deferred: "warning",
+  missed: "danger",
+  cancelled: "neutral",
+};
+
+/** PM finding severity → tone. */
+export const PM_FINDING_SEVERITY_TONE: Record<string, Tone> = {
+  low: "neutral",
+  medium: "warning",
+  high: "attention",
+  critical: "danger",
+};
+
+/** Report run (Analytics → History) status → tone. */
+export const REPORT_RUN_STATUS_TONE: Record<string, Tone> = {
+  pending: "info",
+  running: "progress",
+  success: "success",
+  failed: "danger",
+};
+
+/** Every intervention-request workflow status (incl. terminal ones) → tone, for distributions. */
+export const DI_WORKFLOW_STATUS_TONE: Record<string, Tone> = {
+  ...DI_STATUS_TONE,
+  pending_review: "info",
+  screened: "attention",
+  approved_for_planning: "success",
+  rejected: "danger",
+  converted_to_work_order: "success",
+  closed_as_non_executable: "neutral",
+  archived: "neutral",
+};
+
+/** In-app notification delivery state → tone. */
+export const NOTIFICATION_DELIVERY_TONE: Record<string, Tone> = {
+  pending: "info",
+  delivered: "info",
+  read: "neutral",
+  acknowledged: "success",
+  escalated: "attention",
+  snoozed: "neutral",
+  expired: "neutral",
+  closed: "neutral",
+};
+
+/** Notification severity → tone. */
+export const NOTIFICATION_SEVERITY_TONE: Record<string, Tone> = {
+  info: "info",
+  warning: "warning",
+  error: "danger",
+  critical: "danger",
+};
+
+/** Archive action result (archive history) → tone. */
+export const ARCHIVE_ACTION_RESULT_TONE: Record<string, Tone> = {
+  success: "success",
+  failed: "danger",
+  blocked: "danger",
+};

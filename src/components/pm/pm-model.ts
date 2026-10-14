@@ -1,6 +1,10 @@
-import type { PmOccurrence, PmPlan } from "@shared/ipc-types";
+import type { Tone } from "@/design-system/tone";
+import type { PmOccurrenceRow as PmOccurrence, PmPlanRow as PmPlan } from "@/services/pm-service";
 
-import { PM_ACTIVE_OCCURRENCE_STATUSES } from "./pm-labels";
+import {
+  PM_ACTIVE_OCCURRENCE_STATUSES,
+  allowedOccurrenceTargets as allowedOccurrenceTargetsFor,
+} from "./pm-labels";
 
 export type PmDueWindow = "overdue" | "today" | "next7" | "all";
 
@@ -14,6 +18,11 @@ export function addUtcDays(d: Date, days: number): Date {
   return next;
 }
 
+/**
+ * Due windows, defined exactly as the backend due KPIs (`get_pm_due_metrics`) so a KPI tile and
+ * the list it opens show the same occurrences: overdue = due before now; today = due on the
+ * current UTC day; next 7 days = due between now and now + 7 days.
+ */
 export function matchesDueWindow(
   occ: PmOccurrence,
   window: PmDueWindow,
@@ -23,13 +32,11 @@ export function matchesDueWindow(
   if (!occ.due_at) return false;
   const due = new Date(occ.due_at);
   if (Number.isNaN(due.getTime())) return false;
-  const today = startOfUtcDay(now);
-  const dueDay = startOfUtcDay(due);
-  if (window === "overdue") return dueDay.getTime() < today.getTime();
-  if (window === "today") return dueDay.getTime() === today.getTime();
+  if (window === "overdue") return due.getTime() < now.getTime();
+  if (window === "today") return startOfUtcDay(due).getTime() === startOfUtcDay(now).getTime();
   // next7
-  const end = addUtcDays(today, 7);
-  return dueDay.getTime() >= today.getTime() && dueDay.getTime() <= end.getTime();
+  const end = addUtcDays(now, 7);
+  return due.getTime() >= now.getTime() && due.getTime() <= end.getTime();
 }
 
 export function filterPlans(
@@ -44,7 +51,9 @@ export function filterPlans(
     return (
       p.code.toLowerCase().includes(q) ||
       p.title.toLowerCase().includes(q) ||
-      (p.description ?? "").toLowerCase().includes(q)
+      (p.description ?? "").toLowerCase().includes(q) ||
+      (p.asset_code ?? "").toLowerCase().includes(q) ||
+      (p.asset_name ?? "").toLowerCase().includes(q)
     );
   });
 }
@@ -69,7 +78,8 @@ export function filterDueOccurrences(
     return (
       (o.plan_code ?? "").toLowerCase().includes(q) ||
       (o.plan_title ?? "").toLowerCase().includes(q) ||
-      o.due_basis.toLowerCase().includes(q) ||
+      (o.asset_code ?? "").toLowerCase().includes(q) ||
+      (o.asset_name ?? "").toLowerCase().includes(q) ||
       (o.linked_work_order_code ?? "").toLowerCase().includes(q)
     );
   });
@@ -93,7 +103,8 @@ export function filterCalendarOccurrences(
     return (
       (o.plan_code ?? "").toLowerCase().includes(q) ||
       (o.plan_title ?? "").toLowerCase().includes(q) ||
-      o.due_basis.toLowerCase().includes(q) ||
+      (o.asset_code ?? "").toLowerCase().includes(q) ||
+      (o.asset_name ?? "").toLowerCase().includes(q) ||
       (o.linked_work_order_code ?? "").toLowerCase().includes(q)
     );
   });
@@ -116,23 +127,72 @@ export function calendarOccurrenceTone(occ: PmOccurrence, now = new Date()): PmC
   return "pipeline";
 }
 
-export const PM_CALENDAR_TONE_BORDER: Record<PmCalendarTone, string> = {
-  overdue: "border-l-red-500",
-  today: "border-l-orange-500",
-  pipeline: "border-l-blue-500",
-  completed: "border-l-green-500",
-  muted: "border-l-gray-400",
+/** Calendar chip meaning → status tone (one colour vocabulary, see design-system/tone.ts). */
+export const PM_CALENDAR_TONE: Record<PmCalendarTone, Tone> = {
+  overdue: "danger",
+  today: "warning",
+  pipeline: "info",
+  completed: "success",
+  muted: "neutral",
 };
 
-export function buildTriggerJson(args: {
-  strategy: string;
+/** Left accent of a calendar chip (literal classes so Tailwind keeps them). */
+export const PM_CALENDAR_TONE_BORDER: Record<PmCalendarTone, string> = {
+  overdue: "border-l-tone-danger-fg",
+  today: "border-l-tone-warning-fg",
+  pipeline: "border-l-tone-info-fg",
+  completed: "border-l-tone-success-fg",
+  muted: "border-l-tone-neutral-fg",
+};
+
+/** An active occurrence whose due date is before today. */
+export function isOccurrenceOverdue(occ: PmOccurrence, now = new Date()): boolean {
+  return ACTIVE_SET.has(occ.status) && matchesDueWindow(occ, "overdue", now);
+}
+
+/**
+ * Execution results the backend accepts from an occurrence status (result → target status).
+ * "cancelled" is not offered here: cancelling needs a reason the execution input cannot carry,
+ * so it is done with "Change status".
+ */
+const EXECUTION_RESULT_TARGET: Record<string, string> = {
+  completed_no_findings: "completed",
+  completed_with_findings: "completed",
+  deferred: "deferred",
+  missed: "missed",
+};
+
+/**
+ * "Log execution" records how the work went; the backend completes an occurrence only from
+ * `in_progress`, so the action is offered there only (other moves use "Change status").
+ */
+export function canLogExecution(occ: Pick<PmOccurrence, "status">): boolean {
+  return occ.status === "in_progress";
+}
+
+export function allowedExecutionResults(status: string, allResults: readonly string[]): string[] {
+  const targets = new Set(allowedOccurrenceTargetsFor(status));
+  return allResults.filter((r) => {
+    const target = EXECUTION_RESULT_TARGET[r];
+    return target != null && targets.has(target);
+  });
+}
+
+export interface PmTriggerFields {
   intervalUnit: string;
   intervalValue: number;
+  /** Legacy meter mode: first active meter of this type on the asset. */
   meterSource: string;
   meterInterval: number;
+  /** Chosen asset meter (recurring every `meterInterval` units from `startReading`). */
+  assetMeterId: number | null;
+  /** Meter reading at the last service; thresholds count from it. */
+  startReading: number | null;
   eventCode: string;
   conditionCode: string;
-}): string {
+}
+
+export function buildTriggerJson(args: PmTriggerFields & { strategy: string }): string {
   switch (args.strategy) {
     case "fixed":
     case "floating":
@@ -141,6 +201,13 @@ export function buildTriggerJson(args: {
         interval_value: args.intervalValue,
       });
     case "meter":
+      if (args.assetMeterId != null) {
+        return JSON.stringify({
+          asset_meter_id: args.assetMeterId,
+          interval_value: args.meterInterval,
+          start_reading: args.startReading,
+        });
+      }
       return JSON.stringify({
         meter_source: args.meterSource,
         interval_value: args.meterInterval,
@@ -154,49 +221,63 @@ export function buildTriggerJson(args: {
   }
 }
 
-export function parseTriggerJson(
-  strategy: string,
-  json: string,
-): {
-  intervalUnit: string;
-  intervalValue: number;
-  meterSource: string;
-  meterInterval: number;
-  eventCode: string;
-  conditionCode: string;
-} {
-  const defaults = {
-    intervalUnit: "day",
-    intervalValue: 30,
-    meterSource: "operating_hours",
-    meterInterval: 250,
-    eventCode: "",
-    conditionCode: "",
-  };
+/** Starting values of the version form for a new version (shown and editable in the form). */
+export const PM_TRIGGER_FORM_START: PmTriggerFields = {
+  intervalUnit: "day",
+  intervalValue: 30,
+  meterSource: "operating_hours",
+  meterInterval: 250,
+  assetMeterId: null,
+  startReading: null,
+  eventCode: "",
+  conditionCode: "",
+};
+
+function numberOr(value: unknown, fallback: number): number {
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+export function parseTriggerJson(strategy: string, json: string): PmTriggerFields {
+  const start = PM_TRIGGER_FORM_START;
+  let obj: Record<string, unknown>;
   try {
-    const obj = JSON.parse(json) as Record<string, unknown>;
-    if (strategy === "fixed" || strategy === "floating") {
-      return {
-        ...defaults,
-        intervalUnit: String(obj["interval_unit"] ?? "day"),
-        intervalValue: Number(obj["interval_value"] ?? 30),
-      };
-    }
-    if (strategy === "meter") {
-      return {
-        ...defaults,
-        meterSource: String(obj["meter_source"] ?? "operating_hours"),
-        meterInterval: Number(obj["interval_value"] ?? obj["threshold_value"] ?? 250),
-      };
-    }
-    if (strategy === "event") {
-      return { ...defaults, eventCode: String(obj["event_code"] ?? "") };
-    }
-    if (strategy === "condition") {
-      return { ...defaults, conditionCode: String(obj["condition_code"] ?? "") };
-    }
+    const parsed = JSON.parse(json) as unknown;
+    if (!parsed || typeof parsed !== "object") return start;
+    obj = parsed as Record<string, unknown>;
   } catch {
-    /* keep defaults */
+    return start;
   }
-  return defaults;
+  if (strategy === "fixed" || strategy === "floating") {
+    return {
+      ...start,
+      intervalUnit: typeof obj["interval_unit"] === "string" ? obj["interval_unit"] : "day",
+      intervalValue: numberOr(obj["interval_value"], start.intervalValue),
+    };
+  }
+  if (strategy === "meter") {
+    const meterId = typeof obj["asset_meter_id"] === "number" ? obj["asset_meter_id"] : null;
+    const startReading =
+      typeof obj["start_reading"] === "number" && Number.isFinite(obj["start_reading"])
+        ? obj["start_reading"]
+        : null;
+    return {
+      ...start,
+      meterSource:
+        typeof obj["meter_source"] === "string" ? obj["meter_source"] : start.meterSource,
+      meterInterval: numberOr(obj["interval_value"] ?? obj["threshold_value"], start.meterInterval),
+      assetMeterId: meterId,
+      startReading,
+    };
+  }
+  if (strategy === "event") {
+    return { ...start, eventCode: typeof obj["event_code"] === "string" ? obj["event_code"] : "" };
+  }
+  if (strategy === "condition") {
+    return {
+      ...start,
+      conditionCode: typeof obj["condition_code"] === "string" ? obj["condition_code"] : "",
+    };
+  }
+  return start;
 }

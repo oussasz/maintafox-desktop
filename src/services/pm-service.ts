@@ -32,6 +32,17 @@ import type {
   UpdatePmPlanVersionInput,
 } from "@shared/ipc-types";
 
+/**
+ * Target asset of an equipment-scoped plan (read-only join done by the backend). Kept here until
+ * `shared/ipc-types.ts` `PmPlan` / `PmOccurrence` carry these two optional fields.
+ */
+export interface PmAssetRef {
+  asset_code?: string | null | undefined;
+  asset_name?: string | null | undefined;
+}
+export type PmPlanRow = PmPlan & PmAssetRef;
+export type PmOccurrenceRow = PmOccurrence & PmAssetRef;
+
 const PmPlanSchema = z.object({
   id: z.number(),
   code: z.string(),
@@ -55,6 +66,8 @@ const PmPlanSchema = z.object({
   row_version: z.number(),
   created_at: z.string(),
   updated_at: z.string(),
+  asset_code: z.string().nullable().optional(),
+  asset_name: z.string().nullable().optional(),
 });
 
 const PmPlanVersionSchema = z.object({
@@ -98,6 +111,8 @@ const PmOccurrenceSchema = z.object({
   plan_code: z.string().nullable(),
   plan_title: z.string().nullable(),
   strategy_type: z.string().nullable(),
+  asset_code: z.string().nullable().optional(),
+  asset_name: z.string().nullable().optional(),
 });
 
 const PmDueMetricsSchema = z.object({
@@ -251,11 +266,22 @@ function isIpcError(err: unknown): err is IpcErrorShape {
 
 export class PmIpcError extends Error {
   readonly code: string;
-  constructor(code: string, message: string) {
+  /**
+   * True when the failure came back from the backend: the global IPC toast has already told the
+   * user, so screens must not repeat it. False for a response the app could not read.
+   */
+  readonly reported: boolean;
+  constructor(code: string, message: string, reported = true) {
     super(message);
     this.name = "PmIpcError";
     this.code = code;
+    this.reported = reported;
   }
+}
+
+/** True when the global IPC toast already reported this failure. */
+export function isReportedPmError(err: unknown): boolean {
+  return err instanceof PmIpcError && err.reported;
 }
 
 function mapInvokeError(err: unknown): never {
@@ -269,24 +295,31 @@ async function invokeParsed<T>(
   args: Record<string, unknown> | undefined,
   schema: z.ZodType<T>,
 ): Promise<T> {
+  let raw: unknown;
   try {
-    const raw = await invoke<unknown>(command, args);
+    raw = await invoke<unknown>(command, args);
+  } catch (err) {
+    mapInvokeError(err);
+  }
+  try {
     return schema.parse(raw);
   } catch (err) {
-    if (err instanceof ZodError) throw new PmIpcError("VALIDATION_FAILED", err.message);
-    mapInvokeError(err);
+    if (err instanceof ZodError) {
+      throw new PmIpcError("RESPONSE_SHAPE_INVALID", err.message, false);
+    }
+    throw err;
   }
 }
 
-export function listPmPlans(filter: PmPlanFilter): Promise<PmPlan[]> {
+export function listPmPlans(filter: PmPlanFilter): Promise<PmPlanRow[]> {
   return invokeParsed("list_pm_plans", { filter }, z.array(PmPlanSchema));
 }
 
-export function getPmPlan(planId: number): Promise<PmPlan> {
+export function getPmPlan(planId: number): Promise<PmPlanRow> {
   return invokeParsed("get_pm_plan", { planId }, PmPlanSchema);
 }
 
-export function createPmPlan(input: CreatePmPlanInput): Promise<PmPlan> {
+export function createPmPlan(input: CreatePmPlanInput): Promise<PmPlanRow> {
   return invokeParsed("create_pm_plan", { input }, PmPlanSchema);
 }
 
@@ -294,11 +327,13 @@ export function updatePmPlan(
   planId: number,
   expectedRowVersion: number,
   input: UpdatePmPlanInput,
-): Promise<PmPlan> {
+): Promise<PmPlanRow> {
   return invokeParsed("update_pm_plan", { planId, expectedRowVersion, input }, PmPlanSchema);
 }
 
-export function transitionPmPlanLifecycle(input: TransitionPmPlanLifecycleInput): Promise<PmPlan> {
+export function transitionPmPlanLifecycle(
+  input: TransitionPmPlanLifecycleInput,
+): Promise<PmPlanRow> {
   return invokeParsed("transition_pm_plan_lifecycle", { input }, PmPlanSchema);
 }
 
@@ -329,7 +364,7 @@ export function publishPmPlanVersion(input: PublishPmPlanVersionInput): Promise<
   return invokeParsed("publish_pm_plan_version", { input }, PmPlanVersionSchema);
 }
 
-export function listPmOccurrences(filter: PmOccurrenceFilter): Promise<PmOccurrence[]> {
+export function listPmOccurrences(filter: PmOccurrenceFilter): Promise<PmOccurrenceRow[]> {
   return invokeParsed("list_pm_occurrences", { filter }, z.array(PmOccurrenceSchema));
 }
 
@@ -349,7 +384,9 @@ export function updatePmGenerationSettings(
   return invokeParsed("update_pm_generation_settings", { input }, PmGenerationStatusSchema);
 }
 
-export function transitionPmOccurrence(input: TransitionPmOccurrenceInput): Promise<PmOccurrence> {
+export function transitionPmOccurrence(
+  input: TransitionPmOccurrenceInput,
+): Promise<PmOccurrenceRow> {
   return invokeParsed("transition_pm_occurrence", { input }, PmOccurrenceSchema);
 }
 
