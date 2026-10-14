@@ -251,5 +251,13 @@
     "help": "Help & Documentation",
     "reports": "Reports",
     "admin": "Administration"
+  },
+  "notFound": {
+    "title": "This page does not exist",
+    "body": "The link you followed points to a screen that is not part of Maintafox. It may have moved or been removed.",
+    "home": "Back to the dashboard",
+    "errorTitle": "Something went wrong on this screen",
+    "errorBody": "The screen stopped because of an unexpected error. Your data is safe. Go back to the dashboard and try again; if it happens again, send a support bundle from Settings.",
+    "technicalDetails": "Technical details"
   }
 }

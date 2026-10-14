@@ -21,6 +21,9 @@ import {
 } from "@/services/dashboard-service";
 import { useAppStore } from "@/store/app-store";
 import { useSessionStore } from "@/store/session-store";
+import { useAssetStore } from "@/stores/asset-store";
+import { useDiStore } from "@/stores/di-store";
+import { useWoStore } from "@/stores/wo-store";
 import {
   buildRoleDefaultOverviewKpis,
   parseAnalyticsDashboardLayoutJson,
@@ -222,15 +225,25 @@ export function DashboardPage() {
         <h2 className="text-sm font-medium text-text-muted">{t("quickActions.title")}</h2>
         <div className="flex flex-wrap gap-3">
           <PermissionGate permission={P.DI_CREATE}>
-            <Button variant="outline" size="sm" onClick={() => navigate("/requests?action=create")}>
+            <Button
+              variant="outline"
+              className="h-11"
+              onClick={() => {
+                useDiStore.getState().openCreateForm();
+                void navigate("/requests");
+              }}
+            >
               {t("quickActions.newDi")}
             </Button>
           </PermissionGate>
           <PermissionGate permission={P.OT_CREATE}>
             <Button
               variant="outline"
-              size="sm"
-              onClick={() => navigate("/work-orders?action=create")}
+              className="h-11"
+              onClick={() => {
+                useWoStore.getState().openCreateForm();
+                void navigate("/work-orders");
+              }}
             >
               {t("quickActions.newWo")}
             </Button>
@@ -238,8 +251,11 @@ export function DashboardPage() {
           <PermissionGate permission={P.EQ_MANAGE}>
             <Button
               variant="outline"
-              size="sm"
-              onClick={() => navigate("/equipment?action=create")}
+              className="h-11"
+              onClick={() => {
+                useAssetStore.getState().openCreateForm();
+                void navigate("/equipment");
+              }}
             >
               {t("quickActions.newAsset")}
             </Button>

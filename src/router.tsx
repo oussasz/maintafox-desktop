@@ -6,6 +6,7 @@ import { PermissionRoute } from "@/components/auth/PermissionRoute";
 import { ProductLicenseGate } from "@/components/auth/ProductLicenseGate";
 import { AppShell } from "@/components/layout/AppShell";
 import { DashboardPage } from "@/pages/DashboardPage";
+import { NotFoundPage, RouteErrorPage } from "@/pages/NotFoundPage";
 import { P } from "@shared/rbac/permissions.generated";
 
 // Lazy-load all module pages
@@ -177,6 +178,7 @@ const routes: RouteObject[] = [
         <Outlet />
       </ProductLicenseGate>
     ),
+    errorElement: <RouteErrorPage />,
     children: [
       // ── Public routes (license-gated, no shell, no auth required) ───────
       {
@@ -410,6 +412,8 @@ const routes: RouteObject[] = [
                     element: <Navigate to="/settings?tab=profile" replace />,
                   },
                   { path: "unauthorized", element: <UnauthorizedPage /> },
+                  // Any address without a screen stays inside the shell with a way back.
+                  { path: "*", element: <NotFoundPage /> },
                 ],
               },
             ],
@@ -419,5 +423,8 @@ const routes: RouteObject[] = [
     ],
   },
 ];
+
+/** Route tree, exported for tests (e.g. every dashboard drill link must resolve to a screen). */
+export const appRouteTree = routes;
 
 export const router = createBrowserRouter(routes);

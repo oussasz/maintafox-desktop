@@ -251,5 +251,13 @@
     "help": "Aide & Documentation",
     "reports": "Rapports",
     "admin": "Administration"
+  },
+  "notFound": {
+    "title": "Cette page n'existe pas",
+    "body": "Le lien suivi mène à un écran qui ne fait pas partie de Maintafox. Il a peut-être été déplacé ou supprimé.",
+    "home": "Retour au tableau de bord",
+    "errorTitle": "Un problème est survenu sur cet écran",
+    "errorBody": "L'écran s'est arrêté à cause d'une erreur inattendue. Vos données sont intactes. Revenez au tableau de bord et réessayez ; si le problème se reproduit, envoyez un dossier de diagnostic depuis les Paramètres.",
+    "technicalDetails": "Détails techniques"
   }
 }
