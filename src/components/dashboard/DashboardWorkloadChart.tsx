@@ -15,7 +15,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { getDashboardWorkloadChart } from "@/services/dashboard-service";
 import type { WorkloadDay } from "@shared/ipc-types";
-import { RELIABILITY_RAM_EVIDENCE_HASH } from "@shared/kpi-definitions";
+import { RELIABILITY_RAM_EVIDENCE_HASH, analyticsRamsPath } from "@shared/kpi-definitions";
 
 type Period = 7 | 30;
 
@@ -148,7 +148,7 @@ export function DashboardWorkloadChart() {
                 type="button"
                 className="text-sm font-medium text-primary underline-offset-2 hover:underline"
                 onClick={() =>
-                  navigate(`/analytics/rams/foundation${RELIABILITY_RAM_EVIDENCE_HASH}`)
+                  navigate(analyticsRamsPath("data-quality", RELIABILITY_RAM_EVIDENCE_HASH))
                 }
               >
                 {t("chart.openRamEvidence")}

@@ -77,34 +77,19 @@ const AnalyticsHistoryPage = lazy(() =>
     default: m.AnalyticsHistoryPage,
   })),
 );
-const ReliabilityModuleLayout = lazy(() =>
-  import("@/pages/reliability/ReliabilityModuleLayout").then((m) => ({
-    default: m.ReliabilityModuleLayout,
+const RamsFleetPage = lazy(() =>
+  import("@/pages/reliability/RamsFleetPage").then((m) => ({
+    default: m.RamsFleetPage,
   })),
 );
-const ReliabilityDashboardPage = lazy(() =>
-  import("@/pages/reliability/ReliabilityDashboardPage").then((m) => ({
-    default: m.ReliabilityDashboardPage,
+const RamsDataQualityPage = lazy(() =>
+  import("@/pages/reliability/RamsDataQualityPage").then((m) => ({
+    default: m.RamsDataQualityPage,
   })),
 );
-const ReliabilityFoundationPage = lazy(() =>
-  import("@/pages/reliability/ReliabilityFoundationPage").then((m) => ({
-    default: m.ReliabilityFoundationPage,
-  })),
-);
-const ReliabilityVisualLabPage = lazy(() =>
-  import("@/pages/reliability/ReliabilityVisualLabPage").then((m) => ({
-    default: m.ReliabilityVisualLabPage,
-  })),
-);
-const ReliabilityAdvancedPage = lazy(() =>
-  import("@/pages/reliability/ReliabilityAdvancedPage").then((m) => ({
-    default: m.ReliabilityAdvancedPage,
-  })),
-);
-const ReliabilityGovernancePage = lazy(() =>
-  import("@/pages/reliability/ReliabilityGovernancePage").then((m) => ({
-    default: m.ReliabilityGovernancePage,
+const RamsStudyPage = lazy(() =>
+  import("@/pages/reliability/RamsStudyPage").then((m) => ({
+    default: m.RamsStudyPage,
   })),
 );
 const BudgetPage = lazy(() =>
@@ -275,47 +260,44 @@ const routes: RouteObject[] = [
                           { path: "templates", element: <AnalyticsTemplatesPage /> },
                           { path: "schedules", element: <AnalyticsSchedulesPage /> },
                           { path: "history", element: <AnalyticsHistoryPage /> },
-                          {
-                            path: "rams",
-                            element: <ReliabilityModuleLayout />,
-                            children: [
-                              { index: true, element: <Navigate to="dashboard" replace /> },
-                              { path: "dashboard", element: <ReliabilityDashboardPage /> },
-                              { path: "foundation", element: <ReliabilityFoundationPage /> },
-                              { path: "lab", element: <ReliabilityVisualLabPage /> },
-                              { path: "advanced", element: <ReliabilityAdvancedPage /> },
-                              { path: "governance", element: <ReliabilityGovernancePage /> },
-                            ],
-                          },
                         ],
                       },
+                    ],
+                  },
+                  {
+                    element: <PermissionRoute permission={P.RAM_VIEW} />,
+                    children: [
                       {
                         path: "reliability",
                         children: [
-                          {
-                            index: true,
-                            element: <Navigate to="/analytics/rams/dashboard" replace />,
-                          },
-                          {
-                            path: "dashboard",
-                            element: <Navigate to="/analytics/rams/dashboard" replace />,
-                          },
+                          { index: true, element: <RamsFleetPage /> },
+                          { path: "studies/:studyId", element: <RamsStudyPage /> },
+                          { path: "data-quality", element: <RamsDataQualityPage /> },
+                          // Former screens, now inside the module (study steps, data quality).
+                          { path: "dashboard", element: <Navigate to="/reliability" replace /> },
                           {
                             path: "foundation",
-                            element: <Navigate to="/analytics/rams/foundation" replace />,
+                            element: <Navigate to="/reliability/data-quality" replace />,
                           },
+                          { path: "lab", element: <Navigate to="/reliability" replace /> },
+                          { path: "advanced", element: <Navigate to="/reliability" replace /> },
+                          { path: "governance", element: <Navigate to="/reliability" replace /> },
+                        ],
+                      },
+                      // The module used to live under the analytics hub: old links redirect with
+                      // the reliability permission only.
+                      {
+                        path: "analytics/rams",
+                        children: [
+                          { index: true, element: <Navigate to="/reliability" replace /> },
+                          { path: "dashboard", element: <Navigate to="/reliability" replace /> },
                           {
-                            path: "lab",
-                            element: <Navigate to="/analytics/rams/lab" replace />,
+                            path: "foundation",
+                            element: <Navigate to="/reliability/data-quality" replace />,
                           },
-                          {
-                            path: "advanced",
-                            element: <Navigate to="/analytics/rams/advanced" replace />,
-                          },
-                          {
-                            path: "governance",
-                            element: <Navigate to="/analytics/rams/governance" replace />,
-                          },
+                          { path: "lab", element: <Navigate to="/reliability" replace /> },
+                          { path: "advanced", element: <Navigate to="/reliability" replace /> },
+                          { path: "governance", element: <Navigate to="/reliability" replace /> },
                         ],
                       },
                     ],

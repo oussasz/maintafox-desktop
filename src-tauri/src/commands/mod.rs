@@ -44,6 +44,7 @@ pub mod ram_review;
 pub mod rbac;
 pub mod reference;
 pub mod reliability;
+pub mod reliability_study;
 pub mod reports;
 pub mod settings;
 pub mod sync;

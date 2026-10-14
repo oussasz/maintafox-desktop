@@ -10,6 +10,13 @@ pub const SEED_SCHEMA_VERSION: i32 = 2;
 /// Tuple format: (`setting_key`, category, `setting_scope`, `setting_value_json`)
 const DEFAULT_SETTINGS: &[(&str, &str, &str, &str)] = &[
     ("ram.fmeca_rpn_critical_threshold", "reliability", "tenant", r"150"),
+    // Plant FMECA rating grids (severity / occurrence / detection, criticality matrix).
+    (
+        crate::reliability::study::scales::SETTING_KEY,
+        "reliability",
+        "tenant",
+        crate::reliability::study::scales::DEFAULT_RATING_SCALES_JSON,
+    ),
     // PRD §6.5: a closed WO may be reopened within this many days of its closure.
     ("wo.reopen_window_days", "work_orders", "tenant", r"30"),
     ("locale.primary_language", "localization", "tenant", r#""fr""#),
@@ -2935,8 +2942,9 @@ mod tests {
     fn default_settings_count_is_expected() {
         assert_eq!(
             DEFAULT_SETTINGS.len(),
-            // +locale.currency_code, +ram.fmeca_rpn_critical_threshold, +wo.reopen_window_days
-            18,
+            // +locale.currency_code, +ram.fmeca_rpn_critical_threshold, +wo.reopen_window_days,
+            // +ram.fmeca_rating_scales
+            19,
             "Default settings count changed; update migration and verification checks"
         );
     }

@@ -1,5 +1,4 @@
 import {
-  Activity,
   BarChart3,
   CalendarClock,
   FileStack,
@@ -17,12 +16,6 @@ import { P } from "@shared/rbac/permissions.generated";
 
 const TABS: { to: string; key: string; icon: LucideIcon; matchPrefix?: string }[] = [
   { to: "/analytics/dashboards", key: "hub.tabs.dashboards", icon: LayoutDashboard },
-  {
-    to: "/analytics/rams/dashboard",
-    key: "hub.tabs.rams",
-    icon: Activity,
-    matchPrefix: "/analytics/rams",
-  },
   { to: "/analytics/templates", key: "hub.tabs.templates", icon: FileStack },
   { to: "/analytics/schedules", key: "hub.tabs.schedules", icon: CalendarClock },
   { to: "/analytics/history", key: "hub.tabs.history", icon: History },

@@ -33,9 +33,9 @@ import {
   DASHBOARD_WIDGET_IDS,
   DASHBOARD_WIDGET_PERMISSION,
   DEFAULT_DASHBOARD_LAYOUT,
+  type DashboardLayoutV1,
   mergeWithDefaultLayout,
   parseDashboardLayoutJson,
-  type DashboardLayoutV1,
 } from "@shared/dashboard-layout";
 import type { DashboardKpiValidation, OverviewKpisPayload } from "@shared/ipc-types";
 import type { OverviewKpiLayoutEntry } from "@shared/overview-kpi-registry";

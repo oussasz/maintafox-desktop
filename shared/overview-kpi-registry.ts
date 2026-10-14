@@ -121,8 +121,9 @@ export const OVERVIEW_KPI_REGISTRY: OverviewKpiRegistryEntry[] = [
     unitKey: "overviewKpi.unit.hours",
   },
   {
-    // SMRP PM compliance (%): occurrences done within tolerance ÷ occurrences due, last 30 days
-    // (`analytics::smrp::pm_compliance`). Higher is better.
+    // SMRP PM compliance (%): occurrences done within their tolerance window ÷ occurrences due
+    // whose outcome is known, last 30 days — `pm::compliance`, the same figure as the PM page and
+    // the Analytics SMRP tile. Higher is better.
     semanticKey: OVERVIEW_KPI_SEMANTIC_KEYS.PM_COMPLIANCE,
     catalogId: ANALYTICS_HUB_KPI_CATALOG_IDS.PM_ADHERENCE,
     permission: P.PM_VIEW,
@@ -199,7 +200,7 @@ export const OVERVIEW_KPI_REGISTRY: OverviewKpiRegistryEntry[] = [
     trendSense: "up-good",
     valueKind: "percent",
     vizKind: "gauge",
-    drillPath: analyticsRamsPath("foundation"),
+    drillPath: analyticsRamsPath("data-quality"),
     labelKey: "overviewKpi.dataQuality",
     contextKey: "overviewKpi.contextFleet",
     unitKey: "overviewKpi.unit.percent",

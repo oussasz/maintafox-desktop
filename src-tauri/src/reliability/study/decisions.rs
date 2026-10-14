@@ -1,0 +1,572 @@
+//! Step 6 of a study: the decision log. A decision is recorded with the study evidence,
+//! approved (or rejected) by someone holding `ram.manage`, then applied: a draft PM plan
+//! version with the new interval, or a work order, created through `rcm_loop` so the PM side and
+//! the work order keep the link to the decision. The effect compares the MTBF of the study scope
+//! before the decision with the MTBF since it was applied.
+
+use chrono::Utc;
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement};
+
+use crate::errors::{AppError, AppResult};
+use crate::reliability::rcm_loop::{
+    create_pm_revision_from_source, create_wo_from_source, PmRevisionFromSourceInput, WoFromSourceInput,
+    SOURCE_RELIABILITY_DECISION,
+};
+use crate::reliability::study::analysis::{life_analysis, meter_counts_hours, operating_ratios};
+use crate::reliability::study::clock::parse_instant_opt;
+use crate::reliability::study::domain::{
+    ApproverOption, CreateDecisionInput, DecideDecisionInput, DecisionEffect, DecisionEvidence, LifeAnalysisRequest,
+    StudyDecision, DECISION_MODIFICATION_WO, DECISION_ONE_OFF_WO, DECISION_PM_INTERVAL, STATUS_APPLIED,
+    STATUS_APPROVED, STATUS_PROPOSED, STATUS_REJECTED,
+};
+use crate::reliability::study::pm_interval::PlanTrigger;
+use crate::reliability::study::records::{failures_since, study_clocks, BASIS_OPERATING};
+use crate::reliability::study::store::{get, get_study, opt_f64, opt_i64, opt_str, STUDY_ACTIVE};
+
+/// An effect is measured once the scope has run at least this multiple of the MTBF before, or
+/// had two failures, since the decision was applied.
+const EFFECT_MIN_MTBF_MULTIPLE: f64 = 1.0;
+const EFFECT_MIN_FAILURES: i64 = 2;
+
+fn invalid(code: &str) -> AppError {
+    AppError::ValidationFailed(vec![code.to_string()])
+}
+
+const DECISION_SELECT: &str = "SELECT d.*, e.asset_id_code AS asset_code, p.code AS plan_code,
+        v.version_no AS linked_version_no, wo.code AS linked_wo_code,
+        COALESCE(ap.display_name, ap.username) AS approver_name,
+        COALESCE(pb.display_name, pb.username) AS proposed_by_name,
+        COALESCE(db.display_name, db.username) AS decided_by_name
+     FROM reliability_study_decisions d
+     LEFT JOIN equipment e ON e.id = d.equipment_id
+     LEFT JOIN pm_plans p ON p.id = COALESCE(d.linked_pm_plan_id, d.pm_plan_id)
+     LEFT JOIN pm_plan_versions v ON v.id = d.linked_pm_plan_version_id
+     LEFT JOIN work_orders wo ON wo.id = d.linked_work_order_id
+     LEFT JOIN user_accounts ap ON ap.id = d.approver_id
+     LEFT JOIN user_accounts pb ON pb.id = d.proposed_by_id
+     LEFT JOIN user_accounts db ON db.id = d.decided_by_id";
+
+fn map_decision(r: &QueryResult, effect: DecisionEffect) -> AppResult<StudyDecision> {
+    let evidence_json: String = get(r, "evidence_json")?;
+    let trig: Option<String> = get(r, "proposed_trigger_definition_json")?;
+    let trig_v = trig.and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
+    Ok(StudyDecision {
+        id: get(r, "id")?,
+        study_id: get(r, "study_id")?,
+        title: get(r, "title")?,
+        action_kind: get(r, "action_kind")?,
+        equipment_id: get(r, "equipment_id")?,
+        asset_code: get(r, "asset_code")?,
+        pm_plan_id: get(r, "pm_plan_id")?,
+        pm_plan_code: get(r, "plan_code")?,
+        proposed_interval_hours: get(r, "proposed_interval_hours")?,
+        proposed_trigger_interval_value: trig_v
+            .as_ref()
+            .and_then(|v| v.get("interval_value"))
+            .and_then(serde_json::Value::as_f64),
+        proposed_trigger_interval_unit: trig_v.as_ref().map(|v| {
+            v.get("interval_unit")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("operating_hours")
+                .to_string()
+        }),
+        wo_type_code: get(r, "wo_type_code")?,
+        justification: get(r, "justification")?,
+        fmeca_item_id: get(r, "fmeca_item_id")?,
+        rcm_decision_id: get(r, "rcm_decision_id")?,
+        evidence: serde_json::from_str(&evidence_json).unwrap_or_default(),
+        status: get(r, "status")?,
+        approver_id: get(r, "approver_id")?,
+        approver_name: get(r, "approver_name")?,
+        proposed_by_name: get(r, "proposed_by_name")?,
+        proposed_at: get(r, "proposed_at")?,
+        decided_by_name: get(r, "decided_by_name")?,
+        decided_at: get(r, "decided_at")?,
+        decision_note: get(r, "decision_note")?,
+        applied_at: get(r, "applied_at")?,
+        linked_pm_plan_id: get(r, "linked_pm_plan_id")?,
+        linked_pm_plan_version_id: get(r, "linked_pm_plan_version_id")?,
+        linked_pm_version_no: get(r, "linked_version_no")?,
+        linked_work_order_id: get(r, "linked_work_order_id")?,
+        linked_work_order_code: get(r, "linked_wo_code")?,
+        effect,
+        row_version: get(r, "row_version")?,
+    })
+}
+
+async fn effect_of(db: &DatabaseConnection, r: &QueryResult) -> AppResult<DecisionEffect> {
+    let status: String = get(r, "status")?;
+    let applied_at: Option<String> = get(r, "applied_at")?;
+    let before: Option<f64> = get(r, "baseline_mtbf_hours")?;
+    let not = |state: &str| DecisionEffect {
+        state: state.into(),
+        mtbf_before: before,
+        mtbf_after: None,
+        after_is_lower_bound: false,
+        change: None,
+        failures_after: 0,
+        hours_after: 0.0,
+    };
+    let Some(applied) = parse_instant_opt(applied_at.as_deref()).filter(|_| status == STATUS_APPLIED) else {
+        return Ok(not("not_applied"));
+    };
+    let study = get_study(db, get(r, "study_id")?).await?;
+    let (_, _, clocks) = study_clocks(db, &study).await?;
+    let eq: Option<i64> = get(r, "equipment_id")?;
+    let ids: Vec<i64> = match eq {
+        Some(e) => vec![e],
+        None => study.assets.iter().map(|a| a.equipment_id).collect(),
+    };
+    let (failures, hours) = failures_since(db, &ids, &clocks, study.failure_mode_id, applied).await?;
+    let enough_time = before.is_some_and(|b| hours >= b * EFFECT_MIN_MTBF_MULTIPLE);
+    if failures < EFFECT_MIN_FAILURES && !enough_time {
+        return Ok(DecisionEffect {
+            failures_after: failures,
+            hours_after: hours,
+            ..not("not_yet_measured")
+        });
+    }
+    let after = hours / failures.max(1) as f64;
+    Ok(DecisionEffect {
+        state: "measured".into(),
+        mtbf_before: before,
+        mtbf_after: Some(after),
+        after_is_lower_bound: failures < EFFECT_MIN_FAILURES,
+        change: before.filter(|b| *b > 0.0).map(|b| after / b - 1.0),
+        failures_after: failures,
+        hours_after: hours,
+    })
+}
+
+pub async fn get_decision(db: &DatabaseConnection, id: i64) -> AppResult<StudyDecision> {
+    let r = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!("{DECISION_SELECT} WHERE d.id = ?"),
+            [id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "reliability_study_decision".into(),
+            id: id.to_string(),
+        })?;
+    let effect = effect_of(db, &r).await?;
+    map_decision(&r, effect)
+}
+
+pub async fn list_decisions(db: &DatabaseConnection, study_id: i64) -> AppResult<Vec<StudyDecision>> {
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!("{DECISION_SELECT} WHERE d.study_id = ? ORDER BY d.created_at DESC, d.id DESC"),
+            [study_id.into()],
+        ))
+        .await?;
+    let mut out = Vec::with_capacity(rows.len());
+    for r in &rows {
+        let effect = effect_of(db, r).await?;
+        out.push(map_decision(r, effect)?);
+    }
+    Ok(out)
+}
+
+/// Active users who hold `ram.manage` through a tenant-wide role assignment (or are admins).
+pub async fn list_approvers(db: &DatabaseConnection) -> AppResult<Vec<ApproverOption>> {
+    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT DISTINCT ua.id, COALESCE(ua.display_name, ua.username) AS name
+             FROM user_accounts ua
+             JOIN user_scope_assignments usa ON usa.user_id = ua.id
+             JOIN role_permissions rp ON rp.role_id = usa.role_id
+             JOIN permissions p ON p.id = rp.permission_id
+             WHERE ua.is_active = 1 AND ua.deleted_at IS NULL
+               AND usa.deleted_at IS NULL AND usa.scope_type = 'tenant'
+               AND (usa.valid_from IS NULL OR usa.valid_from <= ?)
+               AND (usa.valid_to IS NULL OR usa.valid_to >= ?)
+               AND usa.is_emergency = 0
+               AND p.name = ?
+             ORDER BY name ASC",
+            [
+                now.clone().into(),
+                now.into(),
+                crate::rbac::permissions::RAM_MANAGE.into(),
+            ],
+        ))
+        .await?;
+    rows.iter()
+        .map(|r| {
+            Ok(ApproverOption {
+                user_id: get(r, "id")?,
+                display_name: get(r, "name")?,
+            })
+        })
+        .collect()
+}
+
+pub async fn create_decision(
+    db: &DatabaseConnection,
+    input: CreateDecisionInput,
+    actor_id: i64,
+) -> AppResult<StudyDecision> {
+    let title = input.title.trim().to_string();
+    if title.is_empty() {
+        return Err(invalid("DECISION_TITLE_REQUIRED"));
+    }
+    let study = get_study(db, input.study_id).await?;
+    if study.status != STUDY_ACTIVE {
+        return Err(invalid("STUDY_ARCHIVED"));
+    }
+    let kind = input.action_kind.as_str();
+    if ![DECISION_PM_INTERVAL, DECISION_ONE_OFF_WO, DECISION_MODIFICATION_WO].contains(&kind) {
+        return Err(invalid("DECISION_KIND_INVALID"));
+    }
+    let (analysis, built) = life_analysis(
+        db,
+        LifeAnalysisRequest {
+            study_id: input.study_id,
+            planned_cost: input.planned_cost,
+            failure_cost: input.failure_cost,
+            pm_plan_id: input.pm_plan_id,
+        },
+    )
+    .await?;
+    let operating = analysis.effective_time_basis == BASIS_OPERATING;
+    let in_study = |id: i64| study.assets.iter().any(|a| a.equipment_id == id);
+
+    let (equipment_id, pm_plan_id, interval, trigger_json, wo_type) = match kind {
+        DECISION_PM_INTERVAL => {
+            let plan_id = input.pm_plan_id.ok_or_else(|| invalid("DECISION_PM_PLAN_REQUIRED"))?;
+            let plan = analysis
+                .pm_plans
+                .iter()
+                .find(|p| p.pm_plan_id == plan_id)
+                .ok_or_else(|| invalid("DECISION_PM_PLAN_NOT_IN_STUDY"))?;
+            let hours = input
+                .proposed_interval_hours
+                .filter(|h| h.is_finite() && *h > 0.0)
+                .ok_or_else(|| invalid("DECISION_INTERVAL_REQUIRED"))?;
+            let trig_row = db
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "SELECT p.strategy_type, COALESCE(cv.trigger_definition_json,
+                        (SELECT v.trigger_definition_json FROM pm_plan_versions v WHERE v.pm_plan_id = p.id
+                         ORDER BY v.version_no DESC LIMIT 1)) AS trig
+                     FROM pm_plans p LEFT JOIN pm_plan_versions cv ON cv.id = p.current_version_id WHERE p.id = ?",
+                    [plan_id.into()],
+                ))
+                .await?
+                .ok_or_else(|| invalid("DECISION_PM_PLAN_NOT_IN_STUDY"))?;
+            let strategy: String = get(&trig_row, "strategy_type")?;
+            let trig: String =
+                get::<Option<String>>(&trig_row, "trig")?.ok_or_else(|| invalid("DECISION_PM_PLAN_NO_VERSION"))?;
+            let parsed = PlanTrigger::parse(&strategy, &trig, meter_counts_hours(db, &trig).await?)
+                .map_err(|n| invalid(&format!("DECISION_PM_INTERVAL_{}", n.to_uppercase())))?;
+            let ratio = operating_ratios(&built).get(&plan.equipment_id).copied();
+            let (json, _, _) = parsed
+                .with_interval_hours(hours, operating, ratio)
+                .map_err(|n| invalid(&format!("DECISION_PM_INTERVAL_{}", n.to_uppercase())))?;
+            (Some(plan.equipment_id), Some(plan_id), Some(hours), Some(json), None)
+        }
+        _ => {
+            let eq = input
+                .equipment_id
+                .or_else(|| (study.assets.len() == 1).then(|| study.assets[0].equipment_id))
+                .ok_or_else(|| invalid("DECISION_EQUIPMENT_REQUIRED"))?;
+            if !in_study(eq) {
+                return Err(invalid("DECISION_EQUIPMENT_NOT_IN_STUDY"));
+            }
+            let wo_type = input
+                .wo_type_code
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .ok_or_else(|| invalid("DECISION_WO_TYPE_REQUIRED"))?;
+            let known = db
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "SELECT 1 FROM work_order_types WHERE code = ?",
+                    [wo_type.clone().into()],
+                ))
+                .await?
+                .is_some();
+            if !known {
+                return Err(invalid("DECISION_WO_TYPE_UNKNOWN"));
+            }
+            (Some(eq), None, None, None, Some(wo_type))
+        }
+    };
+    // Links to the FMECA row / RCM decision of this study (steps 3 and 4).
+    let mut fmeca_mode_label = None;
+    let mut rpn = None;
+    let mut rcm_tactic = None;
+    if let Some(item) = input.fmeca_item_id {
+        let analysis = crate::reliability::study::fmeca::study_fmeca_analysis_id(db, study.id).await?;
+        let row = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT i.rpn, m.label FROM fmeca_items i LEFT JOIN reference_values m ON m.id = i.failure_mode_id
+                 WHERE i.id = ? AND i.analysis_id = ?",
+                [item.into(), analysis.unwrap_or(-1).into()],
+            ))
+            .await?
+            .ok_or_else(|| invalid("DECISION_FMECA_ITEM_NOT_IN_STUDY"))?;
+        rpn = get::<Option<i64>>(&row, "rpn")?;
+        fmeca_mode_label = get::<Option<String>>(&row, "label")?;
+    }
+    if let Some(rcm) = input.rcm_decision_id {
+        let rcm_study = crate::reliability::study::rcm::study_rcm_study_id(db, study.id).await?;
+        let row = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT selected_tactic, fmeca_item_id FROM rcm_decisions WHERE id = ? AND study_id = ?",
+                [rcm.into(), rcm_study.unwrap_or(-1).into()],
+            ))
+            .await?
+            .ok_or_else(|| invalid("DECISION_RCM_NOT_IN_STUDY"))?;
+        rcm_tactic = get::<Option<String>>(&row, "selected_tactic")?;
+        let item: Option<i64> = get(&row, "fmeca_item_id")?;
+        if input.fmeca_item_id.is_some() && item != input.fmeca_item_id {
+            return Err(invalid("DECISION_RCM_NOT_IN_STUDY"));
+        }
+    }
+    if let Some(a) = input.approver_id {
+        if !list_approvers(db).await?.iter().any(|o| o.user_id == a) {
+            return Err(invalid("DECISION_APPROVER_INVALID"));
+        }
+    }
+
+    let fit = analysis.fit.as_ref();
+    let cost = analysis.cost.as_ref();
+    let current = analysis
+        .selected_pm_plan_id
+        .and_then(|id| analysis.pm_plans.iter().find(|p| p.pm_plan_id == id))
+        .and_then(|p| p.interval_hours);
+    let evidence = DecisionEvidence {
+        time_basis: analysis.effective_time_basis.clone(),
+        n_failures: analysis.n_failures,
+        n_suspensions: analysis.n_suspensions,
+        beta: fit.map(|f| f.beta),
+        eta: fit.map(|f| f.eta),
+        beta_lower: fit.map(|f| f.beta_lower),
+        beta_upper: fit.map(|f| f.beta_upper),
+        b10: fit.map(|f| f.b10),
+        mean_life: fit.map(|f| f.mean_life),
+        rho: fit.and_then(|f| f.rho),
+        pattern: fit.map(|f| f.pattern.clone()),
+        optimal_interval: cost.and_then(|c| c.proposed).and_then(|p| p.interval),
+        current_interval: current,
+        proposed_cost_rate: cost.and_then(|c| c.proposed).map(|p| p.cost_rate),
+        current_cost_rate: cost.and_then(|c| c.current).map(|p| p.cost_rate),
+        run_to_failure_cost_rate: cost.map(|c| c.run_to_failure.cost_rate),
+        annual_saving_vs_current: cost.and_then(|c| c.annual_saving_vs_current),
+        planned_cost: cost.map(|c| c.planned_cost),
+        failure_cost: cost.map(|c| c.failure_cost),
+        currency_code: analysis.cost_currency_code.clone(),
+        operating_ratio: analysis.operating_ratio,
+        study_period_start: study.period_start.clone(),
+        study_period_end: study.period_end.clone(),
+        fmeca_mode_label,
+        rpn,
+        rcm_tactic,
+    };
+    // MTBF of the scope before the decision: study hours / failures used (all study equipment,
+    // or the equipment the decision acts on).
+    let baseline_failures = built.failures_used;
+    let baseline_hours = built.total_hours;
+    let baseline_mtbf =
+        (baseline_failures > 0 && baseline_hours > 0.0).then(|| baseline_hours / baseline_failures as f64);
+
+    let ts = Utc::now().to_rfc3339();
+    let sync_id = crate::sync::identity::new_entity_sync_id();
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO reliability_study_decisions (entity_sync_id, study_id, title, action_kind, equipment_id,
+            pm_plan_id, proposed_interval_hours, proposed_trigger_definition_json, wo_type_code, justification,
+            evidence_json, baseline_mtbf_hours, baseline_failures, baseline_exposure_hours, status, approver_id,
+            proposed_by_id, proposed_at, fmeca_item_id, rcm_decision_id, row_version, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'proposed', ?, ?, ?, ?, ?, 1, ?, ?)",
+        [
+            sync_id.clone().into(),
+            input.study_id.into(),
+            title.into(),
+            kind.into(),
+            opt_i64(equipment_id),
+            opt_i64(pm_plan_id),
+            opt_f64(interval),
+            opt_str(trigger_json),
+            opt_str(wo_type),
+            input.justification.unwrap_or_default().trim().to_string().into(),
+            serde_json::to_string(&evidence)?.into(),
+            opt_f64(baseline_mtbf),
+            baseline_failures.into(),
+            baseline_hours.into(),
+            opt_i64(input.approver_id),
+            actor_id.into(),
+            ts.clone().into(),
+            opt_i64(input.fmeca_item_id),
+            opt_i64(input.rcm_decision_id),
+            ts.clone().into(),
+            ts.into(),
+        ],
+    ))
+    .await?;
+    let id: i64 = get(
+        &db.query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id FROM reliability_study_decisions WHERE entity_sync_id = ?",
+            [sync_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::SyncError("decision insert missing".into()))?,
+        "id",
+    )?;
+    get_decision(db, id).await
+}
+
+async fn set_status(
+    db: &impl ConnectionTrait,
+    input: &DecideDecisionInput,
+    from: &str,
+    to: &str,
+    actor_id: i64,
+) -> AppResult<()> {
+    let res = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE reliability_study_decisions SET status = ?, decided_by_id = ?, decided_at = ?, decision_note = ?,
+                row_version = row_version + 1, updated_at = ?
+             WHERE id = ? AND status = ? AND row_version = ?",
+            [
+                to.into(),
+                actor_id.into(),
+                Utc::now().to_rfc3339().into(),
+                opt_str(
+                    input
+                        .note
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string),
+                ),
+                Utc::now().to_rfc3339().into(),
+                input.decision_id.into(),
+                from.into(),
+                input.expected_row_version.into(),
+            ],
+        ))
+        .await?;
+    if res.rows_affected() == 0 {
+        return Err(invalid("DECISION_STALE"));
+    }
+    Ok(())
+}
+
+async fn designated_approver_check(db: &DatabaseConnection, decision_id: i64, actor_id: i64) -> AppResult<()> {
+    let r = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT approver_id FROM reliability_study_decisions WHERE id = ?",
+            [decision_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "reliability_study_decision".into(),
+            id: decision_id.to_string(),
+        })?;
+    let approver: Option<i64> = get(&r, "approver_id")?;
+    if approver.is_some_and(|a| a != actor_id) {
+        return Err(invalid("DECISION_NOT_DESIGNATED_APPROVER"));
+    }
+    Ok(())
+}
+
+pub async fn approve_decision(
+    db: &DatabaseConnection,
+    input: DecideDecisionInput,
+    actor_id: i64,
+) -> AppResult<StudyDecision> {
+    designated_approver_check(db, input.decision_id, actor_id).await?;
+    set_status(db, &input, STATUS_PROPOSED, STATUS_APPROVED, actor_id).await?;
+    get_decision(db, input.decision_id).await
+}
+
+pub async fn reject_decision(
+    db: &DatabaseConnection,
+    input: DecideDecisionInput,
+    actor_id: i64,
+) -> AppResult<StudyDecision> {
+    if input.note.as_deref().map(str::trim).unwrap_or_default().is_empty() {
+        return Err(invalid("DECISION_REJECT_REASON_REQUIRED"));
+    }
+    designated_approver_check(db, input.decision_id, actor_id).await?;
+    set_status(db, &input, STATUS_PROPOSED, STATUS_REJECTED, actor_id).await?;
+    get_decision(db, input.decision_id).await
+}
+
+/// Carry out an approved decision in maintenance: a draft PM plan version with the proposed
+/// trigger, or a work order on the decision's equipment. Both stay linked to the decision.
+pub async fn apply_decision(
+    db: &DatabaseConnection,
+    input: DecideDecisionInput,
+    actor_id: i64,
+) -> AppResult<StudyDecision> {
+    let d = get_decision(db, input.decision_id).await?;
+    if d.status != STATUS_APPROVED {
+        return Err(invalid("DECISION_NOT_APPROVED"));
+    }
+    if d.row_version != input.expected_row_version {
+        return Err(invalid("DECISION_STALE"));
+    }
+    let trig = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT proposed_trigger_definition_json FROM reliability_study_decisions WHERE id = ?",
+            [d.id.into()],
+        ))
+        .await?
+        .map(|r| get::<Option<String>>(&r, "proposed_trigger_definition_json"))
+        .transpose()?
+        .flatten();
+    if d.action_kind == DECISION_PM_INTERVAL {
+        let plan_id = d.pm_plan_id.ok_or_else(|| invalid("DECISION_PM_PLAN_REQUIRED"))?;
+        let note = d.title.clone();
+        create_pm_revision_from_source(
+            db,
+            PmRevisionFromSourceInput {
+                source_type: SOURCE_RELIABILITY_DECISION.into(),
+                source_id: d.id,
+                pm_plan_id: plan_id,
+                trigger_definition_json: Some(trig.ok_or_else(|| invalid("DECISION_TRIGGER_MISSING"))?),
+                change_note: note,
+            },
+        )
+        .await?;
+    } else {
+        create_wo_from_source(
+            db,
+            WoFromSourceInput {
+                source_type: SOURCE_RELIABILITY_DECISION.into(),
+                source_id: d.id,
+                type_code: d
+                    .wo_type_code
+                    .clone()
+                    .ok_or_else(|| invalid("DECISION_WO_TYPE_REQUIRED"))?,
+                title: Some(d.title.clone()),
+            },
+            actor_id,
+        )
+        .await?;
+    }
+    let ts = Utc::now().to_rfc3339();
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE reliability_study_decisions SET status = 'applied', applied_by_id = ?, applied_at = ?,
+            row_version = row_version + 1, updated_at = ? WHERE id = ?",
+        [actor_id.into(), ts.clone().into(), ts.into(), d.id.into()],
+    ))
+    .await?;
+    get_decision(db, d.id).await
+}

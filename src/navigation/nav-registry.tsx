@@ -1,4 +1,5 @@
 import {
+  Activity,
   LayoutDashboard,
   Cog,
   Building2,
@@ -129,6 +130,13 @@ export const defaultNavItems: NavItem[] = [
     path: "#",
     icon: null,
     isGroupHeader: true,
+  },
+  {
+    key: "reliability",
+    labelKey: "nav.reliability",
+    path: "/reliability",
+    icon: <Activity className="h-4 w-4" />,
+    requiredPermission: P.RAM_VIEW,
   },
   {
     key: "analytics",

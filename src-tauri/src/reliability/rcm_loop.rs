@@ -372,10 +372,21 @@ pub async fn apply_rcm_decision_logic(
 
 pub const SOURCE_FMECA_ITEM: &str = "fmeca_item";
 pub const SOURCE_RCM_DECISION: &str = "rcm_decision";
+/// A decision of a reliability study (`reliability_study_decisions`).
+pub const SOURCE_RELIABILITY_DECISION: &str = "reliability_study_decision";
+
+/// Table that keeps the link back to the PM version / work order created from a source.
+fn source_table(source_type: &str) -> &'static str {
+    match source_type {
+        SOURCE_FMECA_ITEM => "fmeca_items",
+        SOURCE_RELIABILITY_DECISION => "reliability_study_decisions",
+        _ => "rcm_decisions",
+    }
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct PmRevisionFromSourceInput {
-    /// `fmeca_item` or `rcm_decision`.
+    /// `fmeca_item`, `rcm_decision` or `reliability_study_decision`.
     pub source_type: String,
     pub source_id: i64,
     pub pm_plan_id: i64,
@@ -415,9 +426,14 @@ async fn load_source(db: &impl ConnectionTrait, source_type: &str, source_id: i6
              JOIN rcm_studies s ON s.id = d.study_id WHERE d.id = ?",
             "functional_failure",
         ),
+        // The decision acts on one equipment of its study (set when the decision is recorded).
+        SOURCE_RELIABILITY_DECISION => (
+            "SELECT d.equipment_id, d.title AS label, NULL AS tactic FROM reliability_study_decisions d WHERE d.id = ? AND d.equipment_id IS NOT NULL",
+            "title",
+        ),
         other => {
             return Err(AppError::ValidationFailed(vec![format!(
-                "source_type must be '{SOURCE_FMECA_ITEM}' or '{SOURCE_RCM_DECISION}' (got '{other}')."
+                "source_type must be '{SOURCE_FMECA_ITEM}', '{SOURCE_RCM_DECISION}' or '{SOURCE_RELIABILITY_DECISION}' (got '{other}')."
             )]))
         }
     };
@@ -517,11 +533,7 @@ pub async fn create_pm_revision_from_source(
             ],
         ))
         .await?;
-        let table = if input.source_type == SOURCE_FMECA_ITEM {
-            "fmeca_items"
-        } else {
-            "rcm_decisions"
-        };
+        let table = source_table(&input.source_type);
         txn.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             format!(
@@ -614,11 +626,7 @@ pub async fn create_wo_from_source(
         },
     )
     .await?;
-    let table = if input.source_type == SOURCE_FMECA_ITEM {
-        "fmeca_items"
-    } else {
-        "rcm_decisions"
-    };
+    let table = source_table(&input.source_type);
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         format!(
