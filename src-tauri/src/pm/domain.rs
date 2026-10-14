@@ -445,8 +445,8 @@ pub struct PmComplianceInput {
     pub pm_plan_id: Option<i64>,
 }
 
-/// PM compliance (SMRP 5.4.1 style): occurrences due in the period (due date inside it, not
-/// cancelled) and how their work went against the tolerance window.
+/// PM compliance (SMRP 5.4.1 style, see `pm::compliance`): occurrences due in the period whose
+/// outcome is known (`due_count`) and how their work went against the tolerance window.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PmComplianceReport {
     pub from: String,
@@ -456,8 +456,11 @@ pub struct PmComplianceReport {
     pub on_time_count: i64,
     pub early_count: i64,
     pub late_count: i64,
-    /// Due in the period, no completed execution yet (open or missed).
+    /// Due in the period, window closed, no completion (missed or still open late).
     pub not_done_count: i64,
+    /// Due in the period, still inside its window, not done yet: not judged (not in `due_count`).
+    #[serde(default)]
+    pub pending_count: i64,
     /// `on_time_count / due_count × 100`; `None` when nothing was due.
     pub compliance_pct: Option<f64>,
 }

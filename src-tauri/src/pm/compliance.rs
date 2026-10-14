@@ -1,16 +1,20 @@
-//! PM compliance KPI (SMRP Best Practice 5.4.1 style).
+//! PM compliance KPI (SMRP Best Practice 5.4.1 style) — the one definition used by the PM page,
+//! the home tile, the Analytics SMRP tile and the monthly report.
 //!
-//! `PM compliance % = PM occurrences completed within their tolerance window ÷ PM occurrences
-//! due in the period × 100`.
+//! `PM compliance % = PM occurrences done within their tolerance window ÷ PM occurrences due in
+//! the period whose outcome is known × 100`.
 //!
-//! - **Due in the period**: the occurrence's due date is in `[from, to)` and it was not cancelled
-//!   (a cancelled PM is a planning decision, not work owed). Forecasts that were never generated
-//!   are not counted.
-//! - **Within the window**: its last completed execution is `on_time` (`pm::schedule`). Work done
-//!   before the window (`early`) or after it (`late`) is not compliant; an occurrence without a
-//!   completed execution (still open, or missed) is `not_done`.
-//! - Executions recorded before windows existed carry no timing: they are classified on read
-//!   with the default window (the due day).
+//! - **Due in the period**: due date in `[from, to)`, never later than `now`, not cancelled
+//!   (a cancelled PM is a planning decision, not work owed).
+//! - **Outcome known**: the work was done, or its window has closed (end of window, else the end
+//!   of the due day) by `now`. Work still inside its window is `pending` and left out: it cannot
+//!   be judged yet.
+//! - **Within the window**: the completion is `on_time` (`pm::schedule`). Work done before the
+//!   window opens (`early`) or after it closes (`late`) is not compliant; an occurrence whose
+//!   window closed without work is `not_done`.
+//! - **Completion**: the last completed execution; an occurrence completed by a status change
+//!   only counts from that change. Executions recorded before windows existed carry no timing:
+//!   they are classified on read with the default window (the due day).
 
 use chrono::{DateTime, Utc};
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
@@ -25,58 +29,92 @@ fn parse(ts: &str, field: &str) -> AppResult<DateTime<Utc>> {
         .with_timezone(&Utc))
 }
 
-pub async fn get_pm_compliance(db: &impl ConnectionTrait, input: PmComplianceInput) -> AppResult<PmComplianceReport> {
-    let from = parse(&input.from, "from")?;
-    let to = parse(&input.to, "to")?;
-    if to <= from {
-        return Err(AppError::ValidationFailed(vec!["to must be after from.".to_string()]));
-    }
+/// Which occurrences count: one plan, and/or the assets installed at one organisation node.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ComplianceScope {
+    pub pm_plan_id: Option<i64>,
+    pub org_node_id: Option<i64>,
+}
+
+/// Compliance of the occurrences due in `[from, to)`, judged at `now` (see module docs).
+pub async fn compliance_between(
+    db: &impl ConnectionTrait,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    now: DateTime<Utc>,
+    scope: ComplianceScope,
+) -> AppResult<PmComplianceReport> {
+    let upper = to.min(now);
+    // Timestamps are normalised to RFC3339 in SQL (rows written by SQLite defaults use another form).
     let mut sql = String::from(
-        "SELECT po.due_at, po.window_start_at, po.window_end_at, po.window_start_meter, po.window_end_meter,
-                done.executed_at, done.timing_status, done.meter_reading
+        "SELECT strftime('%Y-%m-%dT%H:%M:%SZ', po.due_at) AS due_at, po.window_start_at, po.window_end_at,
+                po.window_start_meter, po.window_end_meter,
+                strftime('%Y-%m-%dT%H:%M:%SZ', COALESCE(done.executed_at,
+                    CASE WHEN po.status = 'completed' THEN COALESCE(
+                        (SELECT MIN(t.transitioned_at) FROM pm_occurrence_transitions t
+                         WHERE t.pm_occurrence_id = po.id AND t.to_status = 'completed'),
+                        po.updated_at) END)) AS done_at,
+                done.timing_status, done.meter_reading
          FROM pm_occurrences po
+         JOIN pm_plans pp ON pp.id = po.pm_plan_id
+         LEFT JOIN equipment eq ON eq.id =
+             COALESCE(po.equipment_id, CASE WHEN pp.asset_scope_type = 'equipment' THEN pp.asset_scope_id END)
          LEFT JOIN pm_executions done ON done.id = (
              SELECT pe.id FROM pm_executions pe
              WHERE pe.pm_occurrence_id = po.id
                AND pe.execution_result IN ('completed_no_findings','completed_with_findings')
              ORDER BY pe.executed_at DESC, pe.id DESC LIMIT 1)
-         WHERE po.due_at >= ? AND po.due_at < ?
-           AND po.status NOT IN ('cancelled','forecasted')",
+         WHERE po.due_at IS NOT NULL AND po.status <> 'cancelled'
+           AND datetime(po.due_at) >= datetime(?) AND datetime(po.due_at) < datetime(?)",
     );
-    let mut binds: Vec<sea_orm::Value> = vec![rfc3339(from).into(), rfc3339(to).into()];
-    if let Some(plan_id) = input.pm_plan_id {
+    let mut binds: Vec<sea_orm::Value> = vec![rfc3339(from).into(), rfc3339(upper).into()];
+    if let Some(plan_id) = scope.pm_plan_id {
         sql.push_str(" AND po.pm_plan_id = ?");
         binds.push(plan_id.into());
+    }
+    if let Some(node) = scope.org_node_id {
+        sql.push_str(" AND eq.installed_at_node_id = ?");
+        binds.push(node.into());
     }
     let rows = db
         .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, binds))
         .await?;
 
-    let (mut on_time, mut early, mut late, mut not_done) = (0_i64, 0_i64, 0_i64, 0_i64);
+    let (mut on_time, mut early, mut late, mut not_done, mut pending) = (0_i64, 0_i64, 0_i64, 0_i64, 0_i64);
     for row in &rows {
-        let executed_at: Option<String> = row.try_get("", "executed_at")?;
-        let Some(executed_at) = executed_at else {
-            not_done += 1;
+        let due_at: String = row.try_get("", "due_at")?;
+        let mut window = OccurrenceWindow {
+            start_at: row.try_get("", "window_start_at")?,
+            end_at: row.try_get("", "window_end_at")?,
+            start_meter: row.try_get("", "window_start_meter")?,
+            end_meter: row.try_get("", "window_end_meter")?,
+        };
+        if window.end_at.is_none() {
+            let (start, end) = time_window(parse(&due_at, "due_at")?, None, None);
+            window.start_at = start.map(rfc3339);
+            window.end_at = Some(rfc3339(end));
+        }
+        let done_at: Option<String> = row.try_get("", "done_at")?;
+        let Some(done_at) = done_at else {
+            let closed = window
+                .end_at
+                .as_deref()
+                .map(|e| parse(e, "window_end_at"))
+                .transpose()?
+                .is_some_and(|end| end <= now);
+            if closed {
+                not_done += 1;
+            } else {
+                pending += 1;
+            }
             continue;
         };
         let stored: Option<String> = row.try_get("", "timing_status")?;
         let timing = match stored {
             Some(t) => Some(t),
             None => {
-                let due_at: String = row.try_get("", "due_at")?;
-                let mut window = OccurrenceWindow {
-                    start_at: row.try_get("", "window_start_at")?,
-                    end_at: row.try_get("", "window_end_at")?,
-                    start_meter: row.try_get("", "window_start_meter")?,
-                    end_meter: row.try_get("", "window_end_meter")?,
-                };
-                if window.end_at.is_none() {
-                    let (start, end) = time_window(parse(&due_at, "due_at")?, None, None);
-                    window.start_at = start.map(rfc3339);
-                    window.end_at = Some(rfc3339(end));
-                }
                 let reading: Option<f64> = row.try_get("", "meter_reading")?;
-                classify_timing(&window, parse(&executed_at, "executed_at")?, reading).map(str::to_string)
+                classify_timing(&window, parse(&done_at, "done_at")?, reading).map(str::to_string)
             }
         };
         match timing.as_deref() {
@@ -86,16 +124,37 @@ pub async fn get_pm_compliance(db: &impl ConnectionTrait, input: PmComplianceInp
             _ => not_done += 1,
         }
     }
-    let due_count = rows.len() as i64;
+    let due_count = on_time + early + late + not_done;
     Ok(PmComplianceReport {
         from: rfc3339(from),
         to: rfc3339(to),
-        pm_plan_id: input.pm_plan_id,
+        pm_plan_id: scope.pm_plan_id,
         due_count,
         on_time_count: on_time,
         early_count: early,
         late_count: late,
         not_done_count: not_done,
+        pending_count: pending,
         compliance_pct: compliance_pct(on_time, due_count),
     })
+}
+
+/// IPC entry point (PM page): the period given, judged now.
+pub async fn get_pm_compliance(db: &impl ConnectionTrait, input: PmComplianceInput) -> AppResult<PmComplianceReport> {
+    let from = parse(&input.from, "from")?;
+    let to = parse(&input.to, "to")?;
+    if to <= from {
+        return Err(AppError::ValidationFailed(vec!["to must be after from.".to_string()]));
+    }
+    compliance_between(
+        db,
+        from,
+        to,
+        Utc::now(),
+        ComplianceScope {
+            pm_plan_id: input.pm_plan_id,
+            org_node_id: None,
+        },
+    )
+    .await
 }

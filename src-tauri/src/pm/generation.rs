@@ -659,7 +659,7 @@ async fn apply_meter_first(
     let already_due = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!(
+            format!(
                 "SELECT COUNT(*) AS c FROM pm_occurrences
                  WHERE pm_plan_id = ? AND equipment_id IS ?
                    AND (status = 'in_progress' OR (status IN ({OPEN_STATUSES}) AND due_at <= ?))"
@@ -680,7 +680,7 @@ async fn apply_meter_first(
     let next_open = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!(
+            format!(
                 "SELECT id FROM pm_occurrences
                  WHERE pm_plan_id = ? AND equipment_id IS ? AND status IN ({OPEN_STATUSES})
                  ORDER BY due_at ASC, id ASC LIMIT 1"

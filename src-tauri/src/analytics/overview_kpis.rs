@@ -199,8 +199,9 @@ pub async fn build_overview_kpis(
         "up-bad",
     ));
 
-    // PM compliance (SMRP): occurrences done within tolerance / occurrences due, last 30 days vs
-    // the 30 days before (`analytics::smrp::pm_compliance`).
+    // PM compliance (SMRP): occurrences done within their tolerance window ÷ occurrences due whose
+    // outcome is known, last 30 days vs the 30 days before — `pm::compliance` through
+    // `analytics::smrp::pm_compliance`, the same figure as the PM page.
     let (pm_comp, pm_comp_prev) = if perms.can_pm {
         let window = smrp::SmrpWindow::last_days(now, OVERVIEW_HORIZON_DAYS);
         (

@@ -109,7 +109,7 @@
     },
     "alertNormal": "Normal",
     "alertAttention": "Attention",
-    "contextPmCompliance": "Réalisées dans la tolérance, 30 derniers jours"
+    "contextPmCompliance": "Réalisées dans leur fenêtre, 30 derniers jours"
   },
   "dev": {
     "kpiValidation": "Validation KPI (échantillons SQL)",

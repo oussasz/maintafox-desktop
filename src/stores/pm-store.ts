@@ -67,8 +67,8 @@ import type {
 
 /** Recurring findings look back over this many days (shown in the section title). */
 export const PM_RECURRING_FINDINGS_WINDOW_DAYS = 90;
-/** Compliance period offered first on the PM page (days back from today). */
-export const PM_COMPLIANCE_DEFAULT_DAYS = 90;
+/** Compliance period offered first on the PM page: the home tile's 30 days, so both agree. */
+export const PM_COMPLIANCE_DEFAULT_DAYS = 30;
 /** Upper bound of readiness candidates loaded for one plan (backend maximum is 1000). */
 const PM_READINESS_LIMIT = 200;
 

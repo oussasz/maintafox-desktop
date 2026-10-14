@@ -82,6 +82,8 @@ export interface PmComplianceReport {
   early_count: number;
   late_count: number;
   not_done_count: number;
+  /** Due, still inside its window and not done: not judged yet (not in `due_count`). */
+  pending_count?: number | undefined;
   compliance_pct: number | null;
 }
 
@@ -320,6 +322,7 @@ const PmComplianceReportSchema = z.object({
   early_count: z.number(),
   late_count: z.number(),
   not_done_count: z.number(),
+  pending_count: z.number().optional(),
   compliance_pct: z.number().nullable(),
 });
 

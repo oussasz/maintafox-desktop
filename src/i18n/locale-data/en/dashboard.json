@@ -109,7 +109,7 @@
     },
     "alertNormal": "Normal",
     "alertAttention": "Attention",
-    "contextPmCompliance": "Done within tolerance, last 30 days"
+    "contextPmCompliance": "Done within their window, last 30 days"
   },
   "dev": {
     "kpiValidation": "KPI validation (SQL samples)",

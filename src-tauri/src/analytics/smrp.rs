@@ -6,7 +6,7 @@
 //! |---|---|
 //! | Schedule compliance | committed hours whose work order was completed by the end of the committed day ÷ committed hours (`schedule_commitments`, commitments ending in the window) |
 //! | Planned / reactive / emergency work | labour hours (`work_order_interveners`, else `actual_duration_hours`) of work orders completed in the window, by type; work-order counts when no hours are recorded |
-//! | PM compliance | PM occurrences done by the end of their tolerance window (`window_end_at`, else the end of the due day) ÷ occurrences due whose window has closed or that are done (cancelled excluded) |
+//! | PM compliance | PM occurrences done inside their tolerance window (not early, not late; window = `window_start_at`–`window_end_at`, else the due day) ÷ occurrences due in the window that are done or whose window has closed (cancelled excluded) — `pm::compliance`, the same number as the PM page |
 //! | Backlog | planned hours of work orders not done ÷ weekly crew hours (active personnel × weekly hours of their work schedule) |
 //! | Cost / replacement asset value | annualised cost of work orders closed in the window on assets with a replacement value ÷ their total replacement value |
 //!
@@ -314,60 +314,27 @@ pub async fn work_mix(db: &DatabaseConnection, window: SmrpWindow, org: Option<i
 
 // ── PM compliance ──────────────────────────────────────────────────────────────────────────
 
-/// Occurrences due in the window that are done, or whose tolerance window has closed; and those
-/// done by the end of their tolerance window.
+/// PM compliance over the window, judged at `now`: the single definition of
+/// `pm::compliance::compliance_between` (work done inside its tolerance window ÷ occurrences
+/// due whose outcome is known), restricted to the assets of `org` when given.
 pub async fn pm_compliance(
     db: &DatabaseConnection,
     window: SmrpWindow,
     now: DateTime<Utc>,
     org: Option<i64>,
 ) -> AppResult<SmrpRatio> {
-    // Tolerance windows and timing come from a newer PM migration; use them when present.
-    let limit = if has_column(db, "pm_occurrences", "window_end_at").await? {
-        "COALESCE(po.window_end_at, datetime(date(po.due_at), '+1 day'))"
-    } else {
-        "datetime(date(po.due_at), '+1 day')"
-    };
-    let late = if has_column(db, "pm_executions", "timing_status").await? {
-        "AND NOT EXISTS (SELECT 1 FROM pm_executions x2 WHERE x2.pm_occurrence_id = q.id \
-         AND x2.timing_status = 'late')"
-    } else {
-        ""
-    };
-    let sql = format!(
-        "SELECT COUNT(*) AS due, \
-                COALESCE(SUM(CASE WHEN q.done_at IS NOT NULL \
-                  AND datetime(q.done_at) <= datetime(q.limit_at) {late} THEN 1 ELSE 0 END), 0) AS on_time \
-         FROM ( \
-           SELECT po.id AS id, {limit} AS limit_at, \
-                  COALESCE( \
-                    (SELECT MIN(x.executed_at) FROM pm_executions x WHERE x.pm_occurrence_id = po.id), \
-                    CASE WHEN po.status = 'completed' THEN COALESCE( \
-                      (SELECT MIN(t.transitioned_at) FROM pm_occurrence_transitions t \
-                        WHERE t.pm_occurrence_id = po.id AND t.to_status = 'completed'), po.updated_at) END \
-                  ) AS done_at \
-           FROM pm_occurrences po \
-           JOIN pm_plans pp ON pp.id = po.pm_plan_id \
-           LEFT JOIN equipment e ON e.id = pp.asset_scope_id AND pp.asset_scope_type = 'equipment' \
-           WHERE po.due_at IS NOT NULL AND po.status <> 'cancelled' \
-             AND datetime(po.due_at) >= datetime(?) AND datetime(po.due_at) < datetime(?) \
-             AND (? IS NULL OR e.installed_at_node_id = ?) \
-         ) q \
-         WHERE q.done_at IS NOT NULL OR datetime(q.limit_at) <= datetime(?)"
-    );
-    let row = one_row(
+    let report = crate::pm::compliance::compliance_between(
         db,
-        &sql,
-        vec![
-            instant(window.from).into(),
-            instant(window.until(now)).into(),
-            org.into(),
-            org.into(),
-            instant(now).into(),
-        ],
+        window.from,
+        window.until(now),
+        now,
+        crate::pm::compliance::ComplianceScope {
+            pm_plan_id: None,
+            org_node_id: org,
+        },
     )
     .await?;
-    Ok(SmrpRatio::of(f(&row, "on_time"), f(&row, "due")))
+    Ok(SmrpRatio::of(report.on_time_count as f64, report.due_count as f64))
 }
 
 // ── Backlog ────────────────────────────────────────────────────────────────────────────────

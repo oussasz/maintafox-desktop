@@ -228,7 +228,7 @@ async fn publish_sets_plan_current_version() {
 #[tokio::test]
 async fn fixed_generation_is_idempotent() {
     let db = setup_db().await;
-    let (plan_id, version_id) = create_plan_with_published_version(
+    let (plan_id, _version_id) = create_plan_with_published_version(
         &db,
         "PM-FIXED-001",
         "fixed",
@@ -287,7 +287,7 @@ async fn fixed_generation_is_idempotent() {
 #[tokio::test]
 async fn floating_generation_reanchors_on_completion() {
     let db = setup_db().await;
-    let (plan_id, version_id) = create_plan_with_published_version(
+    let (plan_id, _version_id) = create_plan_with_published_version(
         &db,
         "PM-FLOAT-001",
         "floating",
@@ -449,7 +449,7 @@ async fn meter_generation_respects_threshold_and_idempotency() {
         .expect("meter row");
     let meter_id: i64 = meter_row.try_get("", "id").expect("meter id");
 
-    let (plan_id, version_id) = create_plan_with_published_version(
+    let (plan_id, _version_id) = create_plan_with_published_version(
         &db,
         "PM-METER-001",
         "meter",
@@ -633,7 +633,7 @@ async fn execution_with_finding_creates_followups_and_events() {
     ))
     .await
     .expect("insert execution equipment");
-    let (plan_id, version_id) = create_plan_with_published_version(
+    let (plan_id, _version_id) = create_plan_with_published_version(
         &db,
         "PM-EXEC-001",
         "fixed",
@@ -778,7 +778,7 @@ async fn execution_with_finding_creates_followups_and_events() {
 #[tokio::test]
 async fn missed_execution_requires_reason_code() {
     let db = setup_db().await;
-    let (plan_id, version_id) = create_plan_with_published_version(
+    let (plan_id, _version_id) = create_plan_with_published_version(
         &db,
         "PM-EXEC-002",
         "fixed",
@@ -839,7 +839,7 @@ async fn missed_execution_requires_reason_code() {
 #[tokio::test]
 async fn planning_readiness_projection_returns_blockers_without_scheduler_side_effects() {
     let db = setup_db().await;
-    let (plan_id, version_id) = create_plan_with_published_version(
+    let (plan_id, _version_id) = create_plan_with_published_version(
         &db,
         "PM-READ-001",
         "fixed",
@@ -954,7 +954,7 @@ async fn planning_readiness_projection_returns_blockers_without_scheduler_side_e
 #[tokio::test]
 async fn governance_kpi_report_returns_transparent_derivations() {
     let db = setup_db().await;
-    let (plan_id, version_id) = create_plan_with_published_version(
+    let (plan_id, _version_id) = create_plan_with_published_version(
         &db,
         "PM-KPI-001",
         "fixed",

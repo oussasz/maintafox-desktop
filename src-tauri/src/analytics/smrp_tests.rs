@@ -227,27 +227,46 @@ async fn pm_plan(db: &DatabaseConnection) -> i64 {
     id_of(db, "SELECT id FROM pm_plans WHERE code = 'PM-SM'").await
 }
 
-/// P1 due −20 d, executed same day → on time. P2 due −10 d, executed −7 d → late.
-/// P3 due −5 d, never done → due, not on time. P4 due +2 d → not due yet. P6 due −15 d cancelled.
+/// One definition with the PM page (`pm::compliance`):
+/// P1 due −20 d, executed the same day → on time. P2 due −10 d, executed −7 d → late.
+/// P3 due −5 d, never done, window (the due day) closed → due, not done.
+/// P5 due −12 d with a window −13 d … −11 d, executed −14 d → early, not compliant.
+/// P7 due −1 d with a window until +2 d, not done → still inside its window, not judged.
+/// P4 due +2 d → not due yet. P6 due −15 d cancelled → excluded.
+/// → 1 on time of 4 judged (P1, P2, P3, P5) = 25 %.
 #[tokio::test]
 async fn pm_compliance_and_pm_overdue_from_occurrences() {
     let db = setup().await;
     let now = fixed_now();
     let plan = pm_plan(&db).await;
     let created = ts(now, -40, 0);
-    for (key, due, status, done) in [
-        ("P1", ts(now, -20, 0), "completed", Some(ts(now, -20, 2))),
-        ("P2", ts(now, -10, 0), "completed", Some(ts(now, -7, 0))),
-        ("P3", ts(now, -5, 0), "forecasted", None),
-        ("P4", ts(now, 2, 0), "forecasted", None),
-        ("P6", ts(now, -15, 0), "cancelled", None),
+    for (key, due, status, done, window) in [
+        ("P1", ts(now, -20, 0), "completed", Some(ts(now, -20, 2)), None),
+        ("P2", ts(now, -10, 0), "completed", Some(ts(now, -7, 0)), None),
+        ("P3", ts(now, -5, 0), "forecasted", None, None),
+        ("P4", ts(now, 2, 0), "forecasted", None, None),
+        ("P6", ts(now, -15, 0), "cancelled", None, None),
+        (
+            "P5",
+            ts(now, -12, 0),
+            "completed",
+            Some(ts(now, -14, 0)),
+            Some((ts(now, -13, -12), ts(now, -11, 11))),
+        ),
+        (
+            "P7",
+            ts(now, -1, 0),
+            "scheduled",
+            None,
+            Some((ts(now, -2, 0), ts(now, 2, 0))),
+        ),
     ] {
         let updated = done.clone().unwrap_or_else(|| created.clone());
+        let (start, end) = window.unwrap_or_else(|| ("NULL".to_string(), "NULL".to_string()));
         exec(
             &db,
             &format!(
-                "INSERT INTO pm_occurrences (pm_plan_id, plan_version_id, due_basis, due_at, status, deferral_reason, created_at, \
-                 updated_at) VALUES ({plan}, 1, 'calendar', {due}, '{status}', '{key}', {created}, {updated})"
+                "INSERT INTO pm_occurrences (pm_plan_id, plan_version_id, due_basis, due_at, status, deferral_reason, created_at,                  updated_at, window_start_at, window_end_at)                  VALUES ({plan}, 1, 'calendar-{key}', {due}, '{status}', '{key}', {created}, {updated}, {start}, {end})"
             ),
         )
         .await;
@@ -260,8 +279,7 @@ async fn pm_compliance_and_pm_overdue_from_occurrences() {
             exec(
                 &db,
                 &format!(
-                    "INSERT INTO pm_executions (pm_occurrence_id, execution_result, executed_at, created_at) \
-                     VALUES ({occ}, 'completed_no_findings', {done}, {done})"
+                    "INSERT INTO pm_executions (pm_occurrence_id, execution_result, executed_at, created_at)                      VALUES ({occ}, 'completed_no_findings', {done}, {done})"
                 ),
             )
             .await;
@@ -270,22 +288,44 @@ async fn pm_compliance_and_pm_overdue_from_occurrences() {
     let r = smrp::pm_compliance(&db, SmrpWindow::last_days(now, 30), now, None)
         .await
         .unwrap();
-    assert_eq!((r.numerator, r.denominator), (1.0, 3.0), "P1 of P1, P2, P3");
-    assert!((r.value_pct.unwrap() - 100.0 / 3.0).abs() < 1e-9);
+    assert_eq!((r.numerator, r.denominator), (1.0, 4.0), "P1 of P1, P2, P3, P5");
+    assert!((r.value_pct.unwrap() - 25.0).abs() < 1e-9);
+    // The PM page reads the same function over the same period.
+    let page = crate::pm::compliance::compliance_between(
+        &db,
+        now - Duration::days(30),
+        now,
+        now,
+        crate::pm::compliance::ComplianceScope::default(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        (
+            page.on_time_count,
+            page.early_count,
+            page.late_count,
+            page.not_done_count,
+            page.pending_count
+        ),
+        (1, 1, 1, 1, 1)
+    );
+    assert_eq!(page.compliance_pct, r.value_pct);
     let prev = smrp::pm_compliance(&db, SmrpWindow::last_days(now, 30).previous(), now, None)
         .await
         .unwrap();
     assert_eq!(prev.value_pct, None, "nothing due 30–60 days ago");
 
     let at = |d: i64| now + Duration::days(d);
-    assert_eq!(as_of::pm_overdue_at(&db, at(0), None).await.unwrap(), 1, "P3");
+    // Overdue counts the due date (not the tolerance window): P3 and P7.
+    assert_eq!(as_of::pm_overdue_at(&db, at(0), None).await.unwrap(), 2, "P3, P7");
     assert_eq!(
         as_of::pm_overdue_at(&db, at(-8), None).await.unwrap(),
         1,
         "P2 (done −7 d)"
     );
-    // At −12 d: P1 was done (−20 d), P2 and P3 not yet due, P6 cancelled long before (its last
-    // change is its creation, −40 d).
+    // At −12 d: P1 was done (−20 d), P5 done (−14 d) and due exactly then, P2, P3 and P7 not yet
+    // due, P6 cancelled long before (its last change is its creation, −40 d).
     assert_eq!(as_of::pm_overdue_at(&db, at(-12), None).await.unwrap(), 0);
 }
 

@@ -268,8 +268,8 @@
     "pm": {
       "title": "PM compliance",
       "none": "No preventive maintenance was due in this period.",
-      "detail": "{{done}} of {{total}} done within tolerance",
-      "formula": "PM occurrences done by the end of their tolerance window (or of their due day when the plan has no tolerance) ÷ PM occurrences due in the period. Cancelled occurrences are excluded; occurrences still within their tolerance are not counted yet."
+      "detail": "{{done}} of {{total}} done within their window",
+      "formula": "PM occurrences done within their tolerance window — not before it opens, not after it closes (without tolerance: on the due day) ÷ PM occurrences due in the period that are done or whose window has closed. Cancelled occurrences are excluded; those still inside their window are not counted yet. Same figure as the PM page and the home tile."
     },
     "backlog": {
       "title": "Backlog",
