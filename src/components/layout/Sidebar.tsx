@@ -102,7 +102,7 @@ export function Sidebar({ items }: SidebarProps) {
                     "text-sm transition-colors duration-fast",
                     "hover:bg-surface-3",
                     isActive
-                      ? "bg-primary-bg/10 text-primary-light font-medium"
+                      ? "bg-primary-bg text-primary font-medium dark:bg-primary/20 dark:text-primary-light"
                       : "text-text-secondary",
                     collapsed && "justify-center",
                   )}
