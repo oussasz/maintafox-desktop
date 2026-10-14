@@ -394,6 +394,43 @@ pub async fn plan_wo(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// F1) set_wo_permit_requirement — ot.edit (draft / planning / ready only)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[tauri::command]
+pub async fn set_wo_permit_requirement(
+    input: crate::wo::workflow::actions::WoPermitRequirementInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::wo::domain::WorkOrder> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
+    let actor_id = i64::from(user.user_id);
+    let requires_permit = input.requires_permit;
+    let wo = crate::wo::workflow::actions::set_permit_requirement(&state.db, input, actor_id).await?;
+    audit::record_wo_change_event(
+        &state.db,
+        audit::WoAuditInput {
+            wo_id: Some(wo.id),
+            action: "permit_requirement_changed".into(),
+            actor_id: Some(actor_id),
+            summary: Some(
+                if requires_permit {
+                    "Permis / consignation exigé"
+                } else {
+                    "Permis / consignation non exigé"
+                }
+                .into(),
+            ),
+            details_json: Some(serde_json::json!({ "requires_permit": requires_permit }).to_string()),
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
+    Ok(wo)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // F2) submit / mark ready / readiness / return / approve — ot.edit / ot.plan
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -764,6 +801,14 @@ pub async fn list_labor(wo_id: i64, state: State<'_, AppState>) -> AppResult<Vec
     labor::list_labor_entries(&state.db, wo_id).await
 }
 
+/// People who can be booked on a WO labour entry (personnel register ∩ active logins).
+#[tauri::command]
+pub async fn list_wo_labor_candidates(state: State<'_, AppState>) -> AppResult<Vec<labor::WoLaborCandidate>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
+    labor::list_labor_candidates(&state.db).await
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // P) add_part — ot.edit
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1002,13 +1047,13 @@ pub async fn list_downtime_segments(
 
 #[tauri::command]
 pub async fn save_failure_detail(
-    input: closeout::SaveFailureDetailInput,
+    input: closeout::SaveFailureCodingInput,
     state: State<'_, AppState>,
 ) -> AppResult<closeout::WoFailureDetail> {
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
-    let wo_id = input.wo_id;
-    let detail = closeout::save_failure_detail(&state.db, input).await?;
+    let wo_id = input.base.wo_id;
+    let detail = closeout::save_failure_coding(&state.db, input).await?;
     audit::record_wo_change_event(
         &state.db,
         audit::WoAuditInput {

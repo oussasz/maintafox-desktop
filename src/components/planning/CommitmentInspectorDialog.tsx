@@ -1,12 +1,14 @@
 import { useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 
+import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
 import { Timeline } from "@/components/timeline/Timeline";
 import type { TimelineEntry, TimelineTone } from "@/components/timeline/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
+import { useFormatters } from "@/hooks/use-formatters";
 import { formatOrDash, formatPersonLabel } from "@/lib/display";
 import type { ScheduleChangeLogEntry, ScheduleCommitment } from "@shared/ipc-types";
 
@@ -39,6 +41,7 @@ export function CommitmentInspectorDialog({
   onOpenOnBoard,
 }: CommitmentInspectorDialogProps) {
   const { t, i18n } = useTranslation("planning");
+  const { formatDateTime } = useFormatters();
 
   useEffect(() => {
     if (open && commitment) {
@@ -103,6 +106,17 @@ export function CommitmentInspectorDialog({
           {commitment?.source_title ? (
             <p className="text-sm text-text-secondary">{commitment.source_title}</p>
           ) : null}
+          {commitment?.source_type === "work_order" ? (
+            <div className="flex flex-wrap items-center gap-2 pt-1 text-xs text-text-muted">
+              <span>{t("inspector.sourceWorkOrder")}</span>
+              <LinkedEntityBadge
+                entity="work_order"
+                code={commitment.source_code}
+                entityId={commitment.source_id}
+                title={commitment.source_title}
+              />
+            </div>
+          ) : null}
         </DialogHeader>
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 pb-4">
@@ -113,8 +127,8 @@ export function CommitmentInspectorDialog({
                   {t("inspector.slot")}
                 </div>
                 <div className="text-text-primary">
-                  {new Date(commitment.committed_start).toLocaleString()} –{" "}
-                  {new Date(commitment.committed_end).toLocaleString()}
+                  {formatDateTime(commitment.committed_start)} –{" "}
+                  {formatDateTime(commitment.committed_end)}
                 </div>
               </div>
               <div>
@@ -154,7 +168,7 @@ export function CommitmentInspectorDialog({
                     {t("inspector.nearestWindow")}
                   </div>
                   <div className="text-text-primary">
-                    {new Date(commitment.nearest_feasible_window).toLocaleString()}
+                    {formatDateTime(commitment.nearest_feasible_window)}
                   </div>
                 </div>
               ) : null}

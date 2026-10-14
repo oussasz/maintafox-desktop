@@ -884,7 +884,7 @@ mod tests {
         let wo_lines: Vec<&str> = lib_rs.lines().filter(|l| l.contains("commands::wo::")).collect();
 
         // Snapshot of the registered WO command surface; update deliberately when adding commands.
-        assert_eq!(wo_lines.len(), 65, "invoke_handler must contain exactly 65 WO commands");
+        assert_eq!(wo_lines.len(), 67, "invoke_handler must contain exactly 67 WO commands");
 
         let mut seen = std::collections::HashSet::new();
         for line in &wo_lines {
@@ -1201,5 +1201,389 @@ mod tests {
         .expect("add labor without link");
         assert_eq!(missing.rate_source, "missing");
         assert!(missing.hourly_rate.is_none());
+    }
+    // ═══════════════════════════════════════════════════════════════════════
+    // Permit / LOTO requirement — persisted on create, editable until start
+    // ═══════════════════════════════════════════════════════════════════════
+
+    fn corrective_input(actor: i64, requires_permit: Option<bool>) -> WoCreateInput {
+        WoCreateInput {
+            type_code: "corrective".into(),
+            equipment_id: Some(1),
+            location_id: None,
+            source_di_id: None,
+            source_inspection_anomaly_id: None,
+            source_ram_ishikawa_diagram_id: None,
+            source_ishikawa_flow_node_id: None,
+            source_rca_cause_text: None,
+            entity_id: None,
+            planner_id: None,
+            urgency_id: Some(3),
+            title: "Corrective WO with LOTO".into(),
+            description: None,
+            notes: None,
+            planned_start: None,
+            planned_end: None,
+            shift: None,
+            expected_duration_hours: None,
+            creator_id: actor,
+            requires_permit,
+        }
+    }
+
+    #[tokio::test]
+    async fn permit_requirement_persists_on_create() {
+        let db = setup().await;
+        seed_test_equipment(&db).await;
+        let actor = admin_id(&db).await;
+
+        let with_permit = queries::create_work_order(&db, corrective_input(actor, Some(true)))
+            .await
+            .expect("create WO requiring a permit");
+        assert!(with_permit.requires_permit, "requires_permit=true must be stored");
+
+        let reloaded = queries::get_work_order(&db, with_permit.id)
+            .await
+            .expect("reload")
+            .expect("WO exists");
+        assert!(reloaded.requires_permit, "requires_permit must survive a reload");
+
+        let without = queries::create_work_order(&db, corrective_input(actor, None))
+            .await
+            .expect("create WO without permit");
+        assert!(!without.requires_permit, "default stays false");
+    }
+
+    #[tokio::test]
+    async fn permit_requirement_set_in_planning_gates_start_and_freezes_in_progress() {
+        use crate::wo::workflow::actions::{set_permit_requirement, WoPermitRequirementInput};
+
+        let db = setup().await;
+        seed_test_equipment(&db).await;
+        let actor = admin_id(&db).await;
+
+        let wo = queries::create_work_order(&db, corrective_input(actor, None))
+            .await
+            .expect("create WO");
+        let wo = submit_wo(
+            &db,
+            WoSubmitInput {
+                wo_id: wo.id,
+                actor_id: actor,
+                expected_row_version: wo.row_version,
+            },
+        )
+        .await
+        .expect("submit → planning");
+
+        let wo = set_permit_requirement(
+            &db,
+            WoPermitRequirementInput {
+                wo_id: wo.id,
+                expected_row_version: wo.row_version,
+                requires_permit: true,
+            },
+            actor,
+        )
+        .await
+        .expect("planner can require a permit in planning");
+        assert!(wo.requires_permit);
+
+        let gate = crate::permit::wo_gate::assert_in_progress_permit_gate(&db, wo.id).await;
+        assert!(
+            matches!(gate, Err(AppError::ValidationFailed(_))),
+            "start gate must refuse without an active permit"
+        );
+
+        // A stale row version is refused (optimistic concurrency).
+        let stale = set_permit_requirement(
+            &db,
+            WoPermitRequirementInput {
+                wo_id: wo.id,
+                expected_row_version: wo.row_version - 1,
+                requires_permit: false,
+            },
+            actor,
+        )
+        .await;
+        assert!(stale.is_err(), "stale row version must be rejected");
+
+        // Once the work is under way the requirement can no longer change.
+        let (running_id, running_rv) = create_wo_in_progress(&db).await;
+        let frozen = set_permit_requirement(
+            &db,
+            WoPermitRequirementInput {
+                wo_id: running_id,
+                expected_row_version: running_rv,
+                requires_permit: true,
+            },
+            actor,
+        )
+        .await;
+        assert!(
+            matches!(frozen, Err(AppError::ValidationFailed(_))),
+            "requirement is frozen once the WO is in progress"
+        );
+    }
+    // ═══════════════════════════════════════════════════════════════════════
+    // Execution-added stock part — reserved and issued from stock at once
+    // ═══════════════════════════════════════════════════════════════════════
+
+    async fn lookup_value_id(db: &sea_orm::DatabaseConnection, domain_key: &str) -> i64 {
+        db.query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT lv.id FROM lookup_values lv JOIN lookup_domains ld ON ld.id = lv.domain_id \
+             WHERE ld.domain_key = ? AND lv.is_active = 1 AND lv.deleted_at IS NULL \
+             ORDER BY lv.sort_order, lv.id LIMIT 1",
+            [domain_key.into()],
+        ))
+        .await
+        .expect("lookup query")
+        .expect("lookup value")
+        .try_get::<i64>("", "id")
+        .expect("lookup id")
+    }
+
+    /// Article with `qty` on hand at the seeded MAIN-BIN location. Returns (article_id, location_id).
+    async fn seed_stock_article(db: &sea_orm::DatabaseConnection, code: &str, qty: f64) -> (i64, i64) {
+        let unit = lookup_value_id(db, "inventory.unit_of_measure").await;
+        let stocking = lookup_value_id(db, "inventory.stocking_type").await;
+        let tax = lookup_value_id(db, "inventory.tax_category").await;
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO articles (entity_sync_id, article_code, article_name, unit_value_id, \
+             stocking_type_value_id, tax_category_value_id, min_stock, reorder_point, safety_stock, \
+             is_active, row_version) VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, 1, 1)",
+            [
+                format!("art-{code}").into(),
+                code.into(),
+                format!("Article {code}").into(),
+                unit.into(),
+                stocking.into(),
+                tax.into(),
+            ],
+        ))
+        .await
+        .expect("insert article");
+        let article_id: i64 = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT id FROM articles WHERE article_code = ?",
+                [code.into()],
+            ))
+            .await
+            .expect("article query")
+            .expect("article row")
+            .try_get("", "id")
+            .expect("article id");
+        let location_id: i64 = db
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT id FROM stock_locations WHERE code = 'MAIN-BIN' LIMIT 1".to_string(),
+            ))
+            .await
+            .expect("location query")
+            .expect("MAIN-BIN location")
+            .try_get("", "id")
+            .expect("location id");
+        crate::inventory::queries::adjust_stock(
+            db,
+            crate::inventory::domain::InventoryStockAdjustInput {
+                article_id,
+                location_id,
+                delta_qty: qty,
+                reason_code: Some("seed for WO execution test".to_string()),
+                notes: None,
+                source_ref: None,
+            },
+        )
+        .await
+        .expect("seed stock");
+        (article_id, location_id)
+    }
+
+    async fn on_hand(db: &sea_orm::DatabaseConnection, article_id: i64, location_id: i64) -> f64 {
+        db.query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT on_hand_qty FROM stock_balances WHERE article_id = ? AND location_id = ?",
+            [article_id.into(), location_id.into()],
+        ))
+        .await
+        .expect("balance query")
+        .expect("balance row")
+        .try_get::<f64>("", "on_hand_qty")
+        .expect("on_hand_qty")
+    }
+
+    #[tokio::test]
+    async fn execution_added_stock_part_is_reserved_and_issued() {
+        let db = setup().await;
+        let (wo_id, _) = create_wo_in_progress(&db).await;
+        let (article_id, location_id) = seed_stock_article(&db, "EXEC-BRG-6207", 10.0).await;
+
+        let part = parts::add_planned_part(
+            &db,
+            parts::AddPartInput {
+                wo_id,
+                article_id: Some(article_id),
+                article_ref: None,
+                quantity_planned: 2.0,
+                unit_cost: None,
+                stock_location_id: Some(location_id),
+                auto_reserve: Some(true),
+                notes: None,
+                origin: None,
+            },
+        )
+        .await
+        .expect("add execution part from stock");
+
+        assert_eq!(part.origin, "execution_added");
+        assert!(part.reservation_id.is_some(), "a reservation must back the issued part");
+        assert_eq!(part.quantity_issued, 2.0, "the used quantity is issued from stock");
+        assert_eq!(
+            on_hand(&db, article_id, location_id).await,
+            8.0,
+            "stock decreases by the issue"
+        );
+    }
+
+    #[tokio::test]
+    async fn execution_added_stock_part_without_enough_stock_is_rejected_and_not_kept() {
+        let db = setup().await;
+        let (wo_id, _) = create_wo_in_progress(&db).await;
+        let (article_id, location_id) = seed_stock_article(&db, "EXEC-SEAL-01", 1.0).await;
+
+        let result = parts::add_planned_part(
+            &db,
+            parts::AddPartInput {
+                wo_id,
+                article_id: Some(article_id),
+                article_ref: None,
+                quantity_planned: 5.0,
+                unit_cost: None,
+                stock_location_id: Some(location_id),
+                auto_reserve: Some(true),
+                notes: None,
+                origin: None,
+            },
+        )
+        .await;
+        assert!(result.is_err(), "issuing more than available must fail");
+        let lines: i64 = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT COUNT(*) AS n FROM work_order_parts WHERE work_order_id = ? AND article_id = ?",
+                [wo_id.into(), article_id.into()],
+            ))
+            .await
+            .expect("count")
+            .expect("row")
+            .try_get("", "n")
+            .expect("n");
+        assert_eq!(lines, 0, "no unissued 'used' line may remain");
+        assert_eq!(on_hand(&db, article_id, location_id).await, 1.0, "stock unchanged");
+    }
+    // ═══════════════════════════════════════════════════════════════════════
+    // Close-out coding on reference values (migration 178) + future labour
+    // ═══════════════════════════════════════════════════════════════════════
+
+    async fn value_id(db: &sea_orm::DatabaseConnection, domain: &str, code: &str) -> i64 {
+        db.query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT rv.id FROM reference_values rv JOIN reference_sets rs ON rs.id = rv.set_id \
+             JOIN reference_domains d ON d.id = rs.domain_id \
+             WHERE d.code = ? AND rv.code = ? LIMIT 1",
+            [domain.into(), code.into()],
+        ))
+        .await
+        .expect("value query")
+        .unwrap_or_else(|| panic!("{domain}:{code} must be seeded"))
+        .try_get::<i64>("", "id")
+        .expect("value id")
+    }
+
+    #[tokio::test]
+    async fn closeout_coding_saves_iso_14224_reference_values() {
+        let db = setup().await;
+        let (wo_id, _) = create_wo_in_progress(&db).await;
+        let symptom = value_id(&db, "WORK.SYMPTOMS", "vibration").await;
+        let cause = value_id(&db, "WORK.FAILURE_CAUSES", "wear_and_tear").await;
+        let effect = value_id(&db, "WORK.FAILURE_EFFECTS", "degraded").await;
+        let mechanism = value_id(&db, "WORK.FAILURE_MECHANISMS", "fatigue").await;
+        let detection = value_id(&db, "WORK.DETECTION_METHODS", "inspection").await;
+
+        let saved = closeout::save_failure_coding(
+            &db,
+            closeout::SaveFailureCodingInput {
+                base: SaveFailureDetailInput {
+                    wo_id,
+                    symptom_id: Some(symptom),
+                    failure_mode_id: None,
+                    failure_cause_id: Some(cause),
+                    failure_effect_id: Some(effect),
+                    is_temporary_repair: false,
+                    is_permanent_repair: true,
+                    cause_not_determined: false,
+                    notes: Some("Bearing replaced".into()),
+                },
+                failure_mechanism_id: Some(mechanism),
+                detection_method_id: Some(detection),
+            },
+        )
+        .await
+        .expect("cause / effect from reference domains must satisfy the foreign keys");
+        assert_eq!(saved.failure_cause_id, Some(cause));
+        assert_eq!(saved.failure_effect_id, Some(effect));
+        assert_eq!(saved.failure_mechanism_id, Some(mechanism));
+        assert_eq!(saved.detection_method_id, Some(detection));
+        assert!(saved.failure_mechanism_label.is_some());
+
+        // A mechanism id from another domain is refused.
+        let wrong = closeout::save_failure_coding(
+            &db,
+            closeout::SaveFailureCodingInput {
+                base: SaveFailureDetailInput {
+                    wo_id,
+                    symptom_id: Some(symptom),
+                    failure_mode_id: None,
+                    failure_cause_id: Some(cause),
+                    failure_effect_id: Some(effect),
+                    is_temporary_repair: false,
+                    is_permanent_repair: true,
+                    cause_not_determined: false,
+                    notes: None,
+                },
+                failure_mechanism_id: Some(cause),
+                detection_method_id: None,
+            },
+        )
+        .await;
+        assert!(matches!(wrong, Err(AppError::ValidationFailed(_))));
+    }
+
+    #[tokio::test]
+    async fn labour_in_the_future_is_rejected() {
+        let db = setup().await;
+        let (wo_id, _) = create_wo_in_progress(&db).await;
+        let actor = admin_id(&db).await;
+        let tomorrow = (chrono::Utc::now() + chrono::Duration::days(1))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
+        let result = labor::add_labor_entry(
+            &db,
+            AddLaborInput {
+                wo_id,
+                intervener_id: actor,
+                skill_id: None,
+                started_at: Some("2026-04-10T08:00:00Z".into()),
+                ended_at: Some(tomorrow),
+                hours_worked: None,
+                hourly_rate: None,
+                notes: None,
+            },
+        )
+        .await;
+        assert!(matches!(result, Err(AppError::ValidationFailed(_))));
     }
 }

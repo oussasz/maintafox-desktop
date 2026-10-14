@@ -40,7 +40,13 @@ import {
   listTasks,
   listWoTools,
 } from "@/services/wo-execution-service";
-import { emergencyReassignWo, evaluateWoReadiness, planWo } from "@/services/wo-service";
+import {
+  PERMIT_REQUIREMENT_EDITABLE_STATUSES,
+  emergencyReassignWo,
+  evaluateWoReadiness,
+  planWo,
+  setWoPermitRequirement,
+} from "@/services/wo-service";
 import { useWoStore } from "@/stores/wo-store";
 import { useWorkOrderPrioritiesCatalog } from "@/stores/work-order-priorities-catalog-store";
 import { toErrorMessage } from "@/utils/errors";
@@ -58,6 +64,9 @@ import type {
   WoShift,
 } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
+
+import { WoPermitRequirementField } from "./WoPermitRequirementField";
+import { useWoPeopleOptions } from "./use-wo-people";
 
 export interface WoPlanningPanelHandle {
   refreshReadiness: () => Promise<WoReadinessResult | null>;
@@ -178,7 +187,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
     );
     const { info } = useSession();
     const refreshActiveWo = useWoStore((s) => s.refreshActiveWo);
-    const woItems = useWoStore((s) => s.items);
+    const people = useWoPeopleOptions();
 
     const [statusCode, setStatusCode] = useState(wo.status_code ?? "draft");
     const [rowVersion, setRowVersion] = useState(wo.row_version);
@@ -194,6 +203,8 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
       wo.planned_downtime_hours != null ? String(wo.planned_downtime_hours) : "",
     );
     const [urgencyId, setUrgencyId] = useState(wo.urgency_id != null ? String(wo.urgency_id) : "");
+    const [requiresPermit, setRequiresPermit] = useState<boolean>(Boolean(wo.requires_permit));
+    const [permitBusy, setPermitBusy] = useState(false);
 
     const [assignedTeamId, setAssignedTeamId] = useState(
       wo.assigned_team_id != null ? String(wo.assigned_team_id) : "",
@@ -245,6 +256,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
         wo.planned_downtime_hours != null ? String(wo.planned_downtime_hours) : "",
       );
       setUrgencyId(wo.urgency_id != null ? String(wo.urgency_id) : "");
+      setRequiresPermit(Boolean(wo.requires_permit));
       setAssignedTeamId(wo.assigned_team_id != null ? String(wo.assigned_team_id) : "");
       setPrimaryResponsibleId(
         wo.primary_responsible_id != null ? String(wo.primary_responsible_id) : "",
@@ -342,23 +354,10 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
       const responsibleDedup = new Map<string, string>();
       const plannerDedup = new Map<string, string>();
 
-      for (const item of woItems) {
-        if (item.primary_responsible_id != null) {
-          const id = String(item.primary_responsible_id);
-          const label =
-            item.responsible_display_name?.trim() ||
-            item.responsible_username?.trim() ||
-            formatOrDash(null);
-          responsibleDedup.set(id, label);
-        }
-        if (item.planner_id != null) {
-          const id = String(item.planner_id);
-          const label =
-            item.planner_display_name?.trim() ||
-            item.planner_username?.trim() ||
-            formatOrDash(null);
-          plannerDedup.set(id, label);
-        }
+      // Personnel register (active staff with a login), not people seen on loaded OTs.
+      for (const person of people.options) {
+        responsibleDedup.set(person.value, person.label);
+        plannerDedup.set(person.value, person.label);
       }
 
       if (info?.user_id != null) {
@@ -402,7 +401,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
           .sort((a, b) => a.label.localeCompare(b.label)),
       );
     }, [
-      woItems,
+      people.options,
       wo.primary_responsible_id,
       wo.responsible_username,
       wo.responsible_display_name,
@@ -632,6 +631,61 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
 
     const handleMoveToReady = handleSavePlan;
 
+    const permitRequirementEditable =
+      canEdit && PERMIT_REQUIREMENT_EDITABLE_STATUSES.has(statusCode) && !busy && !permitBusy;
+    const permitRequirementReason = !canEdit
+      ? t("permitRequirement.noPermission")
+      : PERMIT_REQUIREMENT_EDITABLE_STATUSES.has(statusCode)
+        ? null
+        : t("permitRequirement.frozen");
+    const permitOriginHint =
+      wo.source_di_id != null && wo.requires_permit ? t("permitRequirement.fromSafetyDi") : null;
+
+    /** Saved immediately: the start gate reads it, so it must not wait for "Save plan". */
+    const handlePermitRequirementChange = useCallback(
+      async (next: boolean) => {
+        if (!permitRequirementEditable) return;
+        setPermitBusy(true);
+        try {
+          const saved = await setWoPermitRequirement({
+            wo_id: wo.id,
+            expected_row_version: rowVersion,
+            requires_permit: next,
+          });
+          setRequiresPermit(Boolean(saved.requires_permit));
+          setRowVersion(saved.row_version);
+          await refreshActiveWo();
+          if ((saved.status_code ?? statusCode) === "planning") {
+            await loadReadiness();
+          }
+        } catch {
+          // The global IPC toast reports the reason; the checkbox keeps the stored value.
+          setRequiresPermit(Boolean(wo.requires_permit));
+        } finally {
+          setPermitBusy(false);
+        }
+      },
+      [
+        permitRequirementEditable,
+        wo.id,
+        wo.requires_permit,
+        rowVersion,
+        refreshActiveWo,
+        statusCode,
+        loadReadiness,
+      ],
+    );
+
+    const permitRequirementControl = (
+      <WoPermitRequirementField
+        checked={requiresPermit}
+        onCheckedChange={(next) => void handlePermitRequirementChange(next)}
+        disabled={!permitRequirementEditable}
+        disabledReason={permitBusy || busy ? null : permitRequirementReason}
+        originHint={permitOriginHint}
+      />
+    );
+
     const handleEmergencyReassign = useCallback(
       async (reason: string) => {
         if (!assignReady || !requireActor) return;
@@ -824,6 +878,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
       return (
         <div className="space-y-4">
           <p className="text-sm text-muted-foreground">{t("planning.draftSubmitHint")}</p>
+          {permitRequirementControl}
           <div className="rounded-md border p-3 grid gap-2 text-sm sm:grid-cols-2">
             <div>
               <span className="text-muted-foreground">{t("planning.draftIdentification")}: </span>
@@ -871,6 +926,11 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
             {error}
           </div>
         )}
+
+        <section className="space-y-2" aria-label={t("permitRequirement.sectionTitle")}>
+          <h3 className="text-sm font-semibold">{t("permitRequirement.sectionTitle")}</h3>
+          {permitRequirementControl}
+        </section>
 
         <section className="space-y-3">
           <h3 className="text-sm font-semibold">1. {t("planning.timing")}</h3>
@@ -1306,7 +1366,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                         <div className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border bg-popover p-1 shadow-md">
                           {filteredArticles.length === 0 ? (
                             <div className="px-2 py-1.5 text-sm text-muted-foreground">
-                              No matching article
+                              {t("planning.parts.noMatch")}
                             </div>
                           ) : (
                             filteredArticles.map((article) => (
@@ -1333,7 +1393,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                       )}
                   </div>
                   <div className="space-y-1">
-                    <Label>Stock location</Label>
+                    <Label>{t("planning.parts.stockLocation")}</Label>
                     <Select
                       value={
                         part.stock_location_id != null ? String(part.stock_location_id) : "__none"
@@ -1346,7 +1406,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                       disabled={tasksPartsDisabled || part.persisted}
                     >
                       <SelectTrigger>
-                        <SelectValue placeholder="Location" />
+                        <SelectValue placeholder={t("planning.parts.locationPlaceholder")} />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="__none">--</SelectItem>
@@ -1359,7 +1419,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                     </Select>
                   </div>
                   <div className="space-y-1">
-                    <Label>Planned qty</Label>
+                    <Label>{t("planning.parts.plannedQty")}</Label>
                     <Input
                       type="number"
                       min="0"
@@ -1372,7 +1432,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                     />
                   </div>
                   <div className="space-y-1">
-                    <Label>Unit cost</Label>
+                    <Label>{t("planning.parts.unitCost")}</Label>
                     <Input
                       type="number"
                       min="0"
@@ -1479,25 +1539,19 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
 
         {materialReadiness ? (
           <section className="space-y-2 rounded-md border p-3">
-            <h3 className="text-sm font-semibold">
-              {t("wo.materialReadiness.title", {
-                ns: "inventory",
-                defaultValue: "Material readiness",
-              })}
-            </h3>
+            <h3 className="text-sm font-semibold">{t("planning.materialReadiness.title")}</h3>
             <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
               <span>
-                {t("wo.materialReadiness.ready", { ns: "inventory", defaultValue: "Ready" })}:{" "}
+                {t("planning.materialReadiness.ready")}:{" "}
                 <span className="font-medium text-foreground">
                   {materialReadiness.is_fully_available
-                    ? t("wo.materialReadiness.yes", { ns: "inventory", defaultValue: "YES" })
-                    : t("wo.materialReadiness.no", { ns: "inventory", defaultValue: "NO" })}
+                    ? t("planning.materialReadiness.yes")
+                    : t("planning.materialReadiness.no")}
                 </span>
               </span>
               {materialReadiness.ready_pct != null ? (
                 <span>
-                  {t("wo.materialReadiness.readyPct", { ns: "inventory", defaultValue: "Ready %" })}
-                  :{" "}
+                  {t("planning.materialReadiness.readyPct")}:{" "}
                   <span className="font-medium tabular-nums text-foreground">
                     {Math.round(materialReadiness.ready_pct)}%
                   </span>
@@ -1505,11 +1559,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
               ) : null}
               {materialReadiness.reserved_pct != null ? (
                 <span>
-                  {t("wo.materialReadiness.reservedPct", {
-                    ns: "inventory",
-                    defaultValue: "Reserved %",
-                  })}
-                  :{" "}
+                  {t("planning.materialReadiness.reservedPct")}:{" "}
                   <span className="font-medium tabular-nums text-foreground">
                     {Math.round(materialReadiness.reserved_pct)}%
                   </span>
@@ -1517,11 +1567,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
               ) : null}
               {materialReadiness.expected_arrival ? (
                 <span>
-                  {t("wo.materialReadiness.expectedArrival", {
-                    ns: "inventory",
-                    defaultValue: "Expected arrival",
-                  })}
-                  :{" "}
+                  {t("planning.materialReadiness.expectedArrival")}:{" "}
                   <span className="font-medium text-foreground">
                     {materialReadiness.expected_arrival}
                   </span>
@@ -1536,12 +1582,8 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
         !materialReadiness.is_fully_available &&
         materialReadiness.shortages.length > 0 ? (
           <section className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3">
-            <h3 className="text-sm font-semibold text-amber-800">
-              {t("wo.shortage.title", { ns: "inventory" })}
-            </h3>
-            <p className="text-xs text-amber-700">
-              {t("wo.shortage.description", { ns: "inventory" })}
-            </p>
+            <h3 className="text-sm font-semibold text-amber-800">{t("planning.shortage.title")}</h3>
+            <p className="text-xs text-amber-700">{t("planning.shortage.description")}</p>
             <div className="space-y-1.5">
               {materialReadiness.shortages.map((shortage) => {
                 const wasCreated = shortageSuccessIds.includes(shortage.article_id);
@@ -1553,18 +1595,15 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                     <span className="font-medium">{shortage.article_code}</span>
                     <span className="text-muted-foreground">— {shortage.article_name}</span>
                     <span className="ml-auto tabular-nums text-amber-700">
-                      {t("wo.shortage.columns.requested", { ns: "inventory" })}:{" "}
-                      {shortage.requested_qty} ·{" "}
-                      {t("wo.shortage.columns.available", { ns: "inventory" })}:{" "}
-                      {shortage.available_qty} ·{" "}
+                      {t("planning.shortage.columns.requested")}: {shortage.requested_qty} ·{" "}
+                      {t("planning.shortage.columns.available")}: {shortage.available_qty} ·{" "}
                       <span className="font-semibold text-red-700">
-                        {t("wo.shortage.columns.shortage", { ns: "inventory" })}:{" "}
-                        {shortage.shortage_qty}
+                        {t("planning.shortage.columns.shortage")}: {shortage.shortage_qty}
                       </span>
                     </span>
                     {wasCreated ? (
                       <span className="text-xs font-medium text-green-700">
-                        ✓ {t("wo.shortage.requisitionCreated", { ns: "inventory" })}
+                        ✓ {t("planning.shortage.requisitionCreated")}
                       </span>
                     ) : (
                       <Button
@@ -1593,7 +1632,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                       >
                         {shortageReqCreating === shortage.article_id
                           ? "…"
-                          : t("wo.shortage.createRequisition", { ns: "inventory" })}
+                          : t("planning.shortage.createRequisition")}
                       </Button>
                     )}
                   </div>

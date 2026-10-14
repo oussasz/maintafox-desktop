@@ -485,7 +485,8 @@
     "clarificationRequired": "A clarification note is required",
     "returnInfo": "The request will be returned to the requester.",
     "screenAction": "Validate screening",
-    "retryConversion": "Retry conversion"
+    "retryConversion": "Retry conversion",
+    "conversionMissingWoId": "The conversion succeeded but the work order could not be found. Open the work order list."
   },
   "dashboard": {
     "total": "Total",
@@ -559,5 +560,52 @@
     "information_only": "Information only",
     "converted_to_wo": "Converted to work order",
     "other": "Other"
+  },
+  "screening": {
+    "title": "Screen request {{code}}",
+    "description": "Confirm the urgency and classification maintenance retains. The note is kept on the record.",
+    "validatedUrgency": "Validated urgency",
+    "urgencyChanged": "Changed from the reported urgency ({{reported}}).",
+    "urgencyAsReported": "Same as the urgency reported by the requester.",
+    "classification": "Classification",
+    "classificationLoading": "Loading classification…",
+    "classificationPlaceholder": "Choose a classification",
+    "classificationNone": "Not classified yet",
+    "classificationUnavailable": "The classification list could not be loaded; the current classification is kept.",
+    "classificationHelp": "Failure symptom catalogue (DI reference data). Required before conversion to a work order.",
+    "note": "Reviewer note",
+    "notePlaceholder": "Observations, what was checked, instructions for the planner…",
+    "cancel": "Cancel",
+    "submit": "Confirm screening"
+  },
+  "deferral": {
+    "title": "Defer request {{code}}",
+    "description": "The request leaves the active queue until the chosen date. The reason is kept in the history.",
+    "until": "Defer until",
+    "dateRequired": "Choose a deferral date.",
+    "dateFuture": "The date must be after today.",
+    "reason": "Reason",
+    "reasonPlaceholder": "Choose a reason",
+    "reasonRequired": "Choose a reason.",
+    "reasons": {
+      "planned_shutdown": "Waiting for a planned shutdown",
+      "awaiting_parts": "Waiting for parts",
+      "awaiting_contractor": "Waiting for a contractor",
+      "production_constraint": "Production constraint",
+      "budget": "No budget available",
+      "other": "Other (specify)"
+    },
+    "notes": "Comment",
+    "notesPlaceholder": "Details useful when the request is picked up again…",
+    "notesRequiredForOther": "Explain the reason in the comment.",
+    "cancel": "Cancel",
+    "submit": "Defer",
+    "deferredUntil": "Deferred until"
+  },
+  "confirm": {
+    "archiveTitle": "Archive request {{code}}?",
+    "archiveDescription": "The closed request leaves the active lists. It stays available in the archive.",
+    "cancelOwnTitle": "Cancel request {{code}}?",
+    "cancelOwnDescription": "Your request will be closed as cancelled by the requester. This cannot be undone."
   }
 }

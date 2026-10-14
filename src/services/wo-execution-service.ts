@@ -130,6 +130,20 @@ export async function listLabor(woId: number): Promise<WoIntervener[]> {
   return invoke<WoIntervener[]>("list_labor", { woId });
 }
 
+/** Active personnel with a login — the people a labour entry can be booked to. */
+export interface WoLaborCandidate {
+  user_id: number;
+  personnel_id: number;
+  employee_code: string;
+  full_name: string;
+  position_name: string | null;
+  availability_status: string;
+}
+
+export async function listWoLaborCandidates(): Promise<WoLaborCandidate[]> {
+  return invoke<WoLaborCandidate[]>("list_wo_labor_candidates");
+}
+
 export async function addPart(input: AddPartInput): Promise<WoExecPart> {
   return invoke<WoExecPart>("add_part", { input });
 }

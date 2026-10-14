@@ -57,6 +57,7 @@ import { WoPlanningPanel } from "@/components/wo/WoPlanningPanel";
 import { printWoFiche } from "@/components/wo/WoPrintFiche";
 import { usePermissions } from "@/hooks/use-permissions";
 import { needsPlanningApproval, useWoLifecycleActions } from "@/hooks/use-wo-lifecycle-actions";
+import { formatAssetLabel } from "@/lib/display";
 import { evaluateWoCompletionGates } from "@/services/wo-service";
 import { pushAppToast } from "@/store/app-toast-store";
 import { useWoStore } from "@/stores/wo-store";
@@ -277,10 +278,32 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
               </div>
             )}
 
+            {wo.description?.trim() ? (
+              <section aria-labelledby="wo-detail-description" className="space-y-1">
+                <h3 id="wo-detail-description" className="text-xs font-semibold text-text-muted">
+                  {t("form.description.label")}
+                </h3>
+                <p className="whitespace-pre-wrap break-words text-sm text-text-primary">
+                  {wo.description}
+                </p>
+              </section>
+            ) : null}
+
             <Card>
               <CardContent className="p-3 grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2 text-xs">
                 <InfoRow label={t("detail.fields.type")} value={wo.type_label ?? "—"} />
-                <InfoRow label={t("detail.fields.equipment")} value={wo.asset_label ?? "—"} />
+                <InfoRow
+                  label={t("detail.fields.equipment")}
+                  value={formatAssetLabel(wo.asset_code, wo.asset_label)}
+                />
+                <InfoRow
+                  label={t("permitRequirement.short")}
+                  value={
+                    wo.requires_permit
+                      ? t("permitRequirement.required")
+                      : t("permitRequirement.notRequired")
+                  }
+                />
                 <InfoRow
                   label={t("detail.fields.assignedTo")}
                   value={wo.responsible_display_name ?? wo.responsible_username ?? "—"}

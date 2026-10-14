@@ -177,6 +177,100 @@ const PART_FROM: &str = "\
     LEFT JOIN articles a ON a.id = wop.article_id \
     LEFT JOIN reference_values nur ON nur.id = wop.not_used_reason_id";
 
+/// Reserve then issue `quantity` of an execution-added stock article for its WO and
+/// record the reservation on the part line. A failed issue releases the reservation.
+async fn reserve_and_issue_execution_part(
+    db: &DatabaseConnection,
+    part: &WoPart,
+    article_id: i64,
+    location_id: i64,
+    quantity: f64,
+) -> AppResult<WoPart> {
+    let (source_type, _source_di_id, wo_code) = load_wo_source_context(db, part.work_order_id).await?;
+    let reservation = inventory_queries::reserve_stock(
+        db,
+        InventoryReserveInput {
+            article_id,
+            location_id,
+            quantity,
+            source_type: source_type.clone(),
+            source_id: Some(part.work_order_id),
+            source_ref: Some(wo_code.clone()),
+            notes: Some("WO execution part reservation".to_string()),
+        },
+    )
+    .await?;
+
+    if let Err(err) = inventory_queries::issue_reserved_stock(
+        db,
+        InventoryIssueInput {
+            reservation_id: reservation.id,
+            quantity,
+            source_type: Some(source_type),
+            source_id: Some(part.work_order_id),
+            source_ref: Some(wo_code),
+            notes: Some("WO execution part issue".to_string()),
+        },
+    )
+    .await
+    {
+        let _ = inventory_queries::release_stock_reservation(
+            db,
+            InventoryReleaseReservationInput {
+                reservation_id: reservation.id,
+                notes: Some("WO execution part issue failed".to_string()),
+            },
+        )
+        .await;
+        return Err(err);
+    }
+
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE work_order_parts \
+         SET reservation_id = ?, quantity_reserved = ?, quantity_issued = ? \
+         WHERE id = ?",
+        [reservation.id.into(), quantity.into(), quantity.into(), part.id.into()],
+    ))
+    .await?;
+
+    // Carry the stock valuation onto the line when no cost was entered, so the WO parts cost
+    // reflects what left the store. Without a valuation policy the cost stays empty (visible in
+    // the cost summary) rather than being invented.
+    if part.unit_cost.is_none() {
+        let warehouse_id: Option<i64> = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT warehouse_id FROM stock_locations WHERE id = ?",
+                [location_id.into()],
+            ))
+            .await?
+            .and_then(|r| r.try_get::<i64>("", "warehouse_id").ok());
+        if let Some(warehouse_id) = warehouse_id {
+            if let Ok(valuation) =
+                crate::inventory::valuation::evaluate_unit_cost(db, article_id, warehouse_id, location_id).await
+            {
+                db.execute(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "UPDATE work_order_parts SET unit_cost = COALESCE(unit_cost, ?) WHERE id = ?",
+                    [valuation.unit_cost.into(), part.id.into()],
+                ))
+                .await?;
+            }
+        }
+    }
+
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!("SELECT {PART_COLS} FROM {PART_FROM} WHERE wop.id = ?"),
+            [part.id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to re-read part after issue")))?;
+    map_part(&row)
+}
+
 async fn load_wo_source_context(db: &DatabaseConnection, wo_id: i64) -> AppResult<(String, Option<i64>, String)> {
     let row = db
         .query_one(Statement::from_sql_and_values(
@@ -316,6 +410,42 @@ pub async fn add_planned_part(db: &DatabaseConnection, input: AddPartInput) -> A
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to re-read part after insert")))?;
     let mut created = map_part(&row)?;
 
+    // A stock article added during execution is taken from stock at once: reserve and
+    // issue the used quantity so the movement, on-hand figure and WO parts cost agree.
+    // Free-text (non-stock) lines carry no article and skip this. If stock cannot be
+    // reserved or issued, the line is removed so no unissued "used" part remains.
+    let issue_execution_part = origin == "execution_added" && input.auto_reserve.unwrap_or(true);
+    if issue_execution_part {
+        if let (Some(article_id), Some(location_id)) = (created.article_id, created.stock_location_id) {
+            if input.quantity_planned > 0.0 {
+                match reserve_and_issue_execution_part(db, &created, article_id, location_id, input.quantity_planned)
+                    .await
+                {
+                    Ok(updated) => created = updated,
+                    Err(err) => {
+                        db.execute(Statement::from_sql_and_values(
+                            DbBackend::Sqlite,
+                            "DELETE FROM work_order_parts WHERE id = ?",
+                            [created.id.into()],
+                        ))
+                        .await?;
+                        return Err(err);
+                    }
+                }
+            }
+        } else if input.article_id.is_some() {
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "DELETE FROM work_order_parts WHERE id = ?",
+                [created.id.into()],
+            ))
+            .await?;
+            return Err(AppError::ValidationFailed(vec![
+                "Choisissez l'emplacement de stock d'où la pièce est sortie.".into(),
+            ]));
+        }
+    }
+
     let should_auto_reserve = input.auto_reserve.unwrap_or(true) && origin == "planned";
     if should_auto_reserve {
         if let (Some(article_id), Some(location_id)) = (created.article_id, created.stock_location_id) {
@@ -452,6 +582,28 @@ pub async fn record_actual_usage(
                 },
             )
             .await?;
+        }
+    } else if let (Some(article_id), Some(location_id)) = (part.article_id, part.stock_location_id) {
+        // Stock article with no reservation (planned without stock, or added before stock was
+        // chosen): the used quantity still leaves the store. Reserve and issue the increase so
+        // on-hand, the stock movement and the WO parts cost agree.
+        let previous_issued = part.quantity_issued.max(0.0);
+        if quantity_used > previous_issued {
+            let issued =
+                reserve_and_issue_execution_part(db, &part, article_id, location_id, quantity_used - previous_issued)
+                    .await?;
+            // `reserve_and_issue_execution_part` records the delta; keep the cumulative figure.
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "UPDATE work_order_parts SET quantity_issued = ? WHERE id = ?",
+                [quantity_used.into(), issued.id.into()],
+            ))
+            .await?;
+        } else if quantity_used < previous_issued {
+            return Err(AppError::ValidationFailed(vec![
+                "Cette pièce a déjà été sortie du stock : enregistrez un retour magasin pour réduire la quantité."
+                    .to_string(),
+            ]));
         }
     }
 

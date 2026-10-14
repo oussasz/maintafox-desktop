@@ -18,6 +18,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useSession } from "@/hooks/use-session";
+import { describeAppError } from "@/lib/app-error";
 import { listAnalyticsContractVersions } from "@/services/analytics-contract-service";
 import {
   applyDataIntegrityRepair,
@@ -65,7 +66,7 @@ export function WoIntegrityWorkbench() {
       setRows(r);
       setContracts(c);
     } catch (e) {
-      setError(String(e));
+      setError(describeAppError(e).title);
     } finally {
       setLoading(false);
     }
@@ -82,7 +83,7 @@ export function WoIntegrityWorkbench() {
       await runDataIntegrityDetectors();
       await load();
     } catch (e) {
-      setError(String(e));
+      setError(describeAppError(e).title);
     } finally {
       setRunning(false);
     }

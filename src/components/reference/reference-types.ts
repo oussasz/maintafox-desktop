@@ -29,6 +29,8 @@ export type ReferenceTypeId =
   | "work.failure_mode"
   | "work.failure_cause"
   | "work.failure_effect"
+  | "work.failure_mechanism"
+  | "work.detection_method"
   | "work.delay_reason"
   | "work.part_unused_reason"
   | "inventory.supplier_status"
@@ -222,6 +224,24 @@ export const REFERENCE_TYPE_REGISTRY: Record<ReferenceTypeId, ReferenceTypeConfi
     gender: "m",
     emptyMessageFr: "Aucun effet disponible",
     emptyMessageEn: "No failure effect available",
+  },
+  "work.failure_mechanism": {
+    id: "work.failure_mechanism",
+    domainCode: "WORK.FAILURE_MECHANISMS",
+    entityLabelFr: "mécanisme de défaillance",
+    entityLabelEn: "failure mechanism",
+    gender: "m",
+    emptyMessageFr: "Aucun mécanisme disponible",
+    emptyMessageEn: "No failure mechanism available",
+  },
+  "work.detection_method": {
+    id: "work.detection_method",
+    domainCode: "WORK.DETECTION_METHODS",
+    entityLabelFr: "méthode de détection",
+    entityLabelEn: "detection method",
+    gender: "f",
+    emptyMessageFr: "Aucune méthode de détection disponible",
+    emptyMessageEn: "No detection method available",
   },
   "work.delay_reason": {
     id: "work.delay_reason",

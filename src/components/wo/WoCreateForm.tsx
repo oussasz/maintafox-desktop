@@ -24,19 +24,21 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { useSession } from "@/hooks/use-session";
+import { describeAppError } from "@/lib/app-error";
 import { assetToSearchResult } from "@/lib/asset-to-search-result";
 import { getStoredRamsEquipmentId } from "@/pages/reliability/rams-equipment-context";
 import { getAssetByIdSilent } from "@/services/asset-service";
 import { useWoStore } from "@/stores/wo-store";
 import { useWorkOrderPrioritiesCatalog } from "@/stores/work-order-priorities-catalog-store";
 import { useWorkOrderTypesCatalog } from "@/stores/work-order-types-catalog-store";
-import { toErrorMessage } from "@/utils/errors";
 import type {
   AssetSearchResult,
   WoCreateInput,
   WorkOrder,
   WorkOrderPriorityOption,
 } from "@shared/ipc-types";
+
+import { WoPermitRequirementField } from "./WoPermitRequirementField";
 
 const TITLE_MAX = 200;
 
@@ -145,6 +147,7 @@ export function WoCreateForm({
     initial?.expected_duration_hours?.toString() ?? "",
   );
   const [notes, setNotes] = useState(initial?.notes ?? "");
+  const [requiresPermit, setRequiresPermit] = useState<boolean>(initial?.requires_permit ?? false);
 
   // Equipment selection (shared AssetPicker)
   const [selectedAsset, setSelectedAsset] = useState<AssetSearchResult | null>(null);
@@ -291,11 +294,10 @@ export function WoCreateForm({
           planned_end: plannedEnd || null,
           expected_duration_hours: expectedDuration ? Number(expectedDuration) : null,
           notes: notes.trim() || null,
+          requires_permit: requiresPermit,
         };
-        // eslint-disable-next-line no-console -- debug: OT payload to IPC
-        console.log("OT Payload:", draftPayload);
         await updateDraft(draftPayload);
-        onSubmitted({ ...initial, title, description });
+        onSubmitted({ ...initial, title, description, requires_permit: requiresPermit });
       } else {
         const input: WoCreateInput = {
           title: title.trim(),
@@ -308,14 +310,16 @@ export function WoCreateForm({
           expected_duration_hours: expectedDuration ? Number(expectedDuration) : null,
           notes: notes.trim() || null,
           creator_id: info.user_id,
+          requires_permit: requiresPermit,
         };
-        // eslint-disable-next-line no-console -- debug: OT payload to IPC
-        console.log("OT Payload:", input);
         const wo = await submitNewWo(input);
         onSubmitted(wo);
       }
     } catch (err) {
-      setSubmitError(toErrorMessage(err));
+      const described = describeAppError(err);
+      setSubmitError(
+        described.description ? `${described.title} — ${described.description}` : described.title,
+      );
     }
   }, [
     isValid,
@@ -332,6 +336,7 @@ export function WoCreateForm({
     plannedEnd,
     expectedDuration,
     notes,
+    requiresPermit,
     submitNewWo,
     updateDraft,
     onSubmitted,
@@ -450,6 +455,9 @@ export function WoCreateForm({
             onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setDescription(e.target.value)}
           />
         </FormField>
+
+        {/* Safety: permit / LOTO gate on start */}
+        <WoPermitRequirementField checked={requiresPermit} onCheckedChange={setRequiresPermit} />
       </section>
 
       <Separator />
@@ -510,8 +518,7 @@ export function WoCreateForm({
       {(submitError || storeError || catalogError || prioritiesError) && (
         <div className="rounded-md border border-status-danger/30 bg-status-danger/10 px-3 py-2 text-sm text-status-danger">
           {[submitError, storeError, catalogError, prioritiesError]
-            .filter(Boolean)
-            .map((e) => toErrorMessage(e))
+            .filter((e): e is string => Boolean(e))
             .join(" ")}
         </div>
       )}

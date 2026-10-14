@@ -1,7 +1,7 @@
 {
   "page": {
     "title": "Permis de travail",
-    "description": "PRD §6.23 — cycle de vie, isolations LOTO, suspensions et mainlevées."
+    "description": "Cycle de vie des permis, isolations LOTO, suspensions et mainlevées."
   },
   "actions": {
     "refresh": "Actualiser",
@@ -20,11 +20,16 @@
   },
   "open": {
     "title": "Permis ouverts (non expirés)",
-    "empty": "Aucun permis ouvert."
+    "empty": "Aucun permis ouvert.",
+    "count_one": "{{count}} permis ouvert (non expiré)",
+    "count_other": "{{count}} permis ouverts (non expirés)"
   },
   "list": {
     "title": "Permis",
-    "empty": "Aucun permis pour le moment."
+    "empty": "Aucun permis pour le moment.",
+    "noMatch": "Aucun permis ne correspond à la recherche.",
+    "moreAvailable": "Les {{shown}} premiers permis sont affichés ; d'autres existent.",
+    "loadMore": "Afficher plus"
   },
   "columns": {
     "code": "Code",
@@ -45,7 +50,8 @@
     "closed": "Clôturé",
     "handed_back": "Mainlevée faite",
     "cancelled": "Annulé",
-    "expired": "Expiré"
+    "expired": "Expiré",
+    "unknown": "Statut inconnu"
   },
   "detail": {
     "title": "Permis {{code}}",
@@ -59,7 +65,8 @@
     "expiresAt": "Expire",
     "closedAt": "Clôturé",
     "handedBackAt": "Mainlevée",
-    "none": "—"
+    "none": "—",
+    "dialogDescription": "Statut, isolations LOTO, suspensions et passations du permis."
   },
   "transition": {
     "submitReview": "Soumettre en revue",
@@ -116,7 +123,10 @@
     "verifier": "Vérificateur",
     "expiry": "Expiration",
     "show": "Afficher la fiche",
-    "recordPrint": "Enregistrer l'impression"
+    "recordPrint": "Enregistrer l'impression",
+    "print": "Imprimer la fiche LOTO",
+    "doNotOperate": "DANGER — NE PAS MANŒUVRER. Équipement consigné.",
+    "signature": "Signature de l'intervenant"
   },
   "suspension": {
     "title": "Suspensions",
@@ -181,5 +191,10 @@
   "errors": {
     "required": "Ce champ est obligatoire.",
     "invalidNumber": "Saisissez un nombre valide."
+  },
+  "filters": {
+    "searchPlaceholder": "Rechercher un permis, un équipement, un OT…",
+    "status": "Statut",
+    "type": "Type de permis"
   }
 }

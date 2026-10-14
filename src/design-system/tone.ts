@@ -336,9 +336,58 @@ export const ARCHIVE_ACTION_RESULT_TONE: Record<string, Tone> = {
   blocked: "danger",
 };
 
+// ── Reliability (RAMS) ───────────────────────────────────────────────────────
+
+/** Reliability study decision status → tone. */
+export const RELIABILITY_DECISION_STATUS_TONE: Record<string, Tone> = {
+  proposed: "attention",
+  approved: "info",
+  applied: "success",
+  rejected: "neutral",
+};
+
+/** Data quality of an equipment's failure records (fleet view) → tone. */
+export const RELIABILITY_DATA_QUALITY_TONE: Record<string, Tone> = {
+  complete: "success",
+  to_check: "warning",
+  no_operating_hours: "danger",
+};
+
+/** Data check severity (study step 1) → tone. */
+export const RELIABILITY_CHECK_TONE: Record<string, Tone> = {
+  success: "success",
+  info: "info",
+  warning: "warning",
+  danger: "danger",
+};
+
+/** Failure pattern read from the Weibull shape β → tone. */
+export const RELIABILITY_PATTERN_TONE: Record<string, Tone> = {
+  early_life: "attention",
+  random: "info",
+  wear_out: "success",
+};
+
 /** Timing of completed PM work against its tolerance window → tone. */
 export const PM_TIMING_TONE: Record<string, Tone> = {
   on_time: "success",
   early: "warning",
   late: "danger",
+};
+
+/** Criticality matrix zone (FMECA, plant rating grids) → tone. */
+export const RELIABILITY_ZONE_TONE: Record<string, Tone> = {
+  unacceptable: "danger",
+  reduce: "attention",
+  monitor: "warning",
+  acceptable: "success",
+};
+
+/** RCM tactic retained for a failure mode → tone. */
+export const RELIABILITY_TACTIC_TONE: Record<string, Tone> = {
+  condition_based: "success",
+  time_based: "success",
+  failure_finding: "info",
+  run_to_failure: "neutral",
+  redesign: "attention",
 };

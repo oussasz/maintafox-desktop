@@ -1,7 +1,7 @@
 {
   "page": {
     "title": "Work permits",
-    "description": "PRD §6.23 — permit lifecycle, LOTO isolations, suspensions and handback."
+    "description": "Permit lifecycle, LOTO isolations, suspensions and hand-backs."
   },
   "actions": {
     "refresh": "Refresh",
@@ -20,11 +20,16 @@
   },
   "open": {
     "title": "Open permits (not expired)",
-    "empty": "No open permits."
+    "empty": "No open permits.",
+    "count_one": "{{count}} open permit (not expired)",
+    "count_other": "{{count}} open permits (not expired)"
   },
   "list": {
     "title": "Permits",
-    "empty": "No permits yet."
+    "empty": "No permits yet.",
+    "noMatch": "No permit matches the search.",
+    "moreAvailable": "The first {{shown}} permits are shown; more exist.",
+    "loadMore": "Show more"
   },
   "columns": {
     "code": "Code",
@@ -45,7 +50,8 @@
     "closed": "Closed",
     "handed_back": "Handed back",
     "cancelled": "Cancelled",
-    "expired": "Expired"
+    "expired": "Expired",
+    "unknown": "Unknown status"
   },
   "detail": {
     "title": "Permit {{code}}",
@@ -59,7 +65,8 @@
     "expiresAt": "Expires",
     "closedAt": "Closed",
     "handedBackAt": "Handed back",
-    "none": "—"
+    "none": "—",
+    "dialogDescription": "Permit status, LOTO isolations, suspensions and handovers."
   },
   "transition": {
     "submitReview": "Submit for review",
@@ -116,7 +123,10 @@
     "verifier": "Verifier",
     "expiry": "Expiry",
     "show": "Show card",
-    "recordPrint": "Record print"
+    "recordPrint": "Record print",
+    "print": "Print LOTO tag",
+    "doNotOperate": "DANGER — DO NOT OPERATE. Equipment locked out.",
+    "signature": "Worker signature"
   },
   "suspension": {
     "title": "Suspensions",
@@ -181,5 +191,10 @@
   "errors": {
     "required": "This field is required.",
     "invalidNumber": "Enter a valid number."
+  },
+  "filters": {
+    "searchPlaceholder": "Search a permit, asset or work order…",
+    "status": "Status",
+    "type": "Permit type"
   }
 }

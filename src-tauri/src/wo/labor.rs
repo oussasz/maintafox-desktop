@@ -171,6 +171,20 @@ pub async fn add_labor_entry(db: &DatabaseConnection, input: AddLaborInput) -> A
         )]));
     }
 
+    // Labour is recorded after the fact: a start or end later than now (5 min clock tolerance)
+    // would book hours that have not been worked.
+    let latest_allowed = chrono::Utc::now() + chrono::Duration::minutes(5);
+    for (raw, field) in [(&input.started_at, "started_at"), (&input.ended_at, "ended_at")] {
+        if let Some(raw) = raw.as_deref().filter(|s| !s.trim().is_empty()) {
+            let at = crate::wo::time::parse_utc_timestamp(raw, field)?;
+            if at > latest_allowed {
+                return Err(AppError::ValidationFailed(vec![
+                    "Les heures de main-d'œuvre ne peuvent pas être dans le futur.".to_string(),
+                ]));
+            }
+        }
+    }
+
     // Auto-compute hours_worked when both timestamps are provided
     let computed_hours = match (&input.started_at, &input.ended_at) {
         (Some(s), Some(e)) => elapsed_hours(s, e).or(input.hours_worked),
@@ -319,6 +333,66 @@ pub async fn close_labor_entry(
     let entry = map_intervener(&updated)?;
     txn.commit().await?;
     Ok(entry)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// B2) list_labor_candidates — people who can be booked on a WO
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// A person from the personnel register who has a login (labour entries reference
+/// `user_accounts`, so only linked personnel can be booked).
+#[derive(Debug, Clone, Serialize)]
+pub struct WoLaborCandidate {
+    pub user_id: i64,
+    pub personnel_id: i64,
+    pub employee_code: String,
+    pub full_name: String,
+    pub position_name: Option<String>,
+    pub availability_status: String,
+}
+
+/// Active personnel linked to an active, non-deleted login, ordered by name.
+pub async fn list_labor_candidates(db: &DatabaseConnection) -> AppResult<Vec<WoLaborCandidate>> {
+    let rows = db
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT
+                (SELECT ua.id FROM user_accounts ua
+                  WHERE ua.personnel_id = p.id AND ua.deleted_at IS NULL AND ua.is_active = 1
+                  ORDER BY ua.id LIMIT 1) AS user_id,
+                p.id AS personnel_id,
+                p.employee_code,
+                p.full_name,
+                pos.name AS position_name,
+                p.availability_status
+             FROM personnel p
+             LEFT JOIN positions pos ON pos.id = p.position_id
+             WHERE p.employment_status = 'active'
+               AND EXISTS (SELECT 1 FROM user_accounts ua
+                            WHERE ua.personnel_id = p.id AND ua.deleted_at IS NULL AND ua.is_active = 1)
+             ORDER BY p.full_name COLLATE NOCASE ASC, p.id ASC"
+                .to_string(),
+        ))
+        .await?;
+
+    rows.iter()
+        .map(|row| {
+            Ok(WoLaborCandidate {
+                user_id: row
+                    .try_get::<i64>("", "user_id")
+                    .map_err(|e| AppError::Internal(anyhow::anyhow!("user_id decode: {e}")))?,
+                personnel_id: row
+                    .try_get::<i64>("", "personnel_id")
+                    .map_err(|e| AppError::Internal(anyhow::anyhow!("personnel_id decode: {e}")))?,
+                employee_code: row.try_get::<String>("", "employee_code").unwrap_or_default(),
+                full_name: row.try_get::<String>("", "full_name").unwrap_or_default(),
+                position_name: row.try_get::<Option<String>>("", "position_name").unwrap_or(None),
+                availability_status: row
+                    .try_get::<String>("", "availability_status")
+                    .unwrap_or_else(|_| "available".to_string()),
+            })
+        })
+        .collect()
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

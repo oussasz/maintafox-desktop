@@ -23,6 +23,7 @@ import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 
 import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
+import { DiScreenDialog } from "@/components/di/DiScreenDialog";
 import { DI_URGENCY_STYLE } from "@/components/di/status-meta";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -31,7 +32,6 @@ import { usePermissions } from "@/hooks/use-permissions";
 import { formatAssetLabel, formatPersonLabel } from "@/lib/display";
 import { useDiReviewStore } from "@/stores/di-review-store";
 import { useDiStore } from "@/stores/di-store";
-import { toErrorMessage } from "@/utils/errors";
 import { intlLocaleForLanguage } from "@/utils/format-date";
 import type { InterventionRequest } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
@@ -85,14 +85,13 @@ export function DiReviewPanel() {
   const reviewQueue = useDiReviewStore((s) => s.reviewQueue);
   const loadReviewQueue = useDiReviewStore((s) => s.loadReviewQueue);
   const reviewError = useDiReviewStore((s) => s.error);
-  const screen = useDiReviewStore((s) => s.screen);
   const openApproval = useDiReviewStore((s) => s.openApproval);
   const openRejection = useDiReviewStore((s) => s.openRejection);
   const openReturn = useDiReviewStore((s) => s.openReturn);
   const openDi = useDiStore((s) => s.openDi);
 
   const [collapsed, setCollapsed] = useState(false);
-  const [localError, setLocalError] = useState<string | null>(null);
+  const [screeningDi, setScreeningDi] = useState<InterventionRequest | null>(null);
 
   useEffect(() => {
     void loadReviewQueue();
@@ -109,28 +108,14 @@ export function DiReviewPanel() {
     [openDi],
   );
 
-  const handleQuickScreen = useCallback(
-    async (di: InterventionRequest) => {
-      setLocalError(null);
-      try {
-        const updated = await screen({
-          di_id: di.id,
-          actor_id: 0, // overridden by backend
-          expected_row_version: di.row_version,
-          validated_urgency: di.reported_urgency,
-          classification_code_id: di.classification_code_id ?? di.symptom_code_id ?? null,
-          reviewer_note: null,
-        });
-        // Once triage succeeds and DI is awaiting_approval, open approval dialog directly.
-        if (updated.status === "awaiting_approval") {
-          openApproval(updated);
-        }
-      } catch (err) {
-        console.error("[DiReviewPanel] quick screen failed:", err);
-        setLocalError(toErrorMessage(err));
+  /** Once screening succeeds and the DI awaits approval, open the approval dialog directly. */
+  const handleScreened = useCallback(
+    (updated: InterventionRequest) => {
+      if (updated.status === "awaiting_approval") {
+        openApproval(updated);
       }
     },
-    [screen, openApproval],
+    [openApproval],
   );
 
   if (sorted.length === 0) return null;
@@ -157,12 +142,12 @@ export function DiReviewPanel() {
       {/* Queue rows */}
       {!collapsed && (
         <CardContent className="p-0">
-          {(localError ?? reviewError) && (
+          {reviewError && (
             <div
               role="alert"
               className="mx-4 mt-3 rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive"
             >
-              {localError ?? reviewError}
+              {reviewError}
             </div>
           )}
           <div className="divide-y">
@@ -173,7 +158,7 @@ export function DiReviewPanel() {
                 canApprove={can(P.DI_APPROVE)}
                 canReview={can(P.DI_REVIEW)}
                 canScreen={can(P.DI_SCREEN) || can(P.DI_REVIEW)}
-                onScreen={() => handleQuickScreen(di)}
+                onScreen={() => setScreeningDi(di)}
                 onApprove={() => openApproval(di)}
                 onClose={() => openRejection(di)}
                 onReturn={() => openReturn(di)}
@@ -195,6 +180,12 @@ export function DiReviewPanel() {
           )}
         </CardContent>
       )}
+      <DiScreenDialog
+        di={screeningDi}
+        open={screeningDi != null}
+        onOpenChange={(next) => !next && setScreeningDi(null)}
+        onScreened={handleScreened}
+      />
     </Card>
   );
 }

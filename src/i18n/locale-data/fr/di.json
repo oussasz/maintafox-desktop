@@ -413,7 +413,7 @@
     "observedOn": "Observée le",
     "declarant": "Déclarant",
     "convertedToWo": "Convertie en OT",
-    "convertedToWoTitle": "Titre de l\u2019OT",
+    "convertedToWoTitle": "Titre de l’OT",
     "convertedAt": "Date de conversion",
     "flagSafety": "Sécurité",
     "flagEnv": "Environnement",
@@ -485,7 +485,8 @@
     "clarificationRequired": "La note de clarification est requise",
     "returnInfo": "La DI sera renvoyée au déclarant.",
     "screenAction": "Valider le tri",
-    "retryConversion": "Réessayer la conversion"
+    "retryConversion": "Réessayer la conversion",
+    "conversionMissingWoId": "La conversion a réussi mais l'ordre de travail n'a pas été retrouvé. Ouvrez la liste des ordres de travail."
   },
   "dashboard": {
     "total": "Total",
@@ -559,5 +560,52 @@
     "information_only": "Information seulement",
     "converted_to_wo": "Convertie en OT",
     "other": "Autre"
+  },
+  "screening": {
+    "title": "Tri de la demande {{code}}",
+    "description": "Confirmez l'urgence et la classification retenues par le service maintenance. La note est conservée au dossier.",
+    "validatedUrgency": "Urgence retenue",
+    "urgencyChanged": "Modifiée par rapport à l'urgence déclarée ({{reported}}).",
+    "urgencyAsReported": "Identique à l'urgence déclarée par le demandeur.",
+    "classification": "Classification",
+    "classificationLoading": "Chargement de la classification…",
+    "classificationPlaceholder": "Choisir une classification",
+    "classificationNone": "Non classée pour l'instant",
+    "classificationUnavailable": "La liste des classifications n'a pas pu être chargée ; la classification actuelle est conservée.",
+    "classificationHelp": "Catalogue des symptômes de défaillance (données de référence DI). Requise avant la conversion en OT.",
+    "note": "Note du valideur",
+    "notePlaceholder": "Observations, éléments vérifiés, consignes pour le planificateur…",
+    "cancel": "Annuler",
+    "submit": "Valider le tri"
+  },
+  "deferral": {
+    "title": "Reporter la demande {{code}}",
+    "description": "La demande sortira de la file active jusqu'à la date choisie. Le motif est enregistré dans l'historique.",
+    "until": "Reporter jusqu'au",
+    "dateRequired": "Choisissez une date de report.",
+    "dateFuture": "La date doit être postérieure à aujourd'hui.",
+    "reason": "Motif du report",
+    "reasonPlaceholder": "Choisir un motif",
+    "reasonRequired": "Choisissez un motif.",
+    "reasons": {
+      "planned_shutdown": "En attente d'un arrêt programmé",
+      "awaiting_parts": "En attente de pièces",
+      "awaiting_contractor": "En attente d'un prestataire",
+      "production_constraint": "Contrainte de production",
+      "budget": "Budget non disponible",
+      "other": "Autre (préciser)"
+    },
+    "notes": "Commentaire",
+    "notesPlaceholder": "Précisions utiles pour la reprise de la demande…",
+    "notesRequiredForOther": "Précisez le motif dans le commentaire.",
+    "cancel": "Annuler",
+    "submit": "Reporter",
+    "deferredUntil": "Reportée jusqu'au"
+  },
+  "confirm": {
+    "archiveTitle": "Archiver la demande {{code}} ?",
+    "archiveDescription": "La demande clôturée quitte les listes actives. Elle reste consultable dans les archives.",
+    "cancelOwnTitle": "Annuler la demande {{code}} ?",
+    "cancelOwnDescription": "Votre demande sera clôturée comme annulée par le demandeur. Cette action est définitive."
   }
 }

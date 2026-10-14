@@ -424,37 +424,19 @@ mod tests {
         .await
         .expect("ins mode fc");
 
-        let cause_id: i64 = match db
+        // Causes are coded from the WORK.FAILURE_CAUSES reference domain (migration 178 points the
+        // foreign key at reference_values; the domain is seeded with the ISO 14224 starter set).
+        let cause_id: i64 = db
             .query_one(Statement::from_string(
                 DbBackend::Sqlite,
-                "SELECT id FROM failure_codes WHERE code_type IN ('cause','mechanism') LIMIT 1".to_string(),
+                "SELECT rv.id AS id FROM reference_values rv                  INNER JOIN reference_sets rs ON rs.id = rv.set_id                  INNER JOIN reference_domains rd ON rd.id = rs.domain_id                  WHERE rd.code = 'WORK.FAILURE_CAUSES' AND rv.is_active = 1 ORDER BY rv.id LIMIT 1"
+                    .to_string(),
             ))
             .await
             .expect("cause q")
-        {
-            Some(row) => row.try_get("", "id").unwrap(),
-            None => {
-                db.execute(Statement::from_sql_and_values(
-                    DbBackend::Sqlite,
-                    "INSERT INTO failure_codes \
-                     (entity_sync_id, hierarchy_id, parent_id, code, label, code_type, is_active, row_version) \
-                     VALUES ('fc:gap06:cause', ?, NULL, 'GAP06_C', 'Gap06 cause', 'cause', 1, 1)",
-                    [hid.into()],
-                ))
-                .await
-                .expect("ins cause");
-                db.query_one(Statement::from_string(
-                    DbBackend::Sqlite,
-                    "SELECT id FROM failure_codes WHERE code = 'GAP06_C' LIMIT 1".to_string(),
-                ))
-                .await
-                .expect("cause id q")
-                .expect("cause")
-                .try_get("", "id")
-                .unwrap()
-            }
-        };
-
+            .expect("seeded WORK.FAILURE_CAUSES value")
+            .try_get("", "id")
+            .unwrap();
         (mode_id, cause_id)
     }
 

@@ -71,16 +71,17 @@
     "risk": "Risque",
     "emptyReady": "Aucun candidat prêt.",
     "emptyBlocked": "Aucun candidat bloqué.",
-    "readyHint": "Cliquez une carte Prêt pour l'engager au planning."
+    "readyHint": "Cliquez une carte Prêt pour l'engager au planning.",
+    "blockedHint": "Ouvrez un élément bloqué pour lever ses blocages dans l'ordre de travail ou la demande.",
+    "openSource": "Ouvrir {{code}}"
   },
   "blockers": {
-    "parts_missing": "Pièces",
-    "skills_missing": "Compétences",
-    "permit_missing": "Permis",
-    "window_conflict": "Fenêtre",
-    "prerequisite_blocked": "Prérequis",
-    "assignee_unavailable": "Indisponible",
-    "capacity_exceeded": "Capacité"
+    "missing_critical_part": "Pièces critiques non réservées",
+    "no_qualified_technician": "Aucun technicien qualifié",
+    "permit_not_ready": "Permis non prêt",
+    "prerequisite_incomplete": "Prérequis incomplets",
+    "locked_window": "Fenêtre verrouillée",
+    "double_booking": "Double affectation"
   },
   "board": {
     "unassignedLane": "Équipe — pas encore affecté à une personne",
@@ -224,7 +225,8 @@
     "nearestWindow": "Fenêtre faisable la plus proche",
     "auditTitle": "Journal des changements",
     "auditEmpty": "Aucune entrée d'audit pour cet engagement.",
-    "openOnBoard": "Ouvrir sur le tableau"
+    "openOnBoard": "Ouvrir sur le tableau",
+    "sourceWorkOrder": "Ordre de travail :"
   },
   "audit": {
     "actions": {
@@ -238,5 +240,10 @@
   "dialogs": {
     "cancel": "Annuler",
     "close": "Fermer"
+  },
+  "deepLink": {
+    "woNotInBacklog": "Cet ordre de travail n'est pas dans le backlog de planification (pas encore prêt à planifier, déjà engagé ou hors filtre).",
+    "openWo": "Ouvrir l'ordre de travail",
+    "dismiss": "Fermer"
   }
 }

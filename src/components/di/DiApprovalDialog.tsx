@@ -38,6 +38,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useSession } from "@/hooks/use-session";
 import { i18n } from "@/i18n";
+import { describeAppError } from "@/lib/app-error";
 import { formatAssetLabel, formatOrgNodeLabel, formatPersonLabel } from "@/lib/display";
 import { convertDiToWo } from "@/services/di-conversion-service";
 import { useDiReviewStore } from "@/stores/di-review-store";
@@ -268,7 +269,7 @@ export function DiApprovalDialog() {
       setConversionResult({
         woId: null,
         woCode: null,
-        conversionError: err instanceof Error ? err.message : String(err),
+        conversionError: describeAppError(err).title,
       });
     }
   }, [di, approve, info, note, handoffToWorkOrder, loadDis, stepUpMode, retryRowVersion, t]);
@@ -296,7 +297,7 @@ export function DiApprovalDialog() {
       setConversionResult({
         woId: null,
         woCode: null,
-        conversionError: err instanceof Error ? err.message : String(err),
+        conversionError: describeAppError(err).title,
       });
     }
   }, [di, handoffToWorkOrder, loadDis, note, retryRowVersion]);

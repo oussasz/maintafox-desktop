@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import enCommon from "@/i18n/en/common.json";
 import enPermits from "@/i18n/locale-data/en/permits.json";
 import { PermitsPage } from "@/pages/PermitsPage";
 import type {
@@ -10,21 +11,48 @@ import type {
   WorkPermitRecord,
 } from "@/services/permit-service";
 
-// Resolve keys against the real English catalogue so a missing key fails the test.
-function translate(key: string, opts?: Record<string, unknown>): string {
+// Resolve keys against the real English catalogues so a missing key fails the test.
+function lookup(catalog: unknown, key: string): string | undefined {
   const value = key
     .split(".")
     .reduce<unknown>(
       (node, part) => (node as Record<string, unknown> | undefined)?.[part],
-      enPermits,
+      catalog,
     );
-  if (typeof value !== "string") throw new Error(`missing permits i18n key: ${key}`);
+  return typeof value === "string" ? value : undefined;
+}
+
+function interpolate(value: string, opts?: Record<string, unknown>): string {
   return value.replace(/\{\{(\w+)\}\}/g, (_, name: string) => String(opts?.[name] ?? ""));
 }
 
+function translate(key: string, opts?: Record<string, unknown>): string {
+  const plural =
+    typeof opts?.["count"] === "number" ? `${key}_${opts["count"] === 1 ? "one" : "other"}` : null;
+  const value = lookup(enPermits, key) ?? (plural ? lookup(enPermits, plural) : undefined);
+  if (value == null) throw new Error(`missing permits i18n key: ${key}`);
+  return interpolate(value, opts);
+}
+
+/** Shared chrome (DataTable, header controls, filter bar) reads the common namespace. */
+function translateCommon(key: string, opts?: Record<string, unknown>): string {
+  const value = lookup(enCommon, key);
+  if (value != null) return interpolate(value, opts);
+  return typeof opts?.["defaultValue"] === "string" ? opts["defaultValue"] : key;
+}
+
 vi.mock("react-i18next", () => ({
-  useTranslation: () => ({ t: translate, i18n: { language: "en" } }),
+  useTranslation: (ns?: string | string[]) => ({
+    t: (key: string, opts?: Record<string, unknown>) =>
+      (Array.isArray(ns) ? ns[0] : ns) === "permits" && opts?.["ns"] !== "common"
+        ? translate(key, opts)
+        : translateCommon(key, opts),
+    i18n: { language: "en", resolvedLanguage: "en" },
+  }),
 }));
+
+const print = vi.hoisted(() => ({ printLotoCard: vi.fn() }));
+vi.mock("@/components/permits/loto-card-print", () => print);
 
 const svc = vi.hoisted(() => ({
   listPermitTypes: vi.fn(),
@@ -258,5 +286,67 @@ describe("PermitsPage", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: enPermits.create.submit }));
     expect(await within(dialog).findByText(enPermits.errors.required)).toBeInTheDocument();
     expect(svc.createWorkPermit).not.toHaveBeenCalled();
+  });
+
+  it("shows translated status chips and links the permit to its work order", async () => {
+    renderPage();
+    const button = await screen.findByRole("button", { name: "Select PTW-2026-000041" });
+    const row = within(button.closest("tr") as HTMLElement);
+    expect(row.getByText(enPermits.status.issued)).toBeInTheDocument();
+    expect(row.queryByText("issued")).toBeNull();
+    expect(row.getByRole("link", { name: "Open work order OT-0042" })).toBeInTheDocument();
+  });
+
+  it("filters by status through the backend and searches client-side", async () => {
+    svc.listWorkPermits.mockResolvedValue([
+      permit(),
+      permit({ id: 42, code: "PTW-2026-000042", asset_code: "CMP-7", asset_label: "Compressor" }),
+    ]);
+    renderPage();
+    await screen.findByRole("button", { name: "Select PTW-2026-000042" });
+    fireEvent.change(screen.getByPlaceholderText(enPermits.filters.searchPlaceholder), {
+      target: { value: "compressor" },
+    });
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Select PTW-2026-000041" })).toBeNull(),
+    );
+    expect(screen.getByRole("button", { name: "Select PTW-2026-000042" })).toBeInTheDocument();
+    expect(svc.listWorkPermits).toHaveBeenCalledWith({ limit: 201 });
+  });
+
+  it("shows an error state with retry when the list cannot load", async () => {
+    svc.listWorkPermits.mockRejectedValueOnce({ code: "DATABASE_ERROR", message: "boom" });
+    renderPage();
+    const alert = await screen.findByRole("alert");
+    fireEvent.click(within(alert).getByRole("button"));
+    await waitFor(() => expect(svc.listWorkPermits).toHaveBeenCalledTimes(2));
+  });
+
+  it("really prints the LOTO tag, then records the print", async () => {
+    session.userId = 8;
+    const verified = isolation({ ...VERIFIED });
+    svc.listPermitIsolations.mockResolvedValue([verified]);
+    const card = {
+      permit_code: "PTW-2026-000041",
+      equipment_label: "PMP-101 — Feed pump",
+      energy_type: "electrical",
+      isolation_id: 300,
+      isolation_point: "MCC-1 breaker",
+      lock_number: "L-12",
+      verifier_signature: "Sara Sup",
+      expires_at: "2099-01-01T00:00:00Z",
+    };
+    svc.getLotoCardView.mockResolvedValue(card);
+    print.printLotoCard.mockResolvedValue(undefined);
+    svc.recordLotoCardPrint.mockResolvedValue({ id: 1, permit_id: 41, isolation_id: 300 });
+
+    const panel = await openPermit();
+    fireEvent.click(await within(panel).findByRole("button", { name: enPermits.card.show }));
+    fireEvent.click(await within(panel).findByRole("button", { name: enPermits.card.print }));
+    await waitFor(() => expect(svc.recordLotoCardPrint).toHaveBeenCalled());
+    expect(print.printLotoCard).toHaveBeenCalledWith(card, expect.any(Function), "en");
+    expect(print.printLotoCard.mock.invocationCallOrder[0]).toBeLessThan(
+      svc.recordLotoCardPrint.mock.invocationCallOrder[0] ?? 0,
+    );
   });
 });

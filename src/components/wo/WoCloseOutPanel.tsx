@@ -21,6 +21,7 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
 import { ReferenceCombobox } from "@/components/reference/ReferenceCombobox";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -33,11 +34,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { StatusChip } from "@/components/ui/status-chip";
 import { Textarea } from "@/components/ui/textarea";
 import {
   WoCompletionGatesChecklist,
   completionGatesProgress,
 } from "@/components/wo/WoCompletionGatesChecklist";
+import { PERMIT_STATUS_TONE, toneOf } from "@/design-system/tone";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useSession } from "@/hooks/use-session";
 import { useStepUp } from "@/hooks/use-step-up";
@@ -59,6 +62,8 @@ import { useWoStore } from "@/stores/wo-store";
 import { toErrorMessage } from "@/utils/errors";
 import type { WoCompletionGate, WorkOrder } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
+
+import { mergeWoPersonOptions, useWoPeopleOptions } from "./use-wo-people";
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -109,11 +114,11 @@ function SuccessBanner({ message }: { message: string }) {
 
 export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps) {
   const { t } = useTranslation("ot");
+  const { t: tPermits } = useTranslation("permits");
   const { info } = useSession();
   const { can } = usePermissions();
   const { withStepUp, StepUpDialogElement } = useStepUp();
   const refreshActiveWo = useWoStore((s) => s.refreshActiveWo);
-  const woItems = useWoStore((s) => s.items);
   const canReopen = can(P.OT_REOPEN);
 
   // Track current WO state (gets updated after transitions)
@@ -127,6 +132,8 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
   const [failureModeId, setFailureModeId] = useState<number | null>(null);
   const [failureCauseId, setFailureCauseId] = useState<number | null>(null);
   const [failureEffectId, setFailureEffectId] = useState<number | null>(null);
+  const [failureMechanismId, setFailureMechanismId] = useState<number | null>(null);
+  const [detectionMethodId, setDetectionMethodId] = useState<number | null>(null);
   const [repairType, setRepairType] = useState<RepairType>("na");
   const [correctiveAction, setCorrectiveAction] = useState("");
   const [rootCauseSummary, setRootCauseSummary] = useState("");
@@ -168,33 +175,23 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
     "pm_plan_code" | "pm_plan_title" | "pm_due_at" | "permits"
   > | null>(null);
 
-  const signerOptions = useMemo(() => {
-    const dedup = new Map<string, string>();
-    for (const item of woItems) {
-      if (item.primary_responsible_id != null) {
-        dedup.set(
-          String(item.primary_responsible_id),
-          item.responsible_display_name?.trim() ||
-            item.responsible_username?.trim() ||
-            String(item.primary_responsible_id),
-        );
-      }
-      if (item.planner_id != null) {
-        dedup.set(
-          String(item.planner_id),
-          item.planner_display_name?.trim() ||
-            item.planner_username?.trim() ||
-            String(item.planner_id),
-        );
-      }
-    }
-    if (info?.user_id != null) {
-      dedup.set(String(info.user_id), formatPersonLabel(info.display_name, info.username));
-    }
-    return Array.from(dedup.entries())
-      .map(([value, label]) => ({ value, label }))
-      .sort((a, b) => a.label.localeCompare(b.label));
-  }, [woItems, info?.user_id, info?.display_name, info?.username]);
+  // FMECA override signer: personnel register (active staff with a login) + the current user.
+  const people = useWoPeopleOptions();
+  const signerOptions = useMemo(
+    () =>
+      mergeWoPersonOptions(
+        people.options,
+        info?.user_id != null
+          ? [
+              {
+                value: String(info.user_id),
+                label: formatPersonLabel(info.display_name, info.username),
+              },
+            ]
+          : [],
+      ),
+    [people.options, info?.user_id, info?.display_name, info?.username],
+  );
 
   // ── Pre-populate from existing failure data (GA-049) ────────────────
   useEffect(() => {
@@ -214,6 +211,8 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
           setFailureModeId(fd.failure_mode_id);
           setFailureCauseId(fd.failure_cause_id);
           setFailureEffectId(fd.failure_effect_id);
+          setFailureMechanismId(fd.failure_mechanism_id ?? null);
+          setDetectionMethodId(fd.detection_method_id ?? null);
           setCauseNotDetermined(fd.cause_not_determined);
           if (fd.is_temporary_repair) setRepairType("temporary");
           else if (fd.is_permanent_repair) setRepairType("permanent");
@@ -271,6 +270,8 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
         failure_mode_id: causeNotDetermined ? null : failureModeId,
         failure_cause_id: causeNotDetermined ? null : failureCauseId,
         failure_effect_id: causeNotDetermined ? null : failureEffectId,
+        failure_mechanism_id: causeNotDetermined ? null : failureMechanismId,
+        detection_method_id: detectionMethodId,
         is_temporary_repair: repairType === "temporary",
         is_permanent_repair: repairType === "permanent",
         cause_not_determined: causeNotDetermined,
@@ -305,6 +306,8 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
     failureModeId,
     failureCauseId,
     failureEffectId,
+    failureMechanismId,
+    detectionMethodId,
     repairType,
     narrative,
     rootCauseSummary,
@@ -593,6 +596,36 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
               allowCreate={false}
               placeholder={t("closeout.failureEffectPlaceholder")}
               disabled={!isDetailEditable || causeNotDetermined}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="wo-failure-mechanism">{t("closeout.iso.mechanism")}</Label>
+            <ReferenceCombobox
+              id="wo-failure-mechanism"
+              referenceType="work.failure_mechanism"
+              valueMode="id"
+              value={failureMechanismId != null ? String(failureMechanismId) : null}
+              onChange={(idStr) => setFailureMechanismId(idStr ? Number(idStr) : null)}
+              allowClear
+              allowCreate={false}
+              placeholder={t("closeout.iso.mechanismPlaceholder")}
+              disabled={!isDetailEditable || causeNotDetermined}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="wo-detection-method">{t("closeout.iso.detection")}</Label>
+            <ReferenceCombobox
+              id="wo-detection-method"
+              referenceType="work.detection_method"
+              valueMode="id"
+              value={detectionMethodId != null ? String(detectionMethodId) : null}
+              onChange={(idStr) => setDetectionMethodId(idStr ? Number(idStr) : null)}
+              allowClear
+              allowCreate={false}
+              placeholder={t("closeout.iso.detectionPlaceholder")}
+              disabled={!isDetailEditable}
             />
           </div>
         </div>
@@ -896,11 +929,20 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
               </p>
             ) : null}
             {links.permits.length > 0 ? (
-              <p>
-                {t("closeout.linkedPermits", {
-                  list: links.permits.map((p) => `${p.code} (${p.status})`).join(", "),
-                })}
-              </p>
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                <span>{t("closeout.linkedPermitsLabel")}</span>
+                {links.permits.map((p) => (
+                  <span key={p.id} className="inline-flex items-center gap-1.5">
+                    <LinkedEntityBadge entity="permit" code={p.code} entityId={p.id} />
+                    <StatusChip
+                      label={tPermits(`status.${p.status}`, {
+                        defaultValue: tPermits("status.unknown"),
+                      })}
+                      tone={toneOf(PERMIT_STATUS_TONE, p.status)}
+                    />
+                  </span>
+                ))}
+              </div>
             ) : null}
           </div>
         ) : null}

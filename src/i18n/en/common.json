@@ -161,9 +161,13 @@
   "linkedEntity": {
     "work_order": "{{code}}",
     "di": "{{code}}",
+    "permit": "{{code}}",
+    "pm_plan": "{{code}}",
     "open": {
       "work_order": "Open work order {{code}}",
-      "di": "Open request {{code}}"
+      "di": "Open request {{code}}",
+      "permit": "Open permit {{code}}",
+      "pm_plan": "Open preventive maintenance plan {{code}}"
     }
   },
   "time": {

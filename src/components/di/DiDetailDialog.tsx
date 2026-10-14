@@ -32,8 +32,10 @@ import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
+import { DiDeferDialog } from "@/components/di/DiDeferDialog";
 import { DiDetailPanel } from "@/components/di/DiDetailPanel";
 import { printDiFiche } from "@/components/di/DiPrintFiche";
+import { DiScreenDialog } from "@/components/di/DiScreenDialog";
 import { DiSlaStatusBadge } from "@/components/di/DiSlaStatusBadge";
 import { useDiReferenceLabels } from "@/components/di/di-reference-labels";
 import { dispositionLabelKey } from "@/components/di/disposition-meta";
@@ -46,6 +48,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   Dialog,
   DialogContent,
@@ -56,6 +59,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useSession } from "@/hooks/use-session";
+import { describeAppError } from "@/lib/app-error";
 import {
   formatAssetLabel,
   formatOrgNodeLabel,
@@ -103,12 +107,12 @@ export function DiDetailDialog({ di, transitions, open, onClose }: DiDetailDialo
   const openApproval = useDiReviewStore((s) => s.openApproval);
   const openRejection = useDiReviewStore((s) => s.openRejection);
   const openReturn = useDiReviewStore((s) => s.openReturn);
-  const screen = useDiReviewStore((s) => s.screen);
-  const defer = useDiReviewStore((s) => s.defer);
   const cancelOwn = useDiReviewStore((s) => s.cancelOwn);
   const archiveDi = useDiReviewStore((s) => s.archive);
-  const [screenError, setScreenError] = useState<string | null>(null);
   const [triageError, setTriageError] = useState<string | null>(null);
+  const [screenOpen, setScreenOpen] = useState(false);
+  const [deferOpen, setDeferOpen] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<"cancelOwn" | "archive" | null>(null);
   const [slaStatus, setSlaStatus] = useState<DiSlaStatus | null>(null);
 
   useEffect(() => {
@@ -129,26 +133,20 @@ export function DiDetailDialog({ di, transitions, open, onClose }: DiDetailDialo
     };
   }, [open, di]);
 
-  const handleScreen = useCallback(async () => {
-    if (!di) return;
-    setScreenError(null);
-    try {
-      const updated = await screen({
-        di_id: di.id,
-        actor_id: 0,
-        expected_row_version: di.row_version,
-        validated_urgency: di.reported_urgency,
-        classification_code_id: di.classification_code_id ?? di.symptom_code_id ?? null,
-        reviewer_note: null,
-      });
+  const handleScreened = useCallback(
+    (updated: InterventionRequest) => {
       if (updated.status === "awaiting_approval") {
         onClose();
         openApproval(updated);
       }
-    } catch (err) {
-      setScreenError(String(err));
-    }
-  }, [di, screen, onClose, openApproval]);
+    },
+    [onClose, openApproval],
+  );
+
+  const refreshQueues = useCallback(() => {
+    window.dispatchEvent(new Event("mf:di-triage-refresh"));
+    window.dispatchEvent(new Event("mf:dashboard-kpis-refresh"));
+  }, []);
 
   const handleApprove = useCallback(() => {
     if (!di) return;
@@ -176,59 +174,27 @@ export function DiDetailDialog({ di, transitions, open, onClose }: DiDetailDialo
       window.dispatchEvent(new Event("mf:di-triage-refresh"));
       window.dispatchEvent(new Event("mf:dashboard-kpis-refresh"));
     } catch (e) {
-      setTriageError(e instanceof Error ? e.message : String(e));
+      setTriageError(describeAppError(e).title);
     }
   }, [di, triageSubmittedDi]);
 
+  /** Runs inside ConfirmDialog: a rejection keeps it open and the global toast explains why. */
   const handleCancelOwn = useCallback(async () => {
     if (!di || info?.user_id == null) return;
-    setScreenError(null);
-    try {
-      await cancelOwn({
-        di_id: di.id,
-        actor_id: info.user_id,
-        expected_row_version: di.row_version,
-        notes: null,
-      });
-      window.dispatchEvent(new Event("mf:di-triage-refresh"));
-      window.dispatchEvent(new Event("mf:dashboard-kpis-refresh"));
-    } catch (e) {
-      setScreenError(e instanceof Error ? e.message : String(e));
-    }
-  }, [cancelOwn, di, info]);
-
-  const handleDefer = useCallback(async () => {
-    if (!di || info?.user_id == null) return;
-    setScreenError(null);
-    const deferredUntil = new Date();
-    deferredUntil.setDate(deferredUntil.getDate() + 30);
-    try {
-      await defer({
-        di_id: di.id,
-        actor_id: info.user_id,
-        expected_row_version: di.row_version,
-        deferred_until: deferredUntil.toISOString(),
-        reason_code: "operational",
-        notes: null,
-      });
-      window.dispatchEvent(new Event("mf:di-triage-refresh"));
-      window.dispatchEvent(new Event("mf:dashboard-kpis-refresh"));
-    } catch (e) {
-      setScreenError(e instanceof Error ? e.message : String(e));
-    }
-  }, [defer, di, info]);
+    await cancelOwn({
+      di_id: di.id,
+      actor_id: info.user_id,
+      expected_row_version: di.row_version,
+      notes: null,
+    });
+    refreshQueues();
+  }, [cancelOwn, di, info, refreshQueues]);
 
   const handleArchive = useCallback(async () => {
     if (!di) return;
-    setScreenError(null);
-    try {
-      await archiveDi(di.id, di.row_version, null);
-      window.dispatchEvent(new Event("mf:di-triage-refresh"));
-      window.dispatchEvent(new Event("mf:dashboard-kpis-refresh"));
-    } catch (e) {
-      setScreenError(e instanceof Error ? e.message : String(e));
-    }
-  }, [archiveDi, di]);
+    await archiveDi(di.id, di.row_version, null);
+    refreshQueues();
+  }, [archiveDi, di, refreshQueues]);
 
   if (!di) return null;
 
@@ -329,6 +295,18 @@ export function DiDetailDialog({ di, transitions, open, onClose }: DiDetailDialo
 
         {/* ── Scrollable body ─────────────────────────────────────────── */}
         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+          {/* Full description (the header only shows two lines) */}
+          {di.description?.trim() ? (
+            <section aria-labelledby="di-detail-description" className="space-y-1">
+              <h3 id="di-detail-description" className="text-xs font-semibold text-text-muted">
+                {t("detail.fields.description")}
+              </h3>
+              <p className="whitespace-pre-wrap break-words text-sm text-text-primary">
+                {di.description}
+              </p>
+            </section>
+          ) : null}
+
           {/* Info grid */}
           <Card>
             <CardContent className="p-3 grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2 text-xs">
@@ -357,6 +335,29 @@ export function DiDetailDialog({ di, transitions, open, onClose }: DiDetailDialo
                   </Badge>
                 }
               />
+              {di.validated_urgency != null && (
+                <InfoRow
+                  label={t("screening.validatedUrgency")}
+                  value={
+                    <Badge
+                      variant="outline"
+                      className={`text-[10px] border-0 ${DI_URGENCY_STYLE[di.validated_urgency] ?? ""}`}
+                    >
+                      {t(`priority.${di.validated_urgency}`)}
+                    </Badge>
+                  }
+                />
+              )}
+              {di.status === "deferred" && di.deferred_until && (
+                <InfoRow
+                  label={t("deferral.deferredUntil")}
+                  value={formatDiDate(di.deferred_until, dateLocale, {
+                    day: "2-digit",
+                    month: "2-digit",
+                    year: "numeric",
+                  })}
+                />
+              )}
               <InfoRow label={t("detail.fields.origin")} value={originLabel(di.origin_type)} />
               <InfoRow
                 label={t("detail.fields.requestType")}
@@ -429,6 +430,17 @@ export function DiDetailDialog({ di, transitions, open, onClose }: DiDetailDialo
             </CardContent>
           </Card>
 
+          {di.reviewer_note?.trim() ? (
+            <section aria-labelledby="di-detail-reviewer-note" className="space-y-1">
+              <h3 id="di-detail-reviewer-note" className="text-xs font-semibold text-text-muted">
+                {t("review.reviewerNote")}
+              </h3>
+              <p className="whitespace-pre-wrap break-words text-sm text-text-primary">
+                {di.reviewer_note}
+              </p>
+            </section>
+          ) : null}
+
           {/* Tabs: attachments + audit */}
           <DiDetailPanel
             di={di}
@@ -483,7 +495,7 @@ export function DiDetailDialog({ di, transitions, open, onClose }: DiDetailDialo
                 variant="outline"
                 size="sm"
                 className="gap-1.5 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
-                onClick={handleScreen}
+                onClick={() => setScreenOpen(true)}
                 title={t("review.screenAction")}
               >
                 <ClipboardCheck className="h-3.5 w-3.5" />
@@ -506,7 +518,7 @@ export function DiDetailDialog({ di, transitions, open, onClose }: DiDetailDialo
                 variant="outline"
                 size="sm"
                 className="gap-1.5"
-                onClick={() => void handleDefer()}
+                onClick={() => setDeferOpen(true)}
               >
                 <Calendar className="h-3.5 w-3.5" />
                 {t("action.defer")}
@@ -534,7 +546,7 @@ export function DiDetailDialog({ di, transitions, open, onClose }: DiDetailDialo
                 variant="outline"
                 size="sm"
                 className="gap-1.5"
-                onClick={() => void handleArchive()}
+                onClick={() => setConfirmAction("archive")}
               >
                 <Archive className="h-3.5 w-3.5" />
                 {t("action.archive")}
@@ -545,7 +557,7 @@ export function DiDetailDialog({ di, transitions, open, onClose }: DiDetailDialo
                 variant="outline"
                 size="sm"
                 className="gap-1.5 text-red-600 hover:text-red-700 hover:bg-red-50"
-                onClick={() => void handleCancelOwn()}
+                onClick={() => setConfirmAction("cancelOwn")}
               >
                 <X className="h-3.5 w-3.5" />
                 {t("action.cancelOwn")}
@@ -586,18 +598,48 @@ export function DiDetailDialog({ di, transitions, open, onClose }: DiDetailDialo
           </div>
         </div>
 
-        {/* Screen / triage error */}
-        {(triageError ?? screenError) && (
+        {/* Triage error (short context; the global toast carries the details) */}
+        {triageError && (
           <div className="px-6 pb-3">
             <div
               role="alert"
               className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive"
             >
-              {triageError ?? screenError}
+              {triageError}
             </div>
           </div>
         )}
       </DialogContent>
+
+      <DiScreenDialog
+        di={di}
+        open={screenOpen}
+        onOpenChange={setScreenOpen}
+        onScreened={handleScreened}
+      />
+      <DiDeferDialog
+        di={di}
+        open={deferOpen}
+        onOpenChange={setDeferOpen}
+        onDeferred={refreshQueues}
+      />
+      <ConfirmDialog
+        open={confirmAction != null}
+        onOpenChange={(next) => !next && setConfirmAction(null)}
+        title={
+          confirmAction === "archive"
+            ? t("confirm.archiveTitle", { code: di.code })
+            : t("confirm.cancelOwnTitle", { code: di.code })
+        }
+        description={
+          confirmAction === "archive"
+            ? t("confirm.archiveDescription")
+            : t("confirm.cancelOwnDescription")
+        }
+        confirmLabel={confirmAction === "archive" ? t("action.archive") : t("action.cancelOwn")}
+        destructive={confirmAction === "cancelOwn"}
+        onConfirm={confirmAction === "archive" ? handleArchive : handleCancelOwn}
+      />
     </Dialog>
   );
 }

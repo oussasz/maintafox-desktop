@@ -844,3 +844,19 @@ export function parseLaborCostRange(
     return null;
   }
 }
+
+/**
+ * Screen that shows the record behind a planning candidate (OT detail, DI detail), or null
+ * when the source has no deep-linkable screen yet (e.g. PM occurrences).
+ */
+export function candidateSourcePath(
+  candidate: Pick<ScheduleCandidate, "source_type" | "source_id" | "source_di_id">,
+): string | null {
+  if (candidate.source_type === "work_order" && candidate.source_id > 0) {
+    return `/work-orders?openWo=${candidate.source_id}`;
+  }
+  if (candidate.source_di_id != null && candidate.source_di_id > 0) {
+    return `/requests?openDi=${candidate.source_di_id}`;
+  }
+  return null;
+}

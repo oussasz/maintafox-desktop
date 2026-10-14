@@ -1,7 +1,12 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router-dom";
 
-import { candidateDisplayCode, candidateDisplayTitle } from "@/components/planning/planning-model";
+import {
+  candidateDisplayCode,
+  candidateDisplayTitle,
+  candidateSourcePath,
+} from "@/components/planning/planning-model";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
@@ -32,6 +37,7 @@ export function PlanningBacklogRail({
   className,
 }: PlanningBacklogRailProps) {
   const { t } = useTranslation("planning");
+  const navigate = useNavigate();
   const [tab, setTab] = useState<"ready" | "blocked">("ready");
 
   const conflictByCandidate = useMemo(() => {
@@ -99,17 +105,39 @@ export function PlanningBacklogRail({
 
         <TabsContent value="blocked" className="mt-0 min-h-0 flex-1 overflow-y-auto p-3">
           <div className="space-y-2">
-            {blocked.map((candidate) => (
-              <div
-                key={candidate.id}
-                className="rounded-lg border border-surface-border bg-surface-0 p-3"
-              >
+            {blocked.length > 0 ? (
+              <p className="text-[11px] leading-snug text-text-muted">{t("backlog.blockedHint")}</p>
+            ) : null}
+            {blocked.map((candidate) => {
+              const body = (
                 <CandidateCardBody
                   candidate={candidate}
                   blockers={conflictByCandidate.get(candidate.id)?.blocker_codes ?? []}
                 />
-              </div>
-            ))}
+              );
+              const path = candidateSourcePath(candidate);
+              if (!path) {
+                return (
+                  <div
+                    key={candidate.id}
+                    className="rounded-lg border border-surface-border bg-surface-0 p-3"
+                  >
+                    {body}
+                  </div>
+                );
+              }
+              return (
+                <button
+                  key={candidate.id}
+                  type="button"
+                  className="w-full rounded-lg border border-surface-border bg-surface-0 p-3 text-left transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  aria-label={t("backlog.openSource", { code: candidateDisplayCode(candidate) })}
+                  onClick={() => void navigate(path)}
+                >
+                  {body}
+                </button>
+              );
+            })}
             {blocked.length === 0 && (
               <p className="text-xs text-text-muted">{t("backlog.emptyBlocked")}</p>
             )}

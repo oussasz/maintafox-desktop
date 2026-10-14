@@ -161,9 +161,13 @@
   "linkedEntity": {
     "work_order": "{{code}}",
     "di": "{{code}}",
+    "permit": "{{code}}",
+    "pm_plan": "{{code}}",
     "open": {
       "work_order": "Ouvrir l’ordre de travail {{code}}",
-      "di": "Ouvrir la demande {{code}}"
+      "di": "Ouvrir la demande {{code}}",
+      "permit": "Ouvrir le permis {{code}}",
+      "pm_plan": "Ouvrir le plan de maintenance préventive {{code}}"
     }
   },
   "time": {

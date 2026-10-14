@@ -50,6 +50,28 @@ pub struct WoFailureDetail {
     pub failure_cause_label: Option<String>,
     #[serde(default)]
     pub failure_effect_label: Option<String>,
+    /// ISO 14224 B.2 failure mechanism (`WORK.FAILURE_MECHANISMS`).
+    #[serde(default)]
+    pub failure_mechanism_id: Option<i64>,
+    #[serde(default)]
+    pub failure_mechanism_label: Option<String>,
+    /// ISO 14224 B.4 detection method (`WORK.DETECTION_METHODS`).
+    #[serde(default)]
+    pub detection_method_id: Option<i64>,
+    #[serde(default)]
+    pub detection_method_label: Option<String>,
+}
+
+/// IPC input for saving failure coding: the base taxonomy plus the ISO 14224 mechanism and
+/// detection method (kept apart so existing `SaveFailureDetailInput` callers are unchanged).
+#[derive(Debug, Clone, Deserialize)]
+pub struct SaveFailureCodingInput {
+    #[serde(flatten)]
+    pub base: SaveFailureDetailInput,
+    #[serde(default)]
+    pub failure_mechanism_id: Option<i64>,
+    #[serde(default)]
+    pub detection_method_id: Option<i64>,
 }
 
 /// Row from `work_order_verifications`.
@@ -181,11 +203,15 @@ const FAILURE_DETAIL_SELECT: &str = "\
            fd.cause_not_determined, fd.notes, \
            fm.label AS failure_mode_label, \
            fc.label AS failure_cause_label, \
-           fe.label AS failure_effect_label \
+           fe.label AS failure_effect_label, \
+           fd.failure_mechanism_id, fmech.label AS failure_mechanism_label, \
+           fd.detection_method_id, fdet.label AS detection_method_label \
     FROM work_order_failure_details fd \
     LEFT JOIN reference_values fm ON fm.id = fd.failure_mode_id \
     LEFT JOIN reference_values fc ON fc.id = fd.failure_cause_id \
-    LEFT JOIN reference_values fe ON fe.id = fd.failure_effect_id";
+    LEFT JOIN reference_values fe ON fe.id = fd.failure_effect_id \
+    LEFT JOIN reference_values fmech ON fmech.id = fd.failure_mechanism_id \
+    LEFT JOIN reference_values fdet ON fdet.id = fd.detection_method_id";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Row mapping
@@ -287,6 +313,14 @@ fn map_failure_detail(row: &sea_orm::QueryResult) -> AppResult<WoFailureDetail> 
         failure_cause_label: row.try_get::<Option<String>>("", "failure_cause_label").unwrap_or(None),
         failure_effect_label: row
             .try_get::<Option<String>>("", "failure_effect_label")
+            .unwrap_or(None),
+        failure_mechanism_id: row.try_get::<Option<i64>>("", "failure_mechanism_id").unwrap_or(None),
+        failure_mechanism_label: row
+            .try_get::<Option<String>>("", "failure_mechanism_label")
+            .unwrap_or(None),
+        detection_method_id: row.try_get::<Option<i64>>("", "detection_method_id").unwrap_or(None),
+        detection_method_label: row
+            .try_get::<Option<String>>("", "detection_method_label")
             .unwrap_or(None),
     })
 }
@@ -761,6 +795,63 @@ pub async fn save_failure_detail(db: &DatabaseConnection, input: SaveFailureDeta
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to re-fetch failure detail after upsert")))?;
 
+    map_failure_detail(&row)
+}
+
+/// True when `id` is an active value of the reference domain `domain_code`.
+async fn is_value_of_domain(db: &impl ConnectionTrait, id: i64, domain_code: &str) -> AppResult<bool> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS ok FROM reference_values rv \
+               JOIN reference_sets rs ON rs.id = rv.set_id \
+               JOIN reference_domains d ON d.id = rs.domain_id \
+              WHERE rv.id = ? AND rv.is_active = 1 AND UPPER(TRIM(d.code)) = ?",
+            [id.into(), domain_code.into()],
+        ))
+        .await?;
+    Ok(row.is_some())
+}
+
+/// Save failure coding including the ISO 14224 mechanism and detection method.
+pub async fn save_failure_coding(db: &DatabaseConnection, input: SaveFailureCodingInput) -> AppResult<WoFailureDetail> {
+    use crate::wo::closeout_reference_catalog::{DOMAIN_DETECTION_METHODS, DOMAIN_FAILURE_MECHANISMS};
+    let mut errors = Vec::new();
+    if let Some(id) = input.failure_mechanism_id {
+        if !is_value_of_domain(db, id, DOMAIN_FAILURE_MECHANISMS).await? {
+            errors.push("Le mécanisme de défaillance choisi n'existe plus dans le référentiel.".to_string());
+        }
+    }
+    if let Some(id) = input.detection_method_id {
+        if !is_value_of_domain(db, id, DOMAIN_DETECTION_METHODS).await? {
+            errors.push("La méthode de détection choisie n'existe plus dans le référentiel.".to_string());
+        }
+    }
+    if !errors.is_empty() {
+        return Err(AppError::ValidationFailed(errors));
+    }
+
+    let wo_id = input.base.wo_id;
+    save_failure_detail(db, input.base).await?;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE work_order_failure_details SET failure_mechanism_id = ?, detection_method_id = ? \
+         WHERE work_order_id = ?",
+        [
+            input.failure_mechanism_id.into(),
+            input.detection_method_id.into(),
+            wo_id.into(),
+        ],
+    ))
+    .await?;
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!("{FAILURE_DETAIL_SELECT} WHERE fd.work_order_id = ?"),
+            [wo_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to re-fetch failure detail after coding")))?;
     map_failure_detail(&row)
 }
 

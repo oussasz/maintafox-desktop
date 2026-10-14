@@ -71,16 +71,17 @@
     "risk": "Risk",
     "emptyReady": "No ready candidates.",
     "emptyBlocked": "No blocked candidates.",
-    "readyHint": "Click a Ready card to commit it to the schedule."
+    "readyHint": "Click a Ready card to commit it to the schedule.",
+    "blockedHint": "Open a blocked item to clear its blockers in the work order or request.",
+    "openSource": "Open {{code}}"
   },
   "blockers": {
-    "parts_missing": "Parts",
-    "skills_missing": "Skills",
-    "permit_missing": "Permits",
-    "window_conflict": "Window",
-    "prerequisite_blocked": "Prerequisites",
-    "assignee_unavailable": "Unavailable",
-    "capacity_exceeded": "Capacity"
+    "missing_critical_part": "Critical parts not reserved",
+    "no_qualified_technician": "No qualified technician",
+    "permit_not_ready": "Permit not ready",
+    "prerequisite_incomplete": "Prerequisites incomplete",
+    "locked_window": "Locked window",
+    "double_booking": "Double booking"
   },
   "board": {
     "unassignedLane": "Team — not yet assigned to a person",
@@ -224,7 +225,8 @@
     "nearestWindow": "Nearest feasible window",
     "auditTitle": "Schedule change log",
     "auditEmpty": "No audit entries for this commitment.",
-    "openOnBoard": "Open on board"
+    "openOnBoard": "Open on board",
+    "sourceWorkOrder": "Work order:"
   },
   "audit": {
     "actions": {
@@ -238,5 +240,10 @@
   "dialogs": {
     "cancel": "Cancel",
     "close": "Close"
+  },
+  "deepLink": {
+    "woNotInBacklog": "This work order is not in the planning backlog (not ready to plan yet, already committed or filtered out).",
+    "openWo": "Open the work order",
+    "dismiss": "Dismiss"
   }
 }

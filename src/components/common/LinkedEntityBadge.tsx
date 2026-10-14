@@ -1,20 +1,22 @@
 /**
  * LinkedEntityBadge — clickable primary badge for first-class business links
- * (DI ↔ WO today; extensible to asset, PM, inspection, …).
+ * (DI ↔ WO ↔ permit; extensible to asset, PM, inspection, … once their pages read a
+ * deep-link parameter).
  *
  * Renders nothing when code is absent. Never displays database IDs.
  */
 
-import { ClipboardList, Wrench } from "lucide-react";
+import { CalendarClock, ClipboardList, HardHat, Wrench } from "lucide-react";
 import type { KeyboardEvent, MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 
+import { PERMIT_QUERY_SELECT } from "@/components/permits/permit-rules";
 import { Badge } from "@/components/ui/badge";
 import { formatEntityCode } from "@/lib/display";
 import { cn } from "@/lib/utils";
 
-export type LinkedEntityKind = "work_order" | "di";
+export type LinkedEntityKind = "work_order" | "di" | "permit" | "pm_plan";
 
 export interface LinkedEntityBadgeProps {
   entity: LinkedEntityKind;
@@ -31,10 +33,14 @@ export interface LinkedEntityBadgeProps {
 const ENTITY_ICON = {
   work_order: Wrench,
   di: ClipboardList,
+  permit: HardHat,
+  pm_plan: CalendarClock,
 } as const;
 
 function deepLinkPath(entity: LinkedEntityKind, entityId: number): string {
   if (entity === "work_order") return `/work-orders?openWo=${entityId}`;
+  if (entity === "permit") return `/permits?${PERMIT_QUERY_SELECT}=${entityId}`;
+  if (entity === "pm_plan") return `/pm?planId=${entityId}`;
   return `/requests?openDi=${entityId}`;
 }
 

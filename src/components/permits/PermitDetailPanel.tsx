@@ -1,6 +1,8 @@
+import { Printer } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
 import {
   Badge,
   Button,
@@ -14,8 +16,11 @@ import {
   Input,
   Textarea,
 } from "@/components/ui";
+import { StatusChip } from "@/components/ui/status-chip";
+import { PERMIT_STATUS_TONE, toneOf } from "@/design-system/tone";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useSession } from "@/hooks/use-session";
+import { describeAppError } from "@/lib/app-error";
 import {
   type LotoCardViewRecord,
   type PermitHandoverLogRecord,
@@ -36,11 +41,11 @@ import {
   verifyPermitIsolation,
   verifyPermitIsolationRemoval,
 } from "@/services/permit-service";
-import { toErrorMessage } from "@/utils/errors";
 import { formatDateTime } from "@/utils/format-date";
 import type { WorkPermitStatus } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
+import { printLotoCard } from "./loto-card-print";
 import {
   ISOLATION_REMOVAL_STATUSES,
   ISOLATION_SETUP_STATUSES,
@@ -100,7 +105,7 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
       setSuspensions(susp);
       setHandovers(hand);
     } catch (e) {
-      setError(toErrorMessage(e));
+      setError(describeAppError(e).title);
     }
   }, [permit.id]);
 
@@ -121,7 +126,7 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
       await loadChildren();
       return true;
     } catch (e) {
-      setError(toErrorMessage(e));
+      setError(describeAppError(e).title);
       return false;
     } finally {
       setBusy(false);
@@ -220,7 +225,7 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
     try {
       setCardView(await getLotoCardView(permit.id, iso.id));
     } catch (e) {
-      setError(toErrorMessage(e));
+      setError(describeAppError(e).title);
     }
   };
 
@@ -245,7 +250,17 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
             <dt className="text-text-muted">{t("detail.asset")}</dt>
             <dd>{formatAssetLabel(permit) ?? t("detail.none")}</dd>
             <dt className="text-text-muted">{t("detail.workOrder")}</dt>
-            <dd>{permit.linked_work_order_code ?? t("detail.none")}</dd>
+            <dd>
+              {permit.linked_work_order_code ? (
+                <LinkedEntityBadge
+                  entity="work_order"
+                  code={permit.linked_work_order_code}
+                  entityId={permit.linked_work_order_id}
+                />
+              ) : (
+                t("detail.none")
+              )}
+            </dd>
             <dt className="text-text-muted">{t("detail.requestedAt")}</dt>
             <dd>{fmt(permit.requested_at)}</dd>
             <dt className="text-text-muted">{t("detail.activatedAt")}</dt>
@@ -303,9 +318,13 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
             ) : null}
           </dl>
         </div>
-        <Badge variant="outline" data-testid="permit-status">
-          {t(`status.${permit.status}`)}
-        </Badge>
+        <span data-testid="permit-status">
+          <StatusChip
+            size="md"
+            label={t(`status.${permit.status}`, { defaultValue: t("status.unknown") })}
+            tone={toneOf(PERMIT_STATUS_TONE, permit.status)}
+          />
+        </span>
       </header>
 
       <div className="space-y-2">
@@ -484,10 +503,16 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
               <Button
                 size="sm"
                 variant="outline"
-                className="mt-2"
+                className="mt-2 h-11 gap-1.5 font-sans"
                 disabled={busy}
                 onClick={() =>
                   void run(async () => {
+                    // Print first; the audit entry records a print that actually happened.
+                    await printLotoCard(
+                      cardView,
+                      (key) => t(key),
+                      i18n.resolvedLanguage || i18n.language,
+                    );
                     await recordLotoCardPrint({
                       permit_id: permit.id,
                       isolation_id: cardView.isolation_id,
@@ -495,7 +520,8 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
                   })
                 }
               >
-                {t("card.recordPrint")}
+                <Printer className="h-4 w-4" aria-hidden />
+                {t("card.print")}
               </Button>
             ) : null}
           </div>

@@ -32,6 +32,7 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { useSession } from "@/hooks/use-session";
+import { describeAppError } from "@/lib/app-error";
 import { assetToSearchResult } from "@/lib/asset-to-search-result";
 import { getAssetById, getAssetByIdSilent } from "@/services/asset-service";
 import { uploadDiAttachmentFromPath } from "@/services/di-attachment-service";
@@ -337,8 +338,10 @@ export function DiCreateForm({
         onSubmitted(di);
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setSubmitError(msg);
+      const described = describeAppError(err);
+      setSubmitError(
+        described.description ? `${described.title} — ${described.description}` : described.title,
+      );
     }
   }, [
     currentErrors,

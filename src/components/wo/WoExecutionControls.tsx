@@ -54,8 +54,13 @@ import {
 } from "@/services/inventory-service";
 import { listPublishedReferenceValuesByDomainCode } from "@/services/reference-service";
 import {
+  type TaskResultCode,
+  type WoDowntimeSegment,
+  type WoExecutionEvent,
+  type WoIntervener,
+  type WoPlanAdherence,
+  type WoTool,
   addLabor,
-  addPart,
   addWoTool,
   closeDowntime,
   completeTask,
@@ -73,12 +78,6 @@ import {
   openDowntime,
   recordPartUsage,
   unconfirmNoParts,
-  type TaskResultCode,
-  type WoDowntimeSegment,
-  type WoExecutionEvent,
-  type WoIntervener,
-  type WoPlanAdherence,
-  type WoTool,
 } from "@/services/wo-execution-service";
 import { holdWo, pauseWo, resumeWo, startWo } from "@/services/wo-service";
 import { useWoStore } from "@/stores/wo-store";
@@ -90,6 +89,10 @@ import type {
   WoExecTask,
   WorkOrder,
 } from "@shared/ipc-types";
+
+import { WoAddExecutionPartDialog } from "./WoAddExecutionPartDialog";
+import { mergeWoPersonOptions, useWoPeopleOptions } from "./use-wo-people";
+import { woActionFailureText } from "./wo-action-error";
 
 export interface WoExecutionControlsHandle {
   openHoldForm: () => void;
@@ -233,7 +236,6 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
     const { formatCurrency } = useFormatters();
     const { info } = useSession();
     const refreshActiveWo = useWoStore((s) => s.refreshActiveWo);
-    const woItems = useWoStore((s) => s.items);
 
     const durationLabels = useMemo(
       () => ({
@@ -282,9 +284,6 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
 
     // Add part dialog (during execution)
     const [showAddPartDialog, setShowAddPartDialog] = useState(false);
-    const [addPartRef, setAddPartRef] = useState("");
-    const [addPartQty, setAddPartQty] = useState("1");
-    const [addPartDialogError, setAddPartDialogError] = useState<string | null>(null);
 
     // Add tool dialog
     const [showAddToolDialog, setShowAddToolDialog] = useState(false);
@@ -303,38 +302,17 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
 
     // ── Intervener options ──────────────────────────────────────────────────
 
+    // Personnel register (active staff with a login); people already booked stay selectable.
+    const people = useWoPeopleOptions();
     const intervenerOptions = useMemo(() => {
-      const dedup = new Map<string, string>();
-      for (const item of woItems) {
-        if (item.primary_responsible_id != null) {
-          dedup.set(
-            String(item.primary_responsible_id),
-            item.responsible_display_name?.trim() ||
-              item.responsible_username?.trim() ||
-              formatOrDash(null),
-          );
-        }
-        if (item.planner_id != null) {
-          dedup.set(
-            String(item.planner_id),
-            item.planner_display_name?.trim() ||
-              item.planner_username?.trim() ||
-              formatOrDash(null),
-          );
-        }
-      }
-      for (const entry of laborEntries) {
-        if (entry.intervener_id != null) {
-          dedup.set(
-            String(entry.intervener_id),
-            formatPersonLabel(entry.intervener_display_name) !== "—"
-              ? formatPersonLabel(entry.intervener_display_name)
-              : String(entry.intervener_id),
-          );
-        }
-      }
-      return Array.from(dedup.entries()).map(([value, label]) => ({ value, label }));
-    }, [woItems, laborEntries]);
+      const booked = laborEntries
+        .filter((entry) => formatPersonLabel(entry.intervener_display_name) !== "—")
+        .map((entry) => ({
+          value: String(entry.intervener_id),
+          label: formatPersonLabel(entry.intervener_display_name),
+        }));
+      return mergeWoPersonOptions(people.options, booked);
+    }, [people.options, laborEntries]);
 
     // ── Load data ──────────────────────────────────────────────────────────
 
@@ -371,8 +349,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
         setExecutionEvents(eventRows);
         setPlanAdherence(adherenceRow);
       } catch (e) {
-        setError(t("execution.error.loadData"));
-        console.error("loadData", e);
+        setError(woActionFailureText(t("execution.error.loadData"), e));
       }
     }, [wo.id, t]);
 
@@ -413,8 +390,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
         });
         await handleRefreshState(next);
       } catch (e) {
-        setError(t("execution.error.startWo"));
-        console.error("handleStart", e);
+        setError(woActionFailureText(t("execution.error.startWo"), e));
       } finally {
         setBusy(false);
       }
@@ -432,8 +408,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
         });
         await handleRefreshState(next);
       } catch (e) {
-        setError(t("execution.error.resumeWo"));
-        console.error("handleResume", e);
+        setError(woActionFailureText(t("execution.error.resumeWo"), e));
       } finally {
         setBusy(false);
       }
@@ -458,7 +433,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
 
     const submitDelayAction = useCallback(async () => {
       if (!actorId || !delayIntent) return;
-      const reasonId = delayReasonId ? Number(delayReasonId) : NaN;
+      const reasonId = delayReasonId ? Number(delayReasonId) : Number.NaN;
       if (!Number.isFinite(reasonId) || reasonId <= 0) {
         setDelayError(t("execution.delayReasonRequired"));
         return;
@@ -477,8 +452,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
         setDelayIntent(null);
         await handleRefreshState(next);
       } catch (e) {
-        setError(t("execution.error.submitDelay"));
-        console.error("submitDelayAction", e);
+        setError(woActionFailureText(t("execution.error.submitDelay"), e));
       } finally {
         setBusy(false);
       }
@@ -562,8 +536,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
         setShowLaborDialog(false);
         await loadData();
       } catch (e) {
-        setLaborFormError(t("execution.error.addManualLabor"));
-        console.error("submitLaborDialog", e);
+        setLaborFormError(woActionFailureText(t("execution.error.addManualLabor"), e));
       } finally {
         setBusy(false);
       }
@@ -586,7 +559,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
       async (partId: number, fallbackQty?: number) => {
         const raw = partUsage[partId];
         const value =
-          raw != null && raw !== "" ? Number(raw) : fallbackQty != null ? fallbackQty : NaN;
+          raw != null && raw !== "" ? Number(raw) : fallbackQty != null ? fallbackQty : Number.NaN;
         if (!Number.isFinite(value) || value <= 0) {
           setError(t("execution.error.invalidQuantity"));
           return;
@@ -597,8 +570,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
           await recordPartUsage(partId, value);
           await loadData();
         } catch (e) {
-          setError(t("execution.error.recordPart"));
-          console.error("handleRecordPartUsage", e);
+          setError(woActionFailureText(t("execution.error.recordPart"), e));
         } finally {
           setBusy(false);
         }
@@ -613,8 +585,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
         await confirmNoParts(wo.id);
         await Promise.all([loadData(), refreshActiveWo()]);
       } catch (e) {
-        setError(t("execution.error.confirmNoParts"));
-        console.error("handleNoParts", e);
+        setError(woActionFailureText(t("execution.error.confirmNoParts"), e));
       } finally {
         setBusy(false);
       }
@@ -627,45 +598,11 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
         await unconfirmNoParts(wo.id);
         await Promise.all([loadData(), refreshActiveWo()]);
       } catch (e) {
-        setError(t("execution.error.unconfirmNoParts"));
-        console.error("handleUndoNoParts", e);
+        setError(woActionFailureText(t("execution.error.unconfirmNoParts"), e));
       } finally {
         setBusy(false);
       }
     }, [wo.id, loadData, refreshActiveWo, t]);
-
-    const submitAddPart = useCallback(async () => {
-      const label = addPartRef.trim();
-      const qty = Number(addPartQty);
-      if (!label) {
-        setAddPartDialogError(t("execution.parts.add.labelRequired"));
-        return;
-      }
-      if (!Number.isFinite(qty) || qty <= 0) {
-        setAddPartDialogError(t("execution.error.invalidQuantity"));
-        return;
-      }
-      setBusy(true);
-      setAddPartDialogError(null);
-      setError(null);
-      try {
-        await addPart({
-          wo_id: wo.id,
-          article_ref: label,
-          quantity_planned: qty,
-          auto_reserve: false,
-        });
-        setShowAddPartDialog(false);
-        setAddPartRef("");
-        setAddPartQty("1");
-        await loadData();
-      } catch (e) {
-        setAddPartDialogError(t("execution.parts.add.error"));
-        console.error("submitAddPart", e);
-      } finally {
-        setBusy(false);
-      }
-    }, [addPartRef, addPartQty, wo.id, loadData, t]);
 
     const openNotUsedDialog = useCallback((partId: number) => {
       setNotUsedPartId(partId);
@@ -685,7 +622,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
 
     const submitNotUsed = useCallback(async () => {
       if (notUsedPartId == null) return;
-      const reasonId = notUsedReasonId ? Number(notUsedReasonId) : NaN;
+      const reasonId = notUsedReasonId ? Number(notUsedReasonId) : Number.NaN;
       if (!Number.isFinite(reasonId) || reasonId <= 0) {
         setNotUsedError(t("execution.notUsed.reasonRequired"));
         return;
@@ -709,8 +646,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
         setNotUsedPartId(null);
         await loadData();
       } catch (e) {
-        setNotUsedError(t("execution.error.markNotUsed"));
-        console.error("submitNotUsed", e);
+        setNotUsedError(woActionFailureText(t("execution.error.markNotUsed"), e));
       } finally {
         setBusy(false);
       }
@@ -736,8 +672,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
           await completeTask(task.id, actorId, resultCode);
           await loadData();
         } catch (e) {
-          setError(t("execution.error.completeTask"));
-          console.error("handleCompleteTask", e);
+          setError(woActionFailureText(t("execution.error.completeTask"), e));
         } finally {
           setBusy(false);
         }
@@ -763,8 +698,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
         setDowntimeClassification("");
         await loadData();
       } catch (e) {
-        setError(t("execution.error.openDowntime"));
-        console.error("handleOpenDowntime", e);
+        setError(woActionFailureText(t("execution.error.openDowntime"), e));
       } finally {
         setBusy(false);
       }
@@ -778,8 +712,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
           await closeDowntime(segmentId, nowIso());
           await loadData();
         } catch (e) {
-          setError(t("execution.error.closeDowntime"));
-          console.error("handleCloseDowntime", e);
+          setError(woActionFailureText(t("execution.error.closeDowntime"), e));
         } finally {
           setBusy(false);
         }
@@ -795,8 +728,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
           await releaseInventoryReservation({ reservation_id: reservationId });
           await loadData();
         } catch (e) {
-          setError(t("execution.error.releaseReservation"));
-          console.error("handleReleaseReservation", e);
+          setError(woActionFailureText(t("execution.error.releaseReservation"), e));
         } finally {
           setBusy(false);
         }
@@ -825,8 +757,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
         setAddToolCode("");
         await loadData();
       } catch (e) {
-        setAddToolDialogError(t("execution.tools.addError"));
-        console.error("submitAddTool", e);
+        setAddToolDialogError(woActionFailureText(t("execution.tools.addError"), e));
       } finally {
         setBusy(false);
       }
@@ -839,8 +770,8 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
         try {
           await markWoToolUsed({ tool_id: toolId, usage_status: "used" });
           await loadData();
-        } catch {
-          setError(t("execution.tools.updateError"));
+        } catch (e) {
+          setError(woActionFailureText(t("execution.tools.updateError"), e));
         } finally {
           setBusy(false);
         }
@@ -855,8 +786,8 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
         try {
           await markWoToolNotUsed({ tool_id: toolId, usage_status: "not_used" });
           await loadData();
-        } catch {
-          setError(t("execution.tools.updateError"));
+        } catch (e) {
+          setError(woActionFailureText(t("execution.tools.updateError"), e));
         } finally {
           setBusy(false);
         }
@@ -1207,12 +1138,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                   size="sm"
                   variant="outline"
                   className="h-7 text-xs"
-                  onClick={() => {
-                    setAddPartDialogError(null);
-                    setAddPartRef("");
-                    setAddPartQty("1");
-                    setShowAddPartDialog(true);
-                  }}
+                  onClick={() => setShowAddPartDialog(true)}
                   disabled={controlsDisabled}
                 >
                   {t("execution.parts.add.cta")}
@@ -1727,6 +1653,11 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                     ))}
                   </SelectContent>
                 </Select>
+                {people.failed ? (
+                  <p className="text-xs text-text-muted">{t("woPeople.loadFailed")}</p>
+                ) : !people.loading && people.options.length === 0 ? (
+                  <p className="text-xs text-text-muted">{t("woPeople.none")}</p>
+                ) : null}
               </div>
               <div className="space-y-1">
                 <Label>{t("execution.laborDialog.date")}</Label>
@@ -1845,44 +1776,13 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
           </DialogContent>
         </Dialog>
 
-        {/* Add part during execution */}
-        <Dialog open={showAddPartDialog} onOpenChange={setShowAddPartDialog}>
-          <DialogContent className="max-w-sm">
-            <DialogHeader>
-              <DialogTitle>{t("execution.parts.add.title")}</DialogTitle>
-              <DialogDescription>{t("execution.parts.add.hint")}</DialogDescription>
-            </DialogHeader>
-            <div className="space-y-3">
-              <div className="space-y-1">
-                <Label>{t("execution.parts.add.label")}</Label>
-                <Input
-                  value={addPartRef}
-                  onChange={(e) => setAddPartRef(e.target.value)}
-                  placeholder={t("execution.parts.add.labelPlaceholder")}
-                />
-              </div>
-              <div className="space-y-1">
-                <Label>{t("execution.parts.add.qty")}</Label>
-                <Input
-                  type="number"
-                  min="0.01"
-                  step="0.01"
-                  value={addPartQty}
-                  onChange={(e) => setAddPartQty(e.target.value)}
-                />
-              </div>
-              {addPartDialogError && <p className="text-sm text-red-700">{addPartDialogError}</p>}
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setShowAddPartDialog(false)}>
-                {t("execution.cancel")}
-              </Button>
-              <Button onClick={() => void submitAddPart()} disabled={busy}>
-                {t("execution.parts.add.save")}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+        {/* Add part during execution (stock article or explicit non-stock item) */}
+        <WoAddExecutionPartDialog
+          woId={wo.id}
+          open={showAddPartDialog}
+          onOpenChange={setShowAddPartDialog}
+          onAdded={loadData}
+        />
 
         {/* Add tool dialog */}
         <Dialog open={showAddToolDialog} onOpenChange={setShowAddToolDialog}>

@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
@@ -98,6 +98,7 @@ type PendingReschedule = {
 export function PlanningPage() {
   const { t } = useTranslation("planning");
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const { can } = usePermissions();
 
   const backlog = usePlanningStore((s) => s.backlog);
@@ -198,27 +199,34 @@ export function PlanningPage() {
 
   /** Deep-link from WO Plan tab: `/planning?woId=<id>` */
   const deepLinkHandledRef = useRef<string | null>(null);
+  /** OT id from a `?woId=` link that is not in the planning backlog (shown as a notice). */
+  const [deepLinkMissWoId, setDeepLinkMissWoId] = useState<number | null>(null);
   useEffect(() => {
     const raw = searchParams.get("woId");
     if (!raw) {
       deepLinkHandledRef.current = null;
       return;
     }
-    if (!backlog?.candidates?.length) return;
+    // Wait for the backlog to load (an empty backlog is a loaded backlog).
+    if (!backlog || loading) return;
     if (deepLinkHandledRef.current === raw) return;
+    deepLinkHandledRef.current = raw;
 
     const woId = Number(raw);
-    if (!Number.isFinite(woId) || woId <= 0) return;
-
-    const match = backlog.candidates.find(
-      (c) => c.source_type === "work_order" && c.source_id === woId,
-    );
+    const validId = Number.isFinite(woId) && woId > 0;
+    const match = validId
+      ? backlog.candidates.find((c) => c.source_type === "work_order" && c.source_id === woId)
+      : undefined;
     if (!match) {
-      deepLinkHandledRef.current = raw;
+      // -1: malformed link (no OT to offer); otherwise offer to open the OT itself.
+      setDeepLinkMissWoId(validId ? woId : -1);
+      const cleared = new URLSearchParams(searchParams);
+      cleared.delete("woId");
+      setSearchParams(cleared, { replace: true });
       return;
     }
+    setDeepLinkMissWoId(null);
 
-    deepLinkHandledRef.current = raw;
     setSelectedCandidate(match);
     if (match.readiness_status === "ready" && can(P.PLAN_CONFIRM)) {
       setCommitOpen(true);
@@ -227,7 +235,7 @@ export function PlanningPage() {
     const next = new URLSearchParams(searchParams);
     next.delete("woId");
     setSearchParams(next, { replace: true });
-  }, [backlog, searchParams, setSearchParams, can]);
+  }, [backlog, loading, searchParams, setSearchParams, can]);
 
   useEffect(() => {
     void (async () => {
@@ -759,6 +767,35 @@ export function PlanningPage() {
         resultCount={filteredReady.length + filteredBlocked.length}
         onReset={resetFilters}
       />
+
+      {deepLinkMissWoId != null && (
+        <div
+          role="status"
+          className="flex flex-wrap items-center justify-between gap-2 border-b border-surface-border bg-surface-1 px-6 py-2 text-sm text-text-primary"
+        >
+          <span>{t("deepLink.woNotInBacklog")}</span>
+          <div className="flex items-center gap-2">
+            {deepLinkMissWoId > 0 ? (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-9"
+                onClick={() => void navigate(`/work-orders?openWo=${deepLinkMissWoId}`)}
+              >
+                {t("deepLink.openWo")}
+              </Button>
+            ) : null}
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-9"
+              onClick={() => setDeepLinkMissWoId(null)}
+            >
+              {t("deepLink.dismiss")}
+            </Button>
+          </div>
+        </div>
+      )}
 
       {(pageError || storeError) && (
         <div className="border-b border-destructive/20 bg-destructive/5 px-6 py-2 text-sm text-destructive">

@@ -346,8 +346,15 @@ export async function printWoFiche(
     qrSvg,
   );
 
-  // Tauri/webview can block popup windows depending on platform settings.
-  // Use an iframe fallback so print preview still opens from the current window.
+  printHtmlDocument(html);
+}
+
+/**
+ * Prints a self-contained HTML document through a hidden iframe (shared by the WO fiche and
+ * the LOTO card). Tauri/webview can block popup windows depending on platform settings, so
+ * the iframe keeps print preview inside the current window.
+ */
+export function printHtmlDocument(html: string): void {
   const iframe = document.createElement("iframe");
   iframe.style.position = "fixed";
   iframe.style.right = "0";

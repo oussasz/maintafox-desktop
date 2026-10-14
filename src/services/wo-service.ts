@@ -9,13 +9,20 @@ import { z } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
 import type {
-  WoEmergencyReassignInput,
+  CreateWorkOrderTypeInput,
+  UpdateWorkOrderPriorityInput,
+  UpdateWorkOrderStatusInput,
+  UpdateWorkOrderTypeInput,
   WoApprovePlanningInput,
   WoAssignInput,
+  WoBacklogHeatmap,
+  WoBacklogHeatmapInput,
   WoCancelInput,
+  WoCompletionGate,
   WoCostSummary,
   WoCreateInput,
   WoDraftUpdateInput,
+  WoEmergencyReassignInput,
   WoEvaluateReadinessInput,
   WoGetResponse,
   WoHoldInput,
@@ -24,26 +31,19 @@ import type {
   WoMarkReadyInput,
   WoMechCompleteInput,
   WoMechCompleteResponse,
-  WoCompletionGate,
   WoPauseInput,
   WoPlanInput,
   WoPreflightError,
   WoReadinessResult,
-  WoReturnToPlanningInput,
   WoResumeInput,
+  WoReturnToPlanningInput,
   WoStartInput,
   WoStatsPayload,
   WoSubmitInput,
-  CreateWorkOrderTypeInput,
-  UpdateWorkOrderPriorityInput,
-  UpdateWorkOrderStatusInput,
-  UpdateWorkOrderTypeInput,
+  WorkOrder,
   WorkOrderPriorityOption,
   WorkOrderStatusOption,
   WorkOrderTypeOption,
-  WorkOrder,
-  WoBacklogHeatmap,
-  WoBacklogHeatmapInput,
 } from "@shared/ipc-types";
 
 // â”€â”€ Zod schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -357,6 +357,29 @@ export async function updateWoDraft(input: WoDraftUpdateInput): Promise<WorkOrde
 export async function planWo(input: WoPlanInput): Promise<WorkOrder> {
   try {
     const raw = await invoke<unknown>("plan_wo", { input });
+    return WorkOrderSchema.parse(raw) as WorkOrder;
+  } catch (err) {
+    rethrowIfVersionConflict(err);
+  }
+}
+
+/** Input for `set_wo_permit_requirement` (actor comes from the session). */
+export interface WoPermitRequirementInput {
+  wo_id: number;
+  expected_row_version: number;
+  requires_permit: boolean;
+}
+
+/** Statuses in which the permit / LOTO requirement can still change (backend mirror). */
+export const PERMIT_REQUIREMENT_EDITABLE_STATUSES: ReadonlySet<string> = new Set([
+  "draft",
+  "planning",
+  "ready",
+]);
+
+export async function setWoPermitRequirement(input: WoPermitRequirementInput): Promise<WorkOrder> {
+  try {
+    const raw = await invoke<unknown>("set_wo_permit_requirement", { input });
     return WorkOrderSchema.parse(raw) as WorkOrder;
   } catch (err) {
     rethrowIfVersionConflict(err);

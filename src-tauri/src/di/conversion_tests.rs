@@ -716,4 +716,89 @@ mod tests {
             "second conversion attempt must fail — DI is already closed"
         );
     }
+    // ═══════════════════════════════════════════════════════════════════════
+    // V6 – Triage context carried onto the WO (urgency, permit / LOTO gate)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    async fn wo_urgency_code_and_permit(db: &sea_orm::DatabaseConnection, wo_id: i64) -> (Option<String>, i64) {
+        let row = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT ul.code AS urgency_code, w.requires_permit \
+                 FROM work_orders w LEFT JOIN urgency_levels ul ON ul.id = w.urgency_id \
+                 WHERE w.id = ?",
+                [wo_id.into()],
+            ))
+            .await
+            .expect("query")
+            .expect("WO must exist");
+        (
+            row.try_get::<Option<String>>("", "urgency_code").expect("urgency_code"),
+            row.try_get::<i64>("", "requires_permit").expect("requires_permit"),
+        )
+    }
+
+    #[tokio::test]
+    async fn v6_safety_flagged_di_converts_to_permit_required_wo_with_validated_urgency() {
+        let db = setup().await;
+        let user_id = get_user_id(&db).await;
+        let (di_id, _) = advance_to_approved(&db, user_id).await;
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE intervention_requests SET safety_flag = 1 WHERE id = ?",
+            [di_id.into()],
+        ))
+        .await
+        .expect("flag DI as safety-relevant");
+
+        let result = convert_di_to_work_order(
+            &db,
+            WoConversionInput {
+                di_id,
+                actor_id: user_id,
+                expected_row_version: get_row_version(&db, di_id).await,
+                conversion_notes: None,
+            },
+        )
+        .await
+        .expect("conversion should succeed");
+
+        let (urgency, requires_permit) = wo_urgency_code_and_permit(&db, result.wo_id).await;
+        // Screening validated `high` over the reported `medium`.
+        assert_eq!(urgency.as_deref(), Some("high"), "validated urgency must be carried");
+        assert_eq!(
+            requires_permit, 1,
+            "safety flag must make the permit / LOTO gate mandatory"
+        );
+    }
+
+    #[tokio::test]
+    async fn v6_unvalidated_urgency_falls_back_to_reported_and_no_permit_without_safety_flag() {
+        let db = setup().await;
+        let user_id = get_user_id(&db).await;
+        let (di_id, _) = advance_to_approved(&db, user_id).await;
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE intervention_requests SET validated_urgency = NULL, reported_urgency = 'critical' WHERE id = ?",
+            [di_id.into()],
+        ))
+        .await
+        .expect("clear validated urgency");
+
+        let result = convert_di_to_work_order(
+            &db,
+            WoConversionInput {
+                di_id,
+                actor_id: user_id,
+                expected_row_version: get_row_version(&db, di_id).await,
+                conversion_notes: None,
+            },
+        )
+        .await
+        .expect("conversion should succeed");
+
+        let (urgency, requires_permit) = wo_urgency_code_and_permit(&db, result.wo_id).await;
+        assert_eq!(urgency.as_deref(), Some("critical"), "reported urgency is the fallback");
+        assert_eq!(requires_permit, 0, "no safety flag → no permit requirement forced");
+    }
 }

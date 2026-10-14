@@ -98,6 +98,30 @@ fn check_concurrency(rows_affected: u64) -> AppResult<()> {
     Ok(())
 }
 
+/// Resolve the WO urgency level that matches a DI urgency code.
+///
+/// DI urgencies (`low`, `medium`, `high`, `critical`) share their codes with the
+/// `urgency_levels` reference scale, so the match is by code and only among
+/// active levels. A code the tenant has retired yields `None` (the planner sets
+/// it) instead of failing the conversion.
+async fn resolve_wo_urgency_id<C: ConnectionTrait>(conn: &C, di_urgency_code: &str) -> AppResult<Option<i64>> {
+    let row = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id FROM urgency_levels \
+             WHERE code = ? AND COALESCE(is_active, 1) = 1 \
+             ORDER BY id LIMIT 1",
+            [di_urgency_code.to_string().into()],
+        ))
+        .await?;
+    match row {
+        Some(r) => Ok(Some(r.try_get::<i64>("", "id").map_err(|e| {
+            AppError::Internal(anyhow::anyhow!("urgency_levels id decode: {e}"))
+        })?)),
+        None => Ok(None),
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // convert_di_to_work_order — single atomic transaction
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -221,13 +245,26 @@ pub async fn convert_di_to_work_order(
     // Single SSOT allocator (same sequence as manual / PM / inspection create).
     let wo_code = generate_wo_code(&txn).await?;
 
+    // Carry the triage context onto the WO: the urgency the reviewer validated
+    // (falling back to what the requester reported) and the safety flag, which
+    // makes the permit / LOTO gate mandatory before execution can start.
+    let carried_urgency_code = di
+        .validated_urgency
+        .as_deref()
+        .filter(|code| !code.trim().is_empty())
+        .unwrap_or(di.reported_urgency.as_str())
+        .to_string();
+    let urgency_id = resolve_wo_urgency_id(&txn, &carried_urgency_code).await?;
+    let requires_permit: i64 = i64::from(di.safety_flag);
+
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO work_orders (\
             code, type_id, status_id, equipment_id, \
             source_di_id, entity_id, requester_id, \
-            title, description, entity_sync_id, row_version, created_at, updated_at\
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+            title, description, urgency_id, requires_permit, \
+            entity_sync_id, row_version, created_at, updated_at\
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
         [
             wo_code.clone().into(),
             type_id.into(),
@@ -246,6 +283,10 @@ pub async fn convert_di_to_work_order(
             input.actor_id.into(),
             di.title.clone().into(),
             di.description.clone().into(),
+            urgency_id
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::from(None::<i64>)),
+            requires_permit.into(),
             crate::sync::identity::new_entity_sync_id().into(),
             now.clone().into(),
             now.clone().into(),
@@ -274,6 +315,28 @@ pub async fn convert_di_to_work_order(
         .try_get("", "id")
         .map_err(|e| AppError::Internal(anyhow::anyhow!("WO id decode: {e}")))?;
 
+    // The close-out codes symptoms from WORK.SYMPTOMS; carry the DI symptom as the WORK value
+    // with the same code so it shows (and can be changed) on the close-out, else keep the DI id.
+    let wo_symptom_id = match di.symptom_code_id {
+        Some(di_symptom_id) => {
+            let code: Option<String> = txn
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "SELECT code FROM reference_values WHERE id = ?",
+                    [di_symptom_id.into()],
+                ))
+                .await?
+                .and_then(|r| r.try_get::<String>("", "code").ok());
+            match code {
+                Some(code) => crate::wo::closeout_reference_catalog::resolve_work_symptom_id_by_code(&txn, &code)
+                    .await?
+                    .or(Some(di_symptom_id)),
+                None => Some(di_symptom_id),
+            }
+        }
+        None => None,
+    };
+
     // Carry-over DI technical context into WO closeout context for RAMS.
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -283,7 +346,7 @@ pub async fn convert_di_to_work_order(
          VALUES (?, ?, NULL, NULL, NULL, 0, 0, 0, ?)",
         [
             wo_id.into(),
-            di.symptom_code_id
+            wo_symptom_id
                 .map(sea_orm::Value::from)
                 .unwrap_or(sea_orm::Value::from(None::<i64>)),
             Some(format!(

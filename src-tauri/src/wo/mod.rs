@@ -3,6 +3,7 @@ pub mod attachments;
 pub mod audit;
 pub mod backlog;
 pub mod closeout;
+pub mod closeout_reference_catalog;
 pub mod costs;
 pub mod delay;
 pub mod domain;

@@ -1,8 +1,12 @@
 /**
  * WoKanbanView.tsx
  *
- * Data adapter for work-order lanes. Owns status→column mapping, allowed
- * transitions, invalid-drop feedback, and open-detail — never rendering.
+ * Data adapter for work-order lanes. Owns status→column mapping and open-detail.
+ *
+ * Cards are not draggable: every lifecycle step has its own checks and inputs (submit,
+ * readiness, permit gate on start, delay reason on hold, completion gates, cancel reason),
+ * so status changes are made from the OT detail footer, not by dropping a card. The board
+ * says so visibly instead of offering a drop that silently does something else.
  */
 
 import { Calendar as CalendarIcon, User } from "lucide-react";
@@ -11,7 +15,6 @@ import { useTranslation } from "react-i18next";
 
 import { KanbanBoard } from "@/components/kanban";
 import type { KanbanBadge, KanbanCard, KanbanColumn, KanbanTone } from "@/components/kanban";
-import { pushAppToast } from "@/store/app-toast-store";
 import type { WorkOrder } from "@shared/ipc-types";
 
 /**
@@ -35,21 +38,6 @@ const STATUS_TO_COLUMN: Record<string, string> = {
   paused: "executing",
   mechanically_complete: "completed",
   technically_verified: "completed",
-};
-
-/**
- * Allowed drag transitions for Option B lifecycle.
- * Validation only — the detail dialog handles the actual IPC call.
- */
-const ALLOWED_TRANSITIONS: Record<string, string[]> = {
-  draft: ["planning", "cancelled"],
-  planning: ["ready", "cancelled"],
-  ready: ["in_progress", "planning", "cancelled"],
-  in_progress: ["on_hold", "completed", "cancelled"],
-  on_hold: ["in_progress", "cancelled"],
-  completed: ["closed"],
-  closed: [],
-  cancelled: [],
 };
 
 const COLUMN_META: { id: string; labelKey: string; tone: KanbanTone }[] = [
@@ -142,51 +130,22 @@ export function WoKanbanView({ items, onCardClick }: WoKanbanViewProps) {
     [onCardClick],
   );
 
-  const handleDrop = useCallback(
-    (card: KanbanCard, _fromColumnId: string, targetColumnId: string) => {
-      const wo = byId.current.get(card.id);
-      if (!wo) return;
-
-      const fromColumn = STATUS_TO_COLUMN[wo.status_code ?? "draft"] ?? "draft";
-      if (fromColumn === targetColumnId) return;
-
-      const targetStatuses = Object.entries(STATUS_TO_COLUMN)
-        .filter(([, col]) => col === targetColumnId)
-        .map(([s]) => s);
-
-      const currentStatus = wo.status_code ?? "draft";
-      const validTargets = (ALLOWED_TRANSITIONS[currentStatus] ?? []).filter((to) =>
-        targetStatuses.includes(to),
-      );
-
-      if (validTargets.length === 0) {
-        pushAppToast({
-          title: t("kanban.transitionNotAllowed", {
-            code: wo.code,
-            from: currentStatus.replace(/_/g, " "),
-            to: targetColumnId,
-          }),
-          variant: "destructive",
-        });
-        return;
-      }
-
-      // All Option B transitions require full context — open the detail dialog.
-      onCardClick(wo);
-    },
-    [onCardClick, t],
-  );
-
   return (
-    <KanbanBoard
-      columns={columns}
-      cards={cards}
-      enableDrag
-      onCardClick={handleCardClick}
-      onDrop={handleDrop}
-      loadMoreLabel={(count) => t("kanban.loadMore", { count })}
-      emptyColumnLabel={t("kanban.emptyColumn", { ns: "common" })}
-      aria-label={t("page.viewKanban")}
-    />
+    <div className="flex h-full min-h-0 flex-col gap-2">
+      <p className="px-1 text-xs text-text-muted" data-testid="wo-kanban-drag-hint">
+        {t("kanban.statusFromDetailHint")}
+      </p>
+      <div className="min-h-0 flex-1">
+        <KanbanBoard
+          columns={columns}
+          cards={cards}
+          enableDrag={false}
+          onCardClick={handleCardClick}
+          loadMoreLabel={(count) => t("kanban.loadMore", { count })}
+          emptyColumnLabel={t("kanban.emptyColumn", { ns: "common" })}
+          aria-label={t("page.viewKanban")}
+        />
+      </div>
+    </div>
   );
 }
