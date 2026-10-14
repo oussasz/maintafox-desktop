@@ -83,6 +83,11 @@ pub(crate) const INVENTORY_TYPES: &[&str] = &[
     "goods_receipts",
     "goods_receipt_lines",
     "repairable_orders",
+    "inventory_lots",
+    "currency_exchange_rates",
+    "inventory_valuation_periods",
+    "inventory_valuation_snapshot_lines",
+    "procurement_approval_limits",
 ];
 
 /// Intervention requests and work orders with their details and history.
@@ -212,6 +217,11 @@ pub(crate) const RELIABILITY_TYPES: &[&str] = &[
     "data_integrity_findings",
     "data_integrity_repair_actions",
     "analytics_contract_versions",
+    "reliability_cost_profiles",
+    "reliability_studies",
+    "reliability_study_assets",
+    "reliability_study_record_events",
+    "reliability_study_decisions",
 ];
 
 /// Settings, history logs, notifications and reports.
@@ -552,6 +562,7 @@ async fn balance(db: &DatabaseConnection, article_sync: &str, location_sync: &st
 async fn received_stock_movements_update_stock_balances() {
     use crate::inventory::domain::{InventoryIssueInput, InventoryReserveInput, InventoryStockAdjustInput};
     use crate::inventory::queries::{adjust_stock, issue_reserved_stock, reserve_stock};
+    use sea_orm::ConnectionTrait;
 
     let a = started_db().await;
     let b = started_db().await;
@@ -559,6 +570,14 @@ async fn received_stock_movements_update_stock_balances() {
     let mut factory = RowFactory::new();
     let article = factory.create(&a, "articles").await.expect("article");
     let location = factory.create(&a, "stock_locations").await.expect("location");
+    // The factory fills every flag; this test is about balances, not lot / serial tracking.
+    a.execute(sea_orm::Statement::from_sql_and_values(
+        sea_orm::DbBackend::Sqlite,
+        "UPDATE articles SET requires_serial_tracking = 0, requires_batch_tracking = 0,          requires_expiration = 0 WHERE id = ?",
+        [article.rowid.into()],
+    ))
+    .await
+    .expect("untracked article");
 
     adjust_stock(
         &a,

@@ -284,6 +284,16 @@
       "sync_status": "synced"
     },
     {
+      "entity_type": "currency_exchange_rates",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 1,
+      "parents": [
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
       "entity_type": "cost_centers",
       "scope": "tenant",
       "conflict_policy": "operator_review",
@@ -488,6 +498,7 @@
       "apply_priority": 11,
       "parents": [
         "failure_codes",
+        "reference_values",
         "equipment",
         "work_orders",
         "user_accounts"
@@ -692,7 +703,7 @@
       "entity_type": "inventory_count_lines",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 16,
+      "apply_priority": 17,
       "parents": [
         "inventory_transactions",
         "stock_locations",
@@ -730,10 +741,22 @@
       "sync_status": "synced"
     },
     {
+      "entity_type": "inventory_lots",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 15,
+      "parents": [
+        "articles",
+        "goods_receipt_lines",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
       "entity_type": "inventory_mutation_audit_links",
       "scope": "tenant",
       "conflict_policy": "append_only",
-      "apply_priority": 17,
+      "apply_priority": 18,
       "parents": [
         "inventory_transactions",
         "inventory_count_lines",
@@ -821,8 +844,9 @@
       "entity_type": "inventory_transactions",
       "scope": "tenant",
       "conflict_policy": "append_only",
-      "apply_priority": 15,
+      "apply_priority": 16,
       "parents": [
+        "inventory_lots",
         "lookup_values",
         "stock_reservations",
         "stock_locations",
@@ -846,6 +870,28 @@
         "lookup_values",
         "articles",
         "article_families",
+        "warehouses"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "inventory_valuation_periods",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 1,
+      "parents": [
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "inventory_valuation_snapshot_lines",
+      "scope": "tenant",
+      "conflict_policy": "append_only",
+      "apply_priority": 4,
+      "parents": [
+        "inventory_valuation_periods",
+        "articles",
         "warehouses"
       ],
       "sync_status": "synced"
@@ -1278,7 +1324,8 @@
       "parents": [
         "work_orders",
         "pm_plan_versions",
-        "pm_plans"
+        "pm_plans",
+        "equipment"
       ],
       "sync_status": "synced"
     },
@@ -1288,7 +1335,8 @@
       "conflict_policy": "operator_review",
       "apply_priority": 6,
       "parents": [
-        "pm_plans"
+        "pm_plans",
+        "equipment_meters"
       ],
       "sync_status": "synced"
     },
@@ -1300,7 +1348,9 @@
       "parents": [
         "lookup_values",
         "teams",
-        "equipment"
+        "equipment",
+        "reference_values",
+        "org_nodes"
       ],
       "sync_status": "synced"
     },
@@ -1352,6 +1402,17 @@
       "conflict_policy": "operator_review",
       "apply_priority": 0,
       "parents": [],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "procurement_approval_limits",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 1,
+      "parents": [
+        "roles",
+        "user_accounts"
+      ],
       "sync_status": "synced"
     },
     {
@@ -1477,13 +1538,14 @@
       "entity_type": "rcm_decisions",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 11,
+      "apply_priority": 12,
       "parents": [
         "pm_plan_versions",
         "pm_plans",
         "rcm_studies",
         "reference_values",
-        "work_orders"
+        "work_orders",
+        "fmeca_items"
       ],
       "sync_status": "synced"
     },
@@ -1566,11 +1628,81 @@
       "sync_status": "synced"
     },
     {
+      "entity_type": "reliability_cost_profiles",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 1,
+      "parents": [
+        "equipment_classes",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
       "entity_type": "reliability_dashboard_policies",
       "scope": "tenant",
       "conflict_policy": "operator_review",
       "apply_priority": 0,
       "parents": [],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "reliability_studies",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 6,
+      "parents": [
+        "reference_values",
+        "pm_plans",
+        "user_accounts",
+        "fmeca_analyses",
+        "rcm_studies",
+        "rbd_models",
+        "fta_models"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "reliability_study_assets",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 7,
+      "parents": [
+        "reliability_studies",
+        "equipment"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "reliability_study_decisions",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 13,
+      "parents": [
+        "reliability_studies",
+        "equipment",
+        "equipment_meters",
+        "pm_plans",
+        "pm_plan_versions",
+        "work_orders",
+        "user_accounts",
+        "fmeca_items",
+        "rcm_decisions"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "reliability_study_record_events",
+      "scope": "tenant",
+      "conflict_policy": "append_only",
+      "apply_priority": 12,
+      "parents": [
+        "reliability_studies",
+        "failure_events",
+        "work_orders",
+        "equipment",
+        "user_accounts"
+      ],
       "sync_status": "synced"
     },
     {

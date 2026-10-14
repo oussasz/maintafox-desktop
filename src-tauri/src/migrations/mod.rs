@@ -164,6 +164,12 @@ mod m20261012_000173_audit_hash_chain;
 mod m20261012_000174_unit_conversions;
 pub(crate) mod m20261012_000175_wo_lifecycle_facts;
 mod m20261012_000176_notification_daily_digest;
+mod m20261014_000178_wo_failure_coding_reference;
+mod m20261014_000179_reliability_studies;
+mod m20261014_000180_reliability_study_models;
+mod m20261014_000182_pm_windows_fanout_timing;
+mod m20261014_000183_meter_lifetime;
+mod m20261014_000184_inventory_lots_fx_periods_approvals;
 mod m20261101_000036_activity_audit_log;
 mod m20261201_000037_observability_permissions;
 mod m_test;
@@ -340,6 +346,12 @@ impl MigratorTrait for Migrator {
             Box::new(m20261012_000174_unit_conversions::Migration),
             Box::new(m20261012_000175_wo_lifecycle_facts::Migration),
             Box::new(m20261012_000176_notification_daily_digest::Migration),
+            Box::new(m20261014_000178_wo_failure_coding_reference::Migration),
+            Box::new(m20261014_000179_reliability_studies::Migration),
+            Box::new(m20261014_000180_reliability_study_models::Migration),
+            Box::new(m20261014_000182_pm_windows_fanout_timing::Migration),
+            Box::new(m20261014_000183_meter_lifetime::Migration),
+            Box::new(m20261014_000184_inventory_lots_fx_periods_approvals::Migration),
             Box::new(m_test::Migration),
         ]
     }
