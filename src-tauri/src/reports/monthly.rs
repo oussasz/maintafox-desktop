@@ -535,7 +535,7 @@ pub async fn export_monthly_management(
     let mut write_sheet = |name: &str, headers: &[&str], rows: &[Vec<String>], empty: &str| -> AppResult<()> {
         let ws = wb.add_worksheet();
         ws.set_name(name).map_err(xlsx_e)?;
-        ws.write_string_with_format(0, 0, &format!("{} — {}", d.title, d.month), &bold)
+        ws.write_string_with_format(0, 0, format!("{} — {}", d.title, d.month), &bold)
             .map_err(xlsx_e)?;
         for (c, h) in headers.iter().enumerate() {
             ws.write_string_with_format(2, c as u16, *h, &bold).map_err(xlsx_e)?;
