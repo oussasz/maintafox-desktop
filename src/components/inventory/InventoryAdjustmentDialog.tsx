@@ -3,7 +3,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { StockImpactPreview } from "@/components/inventory/StockImpactPreview";
+import { WorkOrderReferencePicker } from "@/components/inventory/WorkOrderReferencePicker";
 import { Button } from "@/components/ui/button";
+import { ErrorState } from "@/components/ui/data-state";
 import {
   Dialog,
   DialogContent,
@@ -21,6 +23,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { type Tone, mfTone } from "@/design-system/tone";
+import { useFormatters } from "@/hooks/use-formatters";
 import { formatSiteLabel } from "@/lib/display";
 import { cn } from "@/lib/utils";
 import {
@@ -31,7 +35,6 @@ import {
 } from "@/services/inventory-service";
 import { getLookupValues } from "@/services/lookup-service";
 import { useInventoryStore } from "@/stores/inventory-store";
-import { toErrorMessage } from "@/utils/errors";
 import type { InventoryArticle, LookupValueOption, StockLocation } from "@shared/ipc-types";
 
 export type InventoryAdjustmentType = "entry" | "exit" | "adjustment";
@@ -42,19 +45,16 @@ const MOTIF_CODES_BY_TYPE: Record<InventoryAdjustmentType, ReadonlySet<string>> 
   adjustment: new Set(["AJUSTEMENT", "INVENTAIRE"]),
 };
 
-const TYPE_STYLES: Record<InventoryAdjustmentType, { active: string; dot: string }> = {
-  entry: {
-    active: "border-green-500 bg-green-50 text-green-800 ring-1 ring-green-500/30",
-    dot: "bg-green-500",
-  },
-  exit: {
-    active: "border-red-500 bg-red-50 text-red-800 ring-1 ring-red-500/30",
-    dot: "bg-red-500",
-  },
-  adjustment: {
-    active: "border-blue-500 bg-blue-50 text-blue-800 ring-1 ring-blue-500/30",
-    dot: "bg-blue-500",
-  },
+/** Movement reasons that move parts to / from a work order: the OT must be named. */
+export const WORK_ORDER_MOTIFS: ReadonlySet<string> = new Set(["SORTIE_OT", "RETOUR_OT"]);
+
+/** Purchase entries outside a PO must carry their unit cost (feeds the weighted average). */
+export const COST_REQUIRED_MOTIFS: ReadonlySet<string> = new Set(["ENTREE_ACHAT"]);
+
+const TYPE_TONE: Record<InventoryAdjustmentType, Tone> = {
+  entry: "success",
+  exit: "attention",
+  adjustment: "info",
 };
 
 export interface InventoryAdjustmentDialogProps {
@@ -74,15 +74,6 @@ function resolveDelta(type: InventoryAdjustmentType, qty: number): number {
   return qty;
 }
 
-function formatQty(n: number): string {
-  return Number.isFinite(n) ? String(n) : "—";
-}
-
-function formatDelta(n: number): string {
-  if (!Number.isFinite(n) || n === 0) return "0";
-  return n > 0 ? `+${n}` : String(n);
-}
-
 export function InventoryAdjustmentDialog({
   articleId,
   defaultWarehouseId = null,
@@ -94,7 +85,11 @@ export function InventoryAdjustmentDialog({
 }: InventoryAdjustmentDialogProps) {
   const { t, i18n } = useTranslation("inventory");
   const { t: tc } = useTranslation("common");
+  const { formatNumber, formatCurrency, currencyCode } = useFormatters();
   const warehouses = useInventoryStore((s) => s.warehouses);
+  const formatQty = (n: number) => formatNumber(n, { maximumFractionDigits: 3 });
+  const formatDelta = (n: number) =>
+    n > 0 ? `+${formatQty(n)}` : n < 0 ? `−${formatQty(Math.abs(n))}` : formatQty(0);
 
   const [article, setArticle] = useState<InventoryArticle | null>(null);
   const [warehouseId, setWarehouseId] = useState<number>(0);
@@ -103,11 +98,17 @@ export function InventoryAdjustmentDialog({
   const [quantity, setQuantity] = useState<string>("");
   const [motifCode, setMotifCode] = useState<string>("");
   const [comment, setComment] = useState("");
+  const [workOrderCode, setWorkOrderCode] = useState<string | null>(null);
   const [locations, setLocations] = useState<StockLocation[]>([]);
   const [motifs, setMotifs] = useState<LookupValueOption[]>([]);
   const [currentStock, setCurrentStock] = useState<number | null>(null);
+  /** Weighted-average unit cost at the selected location (null when never costed). */
+  const [currentAvgCost, setCurrentAvgCost] = useState<number | null>(null);
+  const [unitCost, setUnitCost] = useState<string>("");
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  /** Failure to load the article, reasons, locations or balance (not save failures). */
+  const [error, setError] = useState<unknown>(null);
+  const [loadVersion, setLoadVersion] = useState(0);
   const [loadingLocations, setLoadingLocations] = useState(false);
   const [loadingArticle, setLoadingArticle] = useState(false);
 
@@ -138,7 +139,10 @@ export function InventoryAdjustmentDialog({
     setQuantity("");
     setMotifCode("");
     setComment("");
+    setWorkOrderCode(null);
+    setUnitCost("");
     setCurrentStock(null);
+    setCurrentAvgCost(null);
     setError(null);
   }, [activeWarehouses, defaultLocationId, defaultWarehouseId]);
 
@@ -151,9 +155,9 @@ export function InventoryAdjustmentDialog({
         setArticle(articles.find((a) => a.id === articleId) ?? null);
         setMotifs(movementTypes);
       })
-      .catch((err) => setError(toErrorMessage(err)))
+      .catch((err: unknown) => setError(err))
       .finally(() => setLoadingArticle(false));
-  }, [open, articleId, resetForm]);
+  }, [open, articleId, resetForm, loadVersion]);
 
   useEffect(() => {
     if (!open || warehouseId <= 0) {
@@ -169,8 +173,8 @@ export function InventoryAdjustmentDialog({
         setLocations(active);
         setLocationId((prev) => (active.some((l) => l.id === prev) ? prev : 0));
       })
-      .catch((err) => {
-        if (!cancelled) setError(toErrorMessage(err));
+      .catch((err: unknown) => {
+        if (!cancelled) setError(err);
       })
       .finally(() => {
         if (!cancelled) setLoadingLocations(false);
@@ -183,6 +187,7 @@ export function InventoryAdjustmentDialog({
   useEffect(() => {
     if (!open || articleId <= 0 || locationId <= 0) {
       setCurrentStock(null);
+      setCurrentAvgCost(null);
       return;
     }
     let cancelled = false;
@@ -191,9 +196,10 @@ export function InventoryAdjustmentDialog({
         if (cancelled) return;
         const balance = rows.find((b) => b.location_id === locationId);
         setCurrentStock(balance?.on_hand_qty ?? 0);
+        setCurrentAvgCost(balance?.moving_avg_unit_cost ?? null);
       })
-      .catch((err) => {
-        if (!cancelled) setError(toErrorMessage(err));
+      .catch((err: unknown) => {
+        if (!cancelled) setError(err);
       });
     return () => {
       cancelled = true;
@@ -211,6 +217,17 @@ export function InventoryAdjustmentDialog({
   const afterStock =
     currentStock != null && Number.isFinite(qtyNumber) && delta !== 0 ? currentStock + delta : null;
 
+  const needsWorkOrder = WORK_ORDER_MOTIFS.has(motifCode);
+  // Inbound movements other than returns from a job may carry their own unit cost; exits and
+  // returns are valued at the location's weighted-average cost.
+  const takesUnitCost = delta > 0 && !needsWorkOrder;
+  const costRequired = takesUnitCost && COST_REQUIRED_MOTIFS.has(motifCode);
+  const unitCostNumber = unitCost.trim() === "" ? null : Number(unitCost);
+  const unitCostValid =
+    unitCostNumber === null
+      ? !costRequired
+      : Number.isFinite(unitCostNumber) && unitCostNumber >= 0;
+
   const canSubmit =
     !saving &&
     !loadingArticle &&
@@ -221,25 +238,48 @@ export function InventoryAdjustmentDialog({
     Number.isFinite(qtyNumber) &&
     qtyNumber !== 0 &&
     (adjustType === "adjustment" || qtyNumber > 0) &&
-    delta !== 0;
+    delta !== 0 &&
+    (!needsWorkOrder || workOrderCode !== null) &&
+    (!takesUnitCost || unitCostValid);
+
+  /** Why "Validate" is disabled (shown under the form). */
+  const blocker =
+    saving || loadingArticle
+      ? null
+      : warehouseId <= 0 || locationId <= 0
+        ? t("adjustStock.blockers.location")
+        : !Number.isFinite(qtyNumber) || qtyNumber === 0 || delta === 0
+          ? t("adjustStock.blockers.quantity")
+          : adjustType !== "adjustment" && qtyNumber < 0
+            ? t("adjustStock.blockers.positive")
+            : motifCode.length === 0
+              ? t("adjustStock.blockers.motif")
+              : needsWorkOrder && workOrderCode === null
+                ? t("adjustStock.blockers.workOrder")
+                : takesUnitCost && !unitCostValid
+                  ? t("adjustStock.blockers.unitCost")
+                  : null;
 
   const handleSubmit = async () => {
     if (!canSubmit) return;
     setSaving(true);
-    setError(null);
     try {
-      await adjustInventoryStock({
-        article_id: articleId,
-        location_id: locationId,
-        delta_qty: delta,
-        reason_code: motifCode,
-        notes: comment.trim() || null,
-        source_ref: sourceRef,
-      });
+      await adjustInventoryStock(
+        {
+          article_id: articleId,
+          location_id: locationId,
+          delta_qty: delta,
+          reason_code: motifCode,
+          notes: comment.trim() || null,
+          // Exits to / returns from a work order carry the OT code as their source reference.
+          source_ref: needsWorkOrder ? workOrderCode : sourceRef,
+        },
+        takesUnitCost ? unitCostNumber : null,
+      );
       onOpenChange(false);
       onSuccess();
-    } catch (err) {
-      setError(toErrorMessage(err));
+    } catch {
+      // Reported by the global IPC toast; the dialog stays open with the user's input.
     } finally {
       setSaving(false);
     }
@@ -333,21 +373,22 @@ export function InventoryAdjustmentDialog({
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
               {(["entry", "exit", "adjustment"] as const).map((type) => {
                 const selected = adjustType === type;
-                const styles = TYPE_STYLES[type];
+                const tone = mfTone[TYPE_TONE[type]];
                 return (
                   <button
                     key={type}
                     type="button"
+                    aria-pressed={selected}
                     onClick={() => setAdjustType(type)}
                     className={cn(
-                      "flex items-center gap-2 rounded-md border px-3 py-2 text-left text-sm transition-colors",
+                      "flex min-h-11 items-center gap-2 rounded-md border px-3 py-2 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                       selected
-                        ? styles.active
-                        : "border-surface-border bg-surface text-text-muted hover:bg-surface-muted",
+                        ? cn(tone.chip, "font-medium")
+                        : "border-surface-border bg-surface-1 text-text-muted hover:bg-surface-2",
                     )}
                   >
                     <span
-                      className={cn("h-2.5 w-2.5 shrink-0 rounded-full", styles.dot)}
+                      className={cn("h-2.5 w-2.5 shrink-0 rounded-full", tone.dot)}
                       aria-hidden
                     />
                     {t(`adjustStock.types.${type}`)}
@@ -387,7 +428,7 @@ export function InventoryAdjustmentDialog({
                   <span
                     className={cn(
                       "font-medium tabular-nums",
-                      delta > 0 ? "text-green-700" : delta < 0 ? "text-red-700" : "",
+                      delta > 0 ? mfTone.success.text : delta < 0 ? mfTone.attention.text : "",
                     )}
                   >
                     {formatDelta(delta)}
@@ -401,7 +442,7 @@ export function InventoryAdjustmentDialog({
                   <span
                     className={cn(
                       "text-base font-semibold tabular-nums",
-                      afterStock != null && afterStock < 0 ? "text-red-700" : "",
+                      afterStock != null && afterStock < 0 ? mfTone.danger.text : "",
                     )}
                   >
                     {afterStock != null ? formatQty(afterStock) : "—"}
@@ -441,6 +482,53 @@ export function InventoryAdjustmentDialog({
             </Select>
           </div>
 
+          {takesUnitCost ? (
+            <div className="space-y-1">
+              <label className="text-xs text-text-muted" htmlFor="adjust-unit-cost">
+                {costRequired
+                  ? t("adjustStock.fields.unitCostRequired", { currency: currencyCode })
+                  : t("adjustStock.fields.unitCost", { currency: currencyCode })}
+              </label>
+              <Input
+                id="adjust-unit-cost"
+                type="number"
+                min={0}
+                step="0.01"
+                value={unitCost}
+                onChange={(e) => setUnitCost(e.target.value)}
+                aria-describedby="adjust-unit-cost-hint"
+              />
+              <p id="adjust-unit-cost-hint" className="text-xs text-text-muted">
+                {currentAvgCost != null
+                  ? t("adjustStock.cost.entryHint", { average: formatCurrency(currentAvgCost) })
+                  : t("adjustStock.cost.entryHintNoAverage")}
+              </p>
+            </div>
+          ) : delta !== 0 && locationId > 0 ? (
+            <p className="text-xs text-text-muted">
+              {currentAvgCost != null
+                ? t("adjustStock.cost.valuedAtAverage", {
+                    average: formatCurrency(currentAvgCost),
+                    value: formatCurrency(Math.abs(delta) * currentAvgCost),
+                  })
+                : t("adjustStock.cost.notValued")}
+            </p>
+          ) : null}
+
+          {needsWorkOrder ? (
+            <div className="space-y-1">
+              <label className="text-xs text-text-muted" htmlFor="adjust-work-order">
+                {t("adjustStock.fields.workOrder")}
+              </label>
+              <WorkOrderReferencePicker
+                id="adjust-work-order"
+                value={workOrderCode}
+                onChange={setWorkOrderCode}
+                disabled={saving}
+              />
+            </div>
+          ) : null}
+
           <div className="space-y-1">
             <label className="text-xs text-text-muted" htmlFor="adjust-comment">
               {t("adjustStock.fields.comment")}
@@ -454,19 +542,37 @@ export function InventoryAdjustmentDialog({
             />
           </div>
 
-          {error ? <p className="text-sm text-destructive">{error}</p> : null}
+          {error ? (
+            <ErrorState
+              error={error}
+              title={t("adjustStock.errors.loadFailed")}
+              onRetry={() => setLoadVersion((v) => v + 1)}
+            />
+          ) : null}
+          {blocker ? (
+            <p id="adjust-blocker" role="status" className="text-xs text-text-muted">
+              {blocker}
+            </p>
+          ) : null}
         </div>
 
         <DialogFooter>
           <Button
             type="button"
             variant="outline"
+            className="h-11"
             onClick={() => onOpenChange(false)}
             disabled={saving}
           >
             {tc("action.cancel")}
           </Button>
-          <Button type="button" onClick={() => void handleSubmit()} disabled={!canSubmit}>
+          <Button
+            type="button"
+            className="h-11"
+            aria-describedby={blocker ? "adjust-blocker" : undefined}
+            onClick={() => void handleSubmit()}
+            disabled={!canSubmit}
+          >
             {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
             {t("adjustStock.actions.validate")}
           </Button>

@@ -12,6 +12,9 @@ import { useTranslation } from "react-i18next";
 
 import { DataTable } from "@/components/data/DataTable";
 import { Badge } from "@/components/ui/badge";
+import { StatusChip } from "@/components/ui/status-chip";
+import { PROCUREMENT_STATUS_TONE, REPAIRABLE_STATUS_TONE, toneOf } from "@/design-system/tone";
+import { useFormatters } from "@/hooks/use-formatters";
 import type { ProcurementRequisition, PurchaseOrder, RepairableOrder } from "@shared/ipc-types";
 
 const REQ_TERMINAL = new Set(["CLOSED", "REJECTED", "CANCELLED"]);
@@ -41,6 +44,7 @@ export function ProcurementArchivePanel({
   onRepairableClick,
 }: ProcurementArchivePanelProps) {
   const { t } = useTranslation("inventory");
+  const { formatDateTime } = useFormatters();
   const [open, setOpen] = useState(false);
   const [kind, setKind] = useState<ArchiveKind>("requisitions");
 
@@ -70,27 +74,35 @@ export function ProcurementArchivePanel({
         accessorKey: "status",
         header: t("procurement.requisitions.columns.status"),
         cell: ({ row }) => (
-          <Badge variant="outline" className="text-[10px]">
-            {t(`procurement.statuses.${row.original.status}`, {
+          <StatusChip
+            label={t(`procurement.statuses.${row.original.status}`, {
               defaultValue: row.original.status,
             })}
-          </Badge>
+            tone={toneOf(PROCUREMENT_STATUS_TONE, row.original.status)}
+            dot
+          />
         ),
       },
       {
         accessorKey: "demand_source_type",
         header: t("procurement.requisitions.columns.source"),
-        cell: ({ row }) => <span className="text-xs">{row.original.demand_source_type}</span>,
+        cell: ({ row }) => (
+          <span className="text-xs">
+            {t(`procurement.requisition.sources.${row.original.demand_source_type}`, {
+              defaultValue: row.original.demand_source_type,
+            })}
+          </span>
+        ),
       },
       {
         accessorKey: "updated_at",
         header: t("procurement.requisitions.columns.updated"),
         cell: ({ row }) => (
-          <span className="text-xs text-text-muted">{row.original.updated_at}</span>
+          <span className="text-xs text-text-muted">{formatDateTime(row.original.updated_at)}</span>
         ),
       },
     ],
-    [t],
+    [formatDateTime, t],
   );
 
   const poColumns: ColumnDef<PurchaseOrder>[] = useMemo(
@@ -104,11 +116,13 @@ export function ProcurementArchivePanel({
         accessorKey: "status",
         header: t("procurement.purchaseOrders.columns.status"),
         cell: ({ row }) => (
-          <Badge variant="outline" className="text-[10px]">
-            {t(`procurement.statuses.${row.original.status}`, {
+          <StatusChip
+            label={t(`procurement.statuses.${row.original.status}`, {
               defaultValue: row.original.status,
             })}
-          </Badge>
+            tone={toneOf(PROCUREMENT_STATUS_TONE, row.original.status)}
+            dot
+          />
         ),
       },
       {
@@ -124,11 +138,11 @@ export function ProcurementArchivePanel({
         accessorKey: "updated_at",
         header: t("procurement.purchaseOrders.columns.updated"),
         cell: ({ row }) => (
-          <span className="text-xs text-text-muted">{row.original.updated_at}</span>
+          <span className="text-xs text-text-muted">{formatDateTime(row.original.updated_at)}</span>
         ),
       },
     ],
-    [t],
+    [formatDateTime, t],
   );
 
   const repairColumns: ColumnDef<RepairableOrder>[] = useMemo(
@@ -147,22 +161,24 @@ export function ProcurementArchivePanel({
         accessorKey: "status",
         header: t("procurement.repairables.columns.status"),
         cell: ({ row }) => (
-          <Badge variant="outline" className="text-[10px]">
-            {t(`procurement.repairableStatuses.${row.original.status}`, {
+          <StatusChip
+            label={t(`procurement.repairableStatuses.${row.original.status}`, {
               defaultValue: row.original.status,
             })}
-          </Badge>
+            tone={toneOf(REPAIRABLE_STATUS_TONE, row.original.status)}
+            dot
+          />
         ),
       },
       {
         accessorKey: "updated_at",
         header: t("procurement.repairables.columns.updated"),
         cell: ({ row }) => (
-          <span className="text-xs text-text-muted">{row.original.updated_at}</span>
+          <span className="text-xs text-text-muted">{formatDateTime(row.original.updated_at)}</span>
         ),
       },
     ],
-    [t],
+    [formatDateTime, t],
   );
 
   const sections: { id: ArchiveKind; label: string; count: number }[] = [
@@ -187,7 +203,7 @@ export function ProcurementArchivePanel({
     <div className="rounded-md border">
       <button
         type="button"
-        className="flex items-center gap-2 w-full px-4 py-2.5 hover:bg-muted/50 transition-colors text-left"
+        className="flex min-h-11 w-full items-center gap-2 px-4 py-2.5 text-left transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         onClick={() => setOpen(!open)}
         aria-expanded={open}
       >
@@ -211,11 +227,12 @@ export function ProcurementArchivePanel({
               <button
                 key={s.id}
                 type="button"
+                aria-pressed={kind === s.id}
                 onClick={() => setKind(s.id)}
                 className={
                   kind === s.id
-                    ? "rounded-md bg-primary px-2.5 py-1 text-xs text-primary-foreground"
-                    : "rounded-md border px-2.5 py-1 text-xs hover:bg-muted"
+                    ? "min-h-9 rounded-md bg-primary px-2.5 py-1 text-xs text-primary-foreground"
+                    : "min-h-9 rounded-md border px-2.5 py-1 text-xs hover:bg-muted"
                 }
               >
                 {`${s.label} (${s.count})`}

@@ -387,6 +387,8 @@ pub async fn list_inventory_stock_balances(
 #[tauri::command]
 pub async fn adjust_inventory_stock(
     input: InventoryStockAdjustInput,
+    // Unit cost of a stock entry (tenant currency); updates the weighted-average cost.
+    unit_cost: Option<f64>,
     state: State<'_, AppState>,
 ) -> AppResult<InventoryStockBalance> {
     let user = require_session!(state);
@@ -396,7 +398,7 @@ pub async fn adjust_inventory_stock(
         crate::rbac::permissions::INV_MANAGE,
         PermissionScope::Global
     );
-    queries::adjust_stock(&state.db, input).await
+    queries::adjust_stock_costed(&state.db, input, unit_cost).await
 }
 
 #[tauri::command]
@@ -533,7 +535,7 @@ pub async fn list_inventory_procurement_suppliers(state: State<'_, AppState>) ->
 
 #[tauri::command]
 pub async fn create_inventory_procurement_requisition(
-    input: CreateProcurementRequisitionInput,
+    mut input: CreateProcurementRequisitionInput,
     state: State<'_, AppState>,
 ) -> AppResult<ProcurementRequisition> {
     let user = require_session!(state);
@@ -543,12 +545,14 @@ pub async fn create_inventory_procurement_requisition(
         crate::rbac::permissions::INV_PROCURE,
         PermissionScope::Global
     );
+    // Who did it comes from the session, never from the UI payload.
+    input.actor_id = Some(i64::from(user.user_id));
     procurement::create_procurement_requisition(&state.db, input).await
 }
 
 #[tauri::command]
 pub async fn transition_inventory_procurement_requisition(
-    input: TransitionProcurementRequisitionInput,
+    mut input: TransitionProcurementRequisitionInput,
     state: State<'_, AppState>,
 ) -> AppResult<ProcurementRequisition> {
     let user = require_session!(state);
@@ -558,6 +562,8 @@ pub async fn transition_inventory_procurement_requisition(
         crate::rbac::permissions::INV_PROCURE,
         PermissionScope::Global
     );
+    // Who did it comes from the session, never from the UI payload.
+    input.actor_id = Some(i64::from(user.user_id));
     procurement::transition_procurement_requisition(&state.db, input).await
 }
 
@@ -592,7 +598,7 @@ pub async fn list_inventory_procurement_requisition_lines(
 
 #[tauri::command]
 pub async fn create_inventory_purchase_order_from_requisition(
-    input: CreatePurchaseOrderFromRequisitionInput,
+    mut input: CreatePurchaseOrderFromRequisitionInput,
     state: State<'_, AppState>,
 ) -> AppResult<PurchaseOrder> {
     let user = require_session!(state);
@@ -602,12 +608,14 @@ pub async fn create_inventory_purchase_order_from_requisition(
         crate::rbac::permissions::INV_PROCURE,
         PermissionScope::Global
     );
+    // Who did it comes from the session, never from the UI payload.
+    input.actor_id = Some(i64::from(user.user_id));
     procurement::create_purchase_order_from_requisition(&state.db, input).await
 }
 
 #[tauri::command]
 pub async fn transition_inventory_purchase_order(
-    input: TransitionPurchaseOrderInput,
+    mut input: TransitionPurchaseOrderInput,
     state: State<'_, AppState>,
 ) -> AppResult<PurchaseOrder> {
     let user = require_session!(state);
@@ -617,6 +625,8 @@ pub async fn transition_inventory_purchase_order(
         crate::rbac::permissions::INV_PROCURE,
         PermissionScope::Global
     );
+    // Who did it comes from the session, never from the UI payload.
+    input.actor_id = Some(i64::from(user.user_id));
     procurement::transition_purchase_order(&state.db, input).await
 }
 
@@ -682,7 +692,7 @@ pub async fn project_inventory_stock_impact(
 
 #[tauri::command]
 pub async fn receive_inventory_purchase_order_goods(
-    input: ReceiveGoodsInput,
+    mut input: ReceiveGoodsInput,
     state: State<'_, AppState>,
 ) -> AppResult<GoodsReceipt> {
     let user = require_session!(state);
@@ -692,6 +702,8 @@ pub async fn receive_inventory_purchase_order_goods(
         crate::rbac::permissions::INV_PROCURE,
         PermissionScope::Global
     );
+    // Who did it comes from the session, never from the UI payload.
+    input.actor_id = Some(i64::from(user.user_id));
     procurement::receive_purchase_order_goods(&state.db, input).await
 }
 
@@ -739,7 +751,7 @@ pub async fn update_inventory_procurement_posting_state(
 
 #[tauri::command]
 pub async fn create_inventory_repairable_order(
-    input: CreateRepairableOrderInput,
+    mut input: CreateRepairableOrderInput,
     state: State<'_, AppState>,
 ) -> AppResult<RepairableOrder> {
     let user = require_session!(state);
@@ -749,12 +761,14 @@ pub async fn create_inventory_repairable_order(
         crate::rbac::permissions::INV_PROCURE,
         PermissionScope::Global
     );
+    // Who did it comes from the session, never from the UI payload.
+    input.actor_id = Some(i64::from(user.user_id));
     procurement::create_repairable_order(&state.db, input).await
 }
 
 #[tauri::command]
 pub async fn transition_inventory_repairable_order(
-    input: TransitionRepairableOrderInput,
+    mut input: TransitionRepairableOrderInput,
     state: State<'_, AppState>,
 ) -> AppResult<RepairableOrder> {
     let user = require_session!(state);
@@ -764,6 +778,8 @@ pub async fn transition_inventory_repairable_order(
         crate::rbac::permissions::INV_PROCURE,
         PermissionScope::Global
     );
+    // Who did it comes from the session, never from the UI payload.
+    input.actor_id = Some(i64::from(user.user_id));
     procurement::transition_repairable_order(&state.db, input).await
 }
 
@@ -827,7 +843,7 @@ pub async fn list_inventory_state_events(
 
 #[tauri::command]
 pub async fn create_inventory_count_session(
-    input: CreateInventoryCountSessionInput,
+    mut input: CreateInventoryCountSessionInput,
     state: State<'_, AppState>,
 ) -> AppResult<InventoryCountSession> {
     let user = require_session!(state);
@@ -837,12 +853,14 @@ pub async fn create_inventory_count_session(
         crate::rbac::permissions::INV_COUNT,
         PermissionScope::Global
     );
+    // Who did it comes from the session, never from the UI payload.
+    input.actor_id = Some(i64::from(user.user_id));
     controls::create_count_session(&state.db, input).await
 }
 
 #[tauri::command]
 pub async fn transition_inventory_count_session(
-    input: TransitionInventoryCountSessionInput,
+    mut input: TransitionInventoryCountSessionInput,
     state: State<'_, AppState>,
 ) -> AppResult<InventoryCountSession> {
     let user = require_session!(state);
@@ -852,6 +870,8 @@ pub async fn transition_inventory_count_session(
         crate::rbac::permissions::INV_COUNT,
         PermissionScope::Global
     );
+    // Who did it comes from the session, never from the UI payload.
+    input.actor_id = Some(i64::from(user.user_id));
     controls::transition_count_session(&state.db, input).await
 }
 
@@ -872,7 +892,7 @@ pub async fn upsert_inventory_count_line(
 
 #[tauri::command]
 pub async fn approve_inventory_count_line(
-    input: ApproveInventoryCountLineInput,
+    mut input: ApproveInventoryCountLineInput,
     state: State<'_, AppState>,
 ) -> AppResult<InventoryCountLine> {
     let user = require_session!(state);
@@ -882,12 +902,14 @@ pub async fn approve_inventory_count_line(
         crate::rbac::permissions::INV_MANAGE,
         PermissionScope::Global
     );
+    // The reviewer is always the signed-in user, never a value sent by the UI.
+    input.reviewer_id = i64::from(user.user_id);
     controls::approve_count_line(&state.db, input).await
 }
 
 #[tauri::command]
 pub async fn post_inventory_count_session(
-    input: PostInventoryCountSessionInput,
+    mut input: PostInventoryCountSessionInput,
     state: State<'_, AppState>,
 ) -> AppResult<InventoryCountSession> {
     let user = require_session!(state);
@@ -897,12 +919,14 @@ pub async fn post_inventory_count_session(
         crate::rbac::permissions::INV_COUNT,
         PermissionScope::Global
     );
+    // Who did it comes from the session, never from the UI payload.
+    input.actor_id = Some(i64::from(user.user_id));
     controls::post_count_session(&state.db, input).await
 }
 
 #[tauri::command]
 pub async fn reverse_inventory_count_session(
-    input: ReverseInventoryCountSessionInput,
+    mut input: ReverseInventoryCountSessionInput,
     state: State<'_, AppState>,
 ) -> AppResult<InventoryCountSession> {
     let user = require_session!(state);
@@ -912,6 +936,8 @@ pub async fn reverse_inventory_count_session(
         crate::rbac::permissions::INV_MANAGE,
         PermissionScope::Global
     );
+    // Who did it comes from the session, never from the UI payload.
+    input.actor_id = Some(i64::from(user.user_id));
     controls::reverse_count_session(&state.db, input).await
 }
 
@@ -944,7 +970,7 @@ pub async fn list_inventory_count_lines(
 
 #[tauri::command]
 pub async fn run_inventory_reconciliation(
-    input: RunInventoryReconciliationInput,
+    mut input: RunInventoryReconciliationInput,
     state: State<'_, AppState>,
 ) -> AppResult<InventoryReconciliationRun> {
     let user = require_session!(state);
@@ -954,6 +980,8 @@ pub async fn run_inventory_reconciliation(
         crate::rbac::permissions::ERP_RECONCILE,
         PermissionScope::Global
     );
+    // Who did it comes from the session, never from the UI payload.
+    input.actor_id = Some(i64::from(user.user_id));
     controls::run_reconciliation(&state.db, input).await
 }
 
@@ -1374,7 +1402,7 @@ pub async fn list_inventory_document_links(
 
 #[tauri::command]
 pub async fn upsert_inventory_document_link(
-    input: InventoryDocumentLinkInput,
+    mut input: InventoryDocumentLinkInput,
     state: State<'_, AppState>,
 ) -> AppResult<InventoryDocumentLink> {
     let user = require_session!(state);
@@ -1384,6 +1412,8 @@ pub async fn upsert_inventory_document_link(
         crate::rbac::permissions::INV_MANAGE,
         PermissionScope::Global
     );
+    // Who did it comes from the session, never from the UI payload.
+    input.created_by_id = Some(i64::from(user.user_id));
     queries::upsert_inventory_document_link(&state.db, input).await
 }
 

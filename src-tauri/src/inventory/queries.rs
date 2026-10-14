@@ -991,6 +991,61 @@ pub async fn update_stock_location(
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("updated location not found")))
 }
 
+/// Article master rows with their stock totals summed over every location, in one query
+/// (no per-article balance calls from the UI).
+const ARTICLE_LIST_SELECT: &str = r#"
+    SELECT a.id, a.article_code, a.article_name, a.family_id, af.code AS family_code, af.name AS family_name,
+           a.unit_value_id, u.code AS unit_code, u.label AS unit_label,
+           a.criticality_value_id, c.code AS criticality_code, c.label AS criticality_label,
+           COALESCE(a.stocking_type_value_id, 0) AS stocking_type_value_id,
+           COALESCE(st.code, '') AS stocking_type_code,
+           COALESCE(st.label, '') AS stocking_type_label,
+           COALESCE(a.tax_category_value_id, 0) AS tax_category_value_id,
+           COALESCE(tx.code, '') AS tax_category_code,
+           COALESCE(tx.label, '') AS tax_category_label,
+           a.procurement_category_value_id, pc.code AS procurement_category_code, pc.label AS procurement_category_label,
+           a.preferred_warehouse_id, pw.code AS preferred_warehouse_code, pw.name AS preferred_warehouse_name,
+           a.preferred_location_id, pl.code AS preferred_location_code, pl.name AS preferred_location_name,
+           a.min_stock, a.max_stock, a.reorder_point, a.safety_stock,
+           a.manufacturer_name, a.manufacturer_part_number, a.oem_part_number,
+           a.replenishment_policy_code, a.economic_order_qty, a.minimum_order_qty, a.maximum_order_qty,
+           a.order_multiple_qty, a.lead_time_days, a.review_period_days,
+           a.abc_class_code, a.xyz_class_code,
+           COALESCE(a.is_critical_spare, 0) AS is_critical_spare,
+           COALESCE(a.requires_expiration, 0) AS requires_expiration,
+           a.shelf_life_days,
+           COALESCE(a.requires_batch_tracking, 0) AS requires_batch_tracking,
+           a.is_active, a.row_version, a.created_at, a.updated_at,
+           CAST(COALESCE(sb.on_hand_qty, 0) AS REAL) AS on_hand_qty,
+           CAST(COALESCE(sb.reserved_qty, 0) AS REAL) AS reserved_qty,
+           CAST(COALESCE(sb.available_qty, 0) AS REAL) AS available_qty,
+           sb.stock_value, sb.valued_qty, sb.avg_cost_known,
+           CAST(COALESCE(sb.unvalued_qty, 0) AS REAL) AS unvalued_qty
+    FROM articles a
+    LEFT JOIN article_families af ON af.id = a.family_id
+    JOIN lookup_values u ON u.id = a.unit_value_id
+    LEFT JOIN lookup_values c ON c.id = a.criticality_value_id
+    LEFT JOIN lookup_values st ON st.id = a.stocking_type_value_id
+    LEFT JOIN lookup_values tx ON tx.id = a.tax_category_value_id
+    LEFT JOIN lookup_values pc ON pc.id = a.procurement_category_value_id
+    LEFT JOIN warehouses pw ON pw.id = a.preferred_warehouse_id
+    LEFT JOIN stock_locations pl ON pl.id = a.preferred_location_id
+    LEFT JOIN (
+        SELECT article_id,
+               SUM(on_hand_qty) AS on_hand_qty,
+               SUM(reserved_qty) AS reserved_qty,
+               SUM(available_qty) AS available_qty,
+               SUM(CASE WHEN moving_avg_unit_cost IS NOT NULL
+                        THEN on_hand_qty * moving_avg_unit_cost END) AS stock_value,
+               SUM(CASE WHEN moving_avg_unit_cost IS NOT NULL THEN on_hand_qty END) AS valued_qty,
+               AVG(moving_avg_unit_cost) AS avg_cost_known,
+               SUM(CASE WHEN moving_avg_unit_cost IS NULL AND on_hand_qty > 0
+                        THEN on_hand_qty ELSE 0 END) AS unvalued_qty
+        FROM stock_balances
+        GROUP BY article_id
+    ) sb ON sb.article_id = a.id
+"#;
+
 pub async fn list_articles(
     db: &DatabaseConnection,
     filter: InventoryArticleFilter,
@@ -999,88 +1054,32 @@ pub async fn list_articles(
         let q = format!("%{}%", search.trim().to_lowercase());
         db.query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            r#"
-            SELECT a.id, a.article_code, a.article_name, a.family_id, af.code AS family_code, af.name AS family_name,
-                   a.unit_value_id, u.code AS unit_code, u.label AS unit_label,
-                   a.criticality_value_id, c.code AS criticality_code, c.label AS criticality_label,
-                   COALESCE(a.stocking_type_value_id, 0) AS stocking_type_value_id,
-                   COALESCE(st.code, '') AS stocking_type_code,
-                   COALESCE(st.label, '') AS stocking_type_label,
-                   COALESCE(a.tax_category_value_id, 0) AS tax_category_value_id,
-                   COALESCE(tx.code, '') AS tax_category_code,
-                   COALESCE(tx.label, '') AS tax_category_label,
-                   a.procurement_category_value_id, pc.code AS procurement_category_code, pc.label AS procurement_category_label,
-                   a.preferred_warehouse_id, pw.code AS preferred_warehouse_code, pw.name AS preferred_warehouse_name,
-                   a.preferred_location_id, pl.code AS preferred_location_code, pl.name AS preferred_location_name,
-                   a.min_stock, a.max_stock, a.reorder_point, a.safety_stock,
-                   a.manufacturer_name, a.manufacturer_part_number, a.oem_part_number,
-                   a.replenishment_policy_code, a.economic_order_qty, a.minimum_order_qty, a.maximum_order_qty,
-                   a.order_multiple_qty, a.lead_time_days, a.review_period_days,
-                   a.abc_class_code, a.xyz_class_code,
-                   COALESCE(a.is_critical_spare, 0) AS is_critical_spare,
-                   COALESCE(a.requires_expiration, 0) AS requires_expiration,
-                   a.shelf_life_days,
-                   COALESCE(a.requires_batch_tracking, 0) AS requires_batch_tracking,
-                   a.is_active, a.row_version, a.created_at, a.updated_at
-            FROM articles a
-            LEFT JOIN article_families af ON af.id = a.family_id
-            JOIN lookup_values u ON u.id = a.unit_value_id
-            LEFT JOIN lookup_values c ON c.id = a.criticality_value_id
-            LEFT JOIN lookup_values st ON st.id = a.stocking_type_value_id
-            LEFT JOIN lookup_values tx ON tx.id = a.tax_category_value_id
-            LEFT JOIN lookup_values pc ON pc.id = a.procurement_category_value_id
-            LEFT JOIN warehouses pw ON pw.id = a.preferred_warehouse_id
-            LEFT JOIN stock_locations pl ON pl.id = a.preferred_location_id
-            WHERE LOWER(a.article_code) LIKE ? OR LOWER(a.article_name) LIKE ?
-            ORDER BY a.article_code ASC
-            "#,
+            format!(
+                "{ARTICLE_LIST_SELECT} \
+                 WHERE LOWER(a.article_code) LIKE ? OR LOWER(a.article_name) LIKE ? \
+                 ORDER BY a.article_code ASC"
+            ),
             [q.clone().into(), q.into()],
         ))
         .await?
     } else {
         db.query_all(Statement::from_string(
             DbBackend::Sqlite,
-            r#"
-            SELECT a.id, a.article_code, a.article_name, a.family_id, af.code AS family_code, af.name AS family_name,
-                   a.unit_value_id, u.code AS unit_code, u.label AS unit_label,
-                   a.criticality_value_id, c.code AS criticality_code, c.label AS criticality_label,
-                   COALESCE(a.stocking_type_value_id, 0) AS stocking_type_value_id,
-                   COALESCE(st.code, '') AS stocking_type_code,
-                   COALESCE(st.label, '') AS stocking_type_label,
-                   COALESCE(a.tax_category_value_id, 0) AS tax_category_value_id,
-                   COALESCE(tx.code, '') AS tax_category_code,
-                   COALESCE(tx.label, '') AS tax_category_label,
-                   a.procurement_category_value_id, pc.code AS procurement_category_code, pc.label AS procurement_category_label,
-                   a.preferred_warehouse_id, pw.code AS preferred_warehouse_code, pw.name AS preferred_warehouse_name,
-                   a.preferred_location_id, pl.code AS preferred_location_code, pl.name AS preferred_location_name,
-                   a.min_stock, a.max_stock, a.reorder_point, a.safety_stock,
-                   a.manufacturer_name, a.manufacturer_part_number, a.oem_part_number,
-                   a.replenishment_policy_code, a.economic_order_qty, a.minimum_order_qty, a.maximum_order_qty,
-                   a.order_multiple_qty, a.lead_time_days, a.review_period_days,
-                   a.abc_class_code, a.xyz_class_code,
-                   COALESCE(a.is_critical_spare, 0) AS is_critical_spare,
-                   COALESCE(a.requires_expiration, 0) AS requires_expiration,
-                   a.shelf_life_days,
-                   COALESCE(a.requires_batch_tracking, 0) AS requires_batch_tracking,
-                   a.is_active, a.row_version, a.created_at, a.updated_at
-            FROM articles a
-            LEFT JOIN article_families af ON af.id = a.family_id
-            JOIN lookup_values u ON u.id = a.unit_value_id
-            LEFT JOIN lookup_values c ON c.id = a.criticality_value_id
-            LEFT JOIN lookup_values st ON st.id = a.stocking_type_value_id
-            LEFT JOIN lookup_values tx ON tx.id = a.tax_category_value_id
-            LEFT JOIN lookup_values pc ON pc.id = a.procurement_category_value_id
-            LEFT JOIN warehouses pw ON pw.id = a.preferred_warehouse_id
-            LEFT JOIN stock_locations pl ON pl.id = a.preferred_location_id
-            ORDER BY a.article_code ASC
-            "#
-            .to_string(),
+            format!("{ARTICLE_LIST_SELECT} ORDER BY a.article_code ASC"),
         ))
         .await?
     };
 
     rows.into_iter()
         .map(|row| {
+            let stock_value: Option<f64> = row.try_get("", "stock_value").ok().flatten();
+            let valued_qty: Option<f64> = row.try_get("", "valued_qty").ok().flatten();
+            // Weighted by quantity on hand; an article valued but out of stock keeps the plain
+            // mean of its location averages so the last known cost stays visible.
+            let avg_unit_cost = match (stock_value, valued_qty) {
+                (Some(value), Some(qty)) if qty > f64::EPSILON => Some(value / qty),
+                _ => row.try_get::<Option<f64>>("", "avg_cost_known").ok().flatten(),
+            };
             Ok(InventoryArticle {
                 id: row.try_get("", "id")?,
                 article_code: row.try_get("", "article_code")?,
@@ -1133,6 +1132,12 @@ pub async fn list_articles(
                 row_version: row.try_get("", "row_version")?,
                 created_at: row.try_get("", "created_at")?,
                 updated_at: row.try_get("", "updated_at")?,
+                on_hand_qty: row.try_get("", "on_hand_qty")?,
+                reserved_qty: row.try_get("", "reserved_qty")?,
+                available_qty: row.try_get("", "available_qty")?,
+                avg_unit_cost,
+                stock_value,
+                unvalued_qty: row.try_get("", "unvalued_qty")?,
             })
         })
         .collect()
@@ -1613,7 +1618,7 @@ pub async fn list_stock_balances(
         SELECT sb.id, sb.article_id, a.article_code, a.article_name,
                sb.warehouse_id, w.code AS warehouse_code, w.name AS warehouse_name,
                sb.location_id, sl.code AS location_code, sl.name AS location_name,
-               sb.on_hand_qty, sb.reserved_qty, sb.available_qty, sb.updated_at
+               sb.on_hand_qty, sb.reserved_qty, sb.available_qty, sb.moving_avg_unit_cost, sb.updated_at
         FROM stock_balances sb
         JOIN articles a ON a.id = sb.article_id
         JOIN warehouses w ON w.id = sb.warehouse_id
@@ -1661,6 +1666,7 @@ pub async fn list_stock_balances(
                 on_hand_qty: row.try_get("", "on_hand_qty")?,
                 reserved_qty: row.try_get("", "reserved_qty")?,
                 available_qty: row.try_get("", "available_qty")?,
+                moving_avg_unit_cost: row.try_get("", "moving_avg_unit_cost").ok().flatten(),
                 updated_at: row.try_get("", "updated_at")?,
             })
         })
@@ -1684,6 +1690,7 @@ pub async fn list_stock_balances(
           0.0 AS on_hand_qty,
           0.0 AS reserved_qty,
           0.0 AS available_qty,
+          NULL AS moving_avg_unit_cost,
           strftime('%Y-%m-%dT%H:%M:%SZ','now') AS updated_at
         FROM articles a
         INNER JOIN stock_locations sl ON sl.id = (
@@ -1748,6 +1755,7 @@ pub async fn list_stock_balances(
             on_hand_qty: row.try_get("", "on_hand_qty")?,
             reserved_qty: row.try_get("", "reserved_qty")?,
             available_qty: row.try_get("", "available_qty")?,
+            moving_avg_unit_cost: row.try_get("", "moving_avg_unit_cost").ok().flatten(),
             updated_at: row.try_get("", "updated_at")?,
         });
     }
@@ -1762,16 +1770,73 @@ pub async fn list_stock_balances(
     Ok(balances)
 }
 
+/// Movement reasons that move parts to or from a work order (`inventory.movement_type` lookup).
+const WORK_ORDER_MOVEMENT_REASONS: &[&str] = &["SORTIE_OT", "RETOUR_OT"];
+
+/// A manual exit to / return from a work order must name an existing work order (its code is
+/// kept as the movement's source reference), otherwise the parts cost cannot be traced.
+async fn ensure_work_order_reference(
+    db: &DatabaseConnection,
+    reason_code: Option<&str>,
+    source_ref: Option<&str>,
+) -> AppResult<()> {
+    let Some(reason) = reason_code else {
+        return Ok(());
+    };
+    if !WORK_ORDER_MOVEMENT_REASONS.contains(&reason) {
+        return Ok(());
+    }
+    let wo_code = source_ref.map(str::trim).unwrap_or("");
+    if wo_code.is_empty() {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "Movement reason '{reason}' requires a work order reference."
+        )]));
+    }
+    let exists = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id FROM work_orders WHERE code = ?",
+            [wo_code.to_string().into()],
+        ))
+        .await?;
+    if exists.is_none() {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "Work order '{wo_code}' does not exist."
+        )]));
+    }
+    Ok(())
+}
+
 pub async fn adjust_stock(
     db: &DatabaseConnection,
     input: InventoryStockAdjustInput,
+) -> AppResult<InventoryStockBalance> {
+    adjust_stock_costed(db, input, None).await
+}
+
+/// Manual stock movement. An entry may carry its `unit_cost` (tenant currency): the location's
+/// weighted-average cost is recomputed and the movement is stamped with that cost. Entries without
+/// a cost and all exits are valued at the location's current average (when it has one).
+pub async fn adjust_stock_costed(
+    db: &DatabaseConnection,
+    input: InventoryStockAdjustInput,
+    unit_cost: Option<f64>,
 ) -> AppResult<InventoryStockBalance> {
     if input.delta_qty == 0.0 {
         return Err(AppError::ValidationFailed(vec![
             "delta_qty must be different from 0.".to_string()
         ]));
     }
+    if let Some(cost) = unit_cost {
+        crate::inventory::valuation::validate_unit_cost(cost)?;
+        if input.delta_qty < 0.0 {
+            return Err(AppError::ValidationFailed(vec![
+                "unit_cost applies to stock entries only; exits are valued at the average cost.".to_string(),
+            ]));
+        }
+    }
     let source_type = "MANUAL_ADJUSTMENT".to_string();
+    ensure_work_order_reference(db, input.reason_code.as_deref(), input.source_ref.as_deref()).await?;
 
     let tx = db.begin().await?;
     let warehouse_id = ensure_active_mutation_context(&tx, input.article_id, input.location_id).await?;
@@ -1813,7 +1878,7 @@ pub async fn adjust_stock(
     )
     .await?;
 
-    insert_inventory_transaction(
+    let transaction_id = insert_inventory_transaction(
         &tx,
         input.article_id,
         warehouse_id,
@@ -1833,6 +1898,33 @@ pub async fn adjust_stock(
         None,
     )
     .await?;
+
+    match unit_cost {
+        Some(cost) => {
+            crate::inventory::valuation::apply_inbound_cost(
+                &tx,
+                input.article_id,
+                input.location_id,
+                on_hand,
+                input.delta_qty,
+                cost,
+                transaction_id,
+                crate::inventory::valuation::COST_SOURCE_MANUAL_ENTRY,
+                input.source_ref.as_deref(),
+            )
+            .await?;
+        }
+        None => {
+            crate::inventory::valuation::stamp_at_average(
+                &tx,
+                input.article_id,
+                input.location_id,
+                input.delta_qty,
+                transaction_id,
+            )
+            .await?;
+        }
+    }
 
     tx.commit().await?;
     load_balance(db, input.article_id, input.location_id).await
@@ -2024,7 +2116,7 @@ async fn load_balance(db: &DatabaseConnection, article_id: i64, location_id: i64
             "SELECT sb.id, sb.article_id, a.article_code, a.article_name,
                     sb.warehouse_id, w.code AS warehouse_code, w.name AS warehouse_name,
                     sb.location_id, sl.code AS location_code, sl.name AS location_name,
-                    sb.on_hand_qty, sb.reserved_qty, sb.available_qty, sb.updated_at
+                    sb.on_hand_qty, sb.reserved_qty, sb.available_qty, sb.moving_avg_unit_cost, sb.updated_at
              FROM stock_balances sb
              JOIN articles a ON a.id = sb.article_id
              JOIN warehouses w ON w.id = sb.warehouse_id
@@ -2049,6 +2141,7 @@ async fn load_balance(db: &DatabaseConnection, article_id: i64, location_id: i64
         on_hand_qty: row.try_get("", "on_hand_qty")?,
         reserved_qty: row.try_get("", "reserved_qty")?,
         available_qty: row.try_get("", "available_qty")?,
+        moving_avg_unit_cost: row.try_get("", "moving_avg_unit_cost").ok().flatten(),
         updated_at: row.try_get("", "updated_at")?,
     })
 }
@@ -2245,7 +2338,7 @@ pub async fn issue_reserved_stock(db: &DatabaseConnection, input: InventoryIssue
         .source_type
         .clone()
         .unwrap_or_else(|| reservation.source_type.clone());
-    insert_inventory_transaction(
+    let issue_id = insert_inventory_transaction(
         &tx,
         reservation.article_id,
         reservation.warehouse_id,
@@ -2259,6 +2352,15 @@ pub async fn issue_reserved_stock(db: &DatabaseConnection, input: InventoryIssue
         None,
         input.notes.as_deref(),
         None,
+    )
+    .await?;
+    // Parts issued to a job are valued at the location's weighted-average cost.
+    crate::inventory::valuation::stamp_at_average(
+        &tx,
+        reservation.article_id,
+        reservation.location_id,
+        input.quantity,
+        issue_id,
     )
     .await?;
 
@@ -2470,7 +2572,7 @@ pub async fn transfer_stock(
         .source_type
         .clone()
         .unwrap_or_else(|| "INTERNAL_TRANSFER".to_string());
-    insert_inventory_transaction(
+    let out_id = insert_inventory_transaction(
         &tx,
         input.article_id,
         from_warehouse,
@@ -2486,7 +2588,7 @@ pub async fn transfer_stock(
         None,
     )
     .await?;
-    insert_inventory_transaction(
+    let in_id = insert_inventory_transaction(
         &tx,
         input.article_id,
         to_warehouse,
@@ -2502,6 +2604,31 @@ pub async fn transfer_stock(
         None,
     )
     .await?;
+
+    // Transferred parts keep their cost: the source average values the move and is blended
+    // into the destination's weighted average.
+    if let Some(source_avg) = crate::inventory::valuation::stamp_at_average(
+        &tx,
+        input.article_id,
+        input.from_location_id,
+        input.quantity,
+        out_id,
+    )
+    .await?
+    {
+        crate::inventory::valuation::apply_inbound_cost(
+            &tx,
+            input.article_id,
+            input.to_location_id,
+            to_on_hand,
+            input.quantity,
+            source_avg,
+            in_id,
+            crate::inventory::valuation::COST_SOURCE_MOVING_AVG,
+            input.source_ref.as_deref(),
+        )
+        .await?;
+    }
 
     tx.commit().await?;
     let from = load_balance(db, input.article_id, input.from_location_id).await?;
@@ -3631,7 +3758,7 @@ pub async fn suggest_internal_transfer(
             "SELECT sb.id, sb.article_id, a.article_code, a.article_name,
                     sb.warehouse_id, w.code AS warehouse_code, w.name AS warehouse_name,
                     sb.location_id, sl.code AS location_code, sl.name AS location_name,
-                    sb.on_hand_qty, sb.reserved_qty, sb.available_qty, sb.updated_at
+                    sb.on_hand_qty, sb.reserved_qty, sb.available_qty, sb.moving_avg_unit_cost, sb.updated_at
              FROM stock_balances sb
              JOIN articles a ON a.id = sb.article_id
              JOIN warehouses w ON w.id = sb.warehouse_id
@@ -3660,6 +3787,7 @@ pub async fn suggest_internal_transfer(
                 on_hand_qty: row.try_get("", "on_hand_qty")?,
                 reserved_qty: row.try_get("", "reserved_qty")?,
                 available_qty: row.try_get("", "available_qty")?,
+                moving_avg_unit_cost: row.try_get("", "moving_avg_unit_cost").ok().flatten(),
                 updated_at: row.try_get("", "updated_at")?,
             })
         })

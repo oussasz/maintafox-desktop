@@ -7,8 +7,8 @@ import { PermissionGate } from "@/components/PermissionGate";
 import { DataTable } from "@/components/data/DataTable";
 import { DetailFieldRow, DetailSectionCard, EntityDetailHeader } from "@/components/detail";
 import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ErrorState } from "@/components/ui/data-state";
 import {
   Dialog,
   DialogContent,
@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { StatusChip } from "@/components/ui/status-chip";
 import { Switch } from "@/components/ui/switch";
 import { mfLayout } from "@/design-system/tokens";
 import {
@@ -28,7 +29,6 @@ import {
   updateInventoryWarehouse,
 } from "@/services/inventory-service";
 import { useInventoryStore } from "@/stores/inventory-store";
-import { toErrorMessage } from "@/utils/errors";
 import type { StockLocation, Warehouse } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -57,7 +57,9 @@ export const WarehouseLocationPanel = forwardRef<WarehouseLocationPanelHandle>(
 
     const [locations, setLocations] = useState<StockLocation[]>([]);
     const [locSaving, setLocSaving] = useState(false);
-    const [locError, setLocError] = useState<string | null>(null);
+    /** Failure to load the selected warehouse's locations (save failures go to the toast). */
+    const [locLoadError, setLocLoadError] = useState<unknown>(null);
+    const [whSaving, setWhSaving] = useState(false);
 
     const [newLocCode, setNewLocCode] = useState("");
     const [newLocName, setNewLocName] = useState("");
@@ -70,8 +72,13 @@ export const WarehouseLocationPanel = forwardRef<WarehouseLocationPanelHandle>(
     const [editLocActive, setEditLocActive] = useState(true);
 
     const reloadLocations = useCallback(async (warehouseId: number) => {
-      const rows = await listInventoryLocations(warehouseId);
-      setLocations(rows);
+      try {
+        const rows = await listInventoryLocations(warehouseId);
+        setLocations(rows);
+        setLocLoadError(null);
+      } catch (err) {
+        setLocLoadError(err);
+      }
     }, []);
 
     useEffect(() => {
@@ -87,15 +94,14 @@ export const WarehouseLocationPanel = forwardRef<WarehouseLocationPanelHandle>(
         setWhName("");
         setWhActive(true);
         setEditLoc(null);
-        setLocError(null);
+        setLocLoadError(null);
         return;
       }
       const warehouseId = selectedWarehouse.id;
       setWhName(selectedWarehouse.name);
       setWhActive(selectedWarehouse.is_active === 1);
       setEditLoc(null);
-      setLocError(null);
-      void reloadLocations(warehouseId).catch(() => setLocations([]));
+      void reloadLocations(warehouseId);
       // Sync form when selection changes, not on every warehouse list refresh mid-edit.
       // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: selectedWarehouse.id only
     }, [selectedWarehouse?.id, reloadLocations]);
@@ -104,7 +110,6 @@ export const WarehouseLocationPanel = forwardRef<WarehouseLocationPanelHandle>(
       openCreateWarehouse: () => {
         setCreateCode("");
         setCreateName("");
-        setLocError(null);
         setCreateOpen(true);
       },
     }));
@@ -121,10 +126,11 @@ export const WarehouseLocationPanel = forwardRef<WarehouseLocationPanelHandle>(
       setSelectedWarehouse((prev) => (prev?.id === w.id ? null : w));
     };
 
+    // Save failures are reported by the global IPC toast; forms stay open with the user's input.
     const handleCreateWarehouse = async () => {
       if (!createCode.trim() || !createName.trim()) return;
+      setWhSaving(true);
       try {
-        setLocError(null);
         const created = await createInventoryWarehouse({
           code: createCode.trim(),
           name: createName.trim(),
@@ -132,15 +138,17 @@ export const WarehouseLocationPanel = forwardRef<WarehouseLocationPanelHandle>(
         await loadAll();
         setCreateOpen(false);
         setSelectedWarehouse(created);
-      } catch (err) {
-        setLocError(toErrorMessage(err));
+      } catch {
+        // reported by the global IPC toast
+      } finally {
+        setWhSaving(false);
       }
     };
 
     const handleSaveWarehouse = async () => {
       if (!selectedWarehouse || !whName.trim()) return;
+      setWhSaving(true);
       try {
-        setLocError(null);
         await updateInventoryWarehouse(selectedWarehouse.id, {
           name: whName.trim(),
           is_active: whActive,
@@ -150,15 +158,16 @@ export const WarehouseLocationPanel = forwardRef<WarehouseLocationPanelHandle>(
           .getState()
           .warehouses.find((x) => x.id === selectedWarehouse.id);
         if (refreshed) setSelectedWarehouse(refreshed);
-      } catch (err) {
-        setLocError(toErrorMessage(err));
+      } catch {
+        // reported by the global IPC toast
+      } finally {
+        setWhSaving(false);
       }
     };
 
     const handleAddLocation = async () => {
       if (!selectedWarehouse || !newLocCode.trim() || !newLocName.trim()) return;
       setLocSaving(true);
-      setLocError(null);
       try {
         await createInventoryStockLocation({
           warehouse_id: selectedWarehouse.id,
@@ -171,8 +180,8 @@ export const WarehouseLocationPanel = forwardRef<WarehouseLocationPanelHandle>(
         setNewLocDefault(false);
         await reloadLocations(selectedWarehouse.id);
         await loadAll();
-      } catch (err) {
-        setLocError(toErrorMessage(err));
+      } catch {
+        // reported by the global IPC toast
       } finally {
         setLocSaving(false);
       }
@@ -193,7 +202,6 @@ export const WarehouseLocationPanel = forwardRef<WarehouseLocationPanelHandle>(
     const saveEditLocation = async () => {
       if (!editLoc || !selectedWarehouse || !editLocCode.trim() || !editLocName.trim()) return;
       setLocSaving(true);
-      setLocError(null);
       try {
         await updateInventoryStockLocation(editLoc.id, editLoc.row_version, {
           code: editLocCode.trim(),
@@ -204,8 +212,8 @@ export const WarehouseLocationPanel = forwardRef<WarehouseLocationPanelHandle>(
         cancelEditLocation();
         await reloadLocations(selectedWarehouse.id);
         await loadAll();
-      } catch (err) {
-        setLocError(toErrorMessage(err));
+      } catch {
+        // reported by the global IPC toast
       } finally {
         setLocSaving(false);
       }
@@ -225,9 +233,9 @@ export const WarehouseLocationPanel = forwardRef<WarehouseLocationPanelHandle>(
           header: t("topology.columns.status"),
           cell: ({ row }) =>
             row.original.is_active === 1 ? (
-              <Badge variant="secondary">{tc("status.active")}</Badge>
+              <StatusChip label={tc("status.active")} tone="success" dot />
             ) : (
-              <Badge>{tc("status.inactive")}</Badge>
+              <StatusChip label={tc("status.inactive")} tone="neutral" dot />
             ),
         },
       ],
@@ -257,7 +265,8 @@ export const WarehouseLocationPanel = forwardRef<WarehouseLocationPanelHandle>(
               <Button
                 type="button"
                 variant="outline"
-                size="sm"
+                className="h-9"
+                aria-label={t("topology.actions.editLocationNamed", { code: row.original.code })}
                 onClick={(e) => {
                   e.stopPropagation();
                   beginEditLocation(row.original);
@@ -299,21 +308,19 @@ export const WarehouseLocationPanel = forwardRef<WarehouseLocationPanelHandle>(
         <div className="min-w-[300px] flex-1 overflow-hidden">
           {selectedWarehouse ? (
             <div className="flex h-full flex-col space-y-4 overflow-auto p-4">
-              {locError && !createOpen ? (
-                <div className="rounded-md border border-destructive/30 bg-destructive/10 p-2 text-sm">
-                  {locError}
-                </div>
-              ) : null}
-
               <EntityDetailHeader
                 code={selectedWarehouse.code}
                 designation={selectedWarehouse.name}
                 statusSlot={
-                  <Badge variant={selectedWarehouse.is_active === 1 ? "secondary" : "outline"}>
-                    {selectedWarehouse.is_active === 1
-                      ? tc("status.active")
-                      : tc("status.inactive")}
-                  </Badge>
+                  <StatusChip
+                    label={
+                      selectedWarehouse.is_active === 1
+                        ? tc("status.active")
+                        : tc("status.inactive")
+                    }
+                    tone={selectedWarehouse.is_active === 1 ? "success" : "neutral"}
+                    dot
+                  />
                 }
               />
 
@@ -339,9 +346,9 @@ export const WarehouseLocationPanel = forwardRef<WarehouseLocationPanelHandle>(
                     </div>
                     <Button
                       type="button"
-                      size="sm"
+                      className="h-10"
                       onClick={() => void handleSaveWarehouse()}
-                      disabled={saving || !whName.trim()}
+                      disabled={saving || whSaving || !whName.trim()}
                     >
                       {t("topology.actions.saveWarehouse")}
                     </Button>
@@ -359,7 +366,7 @@ export const WarehouseLocationPanel = forwardRef<WarehouseLocationPanelHandle>(
                           id="new-loc-code"
                           value={newLocCode}
                           onChange={(e) => setNewLocCode(e.target.value)}
-                          placeholder="BIN-A1"
+                          placeholder={t("topology.placeholders.locationCode")}
                         />
                       </div>
                       <div className="space-y-1">
@@ -368,7 +375,7 @@ export const WarehouseLocationPanel = forwardRef<WarehouseLocationPanelHandle>(
                           id="new-loc-name"
                           value={newLocName}
                           onChange={(e) => setNewLocName(e.target.value)}
-                          placeholder="Shelf A1"
+                          placeholder={t("topology.placeholders.locationName")}
                         />
                       </div>
                       <div className="flex items-end gap-2 pb-0.5">
@@ -384,8 +391,8 @@ export const WarehouseLocationPanel = forwardRef<WarehouseLocationPanelHandle>(
                     </div>
                     <Button
                       type="button"
-                      size="sm"
                       variant="secondary"
+                      className="h-10"
                       disabled={locSaving || !newLocCode.trim() || !newLocName.trim()}
                       onClick={() => void handleAddLocation()}
                     >
@@ -394,7 +401,12 @@ export const WarehouseLocationPanel = forwardRef<WarehouseLocationPanelHandle>(
                   </div>
                 </PermissionGate>
 
-                {locations.length === 0 ? (
+                {locLoadError ? (
+                  <ErrorState
+                    error={locLoadError}
+                    onRetry={() => void reloadLocations(selectedWarehouse.id)}
+                  />
+                ) : locations.length === 0 ? (
                   <p className="text-xs text-text-muted">{t("topology.emptyLocations")}</p>
                 ) : (
                   <DataTable
@@ -408,7 +420,7 @@ export const WarehouseLocationPanel = forwardRef<WarehouseLocationPanelHandle>(
                 {editLoc ? (
                   <div className="mt-3 space-y-2 rounded-md border bg-muted/30 p-3">
                     <div className="text-sm font-medium">
-                      {t("topology.actions.editLocation")} {editLoc.code}
+                      {t("topology.actions.editLocationNamed", { code: editLoc.code })}
                     </div>
                     <div className="grid gap-2 md:grid-cols-2">
                       <div className="space-y-1">
@@ -447,16 +459,16 @@ export const WarehouseLocationPanel = forwardRef<WarehouseLocationPanelHandle>(
                     <div className="flex gap-2">
                       <Button
                         type="button"
-                        size="sm"
-                        disabled={locSaving}
+                        className="h-10"
+                        disabled={locSaving || !editLocCode.trim() || !editLocName.trim()}
                         onClick={() => void saveEditLocation()}
                       >
                         {t("topology.actions.saveLocation")}
                       </Button>
                       <Button
                         type="button"
-                        size="sm"
                         variant="outline"
+                        className="h-10"
                         onClick={cancelEditLocation}
                       >
                         {tc("action.cancel")}
@@ -480,7 +492,6 @@ export const WarehouseLocationPanel = forwardRef<WarehouseLocationPanelHandle>(
             if (!o) {
               setCreateCode("");
               setCreateName("");
-              setLocError(null);
             }
           }}
         >
@@ -488,11 +499,6 @@ export const WarehouseLocationPanel = forwardRef<WarehouseLocationPanelHandle>(
             <DialogHeader>
               <DialogTitle>{t("topology.createTitle")}</DialogTitle>
             </DialogHeader>
-            {locError && createOpen ? (
-              <div className="rounded-md border border-destructive/30 bg-destructive/10 p-2 text-sm">
-                {locError}
-              </div>
-            ) : null}
             <PermissionGate permission={P.INV_MANAGE}>
               <div className="grid gap-3">
                 <div className="space-y-1">
@@ -501,7 +507,7 @@ export const WarehouseLocationPanel = forwardRef<WarehouseLocationPanelHandle>(
                     id="create-wh-code"
                     value={createCode}
                     onChange={(e) => setCreateCode(e.target.value)}
-                    placeholder="e.g. WH01"
+                    placeholder={t("topology.placeholders.warehouseCode")}
                   />
                 </div>
                 <div className="space-y-1">
@@ -510,19 +516,25 @@ export const WarehouseLocationPanel = forwardRef<WarehouseLocationPanelHandle>(
                     id="create-wh-name"
                     value={createName}
                     onChange={(e) => setCreateName(e.target.value)}
-                    placeholder="Display name"
+                    placeholder={t("topology.placeholders.warehouseName")}
                   />
                 </div>
               </div>
             </PermissionGate>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>
+            <DialogFooter className="gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="h-11"
+                onClick={() => setCreateOpen(false)}
+              >
                 {tc("action.cancel")}
               </Button>
               <PermissionGate permission={P.INV_MANAGE}>
                 <Button
                   type="button"
-                  disabled={saving || !createCode.trim() || !createName.trim()}
+                  className="h-11"
+                  disabled={saving || whSaving || !createCode.trim() || !createName.trim()}
                   onClick={() => void handleCreateWarehouse()}
                 >
                   {t("topology.actions.createWarehouse")}

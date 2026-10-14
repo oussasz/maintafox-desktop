@@ -854,7 +854,7 @@ pub async fn receive_purchase_order_goods(
         let po_line_row = tx
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT ordered_qty, received_qty, demand_source_type, demand_source_id, demand_source_ref
+                "SELECT ordered_qty, received_qty, unit_price, demand_source_type, demand_source_id, demand_source_ref
                  FROM purchase_order_lines
                  WHERE id = ? AND purchase_order_id = ?",
                 [line.po_line_id.into(), input.purchase_order_id.into()],
@@ -867,6 +867,8 @@ pub async fn receive_purchase_order_goods(
             )]));
         };
         let ordered_qty: f64 = po_line_row.try_get("", "ordered_qty")?;
+        // Agreed PO price: values the accepted quantity and feeds the weighted-average cost.
+        let po_unit_price: Option<f64> = po_line_row.try_get("", "unit_price").ok().flatten();
         let current_received_qty: f64 = po_line_row.try_get("", "received_qty")?;
         if current_received_qty + line.received_qty > ordered_qty + f64::EPSILON {
             return Err(AppError::ValidationFailed(vec![
@@ -937,7 +939,7 @@ pub async fn receive_purchase_order_goods(
                 before.reserved,
             )
             .await?;
-            append_stock_event(
+            let movement_id = append_stock_event(
                 &tx,
                 line.article_id,
                 warehouse_id,
@@ -951,6 +953,33 @@ pub async fn receive_purchase_order_goods(
                 input.actor_id,
             )
             .await?;
+            match po_unit_price {
+                Some(price) if price.is_finite() && price >= 0.0 => {
+                    crate::inventory::valuation::apply_inbound_cost(
+                        &tx,
+                        line.article_id,
+                        line.location_id,
+                        before.on_hand,
+                        line.accepted_qty,
+                        price,
+                        movement_id,
+                        crate::inventory::valuation::COST_SOURCE_PO_RECEIPT,
+                        Some(&gr_number),
+                    )
+                    .await?;
+                }
+                // No agreed price on the PO line: the receipt is valued at the current average.
+                _ => {
+                    crate::inventory::valuation::stamp_at_average(
+                        &tx,
+                        line.article_id,
+                        line.location_id,
+                        line.accepted_qty,
+                        movement_id,
+                    )
+                    .await?;
+                }
+            }
         }
     }
 
@@ -1381,11 +1410,14 @@ pub async fn list_procurement_requisitions(db: &DatabaseConnection) -> AppResult
     let rows = db
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT id, req_number, demand_source_type, demand_source_id, demand_source_ref,
-                    COALESCE(purchase_priority, 'NORMAL') AS purchase_priority,
-                    status, posting_state, posting_error, requested_by_id, row_version, created_at, updated_at
-             FROM procurement_requisitions
-             ORDER BY id DESC"
+            "SELECT r.id, r.req_number, r.demand_source_type, r.demand_source_id, r.demand_source_ref,
+                    COALESCE(r.purchase_priority, 'NORMAL') AS purchase_priority,
+                    r.status, r.posting_state, r.posting_error, r.requested_by_id,
+                    COALESCE(ua.display_name, ua.username) AS requested_by_name,
+                    r.row_version, r.created_at, r.updated_at
+             FROM procurement_requisitions r
+             LEFT JOIN user_accounts ua ON ua.id = r.requested_by_id
+             ORDER BY r.id DESC"
                 .to_string(),
         ))
         .await?;
@@ -1421,12 +1453,14 @@ pub async fn list_purchase_orders(db: &DatabaseConnection) -> AppResult<Vec<Purc
             "SELECT po.id, po.po_number, po.requisition_id,
                     po.supplier_id, s.name AS supplier_name,
                     po.supplier_company_id, ec.name AS supplier_company_name,
-                    po.status, po.posting_state, po.posting_error, po.ordered_by_id, po.ordered_at,
+                    po.status, po.posting_state, po.posting_error, po.ordered_by_id,
+                    COALESCE(ua.display_name, ua.username) AS ordered_by_name, po.ordered_at,
                     po.approved_by_id, po.approved_at, po.expected_delivery_date,
                     po.row_version, po.created_at, po.updated_at
              FROM purchase_orders po
              LEFT JOIN inventory_suppliers s ON s.id = po.supplier_id
              LEFT JOIN external_companies ec ON ec.id = po.supplier_company_id
+             LEFT JOIN user_accounts ua ON ua.id = po.ordered_by_id
              ORDER BY po.id DESC"
                 .to_string(),
         ))
@@ -1769,10 +1803,14 @@ async fn get_procurement_requisition(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, req_number, demand_source_type, demand_source_id, demand_source_ref,
-                    COALESCE(purchase_priority, 'NORMAL') AS purchase_priority,
-                    status, posting_state, posting_error, requested_by_id, row_version, created_at, updated_at
-             FROM procurement_requisitions WHERE id = ?",
+            "SELECT r.id, r.req_number, r.demand_source_type, r.demand_source_id, r.demand_source_ref,
+                    COALESCE(r.purchase_priority, 'NORMAL') AS purchase_priority,
+                    r.status, r.posting_state, r.posting_error, r.requested_by_id,
+                    COALESCE(ua.display_name, ua.username) AS requested_by_name,
+                    r.row_version, r.created_at, r.updated_at
+             FROM procurement_requisitions r
+             LEFT JOIN user_accounts ua ON ua.id = r.requested_by_id
+             WHERE r.id = ?",
             [requisition_id.into()],
         ))
         .await?
@@ -1790,12 +1828,14 @@ async fn get_purchase_order(db: &DatabaseConnection, purchase_order_id: i64) -> 
             "SELECT po.id, po.po_number, po.requisition_id,
                     po.supplier_id, s.name AS supplier_name,
                     po.supplier_company_id, ec.name AS supplier_company_name,
-                    po.status, po.posting_state, po.posting_error, po.ordered_by_id, po.ordered_at,
+                    po.status, po.posting_state, po.posting_error, po.ordered_by_id,
+                    COALESCE(ua.display_name, ua.username) AS ordered_by_name, po.ordered_at,
                     po.approved_by_id, po.approved_at, po.expected_delivery_date,
                     po.row_version, po.created_at, po.updated_at
              FROM purchase_orders po
              LEFT JOIN inventory_suppliers s ON s.id = po.supplier_id
              LEFT JOIN external_companies ec ON ec.id = po.supplier_company_id
+             LEFT JOIN user_accounts ua ON ua.id = po.ordered_by_id
              WHERE po.id = ?",
             [purchase_order_id.into()],
         ))
@@ -1853,6 +1893,7 @@ fn map_requisition_row(row: sea_orm::QueryResult) -> AppResult<ProcurementRequis
         posting_state: row.try_get("", "posting_state")?,
         posting_error: row.try_get("", "posting_error")?,
         requested_by_id: row.try_get("", "requested_by_id")?,
+        requested_by_name: row.try_get("", "requested_by_name").ok().flatten(),
         row_version: row.try_get("", "row_version")?,
         created_at: row.try_get("", "created_at")?,
         updated_at: row.try_get("", "updated_at")?,
@@ -1890,6 +1931,7 @@ fn map_purchase_order_row(row: sea_orm::QueryResult) -> AppResult<PurchaseOrder>
         posting_state: row.try_get("", "posting_state")?,
         posting_error: row.try_get("", "posting_error")?,
         ordered_by_id: row.try_get("", "ordered_by_id")?,
+        ordered_by_name: row.try_get("", "ordered_by_name").ok().flatten(),
         ordered_at: row.try_get("", "ordered_at")?,
         approved_by_id: row.try_get("", "approved_by_id")?,
         approved_at: row.try_get("", "approved_at")?,
