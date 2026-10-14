@@ -273,8 +273,17 @@ pub async fn login(payload: LoginRequest, state: State<'_, AppState>) -> AppResu
         token_tenant_id: tenant_scope.token_tenant_id,
     };
 
+    // Idle lock and session length follow the active session policy (Settings → Security).
+    let policy = crate::settings::load_session_policy(&state.db).await;
     let mut session_guard = state.session.write().await;
-    session_guard.create_session(auth_user);
+    session_guard.create_session_with_timeouts(
+        auth_user,
+        session_manager::SessionTimeouts::from_policy(
+            i64::from(policy.idle_timeout_minutes),
+            i64::from(policy.absolute_session_minutes),
+            i64::from(policy.step_up_window_minutes),
+        ),
+    );
 
     if let Some(current) = &mut session_guard.current {
         current.password_expires_in_days = password_expires_in_days;

@@ -16,12 +16,55 @@ use uuid::Uuid;
 
 use crate::errors::AppResult;
 
-/// Session duration: 8 hours of activity before forced re-login.
+/// Default session duration (8 hours) when no session policy is loaded.
+/// Login uses the active policy (`absolute_session_minutes`, Settings → Security).
 pub const SESSION_DURATION_HOURS: i64 = 8;
-/// Idle timeout: session is locked (not expired) after 30 minutes of no activity.
+/// Default idle timeout (30 minutes) when no session policy is loaded.
+/// Login uses the active policy (`idle_timeout_minutes`, Settings → Security).
 pub const IDLE_LOCK_MINUTES: i64 = 30;
-/// Step-up verification window: 120 seconds after re-entering password.
-pub const STEP_UP_DURATION_SECS: u64 = 120;
+/// Default step-up window (15 minutes, the policy default) when no session policy is loaded.
+/// Login uses the active policy (`step_up_window_minutes`), clamped to 1-30 minutes.
+pub const STEP_UP_WINDOW_MINUTES: i64 = 15;
+pub const STEP_UP_WINDOW_MIN_MINUTES: i64 = 1;
+pub const STEP_UP_WINDOW_MAX_MINUTES: i64 = 30;
+
+/// Session timeouts resolved from the session policy (Settings -> Security).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionTimeouts {
+    /// Minutes without activity before the session locks.
+    pub idle_minutes: i64,
+    /// Minutes after login before the session expires.
+    pub absolute_minutes: i64,
+    /// Minutes a password re-confirmation (step-up) stays valid.
+    pub step_up_minutes: i64,
+}
+
+impl Default for SessionTimeouts {
+    fn default() -> Self {
+        Self {
+            idle_minutes: IDLE_LOCK_MINUTES,
+            absolute_minutes: SESSION_DURATION_HOURS * 60,
+            step_up_minutes: STEP_UP_WINDOW_MINUTES,
+        }
+    }
+}
+
+impl SessionTimeouts {
+    /// Policy values; non-positive idle/absolute values fall back to the defaults and the step-up
+    /// window is clamped to 1-30 minutes.
+    pub fn from_policy(idle_minutes: i64, absolute_minutes: i64, step_up_minutes: i64) -> Self {
+        let d = Self::default();
+        Self {
+            idle_minutes: if idle_minutes > 0 { idle_minutes } else { d.idle_minutes },
+            absolute_minutes: if absolute_minutes > 0 {
+                absolute_minutes
+            } else {
+                d.absolute_minutes
+            },
+            step_up_minutes: step_up_minutes.clamp(STEP_UP_WINDOW_MIN_MINUTES, STEP_UP_WINDOW_MAX_MINUTES),
+        }
+    }
+}
 
 /// The identity of an authenticated user, embedded in the active session.
 #[derive(Debug, Clone, Serialize)]
@@ -45,6 +88,10 @@ pub struct LocalSession {
     pub expires_at: DateTime<Utc>,
     pub last_activity_at: DateTime<Utc>,
     pub is_locked: bool,
+    /// Minutes without activity before the session locks (from the session policy at login).
+    pub idle_timeout_minutes: i64,
+    /// Minutes a step-up verification stays valid (from the session policy at login).
+    pub step_up_window_minutes: i64,
     pub password_expires_in_days: Option<i64>,
     pub pin_configured: bool,
     pub pin_failed_attempts: u8,
@@ -61,16 +108,17 @@ impl LocalSession {
         Utc::now() > self.expires_at
     }
 
-    /// True if the session is idle-locked (no activity for `IDLE_LOCK_MINUTES`).
+    /// True if the session is idle-locked (no activity for `idle_timeout_minutes`).
     pub fn is_idle_locked(&self) -> bool {
-        let idle_deadline = self.last_activity_at + TimeDelta::minutes(IDLE_LOCK_MINUTES);
+        let idle_deadline = self.last_activity_at + TimeDelta::minutes(self.idle_timeout_minutes);
         self.is_locked || Utc::now() > idle_deadline
     }
 
-    /// True if a step-up verification was completed within `STEP_UP_DURATION_SECS`.
+    /// True if a step-up verification was completed within `step_up_window_minutes`.
     pub fn is_step_up_valid(&self) -> bool {
+        let window_secs = u64::try_from(self.step_up_window_minutes.max(0)).unwrap_or(0) * 60;
         self.step_up_verified_at
-            .is_some_and(|t| t.elapsed().as_secs() < STEP_UP_DURATION_SECS)
+            .is_some_and(|t| t.elapsed().as_secs() < window_secs)
     }
 }
 
@@ -162,16 +210,28 @@ impl SessionManager {
         }
     }
 
-    /// Create a new session after a successful authentication check.
+    /// Create a new session with the default timeouts (tests and callers without a policy).
     pub fn create_session(&mut self, user: AuthenticatedUser) -> &LocalSession {
+        self.create_session_with_timeouts(user, SessionTimeouts::default())
+    }
+
+    /// Create a new session after a successful authentication check, with the timeouts of the
+    /// active session policy.
+    pub fn create_session_with_timeouts(
+        &mut self,
+        user: AuthenticatedUser,
+        timeouts: SessionTimeouts,
+    ) -> &LocalSession {
         let now = Utc::now();
         let session = LocalSession {
             session_db_id: Uuid::new_v4().to_string(),
             user,
             created_at: now,
-            expires_at: now + TimeDelta::hours(SESSION_DURATION_HOURS),
+            expires_at: now + TimeDelta::minutes(timeouts.absolute_minutes),
             last_activity_at: now,
             is_locked: false,
+            idle_timeout_minutes: timeouts.idle_minutes,
+            step_up_window_minutes: timeouts.step_up_minutes,
             password_expires_in_days: None,
             pin_configured: false,
             pin_failed_attempts: 0,
@@ -508,6 +568,47 @@ mod tests {
             mgr.require_active_user().unwrap_err(),
             RequireSessionFailure::IdleLocked
         );
+    }
+
+    #[test]
+    fn idle_lock_follows_the_session_policy_timeout() {
+        let mut mgr = SessionManager::new();
+        mgr.create_session_with_timeouts(make_user(), SessionTimeouts::from_policy(10, 120, 15));
+        let session = mgr.current.as_mut().unwrap();
+        assert_eq!(session.idle_timeout_minutes, 10);
+        session.last_activity_at = Utc::now() - TimeDelta::minutes(9);
+        assert!(!session.is_idle_locked(), "9 minutes idle < 10-minute policy");
+        session.last_activity_at = Utc::now() - TimeDelta::minutes(11);
+        assert!(session.is_idle_locked(), "11 minutes idle > 10-minute policy");
+        let lifetime = session.expires_at - session.created_at;
+        assert_eq!(lifetime.num_minutes(), 120);
+    }
+
+    #[test]
+    fn invalid_policy_timeouts_fall_back_to_defaults() {
+        let mut mgr = SessionManager::new();
+        mgr.create_session_with_timeouts(make_user(), SessionTimeouts::from_policy(0, -5, 15));
+        let session = mgr.current.as_ref().unwrap();
+        assert_eq!(session.idle_timeout_minutes, IDLE_LOCK_MINUTES);
+        assert_eq!(
+            (session.expires_at - session.created_at).num_hours(),
+            SESSION_DURATION_HOURS
+        );
+    }
+
+    #[test]
+    fn step_up_window_follows_policy_and_is_clamped() {
+        assert_eq!(SessionTimeouts::from_policy(30, 480, 15).step_up_minutes, 15);
+        assert_eq!(SessionTimeouts::from_policy(30, 480, 0).step_up_minutes, 1);
+        assert_eq!(SessionTimeouts::from_policy(30, 480, 120).step_up_minutes, 30);
+        let mut mgr = SessionManager::new();
+        mgr.create_session_with_timeouts(make_user(), SessionTimeouts::from_policy(30, 480, 5));
+        let session = mgr.current.as_mut().unwrap();
+        assert!(!session.is_step_up_valid(), "no step-up yet");
+        session.step_up_verified_at = Instant::now().checked_sub(std::time::Duration::from_secs(4 * 60));
+        assert!(session.is_step_up_valid(), "4 minutes < 5-minute window");
+        session.step_up_verified_at = Instant::now().checked_sub(std::time::Duration::from_secs(6 * 60));
+        assert!(!session.is_step_up_valid(), "6 minutes > 5-minute window");
     }
 
     #[test]
