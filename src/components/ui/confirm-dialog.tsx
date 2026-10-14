@@ -6,7 +6,7 @@
  * the buttons are disabled; the dialog closes only when `onConfirm` resolves. A rejected
  * `onConfirm` keeps the dialog open (the global toast reports the failure).
  */
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
@@ -28,6 +28,10 @@ export interface ConfirmDialogProps {
   /** Verb naming the action, e.g. "Deactivate article". */
   confirmLabel: string;
   destructive?: boolean;
+  /** Disables the confirm button (e.g. while a required reason field is empty). */
+  confirmDisabled?: boolean;
+  /** Extra content between the description and the buttons (reason field, impact list…). */
+  children?: ReactNode;
   onConfirm: () => Promise<void> | void;
 }
 
@@ -38,6 +42,8 @@ export function ConfirmDialog({
   description,
   confirmLabel,
   destructive = false,
+  confirmDisabled = false,
+  children,
   onConfirm,
 }: ConfirmDialogProps) {
   const { t } = useTranslation("common");
@@ -64,6 +70,7 @@ export function ConfirmDialog({
             {description}
           </DialogDescription>
         </DialogHeader>
+        {children}
         <DialogFooter className="gap-2">
           <Button
             variant="outline"
@@ -77,7 +84,7 @@ export function ConfirmDialog({
             variant={destructive ? "destructive" : "default"}
             className="h-11"
             onClick={() => void run()}
-            disabled={pending}
+            disabled={pending || confirmDisabled}
           >
             {confirmLabel}
           </Button>
