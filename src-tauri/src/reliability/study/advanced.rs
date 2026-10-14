@@ -86,13 +86,14 @@ fn solve(mut a: Vec<Vec<f64>>, mut b: Vec<f64>) -> Option<Vec<f64>> {
         }
         a.swap(col, pivot);
         b.swap(col, pivot);
+        let pivot_row = a[col].clone();
         for row in col + 1..n {
-            let f = a[row][col] / a[col][col];
+            let f = a[row][col] / pivot_row[col];
             if f == 0.0 {
                 continue;
             }
-            for k in col..n {
-                a[row][k] -= f * a[col][k];
+            for (cell, pivot_cell) in a[row].iter_mut().zip(&pivot_row).skip(col) {
+                *cell -= f * pivot_cell;
             }
             b[row] -= f * b[col];
         }
@@ -430,7 +431,7 @@ pub fn simulate(input: &SimulationInput, data: &SourceData, max_trials: i64) -> 
             }),
         }
     }
-    let seed = input.seed.unwrap_or(0x5EED_0F_5EED);
+    let seed = input.seed.unwrap_or(0x5E_ED0F_5EED);
     let empty = Spread {
         mean: 0.0,
         p05: 0.0,

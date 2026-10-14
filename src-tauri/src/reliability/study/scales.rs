@@ -150,7 +150,7 @@ impl RatingScales {
         Ok(())
     }
 
-    fn level<'a>(levels: &'a [RatingLevel], score: i64) -> Option<&'a RatingLevel> {
+    fn level(levels: &[RatingLevel], score: i64) -> Option<&RatingLevel> {
         levels.iter().find(|l| l.score == score)
     }
 

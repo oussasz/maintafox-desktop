@@ -104,7 +104,9 @@ fn fit(observations: &[WeibullObservation]) -> Result<Fitted, &'static str> {
         return Err(ISSUE_NOT_ENOUGH_FAILURES);
     }
     let base = fit_weibull_censored_with_ci(observations);
-    if !base.adequate_sample || !(base.beta > 0.0 && base.eta > 0.0) {
+    // NaN-safe: a NaN shape or scale is refused like a non-positive one.
+    let positive = |v: f64| !v.is_nan() && v > 0.0;
+    if !base.adequate_sample || !positive(base.beta) || !positive(base.eta) {
         return Err(ISSUE_NO_FINITE_MLE);
     }
     let (beta, eta) = (base.beta, base.eta);

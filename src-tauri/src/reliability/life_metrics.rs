@@ -39,7 +39,8 @@ pub fn hazard(t: f64, beta: f64, eta: f64) -> f64 {
 
 /// Age by which `fraction_failed` of the population has failed (B10 → 0.10).
 pub fn b_life(fraction_failed: f64, beta: f64, eta: f64) -> Option<f64> {
-    if !(fraction_failed > 0.0 && fraction_failed < 1.0) || !valid_params(beta, eta) {
+    // NaN-safe: a NaN fraction is refused like any value outside (0, 1).
+    if fraction_failed.is_nan() || fraction_failed <= 0.0 || fraction_failed >= 1.0 || !valid_params(beta, eta) {
         return None;
     }
     Some(eta * (-(1.0 - fraction_failed).ln()).powf(1.0 / beta))
