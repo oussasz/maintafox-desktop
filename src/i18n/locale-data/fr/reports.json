@@ -18,7 +18,7 @@
       "customizeTitle": "Disposition du tableau de bord",
       "saveLayout": "Enregistrer",
       "cancel": "Annuler",
-      "reliabilityHint": "Moyennes flotte des snapshots KPI de fiabilité sur les {{days}} derniers jours (périmètre org. si un site est sélectionné). Écart vs horizon précédent.",
+      "reliabilityHint": "Valeurs regroupées du parc à partir des instantanés de fiabilité des {{days}} derniers jours (limitées à l’organisation choisie). Les écarts comparent aux {{days}} jours précédents.",
       "vsPrior": "vs préc.",
       "pmEmpty": "Aucune PM ouverte dans la file d’échéance pour ce périmètre.",
       "sections": {
@@ -61,6 +61,40 @@
         "empty": "Aucun snapshot sur l’horizon",
         "asset": "Équipement",
         "events": "Événements"
+      },
+      "loading": "Chargement des tableaux de bord…",
+      "loadError": "Les indicateurs du tableau de bord n’ont pas pu être chargés",
+      "trend": {
+        "stable": "Stable vs période précédente",
+        "vsPrevious": "{{change}} vs période précédente"
+      },
+      "context": {
+        "now": "En ce moment",
+        "today": "Aujourd’hui",
+        "next7": "7 prochains jours",
+        "horizon": "{{days}} derniers jours",
+        "inService": "Enregistrés, non supprimés",
+        "overdue": "DI ouvertes > 7 jours + PM en retard"
+      },
+      "diStatus": {
+        "openList": "Ouvrir les demandes",
+        "empty": "Aucune demande d’intervention dans ce périmètre.",
+        "aria": "Demandes d’intervention par statut, {{total}} au total",
+        "other": "Autre statut",
+        "submitted": "Nouvelle",
+        "pending_review": "En attente de tri",
+        "in_review": "En revue",
+        "screened": "Triée",
+        "returned_for_clarification": "Informations requises",
+        "awaiting_approval": "En attente d’approbation",
+        "approved": "Approuvée",
+        "approved_for_planning": "Approuvée pour planification",
+        "deferred": "Reportée",
+        "rejected": "Rejetée",
+        "converted_to_work_order": "Convertie en OT",
+        "closed_as_non_executable": "Clôturée, non exécutable",
+        "closed": "Clôturée",
+        "archived": "Archivée"
       }
     }
   },
@@ -74,7 +108,25 @@
     "code": "Code",
     "name": "Titre",
     "defaultFormat": "Format par défaut",
-    "actions": "Exporter"
+    "actions": "Exporter",
+    "subtitle": "Générez un rapport maintenant en PDF ou Excel. Vous choisissez où enregistrer le fichier.",
+    "loading": "Chargement des modèles de rapport…",
+    "loadError": "Les modèles de rapport n’ont pas pu être chargés",
+    "empty": "Aucun modèle de rapport disponible.",
+    "emptyHint": "Les modèles de rapport sont installés avec l’application ; contactez votre administrateur.",
+    "noExport": "Vous pouvez consulter les modèles mais pas générer de rapport (permission requise : exporter les rapports).",
+    "exportAria": "Générer « {{title}} » en {{format}}",
+    "exporting": "Génération…",
+    "catalog": {
+      "dashboard_summary": {
+        "title": "Synthèse du tableau de bord",
+        "description": "Demandes et OT ouverts, équipements et fiabilité du parc (qualité des données, MTBF) sur 365 jours."
+      },
+      "open_work_orders": {
+        "title": "Ordres de travail ouverts par statut",
+        "description": "Nombre d’ordres de travail ouverts dans chaque statut."
+      }
+    }
   },
   "schedule": {
     "title": "Planifications",
@@ -86,7 +138,43 @@
     "save": "Ajouter",
     "delete": "Supprimer",
     "next": "Prochaine exécution",
-    "noAccess": "Permission insuffisante pour gérer les planifications de rapports."
+    "noAccess": "Permission insuffisante pour gérer les planifications de rapports.",
+    "subtitle": "Rapports générés automatiquement et conservés dans l’historique, d’où vous pouvez les télécharger.",
+    "newTitle": "Nouvelle planification",
+    "frequency": "Fréquence",
+    "frequencies": {
+      "daily": "Chaque jour",
+      "weekly": "Chaque semaine",
+      "monthly": "Chaque mois"
+    },
+    "weekday": "Jour",
+    "monthDay": "Jour du mois",
+    "time": "Heure",
+    "saving": "Ajout…",
+    "when": "Quand",
+    "last": "Dernière exécution",
+    "paused": "En pause",
+    "never": "Pas encore",
+    "custom": "Planification personnalisée",
+    "localTimeHint": "Les heures sont celles de cet ordinateur.",
+    "toggleAria": "Planification « {{name}} » active",
+    "loading": "Chargement des planifications…",
+    "loadError": "Les planifications n’ont pas pu être chargées",
+    "empty": "Aucune planification pour le moment.",
+    "emptyHint": "Ajoutez-en une ci-dessus pour recevoir un rapport chaque jour, semaine ou mois.",
+    "deleteTitle": "Supprimer cette planification ?",
+    "deleteDescription": "« {{name}} » ne sera plus généré automatiquement. Les rapports déjà générés restent dans l’historique.",
+    "deleteConfirm": "Supprimer la planification",
+    "describe": {
+      "daily": "Chaque jour à {{time}}.",
+      "weekly": "Chaque {{day}} à {{time}}.",
+      "monthly": "Le {{day}} de chaque mois à {{time}}."
+    },
+    "errors": {
+      "invalidTime": "Saisissez une heure valide.",
+      "invalidDay": "Choisissez un jour valide.",
+      "monthBoundary": "Cette heure tombe la veille pour l’horloge du serveur. Choisissez une heure plus tardive ou un autre jour."
+    }
   },
   "runs": {
     "title": "Historique & audit",
@@ -101,17 +189,37 @@
       "pending": "En attente",
       "running": "En cours",
       "success": "Réussi",
-      "failed": "Échec"
-    }
+      "failed": "Échec",
+      "unknown": "Inconnu"
+    },
+    "subtitle": "Vos {{count}} rapports les plus récents, générés à la demande ou par une planification.",
+    "report": "Rapport",
+    "origin": "Origine",
+    "originScheduled": "Planification",
+    "originManual": "Généré par vous",
+    "downloading": "Enregistrement…",
+    "saved": "Conservé dans l’archive locale",
+    "technicalDetails": "Détails techniques",
+    "unknownTemplate": "Rapport plus disponible",
+    "loading": "Chargement de l’historique…",
+    "loadError": "L’historique des rapports n’a pas pu être chargé",
+    "empty": "Aucun rapport généré pour le moment.",
+    "emptyHint": "Les rapports que vous générez ou planifiez apparaissent ici."
   },
   "format": {
     "pdf": "PDF",
-    "xlsx": "XLSX"
+    "xlsx": "Excel (XLSX)"
   },
   "common": {
     "empty": "—"
   },
   "table": {
     "id": "ID"
+  },
+  "save": {
+    "dialogTitle": "Enregistrer le rapport",
+    "saved": "Enregistré : {{file}}",
+    "openFolder": "Ouvrir le dossier",
+    "dismiss": "Masquer ce message"
   }
 }

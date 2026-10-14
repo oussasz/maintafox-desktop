@@ -38,5 +38,64 @@
       "unknown": "L'e-mail n'est pas disponible : {{message}}"
     },
     "smsUnavailable": "Les SMS ne sont pas disponibles dans cette version."
+  },
+  "inbox": {
+    "tabsAria": "Filtrer les notifications",
+    "tabs": {
+      "all": "Toutes",
+      "unread": "Non lues",
+      "escalated": "Escaladées",
+      "snoozed": "Reportées"
+    },
+    "empty": {
+      "all": "Aucune notification pour le moment.",
+      "unread": "Aucune notification non lue.",
+      "escalated": "Aucune notification escaladée.",
+      "snoozed": "Aucune notification reportée."
+    },
+    "loading": "Chargement des notifications…",
+    "loadError": "Les notifications n’ont pas pu être chargées",
+    "retryMore": "Charger la suite",
+    "openAria": "Ouvrir la fiche de « {{title}} »",
+    "actions": {
+      "markRead": "Marquer comme lue",
+      "acknowledge": "Accuser réception",
+      "snooze": "Reporter de {{hours}} h"
+    }
+  },
+  "deliveryState": {
+    "pending": "En attente",
+    "delivered": "Nouvelle",
+    "read": "Lue",
+    "acknowledged": "Prise en compte",
+    "escalated": "Escaladée",
+    "snoozed": "Reportée",
+    "expired": "Expirée",
+    "closed": "Close",
+    "other": "Autre"
+  },
+  "category": {
+    "other": "Autre",
+    "budget_control_alert": "Alerte budget",
+    "cert_expiry": "Expiration de certification",
+    "daily_digest": "Récapitulatif du jour",
+    "di_approved": "Demande approuvée",
+    "di_closed": "Demande clôturée",
+    "di_converted": "Demande convertie en OT",
+    "di_deferred": "Demande reportée",
+    "di_pending_review": "Demande à examiner",
+    "di_returned": "Demande renvoyée pour précision",
+    "di_sla_breach": "Délai (SLA) de demande dépassé",
+    "integration_failure": "Échec d’intégration",
+    "personnel_critical_block": "Manque critique de personnel",
+    "pm_deferred": "PM reportée",
+    "pm_due": "PM bientôt due",
+    "pm_follow_up_created": "Suivi de PM créé",
+    "pm_missed": "PM manquée",
+    "ptw_critical": "Événement critique de permis de travail",
+    "stock_critical": "Stock critique",
+    "support_response": "Réponse du support disponible",
+    "wo_assigned": "OT assigné",
+    "wo_overdue": "OT en retard"
   }
 }

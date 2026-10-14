@@ -1,10 +1,213 @@
 {
   "page": {
     "title": "Archive",
-    "subtitle": "Browse archived records, verify integrity, and manage retention policies."
+    "subtitle": "Find archived records, check their integrity and manage how long they are kept."
   },
   "tabs": {
-    "explorer": "Explorer",
-    "retention": "Retention policies"
+    "explorer": "Archived records",
+    "retention": "Retention rules"
+  },
+  "module": {
+    "other": "Other module",
+    "di": "Intervention requests",
+    "wo": "Work orders",
+    "work_orders": "Work orders",
+    "rbac": "Users & roles",
+    "notifications": "Notifications",
+    "config": "Configuration",
+    "report": "Reports",
+    "global": "All modules"
+  },
+  "class": {
+    "other": "Other archive type",
+    "operational_history": "Operational history",
+    "soft_delete": "Deleted record",
+    "audit_retention": "Audit trail",
+    "config_snapshot": "Configuration snapshot",
+    "report_copy": "Report copy"
+  },
+  "restorePolicy": {
+    "other": "Not specified",
+    "not_allowed": "Cannot be restored",
+    "admin_only": "Administrator only",
+    "until_date": "Until a set date"
+  },
+  "purgeMode": {
+    "other": "Not specified",
+    "manual_approval": "Manual, after approval",
+    "scheduled": "Automatic when due",
+    "never": "Never deleted"
+  },
+  "action": {
+    "other": "Other action",
+    "archive": "Archived",
+    "restore": "Restore requested",
+    "export": "Exported",
+    "purge": "Permanently deleted",
+    "legal_hold_on": "Legal hold placed",
+    "legal_hold_off": "Legal hold lifted"
+  },
+  "result": {
+    "other": "Other",
+    "success": "Done",
+    "failed": "Refused",
+    "blocked": "Blocked"
+  },
+  "status": {
+    "legalHold": "Legal hold",
+    "normal": "Normal"
+  },
+  "record": {
+    "unnamed": "{{module}} record"
+  },
+  "stats": {
+    "total": "Archived records",
+    "legalHold": "Under legal hold",
+    "withoutHold": "Without legal hold",
+    "withoutHoldHint": "Can be deleted once their retention period ends"
+  },
+  "explorer": {
+    "filtersTitle": "Browse and filter",
+    "tree": "By module, type and year",
+    "treeEmpty": "Nothing archived yet.",
+    "unknownYear": "Date unknown",
+    "searchPlaceholder": "Search archived records…",
+    "legalHoldOnly": "Legal hold only",
+    "classFilters": "Archive types",
+    "dateFrom": "Archived from",
+    "dateTo": "Archived until",
+    "apply": "Apply",
+    "reset": "Reset",
+    "recordsTitle": "Records",
+    "loading": "Loading archived records…",
+    "loadError": "The archived records could not be loaded",
+    "empty": "No archived record matches.",
+    "emptyHint": "Change or reset the filters.",
+    "limitReached": "Only the {{count}} most recent matching records are shown. Narrow the filters to see older ones.",
+    "select": "Select",
+    "selectRecord": "Select {{name}}",
+    "showing": "{{from}}–{{to}} of {{total}}",
+    "previous": "Previous",
+    "next": "Next",
+    "col": {
+      "record": "Record",
+      "class": "Type",
+      "status": "Status",
+      "archived": "Archived on"
+    }
+  },
+  "bulk": {
+    "selected_one": "{{count}} record selected",
+    "selected_other": "{{count}} records selected",
+    "export": "Export selection",
+    "legalHold": "Place legal hold",
+    "purge": "Delete permanently",
+    "clear": "Clear selection",
+    "legalHoldTitle": "Place a legal hold?",
+    "legalHoldDescription_one": "The selected record will be protected from deletion until the hold is lifted.",
+    "legalHoldDescription_other": "The {{count}} selected records will be protected from deletion until the hold is lifted.",
+    "legalHoldConfirm_one": "Place legal hold",
+    "legalHoldConfirm_other": "Place legal hold on {{count}} records",
+    "legalHoldDone_one": "Legal hold placed on {{count}} record.",
+    "legalHoldDone_other": "Legal hold placed on {{count}} records.",
+    "purgeTitle": "Delete permanently?",
+    "purgeDescription_one": "The selected record will be erased from the archive. This cannot be undone. Records under legal hold or still in their retention period are kept.",
+    "purgeDescription_other": "The {{count}} selected records will be erased from the archive. This cannot be undone. Records under legal hold or still in their retention period are kept.",
+    "purgeConfirm_one": "Delete permanently",
+    "purgeConfirm_other": "Delete {{count}} records permanently",
+    "purgeDone": "{{purged}} deleted, {{blocked}} kept.",
+    "purgeBlocked": "Kept records are under legal hold or still in their retention period.",
+    "purgeBlockedStrict": "Nothing was deleted: strict mode refuses the whole selection when one record cannot be deleted."
+  },
+  "export": {
+    "dialogTitle": "Save the archive export",
+    "bulkReason": "Export of a selection from the archive",
+    "singleReason": "Export of one archived record",
+    "saved_one": "Archived record exported.",
+    "saved_other": "{{count}} archived records exported."
+  },
+  "dialog": {
+    "reason": "Reason (recorded in the archive history)",
+    "reasonPlaceholder": "Why are you doing this?",
+    "cancel": "Cancel"
+  },
+  "detail": {
+    "back": "Back to the list",
+    "loading": "Loading the archived record…",
+    "loadError": "The archived record could not be loaded",
+    "checksumOk": "Integrity verified",
+    "checksumBad": "Integrity check failed",
+    "module": "Module:",
+    "archivedAt": "Archived on:",
+    "restorePolicy": "Restore:",
+    "retention": "Retention:",
+    "retentionValue": "{{years}} years, deletion: {{mode}}",
+    "noRetention": "No retention rule",
+    "export": "Export",
+    "restore": "Request restore",
+    "legalHoldOn": "Place legal hold",
+    "legalHoldOff": "Lift legal hold",
+    "purge": "Delete permanently",
+    "restoreBlocked": {
+      "policy": "This record cannot be restored.",
+      "legalHold": "Lift the legal hold before requesting a restore.",
+      "retention": "The retention rule for this type does not allow restore."
+    },
+    "restoreTitle": "Request a restore?",
+    "restoreDescription": "The request for “{{name}}” is recorded in the archive history. Putting the record back into its module is not available yet in this version.",
+    "restoreConfirm": "Record the restore request",
+    "restoreRecorded": "Restore request recorded in the archive history.",
+    "legalHoldOnTitle": "Place a legal hold?",
+    "legalHoldOnDescription": "“{{name}}” will be protected from deletion until the hold is lifted.",
+    "legalHoldOffTitle": "Lift the legal hold?",
+    "legalHoldOffDescription": "“{{name}}” can then be deleted once its retention period ends.",
+    "purgeTitle": "Delete permanently?",
+    "purgeDescription": "“{{name}}” will be erased from the archive. This cannot be undone.",
+    "purgeConfirm": "Delete permanently",
+    "purgeNotEligible": "This record cannot be deleted yet (see the checks above).",
+    "purged": "“{{name}}” was deleted from the archive.",
+    "purgeRefused": "The record was kept: it is not eligible for deletion.",
+    "eligibility": "Deletion checks",
+    "checkOk": "OK",
+    "checkBlocked": "Blocked",
+    "tabs": {
+      "record": "Archived data",
+      "history": "History"
+    },
+    "recordHint": "The archived content is kept exactly as it was, for audit. Export it to read it in another tool.",
+    "technicalDetails": "Technical details (archived content)",
+    "historyAria": "History of the archived record",
+    "historyEmpty": "No event recorded."
+  },
+  "purgeCheck": {
+    "holdOn": "Under legal hold",
+    "holdOff": "No legal hold",
+    "noPolicy": "No retention rule applies to this record",
+    "policyAllows": "The retention rule allows deletion",
+    "policyForbids": "The retention rule does not allow deletion",
+    "invalidDate": "Archive date unknown",
+    "periodElapsed": "Retention period of {{years}} years has ended",
+    "periodRunning": "Retention period runs until {{date}}"
+  },
+  "retention": {
+    "title": "Retention rules",
+    "subtitle": "How long each type of archived record is kept, and whether it may be restored or deleted.",
+    "loading": "Loading the retention rules…",
+    "loadError": "The retention rules could not be loaded",
+    "empty": "No retention rule defined.",
+    "readOnly": "Read only: changing these rules requires the system settings permission.",
+    "noShortening": "Cannot be shortened",
+    "purgeLocked": "Not possible when deletion is set to never",
+    "yearsAria": "Retention in years for {{name}}",
+    "allowRestoreAria": "Allow restore for {{name}}",
+    "allowPurgeAria": "Allow deletion for {{name}}",
+    "col": {
+      "module": "Module",
+      "class": "Type",
+      "years": "Kept (years)",
+      "purgeMode": "Deletion",
+      "allowRestore": "Restore allowed",
+      "allowPurge": "Deletion allowed"
+    }
   }
 }

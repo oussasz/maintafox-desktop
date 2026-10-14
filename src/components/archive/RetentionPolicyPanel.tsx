@@ -1,9 +1,14 @@
-import { History, Lock } from "lucide-react";
+import { Lock } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
-import { Timeline } from "@/components/timeline";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import {
+  archiveClassLabel,
+  archiveModuleLabel,
+  purgeModeLabel,
+} from "@/components/archive/archive-labels";
+import { ErrorState, LoadingState } from "@/components/ui/data-state";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -22,57 +27,41 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { usePermissions } from "@/hooks/use-permissions";
-import { type ActivityEventSummary, listActivityEvents } from "@/services/activity-service";
+import { useStepUp } from "@/hooks/use-step-up";
 import {
   type RetentionPolicy,
+  type UpdateRetentionInput,
   listRetentionPolicies,
   updateRetentionPolicy,
 } from "@/services/archive-service";
-import { toErrorMessage } from "@/utils/errors";
 import { P } from "@shared/rbac/permissions.generated";
 
+/** Purge modes accepted by `update_retention_policy`. */
+const PURGE_MODES = ["manual_approval", "scheduled", "never"] as const;
+
 export function RetentionPolicyPanel() {
+  const { t } = useTranslation("archive");
   const { can, isLoading: permissionsLoading } = usePermissions();
   const canEdit = can(P.ADM_SETTINGS);
+  const { withStepUp, StepUpDialogElement } = useStepUp();
 
   const [rows, setRows] = useState<RetentionPolicy[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [savingId, setSavingId] = useState<number | null>(null);
-  const [selectedPolicyId, setSelectedPolicyId] = useState<number | null>(null);
-  const [retentionDrafts, setRetentionDrafts] = useState<Record<number, string>>({});
-  const [persistedHistory, setPersistedHistory] = useState<ActivityEventSummary[]>([]);
-  const [historyLoading, setHistoryLoading] = useState(false);
+  const [yearDrafts, setYearDrafts] = useState<Record<number, string>>({});
 
   const load = useCallback(async () => {
     setLoading(true);
-    setError(null);
+    setLoadError(null);
     try {
       const data = await listRetentionPolicies();
       setRows(data);
+      setYearDrafts(Object.fromEntries(data.map((r) => [r.id, String(r.retention_years)])));
     } catch (err) {
-      setError(toErrorMessage(err));
+      setLoadError(err);
     } finally {
       setLoading(false);
-    }
-  }, []);
-
-  const loadHistory = useCallback(async (policyId: number) => {
-    setHistoryLoading(true);
-    try {
-      const events = await listActivityEvents({
-        source_module: "archive",
-        source_record_type: "retention_policy",
-        source_record_id: String(policyId),
-        limit: 50,
-        offset: 0,
-      });
-      setPersistedHistory(events);
-    } catch {
-      // Non-critical: silently ignore if activity_events not yet available
-      setPersistedHistory([]);
-    } finally {
-      setHistoryLoading(false);
     }
   }, []);
 
@@ -80,179 +69,133 @@ export function RetentionPolicyPanel() {
     void load();
   }, [load]);
 
-  useEffect(() => {
-    if (selectedPolicyId === null && rows.length > 0) {
-      const first = rows[0];
-      if (first) setSelectedPolicyId(first.id);
-    }
-  }, [rows, selectedPolicyId]);
-
-  useEffect(() => {
-    setRetentionDrafts((prev) => {
-      const next: Record<number, string> = {};
-      for (const row of rows) {
-        next[row.id] =
-          savingId === row.id
-            ? (prev[row.id] ?? String(row.retention_years))
-            : String(row.retention_years);
-      }
-      return next;
-    });
-  }, [rows, savingId]);
-
-  useEffect(() => {
-    if (selectedPolicyId !== null) {
-      void loadHistory(selectedPolicyId);
-    }
-  }, [selectedPolicyId, loadHistory]);
-
   const patchPolicy = useCallback(
-    async (policy: RetentionPolicy, changes: Partial<RetentionPolicy>) => {
+    async (policy: RetentionPolicy, changes: Omit<UpdateRetentionInput, "policy_id">) => {
       if (!canEdit) return;
-      const next = { ...policy, ...changes };
-      if (next.purge_mode === "never" && next.allow_purge) {
-        setError("Cannot enable allow_purge when purge_mode is 'never'.");
-        return;
-      }
-
-      setError(null);
-      setRows((prev) => prev.map((item) => (item.id === policy.id ? next : item)));
       setSavingId(policy.id);
-
+      setRows((prev) => prev.map((r) => (r.id === policy.id ? { ...r, ...changes } : r)));
       try {
-        const payload: {
-          policy_id: number;
-          retention_years?: number;
-          purge_mode?: string;
-          allow_restore?: boolean;
-          allow_purge?: boolean;
-          requires_legal_hold_check?: boolean;
-        } = { policy_id: policy.id };
-
-        if (changes.retention_years !== undefined)
-          payload.retention_years = changes.retention_years;
-        if (changes.purge_mode !== undefined) payload.purge_mode = changes.purge_mode;
-        if (changes.allow_restore !== undefined) payload.allow_restore = changes.allow_restore;
-        if (changes.allow_purge !== undefined) payload.allow_purge = changes.allow_purge;
-        if (changes.requires_legal_hold_check !== undefined) {
-          payload.requires_legal_hold_check = changes.requires_legal_hold_check;
-        }
-
-        await updateRetentionPolicy(payload);
-
-        // Reload persisted history from activity_events after successful update
-        if (policy.id === selectedPolicyId) {
-          void loadHistory(policy.id);
-        }
-      } catch (err) {
-        setError(toErrorMessage(err));
-        await load();
+        await withStepUp(() => updateRetentionPolicy({ policy_id: policy.id, ...changes }));
+      } catch {
+        // The global toast reports a refusal (e.g. shorter retention for operational history);
+        // reload to show the stored values again.
       } finally {
         setSavingId(null);
+        await load();
       }
     },
-    [canEdit, load, loadHistory, selectedPolicyId],
+    [canEdit, load, withStepUp],
   );
 
-  const commitRetentionYears = useCallback(
-    (policy: RetentionPolicy) => {
-      const draft = retentionDrafts[policy.id] ?? String(policy.retention_years);
-      const nextValue = Number.parseInt(draft, 10);
-      if (Number.isNaN(nextValue)) {
-        setRetentionDrafts((prev) => ({ ...prev, [policy.id]: String(policy.retention_years) }));
-        return;
-      }
-      if (nextValue === policy.retention_years) return;
-      void patchPolicy(policy, { retention_years: nextValue });
-    },
-    [patchPolicy, retentionDrafts],
-  );
+  const commitYears = (policy: RetentionPolicy) => {
+    const draft = yearDrafts[policy.id] ?? String(policy.retention_years);
+    const next = Number.parseInt(draft, 10);
+    if (!Number.isInteger(next) || next < 0) {
+      setYearDrafts((prev) => ({ ...prev, [policy.id]: String(policy.retention_years) }));
+      return;
+    }
+    if (next !== policy.retention_years) void patchPolicy(policy, { retention_years: next });
+  };
 
-  if (loading) {
-    return <div className="text-sm text-muted-foreground">Loading retention policies...</div>;
+  if (loading && rows.length === 0) return <LoadingState label={t("retention.loading")} />;
+  if (loadError) {
+    return (
+      <ErrorState error={loadError} title={t("retention.loadError")} onRetry={() => void load()} />
+    );
   }
 
   return (
-    <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
-      <div className="space-y-3 rounded-lg border p-4">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold">Retention Policies</h3>
-          <Badge variant="outline">{rows.length} policies</Badge>
+    <div className="space-y-3 rounded-lg border border-surface-border p-4">
+      {StepUpDialogElement}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h3 className="text-sm font-semibold text-text-primary">{t("retention.title")}</h3>
+          <p className="text-xs text-text-muted">{t("retention.subtitle")}</p>
         </div>
-        {error && <div className="text-sm text-destructive">{error}</div>}
-        {permissionsLoading ? null : !canEdit ? (
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <Lock className="h-3.5 w-3.5" />
-            Read-only: requires adm.settings permission to edit.
-          </div>
-        ) : null}
+      </div>
+      {!permissionsLoading && !canEdit ? (
+        <div className="flex items-center gap-2 text-xs text-text-muted">
+          <Lock className="h-3.5 w-3.5" aria-hidden />
+          {t("retention.readOnly")}
+        </div>
+      ) : null}
 
+      {rows.length === 0 ? (
+        <EmptyState title={t("retention.empty")} />
+      ) : (
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Module</TableHead>
-              <TableHead>Class</TableHead>
-              <TableHead>Retention (years)</TableHead>
-              <TableHead>Purge mode</TableHead>
-              <TableHead>Allow restore</TableHead>
-              <TableHead>Allow purge</TableHead>
+              <TableHead>{t("retention.col.module")}</TableHead>
+              <TableHead>{t("retention.col.class")}</TableHead>
+              <TableHead>{t("retention.col.years")}</TableHead>
+              <TableHead>{t("retention.col.purgeMode")}</TableHead>
+              <TableHead>{t("retention.col.allowRestore")}</TableHead>
+              <TableHead>{t("retention.col.allowPurge")}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {rows.map((row) => {
-              const disableAllowPurge = row.purge_mode === "never";
+              const busy = !canEdit || savingId === row.id;
+              const purgeLocked = row.purge_mode === "never";
+              const name = `${archiveModuleLabel(t, row.module_code)} — ${archiveClassLabel(t, row.archive_class)}`;
               return (
-                <TableRow
-                  key={row.id}
-                  className={selectedPolicyId === row.id ? "bg-muted/40" : undefined}
-                  onClick={() => setSelectedPolicyId(row.id)}
-                >
-                  <TableCell>{row.module_code}</TableCell>
-                  <TableCell>{row.archive_class}</TableCell>
+                <TableRow key={row.id}>
+                  <TableCell>{archiveModuleLabel(t, row.module_code)}</TableCell>
+                  <TableCell>{archiveClassLabel(t, row.archive_class)}</TableCell>
                   <TableCell>
                     <Input
                       type="number"
                       min={0}
-                      className="h-8 w-24"
-                      disabled={!canEdit || savingId === row.id}
-                      value={retentionDrafts[row.id] ?? String(row.retention_years)}
-                      onChange={(e) => {
-                        setRetentionDrafts((prev) => ({ ...prev, [row.id]: e.target.value }));
-                      }}
-                      onBlur={() => commitRetentionYears(row)}
+                      className="h-9 w-24"
+                      aria-label={t("retention.yearsAria", { name })}
+                      disabled={busy}
+                      value={yearDrafts[row.id] ?? String(row.retention_years)}
+                      onChange={(e) =>
+                        setYearDrafts((prev) => ({ ...prev, [row.id]: e.target.value }))
+                      }
+                      onBlur={() => commitYears(row)}
                       onKeyDown={(e) => {
                         if (e.key === "Enter") {
                           e.preventDefault();
-                          commitRetentionYears(row);
+                          commitYears(row);
                         }
                       }}
                     />
+                    {row.archive_class === "operational_history" ? (
+                      <p className="mt-1 text-[11px] text-text-muted">
+                        {t("retention.noShortening")}
+                      </p>
+                    ) : null}
                   </TableCell>
                   <TableCell>
                     <Select
                       value={row.purge_mode}
-                      disabled={!canEdit || savingId === row.id}
+                      disabled={busy}
                       onValueChange={(value) =>
                         void patchPolicy(row, {
                           purge_mode: value,
-                          allow_purge: value === "never" ? false : row.allow_purge,
+                          ...(value === "never" && row.allow_purge ? { allow_purge: false } : {}),
                         })
                       }
                     >
-                      <SelectTrigger className="h-8 w-40">
-                        <SelectValue />
+                      <SelectTrigger className="h-9 w-48" aria-label={t("retention.col.purgeMode")}>
+                        <SelectValue>{purgeModeLabel(t, row.purge_mode)}</SelectValue>
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="manual_approval">manual_approval</SelectItem>
-                        <SelectItem value="scheduled">scheduled</SelectItem>
-                        <SelectItem value="never">never</SelectItem>
+                        {PURGE_MODES.map((m) => (
+                          <SelectItem key={m} value={m}>
+                            {purgeModeLabel(t, m)}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </TableCell>
                   <TableCell>
                     <Switch
                       checked={row.allow_restore}
-                      disabled={!canEdit || savingId === row.id}
+                      disabled={busy}
+                      aria-label={t("retention.allowRestoreAria", { name })}
                       onCheckedChange={(checked) =>
                         void patchPolicy(row, { allow_restore: checked })
                       }
@@ -261,80 +204,22 @@ export function RetentionPolicyPanel() {
                   <TableCell>
                     <Switch
                       checked={row.allow_purge}
-                      disabled={!canEdit || savingId === row.id || disableAllowPurge}
+                      disabled={busy || purgeLocked}
+                      aria-label={t("retention.allowPurgeAria", { name })}
                       onCheckedChange={(checked) => void patchPolicy(row, { allow_purge: checked })}
                     />
-                    {disableAllowPurge && (
-                      <p className="mt-1 text-[10px] text-muted-foreground">
-                        Disabled by purge_mode='never'
+                    {purgeLocked ? (
+                      <p className="mt-1 text-[11px] text-text-muted">
+                        {t("retention.purgeLocked")}
                       </p>
-                    )}
+                    ) : null}
                   </TableCell>
                 </TableRow>
               );
             })}
           </TableBody>
         </Table>
-      </div>
-
-      <div className="space-y-3 rounded-lg border p-4">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <History className="h-4 w-4" />
-            <h4 className="text-sm font-semibold">Change history</h4>
-          </div>
-          {selectedPolicyId && (
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-6 px-2 text-xs"
-              onClick={() => void loadHistory(selectedPolicyId)}
-            >
-              Refresh
-            </Button>
-          )}
-        </div>
-
-        {selectedPolicyId ? (
-          <>
-            {historyLoading ? (
-              <p className="text-xs text-muted-foreground">Loading history…</p>
-            ) : persistedHistory.length > 0 ? (
-              <Timeline
-                items={persistedHistory}
-                className="max-h-[400px] overflow-y-auto"
-                aria-label="Change history"
-                empty={
-                  <p className="text-sm text-muted-foreground">
-                    No persisted events found for this policy.
-                  </p>
-                }
-                getEntry={(event) => {
-                  const summary =
-                    event.summary_json && typeof event.summary_json === "object"
-                      ? (event.summary_json as Record<string, unknown>)
-                      : null;
-                  return {
-                    id: String(event.id),
-                    title: event.event_code,
-                    timestamp: event.happened_at,
-                    ...(event.actor_username ? { actor: event.actor_username } : {}),
-                    ...(summary?.["result"] != null
-                      ? { description: `Result: ${summary["result"]}` }
-                      : {}),
-                  };
-                }}
-              />
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                No persisted events found for this policy.
-              </p>
-            )}
-          </>
-        ) : (
-          <p className="text-sm text-muted-foreground">Select a row to inspect change history.</p>
-        )}
-      </div>
+      )}
     </div>
   );
 }

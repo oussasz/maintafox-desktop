@@ -334,18 +334,30 @@ pub async fn delete_schedule(db: &DatabaseConnection, user_id: i64, schedule_id:
     Ok(r.rows_affected())
 }
 
+/// Figures of the dashboard summary report (labels are localised by `reports::export`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct DashboardSummaryFigures {
+    pub open_di: i64,
+    pub open_wo: i64,
+    pub assets: i64,
+    /// Assets with a reliability snapshot over the last 365 days.
+    pub assets_with_snapshots: i64,
+    /// Mean data-quality score, 0..=1.
+    pub data_quality: Option<f64>,
+    /// Pooled fleet MTBF in hours.
+    pub mtbf_hours: Option<f64>,
+}
+
 /// KPI-style counts for dashboard summary report.
-pub async fn fetch_dashboard_summary_pairs(db: &DatabaseConnection) -> AppResult<Vec<(String, String)>> {
+pub async fn fetch_dashboard_summary(db: &DatabaseConnection) -> AppResult<DashboardSummaryFigures> {
     let open_di = count_scalar(
         db,
-        "SELECT COUNT(*) AS cnt FROM intervention_requests \
-         WHERE status NOT IN ('rejected','converted_to_work_order','closed_as_non_executable','archived')",
+        "SELECT COUNT(*) AS cnt FROM intervention_requests          WHERE status NOT IN ('rejected','converted_to_work_order','closed_as_non_executable','archived')",
     )
     .await;
     let open_wo = count_scalar(
         db,
-        "SELECT COUNT(*) AS cnt FROM work_orders wo \
-         JOIN work_order_statuses s ON s.id = wo.status_id WHERE s.code NOT IN ('closed','cancelled')",
+        "SELECT COUNT(*) AS cnt FROM work_orders wo          JOIN work_order_statuses s ON s.id = wo.status_id WHERE s.code NOT IN ('closed','cancelled')",
     )
     .await;
     let assets = count_scalar(db, "SELECT COUNT(*) AS cnt FROM equipment WHERE deleted_at IS NULL").await;
@@ -360,28 +372,14 @@ pub async fn fetch_dashboard_summary_pairs(db: &DatabaseConnection) -> AppResult
         crate::reliability::readiness::DQ_GREEN_THRESHOLD,
     )
     .await?;
-    let (snap_n, dq, mtbf) = (fleet.equipment_count, fleet.mean_data_quality_score, fleet.mtbf_hours);
-
-    let mut out = vec![
-        ("Open DIs".to_string(), format!("{open_di}")),
-        ("Open WOs".to_string(), format!("{open_wo}")),
-        ("Assets".to_string(), format!("{assets}")),
-        (
-            "Assets with reliability snapshots (365d)".to_string(),
-            format!("{snap_n}"),
-        ),
-    ];
-    if let Some(v) = dq {
-        out.push(("Avg data quality (365d)".to_string(), format!("{v:.4}")));
-    } else {
-        out.push(("Avg data quality (365d)".to_string(), "—".to_string()));
-    }
-    if let Some(v) = mtbf {
-        out.push(("Fleet MTBF hours, pooled (365d)".to_string(), format!("{v:.2}")));
-    } else {
-        out.push(("Fleet MTBF hours, pooled (365d)".to_string(), "—".to_string()));
-    }
-    Ok(out)
+    Ok(DashboardSummaryFigures {
+        open_di,
+        open_wo,
+        assets,
+        assets_with_snapshots: fleet.equipment_count,
+        data_quality: fleet.mean_data_quality_score,
+        mtbf_hours: fleet.mtbf_hours,
+    })
 }
 
 pub async fn fetch_open_wo_by_status(db: &DatabaseConnection) -> AppResult<Vec<(String, i64)>> {

@@ -18,7 +18,7 @@
       "customizeTitle": "Dashboard layout",
       "saveLayout": "Save layout",
       "cancel": "Cancel",
-      "reliabilityHint": "Fleet averages from reliability KPI snapshots over the last {{days}} days (org-scoped when a site is selected). Deltas vs previous horizon.",
+      "reliabilityHint": "Pooled fleet figures from reliability snapshots over the last {{days}} days (limited to the selected organization). Changes compare with the previous {{days}} days.",
       "vsPrior": "vs prior",
       "pmEmpty": "No open PM due-queue in this scope.",
       "sections": {
@@ -61,6 +61,40 @@
         "empty": "No snapshots in horizon",
         "asset": "Asset",
         "events": "Events"
+      },
+      "loading": "Loading the dashboards…",
+      "loadError": "The dashboard figures could not be loaded",
+      "trend": {
+        "stable": "Stable vs previous period",
+        "vsPrevious": "{{change}} vs previous period"
+      },
+      "context": {
+        "now": "Now",
+        "today": "Today",
+        "next7": "Next 7 days",
+        "horizon": "Last {{days}} days",
+        "inService": "Registered, not deleted",
+        "overdue": "Requests open > 7 days + overdue PM"
+      },
+      "diStatus": {
+        "openList": "Open the requests",
+        "empty": "No intervention requests in this scope.",
+        "aria": "Intervention requests by status, {{total}} in total",
+        "other": "Other status",
+        "submitted": "New",
+        "pending_review": "Waiting for triage",
+        "in_review": "In review",
+        "screened": "Screened",
+        "returned_for_clarification": "Information required",
+        "awaiting_approval": "Awaiting approval",
+        "approved": "Approved",
+        "approved_for_planning": "Approved for planning",
+        "deferred": "Deferred",
+        "rejected": "Rejected",
+        "converted_to_work_order": "Converted to work order",
+        "closed_as_non_executable": "Closed, not executable",
+        "closed": "Closed",
+        "archived": "Archived"
       }
     }
   },
@@ -74,7 +108,25 @@
     "code": "Code",
     "name": "Title",
     "defaultFormat": "Default format",
-    "actions": "Export now"
+    "actions": "Export now",
+    "subtitle": "Generate a report now as PDF or Excel. You choose where the file is saved.",
+    "loading": "Loading the report templates…",
+    "loadError": "The report templates could not be loaded",
+    "empty": "No report template is available.",
+    "emptyHint": "Report templates are installed with the application; contact your administrator.",
+    "noExport": "You can view the templates but not generate reports (permission required: export reports).",
+    "exportAria": "Generate “{{title}}” as {{format}}",
+    "exporting": "Generating…",
+    "catalog": {
+      "dashboard_summary": {
+        "title": "Dashboard summary",
+        "description": "Open requests and work orders, assets, and fleet reliability (data quality, MTBF) over 365 days."
+      },
+      "open_work_orders": {
+        "title": "Open work orders by status",
+        "description": "Number of open work orders in each status."
+      }
+    }
   },
   "schedule": {
     "title": "Schedules",
@@ -84,9 +136,45 @@
     "format": "Format",
     "enabled": "Enabled",
     "save": "Add schedule",
-    "delete": "Remove",
+    "delete": "Delete",
     "next": "Next run",
-    "noAccess": "You do not have permission to manage report schedules."
+    "noAccess": "You do not have permission to manage report schedules.",
+    "subtitle": "Reports generated automatically and kept in the history, where you can download them.",
+    "newTitle": "New schedule",
+    "frequency": "Frequency",
+    "frequencies": {
+      "daily": "Every day",
+      "weekly": "Every week",
+      "monthly": "Every month"
+    },
+    "weekday": "Day",
+    "monthDay": "Day of month",
+    "time": "Time",
+    "saving": "Adding…",
+    "when": "When",
+    "last": "Last run",
+    "paused": "Paused",
+    "never": "Not yet",
+    "custom": "Custom schedule",
+    "localTimeHint": "Times are this computer's local time.",
+    "toggleAria": "Schedule “{{name}}” active",
+    "loading": "Loading the schedules…",
+    "loadError": "The schedules could not be loaded",
+    "empty": "No schedule yet.",
+    "emptyHint": "Add one above to receive a report every day, week or month.",
+    "deleteTitle": "Delete this schedule?",
+    "deleteDescription": "“{{name}}” will no longer be generated automatically. Reports already generated stay in the history.",
+    "deleteConfirm": "Delete schedule",
+    "describe": {
+      "daily": "Every day at {{time}}.",
+      "weekly": "Every {{day}} at {{time}}.",
+      "monthly": "On day {{day}} of every month at {{time}}."
+    },
+    "errors": {
+      "invalidTime": "Enter a valid time.",
+      "invalidDay": "Choose a valid day.",
+      "monthBoundary": "This time falls on the previous day for the server clock. Choose a later time or another day."
+    }
   },
   "runs": {
     "title": "History & audit",
@@ -101,17 +189,37 @@
       "pending": "Pending",
       "running": "Running",
       "success": "Success",
-      "failed": "Failed"
-    }
+      "failed": "Failed",
+      "unknown": "Unknown"
+    },
+    "subtitle": "Your {{count}} most recent reports, generated now or by a schedule.",
+    "report": "Report",
+    "origin": "Origin",
+    "originScheduled": "Schedule",
+    "originManual": "Generated by you",
+    "downloading": "Saving…",
+    "saved": "Kept in the local archive",
+    "technicalDetails": "Technical details",
+    "unknownTemplate": "Report no longer available",
+    "loading": "Loading the history…",
+    "loadError": "The report history could not be loaded",
+    "empty": "No report generated yet.",
+    "emptyHint": "Reports you generate or schedule appear here."
   },
   "format": {
     "pdf": "PDF",
-    "xlsx": "XLSX"
+    "xlsx": "Excel (XLSX)"
   },
   "common": {
     "empty": "—"
   },
   "table": {
     "id": "ID"
+  },
+  "save": {
+    "dialogTitle": "Save the report",
+    "saved": "Saved: {{file}}",
+    "openFolder": "Open folder",
+    "dismiss": "Hide this message"
   }
 }

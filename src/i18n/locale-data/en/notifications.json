@@ -38,5 +38,64 @@
       "unknown": "Email is not available: {{message}}"
     },
     "smsUnavailable": "SMS is not available in this version."
+  },
+  "inbox": {
+    "tabsAria": "Filter notifications",
+    "tabs": {
+      "all": "All",
+      "unread": "Unread",
+      "escalated": "Escalated",
+      "snoozed": "Snoozed"
+    },
+    "empty": {
+      "all": "No notifications yet.",
+      "unread": "No unread notifications.",
+      "escalated": "No escalated notifications.",
+      "snoozed": "No snoozed notifications."
+    },
+    "loading": "Loading notifications…",
+    "loadError": "The notifications could not be loaded",
+    "retryMore": "Load more",
+    "openAria": "Open the record of “{{title}}”",
+    "actions": {
+      "markRead": "Mark as read",
+      "acknowledge": "Acknowledge",
+      "snooze": "Snooze {{hours}} h"
+    }
+  },
+  "deliveryState": {
+    "pending": "Pending",
+    "delivered": "New",
+    "read": "Read",
+    "acknowledged": "Acknowledged",
+    "escalated": "Escalated",
+    "snoozed": "Snoozed",
+    "expired": "Expired",
+    "closed": "Closed",
+    "other": "Other"
+  },
+  "category": {
+    "other": "Other",
+    "budget_control_alert": "Budget alert",
+    "cert_expiry": "Certification expiry",
+    "daily_digest": "Daily digest",
+    "di_approved": "Request approved",
+    "di_closed": "Request closed",
+    "di_converted": "Request converted to work order",
+    "di_deferred": "Request deferred",
+    "di_pending_review": "Request to review",
+    "di_returned": "Request returned for clarification",
+    "di_sla_breach": "Request SLA breached",
+    "integration_failure": "Integration failure",
+    "personnel_critical_block": "Critical staffing gap",
+    "pm_deferred": "PM deferred",
+    "pm_due": "PM due soon",
+    "pm_follow_up_created": "PM follow-up created",
+    "pm_missed": "PM missed",
+    "ptw_critical": "Work permit critical event",
+    "stock_critical": "Critical stock",
+    "support_response": "Support reply available",
+    "wo_assigned": "Work order assigned",
+    "wo_overdue": "Work order overdue"
   }
 }

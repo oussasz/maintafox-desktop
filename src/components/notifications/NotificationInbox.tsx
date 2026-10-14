@@ -1,233 +1,303 @@
-import { AlertTriangle, BellRing, Info, Siren } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { AlertTriangle, BellRing, ChevronRight, Info, Siren } from "lucide-react";
+import { type UIEvent, useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 
-import { Badge } from "@/components/ui/badge";
+import { resolveNotificationLink } from "@/components/notifications/notification-links";
 import { Button } from "@/components/ui/button";
+import { ErrorState, LoadingState } from "@/components/ui/data-state";
+import { StatusChip } from "@/components/ui/status-chip";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
+  NOTIFICATION_DELIVERY_TONE,
+  NOTIFICATION_SEVERITY_TONE,
+  mfTone,
+  toneOf,
+} from "@/design-system/tone";
+import { useFormatters } from "@/hooks/use-formatters";
+import { cn } from "@/lib/utils";
+import {
+  type NotificationSummary,
   acknowledgeNotification,
   listNotifications,
   markNotificationRead,
   snoozeNotification,
-  type NotificationSummary,
 } from "@/services/notification-service";
-import { toErrorMessage } from "@/utils/errors";
 
 type InboxTab = "all" | "unread" | "escalated" | "snoozed";
 
+const TABS: InboxTab[] = ["all", "unread", "escalated", "snoozed"];
+/** Delivery state filter sent to `list_notifications` for each tab. */
+const TAB_STATE: Record<InboxTab, string | null> = {
+  all: null,
+  unread: "unread",
+  escalated: "escalated",
+  snoozed: "snoozed",
+};
+const SNOOZE_MINUTES = [60, 240] as const;
+
 interface NotificationInboxProps {
   className?: string;
+  /** Unread count may have changed (read / acknowledged / snoozed). */
   onChanged?: () => void;
+  /** Called after the user opened a source record (e.g. to close the bell dropdown). */
+  onNavigate?: () => void;
 }
 
 const PAGE_SIZE = 20;
 
-export function NotificationInbox({ className, onChanged }: NotificationInboxProps) {
+export function NotificationInbox({ className, onChanged, onNavigate }: NotificationInboxProps) {
+  const { t } = useTranslation("notifications");
+  const { formatRelativeTime, formatDateTime } = useFormatters();
   const navigate = useNavigate();
   const [tab, setTab] = useState<InboxTab>("all");
   const [rows, setRows] = useState<NotificationSummary[]>([]);
-  const [offset, setOffset] = useState(0);
   const [hasMore, setHasMore] = useState(true);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const loadingRef = useRef(false);
+  const offsetRef = useRef(0);
 
   const loadPage = useCallback(
     async (reset: boolean) => {
-      if (loading) return;
+      if (loadingRef.current) return;
+      loadingRef.current = true;
       setLoading(true);
       setError(null);
       try {
-        const nextOffset = reset ? 0 : offset;
-        const filter =
-          tab === "all"
-            ? { limit: PAGE_SIZE, offset: nextOffset }
-            : {
-                delivery_state: tab === "unread" ? "unread" : tab,
-                limit: PAGE_SIZE,
-                offset: nextOffset,
-              };
-        const data = await listNotifications(filter);
-
+        const offset = reset ? 0 : offsetRef.current;
+        const state = TAB_STATE[tab];
+        const data = await listNotifications({
+          limit: PAGE_SIZE,
+          offset,
+          ...(state ? { delivery_state: state } : {}),
+        });
         setRows((prev) => (reset ? data : [...prev, ...data]));
-        setOffset(nextOffset + data.length);
+        offsetRef.current = offset + data.length;
         setHasMore(data.length === PAGE_SIZE);
       } catch (err) {
-        setError(toErrorMessage(err));
+        setError(err);
       } finally {
+        loadingRef.current = false;
         setLoading(false);
       }
     },
-    [loading, offset, tab],
+    [tab],
   );
 
   useEffect(() => {
-    setOffset(0);
+    offsetRef.current = 0;
+    setRows([]);
     setHasMore(true);
     void loadPage(true);
-  }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [loadPage]);
 
   const onScroll = useCallback(
-    (event: React.UIEvent<HTMLDivElement>) => {
-      if (!hasMore || loading) return;
+    (event: UIEvent<HTMLDivElement>) => {
+      if (!hasMore || loadingRef.current || error) return;
       const el = event.currentTarget;
-      const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
-      if (nearBottom) {
+      if (el.scrollHeight - el.scrollTop - el.clientHeight < 120) {
         void loadPage(false);
       }
     },
-    [hasMore, loadPage, loading],
+    [error, hasMore, loadPage],
   );
 
-  const handleRead = useCallback(
-    async (id: number) => {
-      await markNotificationRead(id);
-      await loadPage(true);
-      onChanged?.();
+  /** Runs an action; a failure is reported by the global IPC toast (`describeAppError`). */
+  const runAction = useCallback(
+    async (id: number, action: () => Promise<void>) => {
+      setBusyId(id);
+      try {
+        await action();
+        await loadPage(true);
+        onChanged?.();
+      } catch {
+        // `invoke` already showed the translated failure; the row stays as it was.
+      } finally {
+        setBusyId(null);
+      }
     },
     [loadPage, onChanged],
   );
 
-  const handleAcknowledge = useCallback(
-    async (id: number) => {
-      await acknowledgeNotification(id);
-      await loadPage(true);
-      onChanged?.();
+  const openSource = useCallback(
+    async (row: NotificationSummary) => {
+      const link = resolveNotificationLink(row.action_url);
+      if (!link) return;
+      if (row.delivery_state === "delivered") {
+        try {
+          await markNotificationRead(row.id);
+          onChanged?.();
+        } catch {
+          // Reported by the global toast; still open the record.
+        }
+      }
+      navigate(link.path);
+      onNavigate?.();
     },
-    [loadPage, onChanged],
+    [navigate, onChanged, onNavigate],
   );
 
-  const handleSnooze = useCallback(
-    async (id: number, minutes: number) => {
-      await snoozeNotification(id, minutes);
-      await loadPage(true);
-      onChanged?.();
-    },
-    [loadPage, onChanged],
-  );
-
-  const emptyLabel = useMemo(() => {
-    if (tab === "unread") return "No unread notifications.";
-    if (tab === "escalated") return "No escalated notifications.";
-    if (tab === "snoozed") return "No snoozed notifications.";
-    return "No notifications yet.";
-  }, [tab]);
+  const categoryLabel = (code: string) =>
+    t(`category.${code}`, { defaultValue: t("category.other") });
+  const stateLabel = (state: string) =>
+    t(`deliveryState.${state}`, { defaultValue: t("deliveryState.other") });
 
   return (
     <div className={className}>
       <Tabs value={tab} onValueChange={(v) => setTab(v as InboxTab)}>
-        <TabsList className="grid w-full grid-cols-4">
-          <TabsTrigger value="all">All</TabsTrigger>
-          <TabsTrigger value="unread">Unread</TabsTrigger>
-          <TabsTrigger value="escalated">Escalated</TabsTrigger>
-          <TabsTrigger value="snoozed">Snoozed</TabsTrigger>
+        <TabsList className="grid w-full grid-cols-4" aria-label={t("inbox.tabsAria")}>
+          {TABS.map((key) => (
+            <TabsTrigger key={key} value={key}>
+              {t(`inbox.tabs.${key}`)}
+            </TabsTrigger>
+          ))}
         </TabsList>
       </Tabs>
 
-      <div className="mt-3 max-h-[28rem] overflow-auto rounded-md border" onScroll={onScroll}>
-        {rows.length === 0 && !loading && !error && (
-          <div className="flex h-36 items-center justify-center text-sm text-muted-foreground">
-            {emptyLabel}
+      <div
+        className="mt-3 max-h-[28rem] overflow-auto rounded-md border border-surface-border"
+        onScroll={onScroll}
+      >
+        {error && rows.length === 0 ? (
+          <ErrorState
+            className="m-2"
+            error={error}
+            title={t("inbox.loadError")}
+            onRetry={() => void loadPage(true)}
+          />
+        ) : null}
+
+        {rows.length === 0 && !loading && !error ? (
+          <div className="flex h-36 items-center justify-center px-4 text-center text-sm text-text-muted">
+            {t(`inbox.empty.${tab}`)}
           </div>
-        )}
+        ) : null}
 
-        {error && (
-          <div className="p-3 text-sm text-destructive">Failed to load notifications: {error}</div>
-        )}
-
-        <div className="divide-y">
-          {rows.map((row) => (
-            <div key={row.id} className="space-y-2 p-3">
-              <div className="flex items-start gap-2">
+        <ul className="divide-y divide-surface-border">
+          {rows.map((row) => {
+            const link = resolveNotificationLink(row.action_url);
+            const busy = busyId === row.id;
+            const unread = row.delivery_state === "delivered";
+            const header = (
+              <>
                 <SeverityIcon severity={row.severity} />
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="truncate font-medium">{row.title}</span>
-                    <Badge variant="outline">{row.category_code}</Badge>
-                    <StateBadge state={row.delivery_state} />
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span
+                      className={cn(
+                        "min-w-0 truncate text-sm text-text-primary",
+                        unread ? "font-semibold" : "font-medium",
+                      )}
+                    >
+                      {row.title}
+                    </span>
+                    <StatusChip label={categoryLabel(row.category_code)} tone="neutral" />
+                    <StatusChip
+                      label={stateLabel(row.delivery_state)}
+                      tone={toneOf(NOTIFICATION_DELIVERY_TONE, row.delivery_state)}
+                      dot
+                    />
                   </div>
-                  {row.body && (
-                    <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{row.body}</p>
-                  )}
+                  {row.body ? (
+                    <p className="mt-1 line-clamp-2 text-sm text-text-muted">{row.body}</p>
+                  ) : null}
                 </div>
-                <span className="whitespace-nowrap text-xs text-muted-foreground">
-                  {timeAgo(row.created_at)}
-                </span>
-              </div>
-
-              <div className="flex flex-wrap gap-2">
-                {row.delivery_state === "delivered" && (
-                  <Button size="sm" variant="outline" onClick={() => void handleRead(row.id)}>
-                    Read
-                  </Button>
-                )}
-                {row.requires_ack && row.delivery_state !== "acknowledged" && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => void handleAcknowledge(row.id)}
+                <time
+                  dateTime={row.created_at}
+                  title={formatDateTime(row.created_at)}
+                  className="whitespace-nowrap text-xs text-text-muted"
+                >
+                  {formatRelativeTime(row.created_at)}
+                </time>
+                {link ? (
+                  <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" aria-hidden />
+                ) : null}
+              </>
+            );
+            return (
+              <li key={row.id} className="space-y-2 p-3">
+                {link ? (
+                  <button
+                    type="button"
+                    className="flex w-full items-start gap-2 rounded-md text-start hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    aria-label={t("inbox.openAria", { title: row.title })}
+                    onClick={() => void openSource(row)}
                   >
-                    Acknowledge
-                  </Button>
+                    {header}
+                  </button>
+                ) : (
+                  <div className="flex items-start gap-2">{header}</div>
                 )}
-                <Button size="sm" variant="outline" onClick={() => void handleSnooze(row.id, 60)}>
-                  Snooze 1h
-                </Button>
-                <Button size="sm" variant="outline" onClick={() => void handleSnooze(row.id, 240)}>
-                  Snooze 4h
-                </Button>
-                {row.action_url && (
-                  <Button
-                    size="sm"
-                    onClick={() => {
-                      if (row.action_url?.startsWith("/")) {
-                        navigate(row.action_url);
-                      } else if (row.action_url) {
-                        window.open(row.action_url, "_blank", "noopener,noreferrer");
-                      }
-                    }}
-                  >
-                    Open source record
-                  </Button>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
 
-        {loading && (
-          <div className="flex items-center justify-center py-3 text-sm text-muted-foreground">
-            Loading...
+                <div className="flex flex-wrap gap-2 ps-6">
+                  {unread ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-9"
+                      disabled={busy}
+                      onClick={() => void runAction(row.id, () => markNotificationRead(row.id))}
+                    >
+                      {t("inbox.actions.markRead")}
+                    </Button>
+                  ) : null}
+                  {row.requires_ack && row.delivery_state !== "acknowledged" ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-9"
+                      disabled={busy}
+                      onClick={() => void runAction(row.id, () => acknowledgeNotification(row.id))}
+                    >
+                      {t("inbox.actions.acknowledge")}
+                    </Button>
+                  ) : null}
+                  {row.delivery_state !== "acknowledged"
+                    ? SNOOZE_MINUTES.map((minutes) => (
+                        <Button
+                          key={minutes}
+                          size="sm"
+                          variant="ghost"
+                          className="h-9"
+                          disabled={busy}
+                          onClick={() =>
+                            void runAction(row.id, () => snoozeNotification(row.id, minutes))
+                          }
+                        >
+                          {t("inbox.actions.snooze", { hours: minutes / 60 })}
+                        </Button>
+                      ))
+                    : null}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+
+        {loading ? <LoadingState className="py-3" label={t("inbox.loading")} /> : null}
+        {error && rows.length > 0 ? (
+          <div className="flex justify-center p-2">
+            <Button size="sm" variant="outline" onClick={() => void loadPage(false)}>
+              {t("inbox.retryMore")}
+            </Button>
           </div>
-        )}
+        ) : null}
       </div>
     </div>
   );
 }
 
 function SeverityIcon({ severity }: { severity: string }) {
-  if (severity === "critical") return <Siren className="mt-0.5 h-4 w-4 text-destructive" />;
-  if (severity === "error") return <AlertTriangle className="mt-0.5 h-4 w-4 text-destructive" />;
-  if (severity === "warning") return <BellRing className="mt-0.5 h-4 w-4 text-amber-500" />;
-  return <Info className="mt-0.5 h-4 w-4 text-blue-500" />;
-}
-
-function StateBadge({ state }: { state: string }) {
-  if (state === "escalated") return <Badge className="bg-orange-600 text-white">{state}</Badge>;
-  if (state === "acknowledged") return <Badge className="bg-emerald-600 text-white">{state}</Badge>;
-  if (state === "snoozed") return <Badge variant="secondary">{state}</Badge>;
-  return <Badge variant="outline">{state}</Badge>;
-}
-
-function timeAgo(value: string): string {
-  const time = new Date(value).getTime();
-  if (!Number.isFinite(time)) return value;
-  const diff = Date.now() - time;
-  if (diff < 60_000) return "just now";
-  const minutes = Math.floor(diff / 60_000);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
+  const tone = toneOf(NOTIFICATION_SEVERITY_TONE, severity);
+  const Icon =
+    severity === "critical"
+      ? Siren
+      : severity === "error"
+        ? AlertTriangle
+        : severity === "warning"
+          ? BellRing
+          : Info;
+  return <Icon className={cn("mt-0.5 h-4 w-4 shrink-0", mfTone[tone].text)} aria-hidden />;
 }
