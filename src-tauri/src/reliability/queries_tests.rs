@@ -9,8 +9,7 @@ mod tests {
     use crate::reliability::queries;
 
     async fn setup() -> DatabaseConnection {
-        let db = crate::db::test_db::seeded().await;
-        db
+        crate::db::test_db::seeded().await
     }
 
     async fn insert_minimal_equipment(db: &DatabaseConnection) -> i64 {

@@ -1004,8 +1004,7 @@ mod tests {
     use crate::auth::rbac::{self, PermissionScope};
 
     async fn setup() -> sea_orm::DatabaseConnection {
-        let db = crate::db::test_db::seeded().await;
-        db
+        crate::db::test_db::seeded().await
     }
 
     async fn assign_role(db: &sea_orm::DatabaseConnection, user_id: i32, role_name: &str) {

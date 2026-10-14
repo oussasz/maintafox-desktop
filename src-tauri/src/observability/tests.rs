@@ -26,9 +26,7 @@ use crate::wo::parts::{self, AddPartInput};
 use crate::wo::queries;
 
 async fn setup_db() -> DatabaseConnection {
-    let db = crate::db::test_db::seeded().await;
-
-    db
+    crate::db::test_db::seeded().await
 }
 
 async fn admin_id(db: &DatabaseConnection) -> i64 {

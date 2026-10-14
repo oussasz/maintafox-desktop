@@ -7,8 +7,7 @@ use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement};
 use super::registry::{self, SyncScope, LOCAL_ONLY_TABLES, SYNC_ENTITIES};
 
 async fn migrated_db() -> DatabaseConnection {
-    let db = crate::db::test_db::migrated().await;
-    db
+    crate::db::test_db::migrated().await
 }
 
 async fn table_names(db: &DatabaseConnection) -> BTreeSet<String> {

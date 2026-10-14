@@ -14,9 +14,7 @@ mod tests {
     use crate::wo::queries as wo_queries;
 
     async fn setup() -> sea_orm::DatabaseConnection {
-        let db = crate::db::test_db::seeded().await;
-
-        db
+        crate::db::test_db::seeded().await
     }
 
     async fn admin_id(db: &sea_orm::DatabaseConnection) -> i64 {

@@ -16,8 +16,7 @@ use crate::kpi_definitions;
 // ── Fixture helpers ─────────────────────────────────────────────────────────────────────────
 
 async fn setup() -> DatabaseConnection {
-    let db = crate::db::test_db::seeded().await;
-    db
+    crate::db::test_db::seeded().await
 }
 
 async fn exec(db: &DatabaseConnection, sql: &str) {

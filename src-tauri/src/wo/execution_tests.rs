@@ -37,9 +37,7 @@ mod tests {
     // ═══════════════════════════════════════════════════════════════════════
 
     async fn setup() -> sea_orm::DatabaseConnection {
-        let db = crate::db::test_db::seeded().await;
-
-        db
+        crate::db::test_db::seeded().await
     }
 
     async fn resolve_delay_reason_id(db: &sea_orm::DatabaseConnection, code: &str) -> i64 {

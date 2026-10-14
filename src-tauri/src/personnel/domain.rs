@@ -940,9 +940,7 @@ mod tests {
     use sea_orm::ConnectionTrait;
 
     async fn setup_migrated_db() -> DatabaseConnection {
-        let db = crate::db::test_db::seeded().await;
-
-        db
+        crate::db::test_db::seeded().await
     }
 
     #[test]

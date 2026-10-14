@@ -82,8 +82,7 @@ mod tests {
     }
 
     async fn seeded_db() -> DatabaseConnection {
-        let db = crate::db::test_db::seeded().await;
-        db
+        crate::db::test_db::seeded().await
     }
 
     #[tokio::test]

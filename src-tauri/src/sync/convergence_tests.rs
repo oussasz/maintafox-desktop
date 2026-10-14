@@ -10,8 +10,7 @@ use crate::sync::materialize::materialize_inbox_batch;
 use crate::sync::queries::apply_sync_batch;
 
 async fn setup_db() -> DatabaseConnection {
-    let db = crate::db::test_db::migrated().await;
-    db
+    crate::db::test_db::migrated().await
 }
 
 #[tokio::test]

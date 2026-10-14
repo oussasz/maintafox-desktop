@@ -302,8 +302,7 @@ fn media_root() -> PathBuf {
 }
 
 async fn setup_db() -> DatabaseConnection {
-    let db = crate::db::test_db::migrated().await;
-    db
+    crate::db::test_db::migrated().await
 }
 
 fn make_worker(

@@ -8,8 +8,7 @@ use crate::sync::domain::{
 use crate::sync::queries;
 
 async fn setup_db() -> DatabaseConnection {
-    let db = crate::db::test_db::migrated().await;
-    db
+    crate::db::test_db::migrated().await
 }
 
 /// Idempotency key the outbox assigned to the latest staged change of an entity.

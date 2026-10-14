@@ -29,9 +29,7 @@ mod tests {
 
     /// Spin up a fresh in-memory SQLite with all migrations + system seed data.
     async fn setup_db() -> DatabaseConnection {
-        let db = crate::db::test_db::seeded().await;
-
-        db
+        crate::db::test_db::seeded().await
     }
 
     /// Create a test user and return their `user_accounts.id`.

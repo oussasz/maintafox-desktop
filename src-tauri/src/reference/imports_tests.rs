@@ -16,9 +16,7 @@ mod tests {
 
     /// In-memory SQLite with all migrations + seed data.
     async fn setup() -> sea_orm::DatabaseConnection {
-        let db = crate::db::test_db::seeded().await;
-
-        db
+        crate::db::test_db::seeded().await
     }
 
     /// Creates a tenant_managed flat domain + draft set, returns (domain_id, set_id).

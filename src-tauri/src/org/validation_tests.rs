@@ -18,9 +18,7 @@ mod tests {
     // ── Test helpers ──────────────────────────────────────────────────────
 
     async fn setup() -> sea_orm::DatabaseConnection {
-        let db = crate::db::test_db::seeded().await;
-
-        db
+        crate::db::test_db::seeded().await
     }
 
     /// Create and publish a base model with three types and two rules.

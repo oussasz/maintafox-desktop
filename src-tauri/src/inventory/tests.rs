@@ -13,8 +13,7 @@ use crate::inventory::domain::{
 use crate::inventory::{controls, procurement, queries};
 
 async fn setup_db() -> DatabaseConnection {
-    let db = crate::db::test_db::seeded().await;
-    db
+    crate::db::test_db::seeded().await
 }
 
 async fn first_active_lookup_value_id(db: &DatabaseConnection, domain_key: &str) -> i64 {

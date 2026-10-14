@@ -15,9 +15,7 @@ mod tests {
 
     /// In-memory SQLite with all migrations + seed data.
     async fn setup() -> sea_orm::DatabaseConnection {
-        let db = crate::db::test_db::seeded().await;
-
-        db
+        crate::db::test_db::seeded().await
     }
 
     /// Standard valid payload for reference domain creation.

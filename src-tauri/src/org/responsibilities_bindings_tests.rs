@@ -17,9 +17,7 @@ mod tests {
     use crate::org::structure_model::{self, CreateStructureModelPayload};
 
     async fn setup() -> sea_orm::DatabaseConnection {
-        let db = crate::db::test_db::seeded().await;
-
-        db
+        crate::db::test_db::seeded().await
     }
 
     /// Helper: create a published model with root + child types and one root node.

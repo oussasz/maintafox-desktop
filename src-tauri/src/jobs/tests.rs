@@ -12,8 +12,7 @@ use crate::jobs::ComputationJob;
 use crate::reliability::domain::RefreshReliabilityKpiSnapshotInput;
 
 async fn setup() -> DatabaseConnection {
-    let db = crate::db::test_db::seeded().await;
-    db
+    crate::db::test_db::seeded().await
 }
 
 async fn job(db: &DatabaseConnection, id: i64) -> ComputationJob {
