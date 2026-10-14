@@ -86,12 +86,12 @@ pub fn compute_hash(value: &serde_json::Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sea_orm::{Database, DbBackend, Statement};
+    use sea_orm::{DbBackend, Statement};
     use sea_orm_migration::MigratorTrait;
 
     #[tokio::test]
     async fn write_audit_event_propagates_error_on_insert_failure() {
-        let db = Database::connect("sqlite::memory:")
+        let db = crate::db::test_db::connect_in_memory()
             .await
             .expect("connect in-memory db");
         crate::migrations::Migrator::up(&db, None)

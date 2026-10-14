@@ -1,7 +1,7 @@
 //! Analytics: dashboard layout validation / merge / per-user storage, the Overview KPI cells and
 //! the executive dashboard projection, on a real migrated + seeded in-memory database.
 
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use sea_orm_migration::MigratorTrait;
 use serde_json::{json, Value};
 
@@ -17,7 +17,7 @@ use crate::kpi_definitions;
 // ── Fixture helpers ─────────────────────────────────────────────────────────────────────────
 
 async fn setup() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:").await.expect("in-memory SQLite");
+    let db = crate::db::test_db::connect_in_memory().await.expect("in-memory SQLite");
     db.execute_unprepared("PRAGMA foreign_keys = ON")
         .await
         .expect("foreign keys");

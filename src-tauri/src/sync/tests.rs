@@ -1,4 +1,4 @@
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection};
+use sea_orm::{ConnectionTrait, DatabaseConnection};
 use sea_orm_migration::MigratorTrait;
 
 use crate::sync::domain::{
@@ -9,7 +9,7 @@ use crate::sync::domain::{
 use crate::sync::queries;
 
 async fn setup_db() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:").await.expect("in-memory sqlite");
+    let db = crate::db::test_db::connect_in_memory().await.expect("in-memory sqlite");
     crate::migrations::Migrator::up(&db, None).await.expect("migrations");
     db
 }

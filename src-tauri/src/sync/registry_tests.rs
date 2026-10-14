@@ -2,13 +2,13 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use sea_orm::{ConnectionTrait, Database, DatabaseBackend, DatabaseConnection, Statement};
+use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement};
 use sea_orm_migration::MigratorTrait;
 
 use super::registry::{self, SyncScope, LOCAL_ONLY_TABLES, SYNC_ENTITIES};
 
 async fn migrated_db() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:").await.expect("in-memory sqlite");
+    let db = crate::db::test_db::connect_in_memory().await.expect("in-memory sqlite");
     crate::migrations::Migrator::up(&db, None).await.expect("migrations");
     db
 }

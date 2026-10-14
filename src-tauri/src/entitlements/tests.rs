@@ -1,4 +1,4 @@
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection};
+use sea_orm::{ConnectionTrait, DatabaseConnection};
 use sea_orm_migration::MigratorTrait;
 
 use crate::entitlements::domain::{EntitlementEnvelopeInput, ENTITLEMENT_SIGNATURE_ALG};
@@ -8,7 +8,7 @@ use crate::entitlements::trusted_keys::TEST_ENTITLEMENT_KEY_ID;
 use crate::errors::AppError;
 
 async fn setup_db() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:").await.expect("in-memory sqlite");
+    let db = crate::db::test_db::connect_in_memory().await.expect("in-memory sqlite");
     crate::migrations::Migrator::up(&db, None).await.expect("migrations");
     crate::license::security::ensure_default_licensing_trust_keys(&db)
         .await

@@ -3,7 +3,7 @@
 //! Two-device convergence of every entity type on the generic capture/apply engine is covered by
 //! `row_sync_tests` (create, update and delete on device A arrive identical on device B).
 
-use sea_orm::{Database, DatabaseConnection};
+use sea_orm::DatabaseConnection;
 use sea_orm_migration::MigratorTrait;
 
 use crate::sync::domain::{ApplySyncBatchInput, SYNC_PROTOCOL_VERSION_V1};
@@ -11,7 +11,7 @@ use crate::sync::materialize::materialize_inbox_batch;
 use crate::sync::queries::apply_sync_batch;
 
 async fn setup_db() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:").await.expect("in-memory sqlite");
+    let db = crate::db::test_db::connect_in_memory().await.expect("in-memory sqlite");
     crate::migrations::Migrator::up(&db, None).await.expect("migrations");
     db
 }

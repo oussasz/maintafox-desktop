@@ -2,7 +2,7 @@
 //! exercised through the Phase 2.4 capture: business writes are captured by the table triggers and
 //! drained into the outbox.
 
-use sea_orm::{ConnectionTrait, Database, DatabaseBackend, DatabaseConnection, Statement, TransactionTrait};
+use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement, TransactionTrait};
 use sea_orm_migration::MigratorTrait;
 
 use super::capture::drain_capture_journal;
@@ -14,7 +14,7 @@ use super::materialize::materialize_inbox_batch;
 use super::queries;
 
 async fn setup_db() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:").await.expect("in-memory sqlite");
+    let db = crate::db::test_db::connect_in_memory().await.expect("in-memory sqlite");
     crate::migrations::Migrator::up(&db, None).await.expect("migrations");
     super::capture::install_capture(&db).await.expect("install capture");
     db

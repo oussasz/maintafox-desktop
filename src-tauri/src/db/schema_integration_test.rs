@@ -10,7 +10,7 @@ mod tests {
     /// - Missing IF NOT EXISTS guards
     #[tokio::test]
     async fn all_migrations_apply_to_clean_database() {
-        let db = sea_orm::Database::connect("sqlite::memory:")
+        let db = crate::db::test_db::connect_in_memory()
             .await
             .expect("Failed to open in-memory SQLite");
 
@@ -77,9 +77,7 @@ mod tests {
     /// Verify critical column presence on the equipment table per PRD §7.1 principles
     #[tokio::test]
     async fn equipment_table_has_required_sync_columns() {
-        let db = sea_orm::Database::connect("sqlite::memory:")
-            .await
-            .expect("In-memory DB");
+        let db = crate::db::test_db::connect_in_memory().await.expect("In-memory DB");
 
         use sea_orm_migration::MigratorTrait;
         crate::migrations::Migrator::up(&db, None).await.expect("Migrations");
@@ -120,9 +118,7 @@ mod tests {
     /// Verify equipment_lifecycle_events does NOT have deleted_at (append-only rule)
     #[tokio::test]
     async fn lifecycle_events_table_is_append_only() {
-        let db = sea_orm::Database::connect("sqlite::memory:")
-            .await
-            .expect("In-memory DB");
+        let db = crate::db::test_db::connect_in_memory().await.expect("In-memory DB");
 
         use sea_orm_migration::MigratorTrait;
         crate::migrations::Migrator::up(&db, None).await.expect("Migrations");
@@ -154,9 +150,7 @@ mod tests {
 
     #[tokio::test]
     async fn default_settings_seed_populates_baseline_and_keeps_settings_audit_empty() {
-        let db = sea_orm::Database::connect("sqlite::memory:")
-            .await
-            .expect("In-memory DB");
+        let db = crate::db::test_db::connect_in_memory().await.expect("In-memory DB");
 
         use sea_orm_migration::MigratorTrait;
         crate::migrations::Migrator::up(&db, None).await.expect("Migrations");
@@ -225,9 +219,7 @@ mod tests {
     /// baseline tenant settings must still be re-inserted — otherwise the Settings UI loses categories.
     #[tokio::test]
     async fn default_settings_seed_fills_missing_tenant_rows_when_table_not_empty() {
-        let db = sea_orm::Database::connect("sqlite::memory:")
-            .await
-            .expect("In-memory DB");
+        let db = crate::db::test_db::connect_in_memory().await.expect("In-memory DB");
 
         use sea_orm::{ConnectionTrait, DbBackend, Statement};
         use sea_orm_migration::MigratorTrait;

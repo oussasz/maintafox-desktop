@@ -1011,12 +1011,12 @@ pub(crate) async fn query_password_recovery_contacts(
 
 #[cfg(test)]
 mod password_recovery_contacts_tests {
-    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
     use super::{query_password_recovery_contacts, PasswordRecoveryContact};
 
     async fn setup_db() -> sea_orm::DatabaseConnection {
-        let db = Database::connect("sqlite::memory:").await.expect("in-memory SQLite");
+        let db = crate::db::test_db::connect_in_memory().await.expect("in-memory SQLite");
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             r"CREATE TABLE user_accounts (

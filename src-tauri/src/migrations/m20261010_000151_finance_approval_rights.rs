@@ -63,7 +63,7 @@ impl MigrationTrait for Migration {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sea_orm::{Database, DatabaseConnection};
+    use sea_orm::DatabaseConnection;
     use sea_orm_migration::MigratorTrait;
 
     async fn role_has(db: &DatabaseConnection, role: &str, permission: &str) -> bool {
@@ -83,7 +83,7 @@ mod tests {
     }
 
     async fn seeded_db() -> DatabaseConnection {
-        let db = Database::connect("sqlite::memory:").await.unwrap();
+        let db = crate::db::test_db::connect_in_memory().await.unwrap();
         crate::migrations::Migrator::up(&db, None).await.unwrap();
         crate::db::seeder::seed_system_data(&db).await.unwrap();
         db

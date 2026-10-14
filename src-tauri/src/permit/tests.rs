@@ -4,7 +4,7 @@
 //! isolation verification and removal verification, the close (removal) gate,
 //! and the work-order start gate integration.
 
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use sea_orm_migration::MigratorTrait;
 
 use crate::errors::AppError;
@@ -24,7 +24,7 @@ const APPLIER: i64 = 1;
 const VERIFIER: i64 = 2;
 
 async fn setup() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:").await.expect("in-memory SQLite");
+    let db = crate::db::test_db::connect_in_memory().await.expect("in-memory SQLite");
     db.execute(Statement::from_string(
         DbBackend::Sqlite,
         "PRAGMA foreign_keys = ON;".to_string(),

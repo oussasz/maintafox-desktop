@@ -1,6 +1,6 @@
 //! SP07 observability cross-module integration tests (roadmap 04).
 
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use sea_orm_migration::MigratorTrait;
 use uuid::Uuid;
 
@@ -27,7 +27,7 @@ use crate::wo::parts::{self, AddPartInput};
 use crate::wo::queries;
 
 async fn setup_db() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:")
+    let db = crate::db::test_db::connect_in_memory()
         .await
         .expect("in-memory SQLite should connect");
 

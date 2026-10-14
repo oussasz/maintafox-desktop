@@ -8,7 +8,7 @@
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
     use sea_orm_migration::MigratorTrait;
 
     use crate::di::domain::InterventionRequest;
@@ -19,7 +19,7 @@ mod tests {
 
     /// In-memory SQLite with all migrations applied + seeded system data.
     async fn setup() -> sea_orm::DatabaseConnection {
-        let db = Database::connect("sqlite::memory:")
+        let db = crate::db::test_db::connect_in_memory()
             .await
             .expect("in-memory SQLite should connect");
 

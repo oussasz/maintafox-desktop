@@ -42,7 +42,7 @@ pub async fn verify_checksum(pool: &SqlitePool, archive_item_id: i64) -> Result<
 mod tests {
     use super::*;
     use crate::archive::writer::{archive_record, ArchiveInput};
-    use sea_orm::{Database, DbBackend, Statement};
+    use sea_orm::{DbBackend, Statement};
     use sea_orm_migration::MigratorTrait;
 
     async fn setup_archived_record(db: &sea_orm::DatabaseConnection) -> i64 {
@@ -101,7 +101,7 @@ mod tests {
 
     #[tokio::test]
     async fn verify_checksum_returns_true_for_fresh_payload() {
-        let db = Database::connect("sqlite::memory:")
+        let db = crate::db::test_db::connect_in_memory()
             .await
             .expect("connect in-memory db");
         crate::migrations::Migrator::up(&db, None)
@@ -115,7 +115,7 @@ mod tests {
 
     #[tokio::test]
     async fn verify_checksum_returns_false_when_payload_tampered() {
-        let db = Database::connect("sqlite::memory:")
+        let db = crate::db::test_db::connect_in_memory()
             .await
             .expect("connect in-memory db");
         crate::migrations::Migrator::up(&db, None)

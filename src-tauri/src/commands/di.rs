@@ -1039,13 +1039,13 @@ pub async fn get_di_stats(
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
     use sea_orm_migration::MigratorTrait;
 
     use crate::auth::rbac::{self, PermissionScope};
 
     async fn setup() -> sea_orm::DatabaseConnection {
-        let db = Database::connect("sqlite::memory:")
+        let db = crate::db::test_db::connect_in_memory()
             .await
             .expect("in-memory SQLite should connect");
         db.execute(Statement::from_string(
