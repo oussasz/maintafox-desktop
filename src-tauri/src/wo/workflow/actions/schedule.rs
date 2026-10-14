@@ -44,6 +44,7 @@ async fn has_schedule_commitment(db: &impl ConnectionTrait, wo_id: i64) -> AppRe
 }
 
 pub async fn save_schedule(db: &DatabaseConnection, input: WoScheduleSaveInput) -> AppResult<WorkOrder> {
+    crate::wo::domain::validate_wo_shift(input.shift.as_deref())?;
     let committed = has_schedule_commitment(db, input.wo_id).await?;
 
     let start_raw = input.planned_start.as_deref().map(str::trim).filter(|s| !s.is_empty());

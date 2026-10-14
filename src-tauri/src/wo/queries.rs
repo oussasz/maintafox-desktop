@@ -355,6 +355,7 @@ pub async fn get_wo_transition_log(db: &DatabaseConnection, wo_id: i64) -> AppRe
 // ═══════════════════════════════════════════════════════════════════════════════
 
 pub async fn create_work_order(db: &DatabaseConnection, input: WoCreateInput) -> AppResult<WorkOrder> {
+    crate::wo::domain::validate_wo_shift(input.shift.as_deref())?;
     ensure_work_order_statuses_if_needed(db).await?;
     let default_closeout_policy_id = ensure_default_closeout_validation_policy_id(db).await?;
 
@@ -703,6 +704,7 @@ pub async fn update_wo_draft_fields(
     db: &DatabaseConnection,
     input: super::domain::WoDraftUpdateInput,
 ) -> AppResult<WorkOrder> {
+    super::domain::validate_wo_shift(input.shift.as_deref())?;
     let txn = db.begin().await?;
 
     // 1. Fetch current row to validate status

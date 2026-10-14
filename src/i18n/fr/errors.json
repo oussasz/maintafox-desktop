@@ -1,5 +1,6 @@
 {
   "generic": {
+    "invalidData": "L'application a reçu des données dans un format inattendu et n'a pas pu les afficher.",
     "unexpected": "Une erreur inattendue s'est produite.",
     "retry": "Veuillez r\u00e9essayer.",
     "contactSupport": "Si le probl\u00e8me persiste, contactez le support.",
@@ -62,6 +63,7 @@
     "INTERNAL_ERROR": "Une erreur interne s'est produite."
   },
   "gateError": {
+    "GATE_WO_SHIFT_INVALID": "Planification refusée : le poste doit être matin, après-midi, nuit ou journée complète.",
     "GATE_INV_PERIOD_CLOSED": "Mouvement refusé : cette date tombe dans une période de stock clôturée. Utilisez une date postérieure à la période clôturée.",
     "GATE_PROC_SELF_APPROVAL": "Approbation refusée : vous ne pouvez pas approuver un document que vous avez vous-même demandé. Un autre approbateur doit l'approuver.",
     "GATE_PROC_APPROVAL_LIMIT": "Approbation refusée : le montant dépasse votre plafond d'approbation. Un utilisateur disposant d'un plafond supérieur doit l'approuver.",

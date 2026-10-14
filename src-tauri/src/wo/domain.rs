@@ -10,6 +10,22 @@ use serde::{Deserialize, Serialize};
 
 pub use crate::wo::workflow::{assert_action_allowed, guard_wo_transition, WoAction, WoStatus};
 
+/// Shift codes a work order can be planned on (`WoShift` in the UI; labels are translated there).
+pub const WO_SHIFTS: [&str; 4] = ["morning", "afternoon", "night", "full_day"];
+
+/// Refuses a shift outside `WO_SHIFTS` (empty = no shift). Without this, any text was stored and
+/// every list containing that work order failed to load in the UI.
+pub fn validate_wo_shift(shift: Option<&str>) -> AppResult<()> {
+    match shift.map(str::trim) {
+        None | Some("") => Ok(()),
+        Some(s) if WO_SHIFTS.contains(&s) => Ok(()),
+        Some(s) => Err(AppError::ValidationFailed(vec![format!(
+            "GATE_WO_SHIFT_INVALID: shift '{s}' is not one of {}",
+            WO_SHIFTS.join(", ")
+        )])),
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // WoMacroState — dashboard / filter grouping
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -551,6 +567,23 @@ pub async fn generate_wo_code(db: &impl ConnectionTrait) -> AppResult<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn shift_must_be_a_known_code() {
+        use super::validate_wo_shift;
+        for ok in [
+            None,
+            Some(""),
+            Some("morning"),
+            Some("afternoon"),
+            Some("night"),
+            Some("full_day"),
+        ] {
+            assert!(validate_wo_shift(ok).is_ok(), "{ok:?} should be accepted");
+        }
+        let err = validate_wo_shift(Some("jour")).expect_err("free text is refused");
+        assert!(format!("{err:?}").contains("GATE_WO_SHIFT_INVALID"));
+    }
+
     use super::*;
 
     // ── Status string round-trip ──────────────────────────────────────────

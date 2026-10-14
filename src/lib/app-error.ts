@@ -7,7 +7,11 @@
  *    `errors:gateError.*`); the backend text only when no translation exists.
  *  - description: localized validation details, else the backend text without the
  *    "Validation failed:" prefix, when it adds information to the title.
+ *  - a response that fails schema validation (ZodError) gets a plain message; the technical
+ *    detail goes to the console, never on screen.
  */
+import { ZodError } from "zod";
+
 import { i18n } from "@/i18n/config";
 import { formatOrgIssuesWithI18n } from "@/lib/format-org-validation-issue";
 import {
@@ -24,6 +28,14 @@ export interface AppErrorDescription {
 }
 
 export function describeAppError(err: unknown): AppErrorDescription {
+  if (err instanceof ZodError) {
+    console.error("[describeAppError] response did not match its schema", err.issues);
+    return {
+      title: String(i18n.t("errors:generic.invalidData")),
+      description: String(i18n.t("errors:generic.contactSupport")),
+      code: "INVALID_RESPONSE",
+    };
+  }
   const code = extractIpcErrorCode(err);
   const rawMsg = toErrorMessage(err);
 

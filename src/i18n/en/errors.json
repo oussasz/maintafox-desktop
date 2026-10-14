@@ -1,5 +1,6 @@
 {
   "generic": {
+    "invalidData": "The app received data in an unexpected format and could not show it.",
     "unexpected": "An unexpected error occurred.",
     "retry": "Please try again.",
     "contactSupport": "If the problem persists, contact support.",
@@ -62,6 +63,7 @@
     "INTERNAL_ERROR": "An internal error occurred."
   },
   "gateError": {
+    "GATE_WO_SHIFT_INVALID": "Planning refused: the shift must be morning, afternoon, night or full day.",
     "GATE_INV_PERIOD_CLOSED": "Posting refused: this date falls in a closed inventory period. Use a date after the closed period.",
     "GATE_PROC_SELF_APPROVAL": "Approval refused: you cannot approve a document you requested yourself. Another approver must approve it.",
     "GATE_PROC_APPROVAL_LIMIT": "Approval refused: the amount is above your approval limit. A user with a higher limit must approve it.",
