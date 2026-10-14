@@ -56,7 +56,12 @@ async fn lookup_id(db: &DatabaseConnection, domain_key: &str) -> i64 {
 }
 
 async fn main_location_id(db: &DatabaseConnection) -> i64 {
-    scalar_i64(db, "SELECT id FROM stock_locations WHERE code = 'MAIN-BIN' LIMIT 1", vec![]).await
+    scalar_i64(
+        db,
+        "SELECT id FROM stock_locations WHERE code = 'MAIN-BIN' LIMIT 1",
+        vec![],
+    )
+    .await
 }
 
 #[derive(Default, Clone, Copy)]
@@ -127,7 +132,12 @@ async fn user(db: &DatabaseConnection, username: &str) -> i64 {
         vec![format!("inv-user-{username}").into(), username.into(), username.into()],
     )
     .await;
-    scalar_i64(db, "SELECT id FROM user_accounts WHERE username = ?", vec![username.into()]).await
+    scalar_i64(
+        db,
+        "SELECT id FROM user_accounts WHERE username = ?",
+        vec![username.into()],
+    )
+    .await
 }
 
 async fn role_for(db: &DatabaseConnection, role_name: &str, user_id: i64) -> i64 {
@@ -169,7 +179,13 @@ async fn stock_in(db: &DatabaseConnection, article_id: i64, location_id: i64, qt
         .expect("stock entry");
 }
 
-async fn stock_in_lot(db: &DatabaseConnection, article_id: i64, location_id: i64, qty: f64, lot: NewLotInput) -> AppResult<()> {
+async fn stock_in_lot(
+    db: &DatabaseConnection,
+    article_id: i64,
+    location_id: i64,
+    qty: f64,
+    lot: NewLotInput,
+) -> AppResult<()> {
     queries::adjust_stock_full(
         db,
         entry(article_id, location_id, qty),
@@ -242,7 +258,12 @@ async fn transition_req(
     .await
 }
 
-async fn transition_po(db: &DatabaseConnection, po: &PurchaseOrder, next: &str, actor: Option<i64>) -> AppResult<PurchaseOrder> {
+async fn transition_po(
+    db: &DatabaseConnection,
+    po: &PurchaseOrder,
+    next: &str,
+    actor: Option<i64>,
+) -> AppResult<PurchaseOrder> {
     procurement::transition_purchase_order(
         db,
         TransitionPurchaseOrderInput {
@@ -288,7 +309,10 @@ async fn issue_desk_reserves_and_issues_to_an_open_work_order_at_average_cost() 
     assert!(close(outcome.lines[0].unit_cost.expect("cost"), 5.0));
     assert!(close(outcome.total_cost.expect("total"), 15.0));
     let (on_hand, reserved, _) = on_hand_and_reserved(&db, article_id, location_id).await;
-    assert!(close(on_hand, 7.0) && close(reserved, 0.0), "direct issue = reserve + issue");
+    assert!(
+        close(on_hand, 7.0) && close(reserved, 0.0),
+        "direct issue = reserve + issue"
+    );
 
     let source_ref: String = db
         .query_one(Statement::from_sql_and_values(
@@ -317,9 +341,11 @@ async fn issue_desk_reserves_and_issues_to_an_open_work_order_at_average_cost() 
         .try_get("", "code")
         .expect("code");
     let closed_wo = work_order(&db, "OT-DESK-0002", &closed_status).await;
-    assert!(issue::issue_stock(&db, issue_request(article_id, location_id, 1.0, closed_wo))
-        .await
-        .is_err());
+    assert!(
+        issue::issue_stock(&db, issue_request(article_id, location_id, 1.0, closed_wo))
+            .await
+            .is_err()
+    );
     // An issue without a work order or reservation is refused.
     let mut orphan = issue_request(article_id, location_id, 1.0, wo_id);
     orphan.work_order_id = None;
@@ -402,10 +428,20 @@ async fn scan_resolves_barcode_article_code_and_serial() {
     .await
     .expect("serial entry");
 
-    let by_barcode = issue::resolve_scan(&db, " 3760000000017 ".to_string()).await.expect("barcode");
-    assert_eq!((by_barcode.article_id, by_barcode.matched_on.as_str()), (plain, "barcode"));
-    let by_code = issue::resolve_scan(&db, "inv-scan-001".to_string()).await.expect("code");
-    assert_eq!((by_code.article_id, by_code.matched_on.as_str()), (plain, "article_code"));
+    let by_barcode = issue::resolve_scan(&db, " 3760000000017 ".to_string())
+        .await
+        .expect("barcode");
+    assert_eq!(
+        (by_barcode.article_id, by_barcode.matched_on.as_str()),
+        (plain, "barcode")
+    );
+    let by_code = issue::resolve_scan(&db, "inv-scan-001".to_string())
+        .await
+        .expect("code");
+    assert_eq!(
+        (by_code.article_id, by_code.matched_on.as_str()),
+        (plain, "article_code")
+    );
     let by_serial = issue::resolve_scan(&db, "sn-0001".to_string()).await.expect("serial");
     assert_eq!(by_serial.article_id, serial);
     assert!(by_serial.lot_id.is_some());
@@ -429,7 +465,9 @@ async fn lots_are_captured_at_entry_and_issued_first_expired_first_out() {
     let far = (today + Duration::days(60)).to_string();
 
     // An entry of a tracked article must name its lot; a shelf-life article needs an expiry.
-    assert!(queries::adjust_stock(&db, entry(article_id, location_id, 1.0)).await.is_err());
+    assert!(queries::adjust_stock(&db, entry(article_id, location_id, 1.0))
+        .await
+        .is_err());
     assert!(stock_in_lot(
         &db,
         article_id,
@@ -478,7 +516,9 @@ async fn lots_are_captured_at_entry_and_issued_first_expired_first_out() {
         .collect();
     assert_eq!(picked, vec![("L-NEAR".to_string(), 4.0), ("L-FAR".to_string(), 1.0)]);
 
-    let remaining = lots::list_lot_stock(&db, article_id, Some(location_id)).await.expect("lot stock");
+    let remaining = lots::list_lot_stock(&db, article_id, Some(location_id))
+        .await
+        .expect("lot stock");
     let far_left = remaining
         .iter()
         .find(|l| l.lot_number.as_deref() == Some("L-FAR"))
@@ -489,9 +529,11 @@ async fn lots_are_captured_at_entry_and_issued_first_expired_first_out() {
         .all(|l| l.lot_number.as_deref() != Some("L-NEAR") || l.quantity.abs() < 1e-9));
 
     // Asking for more than the lots hold is refused.
-    assert!(issue::issue_stock(&db, issue_request(article_id, location_id, 4.0, wo_id))
-        .await
-        .is_err());
+    assert!(
+        issue::issue_stock(&db, issue_request(article_id, location_id, 4.0, wo_id))
+            .await
+            .is_err()
+    );
 }
 
 #[tokio::test]
@@ -512,18 +554,28 @@ async fn serial_numbers_are_one_unit_each_and_unique_in_stock() {
         serial_number: Some(sn.to_string()),
         ..Default::default()
     };
-    stock_in_lot(&db, article_id, location_id, 1.0, serial("SN-A")).await.expect("SN-A");
+    stock_in_lot(&db, article_id, location_id, 1.0, serial("SN-A"))
+        .await
+        .expect("SN-A");
     assert!(
-        stock_in_lot(&db, article_id, location_id, 1.0, serial("SN-A")).await.is_err(),
+        stock_in_lot(&db, article_id, location_id, 1.0, serial("SN-A"))
+            .await
+            .is_err(),
         "a serial already in stock cannot be received again"
     );
     assert!(
-        stock_in_lot(&db, article_id, location_id, 2.0, serial("SN-B")).await.is_err(),
+        stock_in_lot(&db, article_id, location_id, 2.0, serial("SN-B"))
+            .await
+            .is_err(),
         "a serial is one unit"
     );
-    stock_in_lot(&db, article_id, location_id, 1.0, serial("SN-B")).await.expect("SN-B");
+    stock_in_lot(&db, article_id, location_id, 1.0, serial("SN-B"))
+        .await
+        .expect("SN-B");
 
-    let stock = lots::list_lot_stock(&db, article_id, Some(location_id)).await.expect("stock");
+    let stock = lots::list_lot_stock(&db, article_id, Some(location_id))
+        .await
+        .expect("stock");
     let sn_b = stock
         .iter()
         .find(|l| l.serial_number.as_deref() == Some("SN-B"))
@@ -535,9 +587,11 @@ async fn serial_numbers_are_one_unit_each_and_unique_in_stock() {
     let outcome = issue::issue_stock(&db, request).await.expect("issue chosen serial");
     assert_eq!(outcome.lines[0].serial_number.as_deref(), Some("SN-B"));
     // Fractions of a serialised item are refused.
-    assert!(issue::issue_stock(&db, issue_request(article_id, location_id, 0.5, wo_id))
-        .await
-        .is_err());
+    assert!(
+        issue::issue_stock(&db, issue_request(article_id, location_id, 0.5, wo_id))
+            .await
+            .is_err()
+    );
 }
 
 // ── Valuation periods ───────────────────────────────────────────────────────────────────────
@@ -588,7 +642,10 @@ async fn closing_a_period_freezes_its_valuation_and_refuses_back_dated_postings(
     )
     .await
     .expect("close period");
-    assert_eq!(period.period_code, format!("{:04}-{:02}", period_end.year(), period_end.month()));
+    assert_eq!(
+        period.period_code,
+        format!("{:04}-{:02}", period_end.year(), period_end.month())
+    );
     assert!(close(period.total_value, 20.0));
 
     // Postings dated in the closed period are refused with the period named.
@@ -636,7 +693,9 @@ async fn closing_a_period_freezes_its_valuation_and_refuses_back_dated_postings(
         .expect("current report");
     assert!(current.frozen_period_code.is_none());
     assert!(close(current.total_value, 40.0), "{}", current.total_value);
-    assert!(periods::valuation_report(&db, None, "colour".to_string()).await.is_err());
+    assert!(periods::valuation_report(&db, None, "colour".to_string())
+        .await
+        .is_err());
 }
 
 // ── ABC by annual consumption value ─────────────────────────────────────────────────────────
@@ -722,11 +781,18 @@ async fn approvals_enforce_separation_of_duties_and_role_limits() {
     assert_eq!(req.line_count, 2);
     assert!(close(req.estimated_total.expect("total"), 70.0));
     assert!(req.estimate_complete);
-    let req = transition_req(&db, &req, "SUBMITTED", Some(requester)).await.expect("submit");
+    let req = transition_req(&db, &req, "SUBMITTED", Some(requester))
+        .await
+        .expect("submit");
 
-    let own = transition_req(&db, &req, "APPROVED", Some(requester)).await.expect_err("self approval");
+    let own = transition_req(&db, &req, "APPROVED", Some(requester))
+        .await
+        .expect_err("self approval");
     assert!(message(&own).contains("GATE_PROC_SELF_APPROVAL"), "{own:?}");
-    assert!(transition_req(&db, &req, "APPROVED", None).await.is_err(), "approval needs an approver");
+    assert!(
+        transition_req(&db, &req, "APPROVED", None).await.is_err(),
+        "approval needs an approver"
+    );
 
     approvals::upsert_limit(
         &db,
@@ -740,9 +806,13 @@ async fn approvals_enforce_separation_of_duties_and_role_limits() {
     )
     .await
     .expect("limit 50");
-    let over = transition_req(&db, &req, "APPROVED", Some(approver)).await.expect_err("over limit");
+    let over = transition_req(&db, &req, "APPROVED", Some(approver))
+        .await
+        .expect_err("over limit");
     assert!(message(&over).contains("GATE_PROC_APPROVAL_LIMIT"), "{over:?}");
-    let none = transition_req(&db, &req, "APPROVED", Some(outsider)).await.expect_err("no limit");
+    let none = transition_req(&db, &req, "APPROVED", Some(outsider))
+        .await
+        .expect_err("no limit");
     assert!(message(&none).contains("GATE_PROC_NO_APPROVAL_LIMIT"), "{none:?}");
 
     let raised = approvals::upsert_limit(
@@ -757,9 +827,15 @@ async fn approvals_enforce_separation_of_duties_and_role_limits() {
     )
     .await
     .expect("limit 100");
-    assert_eq!(approvals::list_limits(&db).await.expect("limits").len(), 1, "one limit per role and type");
+    assert_eq!(
+        approvals::list_limits(&db).await.expect("limits").len(),
+        1,
+        "one limit per role and type"
+    );
     assert!(close(raised.max_amount.expect("max"), 100.0));
-    let req = transition_req(&db, &req, "APPROVED", Some(approver)).await.expect("approved");
+    let req = transition_req(&db, &req, "APPROVED", Some(approver))
+        .await
+        .expect("approved");
     assert_eq!(req.status, "APPROVED");
 
     // The PO carries every line, priced from the estimates (tenant currency), and is received
@@ -778,10 +854,16 @@ async fn approvals_enforce_separation_of_duties_and_role_limits() {
     .expect("po");
     assert_eq!(po.line_count, 2);
     assert!(close(po.total_amount.expect("po total"), 70.0));
-    let po = transition_po(&db, &po, "SUBMITTED", Some(outsider)).await.expect("submit po");
-    let own_po = transition_po(&db, &po, "APPROVED", Some(outsider)).await.expect_err("buyer approves own PO");
+    let po = transition_po(&db, &po, "SUBMITTED", Some(outsider))
+        .await
+        .expect("submit po");
+    let own_po = transition_po(&db, &po, "APPROVED", Some(outsider))
+        .await
+        .expect_err("buyer approves own PO");
     assert!(message(&own_po).contains("GATE_PROC_SELF_APPROVAL"));
-    let po = transition_po(&db, &po, "APPROVED", Some(approver)).await.expect("approve po");
+    let po = transition_po(&db, &po, "APPROVED", Some(approver))
+        .await
+        .expect("approve po");
 
     let lines = procurement::list_purchase_order_lines(&db, po.id).await.expect("lines");
     let line_a = lines.iter().find(|l| l.article_id == a).expect("line a");
@@ -798,7 +880,9 @@ async fn approvals_enforce_separation_of_duties_and_role_limits() {
     )
     .await
     .expect("partial receipt");
-    let detail = procurement::get_purchase_order_detail(&db, po.id).await.expect("detail");
+    let detail = procurement::get_purchase_order_detail(&db, po.id)
+        .await
+        .expect("detail");
     assert_eq!(detail.order.status, "PARTIALLY_RECEIVED");
     let line_a = detail.lines.iter().find(|l| l.article_id == a).expect("line a");
     assert!(close(line_a.remaining_qty, 2.0));
@@ -906,8 +990,12 @@ async fn foreign_currency_po_is_valued_in_tenant_currency_at_the_receipt_rate() 
     )
     .await
     .expect("requisition");
-    let req = transition_req(&db, &req, "SUBMITTED", Some(requester)).await.expect("submit");
-    let req = transition_req(&db, &req, "APPROVED", Some(approver)).await.expect("approve");
+    let req = transition_req(&db, &req, "SUBMITTED", Some(requester))
+        .await
+        .expect("submit");
+    let req = transition_req(&db, &req, "APPROVED", Some(approver))
+        .await
+        .expect("approve");
     let po = procurement::create_purchase_order_from_requisition(
         &db,
         CreatePurchaseOrderFromRequisitionInput {
@@ -922,15 +1010,27 @@ async fn foreign_currency_po_is_valued_in_tenant_currency_at_the_receipt_rate() 
     .expect("po in EUR");
     assert_eq!(po.currency_code.as_deref(), Some("EUR"));
     let lines = procurement::list_purchase_order_lines(&db, po.id).await.expect("lines");
-    assert!(lines[0].unit_price.is_none(), "a foreign-currency PO is priced by the buyer");
+    assert!(
+        lines[0].unit_price.is_none(),
+        "a foreign-currency PO is priced by the buyer"
+    );
     procurement::set_purchase_order_line_price(&db, lines[0].id, Some(10.0))
         .await
         .expect("price in EUR");
-    let po = procurement::get_purchase_order_detail(&db, po.id).await.expect("detail").order;
-    let po = transition_po(&db, &po, "SUBMITTED", Some(requester)).await.expect("submit po");
-    let po = transition_po(&db, &po, "APPROVED", Some(approver)).await.expect("approve po");
+    let po = procurement::get_purchase_order_detail(&db, po.id)
+        .await
+        .expect("detail")
+        .order;
+    let po = transition_po(&db, &po, "SUBMITTED", Some(requester))
+        .await
+        .expect("submit po");
+    let po = transition_po(&db, &po, "APPROVED", Some(approver))
+        .await
+        .expect("approve po");
     assert!(
-        procurement::set_purchase_order_line_price(&db, lines[0].id, Some(11.0)).await.is_err(),
+        procurement::set_purchase_order_line_price(&db, lines[0].id, Some(11.0))
+            .await
+            .is_err(),
         "prices are frozen after the draft"
     );
 
@@ -952,7 +1052,9 @@ async fn foreign_currency_po_is_valued_in_tenant_currency_at_the_receipt_rate() 
         .expect("receipt at the entered rate");
     assert_eq!(gr.exchange_rate_source.as_deref(), Some(fx::RATE_SOURCE_ENTERED));
     assert!(close(gr.exchange_rate.expect("rate"), 150.0));
-    let gr_lines = procurement::list_goods_receipt_lines(&db, gr.id).await.expect("gr lines");
+    let gr_lines = procurement::list_goods_receipt_lines(&db, gr.id)
+        .await
+        .expect("gr lines");
     assert!(close(gr_lines[0].unit_cost_tenant.expect("tenant cost"), 1500.0));
     let (_, _, avg) = on_hand_and_reserved(&db, article_id, location_id).await;
     assert!(close(avg.expect("avg"), 1500.0));
@@ -980,17 +1082,20 @@ async fn foreign_currency_po_is_valued_in_tenant_currency_at_the_receipt_rate() 
 
     let resolved = fx::resolve_rate(&db, "EUR".to_string(), None).await.expect("resolve");
     assert!(close(resolved.rate.expect("rate"), 140.0));
-    assert!(fx::create_rate(
-        &db,
-        CurrencyExchangeRateInput {
-            from_currency: "EUR".to_string(),
-            to_currency: None,
-            rate: 141.0,
-            valid_from: fx::today(),
-            source: None,
-        },
-        None,
-    )
-    .await
-    .is_err(), "one active rate per pair and date");
+    assert!(
+        fx::create_rate(
+            &db,
+            CurrencyExchangeRateInput {
+                from_currency: "EUR".to_string(),
+                to_currency: None,
+                rate: 141.0,
+                valid_from: fx::today(),
+                source: None,
+            },
+            None,
+        )
+        .await
+        .is_err(),
+        "one active rate per pair and date"
+    );
 }

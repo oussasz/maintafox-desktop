@@ -246,7 +246,9 @@ pub async fn list_lot_stock<C: ConnectionTrait>(
 /// Lots in stock that are expired or expire within `within_days` days (warning list).
 pub async fn list_expiring_lots(db: &DatabaseConnection, within_days: i64) -> AppResult<Vec<LotStock>> {
     if within_days < 0 {
-        return Err(AppError::ValidationFailed(vec!["within_days cannot be negative.".to_string()]));
+        return Err(AppError::ValidationFailed(vec![
+            "within_days cannot be negative.".to_string()
+        ]));
     }
     let rows = db
         .query_all(Statement::from_sql_and_values(
@@ -288,7 +290,9 @@ pub async fn fefo_allocate<C: ConnectionTrait>(
             remaining
         );
         if expired > EPS {
-            message.push_str(&format!(" {expired:.3} are in expired lots and are not issued automatically."));
+            message.push_str(&format!(
+                " {expired:.3} are in expired lots and are not issued automatically."
+            ));
         }
         return Err(AppError::ValidationFailed(vec![message]));
     }

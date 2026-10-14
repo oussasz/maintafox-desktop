@@ -585,8 +585,13 @@ pub async fn record_meter_reading_of_kind(
             let prev_val: f64 = prev_row
                 .try_get("", "reading_value")
                 .map_err(|e| decode_err("reading_value", e))?;
-            (reading_kind, new_offset) =
-                next_meter_offset(Some(prev_val), current_offset, payload.reading_value, rollover_value, kind)?;
+            (reading_kind, new_offset) = next_meter_offset(
+                Some(prev_val),
+                current_offset,
+                payload.reading_value,
+                rollover_value,
+                kind,
+            )?;
         } else if kind == Some(MeterReadingKind::Rollover) {
             return Err(AppError::ValidationFailed(vec![
                 "Un retournement suppose un releve precedent.".into(),

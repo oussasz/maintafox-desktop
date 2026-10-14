@@ -63,7 +63,10 @@ fn ensure_document_type(value: &str) -> AppResult<()> {
 }
 
 /// Creates or replaces the active limit of a role for a document type.
-pub async fn upsert_limit(db: &DatabaseConnection, input: ProcurementApprovalLimitInput) -> AppResult<ProcurementApprovalLimit> {
+pub async fn upsert_limit(
+    db: &DatabaseConnection,
+    input: ProcurementApprovalLimitInput,
+) -> AppResult<ProcurementApprovalLimit> {
     ensure_document_type(&input.document_type)?;
     if let Some(max) = input.max_amount {
         if !max.is_finite() || max < 0.0 {
@@ -243,7 +246,11 @@ pub async fn purchase_order_amount<C: ConnectionTrait>(db: &C, purchase_order_id
 /// Largest approval limit the user holds for a document type through active role assignments:
 /// `Ok(None)` when limits are not configured for that type at all, `Ok(Some(None))` unlimited,
 /// `Ok(Some(Some(x)))` capped at x, or an error when limits exist but none of the user's roles has one.
-async fn approver_limit<C: ConnectionTrait>(db: &C, user_id: i64, document_type: &str) -> AppResult<Option<Option<f64>>> {
+async fn approver_limit<C: ConnectionTrait>(
+    db: &C,
+    user_id: i64,
+    document_type: &str,
+) -> AppResult<Option<Option<f64>>> {
     let configured: i64 = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,

@@ -2480,7 +2480,9 @@ async fn insert_requisition_lines<C: ConnectionTrait>(
                     .filter(|id| *id > 0)
                     .map_or(Value::BigInt(None), Value::from),
                 line.requested_qty.into(),
-                reorder_trigger.map(str::to_string).map_or(Value::String(None), Value::from),
+                reorder_trigger
+                    .map(str::to_string)
+                    .map_or(Value::String(None), Value::from),
                 now_iso().into(),
                 line.estimated_unit_cost.map_or(Value::Double(None), Value::from),
             ],
@@ -2497,7 +2499,9 @@ pub async fn create_multi_line_requisition(
     input: crate::inventory::domain::CreateMultiLineRequisitionInput,
 ) -> AppResult<ProcurementRequisition> {
     if input.demand_source_type.trim().is_empty() {
-        return Err(AppError::ValidationFailed(vec!["demand_source_type is required.".to_string()]));
+        return Err(AppError::ValidationFailed(vec![
+            "demand_source_type is required.".to_string()
+        ]));
     }
     ensure_lookup_code_active(db, PROC_STATUS_DOMAIN, "DRAFT").await?;
     ensure_lookup_code_active(db, ERP_POSTING_DOMAIN, "PENDING_POSTING").await?;
@@ -2607,7 +2611,7 @@ pub async fn set_purchase_order_line_price(
     if let Some(price) = unit_price {
         if !price.is_finite() || price < 0.0 {
             return Err(AppError::ValidationFailed(vec![
-                "The unit price must be 0 or more.".to_string(),
+                "The unit price must be 0 or more.".to_string()
             ]));
         }
     }

@@ -56,9 +56,8 @@ pub async fn tenant_currency<C: ConnectionTrait>(db: &C) -> AppResult<String> {
 
 /// ISO date (YYYY-MM-DD) or an error naming the field.
 pub fn parse_iso_date(value: &str, field: &str) -> AppResult<chrono::NaiveDate> {
-    chrono::NaiveDate::parse_from_str(value.trim(), "%Y-%m-%d").map_err(|_| {
-        AppError::ValidationFailed(vec![format!("{field} must be a date (YYYY-MM-DD), got '{value}'.")])
-    })
+    chrono::NaiveDate::parse_from_str(value.trim(), "%Y-%m-%d")
+        .map_err(|_| AppError::ValidationFailed(vec![format!("{field} must be a date (YYYY-MM-DD), got '{value}'.")]))
 }
 
 pub fn today() -> String {
@@ -89,7 +88,11 @@ pub async fn rate_on<C: ConnectionTrait>(
 
 /// Rate to value `currency` amounts in the tenant currency on `on_date`. 1.0 for the tenant
 /// currency itself; None when no rate is stored.
-pub async fn rate_to_tenant<C: ConnectionTrait>(db: &C, currency: Option<&str>, on_date: &str) -> AppResult<Option<f64>> {
+pub async fn rate_to_tenant<C: ConnectionTrait>(
+    db: &C,
+    currency: Option<&str>,
+    on_date: &str,
+) -> AppResult<Option<f64>> {
     let tenant = tenant_currency(db).await?;
     match currency {
         None => Ok(Some(1.0)),
@@ -169,7 +172,9 @@ pub async fn create_rate(
         ]));
     }
     if !input.rate.is_finite() || input.rate <= 0.0 {
-        return Err(AppError::ValidationFailed(vec!["The rate must be greater than 0.".to_string()]));
+        return Err(AppError::ValidationFailed(vec![
+            "The rate must be greater than 0.".to_string()
+        ]));
     }
     parse_iso_date(&input.valid_from, "valid_from")?;
     let duplicate = db

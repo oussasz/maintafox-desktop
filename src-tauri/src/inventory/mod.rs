@@ -15,6 +15,6 @@ pub mod unit_conversions;
 pub mod valuation;
 
 #[cfg(test)]
-mod tests;
-#[cfg(test)]
 mod benchmark_tests;
+#[cfg(test)]
+mod tests;

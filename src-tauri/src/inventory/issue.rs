@@ -11,9 +11,7 @@
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 
 use crate::errors::{AppError, AppResult};
-use crate::inventory::domain::{
-    InventoryReserveInput, IssueOutcome, IssueStockRequest, IssuedLine, ScanResolution,
-};
+use crate::inventory::domain::{InventoryReserveInput, IssueOutcome, IssueStockRequest, IssuedLine, ScanResolution};
 use crate::inventory::lots;
 use crate::inventory::queries;
 
@@ -129,8 +127,7 @@ pub async fn issue_stock_with_source(
     let allocation: Vec<(Option<i64>, f64)> = if tracking.is_tracked() {
         match request.lot_id {
             Some(lot) => {
-                lots::ensure_lot_available(&tx, lot, request.article_id, request.location_id, request.quantity)
-                    .await?;
+                lots::ensure_lot_available(&tx, lot, request.article_id, request.location_id, request.quantity).await?;
                 vec![(Some(lot), request.quantity)]
             }
             None => lots::fefo_allocate(&tx, request.article_id, request.location_id, request.quantity)

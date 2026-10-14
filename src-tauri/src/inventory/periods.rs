@@ -115,7 +115,12 @@ async fn replay_positions<C: ConnectionTrait>(db: &C, as_at: &str) -> AppResult<
         let position = positions.entry((article_id, location_id)).or_default();
         if delta > 0.0 {
             if let Some(cost) = unit_cost.filter(|c| c.is_finite() && *c >= 0.0) {
-                position.average = Some(weighted_moving_average(position.quantity, position.average, delta, cost));
+                position.average = Some(weighted_moving_average(
+                    position.quantity,
+                    position.average,
+                    delta,
+                    cost,
+                ));
             }
         }
         position.quantity += delta;
@@ -256,7 +261,10 @@ pub async fn valuation_report(
         .await?;
     let mut warehouse_info: HashMap<i64, (String, String)> = HashMap::new();
     for row in warehouses {
-        warehouse_info.insert(row.try_get("", "id")?, (row.try_get("", "code")?, row.try_get("", "name")?));
+        warehouse_info.insert(
+            row.try_get("", "id")?,
+            (row.try_get("", "code")?, row.try_get("", "name")?),
+        );
     }
 
     struct Acc {
@@ -381,7 +389,10 @@ fn period_code(start: chrono::NaiveDate, end: chrono::NaiveDate) -> String {
     }
 }
 
-pub async fn close_period(db: &DatabaseConnection, input: CloseValuationPeriodInput) -> AppResult<InventoryValuationPeriod> {
+pub async fn close_period(
+    db: &DatabaseConnection,
+    input: CloseValuationPeriodInput,
+) -> AppResult<InventoryValuationPeriod> {
     let start = parse_iso_date(&input.period_start, "period_start")?;
     let end = parse_iso_date(&input.period_end, "period_end")?;
     if start > end {

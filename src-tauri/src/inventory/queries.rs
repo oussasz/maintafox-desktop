@@ -1838,7 +1838,15 @@ pub async fn adjust_stock_costed(
     input: InventoryStockAdjustInput,
     unit_cost: Option<f64>,
 ) -> AppResult<InventoryStockBalance> {
-    adjust_stock_full(db, input, AdjustStockOptions { unit_cost, ..Default::default() }).await
+    adjust_stock_full(
+        db,
+        input,
+        AdjustStockOptions {
+            unit_cost,
+            ..Default::default()
+        },
+    )
+    .await
 }
 
 /// Extras of a manual movement: entry cost, lot (existing or new) and a back-dated posting date.
@@ -1859,8 +1867,7 @@ pub async fn adjust_stock_full(
     options: AdjustStockOptions,
 ) -> AppResult<InventoryStockBalance> {
     let unit_cost = options.unit_cost;
-    let posting_date =
-        crate::inventory::periods::resolve_posting_date(db, options.posting_date.as_deref()).await?;
+    let posting_date = crate::inventory::periods::resolve_posting_date(db, options.posting_date.as_deref()).await?;
     let tracking = crate::inventory::lots::article_tracking(db, input.article_id).await?;
     crate::inventory::lots::ensure_whole_units(&tracking, input.delta_qty.abs())?;
     if input.delta_qty == 0.0 {
@@ -2497,7 +2504,11 @@ pub(crate) async fn issue_reserved_in<C: ConnectionTrait>(
 }
 
 /// Records who made a movement (the ledger insert leaves it empty).
-pub(crate) async fn set_movement_actor<C: ConnectionTrait>(tx: &C, transaction_id: i64, actor_id: Option<i64>) -> AppResult<()> {
+pub(crate) async fn set_movement_actor<C: ConnectionTrait>(
+    tx: &C,
+    transaction_id: i64,
+    actor_id: Option<i64>,
+) -> AppResult<()> {
     if let Some(actor) = actor_id {
         tx.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -2792,11 +2803,13 @@ pub async fn transfer_stock(
                 .await?;
                 vec![(Some(lot), input.quantity)]
             }
-            None => crate::inventory::lots::fefo_allocate(&tx, input.article_id, input.from_location_id, input.quantity)
-                .await?
-                .into_iter()
-                .map(|(lot, qty)| (Some(lot), qty))
-                .collect(),
+            None => {
+                crate::inventory::lots::fefo_allocate(&tx, input.article_id, input.from_location_id, input.quantity)
+                    .await?
+                    .into_iter()
+                    .map(|(lot, qty)| (Some(lot), qty))
+                    .collect()
+            }
         }
     } else {
         vec![(None, input.quantity)]
