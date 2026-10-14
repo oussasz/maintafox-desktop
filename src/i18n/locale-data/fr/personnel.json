@@ -9,7 +9,9 @@
     "deactivate": "Désactiver",
     "refresh": "Actualiser",
     "viewDetails": "Voir le détail",
-    "view": "Voir"
+    "view": "Voir",
+    "cancel": "Annuler",
+    "save": "Enregistrer"
   },
   "view": {
     "list": "Liste",
@@ -17,14 +19,16 @@
   },
   "tabs": {
     "directory": "Personnel",
-    "skillsMatrix": "Matrice des competences",
+    "skillsMatrix": "Matrice des compétences",
     "availability": "Disponibilité",
-    "availabilityCalendar": "Calendrier de disponibilite",
+    "availabilityCalendar": "Calendrier de disponibilité",
     "teams": "Gestion des équipes",
-    "teamCapacity": "Capacite des equipes",
+    "teamCapacity": "Capacité des équipes",
     "training": "Formation et certifications",
     "positions": "Postes",
-    "analytics": "Analyses"
+    "analytics": "Analyses",
+    "companies": "Sous-traitants",
+    "calendar": "Calendrier des fériés"
   },
   "training": {
     "heading": "Formation et qualifications",
@@ -124,15 +128,16 @@
       "more": "Plus d'actions"
     },
     "tabs": {
-      "identity": "Identite",
-      "skills": "Competences",
-      "availability": "Disponibilite",
-      "teams": "Equipes",
+      "identity": "Identité",
+      "skills": "Compétences",
+      "availability": "Disponibilité",
+      "teams": "Équipes",
       "rates": "Tarifs",
       "authorizations": "Autorisations",
       "assignment": "Affectations",
       "history": "Historique",
-      "workload": "Charge"
+      "workload": "Charge",
+      "qualifications": "Habilitations et compétences"
     },
     "workload": {
       "openWo": "OT ouverts",
@@ -638,6 +643,88 @@
       "title": "Ecarts de competences prioritaires",
       "empty": "Aucune donnee d'ecart disponible.",
       "score": "Score d'ecart : {{score}}"
+    }
+  },
+  "capacityDays": {
+    "title": "Capacité selon les horaires",
+    "plannedLoad": "Charge planifiée (planification)",
+    "teamIntro": "Heures disponibles chaque jour d'après les horaires des membres, moins les absences et les jours fériés. Cliquez sur un jour pour voir qui est en poste.",
+    "personIntro": "Deux prochaines semaines : horaire, heures disponibles et motif.",
+    "from": "Du",
+    "to": "Au",
+    "rangeInvalid": "Choisissez une période de {{max}} jours au plus.",
+    "totalHours": "{{hours}} h disponibles sur la période",
+    "day": "Jour",
+    "available": "Disponible",
+    "absentHours": "Absences",
+    "onShift": "En poste",
+    "basis": "Base",
+    "rule": "Règle du planificateur",
+    "ruleValue": "{{hours}} h + {{overtime}} h sup.",
+    "noMembers": "Personne dans l'équipe ce jour-là.",
+    "absence": "Absence",
+    "bases": {
+      "roster": "Horaires",
+      "holiday": "Jour férié",
+      "no_schedule": "Aucun poste prévu",
+      "no_members": "Aucun membre"
+    },
+    "reasons": {
+      "working": "En poste",
+      "absent": "Absent",
+      "rest_day": "Repos",
+      "holiday": "Férié",
+      "no_schedule": "Sans horaire",
+      "not_employed": "Hors contrat"
+    }
+  },
+  "holidays": {
+    "year": "Année",
+    "add": "Nouveau jour férié",
+    "addTitle": "Nouveau jour férié ou d'arrêt",
+    "editTitle": "Modifier le jour férié",
+    "edit": "Modifier",
+    "intro": "Jours fériés et jours d'arrêt de l'usine : personne ne travaille, la capacité compte zéro heure.",
+    "formDescription": "Pour tous les sites, ou seulement pour un site / atelier et ce qui en dépend.",
+    "date": "Date",
+    "label": "Libellé",
+    "scope": "S'applique à",
+    "allSites": "Tous les sites",
+    "active": "En vigueur",
+    "cancelled": "Annulé",
+    "empty": "Aucun jour férié enregistré pour {{year}}",
+    "emptyHint": "Enregistrez les jours fériés et d'arrêt pour que la capacité soit juste."
+  },
+  "companies": {
+    "intro": "Entreprises sous-traitantes : période du contrat, référencement et assurance. Leurs techniciens sont enregistrés dans le registre sans avoir besoin d'un compte.",
+    "add": "Nouvelle entreprise",
+    "addTitle": "Nouvelle entreprise sous-traitante",
+    "editTitle": "Modifier l'entreprise",
+    "formDescription": "Période du contrat, référencement et assurance du sous-traitant.",
+    "name": "Entreprise",
+    "domain": "Domaine d'intervention",
+    "contract": "Contrat",
+    "contractStart": "Début du contrat",
+    "contractEnd": "Fin du contrat",
+    "endBeforeStart": "La fin du contrat précède son début.",
+    "onboarding": "Référencement",
+    "insurance": "Assurance",
+    "notes": "Remarques",
+    "people": "Techniciens",
+    "active": "Active",
+    "empty": "Aucune entreprise sous-traitante",
+    "emptyHint": "Ajoutez les entreprises dont les techniciens interviennent sur site.",
+    "onboardingStatus": {
+      "pending": "En cours de référencement",
+      "active": "Référencée",
+      "suspended": "Suspendue",
+      "expired": "Contrat terminé"
+    },
+    "insuranceStatus": {
+      "unknown": "Non vérifiée",
+      "valid": "Valide",
+      "expired": "Échue",
+      "not_required": "Non exigée"
     }
   }
 }

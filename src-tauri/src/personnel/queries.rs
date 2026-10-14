@@ -1041,26 +1041,33 @@ pub async fn deactivate_personnel(
     })
 }
 
-/// WO assignments via `user_accounts.personnel_id` (WO stores user ids, not personnel ids).
+/// A work order the person `?` is on: responsible (through their login), or labour booked for
+/// them — directly (`personnel_id`, people without a login) or through their login. Binds the
+/// personnel id three times.
+const PERSON_ON_WO: &str = "( \
+    wo.primary_responsible_id IN (SELECT ua.id FROM user_accounts ua WHERE ua.personnel_id = ?) \
+    OR EXISTS ( \
+        SELECT 1 FROM work_order_interveners woi \
+        LEFT JOIN user_accounts uai ON uai.id = woi.intervener_id \
+        WHERE woi.work_order_id = wo.id AND (woi.personnel_id = ? OR uai.personnel_id = ?) \
+    ) \
+)";
+
+/// Open work orders the person is on (responsible or labour).
 async fn collect_deactivation_blockers(db: &DatabaseConnection, personnel_id: i64) -> AppResult<String> {
     let mut parts: Vec<String> = Vec::new();
 
     let wo_rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT DISTINCT wo.id, wo.code \
-             FROM user_accounts ua \
-             JOIN work_orders wo ON ( \
-                wo.primary_responsible_id = ua.id \
-                OR EXISTS ( \
-                    SELECT 1 FROM work_order_interveners woi \
-                    WHERE woi.work_order_id = wo.id AND woi.intervener_id = ua.id \
-                ) \
-             ) \
-             JOIN work_order_statuses wos ON wos.id = wo.status_id \
-             WHERE ua.personnel_id = ? \
-               AND wos.code NOT IN ('closed', 'cancelled')",
-            [personnel_id.into()],
+            format!(
+                "SELECT DISTINCT wo.id, wo.code \
+                 FROM work_orders wo \
+                 JOIN work_order_statuses wos ON wos.id = wo.status_id \
+                 WHERE {PERSON_ON_WO} \
+                   AND wos.code NOT IN ('closed', 'cancelled')"
+            ),
+            [personnel_id.into(), personnel_id.into(), personnel_id.into()],
         ))
         .await?;
 
@@ -1967,6 +1974,87 @@ pub async fn create_external_company(
     map_external_company_row(&row)
 }
 
+/// Contractor company edit: contract dates, onboarding and insurance status (an expired
+/// insurance or a suspended contractor is visible on the company and its people).
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ExternalCompanyUpdateInput {
+    pub id: i64,
+    pub name: String,
+    pub service_domain: Option<String>,
+    pub contract_start: Option<String>,
+    pub contract_end: Option<String>,
+    pub onboarding_status: String,
+    pub insurance_status: String,
+    pub notes: Option<String>,
+    pub is_active: bool,
+}
+
+pub async fn update_external_company(
+    db: &DatabaseConnection,
+    input: ExternalCompanyUpdateInput,
+) -> AppResult<ExternalCompany> {
+    let issue = |code: &str, message: &str| {
+        crate::errors::org_validation_failed(code, message, std::collections::HashMap::new())
+    };
+    let name = input.name.trim().to_string();
+    if name.is_empty() {
+        return Err(issue("COMPANY_NAME_REQUIRED", "The company name is required."));
+    }
+    super::domain::OnboardingStatus::try_from(input.onboarding_status.as_str())
+        .map_err(|_| issue("COMPANY_STATUS_UNKNOWN", "Unknown onboarding status."))?;
+    super::domain::InsuranceStatus::try_from(input.insurance_status.as_str())
+        .map_err(|_| issue("COMPANY_STATUS_UNKNOWN", "Unknown insurance status."))?;
+    let clean = |v: Option<String>| v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    let (start, end) = (clean(input.contract_start), clean(input.contract_end));
+    if let (Some(s), Some(e)) = (&start, &end) {
+        if e < s {
+            return Err(issue(
+                "COMPANY_CONTRACT_DATES",
+                "The contract end is before its start.",
+            ));
+        }
+    }
+    let res = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE external_companies SET name = ?, service_domain = ?, contract_start = ?, contract_end = ?, \
+             onboarding_status = ?, insurance_status = ?, notes = ?, is_active = ?, updated_at = ? WHERE id = ?",
+            [
+                name.into(),
+                clean(input.service_domain).into(),
+                start.into(),
+                end.into(),
+                input.onboarding_status.into(),
+                input.insurance_status.into(),
+                clean(input.notes).into(),
+                i64::from(input.is_active).into(),
+                Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string().into(),
+                input.id.into(),
+            ],
+        ))
+        .await?;
+    if res.rows_affected() == 0 {
+        return Err(AppError::NotFound {
+            entity: "ExternalCompany".into(),
+            id: input.id.to_string(),
+        });
+    }
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id, name, service_domain, contract_start, contract_end, onboarding_status, insurance_status, \
+                    notes, is_active, created_at, updated_at \
+             FROM external_companies WHERE id = ?",
+            [input.id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "ExternalCompany".into(),
+            id: input.id.to_string(),
+        })?;
+    map_external_company_row(&row)
+}
+
 pub async fn list_company_contacts(db: &DatabaseConnection, company_id: i64) -> AppResult<Vec<ExternalCompanyContact>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
@@ -2266,27 +2354,23 @@ pub async fn list_personnel_work_history(
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT * FROM (
+            format!(
+                "SELECT * FROM (
                 SELECT
                     'wo' AS source_module,
                     wo.id AS record_id,
                     wo.code AS record_code,
                     CASE
-                        WHEN wo.primary_responsible_id = ua.id THEN 'primary_responsible'
+                        WHEN wo.primary_responsible_id IN
+                            (SELECT u.id FROM user_accounts u WHERE u.personnel_id = ?) THEN 'primary_responsible'
                         ELSE 'intervener'
                     END AS role_code,
                     wos.code AS status_code,
                     wo.title AS title,
                     COALESCE(wo.actual_end, wo.updated_at, wo.created_at) AS happened_at
-                FROM user_accounts ua
-                JOIN work_orders wo ON (
-                    wo.primary_responsible_id = ua.id OR EXISTS (
-                        SELECT 1 FROM work_order_interveners woi
-                        WHERE woi.work_order_id = wo.id AND woi.intervener_id = ua.id
-                    )
-                )
+                FROM work_orders wo
                 LEFT JOIN work_order_statuses wos ON wos.id = wo.status_id
-                WHERE ua.personnel_id = ?
+                WHERE {PERSON_ON_WO}
 
                 UNION ALL
 
@@ -2309,8 +2393,16 @@ pub async fn list_personnel_work_history(
                 WHERE ua2.personnel_id = ?
             ) h
             ORDER BY h.happened_at DESC
-            LIMIT ?",
-            [personnel_id.into(), personnel_id.into(), row_limit.into()],
+            LIMIT ?"
+            ),
+            [
+                personnel_id.into(),
+                personnel_id.into(),
+                personnel_id.into(),
+                personnel_id.into(),
+                personnel_id.into(),
+                row_limit.into(),
+            ],
         ))
         .await?;
 
@@ -2335,31 +2427,20 @@ pub async fn get_personnel_workload_summary(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT
+            format!(
+                "SELECT
                 COALESCE((
                     SELECT COUNT(DISTINCT wo.id)
-                    FROM user_accounts ua
-                    JOIN work_orders wo ON (
-                        wo.primary_responsible_id = ua.id OR EXISTS (
-                            SELECT 1 FROM work_order_interveners woi
-                            WHERE woi.work_order_id = wo.id AND woi.intervener_id = ua.id
-                        )
-                    )
+                    FROM work_orders wo
                     JOIN work_order_statuses wos ON wos.id = wo.status_id
-                    WHERE ua.personnel_id = ?
+                    WHERE {PERSON_ON_WO}
                       AND wos.code NOT IN ('closed', 'cancelled')
                 ), 0) AS open_work_orders,
                 COALESCE((
                     SELECT COUNT(DISTINCT wo.id)
-                    FROM user_accounts ua
-                    JOIN work_orders wo ON (
-                        wo.primary_responsible_id = ua.id OR EXISTS (
-                            SELECT 1 FROM work_order_interveners woi
-                            WHERE woi.work_order_id = wo.id AND woi.intervener_id = ua.id
-                        )
-                    )
+                    FROM work_orders wo
                     JOIN work_order_statuses wos ON wos.id = wo.status_id
-                    WHERE ua.personnel_id = ?
+                    WHERE {PERSON_ON_WO}
                       AND wos.code IN ('in_progress', 'assigned', 'planned', 'ready_to_schedule')
                 ), 0) AS in_progress_work_orders,
                 COALESCE((
@@ -2375,8 +2456,13 @@ pub async fn get_personnel_workload_summary(
                     JOIN user_accounts ua3 ON ua3.id = di2.submitter_id
                     WHERE ua3.personnel_id = ?
                       AND date(di2.created_at) >= date('now', '-30 day')
-                ), 0) AS interventions_last_30d",
+                ), 0) AS interventions_last_30d"
+            ),
             [
+                personnel_id.into(),
+                personnel_id.into(),
+                personnel_id.into(),
+                personnel_id.into(),
                 personnel_id.into(),
                 personnel_id.into(),
                 personnel_id.into(),

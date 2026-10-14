@@ -9,7 +9,9 @@
     "deactivate": "Deactivate",
     "refresh": "Refresh",
     "viewDetails": "View details",
-    "view": "View"
+    "view": "View",
+    "cancel": "Cancel",
+    "save": "Save"
   },
   "view": {
     "list": "List",
@@ -24,7 +26,9 @@
     "teamCapacity": "Team Capacity",
     "training": "Training & certs",
     "positions": "Positions",
-    "analytics": "Analytics"
+    "analytics": "Analytics",
+    "companies": "Contractors",
+    "calendar": "Holiday calendar"
   },
   "training": {
     "heading": "Training & qualifications",
@@ -132,7 +136,8 @@
       "authorizations": "Authorizations",
       "assignment": "Assignments",
       "history": "Work history",
-      "workload": "Workload"
+      "workload": "Workload",
+      "qualifications": "Qualifications"
     },
     "workload": {
       "openWo": "Open WO",
@@ -638,6 +643,88 @@
       "title": "Top skills gap",
       "empty": "No skills gap data available.",
       "score": "Gap score: {{score}}"
+    }
+  },
+  "capacityDays": {
+    "title": "Capacity from shift calendars",
+    "plannedLoad": "Planned load (planning)",
+    "teamIntro": "Hours each day from the members' shifts, minus absences and plant holidays. Click a day to see who is on shift.",
+    "personIntro": "Next two weeks: shift, hours available and why.",
+    "from": "From",
+    "to": "To",
+    "rangeInvalid": "Choose a range of at most {{max}} days.",
+    "totalHours": "{{hours}} h available over the period",
+    "day": "Day",
+    "available": "Available",
+    "absentHours": "Absences",
+    "onShift": "On shift",
+    "basis": "Basis",
+    "rule": "Planner's rule",
+    "ruleValue": "{{hours}} h + {{overtime}} h overtime",
+    "noMembers": "Nobody in the team that day.",
+    "absence": "Absence",
+    "bases": {
+      "roster": "Shift calendars",
+      "holiday": "Holiday",
+      "no_schedule": "No shift scheduled",
+      "no_members": "No members"
+    },
+    "reasons": {
+      "working": "Working",
+      "absent": "Absent",
+      "rest_day": "Rest day",
+      "holiday": "Holiday",
+      "no_schedule": "No schedule",
+      "not_employed": "Not under contract"
+    }
+  },
+  "holidays": {
+    "year": "Year",
+    "add": "New holiday",
+    "addTitle": "New holiday or shutdown day",
+    "editTitle": "Edit the holiday",
+    "edit": "Edit",
+    "intro": "Public holidays and plant shutdown days: nobody on the calendar works, capacity counts zero hours.",
+    "formDescription": "For every site, or only for one site / workshop and what is under it.",
+    "date": "Date",
+    "label": "Name",
+    "scope": "Applies to",
+    "allSites": "All sites",
+    "active": "In force",
+    "cancelled": "Cancelled",
+    "empty": "No holiday recorded for {{year}}",
+    "emptyHint": "Record the public holidays and shutdown days so capacity is right."
+  },
+  "companies": {
+    "intro": "Contractor companies: contract period, onboarding and insurance. Their technicians are recorded in the register without needing a login.",
+    "add": "New company",
+    "addTitle": "New contractor company",
+    "editTitle": "Edit the company",
+    "formDescription": "Contract period, onboarding and insurance of the contractor.",
+    "name": "Company",
+    "domain": "Field of work",
+    "contract": "Contract",
+    "contractStart": "Contract start",
+    "contractEnd": "Contract end",
+    "endBeforeStart": "The contract end is before its start.",
+    "onboarding": "Onboarding",
+    "insurance": "Insurance",
+    "notes": "Notes",
+    "people": "Technicians",
+    "active": "Active",
+    "empty": "No contractor company",
+    "emptyHint": "Add the companies whose technicians work on site.",
+    "onboardingStatus": {
+      "pending": "Being onboarded",
+      "active": "Approved",
+      "suspended": "Suspended",
+      "expired": "Contract ended"
+    },
+    "insuranceStatus": {
+      "unknown": "Not checked",
+      "valid": "Valid",
+      "expired": "Expired",
+      "not_required": "Not required"
     }
   }
 }

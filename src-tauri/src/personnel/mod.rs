@@ -5,6 +5,8 @@
 
 pub mod assignment_history;
 pub mod availability;
+pub mod calendar;
+pub mod capacity;
 pub mod domain;
 pub mod import;
 pub mod photos;
@@ -13,6 +15,8 @@ pub mod reports;
 pub mod skills;
 pub mod teams;
 
+#[cfg(test)]
+mod capacity_tests;
 #[cfg(test)]
 mod e2e_tests;
 #[cfg(test)]

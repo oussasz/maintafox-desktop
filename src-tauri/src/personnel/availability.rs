@@ -164,7 +164,7 @@ pub async fn list_availability_calendar(
         values.push(personnel_id.into());
     }
     if !filter.include_inactive.unwrap_or(false) {
-        personnel_where.push("p.availability_status <> 'inactive'".to_string());
+        personnel_where.push("p.employment_status = 'active'".to_string());
     }
 
     let team_filter_sql = if filter.team_id.is_some() {
@@ -214,15 +214,15 @@ pub async fn list_availability_calendar(
             sd.shift_end,
             CASE
                 WHEN sd.id IS NULL OR sd.is_rest_day = 1 THEN 0
-                ELSE MAX(CAST((julianday(pd.work_date || 'T' || sd.shift_end || ':00Z') - julianday(pd.work_date || 'T' || sd.shift_start || ':00Z')) * 1440 AS INTEGER), 0)
+                ELSE MAX(CAST((julianday((CASE WHEN sd.shift_end <= sd.shift_start THEN date(pd.work_date, '+1 day') ELSE pd.work_date END) || 'T' || sd.shift_end || ':00Z') - julianday(pd.work_date || 'T' || sd.shift_start || ':00Z')) * 1440 AS INTEGER), 0)
             END AS scheduled_minutes,
             COALESCE((
-                SELECT SUM(MAX(CAST((julianday(MIN(ab.end_at, pd.work_date || 'T' || sd.shift_end || ':00Z')) - julianday(MAX(ab.start_at, pd.work_date || 'T' || sd.shift_start || ':00Z'))) * 1440 AS INTEGER), 0))
+                SELECT SUM(MAX(CAST((julianday(MIN(ab.end_at, (CASE WHEN sd.shift_end <= sd.shift_start THEN date(pd.work_date, '+1 day') ELSE pd.work_date END) || 'T' || sd.shift_end || ':00Z')) - julianday(MAX(ab.start_at, pd.work_date || 'T' || sd.shift_start || ':00Z'))) * 1440 AS INTEGER), 0))
                 FROM personnel_availability_blocks ab
                 WHERE ab.personnel_id = pd.id
                   AND sd.id IS NOT NULL
                   AND sd.is_rest_day = 0
-                  AND ab.start_at < pd.work_date || 'T' || sd.shift_end || ':00Z'
+                  AND ab.start_at < (CASE WHEN sd.shift_end <= sd.shift_start THEN date(pd.work_date, '+1 day') ELSE pd.work_date END) || 'T' || sd.shift_end || ':00Z'
                   AND ab.end_at > pd.work_date || 'T' || sd.shift_start || ':00Z'
             ), 0) AS blocked_minutes,
             CASE WHEN EXISTS (
@@ -231,7 +231,7 @@ pub async fn list_availability_calendar(
                   AND ab2.is_critical = 1
                   AND sd.id IS NOT NULL
                   AND sd.is_rest_day = 0
-                  AND ab2.start_at < pd.work_date || 'T' || sd.shift_end || ':00Z'
+                  AND ab2.start_at < (CASE WHEN sd.shift_end <= sd.shift_start THEN date(pd.work_date, '+1 day') ELSE pd.work_date END) || 'T' || sd.shift_end || ':00Z'
                   AND ab2.end_at > pd.work_date || 'T' || sd.shift_start || ':00Z'
             ) THEN 1 ELSE 0 END AS has_critical_block,
             COALESCE((
@@ -240,7 +240,7 @@ pub async fn list_availability_calendar(
                 WHERE ab3.personnel_id = pd.id
                   AND sd.id IS NOT NULL
                   AND sd.is_rest_day = 0
-                  AND ab3.start_at < pd.work_date || 'T' || sd.shift_end || ':00Z'
+                  AND ab3.start_at < (CASE WHEN sd.shift_end <= sd.shift_start THEN date(pd.work_date, '+1 day') ELSE pd.work_date END) || 'T' || sd.shift_end || ':00Z'
                   AND ab3.end_at > pd.work_date || 'T' || sd.shift_start || ':00Z'
             ), '') AS block_types
          FROM person_days pd

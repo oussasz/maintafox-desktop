@@ -24,6 +24,8 @@ pub async fn ensure_system_reference_catalog_integrity(db: &DatabaseConnection) 
     ensure_org_schedule_class_reference_catalog(db).await?;
     // WO close-out coding (symptoms, causes, effects, mechanisms, detection methods).
     crate::wo::closeout_reference_catalog::ensure_closeout_reference_catalogs(db).await?;
+    // Certification / authorisation types and skills in the tenant's language.
+    crate::qualification::catalog::ensure_qualification_catalog(db).await?;
     Ok(())
 }
 

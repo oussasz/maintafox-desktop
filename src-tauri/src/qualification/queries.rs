@@ -5,11 +5,14 @@ use uuid::Uuid;
 use crate::errors::{AppError, AppResult};
 
 use super::domain::{
-    CertificationType, CertificationTypeUpsertInput, PersonnelCertification, PersonnelCertificationListFilter,
+    CertificationType, CertificationTypeUpsertInput, PersonnelCertification, CERTIFICATION_CATEGORIES, PersonnelCertificationListFilter,
     PersonnelCertificationUpsertInput, QualificationRequirementProfile, QualificationRequirementProfileUpsertInput,
 };
 
 const VERIFICATION: &[&str] = &["pending", "verified", "rejected"];
+
+pub(crate) const CERT_TYPE_COLS: &str = "id, entity_sync_id, code, name, default_validity_months, renewal_lead_days, \
+     row_version, category, description, is_active";
 
 /// Renewal warning window used when a certification type has no `renewal_lead_days`.
 pub(crate) const DEFAULT_RENEWAL_LEAD_DAYS: i64 = 30;
@@ -95,6 +98,14 @@ fn map_cert_type(row: &sea_orm::QueryResult) -> AppResult<CertificationType> {
         row_version: row
             .try_get("", "row_version")
             .map_err(|e| decode_err("row_version", e))?,
+        category: row.try_get("", "category").map_err(|e| decode_err("category", e))?,
+        description: row
+            .try_get("", "description")
+            .map_err(|e| decode_err("description", e))?,
+        is_active: row
+            .try_get::<i64>("", "is_active")
+            .map_err(|e| decode_err("is_active", e))?
+            != 0,
     })
 }
 
@@ -200,9 +211,7 @@ pub async fn list_certification_types(db: &DatabaseConnection) -> AppResult<Vec<
     let rows = db
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT id, entity_sync_id, code, name, default_validity_months, renewal_lead_days, row_version \
-             FROM certification_types ORDER BY code ASC"
-                .to_string(),
+            format!("SELECT {CERT_TYPE_COLS} FROM certification_types ORDER BY is_active DESC, category ASC, code ASC"),
         ))
         .await?;
     let mut out = Vec::with_capacity(rows.len());
@@ -219,8 +228,7 @@ pub(crate) async fn get_certification_type_by_id(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, entity_sync_id, code, name, default_validity_months, renewal_lead_days, row_version \
-             FROM certification_types WHERE id = ?",
+            format!("SELECT {CERT_TYPE_COLS} FROM certification_types WHERE id = ?"),
             [id.into()],
         ))
         .await?;
@@ -234,43 +242,90 @@ pub async fn upsert_certification_type(
     db: &DatabaseConnection,
     input: CertificationTypeUpsertInput,
 ) -> AppResult<CertificationType> {
-    if input.code.trim().is_empty() || input.name.trim().is_empty() {
-        return Err(AppError::ValidationFailed(vec!["code and name are required.".into()]));
+    let code = input.code.trim().to_uppercase();
+    let name = input.name.trim().to_string();
+    if code.is_empty() || name.is_empty() {
+        return Err(super::issue(
+            "CERT_TYPE_CODE_NAME_REQUIRED",
+            "A code and a name are required.",
+            &[],
+        ));
     }
+    if let Some(category) = input.category.as_deref() {
+        if !CERTIFICATION_CATEGORIES.contains(&category) {
+            return Err(super::issue(
+                "CERT_TYPE_CATEGORY_UNKNOWN",
+                "Unknown certification category.",
+                &[("category", category.to_string())],
+            ));
+        }
+    }
+    for (field, value) in [
+        ("default_validity_months", input.default_validity_months),
+        ("renewal_lead_days", input.renewal_lead_days),
+    ] {
+        if value.is_some_and(|v| v <= 0) {
+            return Err(super::issue(
+                "CERT_TYPE_DURATION_POSITIVE",
+                "Validity and renewal notice must be positive numbers.",
+                &[("field", field.to_string())],
+            ));
+        }
+    }
+    let description = input
+        .description
+        .map(|d| d.trim().to_string())
+        .filter(|d| !d.is_empty());
     let txn = db.begin().await?;
 
+    let clash = txn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id FROM certification_types WHERE UPPER(code) = ? AND id <> ?",
+            [code.clone().into(), input.id.unwrap_or(0).into()],
+        ))
+        .await?;
+    if clash.is_some() {
+        return Err(super::issue(
+            "CERT_TYPE_CODE_TAKEN",
+            "Another certification type already uses this code.",
+            &[("code", code)],
+        ));
+    }
+
     if let Some(id) = input.id {
-        if id <= 0 {
-            return Err(AppError::ValidationFailed(vec!["id must be positive.".into()]));
-        }
         let current = get_certification_type_by_id(&txn, id)
             .await?
             .ok_or_else(|| AppError::NotFound {
                 entity: "CertificationType".into(),
                 id: id.to_string(),
             })?;
-        let new_rv = current.row_version + 1;
+        let expected = input.expected_row_version.unwrap_or(current.row_version);
         let affected = txn
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "UPDATE certification_types SET code = ?, name = ?, default_validity_months = ?, \
-                 renewal_lead_days = ?, row_version = ? \
+                 renewal_lead_days = ?, category = ?, description = ?, is_active = ?, row_version = row_version + 1 \
                  WHERE id = ? AND row_version = ?",
                 [
-                    input.code.into(),
-                    input.name.into(),
+                    code.into(),
+                    name.into(),
                     opt_i64(input.default_validity_months),
                     opt_i64(input.renewal_lead_days),
-                    new_rv.into(),
+                    input.category.unwrap_or(current.category).into(),
+                    opt_string(description.or(current.description)),
+                    i64::from(input.is_active.unwrap_or(current.is_active)).into(),
                     id.into(),
-                    current.row_version.into(),
+                    expected.into(),
                 ],
             ))
             .await?;
         if affected.rows_affected() == 0 {
-            return Err(AppError::ValidationFailed(vec![
-                "Concurrent update on certification_types.".into(),
-            ]));
+            return Err(super::issue(
+                "RECORD_CHANGED_ELSEWHERE",
+                "This record was changed by someone else; reload and try again.",
+                &[],
+            ));
         }
         let updated = get_certification_type_by_id(&txn, id).await?.expect("row");
         txn.commit().await?;
@@ -281,13 +336,16 @@ pub async fn upsert_certification_type(
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO certification_types (entity_sync_id, code, name, default_validity_months, renewal_lead_days, \
-         row_version) VALUES (?, ?, ?, ?, ?, 1)",
+         category, description, is_active, row_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)",
         [
             entity_sync_id.into(),
-            input.code.into(),
-            input.name.into(),
+            code.into(),
+            name.into(),
             opt_i64(input.default_validity_months),
             opt_i64(input.renewal_lead_days),
+            input.category.unwrap_or_else(|| "other".to_string()).into(),
+            opt_string(description),
+            i64::from(input.is_active.unwrap_or(true)).into(),
         ],
     ))
     .await?;

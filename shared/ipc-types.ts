@@ -6465,6 +6465,10 @@ export interface CertificationType {
   default_validity_months: number | null;
   renewal_lead_days: number | null;
   row_version: number;
+  /** electrical | loto | confined_space | work_at_height | welding | lifting | first_aid | hot_work | other */
+  category: string;
+  description: string | null;
+  is_active: boolean;
 }
 
 export interface QualificationRequirementProfile {
@@ -6503,6 +6507,10 @@ export interface CertificationTypeUpsertInput {
   name: string;
   default_validity_months?: number | null;
   renewal_lead_days?: number | null;
+  category?: string | null;
+  description?: string | null;
+  is_active?: boolean | null;
+  expected_row_version?: number | null;
 }
 
 export interface QualificationRequirementProfileUpsertInput {

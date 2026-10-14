@@ -115,15 +115,26 @@ pub async fn scan_training_expiry_alerts(
     db: &DatabaseConnection,
     lookahead_days: i64,
 ) -> AppResult<Vec<TrainingExpiryAlertEvent>> {
-    let lookahead = lookahead_days.clamp(1, 730);
-    let horizon = today() + chrono::Duration::days(lookahead);
+    scan(db, Some(lookahead_days.clamp(1, 730))).await
+}
+
+/// Alerts for certificates that expired or fall inside their own type's renewal notice
+/// (`renewal_lead_days`, 30 days when unset) — run at startup so managers are told without
+/// anyone opening the training screen.
+pub async fn scan_due_certification_alerts(db: &DatabaseConnection) -> AppResult<Vec<TrainingExpiryAlertEvent>> {
+    scan(db, None).await
+}
+
+async fn scan(db: &DatabaseConnection, lookahead_days: Option<i64>) -> AppResult<Vec<TrainingExpiryAlertEvent>> {
     let txn = db.begin().await?;
 
     let rows = txn
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT pc.id, pc.personnel_id, pc.certification_type_id, pc.expires_at, pc.verification_status \
+            "SELECT pc.id, pc.personnel_id, pc.certification_type_id, pc.expires_at, pc.verification_status, \
+                    ct.renewal_lead_days \
              FROM personnel_certifications pc \
+             JOIN certification_types ct ON ct.id = pc.certification_type_id \
              WHERE pc.expires_at IS NOT NULL AND pc.expires_at != ''"
                 .to_string(),
         ))
@@ -154,7 +165,14 @@ pub async fn scan_training_expiry_alerts(
             continue;
         };
 
-        if exp_d > horizon {
+        let lead = lookahead_days.unwrap_or_else(|| {
+            r.try_get::<Option<i64>>("", "renewal_lead_days")
+                .ok()
+                .flatten()
+                .unwrap_or(super::queries::DEFAULT_RENEWAL_LEAD_DAYS)
+                .max(0)
+        });
+        if exp_d > today() + chrono::Duration::days(lead) {
             continue;
         }
 
@@ -210,7 +228,89 @@ pub async fn scan_training_expiry_alerts(
     }
 
     txn.commit().await?;
+    notify_expiry_alerts(db, &created).await;
     Ok(created)
+}
+
+/// One `cert_expiry` notification per new alert, routed to the managers of the person's
+/// organisation node (rule `entity_manager`, migration 193), written in the tenant's language.
+/// Best effort: a notification failure never undoes the alert.
+async fn notify_expiry_alerts(db: &DatabaseConnection, created: &[TrainingExpiryAlertEvent]) {
+    if created.is_empty() {
+        return;
+    }
+    let french = crate::pm::wo_content::tenant_text_locale(db)
+        .await
+        .map(|l| l.to_ascii_lowercase().starts_with("fr"))
+        .unwrap_or(true);
+    for event in created {
+        let row = match db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT p.id AS personnel_id, p.full_name, p.primary_entity_id, ct.name AS cert_name, pc.expires_at                  FROM personnel_certifications pc                  JOIN personnel p ON p.id = pc.personnel_id                  JOIN certification_types ct ON ct.id = pc.certification_type_id                  WHERE pc.id = ?",
+                [event.certification_id.into()],
+            ))
+            .await
+        {
+            Ok(Some(row)) => row,
+            Ok(None) => continue,
+            Err(err) => {
+                tracing::warn!(error = %err, "certification expiry notification: lookup failed");
+                continue;
+            }
+        };
+        let person: String = row.try_get("", "full_name").unwrap_or_default();
+        let cert: String = row.try_get("", "cert_name").unwrap_or_default();
+        let expires: String = row
+            .try_get::<Option<String>>("", "expires_at")
+            .ok()
+            .flatten()
+            .map(|e| e.chars().take(10).collect())
+            .unwrap_or_default();
+        let expired = parse_day(&expires).is_some_and(|d| d < today());
+        let (title, body) = match (french, expired) {
+            (true, true) => (
+                format!("Habilitation échue : {person}"),
+                format!("{cert} de {person} est échue depuis le {expires}."),
+            ),
+            (true, false) => (
+                format!("Habilitation bientôt échue : {person}"),
+                format!("{cert} de {person} arrive à échéance le {expires} : prévoir le recyclage."),
+            ),
+            (false, true) => (
+                format!("Certification expired: {person}"),
+                format!("{person}'s {cert} expired on {expires}."),
+            ),
+            (false, false) => (
+                format!("Certification running out: {person}"),
+                format!("{person}'s {cert} expires on {expires}: plan the renewal."),
+            ),
+        };
+        let input = crate::notifications::emitter::NotificationEventInput {
+            source_module: "personnel".to_string(),
+            source_record_id: row
+                .try_get::<i64>("", "personnel_id")
+                .ok()
+                .map(|id| id.to_string()),
+            event_code: "cert_expiry".to_string(),
+            category_code: "cert_expiry".to_string(),
+            severity: event.severity.clone(),
+            dedupe_key: Some(format!("cert-expiry-{}", event.alert_dedupe_key)),
+            payload_json: Some(
+                serde_json::json!({
+                    "entity_id": row.try_get::<Option<i64>>("", "primary_entity_id").ok().flatten(),
+                    "certification_id": event.certification_id,
+                })
+                .to_string(),
+            ),
+            title,
+            body: Some(body),
+            action_url: Some("/training".to_string()),
+        };
+        if let Err(err) = crate::notifications::emitter::emit_event(db, input).await {
+            tracing::warn!(error = %err, "certification expiry notification failed");
+        }
+    }
 }
 
 pub async fn list_certification_expiry_drilldown(

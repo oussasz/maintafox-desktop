@@ -228,6 +228,13 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
         return Err(crate::errors::AppError::Internal(anyhow::anyhow!(reason)));
     }
 
+    // Certification expiry alerts: notify the managers of people whose habilitations have run
+    // out or fall inside their renewal notice (deduplicated per week). Never blocks startup.
+    match crate::qualification::expiry_alerts::scan_due_certification_alerts(&app_state.db).await {
+        Ok(created) => info!("startup: certification expiry scan raised {} alert(s)", created.len()),
+        Err(e) => tracing::warn!(error = %e, "startup: certification expiry scan failed"),
+    }
+
     // Phase 3b: tenant bootstrap from activation claim.
     // Clean-by-default policy:
     // - always ensure a single root organization from activated tenant name

@@ -17,7 +17,7 @@ use crate::personnel::domain::{
     PositionUpsertInput, ScheduleClassWithDetails, SuccessionRiskRow,
 };
 use crate::personnel::queries;
-use crate::personnel::{assignment_history, availability, import, photos, reports, skills, teams};
+use crate::personnel::{assignment_history, availability, calendar, capacity, import, photos, reports, skills, teams};
 use crate::state::AppState;
 use crate::{require_permission, require_session, require_step_up};
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
@@ -551,6 +551,22 @@ pub async fn create_external_company(
     queries::create_external_company(&state.db, name, service_domain, contract_start, contract_end, notes).await
 }
 
+/// Contractor company record: contract dates, onboarding and insurance status.
+#[tauri::command]
+pub async fn update_external_company(
+    input: queries::ExternalCompanyUpdateInput,
+    state: State<'_, AppState>,
+) -> AppResult<ExternalCompany> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PER_MANAGE,
+        PermissionScope::Global
+    );
+    queries::update_external_company(&state.db, input).await
+}
+
 #[tauri::command]
 pub async fn list_company_contacts(
     company_id: i64,
@@ -728,9 +744,24 @@ pub async fn create_availability_block(
             )),
             payload_json: None,
             title: "Critical personnel availability block".to_string(),
+            // The block type (medical, restriction…) is personal data: recipients only learn
+            // that the person is unavailable, not why.
             body: Some(format!(
-                "A critical block ({}) was recorded for personnel #{}.",
-                block.block_type, block.personnel_id
+                "{} is unavailable (critical block) from {} to {}.",
+                state
+                    .db
+                    .query_one(Statement::from_sql_and_values(
+                        DbBackend::Sqlite,
+                        "SELECT full_name FROM personnel WHERE id = ?",
+                        [block.personnel_id.into()],
+                    ))
+                    .await
+                    .ok()
+                    .flatten()
+                    .and_then(|r| r.try_get::<String>("", "full_name").ok())
+                    .unwrap_or_default(),
+                block.start_at.chars().take(16).collect::<String>().replace('T', " "),
+                block.end_at.chars().take(16).collect::<String>().replace('T', " ")
             )),
             action_url: Some("/personnel".to_string()),
         };
@@ -988,4 +1019,147 @@ pub async fn export_workforce_report_csv(report_kind: String, state: State<'_, A
             "report_kind must be one of: summary, skills_gap, kpi.".to_string(),
         ])),
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Capacity, holiday calendar, skills recorded by managers
+// ═══════════════════════════════════════════════════════════════════════════════
+
+fn parse_capacity_day(field: &str, value: &str) -> AppResult<chrono::NaiveDate> {
+    chrono::NaiveDate::parse_from_str(value.trim(), "%Y-%m-%d").map_err(|_| {
+        crate::errors::org_validation_failed(
+            "CAPACITY_RANGE_INVALID",
+            "Enter dates as YYYY-MM-DD.",
+            std::collections::HashMap::from([("field".to_string(), field.to_string())]),
+        )
+    })
+}
+
+/// Team capacity per day from the members' shift calendars, absences and holidays.
+#[tauri::command]
+pub async fn get_team_capacity(
+    team_id: i64,
+    date_from: String,
+    date_to: String,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<capacity::TeamDayCapacity>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PER_VIEW,
+        PermissionScope::Global
+    );
+    capacity::team_capacity_range(
+        &state.db,
+        team_id,
+        parse_capacity_day("date_from", &date_from)?,
+        parse_capacity_day("date_to", &date_to)?,
+    )
+    .await
+}
+
+/// One person's capacity per day. Absence types are personal data (`per.sensitiveview`).
+#[tauri::command]
+pub async fn get_person_capacity(
+    personnel_id: i64,
+    date_from: String,
+    date_to: String,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<capacity::PersonDayCapacity>> {
+    let user = require_session!(state);
+    if !can_read_personnel_record(&state, &user, personnel_id).await? {
+        return Err(AppError::PermissionDenied("Permission requise : per.view".to_string()));
+    }
+    let mut days = capacity::person_capacity_range(
+        &state.db,
+        personnel_id,
+        parse_capacity_day("date_from", &date_from)?,
+        parse_capacity_day("date_to", &date_to)?,
+    )
+    .await?;
+    if !SensitiveAccess::load(&state, user.user_id).await?.can_view(personnel_id) {
+        for day in &mut days {
+            day.absence_types.clear();
+        }
+    }
+    Ok(days)
+}
+
+#[tauri::command]
+pub async fn list_work_calendar_holidays(
+    filter: calendar::WorkCalendarHolidayFilter,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<calendar::WorkCalendarHoliday>> {
+    let _user = require_session!(state);
+    calendar::list_holidays(&state.db, filter).await
+}
+
+#[tauri::command]
+pub async fn upsert_work_calendar_holiday(
+    input: calendar::WorkCalendarHolidayUpsertInput,
+    state: State<'_, AppState>,
+) -> AppResult<calendar::WorkCalendarHoliday> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PER_MANAGE,
+        PermissionScope::Global
+    );
+    calendar::upsert_holiday(&state.db, input, i64::from(user.user_id)).await
+}
+
+#[tauri::command]
+pub async fn list_personnel_skills(
+    personnel_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<skills::PersonnelSkillRow>> {
+    let user = require_session!(state);
+    if !can_read_personnel_record(&state, &user, personnel_id).await? {
+        return Err(AppError::PermissionDenied("Permission requise : per.view".to_string()));
+    }
+    skills::list_personnel_skills(&state.db, personnel_id).await
+}
+
+/// Records a person's skill and level. Validating it (it then counts for qualification
+/// requirements) is a certification act: `trn.certify`.
+#[tauri::command]
+pub async fn upsert_personnel_skill(
+    input: skills::PersonnelSkillUpsertInput,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<skills::PersonnelSkillRow>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PER_MANAGE,
+        PermissionScope::Global
+    );
+    if input.validate {
+        require_permission!(
+            state,
+            &user,
+            crate::rbac::permissions::TRN_CERTIFY,
+            PermissionScope::Global
+        );
+    }
+    let validator = linked_personnel_id(&state, user.user_id).await?;
+    skills::upsert_personnel_skill(&state.db, input, validator).await
+}
+
+#[tauri::command]
+pub async fn remove_personnel_skill(
+    personnel_id: i64,
+    reference_value_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<skills::PersonnelSkillRow>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PER_MANAGE,
+        PermissionScope::Global
+    );
+    skills::remove_personnel_skill(&state.db, personnel_id, reference_value_id).await
 }

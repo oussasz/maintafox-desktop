@@ -61,6 +61,10 @@ async fn cert_type(db: &DatabaseConnection, code: &str) -> i64 {
             name: format!("{code} habilitation"),
             default_validity_months: Some(36),
             renewal_lead_days: Some(60),
+            category: Some("electrical".into()),
+            description: None,
+            is_active: None,
+            expected_row_version: None,
         },
     )
     .await
