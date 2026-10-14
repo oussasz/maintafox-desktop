@@ -1071,7 +1071,7 @@ pub async fn save_failure_detail(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// AA) save_verification — ot.edit + step-up
+// AA) save_verification — ot.edit (confirmed in a dialog; no step-up)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
@@ -1082,27 +1082,6 @@ pub async fn save_verification(
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
 
-    // Manual step-up check to record blocked event
-    {
-        let guard = state.session.read().await;
-        if !guard.is_step_up_valid() {
-            audit::record_wo_change_event(
-                &state.db,
-                audit::WoAuditInput {
-                    wo_id: Some(input.wo_id),
-                    action: "verification_saved".into(),
-                    actor_id: Some(i64::from(user.user_id)),
-                    summary: Some("Verification blocked: step-up verification failed".into()),
-                    details_json: None,
-                    requires_step_up: true,
-                    apply_result: "blocked".into(),
-                },
-            )
-            .await;
-            return Err(AppError::StepUpRequired);
-        }
-    }
-
     let result = closeout::save_verification(&state.db, input).await?;
     audit::record_wo_change_event(
         &state.db,
@@ -1112,7 +1091,7 @@ pub async fn save_verification(
             actor_id: Some(i64::from(user.user_id)),
             summary: Some("Technical verification recorded".into()),
             details_json: None,
-            requires_step_up: true,
+            requires_step_up: false,
             apply_result: "applied".into(),
         },
     )
@@ -1121,7 +1100,7 @@ pub async fn save_verification(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// AB) close_wo — ot.close + step-up
+// AB) close_wo — ot.close (confirmed in a dialog; no step-up)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
@@ -1137,27 +1116,6 @@ pub async fn close_wo(
         PermissionScope::Global
     );
 
-    // Manual step-up check to record blocked event
-    {
-        let guard = state.session.read().await;
-        if !guard.is_step_up_valid() {
-            audit::record_wo_change_event(
-                &state.db,
-                audit::WoAuditInput {
-                    wo_id: Some(input.wo_id),
-                    action: "closed".into(),
-                    actor_id: Some(i64::from(user.user_id)),
-                    summary: Some("Close blocked: step-up verification failed".into()),
-                    details_json: None,
-                    requires_step_up: true,
-                    apply_result: "blocked".into(),
-                },
-            )
-            .await;
-            return Err(AppError::StepUpRequired);
-        }
-    }
-
     match closeout::close_wo(&state.db, input).await {
         Ok(wo) => {
             audit::record_wo_change_event(
@@ -1168,7 +1126,7 @@ pub async fn close_wo(
                     actor_id: Some(i64::from(user.user_id)),
                     summary: Some("Work order closed".into()),
                     details_json: None,
-                    requires_step_up: true,
+                    requires_step_up: false,
                     apply_result: "applied".into(),
                 },
             )
@@ -1185,7 +1143,7 @@ pub async fn close_wo(
                     actor_id: Some(i64::from(user.user_id)),
                     summary: Some("Close blocked: quality gate failed".into()),
                     details_json: Some(details),
-                    requires_step_up: true,
+                    requires_step_up: false,
                     apply_result: "blocked".into(),
                 },
             )

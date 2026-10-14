@@ -89,7 +89,7 @@
       "description": "Approve, defer, or reactivate intervention requests",
       "category": "di",
       "is_dangerous": true,
-      "requires_step_up": true,
+      "requires_step_up": false,
       "usage": "both",
       "aliases": []
     },
@@ -98,7 +98,7 @@
       "description": "Convert approved DI to work order",
       "category": "di",
       "is_dangerous": true,
-      "requires_step_up": true,
+      "requires_step_up": false,
       "usage": "backend",
       "aliases": []
     },
@@ -170,7 +170,7 @@
       "description": "Close technically verified work orders",
       "category": "ot",
       "is_dangerous": true,
-      "requires_step_up": true,
+      "requires_step_up": false,
       "usage": "both",
       "aliases": []
     },

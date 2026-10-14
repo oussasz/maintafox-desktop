@@ -9,7 +9,7 @@
 //!   di.screen       — triage submitted DIs (submitted → in_review)
 //!   di.review       — update draft, return, close from in_review, upload attachment on any DI
 //!   di.approve      — approve, defer, reactivate, close from awaiting_approval/approved
-//!   di.convert      — convert DI to WO (step-up required)
+//!   di.convert      — convert DI to WO (confirmed in a dialog; no step-up)
 //!   di.admin        — SLA rule management, delete attachment records
 
 use tauri::{Manager, State};
@@ -535,7 +535,7 @@ pub async fn close_di_as_non_executable(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// H) approve_di — requires di.approve + step-up
+// H) approve_di — requires di.approve (confirmed in a dialog; no step-up)
 //    awaiting_approval → approved
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -552,26 +552,6 @@ pub async fn approve_di(
         PermissionScope::Global
     );
 
-    {
-        let guard = state.session.read().await;
-        if !guard.is_step_up_valid() {
-            audit::record_di_change_event(
-                &state.db,
-                audit::DiAuditInput {
-                    di_id: Some(input.di_id),
-                    action: "approved".into(),
-                    actor_id: Some(i64::from(user.user_id)),
-                    summary: Some("Approval blocked: step-up verification failed".into()),
-                    details_json: None,
-                    requires_step_up: true,
-                    apply_result: "blocked".into(),
-                },
-            )
-            .await;
-            return Err(AppError::StepUpRequired);
-        }
-    }
-
     input.actor_id = i64::from(user.user_id);
     let di = review::approve_di(&state.db, input).await?;
     audit::record_di_change_event(
@@ -582,7 +562,7 @@ pub async fn approve_di(
             actor_id: Some(i64::from(user.user_id)),
             summary: Some("DI approuvée.".into()),
             details_json: None,
-            requires_step_up: true,
+            requires_step_up: false,
             apply_result: "applied".into(),
         },
     )
@@ -878,7 +858,7 @@ pub async fn delete_di_attachment(attachment_id: i64, state: State<'_, AppState>
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// P) convert_di_to_wo — requires di.convert + step-up
+// P) convert_di_to_wo — requires di.convert (confirmed in a dialog; no step-up)
 //    approved → closed (disposition=converted_to_wo)
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -894,26 +874,6 @@ pub async fn convert_di_to_wo(
         crate::rbac::permissions::DI_CONVERT,
         PermissionScope::Global
     );
-
-    {
-        let guard = state.session.read().await;
-        if !guard.is_step_up_valid() {
-            audit::record_di_change_event(
-                &state.db,
-                audit::DiAuditInput {
-                    di_id: Some(input.di_id),
-                    action: "converted".into(),
-                    actor_id: Some(i64::from(user.user_id)),
-                    summary: Some("Conversion blocked: step-up verification failed".into()),
-                    details_json: None,
-                    requires_step_up: true,
-                    apply_result: "blocked".into(),
-                },
-            )
-            .await;
-            return Err(AppError::StepUpRequired);
-        }
-    }
 
     input.actor_id = i64::from(user.user_id);
     let result = conversion::convert_di_to_work_order(&state.db, input).await?;
@@ -931,7 +891,7 @@ pub async fn convert_di_to_wo(
                 })
                 .to_string(),
             ),
-            requires_step_up: true,
+            requires_step_up: false,
             apply_result: "applied".into(),
         },
     )
@@ -1143,7 +1103,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn v1_di_approve_requires_step_up() {
+    async fn v1_di_approve_does_not_require_step_up() {
         let db = setup().await;
 
         let row = db
@@ -1156,7 +1116,8 @@ mod tests {
             .expect("query")
             .expect("di.approve permission must exist in seed data");
         let requires: i64 = row.try_get("", "requires_step_up").expect("column");
-        assert_eq!(requires, 1, "di.approve must require step-up authentication");
+        // Owner decision (2026-10-14): approval is confirmed in a dialog, not by password re-entry.
+        assert_eq!(requires, 0, "di.approve must not require step-up authentication");
     }
 
     // ─── V2 — screen_di permission ──────────────────────────────────────
@@ -1427,7 +1388,7 @@ mod tests {
                 actor_id: Some(1),
                 summary: Some("DI approuvée.".into()),
                 details_json: None,
-                requires_step_up: true,
+                requires_step_up: false,
                 apply_result: "applied".into(),
             },
         )
@@ -1444,7 +1405,7 @@ mod tests {
 
         assert_eq!(approved_events.len(), 1, "Exactly 1 audit event with action='approved'");
         assert_eq!(approved.status, "approved");
-        assert_eq!(approved_events[0].requires_step_up, 1);
+        assert_eq!(approved_events[0].requires_step_up, 0);
     }
 
     // ─── Lifecycle V3 — Audit on blocked step-up ─────────────────────────
@@ -1498,7 +1459,7 @@ mod tests {
                 actor_id: Some(1),
                 summary: Some("DI convertie en OT".into()),
                 details_json: Some(r#"{"wo_id":1,"wo_code":"OT-0001"}"#.into()),
-                requires_step_up: true,
+                requires_step_up: false,
                 apply_result: "applied".into(),
             },
         )
@@ -1511,7 +1472,10 @@ mod tests {
         let converted: Vec<_> = events.iter().filter(|e| e.action == "converted").collect();
 
         assert_eq!(converted.len(), 1, "One converted audit event");
-        assert_eq!(converted[0].requires_step_up, 1, "Conversion must require step-up");
+        assert_eq!(
+            converted[0].requires_step_up, 0,
+            "Conversion is confirmed in a dialog, no step-up"
+        );
         assert_eq!(converted[0].apply_result, "applied");
     }
 

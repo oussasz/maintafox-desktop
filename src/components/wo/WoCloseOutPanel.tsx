@@ -25,6 +25,7 @@ import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
 import { ReferenceCombobox } from "@/components/reference/ReferenceCombobox";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -117,7 +118,9 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
   const { t: tPermits } = useTranslation("permits");
   const { info } = useSession();
   const { can } = usePermissions();
+  // Reopen still asks for the password; verification and close are confirmed in a dialog.
   const { withStepUp, StepUpDialogElement } = useStepUp();
+  const [confirmAction, setConfirmAction] = useState<"verify" | "close" | null>(null);
   const refreshActiveWo = useWoStore((s) => s.refreshActiveWo);
   const canReopen = can(P.OT_REOPEN);
 
@@ -323,17 +326,15 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
     if (!canEdit || !actorId || !verificationResult) return;
     setSavingVerification(true);
     setVerificationError(null);
-    withStepUp(() =>
-      saveVerification({
-        wo_id: currentWo.id,
-        verified_by_id: actorId,
-        result: verificationResult,
-        return_to_service_confirmed: returnToServiceConfirmed,
-        recurrence_risk_level: null,
-        notes: verificationNotes.trim() || null,
-        expected_row_version: currentWo.row_version,
-      }),
-    )
+    return saveVerification({
+      wo_id: currentWo.id,
+      verified_by_id: actorId,
+      result: verificationResult,
+      return_to_service_confirmed: returnToServiceConfirmed,
+      recurrence_risk_level: null,
+      notes: verificationNotes.trim() || null,
+      expected_row_version: currentWo.row_version,
+    })
       .then(async ([, updatedWo]) => {
         setCurrentWo(updatedWo);
         setVerificationResult("");
@@ -347,7 +348,6 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
     canEdit,
     currentWo,
     info,
-    withStepUp,
     verificationResult,
     returnToServiceConfirmed,
     verificationNotes,
@@ -362,23 +362,21 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
     setClosing(true);
     setBlockingErrors([]);
     setCloseError(null);
-    withStepUp(() =>
-      closeWo({
-        wo_id: currentWo.id,
-        actor_id: actorId,
-        expected_row_version: currentWo.row_version,
-        ...(currentWo.production_impact_id != null
-          ? {
-              no_downtime_attestation: noDowntimeAttestation,
-              no_downtime_attestation_reason: noDowntimeReason.trim() || null,
-            }
-          : {}),
-        fmeca_parts_override_reason: fmecaOverrideReason.trim() || null,
-        fmeca_parts_override_signed_by_id:
-          fmecaOverrideSignerId.trim() !== "" ? Number(fmecaOverrideSignerId) : null,
-        fmeca_parts_override_signer_password: fmecaOverrideSignerPassword || null,
-      }),
-    )
+    return closeWo({
+      wo_id: currentWo.id,
+      actor_id: actorId,
+      expected_row_version: currentWo.row_version,
+      ...(currentWo.production_impact_id != null
+        ? {
+            no_downtime_attestation: noDowntimeAttestation,
+            no_downtime_attestation_reason: noDowntimeReason.trim() || null,
+          }
+        : {}),
+      fmeca_parts_override_reason: fmecaOverrideReason.trim() || null,
+      fmeca_parts_override_signed_by_id:
+        fmecaOverrideSignerId.trim() !== "" ? Number(fmecaOverrideSignerId) : null,
+      fmeca_parts_override_signer_password: fmecaOverrideSignerPassword || null,
+    })
       .then(() => onClosed())
       .catch((err: unknown) => {
         if (err instanceof CloseoutBlockingError) {
@@ -392,7 +390,6 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
     canEdit,
     currentWo,
     info,
-    withStepUp,
     onClosed,
     noDowntimeAttestation,
     noDowntimeReason,
@@ -482,6 +479,44 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
   return (
     <div className="space-y-6">
       {StepUpDialogElement}
+      <ConfirmDialog
+        open={confirmAction !== null}
+        onOpenChange={(next) => {
+          if (!next) setConfirmAction(null);
+        }}
+        title={
+          confirmAction === "close"
+            ? t("closeout.confirmCloseTitle")
+            : t("closeout.confirmVerifyTitle")
+        }
+        description={
+          confirmAction === "close"
+            ? t("closeout.confirmCloseDescription", { code: currentWo.code })
+            : t("closeout.confirmVerifyDescription", {
+                code: currentWo.code,
+                result:
+                  verificationResult === "pass"
+                    ? t("closeout.resultPass")
+                    : verificationResult === "fail"
+                      ? t("closeout.resultFail")
+                      : t("closeout.resultMonitor"),
+                rts:
+                  verificationResult === "pass" && returnToServiceConfirmed
+                    ? t("closeout.confirmVerifyReturnToService")
+                    : "",
+              })
+        }
+        confirmLabel={
+          confirmAction === "close"
+            ? t("closeout.confirmCloseAction")
+            : t("closeout.confirmVerifyAction")
+        }
+        destructive={confirmAction === "close"}
+        onConfirm={async () => {
+          // Errors stay inline in the panel (verification / close-out banners).
+          await (confirmAction === "close" ? handleClose() : handleSaveVerification());
+        }}
+      />
 
       {completionGates.length > 0 && (
         <section className="space-y-2">
@@ -784,7 +819,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
             {verificationError && <ErrorBanner message={verificationError} />}
 
             <Button
-              onClick={handleSaveVerification}
+              onClick={() => setConfirmAction("verify")}
               disabled={
                 !canEdit ||
                 savingVerification ||
@@ -904,7 +939,11 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
 
             {closeError && <ErrorBanner message={closeError} />}
 
-            <Button variant="destructive" onClick={handleClose} disabled={!canEdit || closing}>
+            <Button
+              variant="destructive"
+              onClick={() => setConfirmAction("close")}
+              disabled={!canEdit || closing}
+            >
               {closing ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               ) : (

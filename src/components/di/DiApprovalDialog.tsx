@@ -13,7 +13,6 @@ import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 
-import { StepUpDialog } from "@/components/auth/StepUpDialog";
 import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
 import {
   fetchDiSymptomLabel,
@@ -25,6 +24,7 @@ import { DI_STATUS_STYLE, DI_URGENCY_STYLE, diStatusToI18nKey } from "@/componen
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   Dialog,
   DialogContent,
@@ -183,8 +183,9 @@ export function DiApprovalDialog() {
   const { info } = useSession();
 
   const [note, setNote] = useState("");
-  const [showStepUp, setShowStepUp] = useState(false);
-  const [stepUpMode, setStepUpMode] = useState<"approve" | "convert">("approve");
+  // Approve and convert are confirmed in a dialog (no password re-entry; RBAC + audit on the backend).
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmMode, setConfirmMode] = useState<"approve" | "convert">("approve");
   const [conversionResult, setConversionResult] = useState<{
     woId: number | null;
     woCode: string | null;
@@ -201,7 +202,7 @@ export function DiApprovalDialog() {
     (woId: number) => {
       setConversionResult(null);
       setNote("");
-      setShowStepUp(false);
+      setConfirmOpen(false);
       setRetryRowVersion(null);
       closeApproval();
       navigate(`/work-orders?openWo=${woId}`);
@@ -210,13 +211,13 @@ export function DiApprovalDialog() {
   );
 
   const handleApproveClick = useCallback(() => {
-    setStepUpMode("approve");
-    setShowStepUp(true);
+    setConfirmMode("approve");
+    setConfirmOpen(true);
   }, []);
 
   const handleConvertClick = useCallback(() => {
-    setStepUpMode("convert");
-    setShowStepUp(true);
+    setConfirmMode("convert");
+    setConfirmOpen(true);
   }, []);
 
   const handleCloseRequest = useCallback(() => {
@@ -225,10 +226,9 @@ export function DiApprovalDialog() {
     openRejection(di);
   }, [closeApproval, di, openRejection]);
 
-  const handleStepUpVerified = useCallback(async () => {
-    setShowStepUp(false);
+  const handleConfirmed = useCallback(async () => {
     if (!di) return;
-    if (stepUpMode === "approve") {
+    if (confirmMode === "approve") {
       try {
         const result = await approve({
           di_id: di.id,
@@ -272,7 +272,7 @@ export function DiApprovalDialog() {
         conversionError: describeAppError(err).title,
       });
     }
-  }, [di, approve, info, note, handoffToWorkOrder, loadDis, stepUpMode, retryRowVersion, t]);
+  }, [di, approve, info, note, handoffToWorkOrder, loadDis, confirmMode, retryRowVersion, t]);
 
   const handleRetryConversion = useCallback(async () => {
     if (!di || retryRowVersion == null) return;
@@ -302,10 +302,6 @@ export function DiApprovalDialog() {
     }
   }, [di, handoffToWorkOrder, loadDis, note, retryRowVersion]);
 
-  const handleStepUpCancel = useCallback(() => {
-    setShowStepUp(false);
-  }, []);
-
   const handlePrint = useCallback(() => {
     if (!di) return;
     const tPrint = i18n.getFixedT(i18n.language, "di");
@@ -328,7 +324,7 @@ export function DiApprovalDialog() {
 
   const handleClose = useCallback(() => {
     setNote("");
-    setShowStepUp(false);
+    setConfirmOpen(false);
     setConversionResult(null);
     setRetryRowVersion(null);
     closeApproval();
@@ -338,10 +334,25 @@ export function DiApprovalDialog() {
 
   return (
     <>
-      <StepUpDialog
-        open={showStepUp}
-        onVerified={handleStepUpVerified}
-        onCancel={handleStepUpCancel}
+      <ConfirmDialog
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        title={
+          confirmMode === "approve"
+            ? t("review.confirmApproveTitle")
+            : t("review.confirmConvertTitle")
+        }
+        description={
+          confirmMode === "approve"
+            ? t("review.confirmApproveDescription", { code: di.code })
+            : t("review.confirmConvertDescription", { code: di.code })
+        }
+        confirmLabel={
+          confirmMode === "approve"
+            ? t("review.confirmApproveAction")
+            : t("review.confirmConvertAction")
+        }
+        onConfirm={handleConfirmed}
       />
       <Dialog open={open} onOpenChange={(isOpen) => !isOpen && handleClose()}>
         <DialogContent
