@@ -437,7 +437,28 @@ pub async fn assign_org_node_responsibility(
         PermissionScope::Global
     );
 
-    let result = responsibilities::assign_responsibility(&state.db, payload, user.user_id).await?;
+    let outcome = responsibilities::assign_or_replace_responsibility(&state.db, payload, user.user_id).await?;
+
+    // A handover ends the previous assignee first; record that end as its own event.
+    if let Some(ended) = &outcome.ended {
+        audit::record_org_change(
+            &state.db,
+            OrgAuditEventInput {
+                entity_kind: "org_node_responsibility".to_string(),
+                entity_id: Some(ended.id),
+                change_type: "end_responsibility".to_string(),
+                before_json: None,
+                after_json: Some(serde_json::to_string(ended).unwrap_or_default()),
+                preview_summary_json: None,
+                changed_by_id: Some(user.user_id as i64),
+                requires_step_up: false,
+                apply_result: "applied".to_string(),
+            },
+        )
+        .await?;
+    }
+
+    let result = outcome.assignment;
 
     audit::record_org_change(
         &state.db,

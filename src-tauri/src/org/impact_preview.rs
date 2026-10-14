@@ -75,35 +75,70 @@ fn preview_warning(code: &str, message: impl Into<String>, pairs: &[(&str, Strin
     AppValidationIssue::warning(code, message, issue_params(pairs))
 }
 
-/// Standard future-module dependency placeholders.
-/// These will be replaced with real counts as each module is implemented.
-fn future_dependency_placeholders() -> Vec<OrgImpactDependencySummary> {
-    vec![
-        OrgImpactDependencySummary {
-            domain: "assets".to_string(),
-            status: "unavailable".to_string(),
-            count: None,
-            note: Some("Asset dependency impact is not available yet.".to_string()),
-        },
-        OrgImpactDependencySummary {
-            domain: "open_work".to_string(),
-            status: "unavailable".to_string(),
-            count: None,
-            note: Some("Open work order dependency impact is not available yet.".to_string()),
-        },
-        OrgImpactDependencySummary {
-            domain: "permits".to_string(),
-            status: "unavailable".to_string(),
-            count: None,
-            note: Some("Permit dependency impact is not available yet.".to_string()),
-        },
-        OrgImpactDependencySummary {
-            domain: "inventory".to_string(),
-            status: "unavailable".to_string(),
-            count: None,
-            note: Some("Inventory dependency impact is not available yet.".to_string()),
-        },
-    ]
+fn in_placeholders(ids: &[i64]) -> (String, Vec<sea_orm::Value>) {
+    let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    let values: Vec<sea_orm::Value> = ids.iter().map(|&id| id.into()).collect();
+    (placeholders, values)
+}
+
+async fn count_with_ids(db: &impl ConnectionTrait, sql_template: &str, ids: &[i64], repeats: usize) -> AppResult<i64> {
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    let (placeholders, values) = in_placeholders(ids);
+    let sql = sql_template.replace("{ids}", &placeholders);
+    let mut all_values: Vec<sea_orm::Value> = Vec::with_capacity(values.len() * repeats);
+    for _ in 0..repeats {
+        all_values.extend(values.iter().cloned());
+    }
+    let row = db
+        .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, sql, all_values))
+        .await?
+        .expect("COUNT always returns a row");
+    row.try_get::<i64>("", "cnt").map_err(|e| decode_err("cnt", e))
+}
+
+fn dependency_summary(domain: &str, count: i64) -> OrgImpactDependencySummary {
+    OrgImpactDependencySummary {
+        domain: domain.to_string(),
+        status: if count > 0 { "impacted" } else { "ok" }.to_string(),
+        count: Some(count),
+        note: None,
+    }
+}
+
+/// Operational records attached to the affected units (operational node ids):
+/// equipment installed there, and open (non-terminal) work orders raised on those
+/// units or on their equipment.
+async fn dependency_summaries(
+    db: &impl ConnectionTrait,
+    ops_ids: &[i64],
+) -> AppResult<Vec<OrgImpactDependencySummary>> {
+    let assets = count_with_ids(
+        db,
+        "SELECT COUNT(*) AS cnt FROM equipment \
+         WHERE installed_at_node_id IN ({ids}) AND deleted_at IS NULL",
+        ops_ids,
+        1,
+    )
+    .await?;
+    let open_work = count_with_ids(
+        db,
+        "SELECT COUNT(*) AS cnt FROM work_orders w \
+         JOIN work_order_statuses s ON s.id = w.status_id \
+         WHERE s.is_terminal = 0 \
+           AND (w.entity_id IN ({ids}) \
+                OR w.equipment_id IN (SELECT e.id FROM equipment e \
+                                      WHERE e.installed_at_node_id IN ({ids}) \
+                                        AND e.deleted_at IS NULL))",
+        ops_ids,
+        2,
+    )
+    .await?;
+    Ok(vec![
+        dependency_summary("assets", assets),
+        dependency_summary("open_work", open_work),
+    ])
 }
 
 /// Fetch basic node info needed for preview computations, including
@@ -212,15 +247,12 @@ async fn count_active_descendants(
     row.try_get::<i64>("", "cnt").map_err(|e| decode_err("cnt", e))
 }
 
-/// Count active responsibilities on a node and its structural descendants.
+/// Operational node ids of a node and its structural descendants.
 ///
 /// The ops node id (origin when draft clone) is used for the subject node.
 /// Descendants are resolved within the same structure model, then their ops
 /// ids are similarly resolved.
-async fn count_subtree_active_responsibilities(db: &impl ConnectionTrait, node: &NodeBrief) -> AppResult<i64> {
-    let ops_id = node.ops_node_id();
-
-    // Collect all descendant ids within the same model, resolve to ops ids.
+async fn subtree_ops_ids(db: &impl ConnectionTrait, node: &NodeBrief) -> AppResult<Vec<i64>> {
     let desc_rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -236,8 +268,7 @@ async fn count_subtree_active_responsibilities(db: &impl ConnectionTrait, node: 
         ))
         .await?;
 
-    // Build set of effective (ops) ids to query responsibilities for.
-    let mut ops_ids: Vec<i64> = vec![ops_id];
+    let mut ops_ids: Vec<i64> = vec![node.ops_node_id()];
     for row in &desc_rows {
         let desc_id: i64 = row.try_get("", "id").map_err(|e| decode_err("id", e))?;
         let desc_origin: Option<i64> = row
@@ -245,82 +276,33 @@ async fn count_subtree_active_responsibilities(db: &impl ConnectionTrait, node: 
             .map_err(|e| decode_err("origin_node_id", e))?;
         ops_ids.push(desc_origin.unwrap_or(desc_id));
     }
-
-    // Deduplicate.
     ops_ids.sort_unstable();
     ops_ids.dedup();
-
-    if ops_ids.is_empty() {
-        return Ok(0);
-    }
-
-    let placeholders = ops_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-    let values: Vec<sea_orm::Value> = ops_ids.iter().map(|&id| id.into()).collect();
-
-    let row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            format!(
-                "SELECT COUNT(*) AS cnt FROM org_node_responsibilities \
-                 WHERE node_id IN ({placeholders}) AND valid_to IS NULL"
-            ),
-            values,
-        ))
-        .await?
-        .expect("COUNT always returns a row");
-    row.try_get::<i64>("", "cnt").map_err(|e| decode_err("cnt", e))
+    Ok(ops_ids)
 }
 
-/// Count active bindings on a node and its structural descendants (ops ids).
-async fn count_subtree_active_bindings(db: &impl ConnectionTrait, node: &NodeBrief) -> AppResult<i64> {
-    let ops_id = node.ops_node_id();
+/// Count active responsibilities on the given operational node ids.
+async fn count_active_responsibilities(db: &impl ConnectionTrait, ops_ids: &[i64]) -> AppResult<i64> {
+    count_with_ids(
+        db,
+        "SELECT COUNT(*) AS cnt FROM org_node_responsibilities \
+         WHERE node_id IN ({ids}) AND valid_to IS NULL",
+        ops_ids,
+        1,
+    )
+    .await
+}
 
-    let desc_rows = db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT id, origin_node_id FROM org_nodes \
-             WHERE ancestor_path LIKE ? AND id != ? \
-               AND deleted_at IS NULL \
-               AND structure_model_id = ?",
-            [
-                format!("{}%", node.ancestor_path).into(),
-                node.id.into(),
-                node.structure_model_id.into(),
-            ],
-        ))
-        .await?;
-
-    let mut ops_ids: Vec<i64> = vec![ops_id];
-    for row in &desc_rows {
-        let desc_id: i64 = row.try_get("", "id").map_err(|e| decode_err("id", e))?;
-        let desc_origin: Option<i64> = row
-            .try_get("", "origin_node_id")
-            .map_err(|e| decode_err("origin_node_id", e))?;
-        ops_ids.push(desc_origin.unwrap_or(desc_id));
-    }
-
-    ops_ids.sort_unstable();
-    ops_ids.dedup();
-
-    if ops_ids.is_empty() {
-        return Ok(0);
-    }
-
-    let placeholders = ops_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-    let values: Vec<sea_orm::Value> = ops_ids.iter().map(|&id| id.into()).collect();
-
-    let row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            format!(
-                "SELECT COUNT(*) AS cnt FROM org_entity_bindings \
-                 WHERE node_id IN ({placeholders}) AND valid_to IS NULL"
-            ),
-            values,
-        ))
-        .await?
-        .expect("COUNT always returns a row");
-    row.try_get::<i64>("", "cnt").map_err(|e| decode_err("cnt", e))
+/// Count active external bindings on the given operational node ids.
+async fn count_active_bindings(db: &impl ConnectionTrait, ops_ids: &[i64]) -> AppResult<i64> {
+    count_with_ids(
+        db,
+        "SELECT COUNT(*) AS cnt FROM org_entity_bindings \
+         WHERE node_id IN ({ids}) AND valid_to IS NULL",
+        ops_ids,
+        1,
+    )
+    .await
 }
 
 /// Check whether a parent-child type rule exists in the model that owns both nodes.
@@ -361,8 +343,9 @@ pub async fn preview_move_node(
     let parent = fetch_node_brief(db, new_parent_id).await?;
 
     let descendant_count = count_descendants(db, node.id, &node.ancestor_path, node.structure_model_id).await?;
-    let active_resp = count_subtree_active_responsibilities(db, &node).await?;
-    let active_bind = count_subtree_active_bindings(db, &node).await?;
+    let ops_ids = subtree_ops_ids(db, &node).await?;
+    let active_resp = count_active_responsibilities(db, &ops_ids).await?;
+    let active_bind = count_active_bindings(db, &ops_ids).await?;
 
     let mut blockers: Vec<AppValidationIssue> = Vec::new();
     let mut warnings: Vec<AppValidationIssue> = Vec::new();
@@ -373,6 +356,15 @@ pub async fn preview_move_node(
         blockers.push(preview_blocker(
             "ORG_PREVIEW_MOVE_CYCLE",
             "Cannot move this node under one of its own descendants.",
+            &[],
+        ));
+    }
+
+    // Parent must live in the same structure model (draft vs published tree).
+    if parent.structure_model_id != node.structure_model_id {
+        blockers.push(preview_blocker(
+            "ORG_PREVIEW_PARENT_WRONG_MODEL",
+            "The target parent belongs to a different structure version.",
             &[],
         ));
     }
@@ -411,7 +403,7 @@ pub async fn preview_move_node(
         active_binding_count: active_bind,
         blockers,
         warnings,
-        dependencies: future_dependency_placeholders(),
+        dependencies: dependency_summaries(db, &ops_ids).await?,
     })
 }
 
@@ -422,29 +414,9 @@ pub async fn preview_deactivate_node(db: &DatabaseConnection, node_id: i64) -> A
     let descendant_count = count_descendants(db, node.id, &node.ancestor_path, node.structure_model_id).await?;
     let active_desc = count_active_descendants(db, node.id, &node.ancestor_path, node.structure_model_id).await?;
 
-    let ops_id = node.ops_node_id();
-
-    let resp_row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT COUNT(*) AS cnt FROM org_node_responsibilities \
-             WHERE node_id = ? AND valid_to IS NULL",
-            [ops_id.into()],
-        ))
-        .await?
-        .expect("COUNT always returns a row");
-    let active_resp: i64 = resp_row.try_get("", "cnt").map_err(|e| decode_err("cnt", e))?;
-
-    let bind_row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT COUNT(*) AS cnt FROM org_entity_bindings \
-             WHERE node_id = ? AND valid_to IS NULL",
-            [ops_id.into()],
-        ))
-        .await?
-        .expect("COUNT always returns a row");
-    let active_bind: i64 = bind_row.try_get("", "cnt").map_err(|e| decode_err("cnt", e))?;
+    let ops_ids = vec![node.ops_node_id()];
+    let active_resp = count_active_responsibilities(db, &ops_ids).await?;
+    let active_bind = count_active_bindings(db, &ops_ids).await?;
 
     let mut blockers: Vec<AppValidationIssue> = Vec::new();
     let mut warnings: Vec<AppValidationIssue> = Vec::new();
@@ -482,7 +454,7 @@ pub async fn preview_deactivate_node(db: &DatabaseConnection, node_id: i64) -> A
         active_binding_count: active_bind,
         blockers,
         warnings,
-        dependencies: future_dependency_placeholders(),
+        dependencies: dependency_summaries(db, &ops_ids).await?,
     })
 }
 
@@ -511,9 +483,9 @@ pub async fn preview_responsibility_reassignment(
     let current_row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, valid_to FROM org_node_responsibilities \
+            "SELECT id, person_id, team_id, valid_to FROM org_node_responsibilities \
              WHERE node_id = ? AND responsibility_type = ? \
-             ORDER BY created_at DESC LIMIT 1",
+             ORDER BY created_at DESC, id DESC LIMIT 1",
             [ops_id.into(), responsibility_type.to_string().into()],
         ))
         .await?;
@@ -521,12 +493,22 @@ pub async fn preview_responsibility_reassignment(
     match current_row {
         Some(row) => {
             let valid_to: Option<String> = row.try_get("", "valid_to").map_err(|e| decode_err("valid_to", e))?;
+            let person_id: Option<i64> = row.try_get("", "person_id").map_err(|e| decode_err("person_id", e))?;
+            let team_id: Option<i64> = row.try_get("", "team_id").map_err(|e| decode_err("team_id", e))?;
             if valid_to.is_some() {
                 warnings.push(preview_warning(
                     "ORG_PREVIEW_ASSIGNMENT_ENDED",
                     format!(
                         "The current '{responsibility_type}' assignment is already ended — this will create a new assignment rather than replacing an active one."
                     ),
+                    &[("responsibilityType", responsibility_type.to_string())],
+                ));
+            } else if (replacement_person_id.is_some() && replacement_person_id == person_id)
+                || (replacement_team_id.is_some() && replacement_team_id == team_id)
+            {
+                blockers.push(preview_blocker(
+                    "ORG_PREVIEW_SAME_ASSIGNEE",
+                    "The replacement is already the active assignee for this responsibility.",
                     &[("responsibilityType", responsibility_type.to_string())],
                 ));
             }
@@ -542,27 +524,9 @@ pub async fn preview_responsibility_reassignment(
         }
     }
 
-    let resp_row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT COUNT(*) AS cnt FROM org_node_responsibilities \
-             WHERE node_id = ? AND valid_to IS NULL",
-            [ops_id.into()],
-        ))
-        .await?
-        .expect("COUNT always returns a row");
-    let active_resp: i64 = resp_row.try_get("", "cnt").map_err(|e| decode_err("cnt", e))?;
-
-    let bind_row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT COUNT(*) AS cnt FROM org_entity_bindings \
-             WHERE node_id = ? AND valid_to IS NULL",
-            [ops_id.into()],
-        ))
-        .await?
-        .expect("COUNT always returns a row");
-    let active_bind: i64 = bind_row.try_get("", "cnt").map_err(|e| decode_err("cnt", e))?;
+    let ops_ids = vec![ops_id];
+    let active_resp = count_active_responsibilities(db, &ops_ids).await?;
+    let active_bind = count_active_bindings(db, &ops_ids).await?;
 
     Ok(OrgImpactPreview {
         action: OrgPreviewAction::ReassignResponsibility,
@@ -573,17 +537,21 @@ pub async fn preview_responsibility_reassignment(
         active_binding_count: active_bind,
         blockers,
         warnings,
-        dependencies: future_dependency_placeholders(),
+        dependencies: dependency_summaries(db, &ops_ids).await?,
     })
 }
 
 /// Route a `PreviewOrgChangePayload` to the correct preview function.
+///
+/// The action names are the `OrgPreviewAction` variant names the preview returns
+/// (`MoveNode`, `DeactivateNode`, `ReassignResponsibility`), so a client sends back
+/// what it receives. The older snake-case spellings are still accepted.
 pub async fn dispatch_preview(
     db: &DatabaseConnection,
     payload: PreviewOrgChangePayload,
 ) -> AppResult<OrgImpactPreview> {
     match payload.action.as_str() {
-        "move" => {
+        "MoveNode" | "move" => {
             let new_parent_id = payload.new_parent_id.ok_or_else(|| {
                 fail(
                     "ORG_PREVIEW_NEW_PARENT_REQUIRED",
@@ -592,14 +560,19 @@ pub async fn dispatch_preview(
             })?;
             preview_move_node(db, payload.node_id, new_parent_id).await
         }
-        "deactivate" => preview_deactivate_node(db, payload.node_id).await,
-        "reassign_responsibility" => {
-            let responsibility_type = payload.responsibility_type.as_deref().ok_or_else(|| {
-                fail(
-                    "ORG_PREVIEW_RESPONSIBILITY_TYPE_REQUIRED",
-                    "A responsibility type is required for a reassignment preview.",
-                )
-            })?;
+        "DeactivateNode" | "deactivate" => preview_deactivate_node(db, payload.node_id).await,
+        "ReassignResponsibility" | "reassign_responsibility" => {
+            let responsibility_type = payload
+                .responsibility_type
+                .as_deref()
+                .map(str::trim)
+                .filter(|t| !t.is_empty())
+                .ok_or_else(|| {
+                    fail(
+                        "ORG_PREVIEW_RESPONSIBILITY_TYPE_REQUIRED",
+                        "A responsibility type is required for a reassignment preview.",
+                    )
+                })?;
             preview_responsibility_reassignment(
                 db,
                 payload.node_id,
@@ -611,7 +584,7 @@ pub async fn dispatch_preview(
         }
         other => Err(fail_params(
             "ORG_PREVIEW_UNKNOWN_ACTION",
-            format!("Unknown preview action '{other}'. Expected: move, deactivate, reassign_responsibility."),
+            format!("Unknown preview action '{other}'. Expected: MoveNode, DeactivateNode, ReassignResponsibility."),
             &[("action", other.to_string())],
         )),
     }

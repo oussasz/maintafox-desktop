@@ -5,11 +5,13 @@
  * Governed lifecycle: explicit “published (read-only)” vs “draft (editing)” modes.
  */
 
-import { AlertTriangle, Building2, Network, RefreshCw, Settings2 } from "lucide-react";
+import { Building2, Network, Settings2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
+import { RefreshButton } from "@/components/layout/ModuleHeaderControls";
+import { ModulePageShell } from "@/components/layout/ModulePageShell";
 import { DraftStatusBanner } from "@/components/org/DraftStatusBanner";
 import { ImpactPreviewDrawer } from "@/components/org/ImpactPreviewDrawer";
 import { NodeTypeManagerPanel } from "@/components/org/NodeTypeManagerPanel";
@@ -20,13 +22,16 @@ import { OrgNodeCreateDialog } from "@/components/org/OrgNodeCreateDialog";
 import { OrgRelationshipRulesPanel } from "@/components/org/OrgRelationshipRulesPanel";
 import { OrganizationTreePanel } from "@/components/org/OrganizationTreePanel";
 import { Button } from "@/components/ui/button";
+import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import { mfLayout } from "@/design-system/tokens";
+import { useFormatters } from "@/hooks/use-formatters";
 import { isOrgStructureDesignMode, useOrgDesignerStore } from "@/stores/org-designer-store";
 import { useOrgGovernanceStore } from "@/stores/org-governance-store";
 import { P } from "@shared/rbac/permissions.generated";
 
 export function OrganizationDesignerPage() {
   const { t } = useTranslation("org");
+  const { formatNumber } = useFormatters();
   const [typesPanelOpen, setTypesPanelOpen] = useState(false);
   const [rulesPanelOpen, setRulesPanelOpen] = useState(false);
   const snapshot = useOrgDesignerStore((s) => s.snapshot);
@@ -91,90 +96,74 @@ export function OrganizationDesignerPage() {
     }
   }, [loadSnapshot, loadPublishValidation]);
 
-  // Loading state
-  if (loading && !snapshot) {
-    return (
-      <div className="flex h-full items-center justify-center">
-        <div className="h-6 w-6 animate-spin rounded-full border-2 border-surface-3 border-t-primary" />
-      </div>
-    );
-  }
+  const headerActions = (
+    <>
+      <PermissionGate permission={P.ORG_ADMIN}>
+        <Button
+          variant="outline"
+          onClick={() => canOpenTypeManager && setTypesPanelOpen(true)}
+          disabled={!canOpenTypeManager}
+          title={
+            !hasDraftModel
+              ? t("designer.manageTypesNoDraftHint")
+              : !isDesign
+                ? t("designer.manageTypesReadOnlyHint")
+                : undefined
+          }
+          className="h-11 gap-1.5"
+        >
+          <Settings2 className="h-4 w-4" aria-hidden />
+          {t("designer.manageTypes")}
+        </Button>
+      </PermissionGate>
+      <PermissionGate permission={P.ORG_ADMIN}>
+        <Button
+          variant="outline"
+          onClick={() => canOpenTypeManager && setRulesPanelOpen(true)}
+          disabled={!canOpenTypeManager}
+          title={
+            !hasDraftModel
+              ? t("designer.manageHierarchyRulesNoDraftHint")
+              : !isDesign
+                ? t("designer.manageHierarchyRulesReadOnlyHint")
+                : undefined
+          }
+          className="h-11 gap-1.5"
+        >
+          <Network className="h-4 w-4" aria-hidden />
+          {t("designer.manageHierarchyRules")}
+        </Button>
+      </PermissionGate>
+      <OrgExportMenu treeContainerId="org-tree-container" />
+      <RefreshButton onRefresh={() => void loadSnapshot()} loading={loading} />
+    </>
+  );
 
-  // Error state
-  if (error && !snapshot) {
+  // First load / failed first load: the page has nothing else to show yet.
+  if (!snapshot) {
     return (
-      <div className="flex h-full items-center justify-center p-6">
-        <div className="text-center space-y-3">
-          <AlertTriangle className="h-8 w-8 mx-auto text-status-danger" />
-          <p className="text-sm text-status-danger">{error}</p>
-          <Button variant="outline" size="sm" onClick={() => void loadSnapshot()}>
-            {t("designer.retry")}
-          </Button>
-        </div>
-      </div>
+      <ModulePageShell
+        icon={Building2}
+        title={t("designer.title")}
+        actions={<RefreshButton onRefresh={() => void loadSnapshot()} loading={loading} />}
+      >
+        {error != null && !loading ? (
+          <ErrorState error={error} onRetry={() => void loadSnapshot()} />
+        ) : (
+          <LoadingState label={t("designer.loading")} />
+        )}
+      </ModulePageShell>
     );
   }
 
   return (
-    <div className={mfLayout.moduleRoot}>
-      <div className={mfLayout.moduleHeader}>
-        <div className={mfLayout.moduleTitleRow}>
-          <Building2 className={mfLayout.moduleHeaderIcon} />
-          <h1 className={mfLayout.moduleTitle}>{t("designer.title")}</h1>
-        </div>
-        <div className={mfLayout.moduleHeaderActions}>
-          <PermissionGate permission={P.ORG_ADMIN}>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => canOpenTypeManager && setTypesPanelOpen(true)}
-              disabled={!canOpenTypeManager}
-              title={
-                !hasDraftModel
-                  ? t("designer.manageTypesNoDraftHint")
-                  : !isDesign
-                    ? t("designer.manageTypesReadOnlyHint")
-                    : undefined
-              }
-              className="gap-1.5"
-            >
-              <Settings2 className="h-3.5 w-3.5" />
-              {t("designer.manageTypes")}
-            </Button>
-          </PermissionGate>
-          <PermissionGate permission={P.ORG_ADMIN}>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => canOpenTypeManager && setRulesPanelOpen(true)}
-              disabled={!canOpenTypeManager}
-              title={
-                !hasDraftModel
-                  ? t("designer.manageHierarchyRulesNoDraftHint")
-                  : !isDesign
-                    ? t("designer.manageHierarchyRulesReadOnlyHint")
-                    : undefined
-              }
-              className="gap-1.5"
-            >
-              <Network className="h-3.5 w-3.5" />
-              {t("designer.manageHierarchyRules")}
-            </Button>
-          </PermissionGate>
-          <OrgExportMenu treeContainerId="org-tree-container" />
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => void loadSnapshot()}
-            disabled={loading}
-            className="gap-1.5"
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-            {t("designer.refresh")}
-          </Button>
-        </div>
-      </div>
-
+    <ModulePageShell
+      icon={Building2}
+      title={t("designer.title")}
+      count={snapshot.nodes.length}
+      actions={headerActions}
+      bodyClassName={null}
+    >
       <OrgDesignerLifecycleBar />
 
       <DraftStatusBanner
@@ -195,19 +184,22 @@ export function OrganizationDesignerPage() {
                 <div className="flex justify-between">
                   <span>{t("designer.totalNodes")}</span>
                   <span className="text-text-primary font-medium">
-                    {snapshot?.nodes.length ?? 0}
+                    {formatNumber(snapshot.nodes.length)}
                   </span>
                 </div>
                 <div className="flex justify-between">
                   <span>{t("designer.nodeTypesCount")}</span>
-                  <span className="text-text-primary font-medium">{nodeTypes.length}</span>
+                  <span className="text-text-primary font-medium">
+                    {formatNumber(nodeTypes.length)}
+                  </span>
                 </div>
               </div>
             </div>
           </aside>
 
-          <main
+          <section
             id="org-tree-container"
+            aria-label={t("designer.treeLabel")}
             className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
           >
             <OrganizationTreePanel
@@ -223,7 +215,7 @@ export function OrganizationDesignerPage() {
                 setCreateNodeOpen(true);
               }}
             />
-          </main>
+          </section>
 
           <OrgDesignerPropertyPanel readOnly={!isDesign} />
         </div>
@@ -256,6 +248,6 @@ export function OrganizationDesignerPage() {
       />
 
       <ImpactPreviewDrawer />
-    </div>
+    </ModulePageShell>
   );
 }

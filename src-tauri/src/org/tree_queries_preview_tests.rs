@@ -2,7 +2,8 @@
 //!
 //! V1 — Snapshot ordering: ancestor_path sorted, depth matches tree
 //! V2 — Move preview blocker: cycle detected when moving under descendant
-//! V3 — Future-domain placeholders always present in preview dependencies
+//! V3 — Operational dependencies (assets, open work) are real counts
+//! V4 — Designer action names reach the backend; a previewed move applies
 
 #[cfg(test)]
 mod tests {
@@ -326,118 +327,174 @@ mod tests {
     }
 
     // ══════════════════════════════════════════════════════════════════════
-    // V3 — Future-domain placeholders
+    // V3 — Operational dependencies are real counts (no placeholders)
     // ══════════════════════════════════════════════════════════════════════
 
+    fn assert_counted_dependencies(preview: &impact_preview::OrgImpactPreview) {
+        let domains: Vec<&str> = preview.dependencies.iter().map(|d| d.domain.as_str()).collect();
+        assert_eq!(domains, vec!["assets", "open_work"], "dependency domains");
+        for dep in &preview.dependencies {
+            assert_eq!(dep.count, Some(0), "'{}' must carry a real count", dep.domain);
+            assert_eq!(dep.status, "ok", "'{}' with no records must be 'ok'", dep.domain);
+        }
+    }
+
     #[tokio::test]
-    async fn v3_preview_includes_all_future_domain_placeholders() {
+    async fn v3_deactivate_preview_counts_operational_dependencies() {
         let db = setup().await;
         let (model_id, root_type_id, child_type_id) = setup_published_model(&db).await;
         let (_root_id, _child_id, grandchild_id) =
             setup_three_level_tree(&db, model_id, root_type_id, child_type_id).await;
 
-        // Use deactivate preview for a leaf node (no blockers expected).
         let preview = impact_preview::preview_deactivate_node(&db, grandchild_id)
             .await
             .expect("preview should succeed");
-
-        let domains: Vec<&str> = preview.dependencies.iter().map(|d| d.domain.as_str()).collect();
-
-        // Must include all four placeholder domains.
-        assert!(
-            domains.contains(&"assets"),
-            "missing 'assets' dependency, got: {domains:?}"
-        );
-        assert!(
-            domains.contains(&"open_work"),
-            "missing 'open_work' dependency, got: {domains:?}"
-        );
-        assert!(
-            domains.contains(&"permits"),
-            "missing 'permits' dependency, got: {domains:?}"
-        );
-        assert!(
-            domains.contains(&"inventory"),
-            "missing 'inventory' dependency, got: {domains:?}"
-        );
-
-        // All must have status = "unavailable".
-        for dep in &preview.dependencies {
-            assert_eq!(
-                dep.status, "unavailable",
-                "dependency '{}' must have status 'unavailable', got '{}'",
-                dep.domain, dep.status,
-            );
-        }
-
-        // Count must be None.
-        for dep in &preview.dependencies {
-            assert!(
-                dep.count.is_none(),
-                "dependency '{}' count must be None (null), got {:?}",
-                dep.domain,
-                dep.count,
-            );
-        }
-
-        // Notes must not be empty.
-        for dep in &preview.dependencies {
-            assert!(
-                dep.note.is_some() && !dep.note.as_ref().unwrap().is_empty(),
-                "dependency '{}' note must not be empty, got {:?}",
-                dep.domain,
-                dep.note,
-            );
-        }
+        assert_counted_dependencies(&preview);
     }
 
     #[tokio::test]
-    async fn v3_placeholders_present_in_move_preview_too() {
+    async fn v3_move_preview_counts_operational_dependencies() {
         let db = setup().await;
         let (model_id, root_type_id, child_type_id) = setup_published_model(&db).await;
         let (root_id, child_id, _grandchild_id) =
             setup_three_level_tree(&db, model_id, root_type_id, child_type_id).await;
 
-        // Valid move preview (child is already under root, but let's still call it).
         let preview = impact_preview::preview_move_node(&db, child_id, root_id)
             .await
             .expect("preview should succeed");
+        assert_counted_dependencies(&preview);
+    }
 
-        assert_eq!(
-            preview.dependencies.len(),
-            4,
-            "move preview must have exactly 4 dependency placeholders, got {}",
-            preview.dependencies.len(),
-        );
+    // ══════════════════════════════════════════════════════════════════════
+    // V4 — The designer's preview actions reach the backend and can be applied
+    // ══════════════════════════════════════════════════════════════════════
+
+    fn payload(action: &str, node_id: i64) -> PreviewOrgChangePayload {
+        PreviewOrgChangePayload {
+            action: action.to_string(),
+            node_id,
+            new_parent_id: None,
+            responsibility_type: None,
+            replacement_person_id: None,
+            replacement_team_id: None,
+        }
+    }
+
+    fn first_issue_code(err: crate::errors::AppError) -> String {
+        match err {
+            crate::errors::AppError::OrgValidationFailed(issues) => {
+                issues.first().map(|i| i.code.clone()).unwrap_or_default()
+            }
+            other => panic!("expected an org validation error, got {other:?}"),
+        }
+    }
+
+    /// The designer sends the action names the preview itself returns. They used to be
+    /// rejected as unknown actions, so no preview (and no move/reassign) could ever succeed.
+    #[tokio::test]
+    async fn v4_dispatch_accepts_designer_action_names() {
+        let db = setup().await;
+        let (model_id, root_type_id, child_type_id) = setup_published_model(&db).await;
+        let (root_id, child_id, grandchild_id) =
+            setup_three_level_tree(&db, model_id, root_type_id, child_type_id).await;
+
+        let mut move_payload = payload("MoveNode", grandchild_id);
+        move_payload.new_parent_id = Some(root_id);
+        let preview = impact_preview::dispatch_preview(&db, move_payload)
+            .await
+            .expect("MoveNode preview must be accepted");
+        assert!(matches!(preview.action, impact_preview::OrgPreviewAction::MoveNode));
+        assert!(preview.blockers.is_empty(), "blockers: {:?}", preview.blockers);
+
+        let preview = impact_preview::dispatch_preview(&db, payload("DeactivateNode", grandchild_id))
+            .await
+            .expect("DeactivateNode preview must be accepted");
+        assert!(matches!(
+            preview.action,
+            impact_preview::OrgPreviewAction::DeactivateNode
+        ));
+
+        let mut reassign = payload("ReassignResponsibility", child_id);
+        reassign.responsibility_type = Some("MAINTENANCE_OWNER".to_string());
+        reassign.replacement_person_id = Some(1);
+        let preview = impact_preview::dispatch_preview(&db, reassign)
+            .await
+            .expect("ReassignResponsibility preview must be accepted");
+        assert!(matches!(
+            preview.action,
+            impact_preview::OrgPreviewAction::ReassignResponsibility
+        ));
+        assert!(preview.blockers.is_empty(), "blockers: {:?}", preview.blockers);
+
+        // Legacy spellings keep working.
+        impact_preview::dispatch_preview(&db, payload("deactivate", grandchild_id))
+            .await
+            .expect("legacy 'deactivate' must still be accepted");
     }
 
     #[tokio::test]
-    async fn v3_placeholders_present_via_dispatch_preview_endpoint() {
+    async fn v4_move_preview_without_parent_is_rejected_with_code() {
         let db = setup().await;
         let (model_id, root_type_id, child_type_id) = setup_published_model(&db).await;
         let (_root_id, child_id, _grandchild_id) =
             setup_three_level_tree(&db, model_id, root_type_id, child_type_id).await;
 
-        // Use the dispatch function as the IPC command would.
-        let preview = impact_preview::dispatch_preview(
+        let err = impact_preview::dispatch_preview(&db, payload("MoveNode", child_id))
+            .await
+            .expect_err("a move preview needs a target parent");
+        assert_eq!(first_issue_code(err), "ORG_PREVIEW_NEW_PARENT_REQUIRED");
+    }
+
+    /// End to end: preview a move to a sibling branch, then apply it as the drawer does.
+    #[tokio::test]
+    async fn v4_move_previewed_in_designer_can_be_applied() {
+        let db = setup().await;
+        let (model_id, root_type_id, child_type_id) = setup_published_model(&db).await;
+        let (root_id, child_id, grandchild_id) =
+            setup_three_level_tree(&db, model_id, root_type_id, child_type_id).await;
+
+        let sibling = nodes::create_org_node(
             &db,
-            PreviewOrgChangePayload {
-                action: "deactivate".to_string(),
-                node_id: child_id,
-                new_parent_id: None,
-                responsibility_type: None,
-                replacement_person_id: None,
-                replacement_team_id: None,
+            CreateOrgNodePayload {
+                code: "WS-002".to_string(),
+                name: "Atelier Electrique".to_string(),
+                node_type_id: child_type_id.into(),
+                parent_id: Some(root_id),
+                description: None,
+                cost_center_code: None,
+                external_reference: None,
+                effective_from: None,
+                erp_reference: None,
+                notes: None,
+                structure_model_id: model_id,
             },
+            1,
         )
         .await
-        .expect("dispatch_preview should succeed");
+        .expect("create sibling");
 
-        let domains: Vec<&str> = preview.dependencies.iter().map(|d| d.domain.as_str()).collect();
+        let mut move_payload = payload("MoveNode", grandchild_id);
+        move_payload.new_parent_id = Some(sibling.id);
+        let preview = impact_preview::dispatch_preview(&db, move_payload)
+            .await
+            .expect("preview");
+        assert!(preview.blockers.is_empty(), "blockers: {:?}", preview.blockers);
 
-        assert!(domains.contains(&"assets"), "via dispatch: missing 'assets'");
-        assert!(domains.contains(&"open_work"), "via dispatch: missing 'open_work'");
-        assert!(domains.contains(&"permits"), "via dispatch: missing 'permits'");
-        assert!(domains.contains(&"inventory"), "via dispatch: missing 'inventory'");
+        let before = nodes::get_org_node_by_id(&db, grandchild_id).await.expect("node");
+        assert_eq!(before.parent_id, Some(child_id));
+        let moved = nodes::move_org_node(
+            &db,
+            nodes::MoveOrgNodePayload {
+                node_id: grandchild_id,
+                new_parent_id: Some(sibling.id),
+                expected_row_version: before.row_version,
+                effective_from: None,
+            },
+            1,
+        )
+        .await
+        .expect("the previewed move must apply");
+        assert_eq!(moved.parent_id, Some(sibling.id));
+        assert!(moved.ancestor_path.contains(&format!("/{}/", sibling.id)));
     }
 }

@@ -13,7 +13,7 @@
 use crate::errors::{AppError, AppResult};
 use crate::org::fail::{fail, fail_params};
 use chrono::Utc;
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -43,6 +43,10 @@ pub struct AssignResponsibilityPayload {
     pub team_id: Option<i64>,
     pub valid_from: Option<String>,
     pub valid_to: Option<String>,
+    /// Hand the responsibility over: end the current active assignment of the same type on
+    /// the node and create this one in the same transaction. Defaults to false (reject overlap).
+    #[serde(default)]
+    pub replace_active: bool,
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -136,6 +140,15 @@ pub async fn list_node_responsibilities(
     rows.iter().map(map_responsibility).collect()
 }
 
+/// Result of an assignment that may have replaced the previous active assignee.
+#[derive(Debug, Clone)]
+pub struct ResponsibilityAssignOutcome {
+    /// The new, active assignment.
+    pub assignment: OrgNodeResponsibility,
+    /// The assignment that was ended to make room for it (`replace_active`), if any.
+    pub ended: Option<OrgNodeResponsibility>,
+}
+
 /// Assign a responsibility to a node.
 ///
 /// Validation:
@@ -143,11 +156,28 @@ pub async fn list_node_responsibilities(
 /// - Exactly one of `person_id` or `team_id` must be set
 /// - `node_id` must reference an active (non-deleted) node
 /// - No overlapping active assignment for the same `(node_id, responsibility_type)`
+///   unless `replace_active` is set (see [`assign_or_replace_responsibility`]).
 pub async fn assign_responsibility(
     db: &DatabaseConnection,
     payload: AssignResponsibilityPayload,
-    _actor_id: i32,
+    actor_id: i32,
 ) -> AppResult<OrgNodeResponsibility> {
+    Ok(assign_or_replace_responsibility(db, payload, actor_id)
+        .await?
+        .assignment)
+}
+
+/// Assign a responsibility, optionally handing it over from the current active assignee.
+///
+/// When `payload.replace_active` is true and an active assignment of the same type exists on
+/// the node, that assignment is ended (`valid_to = now`) and the new one is created in the same
+/// transaction, so the node is never left without a responsible and never has two.
+/// Handing a responsibility to the person or team who already holds it is rejected.
+pub async fn assign_or_replace_responsibility(
+    db: &DatabaseConnection,
+    payload: AssignResponsibilityPayload,
+    _actor_id: i32,
+) -> AppResult<ResponsibilityAssignOutcome> {
     let resp_type = payload.responsibility_type.trim().to_string();
     if resp_type.is_empty() {
         return Err(fail(
@@ -173,37 +203,81 @@ pub async fn assign_responsibility(
         _ => {} // valid
     }
 
+    let txn = db.begin().await?;
+
     // Node must exist in the active (production) tree and be status=active
-    crate::org::model_scope::assert_org_node_active(db, payload.node_id).await?;
+    crate::org::model_scope::assert_org_node_active(&txn, payload.node_id).await?;
 
     if let Some(team_id) = payload.team_id {
-        crate::repository::team_repository::assert_active_crew_exists(db, team_id).await?;
+        crate::repository::team_repository::assert_active_crew_exists(&txn, team_id).await?;
     }
 
-    // Check for overlapping active assignment on the same (node_id, responsibility_type)
-    let overlap_row = db
+    // Current active assignment on the same (node_id, responsibility_type), if any.
+    let active_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT COUNT(*) AS cnt FROM org_node_responsibilities \
-             WHERE node_id = ? AND responsibility_type = ? AND valid_to IS NULL",
+            "SELECT id, person_id, team_id FROM org_node_responsibilities \
+             WHERE node_id = ? AND responsibility_type = ? AND valid_to IS NULL \
+             ORDER BY created_at DESC, id DESC LIMIT 1",
             [payload.node_id.into(), resp_type.clone().into()],
         ))
-        .await?
-        .expect("COUNT always returns a row");
-    let overlap_count: i64 = overlap_row.try_get("", "cnt").unwrap_or(0);
-    if overlap_count > 0 {
-        return Err(fail_params(
-            "ORG_ASSIGNMENT_EXISTS",
-            format!(
-                "An active '{resp_type}' assignment already exists on this node — end it before assigning a new one."
-            ),
-            &[("responsibilityType", resp_type)],
-        ));
-    }
+        .await?;
 
     let now = Utc::now().to_rfc3339();
 
-    db.execute(Statement::from_sql_and_values(
+    let ended = match active_row {
+        None => None,
+        Some(_) if !payload.replace_active => {
+            return Err(fail_params(
+                "ORG_ASSIGNMENT_EXISTS",
+                format!(
+                    "An active '{resp_type}' assignment already exists on this node — end it before assigning a new one."
+                ),
+                &[("responsibilityType", resp_type)],
+            ));
+        }
+        Some(row) => {
+            let active_id: i64 = row.try_get("", "id").map_err(|e| decode_err("id", e))?;
+            let active_person: Option<i64> = row.try_get("", "person_id").map_err(|e| decode_err("person_id", e))?;
+            let active_team: Option<i64> = row.try_get("", "team_id").map_err(|e| decode_err("team_id", e))?;
+            let unchanged = (payload.person_id.is_some() && payload.person_id == active_person)
+                || (payload.team_id.is_some() && payload.team_id == active_team);
+            if unchanged {
+                return Err(fail_params(
+                    "ORG_ASSIGNEE_UNCHANGED",
+                    format!("This person or team already holds the '{resp_type}' responsibility on this node."),
+                    &[("responsibilityType", resp_type)],
+                ));
+            }
+            txn.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "UPDATE org_node_responsibilities SET valid_to = ?, updated_at = ? WHERE id = ?",
+                [now.clone().into(), now.clone().into(), active_id.into()],
+            ))
+            .await?;
+            let ended_row = txn
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    select_by_id_sql(),
+                    [active_id.into()],
+                ))
+                .await?
+                .ok_or_else(|| AppError::NotFound {
+                    entity: "org_node_responsibility".to_string(),
+                    id: active_id.to_string(),
+                })?;
+            Some(map_responsibility(&ended_row)?)
+        }
+    };
+
+    // A handover starts when the previous assignment ends unless the caller dated it.
+    let valid_from = match (&payload.valid_from, &ended) {
+        (Some(from), _) => Some(from.clone()),
+        (None, Some(_)) => Some(now.clone()),
+        (None, None) => None,
+    };
+
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO org_node_responsibilities
           (node_id, responsibility_type, person_id, team_id,
@@ -214,7 +288,7 @@ pub async fn assign_responsibility(
             resp_type.into(),
             payload.person_id.into(),
             payload.team_id.into(),
-            payload.valid_from.into(),
+            valid_from.into(),
             payload.valid_to.into(),
             now.clone().into(),
             now.into(),
@@ -223,7 +297,7 @@ pub async fn assign_responsibility(
     .await?;
 
     // Retrieve the inserted row
-    let row = db
+    let row = txn
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
             format!("SELECT {SELECT_COLS} {SELECT_FROM} WHERE r.id = last_insert_rowid()"),
@@ -232,12 +306,15 @@ pub async fn assign_responsibility(
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("responsibility created but not found after insert")))?;
 
     let assignment = map_responsibility(&row)?;
+    txn.commit().await?;
+
     tracing::info!(
         assignment_id = assignment.id,
         node_id = assignment.node_id,
+        replaced = ended.as_ref().map(|e| e.id),
         "responsibility assigned"
     );
-    Ok(assignment)
+    Ok(ResponsibilityAssignOutcome { assignment, ended })
 }
 
 /// End a responsibility assignment by setting `valid_to`.
