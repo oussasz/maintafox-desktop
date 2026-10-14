@@ -248,6 +248,16 @@
     "cancelledStubHint": "Cet ordre de travail a été annulé. Les champs de planification ne sont plus modifiables. Consultez l'onglet Audit pour l'historique.",
     "readinessChecklist": "Contrôle de prêt",
     "readinessRecommended": "recommandé",
+    "readinessRule": {
+      "approval_required": "Validation de la préparation",
+      "assignment_completed": "Responsable ou équipe affectés",
+      "equipment_assigned": "Équipement identifié",
+      "material_readiness": "Pièces disponibles / réservées",
+      "permit_approved": "Permis validé",
+      "planning_completed": "Travail préparé",
+      "crew_qualified": "Équipe habilitée pour ce travail",
+      "schedule_defined": "Dates planifiées"
+    },
     "readinessBlocking": "Impossible de marquer Prêt — conditions bloquantes :",
     "readinessBlockingHint": "Corrigez les points ci-dessous, puis réessayez Marquer comme Prêt.",
     "readinessBlockingEmpty": "Le contrôle de prêt a échoué. Vérifiez la checklist du plan, puis réessayez.",
@@ -400,7 +410,8 @@
       "invalidTimes": "Date, heure de début et de fin sont obligatoires.",
       "endAfterStart": "L'heure de fin doit être après l'heure de début.",
       "breakTooLong": "La pause ne peut pas dépasser le temps travaillé.",
-      "breakNote": "Pause : {{minutes}} min"
+      "breakNote": "Pause : {{minutes}} min",
+      "overtime": "Heures supplémentaires (au taux majoré)"
     },
     "rateMissing": "Taux manquant",
     "pauseTitle": "Mettre en pause l'OT",

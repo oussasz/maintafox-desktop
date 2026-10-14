@@ -171,6 +171,10 @@ mod m20261014_000182_pm_windows_fanout_timing;
 mod m20261014_000183_meter_lifetime;
 mod m20261014_000184_inventory_lots_fx_periods_approvals;
 mod m20261014_000185_asset_spares_criticality;
+mod m20261014_000190_wo_labor_personnel;
+mod m20261014_000191_qualification_requirements;
+mod m20261014_000192_work_calendar_holidays;
+mod m20261014_000193_cert_expiry_routing;
 mod m20261101_000036_activity_audit_log;
 mod m20261201_000037_observability_permissions;
 mod m_test;
@@ -354,6 +358,10 @@ impl MigratorTrait for Migrator {
             Box::new(m20261014_000183_meter_lifetime::Migration),
             Box::new(m20261014_000184_inventory_lots_fx_periods_approvals::Migration),
             Box::new(m20261014_000185_asset_spares_criticality::Migration),
+            Box::new(m20261014_000190_wo_labor_personnel::Migration),
+            Box::new(m20261014_000191_qualification_requirements::Migration),
+            Box::new(m20261014_000192_work_calendar_holidays::Migration),
+            Box::new(m20261014_000193_cert_expiry_routing::Migration),
             Box::new(m_test::Migration),
         ]
     }

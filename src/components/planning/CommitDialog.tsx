@@ -681,6 +681,9 @@ export function CommitDialog({
                         1,
                       ),
                     })}
+                    {dayCapacity.basis
+                      ? ` · ${t(`commitment.capacityBasis.${dayCapacity.basis}`, { defaultValue: dayCapacity.basis })}`
+                      : null}
                   </p>
                 ) : null}
                 {capacityBlocked ? (

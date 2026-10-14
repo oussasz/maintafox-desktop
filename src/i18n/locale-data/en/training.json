@@ -12,7 +12,10 @@
     "overrides": "Overrides",
     "mine": "My qualifications"
   },
-  "action": { "cancel": "Cancel", "save": "Save" },
+  "action": {
+    "cancel": "Cancel",
+    "save": "Save"
+  },
   "col": {
     "actions": "Actions",
     "appliesTo": "Applies to",
@@ -331,6 +334,8 @@
     "SKILL_VALIDATOR_NOT_LINKED": "Only a user linked to a personnel record can validate a skill.",
     "COMPANY_NAME_REQUIRED": "The company name is required.",
     "COMPANY_STATUS_UNKNOWN": "Unknown onboarding or insurance status.",
-    "COMPANY_CONTRACT_DATES": "The contract end is before its start."
+    "COMPANY_CONTRACT_DATES": "The contract end is before its start.",
+    "TEAM_NO_SCHEDULE": "The team has no working hours on {{day}}: give its members a shift schedule or set a capacity rule.",
+    "LOTO_ROLE_PERSON_UNKNOWN": "This LOTO role requires qualifications: link your account to your personnel record first."
   }
 }

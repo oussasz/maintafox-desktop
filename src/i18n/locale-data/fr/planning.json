@@ -123,6 +123,13 @@
     "matchingSkills": "{{count}} compétences correspondantes",
     "costRange": "Coût main-d'œuvre estimé : {{min}} – {{max}}",
     "capacityRemaining": "Capacité équipe ce jour : {{remaining}} h restantes sur {{available}} h.",
+    "capacityBasis": {
+      "rule": "règle de capacité",
+      "roster": "selon les horaires",
+      "holiday": "jour férié",
+      "no_schedule": "aucun poste prévu",
+      "no_members": "équipe sans membre"
+    },
     "capacityBlockedHint": "Ce créneau dépasse la capacité restante de l'équipe ({{remaining}} h). Raccourcissez la fin.",
     "capacityDayFull": "Plus de capacité équipe ce jour",
     "horizonHint": "Seules les dates de la période Du–Au du tableau sont sélectionnables. La durée est limitée par la capacité journalière restante de l'équipe.",

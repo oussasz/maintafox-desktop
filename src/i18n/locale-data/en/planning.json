@@ -123,6 +123,13 @@
     "matchingSkills": "{{count}} matching skills",
     "costRange": "Estimated labor cost: {{min}} – {{max}}",
     "capacityRemaining": "Crew capacity this day: {{remaining}} h remaining of {{available}} h.",
+    "capacityBasis": {
+      "rule": "capacity rule",
+      "roster": "from shift schedules",
+      "holiday": "holiday",
+      "no_schedule": "no shift scheduled",
+      "no_members": "no team members"
+    },
     "capacityBlockedHint": "This slot is longer than remaining crew capacity ({{remaining}} h). Shorten the end time.",
     "capacityDayFull": "No remaining crew capacity on this day",
     "horizonHint": "Only dates inside the board From–To period can be selected. Slot length is limited by remaining daily crew capacity.",

@@ -5079,7 +5079,12 @@ export interface WoExecTask {
 export interface WoIntervener {
   id: number;
   work_order_id: number;
-  intervener_id: number;
+  /** Login of the person, when they have one. */
+  intervener_id: number | null;
+  /** The person (personnel register); people without a login are booked by this. */
+  personnel_id?: number | null;
+  /** Paid at the overtime rate. */
+  is_overtime?: boolean;
   skill_id: number | null;
   started_at: string | null;
   ended_at: string | null;
@@ -8256,6 +8261,8 @@ export interface TeamCapacityLoad {
   overtime_hours: number;
   committed_hours: number;
   utilization_ratio: number;
+  /** `rule` (planner's capacity rule) | `roster` (shift calendars) | `holiday` | `no_schedule` | `no_members`. */
+  basis?: string;
 }
 
 export interface PlanningAssigneeLane {

@@ -11,6 +11,8 @@ pub mod training;
 #[cfg(test)]
 mod gate_tests;
 #[cfg(test)]
+mod hook_tests;
+#[cfg(test)]
 mod tests;
 
 use std::collections::HashMap;

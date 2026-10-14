@@ -1052,6 +1052,25 @@ pub fn run() {
             commands::dashboard::get_overview_kpis,
             commands::dashboard::get_overview_kpi_layout,
             commands::dashboard::save_overview_kpi_layout,
+            // Personnel, qualifications and training (migrations 190-193)
+            commands::qualification::list_qualification_requirements,
+            commands::qualification::upsert_qualification_requirement,
+            commands::qualification::get_wo_qualification_assessment,
+            commands::qualification::check_person_for_work_order,
+            commands::qualification::check_person_for_permit_role,
+            commands::qualification::record_qualification_override,
+            commands::qualification::list_qualification_overrides,
+            commands::qualification::get_qualification_matrix,
+            commands::personnel::get_team_capacity,
+            commands::personnel::get_person_capacity,
+            commands::personnel::list_work_calendar_holidays,
+            commands::personnel::upsert_work_calendar_holiday,
+            commands::personnel::list_personnel_skills,
+            commands::personnel::upsert_personnel_skill,
+            commands::personnel::remove_personnel_skill,
+            commands::personnel::update_external_company,
+            commands::wo::add_personnel_labor,
+            commands::wo::list_wo_labor_people,
         ])
         .run(tauri::generate_context!())
         // EXPECT: If the Tauri context cannot be loaded, the application binary is corrupt or

@@ -206,6 +206,10 @@ pub struct TeamCapacityLoad {
     pub overtime_hours: f64,
     pub committed_hours: f64,
     pub utilization_ratio: f64,
+    /// Where `available_hours` comes from: `rule` (planner's capacity rule), `roster` (shift
+    /// calendars minus absences), `holiday`, `no_schedule` or `no_members` (0 h).
+    #[serde(default)]
+    pub basis: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

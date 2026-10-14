@@ -849,6 +849,72 @@ pub async fn assess_work_order(db: &impl ConnectionTrait, wo_id: i64) -> AppResu
     })
 }
 
+/// The tenant writes in English (`locale.default_language`, else the tenant setting); French
+/// otherwise, the product default.
+pub async fn tenant_writes_english(db: &impl ConnectionTrait) -> AppResult<bool> {
+    let from_config = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT value FROM system_config WHERE key = 'locale.default_language'".to_string(),
+        ))
+        .await?
+        .and_then(|r| r.try_get::<String>("", "value").ok());
+    let raw = match from_config {
+        Some(v) => Some(v),
+        None => db
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT setting_value_json FROM app_settings \
+                 WHERE setting_key = 'locale.primary_language' AND setting_scope = 'tenant' LIMIT 1"
+                    .to_string(),
+            ))
+            .await?
+            .and_then(|r| r.try_get::<String>("", "setting_value_json").ok())
+            .map(|json| serde_json::from_str::<String>(&json).unwrap_or(json)),
+    };
+    Ok(raw.is_some_and(|v| v.trim().to_ascii_lowercase().starts_with("en")))
+}
+
+/// Readiness blocker text for a work order whose crew does not meet its requirements
+/// (`None` when it does). Names who lacks what, and the `any` requirements nobody covers.
+pub fn readiness_message(assessment: &WoQualificationAssessment, english: bool) -> Option<String> {
+    if assessment.ok {
+        return None;
+    }
+    let mut parts: Vec<String> = assessment
+        .people
+        .iter()
+        .filter(|p| !p.qualified)
+        .map(|p| {
+            let missing = p.gaps.iter().map(|g| g.label.as_str()).collect::<Vec<_>>().join(", ");
+            if english {
+                format!("{} lacks {missing}", p.full_name)
+            } else {
+                format!("{} : manque {missing}", p.full_name)
+            }
+        })
+        .collect();
+    if !assessment.uncovered.is_empty() {
+        let labels = assessment
+            .uncovered
+            .iter()
+            .map(|r| r.label.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        parts.push(if english {
+            format!("nobody on the job holds {labels}")
+        } else {
+            format!("personne dans l'équipe ne détient {labels}")
+        });
+    }
+    let head = if english {
+        "Crew not qualified"
+    } else {
+        "Équipe non habilitée"
+    };
+    Some(format!("{head} — {}.", parts.join(" ; ")))
+}
+
 /// One person against a work order's personal (`each`) requirements — used before booking or
 /// assigning them.
 pub async fn check_person_for_work_order(

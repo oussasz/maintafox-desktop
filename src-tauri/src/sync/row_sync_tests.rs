@@ -174,6 +174,9 @@ pub(crate) const PERSONNEL_TYPES: &[&str] = &[
     "training_sessions",
     "training_attendance",
     "document_acknowledgements",
+    "qualification_requirements",
+    "qualification_overrides",
+    "work_calendar_holidays",
 ];
 
 /// Inspections and work permits.

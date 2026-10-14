@@ -298,6 +298,17 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
         "category_code",
         "(SELECT code FROM notification_categories ORDER BY id LIMIT 1)",
     ),
+    // Labour booked to a person without a login (migration 190): personnel only.
+    ("work_order_interveners", "intervener_id", "NULL"),
+    // A requirement asks for one certification or one skill, never both.
+    ("qualification_requirements", "skill_reference_value_id", "NULL"),
+    ("qualification_requirements", "min_proficiency_level", "NULL"),
+    // An override states its reason (at least 10 characters).
+    ("qualification_overrides", "reason", "'Supervised on site by the shift lead'"),
+    ("qualification_overrides", "role_code", "NULL"),
+    ("qualification_overrides", "permit_id", "NULL"),
+    // A calendar day, not a timestamp.
+    ("work_calendar_holidays", "holiday_date", "'2026-12-25'"),
 ];
 
 #[derive(Debug, Clone)]

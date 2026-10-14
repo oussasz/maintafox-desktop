@@ -774,6 +774,27 @@ pub async fn add_labor(input: labor::AddLaborInput, state: State<'_, AppState>) 
     labor::add_labor_entry(&state.db, input).await
 }
 
+/// Labour for a person of the register, login or not (contractor technicians). Refused with
+/// the reason when they lack a qualification the work order requires, unless an override was
+/// recorded (`record_qualification_override`).
+#[tauri::command]
+pub async fn add_personnel_labor(
+    input: labor::AddPersonnelLaborInput,
+    state: State<'_, AppState>,
+) -> AppResult<labor::WoIntervener> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
+    labor::add_personnel_labor_entry(&state.db, input).await
+}
+
+/// Everyone who can be booked for labour (active personnel, with or without a login).
+#[tauri::command]
+pub async fn list_wo_labor_people(state: State<'_, AppState>) -> AppResult<Vec<labor::WoLaborPerson>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
+    labor::list_labor_people(&state.db).await
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // N) close_labor — ot.edit
 // ═══════════════════════════════════════════════════════════════════════════════

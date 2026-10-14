@@ -18,7 +18,10 @@ import type {
 export const PLANNING_HORIZON_PRESETS = RESOURCE_TIMELINE_HORIZON_PRESETS;
 export const PLANNING_DEFAULT_HORIZON_DAYS = RESOURCE_TIMELINE_HORIZON_PRESETS[1]; // 14
 
-/** Default daily available hours when no capacity_rules row exists (matches Rust gate). */
+/**
+ * Longest slot proposed when pre-filling a commitment from a candidate window (a prefill
+ * suggestion only — team capacity comes from the roster or the planner's rule).
+ */
 export const PLANNING_DEFAULT_DAILY_CAPACITY_HOURS = 8;
 
 /** Utilization ratio thresholds for capacity strip tone. */
@@ -753,11 +756,13 @@ export type TeamDayCapacity = {
   overtimeHours: number;
   committedHours: number;
   remainingHours: number;
+  /** `rule` | `roster` | `holiday` | `no_schedule` | `no_members`; null when not loaded. */
+  basis: string | null;
 };
 
 /**
- * Remaining team capacity for a work date (mirrors compute_capacity_gate defaults).
- * Missing gantt rows ⇒ 8h available / 0 overtime / 0 committed.
+ * Remaining team capacity for a work date (mirrors compute_capacity_gate): the planner's rule,
+ * else the roster (shift calendars − absences − holidays). No row ⇒ 0 h, never a default.
  */
 export function resolveTeamDayCapacity(
   capacity: TeamCapacityLoad[] | null | undefined,
@@ -765,11 +770,17 @@ export function resolveTeamDayCapacity(
   workDate: string,
 ): TeamDayCapacity {
   const row = (capacity ?? []).find((c) => c.team_id === teamId && c.work_date === workDate);
-  const availableHours = row?.available_hours ?? PLANNING_DEFAULT_DAILY_CAPACITY_HOURS;
+  const availableHours = row?.available_hours ?? 0;
   const overtimeHours = row?.overtime_hours ?? 0;
   const committedHours = row?.committed_hours ?? 0;
   const remainingHours = Math.max(0, availableHours + overtimeHours - committedHours);
-  return { availableHours, overtimeHours, committedHours, remainingHours };
+  return {
+    availableHours,
+    overtimeHours,
+    committedHours,
+    remainingHours,
+    basis: row?.basis ? row.basis : null,
+  };
 }
 
 /** True when requested hours would fail the daily capacity gate. */

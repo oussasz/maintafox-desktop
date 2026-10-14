@@ -12,7 +12,10 @@
     "overrides": "Dérogations",
     "mine": "Mes habilitations"
   },
-  "action": { "cancel": "Annuler", "save": "Enregistrer" },
+  "action": {
+    "cancel": "Annuler",
+    "save": "Enregistrer"
+  },
   "col": {
     "actions": "Actions",
     "appliesTo": "S'applique à",
@@ -331,6 +334,8 @@
     "SKILL_VALIDATOR_NOT_LINKED": "Seul un utilisateur relié à une fiche personnel peut valider une compétence.",
     "COMPANY_NAME_REQUIRED": "Le nom de l'entreprise est obligatoire.",
     "COMPANY_STATUS_UNKNOWN": "État de référencement ou d'assurance inconnu.",
-    "COMPANY_CONTRACT_DATES": "La fin du contrat précède son début."
+    "COMPANY_CONTRACT_DATES": "La fin du contrat précède son début.",
+    "TEAM_NO_SCHEDULE": "L'équipe n'a aucune heure de travail le {{day}} : donnez un horaire à ses membres ou définissez une règle de capacité.",
+    "LOTO_ROLE_PERSON_UNKNOWN": "Ce rôle de consignation exige des habilitations : reliez d'abord votre compte à votre fiche personnel."
   }
 }
