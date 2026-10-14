@@ -4,11 +4,18 @@
 // Tree-shaken from production via import.meta.env.DEV gating in router.tsx.
 
 import type { ColumnDef } from "@tanstack/react-table";
+import { AlertTriangle, ClipboardList, Columns3, List as ListIcon } from "lucide-react";
 import { useState } from "react";
 
 import { BarChart, type BarChartDatum } from "@/components/charts/BarChart";
 import { LineChart, type LineChartDatum } from "@/components/charts/LineChart";
 import { DataTable } from "@/components/data";
+import {
+  FilterToggleButton,
+  RefreshButton,
+  ViewToggle,
+} from "@/components/layout/ModuleHeaderControls";
+import { KpiTile } from "@/components/metrics/KpiTile";
 import {
   Badge,
   Button,
@@ -41,8 +48,14 @@ import {
   Textarea,
 } from "@/components/ui";
 import { FormField } from "@/components/ui/FormField";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { ErrorState, LoadingState, TruncationNotice } from "@/components/ui/data-state";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Separator } from "@/components/ui/separator";
+import { StatusChip } from "@/components/ui/status-chip";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { mfLayout } from "@/design-system/tokens";
+import { TONES, type Tone } from "@/design-system/tone";
 
 // ─── Sample data ──────────────────────────────────────────────────
 
@@ -99,6 +112,93 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
+// ─── Design system (docs/DESIGN_SYSTEM.md) ────────────────────────
+
+const TONE_EXAMPLES: Record<Tone, string> = {
+  neutral: "Draft / closed",
+  info: "Planning / submitted",
+  progress: "In progress",
+  attention: "Awaiting approval",
+  warning: "Due soon",
+  success: "Completed",
+  danger: "Overdue / blocked",
+};
+
+function DesignSystemSection() {
+  const [view, setView] = useState<"list" | "kanban">("list");
+  const [filtersOpen, setFiltersOpen] = useState(true);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  return (
+    <Section title="Design system: OT/DI reference patterns">
+      <p className="text-sm text-text-secondary">
+        Shared pieces every module uses. Rules and usage: <code>docs/DESIGN_SYSTEM.md</code>.
+      </p>
+      <h3 className="text-sm font-semibold">Status tones</h3>
+      <div className="flex flex-wrap gap-2">
+        {TONES.map((tone) => (
+          <StatusChip key={tone} tone={tone} label={`${tone} · ${TONE_EXAMPLES[tone]}`} dot />
+        ))}
+      </div>
+      <h3 className="text-sm font-semibold">Module header controls</h3>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button className={mfLayout.primaryAction}>Create</Button>
+        <ViewToggle
+          value={view}
+          onChange={setView}
+          options={[
+            { value: "list", label: "List", icon: ListIcon },
+            { value: "kanban", label: "Board", icon: Columns3 },
+          ]}
+        />
+        <FilterToggleButton
+          open={filtersOpen}
+          onToggle={() => setFiltersOpen((o) => !o)}
+          activeCount={2}
+        />
+        <RefreshButton onRefresh={() => undefined} />
+      </div>
+      <h3 className="text-sm font-semibold">KPI tiles</h3>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <KpiTile label="Open work orders" value="128" icon={ClipboardList} />
+        <KpiTile
+          label="Overdue"
+          value="12"
+          tone="danger"
+          icon={AlertTriangle}
+          onOpen={() => undefined}
+        />
+        <KpiTile label="MTTR" value="6.8" unit="h" hint="Last 30 days" />
+        <KpiTile label="PM compliance" value="92" unit="%" tone="success" />
+      </div>
+      <h3 className="text-sm font-semibold">States</h3>
+      <div className="grid gap-3 md:grid-cols-2">
+        <LoadingState />
+        <EmptyState
+          title="No work orders match these filters"
+          description="Clear a filter to see more."
+        />
+        <ErrorState
+          error={{ code: "DATABASE_ERROR", message: "Validation failed: disk I/O error" }}
+          onRetry={() => undefined}
+        />
+        <TruncationNotice shown={200} total={1240} onLoadMore={() => undefined} />
+      </div>
+      <h3 className="text-sm font-semibold">Confirmation</h3>
+      <Button variant="destructive" className="h-11 w-fit" onClick={() => setConfirmOpen(true)}>
+        Deactivate article
+      </Button>
+      <ConfirmDialog
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        description="The article will be hidden from active operations. Its stock history is kept."
+        confirmLabel="Deactivate article"
+        destructive
+        onConfirm={() => undefined}
+      />
+    </Section>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────
 
 export function ComponentShowcase() {
@@ -112,6 +212,8 @@ export function ComponentShowcase() {
           Dev-only page — UI foundation primitives for Phase 2 module development.
         </p>
       </div>
+
+      <DesignSystemSection />
 
       {/* ── Buttons ────────────────────────────────────────────── */}
       <Section title="Buttons">

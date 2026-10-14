@@ -42,7 +42,7 @@ import type {
   WorkOrder,
 } from "@shared/ipc-types";
 
-import { useWoStore, WO_LIST_PAGE_SIZE } from "../wo-store";
+import { WO_LIST_PAGE_SIZE, useWoStore } from "../wo-store";
 
 vi.mock("@/services/wo-service", async (importOriginal) => {
   const actual = await importOriginal<typeof WoService>();

@@ -5,7 +5,7 @@
  * V4 — Loading state: loadDis sets loading=true while awaiting and loading=false after.
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import { mockInvoke } from "@/test/mocks/tauri";
 import type { InterventionRequest } from "@shared/ipc-types";

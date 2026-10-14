@@ -29,6 +29,9 @@ const PlanningPage = lazy(() =>
   import("@/pages/PlanningPage").then((m) => ({ default: m.PlanningPage })),
 );
 const PmPage = lazy(() => import("@/pages/PmPage").then((m) => ({ default: m.PmPage })));
+const ComponentShowcase = lazy(() =>
+  import("@/pages/dev/ComponentShowcase").then((m) => ({ default: m.ComponentShowcase })),
+);
 const PermitsPage = lazy(() =>
   import("@/pages/PermitsPage").then((m) => ({ default: m.PermitsPage })),
 );
@@ -384,6 +387,11 @@ const routes: RouteObject[] = [
                     element: <Navigate to="/settings?tab=security" replace />,
                   },
                   { path: "settings", element: <SettingsPage /> },
+                  // Living design-system reference (docs/DESIGN_SYSTEM.md). Development builds only:
+                  // the import is tree-shaken from production bundles.
+                  ...(import.meta.env.DEV
+                    ? [{ path: "__dev/components", element: <ComponentShowcase /> }]
+                    : []),
                   {
                     element: <PermissionRoute permission={P.CFG_VIEW} />,
                     children: [

@@ -7,7 +7,7 @@ import { KpiTile } from "@/components/metrics/KpiTile";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState, TruncationNotice } from "@/components/ui/data-state";
 import { StatusChip } from "@/components/ui/status-chip";
-import { mfTone, toneOf, WO_STATUS_TONE } from "@/design-system/tone";
+import { WO_STATUS_TONE, mfTone, toneOf } from "@/design-system/tone";
 import { describeAppError } from "@/lib/app-error";
 
 vi.mock("react-i18next", () => ({
