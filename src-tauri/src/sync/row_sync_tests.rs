@@ -41,6 +41,8 @@ pub(crate) const FOUNDATION_TYPES: &[&str] = &[
     "asset_document_links",
     "asset_external_ids",
     "asset_photos",
+    "equipment_spare_parts",
+    "equipment_criticality_assessments",
     "library_documents",
     "media_attachments",
     "lookup_domains",

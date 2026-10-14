@@ -164,6 +164,7 @@ mod m20261012_000173_audit_hash_chain;
 mod m20261012_000174_unit_conversions;
 pub(crate) mod m20261012_000175_wo_lifecycle_facts;
 mod m20261012_000176_notification_daily_digest;
+mod m20261014_000185_asset_spares_criticality;
 mod m20261101_000036_activity_audit_log;
 mod m20261201_000037_observability_permissions;
 mod m_test;
@@ -340,6 +341,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261012_000174_unit_conversions::Migration),
             Box::new(m20261012_000175_wo_lifecycle_facts::Migration),
             Box::new(m20261012_000176_notification_daily_digest::Migration),
+            Box::new(m20261014_000185_asset_spares_criticality::Migration),
             Box::new(m_test::Migration),
         ]
     }

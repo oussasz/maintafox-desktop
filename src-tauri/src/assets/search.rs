@@ -27,7 +27,28 @@ pub struct AssetSearchFilters {
     /// KPI strip click-to-filter focus (`status_down` | `critical_at_risk` | `open_work` | `stale_meters`).
     #[serde(default)]
     pub registry_focus: Option<String>,
+    /// Rows to skip (paged registry list).
+    #[serde(default)]
+    pub offset: Option<u64>,
+    /// Canonical criticality classes (`A`..`D`).
+    #[serde(default)]
+    pub criticality_codes: Option<Vec<String>>,
+    /// When true, `org_node_ids` also matches assets installed anywhere below those nodes.
+    #[serde(default)]
+    pub org_subtree: Option<bool>,
 }
+
+/// One page of the registry list and the number of assets matching the filters.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssetSearchPage {
+    pub items: Vec<AssetSearchResult>,
+    pub total: i64,
+}
+
+/// Largest page the registry list may request.
+pub const SEARCH_PAGE_MAX: u64 = 200;
+/// Page size used when the caller gives none.
+pub const SEARCH_PAGE_DEFAULT: u64 = 100;
 
 /// Filters for the shared AssetPicker empty-query / typed suggestions.
 #[derive(Debug, Deserialize)]
@@ -557,9 +578,25 @@ pub(crate) fn build_asset_scope_where(filters: &AssetSearchFilters) -> (String, 
     if let Some(ref ids) = filters.org_node_ids {
         if !ids.is_empty() {
             let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
-            where_clauses.push(format!("e.installed_at_node_id IN ({placeholders})"));
+            if filters.org_subtree.unwrap_or(false) {
+                where_clauses.push(format!(
+                    "e.installed_at_node_id IN (                       SELECT d.id FROM org_nodes d                        JOIN org_nodes a ON d.ancestor_path LIKE a.ancestor_path || '%'                        WHERE a.id IN ({placeholders}))"
+                ));
+            } else {
+                where_clauses.push(format!("e.installed_at_node_id IN ({placeholders})"));
+            }
             for &node_id in ids {
                 binds.push(node_id.into());
+            }
+        }
+    }
+
+    if let Some(ref codes) = filters.criticality_codes {
+        if !codes.is_empty() {
+            let placeholders = codes.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+            where_clauses.push(format!("COALESCE(rs_crit.code, lv.code) IN ({placeholders})"));
+            for code in codes {
+                binds.push(code.clone().into());
             }
         }
     }
@@ -636,6 +673,7 @@ pub(crate) fn build_asset_scope_where(filters: &AssetSearchFilters) -> (String, 
 /// case-insensitive.
 pub async fn search_assets(db: &DatabaseConnection, filters: AssetSearchFilters) -> AppResult<Vec<AssetSearchResult>> {
     let (where_sql, mut binds) = build_asset_scope_where(&filters);
+    let row_offset = filters.offset.unwrap_or(0);
 
     let folded_query = filters
         .query
@@ -643,7 +681,7 @@ pub async fn search_assets(db: &DatabaseConnection, filters: AssetSearchFilters)
         .map(|q| fold_search_text(q.trim()))
         .filter(|q| !q.is_empty());
 
-    let row_limit = filters.limit.unwrap_or(100).min(200);
+    let row_limit = filters.limit.unwrap_or(SEARCH_PAGE_DEFAULT).min(SEARCH_PAGE_MAX);
 
     let order_sql = if let Some(ref folded) = folded_query {
         let code_fold = sql_fold_expr("e.asset_id_code");
@@ -660,7 +698,9 @@ pub async fn search_assets(db: &DatabaseConnection, filters: AssetSearchFilters)
         "ORDER BY e.asset_id_code ASC".to_string()
     };
 
-    let sql = format!("SELECT {SEARCH_SELECT} {SEARCH_FROM} WHERE {where_sql} {order_sql} LIMIT {row_limit}");
+    let sql = format!(
+        "SELECT {SEARCH_SELECT} {SEARCH_FROM} WHERE {where_sql} {order_sql} LIMIT {row_limit} OFFSET {row_offset}"
+    );
 
     let rows = db
         .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, binds))
@@ -669,6 +709,20 @@ pub async fn search_assets(db: &DatabaseConnection, filters: AssetSearchFilters)
     let mut results: Vec<AssetSearchResult> = rows.iter().map(map_search_result).collect::<AppResult<_>>()?;
     enrich_org_paths(db, &mut results).await?;
     Ok(results)
+}
+
+/// Paged registry list: one page of [`search_assets`] plus the total matching the same filters.
+pub async fn search_assets_page(db: &DatabaseConnection, filters: AssetSearchFilters) -> AppResult<AssetSearchPage> {
+    let (where_sql, binds) = build_asset_scope_where(&filters);
+    let count_sql = format!("SELECT COUNT(*) AS total {METRICS_FROM} WHERE {where_sql}");
+    let total: i64 = db
+        .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, &count_sql, binds))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("asset count query returned no row")))?
+        .try_get("", "total")
+        .map_err(|e| decode_err("total", e))?;
+    let items = search_assets(db, filters).await?;
+    Ok(AssetSearchPage { items, total })
 }
 
 /// Suggestions for the shared AssetPicker.
@@ -697,6 +751,9 @@ pub async fn suggest_picker_assets(
                 include_decommissioned: Some(include_decommissioned),
                 limit: Some(limit),
                 registry_focus: None,
+                offset: None,
+                criticality_codes: None,
+                org_subtree: None,
             },
         )
         .await?;

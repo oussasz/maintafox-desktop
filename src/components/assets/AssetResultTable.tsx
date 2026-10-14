@@ -34,7 +34,6 @@ export function AssetResultTable() {
   const results = useAssetSearchStore((s) => s.results);
   const selectedId = useAssetSearchStore((s) => s.selectedResultId);
   const loading = useAssetSearchStore((s) => s.loading);
-  const error = useAssetSearchStore((s) => s.error);
   const expandedIds = useAssetSearchStore((s) => s.expandedIds);
   const selectAsset = useAssetSearchStore((s) => s.selectAsset);
   const toggleExpanded = useAssetSearchStore((s) => s.toggleExpanded);
@@ -44,17 +43,10 @@ export function AssetResultTable() {
   const forest = useMemo(() => buildEquipmentForest(results), [results]);
   const visibleRows = useMemo(() => flattenVisibleRows(forest, expandedIds), [forest, expandedIds]);
 
+  // Opens the asset record (AssetDetailDialog); load errors are shown by the page.
   const handleRowClick = (asset: AssetSearchResult) => {
-    selectAsset(asset.id === selectedId ? null : asset.id);
+    selectAsset(asset.id);
   };
-
-  if (error) {
-    return (
-      <div className="flex flex-1 items-center justify-center p-6">
-        <p className="text-sm text-status-danger">{error}</p>
-      </div>
-    );
-  }
 
   if (!loading && results.length === 0) {
     return (
@@ -92,6 +84,10 @@ export function AssetResultTable() {
                 <TableRow
                   key={asset.id}
                   onClick={() => handleRowClick(asset)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleRowClick(asset);
+                  }}
+                  tabIndex={0}
                   data-state={asset.id === selectedId ? "selected" : undefined}
                   className={cn("cursor-pointer", asset.id === selectedId && "bg-muted")}
                 >

@@ -10,7 +10,7 @@
 use tauri::{AppHandle, Manager, State};
 
 use crate::assets::{
-    bindings,
+    bindings, criticality,
     decommission::{self, DecommissionAssetPayload},
     documents::{self, UpsertDocumentLinkPayload},
     health,
@@ -19,10 +19,11 @@ use crate::assets::{
     identity::{self, CreateAssetPayload, UpdateAssetIdentityPayload},
     import::{self, ApplyPolicy},
     lifecycle::{self, RecordLifecycleEventPayload},
+    maintenance_profile,
     meters::{self, CreateAssetMeterPayload, RecordMeterReadingPayload},
     photos, registry_metrics,
     search::{self, AssetPickerSuggestFilters, AssetSearchFilters},
-    taxonomy_reference, EquipmentTaxonomyCatalog,
+    spare_parts, taxonomy_reference, EquipmentTaxonomyCatalog,
 };
 use crate::auth::rbac::PermissionScope;
 use crate::errors::{AppError, AppResult};
@@ -541,4 +542,160 @@ pub async fn list_asset_import_batches(
         PermissionScope::Global
     );
     import::list_import_batches(&state.db, status_filter, limit).await
+}
+
+// ─── Registry upgrade: paging, commercial data, maintenance profile, spares, criticality ──────
+
+#[tauri::command]
+pub async fn search_assets_page(
+    filters: AssetSearchFilters,
+    state: State<'_, AppState>,
+) -> AppResult<search::AssetSearchPage> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
+    search::search_assets_page(&state.db, filters).await
+}
+
+#[tauri::command]
+pub async fn update_asset_commercial(
+    asset_id: i64,
+    input: identity::AssetCommercialInput,
+    expected_row_version: i64,
+    state: State<'_, AppState>,
+) -> AppResult<identity::Asset> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::EQ_MANAGE,
+        PermissionScope::Global
+    );
+    identity::update_asset_commercial(&state.db, asset_id, input, expected_row_version).await
+}
+
+#[tauri::command]
+pub async fn get_asset_maintenance_profile(
+    asset_id: i64,
+    include_descendants: bool,
+    state: State<'_, AppState>,
+) -> AppResult<maintenance_profile::AssetMaintenanceProfile> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
+    maintenance_profile::get_asset_maintenance_profile(&state.db, asset_id, include_descendants, chrono::Utc::now())
+        .await
+}
+
+#[tauri::command]
+pub async fn list_asset_spare_parts(
+    asset_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<spare_parts::AssetSparePart>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
+    spare_parts::list_asset_spare_parts(&state.db, asset_id).await
+}
+
+#[tauri::command]
+pub async fn list_article_asset_usage(
+    article_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<spare_parts::ArticleAssetUsage>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
+    spare_parts::list_article_asset_usage(&state.db, article_id).await
+}
+
+#[tauri::command]
+pub async fn add_asset_spare_part(
+    payload: spare_parts::AddSparePartPayload,
+    state: State<'_, AppState>,
+) -> AppResult<spare_parts::AssetSparePart> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::EQ_MANAGE,
+        PermissionScope::Global
+    );
+    spare_parts::add_asset_spare_part(&state.db, payload, i64::from(user.user_id)).await
+}
+
+#[tauri::command]
+pub async fn update_asset_spare_part(
+    id: i64,
+    line: spare_parts::SparePartInput,
+    expected_row_version: i64,
+    state: State<'_, AppState>,
+) -> AppResult<spare_parts::AssetSparePart> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::EQ_MANAGE,
+        PermissionScope::Global
+    );
+    spare_parts::update_asset_spare_part(&state.db, id, line, expected_row_version).await
+}
+
+#[tauri::command]
+pub async fn remove_asset_spare_part(id: i64, expected_row_version: i64, state: State<'_, AppState>) -> AppResult<()> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::EQ_MANAGE,
+        PermissionScope::Global
+    );
+    spare_parts::remove_asset_spare_part(&state.db, id, expected_row_version).await
+}
+
+#[tauri::command]
+pub async fn get_asset_criticality_method(state: State<'_, AppState>) -> AppResult<criticality::CriticalityMethod> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
+    Ok(criticality::RISK_5X5_V1)
+}
+
+#[tauri::command]
+pub async fn preview_asset_criticality(
+    scores: criticality::CriticalityScores,
+    state: State<'_, AppState>,
+) -> AppResult<criticality::CriticalityResult> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
+    criticality::evaluate(&criticality::RISK_5X5_V1, &scores)
+}
+
+#[tauri::command]
+pub async fn list_asset_criticality_assessments(
+    asset_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<criticality::CriticalityAssessment>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
+    criticality::list_assessments(&state.db, asset_id).await
+}
+
+/// Result of a criticality assessment: the stored assessment and the updated asset.
+#[derive(serde::Serialize)]
+pub struct AssessCriticalityResult {
+    pub assessment: criticality::CriticalityAssessment,
+    pub asset: identity::Asset,
+}
+
+#[tauri::command]
+pub async fn assess_asset_criticality(
+    payload: criticality::AssessCriticalityPayload,
+    state: State<'_, AppState>,
+) -> AppResult<AssessCriticalityResult> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::EQ_MANAGE,
+        PermissionScope::Global
+    );
+    let (assessment, asset) =
+        criticality::assess_asset_criticality(&state.db, payload, i64::from(user.user_id)).await?;
+    Ok(AssessCriticalityResult { assessment, asset })
 }

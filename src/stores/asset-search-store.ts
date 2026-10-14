@@ -15,14 +15,16 @@ import {
   pruneExpandedIds,
 } from "@/components/assets/tree/equipment-tree-model";
 import {
-  searchAssets,
+  searchAssetsPage,
   suggestAssetCodes,
   suggestAssetNames,
 } from "@/services/asset-search-service";
-import { toErrorMessage } from "@/utils/errors";
 import type { AssetSearchFilters, AssetSearchResult, AssetSuggestion } from "@shared/ipc-types";
 
 // ── Default filter state ──────────────────────────────────────────────────────
+
+/** Rows fetched per page (backend maximum: 200). */
+export const ASSET_PAGE_SIZE = 100;
 
 const DEFAULT_FILTERS: AssetSearchFilters = {
   query: null,
@@ -31,8 +33,10 @@ const DEFAULT_FILTERS: AssetSearchFilters = {
   status_codes: null,
   org_node_ids: null,
   include_decommissioned: false,
-  limit: 100,
+  limit: ASSET_PAGE_SIZE,
   registry_focus: null,
+  criticality_codes: null,
+  org_subtree: true,
 };
 
 function applyResultsToExpandState(
@@ -56,14 +60,20 @@ function applyResultsToExpandState(
 interface AssetSearchStoreState {
   filters: AssetSearchFilters;
   results: AssetSearchResult[];
+  /** Assets matching the filters (results holds the pages loaded so far). */
+  total: number;
   selectedResultId: number | null;
   loading: boolean;
-  error: string | null;
+  loadingMore: boolean;
+  /** Raw failure of the last load (rendered through ErrorState / describeAppError). */
+  error: unknown;
   /** Expanded parent asset ids for the list tree (session until page refresh). */
   expandedIds: Set<number>;
 
   /** Execute search with current filters. */
   runSearch: () => Promise<void>;
+  /** Load the next page with the same filters. */
+  loadMore: () => Promise<void>;
   /** Merge partial filter updates and re-execute search. */
   updateFilters: (partial: Partial<AssetSearchFilters>) => Promise<void>;
   /** Reset all filters to defaults and re-execute search. */
@@ -81,99 +91,105 @@ interface AssetSearchStoreState {
 
 // ── Store implementation ──────────────────────────────────────────────────────
 
-export const useAssetSearchStore = create<AssetSearchStoreState>()((set, get) => ({
-  filters: { ...DEFAULT_FILTERS },
-  results: [],
-  selectedResultId: null,
-  loading: false,
-  error: null,
-  expandedIds: new Set(),
-
-  runSearch: async () => {
-    const { filters, expandedIds } = get();
+export const useAssetSearchStore = create<AssetSearchStoreState>()((set, get) => {
+  /** Loads the first page for `filters`; later answers win over earlier ones. */
+  let requestSeq = 0;
+  const loadFirstPage = async (filters: AssetSearchFilters) => {
+    const seq = ++requestSeq;
     set({ loading: true, error: null });
     try {
-      const results = await searchAssets(filters);
+      const page = await searchAssetsPage({ ...filters, offset: 0, limit: ASSET_PAGE_SIZE });
+      if (seq !== requestSeq) return;
       set({
-        results,
-        expandedIds: applyResultsToExpandState(results, expandedIds, filters.query),
+        results: page.items,
+        total: page.total,
+        expandedIds: applyResultsToExpandState(page.items, get().expandedIds, filters.query),
       });
     } catch (err) {
-      set({
-        results: [],
-        error: toErrorMessage(err),
-      });
+      if (seq !== requestSeq) return;
+      set({ results: [], total: 0, error: err });
     } finally {
-      set({ loading: false });
+      if (seq === requestSeq) set({ loading: false });
     }
-  },
+  };
 
-  updateFilters: async (partial) => {
-    const current = get().filters;
-    const merged = { ...current, ...partial };
-    const { expandedIds } = get();
-    set({ filters: merged, loading: true, error: null });
-    try {
-      const results = await searchAssets(merged);
-      set({
-        results,
-        expandedIds: applyResultsToExpandState(results, expandedIds, merged.query),
-      });
-    } catch (err) {
-      set({
-        results: [],
-        error: toErrorMessage(err),
-      });
-    } finally {
-      set({ loading: false });
-    }
-  },
+  return {
+    filters: { ...DEFAULT_FILTERS },
+    results: [],
+    total: 0,
+    selectedResultId: null,
+    loading: false,
+    loadingMore: false,
+    error: null,
+    expandedIds: new Set(),
 
-  clearFilters: async () => {
-    const fresh = { ...DEFAULT_FILTERS };
-    const { expandedIds } = get();
-    set({ filters: fresh, selectedResultId: null, loading: true, error: null });
-    try {
-      const results = await searchAssets(fresh);
-      set({
-        results,
-        expandedIds: applyResultsToExpandState(results, expandedIds, fresh.query),
-      });
-    } catch (err) {
-      set({
-        results: [],
-        error: toErrorMessage(err),
-      });
-    } finally {
-      set({ loading: false });
-    }
-  },
+    runSearch: async () => {
+      await loadFirstPage(get().filters);
+    },
 
-  selectAsset: (assetId) => {
-    set({ selectedResultId: assetId });
-  },
+    loadMore: async () => {
+      const { filters, results, total, loadingMore } = get();
+      if (loadingMore || results.length >= total) return;
+      const seq = requestSeq;
+      set({ loadingMore: true });
+      try {
+        const page = await searchAssetsPage({
+          ...filters,
+          offset: results.length,
+          limit: ASSET_PAGE_SIZE,
+        });
+        if (seq !== requestSeq) return;
+        const merged = [...get().results, ...page.items];
+        set({
+          results: merged,
+          total: page.total,
+          expandedIds: applyResultsToExpandState(merged, get().expandedIds, filters.query),
+        });
+      } catch (err) {
+        if (seq === requestSeq) set({ error: err });
+      } finally {
+        set({ loadingMore: false });
+      }
+    },
 
-  toggleExpanded: (assetId) => {
-    const next = new Set(get().expandedIds);
-    if (next.has(assetId)) next.delete(assetId);
-    else next.add(assetId);
-    set({ expandedIds: next });
-  },
+    updateFilters: async (partial) => {
+      const merged = { ...get().filters, ...partial };
+      set({ filters: merged });
+      await loadFirstPage(merged);
+    },
 
-  expandAll: () => {
-    const forest = buildEquipmentForest(get().results);
-    set({ expandedIds: new Set(collectExpandableIds(forest)) });
-  },
+    clearFilters: async () => {
+      const fresh = { ...DEFAULT_FILTERS };
+      set({ filters: fresh, selectedResultId: null });
+      await loadFirstPage(fresh);
+    },
 
-  collapseAll: () => {
-    set({ expandedIds: new Set() });
-  },
+    selectAsset: (assetId) => {
+      set({ selectedResultId: assetId });
+    },
 
-  suggestCodes: async (prefix) => {
-    return suggestAssetCodes(prefix);
-  },
+    toggleExpanded: (assetId) => {
+      const next = new Set(get().expandedIds);
+      if (next.has(assetId)) next.delete(assetId);
+      else next.add(assetId);
+      set({ expandedIds: next });
+    },
 
-  suggestNames: async (partial) => {
-    return suggestAssetNames(partial);
-  },
-}));
+    expandAll: () => {
+      const forest = buildEquipmentForest(get().results);
+      set({ expandedIds: new Set(collectExpandableIds(forest)) });
+    },
+
+    collapseAll: () => {
+      set({ expandedIds: new Set() });
+    },
+
+    suggestCodes: async (prefix) => {
+      return suggestAssetCodes(prefix);
+    },
+
+    suggestNames: async (partial) => {
+      return suggestAssetNames(partial);
+    },
+  };
+});
