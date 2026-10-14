@@ -497,18 +497,33 @@ mod tests {
     async fn test_rbac_08_step_up_required_permission_check() {
         let db = setup_db().await;
 
-        // ot.close: dangerous + requires_step_up
-        let close_row = db
+        // ot.reopen: dangerous + requires_step_up
+        let reopen_row = db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "SELECT requires_step_up FROM permissions WHERE name = ?",
+                [crate::rbac::permissions::OT_REOPEN.into()],
+            ))
+            .await
+            .expect("query")
+            .expect("ot.reopen exists");
+        let reopen_step_up: i32 = reopen_row.try_get("", "requires_step_up").unwrap();
+        assert_eq!(reopen_step_up, 1, "ot.reopen should require step-up");
+
+        // ot.close: dangerous, but confirmed in a dialog (owner decision 2026-10-14), no step-up
+        let close_row = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT requires_step_up, is_dangerous FROM permissions WHERE name = ?",
                 [crate::rbac::permissions::OT_CLOSE.into()],
             ))
             .await
             .expect("query")
             .expect("ot.close exists");
         let close_step_up: i32 = close_row.try_get("", "requires_step_up").unwrap();
-        assert_eq!(close_step_up, 1, "ot.close should require step-up");
+        let close_dangerous: i32 = close_row.try_get("", "is_dangerous").unwrap();
+        assert_eq!(close_step_up, 0, "ot.close is confirmed in a dialog, not by step-up");
+        assert_eq!(close_dangerous, 1, "ot.close stays a dangerous permission");
 
         // ot.view: not dangerous
         let view_row = db

@@ -2,7 +2,7 @@
 //!
 //! V1 — Permission seed count: 8 ot.* rows after migration 026.
 //! V2 — Audit on close: successful close_wo writes row with action='closed',
-//!       apply_result='applied', requires_step_up=1.
+//!       apply_result='applied', requires_step_up=0 (confirmed in a dialog).
 //! V3 — Blocked close audit: quality-gate failure writes row with
 //!       apply_result='blocked' and details_json containing error text.
 //! V4 — Fire-and-log: wo_change_events table dropped; close_wo primary workflow
@@ -455,7 +455,7 @@ mod tests {
                 actor_id: Some(actor),
                 summary: Some("Work order closed".into()),
                 details_json: None,
-                requires_step_up: true,
+                requires_step_up: false,
                 apply_result: "applied".into(),
             },
         )
@@ -480,7 +480,8 @@ mod tests {
 
         assert_eq!(action, "closed");
         assert_eq!(apply_result, "applied");
-        assert_eq!(requires_step_up, 1);
+        // Close is confirmed in a dialog (owner decision 2026-10-14), not by step-up.
+        assert_eq!(requires_step_up, 0);
     }
 
     // ═══════════════════════════════════════════════════════════════════════

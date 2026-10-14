@@ -371,23 +371,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn v2_conversion_permission_requires_step_up() {
+    async fn v2_approval_and_conversion_are_confirmed_without_step_up() {
+        // Owner decision (2026-10-14): approve and convert are confirmed in a dialog; the
+        // permissions stay dangerous (audited) but no longer require password re-entry.
         let db = setup().await;
 
-        let row = db
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT requires_step_up FROM permissions WHERE name = ?",
-                [crate::rbac::permissions::DI_APPROVE.into()],
-            ))
-            .await
-            .expect("query");
-
-        if let Some(row) = row {
+        for name in [
+            crate::rbac::permissions::DI_APPROVE,
+            crate::rbac::permissions::DI_CONVERT,
+        ] {
+            let row = db
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "SELECT requires_step_up, is_dangerous FROM permissions WHERE name = ?",
+                    [name.into()],
+                ))
+                .await
+                .expect("query")
+                .unwrap_or_else(|| panic!("{name} must exist in seed data"));
             let requires: i64 = row.try_get("", "requires_step_up").expect("column");
-            assert_eq!(requires, 1, "di.approve must require step-up authentication");
+            let dangerous: i64 = row.try_get("", "is_dangerous").expect("column");
+            assert_eq!(requires, 0, "{name} must not require step-up");
+            assert_eq!(dangerous, 1, "{name} stays a dangerous, audited permission");
         }
-        // If permission doesn't exist in test seed, test is vacuously correct
     }
 
     // ═══════════════════════════════════════════════════════════════════════
