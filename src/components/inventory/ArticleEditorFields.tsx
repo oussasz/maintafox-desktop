@@ -20,34 +20,8 @@ import type {
   Warehouse,
 } from "@shared/ipc-types";
 
-/**
- * Extended form type for article editing — adds Phase 2 procurement maturity fields.
- * These extend InventoryArticleInput with optional metadata fields.
- * The backend currently accepts only InventoryArticleInput; extra fields are
- * passed through structural typing and ignored until schema is extended.
- */
-export interface ExtendedArticleInput extends InventoryArticleInput {
-  // Identity
-  manufacturer_name?: string | null;
-  manufacturer_part_number?: string | null;
-  oem_part_number?: string | null;
-  // Replenishment
-  replenishment_policy_code?: string | null;
-  eoq?: number | null;
-  moq?: number | null;
-  max_order_qty?: number | null;
-  order_multiple?: number | null;
-  lead_time_days?: number | null;
-  review_period_days?: number | null;
-  abc_class_code?: string | null;
-  xyz_class_code?: string | null;
-  // Critical spare
-  is_critical_spare?: boolean | null;
-  // Shelf life
-  requires_expiration?: boolean | null;
-  shelf_life_days?: number | null;
-  requires_batch_tracking?: boolean | null;
-}
+/** Article form state: the full item-master payload accepted by the backend. */
+export type ExtendedArticleInput = InventoryArticleInput;
 
 export type ArticleEditorFieldsProps = {
   articleForm: ExtendedArticleInput;
@@ -423,11 +397,11 @@ export function ArticleEditorFields({
           step="0.01"
           min={0}
           placeholder="0"
-          value={articleForm.eoq ?? ""}
+          value={articleForm.economic_order_qty ?? ""}
           onChange={(e) =>
             setArticleForm((s) => ({
               ...s,
-              eoq: e.target.value === "" ? null : Number(e.target.value),
+              economic_order_qty: e.target.value === "" ? null : Number(e.target.value),
             }))
           }
         />
@@ -439,11 +413,11 @@ export function ArticleEditorFields({
           step="0.01"
           min={0}
           placeholder="0"
-          value={articleForm.moq ?? ""}
+          value={articleForm.minimum_order_qty ?? ""}
           onChange={(e) =>
             setArticleForm((s) => ({
               ...s,
-              moq: e.target.value === "" ? null : Number(e.target.value),
+              minimum_order_qty: e.target.value === "" ? null : Number(e.target.value),
             }))
           }
         />
@@ -454,11 +428,11 @@ export function ArticleEditorFields({
           type="number"
           step="0.01"
           min={0}
-          value={articleForm.max_order_qty ?? ""}
+          value={articleForm.maximum_order_qty ?? ""}
           onChange={(e) =>
             setArticleForm((s) => ({
               ...s,
-              max_order_qty: e.target.value === "" ? null : Number(e.target.value),
+              maximum_order_qty: e.target.value === "" ? null : Number(e.target.value),
             }))
           }
         />
@@ -469,11 +443,11 @@ export function ArticleEditorFields({
           type="number"
           step="0.01"
           min={0}
-          value={articleForm.order_multiple ?? ""}
+          value={articleForm.order_multiple_qty ?? ""}
           onChange={(e) =>
             setArticleForm((s) => ({
               ...s,
-              order_multiple: e.target.value === "" ? null : Number(e.target.value),
+              order_multiple_qty: e.target.value === "" ? null : Number(e.target.value),
             }))
           }
         />

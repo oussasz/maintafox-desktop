@@ -34,6 +34,7 @@ import {
 } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { mfLayout } from "@/design-system/tokens";
+import { articleToInput } from "@/services/inventory-service";
 import { getLookupValues } from "@/services/lookup-service";
 import { useInventoryStore } from "@/stores/inventory-store";
 import type { InventoryArticle, LookupValueOption } from "@shared/ipc-types";
@@ -55,15 +56,15 @@ const EMPTY_ARTICLE_FORM: ExtendedArticleInput = {
   reorder_point: 0,
   safety_stock: 0,
   is_active: true,
-  // Phase 2 extended fields
+  // Extended item-master fields
   manufacturer_name: null,
   manufacturer_part_number: null,
   oem_part_number: null,
   replenishment_policy_code: null,
-  eoq: null,
-  moq: null,
-  max_order_qty: null,
-  order_multiple: null,
+  economic_order_qty: null,
+  minimum_order_qty: null,
+  maximum_order_qty: null,
+  order_multiple_qty: null,
   lead_time_days: null,
   review_period_days: null,
   abc_class_code: null,
@@ -195,23 +196,7 @@ export function InventoryPage() {
 
   const beginEditSelectedArticle = () => {
     if (!selectedArticle) return;
-    setArticleForm({
-      article_code: selectedArticle.article_code,
-      article_name: selectedArticle.article_name,
-      family_id: selectedArticle.family_id,
-      unit_value_id: selectedArticle.unit_value_id,
-      criticality_value_id: selectedArticle.criticality_value_id,
-      stocking_type_value_id: selectedArticle.stocking_type_value_id,
-      tax_category_value_id: selectedArticle.tax_category_value_id,
-      procurement_category_value_id: selectedArticle.procurement_category_value_id,
-      preferred_warehouse_id: selectedArticle.preferred_warehouse_id,
-      preferred_location_id: selectedArticle.preferred_location_id,
-      min_stock: selectedArticle.min_stock,
-      max_stock: selectedArticle.max_stock,
-      reorder_point: selectedArticle.reorder_point,
-      safety_stock: selectedArticle.safety_stock,
-      is_active: selectedArticle.is_active === 1,
-    });
+    setArticleForm(articleToInput(selectedArticle));
     setEditingInDialog(true);
   };
 
@@ -232,23 +217,11 @@ export function InventoryPage() {
       `Deactivate article ${selectedArticle.article_code}? It will be hidden from active operations.`,
     );
     if (!confirmed) return;
-    await updateArticle(selectedArticle.id, selectedArticle.row_version, {
-      article_code: selectedArticle.article_code,
-      article_name: selectedArticle.article_name,
-      family_id: selectedArticle.family_id,
-      unit_value_id: selectedArticle.unit_value_id,
-      criticality_value_id: selectedArticle.criticality_value_id,
-      stocking_type_value_id: selectedArticle.stocking_type_value_id,
-      tax_category_value_id: selectedArticle.tax_category_value_id,
-      procurement_category_value_id: selectedArticle.procurement_category_value_id,
-      preferred_warehouse_id: selectedArticle.preferred_warehouse_id,
-      preferred_location_id: selectedArticle.preferred_location_id,
-      min_stock: selectedArticle.min_stock,
-      max_stock: selectedArticle.max_stock,
-      reorder_point: selectedArticle.reorder_point,
-      safety_stock: selectedArticle.safety_stock,
-      is_active: false,
-    });
+    await updateArticle(
+      selectedArticle.id,
+      selectedArticle.row_version,
+      articleToInput(selectedArticle, { is_active: false }),
+    );
     await loadAll();
     setSelectedArticle(null);
   };

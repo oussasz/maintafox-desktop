@@ -2557,6 +2557,22 @@ export interface InventoryArticle {
   max_stock: number | null;
   reorder_point: number;
   safety_stock: number;
+  manufacturer_name: string | null;
+  manufacturer_part_number: string | null;
+  oem_part_number: string | null;
+  replenishment_policy_code: string | null;
+  economic_order_qty: number | null;
+  minimum_order_qty: number | null;
+  maximum_order_qty: number | null;
+  order_multiple_qty: number | null;
+  lead_time_days: number | null;
+  review_period_days: number | null;
+  abc_class_code: string | null;
+  xyz_class_code: string | null;
+  is_critical_spare: number;
+  requires_expiration: number;
+  shelf_life_days: number | null;
+  requires_batch_tracking: number;
   is_active: number;
   row_version: number;
   created_at: string;
@@ -2630,6 +2646,26 @@ export interface InventoryArticleInput {
   max_stock?: number | null;
   reorder_point: number;
   safety_stock: number;
+  /**
+   * Extended item-master fields. The backend update replaces every column, so callers must
+   * send the current values (see `articleToInput`) or the stored data is cleared.
+   */
+  manufacturer_name?: string | null;
+  manufacturer_part_number?: string | null;
+  oem_part_number?: string | null;
+  replenishment_policy_code?: string | null;
+  economic_order_qty?: number | null;
+  minimum_order_qty?: number | null;
+  maximum_order_qty?: number | null;
+  order_multiple_qty?: number | null;
+  lead_time_days?: number | null;
+  review_period_days?: number | null;
+  abc_class_code?: string | null;
+  xyz_class_code?: string | null;
+  is_critical_spare?: boolean | null;
+  requires_expiration?: boolean | null;
+  shelf_life_days?: number | null;
+  requires_batch_tracking?: boolean | null;
   is_active?: boolean;
 }
 
