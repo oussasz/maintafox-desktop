@@ -2,6 +2,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { AlertTriangle, Columns3, List, PackageSearch, Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useSearchParams } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { DataTable } from "@/components/data/DataTable";
@@ -163,6 +164,37 @@ export function InventoryPage() {
   useEffect(() => {
     setMasterSearchInput(articleSearchStore);
   }, [articleSearchStore]);
+
+  // Deep link from other modules (asset spare parts, work orders): /inventory?articleId=<id>.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const linkedArticleId = Number(searchParams.get("articleId"));
+  // The list starts empty: only resolve the link once a load has run and finished.
+  const articleLoadSeenRef = useRef(false);
+  useEffect(() => {
+    if (loading) articleLoadSeenRef.current = true;
+  }, [loading]);
+  useEffect(() => {
+    if (!Number.isInteger(linkedArticleId) || linkedArticleId <= 0) return;
+    if (loading || !articleLoadSeenRef.current) return;
+    const linked = articles.find((a) => a.id === linkedArticleId);
+    if (!linked && articleSearchStore) {
+      // The current search may hide the article: clear it, the list reloads and this runs again.
+      void setArticleSearch("");
+      return;
+    }
+    if (linked) {
+      setInvTab("master");
+      setSelectedArticle(linked);
+    }
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("articleId");
+        return next;
+      },
+      { replace: true },
+    );
+  }, [linkedArticleId, loading, articles, articleSearchStore, setArticleSearch, setSearchParams]);
 
   useEffect(() => {
     let cancelled = false;

@@ -7,6 +7,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import i18next from "i18next";
 import type { ReactNode } from "react";
 import { initReactI18next } from "react-i18next";
+import { MemoryRouter } from "react-router-dom";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import enCommon from "@/i18n/en/common.json";
@@ -169,6 +170,14 @@ function article(overrides: Partial<InventoryArticleRow> = {}): InventoryArticle
 
 const initialStore = useInventoryStore.getState();
 
+function renderPage(path = "/inventory") {
+  return render(
+    <MemoryRouter initialEntries={[path]}>
+      <InventoryPage />
+    </MemoryRouter>,
+  );
+}
+
 function primeLists(articles: InventoryArticleRow[]) {
   svc.listInventoryArticleFamilies.mockResolvedValue([]);
   svc.listInventoryWarehouses.mockResolvedValue([]);
@@ -214,7 +223,7 @@ describe("InventoryPage", () => {
       }),
     ]);
 
-    render(<InventoryPage />);
+    renderPage();
 
     const heading = screen.getByRole("heading", { name: "Inventory & procurement" });
     expect(await screen.findByText("ART-002")).toBeInTheDocument();
@@ -248,11 +257,33 @@ describe("InventoryPage", () => {
     expect(within(okRow).getAllByText("—").length).toBeGreaterThan(0);
   });
 
+  it("opens the article named in ?articleId= (link from another module)", async () => {
+    primeLists([article(), article({ id: 5, article_code: "ART-002", article_name: "Seal kit" })]);
+
+    renderPage("/inventory?articleId=5");
+
+    expect(await screen.findByText("detail ART-002")).toBeInTheDocument();
+    expect(screen.queryByText("detail ART-001")).toBeNull();
+  });
+
+  it("clears the article search when it hides the linked article", async () => {
+    primeLists([article()]);
+    useInventoryStore.setState({ articleSearch: "seal" });
+    svc.listInventoryArticles.mockImplementation(async ({ search }: { search: string | null }) =>
+      search ? [] : [article()],
+    );
+
+    renderPage("/inventory?articleId=4");
+
+    expect(await screen.findByText("detail ART-001")).toBeInTheDocument();
+    expect(useInventoryStore.getState().articleSearch).toBe("");
+  });
+
   it("shows an error with retry instead of an empty list when the articles cannot load", async () => {
     primeLists([]);
     svc.listInventoryArticles.mockRejectedValueOnce(new Error("database is locked"));
 
-    render(<InventoryPage />);
+    renderPage();
 
     expect(await screen.findByRole("alert")).toHaveTextContent("database is locked");
     svc.listInventoryArticles.mockResolvedValue([article()]);
@@ -264,7 +295,7 @@ describe("InventoryPage", () => {
     primeLists([article()]);
     svc.updateInventoryArticle.mockResolvedValue(article({ is_active: 0 }));
 
-    render(<InventoryPage />);
+    renderPage();
     fireEvent.click(await screen.findByText("ART-001"));
     fireEvent.click(await screen.findByRole("button", { name: "stub-deactivate" }));
     expect(svc.updateInventoryArticle).not.toHaveBeenCalled();
@@ -290,7 +321,7 @@ describe("InventoryPage", () => {
   it("hands the selected article to the procurement panel to pre-fill a requisition", async () => {
     primeLists([article()]);
 
-    render(<InventoryPage />);
+    renderPage();
     fireEvent.click(await screen.findByText("ART-001"));
     fireEvent.click(await screen.findByRole("button", { name: "stub-requisition" }));
 
@@ -309,7 +340,7 @@ describe("InventoryPage", () => {
     primeLists([article()]);
     svc.calculateInventoryAbc.mockResolvedValue(4);
 
-    render(<InventoryPage />);
+    renderPage();
     fireEvent.click(await screen.findByText("ART-001"));
     fireEvent.click(await screen.findByRole("button", { name: "stub-edit" }));
     const dialog = await screen.findByRole("dialog", { name: "Edit article" });
