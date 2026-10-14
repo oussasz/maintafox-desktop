@@ -188,7 +188,7 @@ describe("InspectionRunner", () => {
     render(<InspectionRunner roundId={42} onClose={vi.fn()} />);
     const input = await screen.findByLabelText("Reading");
     fireEvent.change(input, { target: { value: "80,5" } });
-    expect(screen.getByTestId("predicted-status")).toHaveTextContent("Warning");
+    expect(await screen.findByTestId("predicted-status")).toHaveTextContent("Warning");
     const save = screen.getByRole("button", { name: "Save and next" });
     expect(save).toBeDisabled();
     expect(screen.getByText("A comment is required for this answer.")).toBeInTheDocument();
