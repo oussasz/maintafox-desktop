@@ -6,12 +6,9 @@
 
 import { useTranslation } from "react-i18next";
 
-import {
-  CRITICALITY_LABEL_KEY,
-  CRITICALITY_TONE,
-  toCriticalityGrade,
-} from "@/components/assets/asset-tones";
+import { CRITICALITY_LABEL_KEY, toCriticalityGrade } from "@/components/assets/asset-tones";
 import { StatusChip } from "@/components/ui/status-chip";
+import { CRITICALITY_TONE } from "@/design-system/tone";
 
 interface CriticalityBadgeProps {
   criticality: string | null;

@@ -163,8 +163,10 @@
     "di": "{{code}}",
     "open": {
       "work_order": "Ouvrir l’ordre de travail {{code}}",
-      "di": "Ouvrir la demande {{code}}"
-    }
+      "di": "Ouvrir la demande {{code}}",
+      "asset": "Ouvrir l’équipement {{code}}"
+    },
+    "asset": "{{code}}"
   },
   "time": {
     "just_now": "À l'instant",

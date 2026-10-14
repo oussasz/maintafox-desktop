@@ -6,6 +6,7 @@
 import { Package, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { useEffect, useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { useLoad } from "@/components/assets/detail/use-load";
@@ -62,6 +63,7 @@ export function AssetSparePartsTab({ asset }: { asset: Asset }) {
   const [editing, setEditing] = useState<AssetSparePart | "new" | null>(null);
   const [removing, setRemoving] = useState<AssetSparePart | null>(null);
   const canPickArticles = can(P.INV_VIEW);
+  const navigate = useNavigate();
 
   if (loading && !data) return <LoadingState />;
   if (error || !data) {
@@ -122,9 +124,20 @@ export function AssetSparePartsTab({ asset }: { asset: Asset }) {
                 return (
                   <tr key={line.id} className="border-t border-surface-border">
                     <td className="px-3 py-2">
-                      <span className="block font-mono text-xs text-text-muted">
-                        {line.article_code}
-                      </span>
+                      {canPickArticles ? (
+                        <Button
+                          variant="link"
+                          className="h-auto min-h-[32px] p-0 font-mono text-xs"
+                          aria-label={t("spares.openArticle", { code: line.article_code })}
+                          onClick={() => void navigate(`/inventory?articleId=${line.article_id}`)}
+                        >
+                          {line.article_code}
+                        </Button>
+                      ) : (
+                        <span className="block font-mono text-xs text-text-muted">
+                          {line.article_code}
+                        </span>
+                      )}
                       <span className="block">{line.article_name}</span>
                       <span className="flex flex-wrap gap-1 pt-0.5">
                         {line.is_critical_spare ? (

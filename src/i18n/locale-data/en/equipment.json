@@ -666,7 +666,8 @@
     "errors": {
       "quantity": "Enter a quantity greater than zero.",
       "tooLong": "Limited to {{max}} characters."
-    }
+    },
+    "openArticle": "Open article {{code}} in stock"
   },
   "documents": {
     "title": "Documents",

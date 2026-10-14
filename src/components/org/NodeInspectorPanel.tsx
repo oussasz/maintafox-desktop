@@ -32,11 +32,7 @@ import { PermissionGate } from "@/components/PermissionGate";
 import { AssetStatusBadge } from "@/components/assets/AssetStatusBadge";
 import { MoveNodeDialog } from "@/components/org/MoveNodeDialog";
 import { ResponsibilityAssignDialog } from "@/components/org/ResponsibilityAssignDialog";
-import {
-  ORG_NODE_STATUS_TONE,
-  orgNodePathLabel,
-  orgNodeStatusLabel,
-} from "@/components/org/org-display";
+import { orgNodePathLabel, orgNodeStatusLabel } from "@/components/org/org-display";
 import { useResponsibilityTypes } from "@/components/org/use-responsibility-types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -49,7 +45,7 @@ import { Separator } from "@/components/ui/separator";
 import { StatusChip } from "@/components/ui/status-chip";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { toneOf } from "@/design-system/tone";
+import { ORG_NODE_STATUS_TONE, toneOf } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
 import { describeAppError } from "@/lib/app-error";
 import {

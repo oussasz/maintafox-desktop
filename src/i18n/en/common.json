@@ -163,8 +163,10 @@
     "di": "{{code}}",
     "open": {
       "work_order": "Open work order {{code}}",
-      "di": "Open request {{code}}"
-    }
+      "di": "Open request {{code}}",
+      "asset": "Open asset {{code}}"
+    },
+    "asset": "{{code}}"
   },
   "time": {
     "just_now": "Just now",

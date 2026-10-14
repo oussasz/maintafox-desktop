@@ -5,6 +5,7 @@
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
+import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const svc = {
@@ -157,9 +158,14 @@ describe("AssetSparePartsTab", () => {
     svc.listAssetSpareParts.mockResolvedValueOnce([line]).mockResolvedValueOnce([]);
     svc.removeAssetSparePart.mockResolvedValue(undefined);
 
-    render(<AssetSparePartsTab asset={asset} />);
+    render(
+      <MemoryRouter>
+        <AssetSparePartsTab asset={asset} />
+      </MemoryRouter>,
+    );
 
-    expect(await screen.findByText("BRG-6205")).toBeTruthy();
+    // The article code links to its stock record.
+    expect(await screen.findByRole("button", { name: /spares.openArticle/ })).toBeTruthy();
     expect(screen.getByText(/spares.criticalShort/)).toBeTruthy();
     expect(screen.getByText(/spares.stockState.out/)).toBeTruthy();
 

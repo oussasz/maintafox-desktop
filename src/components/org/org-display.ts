@@ -8,7 +8,6 @@
 
 import type { TFunction } from "i18next";
 
-import type { Tone } from "@/design-system/tone";
 import { describeAppError } from "@/lib/app-error";
 import type {
   LookupValueOption,
@@ -16,13 +15,6 @@ import type {
   OrgDesignerSnapshot,
   OrgRelationshipRule,
 } from "@shared/ipc-types";
-
-/** Unit status → tone of the shared vocabulary (design-system/tone.ts). */
-export const ORG_NODE_STATUS_TONE: Record<string, Tone> = {
-  active: "success",
-  inactive: "neutral",
-  draft: "info",
-};
 
 export function orgNodeStatusLabel(t: TFunction<"org">, status: string): string {
   switch (status) {

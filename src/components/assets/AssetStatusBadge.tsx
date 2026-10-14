@@ -4,13 +4,9 @@
 
 import { useTranslation } from "react-i18next";
 
-import {
-  ASSET_STATUS_LABEL_KEY,
-  ASSET_STATUS_TONE,
-  normalizeAssetStatus,
-} from "@/components/assets/asset-tones";
+import { ASSET_STATUS_LABEL_KEY, normalizeAssetStatus } from "@/components/assets/asset-tones";
 import { StatusChip } from "@/components/ui/status-chip";
-import { toneOf } from "@/design-system/tone";
+import { ASSET_STATUS_TONE, toneOf } from "@/design-system/tone";
 
 interface AssetStatusBadgeProps {
   code: string;

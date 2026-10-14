@@ -666,7 +666,8 @@
     "errors": {
       "quantity": "Saisissez une quantité supérieure à zéro.",
       "tooLong": "Limité à {{max}} caractères."
-    }
+    },
+    "openArticle": "Ouvrir l’article {{code}} dans le stock"
   },
   "documents": {
     "title": "Documents",
