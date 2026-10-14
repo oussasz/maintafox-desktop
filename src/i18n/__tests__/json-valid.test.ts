@@ -41,6 +41,8 @@ const COMMON_TOP_KEYS = [
   "linkedEntity",
   "resourceTimeline",
   "smartFilter",
+  // Design-system states, toolbar and confirmation labels (docs/DESIGN_SYSTEM.md).
+  "ds",
 ];
 const AUTH_TOP_KEYS = [
   "activation",
