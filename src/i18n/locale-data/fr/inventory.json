@@ -73,6 +73,30 @@
       "entryHintNoAverage": "Cet emplacement n'a pas encore de coût : le coût saisi devient son CUMP.",
       "valuedAtAverage": "Valorisé au CUMP de {{average}} ({{value}}).",
       "notValued": "Cet emplacement n'a pas encore de coût : le mouvement n'est pas valorisé."
+    },
+    "lots": {
+      "title": "Lot",
+      "serialTitle": "Numéro de série",
+      "choice": "Lot / série",
+      "newLot": "Nouveau lot",
+      "newSerial": "Nouveau numéro de série",
+      "fefo": "Automatique — premier périmé, premier sorti",
+      "lotNumber": "Numéro de lot",
+      "serialNumber": "Numéro de série",
+      "expiry": "Date d'expiration",
+      "expiryOptional": "Date d'expiration (facultative)",
+      "blockers": {
+        "serialQty": "Un numéro de série correspond à une unité : saisissez les articles sérialisés un par un.",
+        "serial": "Saisissez le numéro de série.",
+        "lot": "Saisissez le numéro de lot.",
+        "expiry": "Saisissez la date d'expiration du lot."
+      }
+    },
+    "postingDate": {
+      "label": "Date du mouvement",
+      "hint": "Aujourd'hui, sauf si le mouvement a eu lieu plus tôt. Les dates d'une période de valorisation clôturée sont refusées.",
+      "blocker": "Saisissez la date du mouvement.",
+      "future": "La date du mouvement ne peut pas être dans le futur."
     }
   },
   "detail": {
@@ -321,7 +345,8 @@
         "cancel": "Annuler",
         "close": "Clôturer",
         "menu": "Actions de la ligne",
-        "createPo": "Créer le bon de commande"
+        "createPo": "Créer le bon de commande",
+        "editLines": "Modifier les lignes"
       },
       "reject": {
         "title": "Rejeter la demande",
@@ -348,7 +373,9 @@
       },
       "lines": {
         "title": "Lignes",
-        "empty": "Aucune ligne."
+        "empty": "Aucune ligne.",
+        "estimate": "est. {{cost}} · {{total}}",
+        "noEstimate": "non estimée"
       },
       "hints": {
         "DRAFT": "Brouillon : soumettez-la pour qu'elle puisse être approuvée.",
@@ -543,7 +570,9 @@
         "status": "Statut",
         "paymentTerms": "Conditions de paiement",
         "leadTime": "Délai par défaut (jours)",
-        "active": "Actif"
+        "active": "Actif",
+        "currency": "Devise de facturation",
+        "currencyHint": "Code ISO (ex. EUR). Laisser vide si le fournisseur facture en {{currency}}."
       },
       "status": {
         "PREFERRED": "Préféré",
@@ -736,13 +765,45 @@
         "noLines": "Saisissez une quantité reçue sur au moins une ligne.",
         "location": "Sélectionnez un emplacement pour chaque ligne réceptionnée.",
         "overRemaining": "La quantité reçue ne peut pas dépasser la quantité restante.",
-        "rejectedExceeds": "La quantité refusée ne peut pas dépasser la quantité reçue."
+        "rejectedExceeds": "La quantité refusée ne peut pas dépasser la quantité reçue.",
+        "postingDate": "Saisissez la date de réception.",
+        "futureDate": "La date de réception ne peut pas être dans le futur.",
+        "rate": "Saisissez un taux de change supérieur à 0.",
+        "rateMissing": "Saisissez le taux de change {{currency}} : aucun n'est enregistré pour cette date."
       },
       "fulfillmentAction": "Action d'affectation",
       "fulfillmentValues": {
         "STOCK_ONLY": "Stock uniquement",
         "RESERVE_FOR_DEMAND": "Réserver pour la demande",
         "ISSUE_TO_DEMAND": "Sortir pour la demande"
+      },
+      "postError": "La réception n'a pas pu être passée",
+      "postingDate": "Date de réception",
+      "postingDateHint": "Les réceptions antidatées sont refusées dans une période de valorisation clôturée.",
+      "rate": {
+        "label": "Taux de change : 1 {{from}} = ? {{to}}",
+        "stored": "Laisser vide pour utiliser le taux enregistré {{rate}} (valable à partir du {{date}}).",
+        "none": "Aucun taux enregistré à cette date : saisissez le taux du jour."
+      },
+      "stockCost": "Coût en stock : {{cost}} l'unité",
+      "lots": {
+        "title": "Lots reçus",
+        "serialTitle": "Numéros de série reçus",
+        "lotNumber": "Numéro de lot",
+        "serialNumber": "Numéro de série",
+        "expiry": "Date d'expiration",
+        "expiryOptional": "Date d'expiration (facultative)",
+        "quantity": "Quantité",
+        "remove": "Supprimer le lot {{n}}",
+        "add": "Ajouter un lot",
+        "addSerial": "Ajouter un numéro de série",
+        "sum": "{{sum}} sur {{accepted}} acceptés",
+        "errors": {
+          "missing": "{{article}} : saisissez le lot ou le numéro de série de chaque unité acceptée.",
+          "expiry": "{{article}} : saisissez la date d'expiration de chaque lot.",
+          "serialQty": "{{article}} : un numéro de série correspond à une seule unité.",
+          "sum": "{{article}} : les lots doivent totaliser la quantité acceptée."
+        }
       }
     },
     "poWorkspace": {
@@ -772,7 +833,8 @@
         "orderedAt": "Commandé le",
         "approvedAt": "Approuvé le",
         "expectedDelivery": "Livraison prévue",
-        "orderedBy": "Acheteur"
+        "orderedBy": "Acheteur",
+        "currency": "Devise"
       },
       "lines": {
         "empty": "Aucune ligne sur ce bon de commande.",
@@ -828,6 +890,14 @@
         "supplierSig": "Fournisseur",
         "signature": "Signature",
         "date": "Date"
+      },
+      "currencyForeign": "{{code}} (converti en {{tenant}} à la réception)",
+      "price": {
+        "label": "Prix unitaire convenu pour {{article}} ({{currency}})",
+        "save": "Enregistrer le prix",
+        "hint": "Les prix sont modifiables tant que la commande est en brouillon. Laisser vide pour effacer.",
+        "invalid": "Saisissez un prix supérieur ou égal à 0.",
+        "error": "Le prix n'a pas pu être enregistré"
       }
     },
     "repairableDetail": {
@@ -922,8 +992,19 @@
       "submit": "Créer la demande d'achat",
       "blockers": {
         "article": "Choisissez l'article à acheter.",
-        "quantity": "Saisissez une quantité supérieure à zéro."
-      }
+        "quantity": "Saisissez une quantité supérieure à zéro.",
+        "cost": "Les coûts estimés doivent être supérieurs ou égaux à 0."
+      },
+      "lineLabel": "Ligne {{n}}",
+      "addLine": "Ajouter une ligne",
+      "removeLine": "Supprimer la ligne {{n}}",
+      "estimatedCost": "Coût unitaire estimé ({{currency}})",
+      "estimatedCostHint": "Les coûts estimés donnent le montant de la demande, comparé aux plafonds d'approbation. Le coût moyen de l'article est proposé s'il existe.",
+      "lineTotal": "Ligne : {{total}}",
+      "total": "Total estimé : {{total}}",
+      "totalIncomplete": "Total estimé : {{total}} (des lignes ne sont pas estimées)",
+      "editTitle": "Modifier les lignes de {{number}}",
+      "saveLines": "Enregistrer les lignes"
     },
     "poForm": {
       "requisition": "Demande d'achat approuvée",
@@ -931,7 +1012,10 @@
       "noApproved": "Aucune demande approuvée : approuvez d'abord une demande d'achat.",
       "supplier": "Fournisseur",
       "supplierHint": "Les fournisseurs bloqués ne sont pas proposés.",
-      "submit": "Créer le bon de commande"
+      "submit": "Créer le bon de commande",
+      "currency": "Devise de la commande",
+      "currencyTenant": "{{code}} (devise de l'entreprise)",
+      "currencyHint": "Les prix de la commande sont dans cette devise. Chaque réception les convertit dans la devise de l'entreprise au taux du jour."
     },
     "lifecycle": {
       "title": "Derniers changements de statut",
@@ -1021,7 +1105,10 @@
       "isCriticalSpare": "Pièce de rechange critique",
       "requiresExpiration": "Suivi de péremption requis",
       "shelfLifeDays": "Durée de vie (jours)",
-      "requiresBatchTracking": "Suivi par lot requis"
+      "requiresBatchTracking": "Suivi par lot requis",
+      "barcode": "Code-barres",
+      "barcodeHint": "Imprimé sur l'étiquette de l'article ou du casier ; scanné au comptoir de sortie.",
+      "requiresSerialTracking": "Numéro de série par unité"
     },
     "actions": {
       "calculateAbc": "Calculer ABC",
@@ -1219,7 +1306,10 @@
       "master": "Articles",
       "topology": "Magasins & emplacements",
       "procurement": "Achats & réparables",
-      "controls": "Inventaires & contrôles"
+      "controls": "Inventaires & contrôles",
+      "issueDesk": "Comptoir de sortie",
+      "valuation": "Valorisation",
+      "rules": "Taux et approbations"
     },
     "actions": {
       "createArticle": "Créer un article",
@@ -1366,6 +1456,223 @@
         "sourceRef": "Référence",
         "reason": "Motif",
         "notes": "Notes"
+      }
+    }
+  },
+  "issueDesk": {
+    "title": "Comptoir de sortie",
+    "description": "Scannez ou saisissez une pièce, choisissez l'OT et sortez-la. La sortie passe le même mouvement de stock que la consommation de pièces sur l'OT : la réservation est consommée et les pièces sont valorisées au coût moyen.",
+    "formLabel": "Sortie vers un OT",
+    "scan": {
+      "label": "Scanner ou saisir un article",
+      "placeholder": "Code-barres, code article, lot ou numéro de série",
+      "hint": "Un lecteur de codes-barres saisit le code puis valide avec Entrée.",
+      "submit": "Rechercher",
+      "notFound": "Aucun résultat pour ce code",
+      "matched": {
+        "barcode": "Trouvé par code-barres",
+        "article_code": "Trouvé par code article",
+        "lot": "Trouvé par lot / numéro de série"
+      }
+    },
+    "article": {
+      "clear": "Changer d'article"
+    },
+    "workOrder": {
+      "label": "Ordre de travail"
+    },
+    "reservation": {
+      "label": "Pièces prévues (réservation)",
+      "none": "Sortie directe (sans réservation)",
+      "option": "{{qty}} {{unit}} réservés — {{location}}"
+    },
+    "location": {
+      "label": "Emplacement du magasin",
+      "placeholder": "Choisir l'emplacement",
+      "available": "{{qty}} {{unit}} disponibles",
+      "empty": "Aucun stock disponible de cet article, quel que soit l'emplacement."
+    },
+    "lot": {
+      "label": "Lot / numéro de série",
+      "auto": "Automatique — premier périmé, premier sorti ({{lot}})",
+      "autoNone": "Automatique — premier périmé, premier sorti",
+      "option": "{{lot}} · {{qty}} {{unit}}",
+      "expires": "expire le {{date}}",
+      "expired": "périmé",
+      "hint": "En automatique, la sortie prend le lot qui expire en premier et ignore les lots périmés."
+    },
+    "quantity": {
+      "label": "Quantité"
+    },
+    "submit": "Sortir vers l'OT",
+    "submitting": "Sortie en cours…",
+    "error": "Les pièces n'ont pas pu être sorties",
+    "blockers": {
+      "article": "Scannez ou saisissez l'article.",
+      "workOrder": "Choisissez l'OT auquel les pièces sont destinées.",
+      "location": "Choisissez l'emplacement d'où partent les pièces.",
+      "quantity": "Saisissez une quantité supérieure à 0.",
+      "tooMuch": "Seulement {{qty}} {{unit}} peuvent sortir d'ici."
+    },
+    "outcome": {
+      "title": "{{code}} sorti vers {{wo}}",
+      "line": "{{qty}} {{unit}}{{lot}} à {{cost}} l'unité",
+      "unvalued": "non valorisé (pas encore de coût)",
+      "total": "Coût total : {{total}}",
+      "toast": "{{qty}} {{unit}} de {{code}} sortis vers {{wo}}"
+    },
+    "expiring": {
+      "title": "Lots expirant sous {{days}} jours",
+      "window": "Horizon",
+      "windowOption_one": "{{count}} jour",
+      "windowOption_other": "{{count}} jours",
+      "empty": "Aucun lot en stock n'expire sous {{days}} jours.",
+      "loadError": "Les lots à expiration proche n'ont pas pu être chargés",
+      "today": "Expire aujourd'hui",
+      "daysLeft_one": "Encore {{count}} jour",
+      "daysLeft_other": "Encore {{count}} jours",
+      "expired_one": "Périmé depuis {{count}} jour",
+      "expired_other": "Périmé depuis {{count}} jours",
+      "columns": {
+        "article": "Article",
+        "lot": "Lot / série",
+        "location": "Emplacement",
+        "quantity": "Quantité",
+        "expiry": "Expiration"
+      }
+    }
+  },
+  "valuation": {
+    "title": "Valorisation du stock",
+    "description": "Valeur du stock en {{currency}} au coût moyen pondéré, par article, magasin ou famille, à une date.",
+    "groupBy": {
+      "label": "Regrouper par",
+      "article": "Article",
+      "warehouse": "Magasin",
+      "family": "Famille"
+    },
+    "asAt": {
+      "label": "À la date du"
+    },
+    "loadError": "La valorisation n'a pas pu être calculée",
+    "total": "Valeur totale",
+    "unvaluedKpi": "Quantité sans coût",
+    "unvaluedHint": "Le stock jamais valorisé n'entre pas dans la valeur.",
+    "basis": "Base",
+    "frozenValue": "Période clôturée {{code}}",
+    "frozenHint": "Chiffres figés à la clôture de la période.",
+    "liveValue": "Journal des stocks",
+    "liveHint": "Chiffres recalculés à partir des mouvements jusqu'à la date.",
+    "empty": "Aucun stock à cette date.",
+    "noFamily": "Sans famille",
+    "columns": {
+      "code": "Code",
+      "name": "Libellé",
+      "articles": "Articles",
+      "quantity": "Quantité",
+      "value": "Valeur",
+      "unvalued": "Sans coût"
+    },
+    "periods": {
+      "title": "Périodes clôturées",
+      "description": "Une période clôturée conserve la valorisation de son dernier jour. Les mouvements datés dans la période sont refusés.",
+      "close": "Clôturer une période",
+      "empty": "Aucune période n'a encore été clôturée.",
+      "loadError": "Les périodes clôturées n'ont pas pu être chargées",
+      "range": "{{start}} – {{end}}",
+      "columns": {
+        "code": "Période",
+        "dates": "Dates",
+        "value": "Valeur figée",
+        "closedBy": "Clôturée par",
+        "closedAt": "Clôturée le",
+        "notes": "Notes"
+      }
+    },
+    "close": {
+      "title": "Clôturer une période de valorisation",
+      "description": "La clôture fige la valorisation du stock au dernier jour de la période. Ensuite, tout mouvement daté dans la période est refusé. Cette action est définitive.",
+      "start": "Premier jour",
+      "end": "Dernier jour",
+      "notes": "Notes",
+      "confirm": "Clôturer la période",
+      "error": "La période n'a pas pu être clôturée",
+      "done": "Période {{code}} clôturée à {{value}}.",
+      "blockers": {
+        "dates": "Saisissez le premier et le dernier jour.",
+        "order": "Le dernier jour doit être égal ou postérieur au premier.",
+        "future": "Seule une période terminée peut être clôturée."
+      }
+    }
+  },
+  "rules": {
+    "fx": {
+      "title": "Taux de change",
+      "description": "Les prix fournisseurs dans une autre devise sont convertis en {{currency}} à la réception : la réception utilise le taux saisi sur celle-ci, sinon le dernier taux ci-dessous valable à sa date.",
+      "add": "Ajouter un taux",
+      "empty": "Aucun taux enregistré. Une réception en devise étrangère demande alors le taux sur la réception.",
+      "loadError": "Les taux de change n'ont pas pu être chargés",
+      "saved": "Taux de change enregistré.",
+      "pair": "1 {{from}} = {{rate}} {{to}}",
+      "active": "En vigueur",
+      "retired": "Retiré",
+      "deactivate": "Retirer",
+      "columns": {
+        "pair": "Taux",
+        "validFrom": "Valable à partir du",
+        "source": "Source",
+        "createdBy": "Saisi par",
+        "status": "Statut",
+        "actions": "Actions"
+      },
+      "form": {
+        "description": "Le taux convertit 1 unité de la devise fournisseur en {{currency}}.",
+        "from": "Devise fournisseur (code ISO)",
+        "rate": "Valeur en {{currency}}",
+        "validFrom": "Valable à partir du",
+        "source": "Source (banque, contrat…)",
+        "submit": "Enregistrer le taux",
+        "error": "Le taux n'a pas pu être enregistré",
+        "blockers": {
+          "currency": "Saisissez un code devise de 3 lettres différent de {{currency}}.",
+          "rate": "Saisissez un taux supérieur à 0.",
+          "date": "Saisissez la date à partir de laquelle le taux s'applique."
+        }
+      },
+      "deactivateConfirm": {
+        "title": "Retirer ce taux ?",
+        "description": "Les réceptions n'utiliseront plus 1 {{from}} = {{rate}} {{to}} (valable à partir du {{date}}). Les réceptions déjà passées gardent leur taux."
+      }
+    },
+    "limits": {
+      "title": "Plafonds d'approbation",
+      "description": "Montant maximal (en {{currency}}) que chaque rôle peut approuver. Tant qu'aucun plafond n'est défini pour un type de document, tout utilisateur ayant le droit achats peut l'approuver. Dès qu'un plafond existe, seuls les rôles dotés d'un plafond peuvent approuver, dans sa limite.",
+      "sod": "Quels que soient les plafonds, l'auteur d'une demande d'achat ou d'une commande ne peut jamais l'approuver.",
+      "loadError": "Les plafonds d'approbation n'ont pas pu être chargés",
+      "rolesUnavailable": "La liste des rôles demande le droit d'administration des rôles ; seuls les rôles déjà dotés d'un plafond sont affichés.",
+      "empty": "Aucun rôle à afficher.",
+      "saved": "Plafond d'approbation enregistré.",
+      "unlimited": "Sans plafond",
+      "notAllowed": "Non autorisé",
+      "noRule": "Aucun plafond",
+      "edit": "Modifier",
+      "editFor": "Modifier le plafond {{doc}} de {{role}}",
+      "docTypes": {
+        "REQUISITION": "Demandes d'achat",
+        "PURCHASE_ORDER": "Commandes"
+      },
+      "columns": {
+        "role": "Rôle"
+      },
+      "form": {
+        "title": "{{doc}} — {{role}}",
+        "description": "Montants en devise de l'entreprise ; les commandes en devise étrangère sont converties au taux enregistré du jour.",
+        "maxAmount": "Montant maximal ({{currency}})",
+        "maxHint": "Laisser vide pour ne fixer aucun plafond.",
+        "active": "Plafond en vigueur",
+        "submit": "Enregistrer le plafond",
+        "error": "Le plafond n'a pas pu être enregistré",
+        "blocker": "Saisissez un montant supérieur ou égal à 0, ou laissez vide."
       }
     }
   }

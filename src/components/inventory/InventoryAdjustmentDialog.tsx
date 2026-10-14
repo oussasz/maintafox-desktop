@@ -28,14 +28,27 @@ import { useFormatters } from "@/hooks/use-formatters";
 import { formatSiteLabel } from "@/lib/display";
 import { cn } from "@/lib/utils";
 import {
+  type InventoryArticleRow,
+  type LotStock,
   adjustInventoryStock,
+  isLotTracked,
   listInventoryArticles,
   listInventoryLocations,
+  listInventoryLotStock,
   listInventoryStockBalances,
 } from "@/services/inventory-service";
 import { getLookupValues } from "@/services/lookup-service";
 import { useInventoryStore } from "@/stores/inventory-store";
-import type { InventoryArticle, LookupValueOption, StockLocation } from "@shared/ipc-types";
+import type { LookupValueOption, StockLocation } from "@shared/ipc-types";
+
+/** Lot choice of a tracked movement: a new lot (entries), FEFO (exits) or an existing lot id. */
+const NEW_LOT = "new";
+const AUTO_LOT = "auto";
+
+function todayIso(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 
 export type InventoryAdjustmentType = "entry" | "exit" | "adjustment";
 
@@ -91,7 +104,12 @@ export function InventoryAdjustmentDialog({
   const formatDelta = (n: number) =>
     n > 0 ? `+${formatQty(n)}` : n < 0 ? `−${formatQty(Math.abs(n))}` : formatQty(0);
 
-  const [article, setArticle] = useState<InventoryArticle | null>(null);
+  const [article, setArticle] = useState<InventoryArticleRow | null>(null);
+  const [lots, setLots] = useState<LotStock[]>([]);
+  const [lotChoice, setLotChoice] = useState<string>(NEW_LOT);
+  const [lotNumber, setLotNumber] = useState("");
+  const [lotExpiry, setLotExpiry] = useState("");
+  const [postingDate, setPostingDate] = useState(todayIso());
   const [warehouseId, setWarehouseId] = useState<number>(0);
   const [locationId, setLocationId] = useState<number>(0);
   const [adjustType, setAdjustType] = useState<InventoryAdjustmentType>("entry");
@@ -144,6 +162,10 @@ export function InventoryAdjustmentDialog({
     setCurrentStock(null);
     setCurrentAvgCost(null);
     setError(null);
+    setLotChoice(NEW_LOT);
+    setLotNumber("");
+    setLotExpiry("");
+    setPostingDate(todayIso());
   }, [activeWarehouses, defaultLocationId, defaultWarehouseId]);
 
   useEffect(() => {
@@ -212,6 +234,28 @@ export function InventoryAdjustmentDialog({
     }
   }, [filteredMotifs, motifCode]);
 
+  const tracked = article ? isLotTracked(article) : false;
+  const serialTracked = article?.requires_serial_tracking === 1;
+  const expiryTracked = article?.requires_expiration === 1;
+
+  useEffect(() => {
+    if (!open || !tracked || locationId <= 0) {
+      setLots([]);
+      return;
+    }
+    let cancelled = false;
+    void listInventoryLotStock(articleId, locationId)
+      .then((rows) => {
+        if (!cancelled) setLots(rows.filter((l) => l.quantity > 0));
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setError(err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, tracked, articleId, locationId]);
+
   const qtyNumber = Number(quantity);
   const delta = Number.isFinite(qtyNumber) ? resolveDelta(adjustType, qtyNumber) : 0;
   const afterStock =
@@ -228,7 +272,35 @@ export function InventoryAdjustmentDialog({
       ? !costRequired
       : Number.isFinite(unitCostNumber) && unitCostNumber >= 0;
 
+  const isEntry = delta > 0;
+  // Entries default to a new lot, exits to first-expired-first-out.
+  const effectiveLotChoice = isEntry
+    ? lotChoice === AUTO_LOT
+      ? NEW_LOT
+      : lotChoice
+    : lotChoice === NEW_LOT
+      ? AUTO_LOT
+      : lotChoice;
+  const lotBlocker = !tracked
+    ? null
+    : isEntry && serialTracked && Math.abs(delta) !== 1
+      ? t("adjustStock.lots.blockers.serialQty")
+      : isEntry && effectiveLotChoice === NEW_LOT && !lotNumber.trim()
+        ? serialTracked
+          ? t("adjustStock.lots.blockers.serial")
+          : t("adjustStock.lots.blockers.lot")
+        : isEntry && effectiveLotChoice === NEW_LOT && expiryTracked && !lotExpiry
+          ? t("adjustStock.lots.blockers.expiry")
+          : null;
+  const dateBlocker = !postingDate
+    ? t("adjustStock.postingDate.blocker")
+    : postingDate > todayIso()
+      ? t("adjustStock.postingDate.future")
+      : null;
+
   const canSubmit =
+    lotBlocker === null &&
+    dateBlocker === null &&
     !saving &&
     !loadingArticle &&
     article != null &&
@@ -258,7 +330,7 @@ export function InventoryAdjustmentDialog({
                 ? t("adjustStock.blockers.workOrder")
                 : takesUnitCost && !unitCostValid
                   ? t("adjustStock.blockers.unitCost")
-                  : null;
+                  : (lotBlocker ?? dateBlocker);
 
   const handleSubmit = async () => {
     if (!canSubmit) return;
@@ -275,6 +347,21 @@ export function InventoryAdjustmentDialog({
           source_ref: needsWorkOrder ? workOrderCode : sourceRef,
         },
         takesUnitCost ? unitCostNumber : null,
+        {
+          lotId:
+            tracked && effectiveLotChoice !== NEW_LOT && effectiveLotChoice !== AUTO_LOT
+              ? Number(effectiveLotChoice)
+              : null,
+          newLot:
+            tracked && isEntry && effectiveLotChoice === NEW_LOT
+              ? {
+                  lot_number: serialTracked ? null : lotNumber.trim(),
+                  serial_number: serialTracked ? lotNumber.trim() : null,
+                  expiry_date: lotExpiry || null,
+                }
+              : null,
+          postingDate: postingDate === todayIso() ? null : postingDate,
+        },
       );
       onOpenChange(false);
       onSuccess();
@@ -514,6 +601,91 @@ export function InventoryAdjustmentDialog({
                 : t("adjustStock.cost.notValued")}
             </p>
           ) : null}
+
+          {tracked && delta !== 0 && locationId > 0 ? (
+            <fieldset className="space-y-2 rounded-md border border-dashed p-3">
+              <legend className="px-1 text-xs font-medium">
+                {serialTracked ? t("adjustStock.lots.serialTitle") : t("adjustStock.lots.title")}
+              </legend>
+              <div className="space-y-1">
+                <label className="text-xs text-text-muted" htmlFor="adjust-lot">
+                  {t("adjustStock.lots.choice")}
+                </label>
+                <Select value={effectiveLotChoice} onValueChange={(v) => v && setLotChoice(v)}>
+                  <SelectTrigger id="adjust-lot" className="h-11">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {isEntry ? (
+                      <SelectItem value={NEW_LOT}>
+                        {serialTracked
+                          ? t("adjustStock.lots.newSerial")
+                          : t("adjustStock.lots.newLot")}
+                      </SelectItem>
+                    ) : (
+                      <SelectItem value={AUTO_LOT}>{t("adjustStock.lots.fefo")}</SelectItem>
+                    )}
+                    {lots.map((l) => (
+                      <SelectItem key={l.lot_id} value={String(l.lot_id)}>
+                        {(l.serial_number ?? l.lot_number ?? "") +
+                          ` · ${formatQty(l.quantity)}` +
+                          (l.expiry_date ? ` · ${l.expiry_date}` : "")}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {isEntry && effectiveLotChoice === NEW_LOT ? (
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <div className="space-y-1">
+                    <label className="text-xs text-text-muted" htmlFor="adjust-lot-number">
+                      {serialTracked
+                        ? t("adjustStock.lots.serialNumber")
+                        : t("adjustStock.lots.lotNumber")}
+                    </label>
+                    <Input
+                      id="adjust-lot-number"
+                      className="h-11 font-mono"
+                      value={lotNumber}
+                      onChange={(e) => setLotNumber(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs text-text-muted" htmlFor="adjust-lot-expiry">
+                      {expiryTracked
+                        ? t("adjustStock.lots.expiry")
+                        : t("adjustStock.lots.expiryOptional")}
+                    </label>
+                    <Input
+                      id="adjust-lot-expiry"
+                      type="date"
+                      className="h-11"
+                      value={lotExpiry}
+                      onChange={(e) => setLotExpiry(e.target.value)}
+                    />
+                  </div>
+                </div>
+              ) : null}
+            </fieldset>
+          ) : null}
+
+          <div className="space-y-1">
+            <label className="text-xs text-text-muted" htmlFor="adjust-posting-date">
+              {t("adjustStock.postingDate.label")}
+            </label>
+            <Input
+              id="adjust-posting-date"
+              type="date"
+              className="h-11"
+              max={todayIso()}
+              value={postingDate}
+              onChange={(e) => setPostingDate(e.target.value)}
+              aria-describedby="adjust-posting-date-hint"
+            />
+            <p id="adjust-posting-date-hint" className="text-xs text-text-muted">
+              {t("adjustStock.postingDate.hint")}
+            </p>
+          </div>
 
           {needsWorkOrder ? (
             <div className="space-y-1">

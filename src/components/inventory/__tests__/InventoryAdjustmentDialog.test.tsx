@@ -19,6 +19,7 @@ const svc = vi.hoisted(() => ({
   adjustInventoryStock: vi.fn(),
   listInventoryArticles: vi.fn(),
   listInventoryLocations: vi.fn(),
+  listInventoryLotStock: vi.fn(),
   listInventoryStockBalances: vi.fn(),
   projectInventoryStockImpact: vi.fn(),
 }));
@@ -91,6 +92,7 @@ describe("InventoryAdjustmentDialog", () => {
       { location_id: 3, on_hand_qty: 10, moving_avg_unit_cost: 4 },
     ]);
     svc.adjustInventoryStock.mockResolvedValue({});
+    svc.listInventoryLotStock.mockResolvedValue([]);
     wo.listWos.mockResolvedValue({
       items: [{ id: 81, code: "OT-2026-0144", title: "Pump P-101 bearing change" }],
       total: 1,
@@ -141,6 +143,7 @@ describe("InventoryAdjustmentDialog", () => {
         }),
         // Exits carry no cost of their own: valued at the weighted average by the backend.
         null,
+        { lotId: null, newLot: null, postingDate: null },
       ),
     );
     expect(onSuccess).toHaveBeenCalled();
@@ -178,6 +181,62 @@ describe("InventoryAdjustmentDialog", () => {
       expect(svc.adjustInventoryStock).toHaveBeenCalledWith(
         expect.objectContaining({ delta_qty: 5, reason_code: "ENTREE_ACHAT" }),
         6.5,
+        { lotId: null, newLot: null, postingDate: null },
+      ),
+    );
+  });
+
+  it("asks for the lot and expiry of an entry of a lot-tracked article", async () => {
+    svc.listInventoryArticles.mockResolvedValue([
+      {
+        id: 4,
+        article_code: "ART-001",
+        article_name: "Bearing",
+        is_active: 1,
+        requires_batch_tracking: 1,
+        requires_serial_tracking: 0,
+        requires_expiration: 1,
+      },
+    ]);
+    render(
+      <InventoryAdjustmentDialog
+        articleId={4}
+        defaultWarehouseId={2}
+        defaultLocationId={3}
+        open
+        onOpenChange={vi.fn()}
+        onSuccess={vi.fn()}
+      />,
+    );
+    const dialog = await screen.findByRole("dialog");
+    await within(dialog).findByText(/Bearing/);
+
+    fireEvent.change(within(dialog).getByLabelText("Quantity"), { target: { value: "5" } });
+    fireEvent.click(within(dialog).getByLabelText("Reason"));
+    fireEvent.click(await screen.findByRole("option", { name: "Purchase receipt" }));
+    fireEvent.change(within(dialog).getByLabelText(/^Unit cost/), { target: { value: "2" } });
+
+    const validate = within(dialog).getByRole("button", { name: "Validate" });
+    expect(await within(dialog).findByText("Enter the lot number.")).toBeInTheDocument();
+    expect(validate).toBeDisabled();
+
+    fireEvent.change(within(dialog).getByLabelText("Lot number"), { target: { value: "L-24-07" } });
+    expect(within(dialog).getByText("Enter the expiry date of the lot.")).toBeInTheDocument();
+    fireEvent.change(within(dialog).getByLabelText("Expiry date"), {
+      target: { value: "2027-03-31" },
+    });
+    await waitFor(() => expect(validate).toBeEnabled());
+    fireEvent.click(validate);
+
+    await waitFor(() =>
+      expect(svc.adjustInventoryStock).toHaveBeenCalledWith(
+        expect.objectContaining({ delta_qty: 5 }),
+        2,
+        {
+          lotId: null,
+          newLot: { lot_number: "L-24-07", serial_number: null, expiry_date: "2027-03-31" },
+          postingDate: null,
+        },
       ),
     );
   });

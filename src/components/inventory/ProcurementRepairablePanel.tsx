@@ -23,6 +23,13 @@ import {
   type RepairableActionPayload,
 } from "@/components/inventory/RepairableActionDialog";
 import { RepairableDetailDialog } from "@/components/inventory/RepairableDetailDialog";
+import {
+  type RequisitionDraftLine,
+  RequisitionLinesEditor,
+  draftLinesToInput,
+  emptyRequisitionLine,
+  requisitionLinesBlocker,
+} from "@/components/inventory/RequisitionLinesEditor";
 import { SupplierArticleSourcesSection } from "@/components/inventory/SupplierArticleSourcesSection";
 import { SupplierContactsSection } from "@/components/inventory/SupplierContactsSection";
 import { riskBadgeVariant } from "@/components/inventory/supplier-sourcing";
@@ -77,15 +84,18 @@ import { formatAssetLabel, formatEntityCode, formatOrDash } from "@/lib/display"
 import { cn } from "@/lib/utils";
 import {
   type InventoryArticleRow,
+  type InventorySupplierRow,
+  type ProcurementRequisitionLineRow,
   type ProcurementRequisitionRow,
   type PurchaseOrderRow,
-  createInventoryProcurementRequisition,
+  createInventoryMultiLineRequisition,
   createInventoryPurchaseOrderFromRequisition,
   createInventoryRepairableOrder,
   deactivateInventorySupplier,
   getInventorySupplierScorecard,
   getProcurementAlerts,
   getProcurementDashboardSummary,
+  listCurrencyExchangeRates,
   listInventoryArticles,
   listInventoryDocumentLinks,
   listInventoryGoodsReceiptLines,
@@ -100,6 +110,7 @@ import {
   listInventorySuppliers,
   listSupplierPrices,
   listSupplierPurchaseHistory,
+  replaceInventoryRequisitionLines,
   transitionInventoryProcurementRequisition,
   transitionInventoryPurchaseOrder,
   transitionInventoryRepairableOrder,
@@ -113,11 +124,9 @@ import type {
   InventoryDocumentLink,
   InventoryStateEvent,
   InventoryStockBalance,
-  InventorySupplier,
   ProcurementAlert,
   ProcurementDashboardSummary,
   ProcurementRequisition,
-  ProcurementRequisitionLine,
   PurchaseOrder,
   RepairableOrder,
   StockLocation,
@@ -295,7 +304,7 @@ export const ProcurementRepairablePanel = forwardRef<
     onRequestHandled,
   } = props;
   const { t } = useTranslation(["inventory", "common"]);
-  const { formatDate, formatDateTime, formatNumber, formatCurrency, formatPercent } =
+  const { formatDate, formatDateTime, formatNumber, formatCurrency, formatPercent, currencyCode } =
     useFormatters();
   const { can } = usePermissions();
   const canProcure = can(P.INV_PROCURE);
@@ -343,11 +352,13 @@ export const ProcurementRepairablePanel = forwardRef<
   const [activeTab, setActiveTab] = useState<SubTab>("requisitions");
   const [articles, setArticles] = useState<InventoryArticleRow[]>([]);
   const [locations, setLocations] = useState<StockLocation[]>([]);
-  const [inventorySuppliers, setInventorySuppliers] = useState<InventorySupplier[]>([]);
+  const [inventorySuppliers, setInventorySuppliers] = useState<InventorySupplierRow[]>([]);
   const [requisitions, setRequisitions] = useState<ProcurementRequisitionRow[]>([]);
   const [selectedReqId, setSelectedReqId] = useState<number | null>(null);
-  const [reqLines, setReqLines] = useState<ProcurementRequisitionLine[]>([]);
+  const [reqLines, setReqLines] = useState<ProcurementRequisitionLineRow[]>([]);
   const [reqLinesError, setReqLinesError] = useState<unknown>(null);
+  /** Bumped after the lines of a draft are replaced so the detail refetches them. */
+  const [reqLinesVersion, setReqLinesVersion] = useState(0);
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrderRow[]>([]);
   const [selectedPoId, setSelectedPoId] = useState<number | null>(null);
   const [repairables, setRepairables] = useState<RepairableOrder[]>([]);
@@ -368,9 +379,11 @@ export const ProcurementRepairablePanel = forwardRef<
   // ── Requisition form ────────────────────────────────────────────────────────
   // Manual requisitions are stock replenishment or a free demand. Requisitions for a work
   // order part are raised from the work order (shortage panel), which carries the WO link.
-  const [reqArticleId, setReqArticleId] = useState<number>(0);
-  const [reqLocationId, setReqLocationId] = useState<number>(0);
-  const [reqQty, setReqQty] = useState<number>(0);
+  const [reqDraftLines, setReqDraftLines] = useState<RequisitionDraftLine[]>(() => [
+    emptyRequisitionLine(),
+  ]);
+  /** Draft requisition whose lines are being edited; null when creating a requisition. */
+  const [reqEditTarget, setReqEditTarget] = useState<ProcurementRequisitionRow | null>(null);
   const [reqSourceType, setReqSourceType] = useState("REORDER");
   const [reqSourceRef, setReqSourceRef] = useState<string>("");
   const [reqReason, setReqReason] = useState<string>("");
@@ -379,6 +392,10 @@ export const ProcurementRepairablePanel = forwardRef<
   // ── PO form ─────────────────────────────────────────────────────────────────
   const [poSupplierId, setPoSupplierId] = useState<number>(0);
   const [poDialogReqId, setPoDialogReqId] = useState<number>(0);
+  /** Currency the PO is priced in; follows the supplier's invoicing currency by default. */
+  const [poCurrency, setPoCurrency] = useState<string>("");
+  /** Currencies with a stored exchange rate (offered for foreign-currency POs). */
+  const [rateCurrencies, setRateCurrencies] = useState<string[]>([]);
 
   // ── Receive goods ───────────────────────────────────────────────────────────
   const [receiveInitialPoId, setReceiveInitialPoId] = useState<number | null>(null);
@@ -463,6 +480,7 @@ export const ProcurementRepairablePanel = forwardRef<
     statusCode: string;
     paymentTermsCode: string;
     defaultLeadTimeDays: string;
+    currencyCode: string;
     isActive: boolean;
   }>({
     id: null,
@@ -472,6 +490,7 @@ export const ProcurementRepairablePanel = forwardRef<
     statusCode: "APPROVED",
     paymentTermsCode: "",
     defaultLeadTimeDays: "",
+    currencyCode: "",
     isActive: true,
   });
 
@@ -534,9 +553,8 @@ export const ProcurementRepairablePanel = forwardRef<
   }, []);
 
   const resetRequisitionForm = useCallback(() => {
-    setReqArticleId(0);
-    setReqLocationId(0);
-    setReqQty(0);
+    setReqDraftLines([emptyRequisitionLine()]);
+    setReqEditTarget(null);
     setReqSourceType("REORDER");
     setReqSourceRef("");
     setReqReason("");
@@ -547,9 +565,13 @@ export const ProcurementRepairablePanel = forwardRef<
     (prefill?: RequisitionPrefill) => {
       resetRequisitionForm();
       if (prefill) {
-        setReqArticleId(prefill.articleId);
-        setReqLocationId(prefill.locationId ?? 0);
-        if (prefill.quantity != null) setReqQty(prefill.quantity);
+        setReqDraftLines([
+          emptyRequisitionLine({
+            articleId: prefill.articleId,
+            locationId: prefill.locationId ?? 0,
+            qty: prefill.quantity ?? 0,
+          }),
+        ]);
         if (prefill.sourceType) setReqSourceType(prefill.sourceType);
         setReqSourceRef(prefill.sourceRef ?? "");
         setReqReason(prefill.reason ?? "");
@@ -563,7 +585,15 @@ export const ProcurementRepairablePanel = forwardRef<
   const openCreatePoForm = useCallback((requisitionId: number) => {
     setPoDialogReqId(requisitionId);
     setPoSupplierId(0);
+    setPoCurrency("");
     setCreatePoOpen(true);
+    void listCurrencyExchangeRates()
+      .then((rows) =>
+        setRateCurrencies(
+          [...new Set(rows.filter((r) => r.is_active === 1).map((r) => r.from_currency))].sort(),
+        ),
+      )
+      .catch(() => setRateCurrencies([]));
   }, []);
 
   useImperativeHandle(ref, () => ({
@@ -633,7 +663,7 @@ export const ProcurementRepairablePanel = forwardRef<
     return () => {
       cancelled = true;
     };
-  }, [selectedReqId]);
+  }, [selectedReqId, reqLinesVersion]);
 
   useEffect(() => {
     if (!selectedGrId) {
@@ -886,12 +916,13 @@ export const ProcurementRepairablePanel = forwardRef<
       statusCode: "APPROVED",
       paymentTermsCode: "",
       defaultLeadTimeDays: "",
+      currencyCode: "",
       isActive: true,
     });
     setSupplierEditOpen(true);
   };
 
-  const openEditSupplierForm = (s: InventorySupplier) => {
+  const openEditSupplierForm = (s: InventorySupplierRow) => {
     setSupplierForm({
       id: s.id,
       rowVersion: s.row_version,
@@ -900,6 +931,7 @@ export const ProcurementRepairablePanel = forwardRef<
       statusCode: s.status_code,
       paymentTermsCode: s.payment_terms_code ?? "",
       defaultLeadTimeDays: s.default_lead_time_days != null ? String(s.default_lead_time_days) : "",
+      currencyCode: s.currency_code ?? "",
       isActive: s.is_active === 1,
     });
     setSupplierEditOpen(true);
@@ -918,6 +950,8 @@ export const ProcurementRepairablePanel = forwardRef<
           default_lead_time_days: supplierForm.defaultLeadTimeDays
             ? Number(supplierForm.defaultLeadTimeDays)
             : null,
+          // Empty = the company currency (stored as no currency, no conversion).
+          currency_code: supplierForm.currencyCode.trim().toUpperCase() || null,
           is_active: supplierForm.isActive,
         },
       );
@@ -1514,7 +1548,7 @@ export const ProcurementRepairablePanel = forwardRef<
     [entityStatusLabel, formatDateTime, t],
   );
 
-  const supplierColumns: ColumnDef<InventorySupplier>[] = useMemo(
+  const supplierColumns: ColumnDef<InventorySupplierRow>[] = useMemo(
     () => [
       { accessorKey: "code", header: t("procurement.suppliers.columns.code") },
       { accessorKey: "name", header: t("procurement.suppliers.columns.name") },
@@ -1800,65 +1834,19 @@ export const ProcurementRepairablePanel = forwardRef<
   };
 
   // ── Requisition form JSX ────────────────────────────────────────────────────
-  const reqArticle = useMemo(
-    () => articles.find((a) => a.id === reqArticleId) ?? null,
-    [articles, reqArticleId],
+  const requisitionLinesEditor = (
+    <RequisitionLinesEditor
+      lines={reqDraftLines}
+      onChange={setReqDraftLines}
+      articles={articles}
+      locations={locations}
+      disabled={saving}
+    />
   );
 
   const requisitionForm = (
     <div className="grid gap-3 md:grid-cols-2">
-      <div className="space-y-1">
-        <Label htmlFor="inv-req-article">{t("procurement.requisitionForm.article")}</Label>
-        <Select value={String(reqArticleId)} onValueChange={(v) => setReqArticleId(Number(v))}>
-          <SelectTrigger id="inv-req-article">
-            <SelectValue placeholder={t("procurement.requisitionForm.selectArticle")} />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="0">{t("procurement.requisitionForm.selectArticle")}</SelectItem>
-            {articles.map((a) => (
-              <SelectItem key={a.id} value={String(a.id)}>
-                {a.article_code} - {a.article_name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        {reqArticle ? (
-          <p className="text-xs text-text-muted">
-            {t("procurement.requisitionForm.stockHint", {
-              available: qtyLabel(reqArticle.available_qty),
-              reorderPoint: qtyLabel(reqArticle.reorder_point),
-              unit: reqArticle.unit_code,
-            })}
-          </p>
-        ) : null}
-      </div>
-      <div className="space-y-1">
-        <Label htmlFor="inv-req-location">{t("procurement.requisitionForm.location")}</Label>
-        <Select value={String(reqLocationId)} onValueChange={(v) => setReqLocationId(Number(v))}>
-          <SelectTrigger id="inv-req-location">
-            <SelectValue placeholder={t("procurement.requisitionForm.noLocation")} />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="0">{t("procurement.requisitionForm.noLocation")}</SelectItem>
-            {locations.map((l) => (
-              <SelectItem key={l.id} value={String(l.id)}>
-                {l.warehouse_code}/{l.code}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-      <div className="space-y-1">
-        <Label htmlFor="inv-req-qty">{t("procurement.requisitionForm.quantity")}</Label>
-        <Input
-          id="inv-req-qty"
-          type="number"
-          min={0}
-          step="0.01"
-          value={reqQty}
-          onChange={(e) => setReqQty(Number(e.target.value || 0))}
-        />
-      </div>
+      <div className="md:col-span-2">{requisitionLinesEditor}</div>
       <div className="space-y-1">
         <Label htmlFor="inv-req-priority">{t("procurement.requisition.priority")}</Label>
         <Select value={reqPriority} onValueChange={setReqPriority}>
@@ -1909,32 +1897,52 @@ export const ProcurementRepairablePanel = forwardRef<
     </div>
   );
 
-  const reqFormBlocker =
-    reqArticleId <= 0
-      ? t("procurement.requisitionForm.blockers.article")
-      : reqQty <= 0
-        ? t("procurement.requisitionForm.blockers.quantity")
-        : null;
+  const reqLinesBlocker = requisitionLinesBlocker(reqDraftLines);
+  const reqFormBlocker = reqLinesBlocker
+    ? t(`procurement.requisitionForm.blockers.${reqLinesBlocker}`)
+    : null;
 
   const submitRequisition = async () => {
+    const editing = reqEditTarget;
     const ok = await runSaving(async () => {
-      await createInventoryProcurementRequisition({
-        article_id: reqArticleId,
-        preferred_location_id: reqLocationId > 0 ? reqLocationId : null,
-        requested_qty: reqQty,
-        demand_source_type: reqSourceType,
-        demand_source_ref: reqSourceRef.trim() || null,
-        source_reservation_id: null,
-        source_reorder_trigger: reqSourceType === "REORDER" ? "threshold_crossed" : null,
-        purchase_priority: reqPriority || null,
-        reason: reqReason.trim() || null,
+      if (editing) {
+        await replaceInventoryRequisitionLines({
+          requisition_id: editing.id,
+          expected_row_version: editing.row_version,
+          lines: draftLinesToInput(reqDraftLines),
+        });
+      } else {
         // The requester is recorded by the backend from the signed-in session.
-        actor_id: null,
-      });
+        await createInventoryMultiLineRequisition({
+          lines: draftLinesToInput(reqDraftLines),
+          demand_source_type: reqSourceType,
+          demand_source_ref: reqSourceRef.trim() || null,
+          purchase_priority: reqPriority || null,
+          reason: reqReason.trim() || null,
+        });
+      }
     });
     if (!ok) return;
     setCreateReqOpen(false);
     resetRequisitionForm();
+    if (editing) setReqLinesVersion((v) => v + 1);
+  };
+
+  /** Opens the lines of a draft requisition for editing. */
+  const openEditRequisitionLines = (req: ProcurementRequisitionRow) => {
+    setReqDraftLines(
+      reqLines.map((line) =>
+        emptyRequisitionLine({
+          articleId: line.article_id,
+          locationId: line.preferred_location_id ?? 0,
+          qty: line.requested_qty,
+          estimatedCost: line.estimated_unit_cost != null ? String(line.estimated_unit_cost) : "",
+        }),
+      ),
+    );
+    setReqEditTarget(req);
+    setReqDetailOpen(false);
+    setCreateReqOpen(true);
   };
 
   const selectedSupplier = useMemo(
@@ -2944,19 +2952,40 @@ export const ProcurementRepairablePanel = forwardRef<
                 ) : reqLines.length === 0 ? (
                   <div className="text-text-muted">{t("procurement.requisitions.lines.empty")}</div>
                 ) : (
-                  <ul className="space-y-1">
-                    {reqLines.map((line) => (
-                      <li key={line.id}>
-                        {line.article_code} — {line.article_name} ×{" "}
-                        <span className="tabular-nums">{qtyLabel(line.requested_qty)}</span>
-                        {line.preferred_location_code ? (
-                          <span className="ml-2 text-xs text-text-muted">
-                            → {line.preferred_location_code}
+                  <>
+                    <ul className="space-y-1">
+                      {reqLines.map((line) => (
+                        <li key={line.id} className="flex flex-wrap items-baseline gap-x-2">
+                          <span>
+                            {line.article_code} — {line.article_name} ×{" "}
+                            <span className="tabular-nums">{qtyLabel(line.requested_qty)}</span>
                           </span>
-                        ) : null}
-                      </li>
-                    ))}
-                  </ul>
+                          {line.preferred_location_code ? (
+                            <span className="text-xs text-text-muted">
+                              → {line.preferred_location_code}
+                            </span>
+                          ) : null}
+                          <span className="ml-auto text-xs tabular-nums text-text-muted">
+                            {line.estimated_unit_cost != null
+                              ? t("procurement.requisitions.lines.estimate", {
+                                  cost: moneyLabel(line.estimated_unit_cost),
+                                  total: moneyLabel(line.estimated_unit_cost * line.requested_qty),
+                                })
+                              : t("procurement.requisitions.lines.noEstimate")}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="mt-2 border-t border-surface-border pt-2 text-sm tabular-nums">
+                      {selectedRequisition.estimate_complete
+                        ? t("procurement.requisitionForm.total", {
+                            total: moneyLabel(selectedRequisition.estimated_total ?? 0),
+                          })
+                        : t("procurement.requisitionForm.totalIncomplete", {
+                            total: moneyLabel(selectedRequisition.estimated_total ?? 0),
+                          })}
+                    </p>
+                  </>
                 )}
               </div>
               <div className="rounded-md border p-3 text-sm">
@@ -3016,6 +3045,16 @@ export const ProcurementRepairablePanel = forwardRef<
             {selectedRequisition ? (
               <PermissionGate permission={P.INV_PROCURE}>
                 <>
+                  {selectedRequisition.status === "DRAFT" ? (
+                    <Button
+                      variant="outline"
+                      className="h-11"
+                      disabled={saving || reqLinesError !== null}
+                      onClick={() => openEditRequisitionLines(selectedRequisition)}
+                    >
+                      {t("procurement.requisitions.actions.editLines")}
+                    </Button>
+                  ) : null}
                   <Button
                     variant="outline"
                     className="h-11"
@@ -3179,9 +3218,13 @@ export const ProcurementRepairablePanel = forwardRef<
           onPointerDownOutside={(e) => e.preventDefault()}
         >
           <DialogHeader>
-            <DialogTitle>{t("procurement.requisitionForm.title")}</DialogTitle>
+            <DialogTitle>
+              {reqEditTarget
+                ? t("procurement.requisitionForm.editTitle", { number: reqEditTarget.req_number })
+                : t("procurement.requisitionForm.title")}
+            </DialogTitle>
           </DialogHeader>
-          {requisitionForm}
+          {reqEditTarget ? requisitionLinesEditor : requisitionForm}
           {reqFormBlocker ? (
             <p id="inv-req-form-blocker" role="status" className="text-xs text-text-muted">
               {reqFormBlocker}
@@ -3203,7 +3246,9 @@ export const ProcurementRepairablePanel = forwardRef<
               disabled={saving || reqFormBlocker !== null}
               onClick={() => void submitRequisition()}
             >
-              {t("procurement.requisitionForm.submit")}
+              {reqEditTarget
+                ? t("procurement.requisitionForm.saveLines")
+                : t("procurement.requisitionForm.submit")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -3242,7 +3287,11 @@ export const ProcurementRepairablePanel = forwardRef<
               <Label htmlFor="inv-po-supplier">{t("procurement.poForm.supplier")}</Label>
               <Select
                 value={String(poSupplierId)}
-                onValueChange={(v) => setPoSupplierId(Number(v))}
+                onValueChange={(v) => {
+                  const id = Number(v);
+                  setPoSupplierId(id);
+                  setPoCurrency(inventorySuppliers.find((s) => s.id === id)?.currency_code ?? "");
+                }}
               >
                 <SelectTrigger id="inv-po-supplier">
                   <SelectValue placeholder={t("procurement.purchaseOrders.noSupplier")} />
@@ -3257,6 +3306,33 @@ export const ProcurementRepairablePanel = forwardRef<
                 </SelectContent>
               </Select>
               <p className="text-xs text-text-muted">{t("procurement.poForm.supplierHint")}</p>
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="inv-po-currency">{t("procurement.poForm.currency")}</Label>
+              <Select
+                value={poCurrency || currencyCode}
+                onValueChange={(v) => v && setPoCurrency(v === currencyCode ? "" : v)}
+              >
+                <SelectTrigger id="inv-po-currency">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {[
+                    ...new Set([
+                      currencyCode,
+                      ...(poCurrency ? [poCurrency] : []),
+                      ...rateCurrencies,
+                    ]),
+                  ].map((code) => (
+                    <SelectItem key={code} value={code}>
+                      {code === currencyCode
+                        ? t("procurement.poForm.currencyTenant", { code })
+                        : code}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-text-muted">{t("procurement.poForm.currencyHint")}</p>
             </div>
           </div>
           <DialogFooter className="gap-2">
@@ -3283,6 +3359,7 @@ export const ProcurementRepairablePanel = forwardRef<
                     const po = await createInventoryPurchaseOrderFromRequisition({
                       requisition_id: poDialogReqId,
                       supplier_id: poSupplierId > 0 ? poSupplierId : null,
+                      currency_code: poCurrency || null,
                       // The buyer is recorded by the backend from the signed-in session.
                       actor_id: null,
                     });
@@ -3310,6 +3387,7 @@ export const ProcurementRepairablePanel = forwardRef<
         onOpenChange={setReceiveOpen}
         purchaseOrders={purchaseOrders}
         locations={locations}
+        articles={articles}
         initialPoId={receiveInitialPoId}
         onPosted={() => {
           setPoReloadToken((token) => token + 1);
@@ -3585,6 +3663,25 @@ export const ProcurementRepairablePanel = forwardRef<
                   setSupplierForm((s) => ({ ...s, paymentTermsCode: e.target.value }))
                 }
               />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="inv-supplier-currency">
+                {t("procurement.suppliers.fields.currency")}
+              </Label>
+              <Input
+                id="inv-supplier-currency"
+                className="font-mono uppercase"
+                maxLength={3}
+                value={supplierForm.currencyCode}
+                placeholder={currencyCode}
+                aria-describedby="inv-supplier-currency-hint"
+                onChange={(e) =>
+                  setSupplierForm((s) => ({ ...s, currencyCode: e.target.value.toUpperCase() }))
+                }
+              />
+              <p id="inv-supplier-currency-hint" className="text-xs text-text-muted">
+                {t("procurement.suppliers.fields.currencyHint", { currency: currencyCode })}
+              </p>
             </div>
             <div className="flex items-center gap-2 pt-4">
               <input

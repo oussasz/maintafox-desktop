@@ -25,6 +25,8 @@ export interface WorkOrderReferencePickerProps {
   /** Selected work order code, or null. */
   value: string | null;
   onChange: (code: string | null) => void;
+  /** Receives the whole work order (id, code, title) when one is picked; null when cleared. */
+  onSelect?: (workOrder: WorkOrder | null) => void;
   disabled?: boolean;
 }
 
@@ -32,6 +34,7 @@ export function WorkOrderReferencePicker({
   id,
   value,
   onChange,
+  onSelect,
   disabled = false,
 }: WorkOrderReferencePickerProps) {
   const { t } = useTranslation("inventory");
@@ -112,7 +115,10 @@ export function WorkOrderReferencePicker({
                   role="option"
                   aria-selected={selected}
                   disabled={disabled}
-                  onClick={() => onChange(selected ? null : wo.code)}
+                  onClick={() => {
+                    onChange(selected ? null : wo.code);
+                    onSelect?.(selected ? null : wo);
+                  }}
                   className={cn(
                     "flex min-h-10 w-full items-center gap-2 px-3 py-1.5 text-left text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                     selected ? "bg-primary/10 font-medium text-text-primary" : "hover:bg-surface-2",

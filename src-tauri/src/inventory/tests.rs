@@ -92,6 +92,8 @@ async fn create_test_article(db: &DatabaseConnection, code: &str) -> i64 {
             shelf_life_days: None,
             requires_batch_tracking: None,
             is_active: Some(true),
+            barcode: None,
+            requires_serial_tracking: None,
         },
     )
     .await
@@ -347,6 +349,7 @@ async fn transfer_safety_preserves_reserved_and_blocks_double_consumption() {
             source_id: Some(9003),
             source_ref: Some("WO-9003".to_string()),
             notes: Some("should fail due reserved".to_string()),
+            lot_id: None,
         },
     )
     .await
@@ -439,7 +442,7 @@ async fn procurement_requisition_po_gr_flow_keeps_traceability() {
             next_status: "APPROVED".to_string(),
             reason: None,
             note: None,
-            actor_id: None,
+            actor_id: Some(1),
         },
     )
     .await
@@ -452,6 +455,7 @@ async fn procurement_requisition_po_gr_flow_keeps_traceability() {
             supplier_id: None,
             supplier_company_id: Some(supplier_id),
             actor_id: None,
+            currency_code: None,
         },
     )
     .await
@@ -477,7 +481,7 @@ async fn procurement_requisition_po_gr_flow_keeps_traceability() {
             next_status: "APPROVED".to_string(),
             reason: None,
             note: None,
-            actor_id: None,
+            actor_id: Some(1),
         },
     )
     .await
@@ -516,9 +520,12 @@ async fn procurement_requisition_po_gr_flow_keeps_traceability() {
                 accepted_qty: 7.0,
                 rejected_qty: 0.0,
                 rejection_reason: None,
+                lots: None,
             }],
             fulfillment_action: None,
             actor_id: None,
+            exchange_rate: None,
+            posting_date: None,
         },
     )
     .await

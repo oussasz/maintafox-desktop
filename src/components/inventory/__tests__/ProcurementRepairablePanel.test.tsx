@@ -14,7 +14,9 @@ import enCommon from "@/i18n/en/common.json";
 import enInventory from "@/i18n/locale-data/en/inventory.json";
 
 const mocks = vi.hoisted(() => ({
-  createInventoryProcurementRequisition: vi.fn(),
+  createInventoryMultiLineRequisition: vi.fn(),
+  replaceInventoryRequisitionLines: vi.fn(),
+  listCurrencyExchangeRates: vi.fn(),
   createInventoryPurchaseOrderFromRequisition: vi.fn(),
   createInventoryRepairableOrder: vi.fn(),
   listInventoryArticles: vi.fn(),
@@ -257,7 +259,9 @@ describe("ProcurementRepairablePanel", () => {
       document_links: [],
       total_amount: null,
     }));
-    mocks.createInventoryProcurementRequisition.mockResolvedValue({});
+    mocks.createInventoryMultiLineRequisition.mockResolvedValue({});
+    mocks.replaceInventoryRequisitionLines.mockResolvedValue({});
+    mocks.listCurrencyExchangeRates.mockResolvedValue([]);
     mocks.createInventoryPurchaseOrderFromRequisition.mockResolvedValue({});
     mocks.createInventoryRepairableOrder.mockResolvedValue({});
     mocks.receiveInventoryPurchaseOrderGoods.mockResolvedValue({});
@@ -286,11 +290,16 @@ describe("ProcurementRepairablePanel", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Create requisition" }));
 
     await waitFor(() => {
-      expect(mocks.createInventoryProcurementRequisition).toHaveBeenCalledWith(
+      expect(mocks.createInventoryMultiLineRequisition).toHaveBeenCalledWith(
         expect.objectContaining({
-          article_id: 11,
-          preferred_location_id: 101,
-          requested_qty: 5,
+          lines: [
+            {
+              article_id: 11,
+              preferred_location_id: 101,
+              requested_qty: 5,
+              estimated_unit_cost: null,
+            },
+          ],
           demand_source_type: "REORDER",
         }),
       );
@@ -328,8 +337,16 @@ describe("ProcurementRepairablePanel", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Create requisition" }));
 
     await waitFor(() => {
-      expect(mocks.createInventoryProcurementRequisition).toHaveBeenCalledWith(
-        expect.objectContaining({ article_id: 11, preferred_location_id: 101, requested_qty: 2 }),
+      expect(mocks.createInventoryMultiLineRequisition).toHaveBeenCalledWith(
+        expect.objectContaining({
+          lines: [
+            expect.objectContaining({
+              article_id: 11,
+              preferred_location_id: 101,
+              requested_qty: 2,
+            }),
+          ],
+        }),
       );
     });
   });
@@ -490,6 +507,64 @@ describe("ProcurementRepairablePanel", () => {
     });
     await waitFor(() =>
       expect(mocks.listInventoryProcurementRequisitions).toHaveBeenCalledTimes(2),
+    );
+  });
+
+  it("creates a requisition with several lines, estimated costs and their total", async () => {
+    mocks.listInventoryArticles.mockResolvedValue([
+      { id: 11, article_code: "A-11", article_name: "Bearing", is_active: 1, avg_unit_cost: 12 },
+      { id: 12, article_code: "A-12", article_name: "Seal kit", is_active: 1, avg_unit_cost: null },
+    ]);
+    const ref = createRef<ProcurementRepairablePanelHandle>();
+    render(<ProcurementRepairablePanel ref={ref} />);
+    await waitFor(() =>
+      expect(mocks.listInventoryProcurementRequisitions).toHaveBeenCalledTimes(1),
+    );
+
+    act(() => ref.current?.openCreateRequisition());
+    const dialog = await screen.findByRole("dialog", { name: "New purchase requisition" });
+
+    // Line 1: the article's average cost is proposed as the estimate.
+    fireEvent.click(within(dialog).getByLabelText("Article"));
+    fireEvent.click(await screen.findByText("A-11 - Bearing"));
+    fireEvent.change(within(dialog).getByLabelText("Requested quantity"), {
+      target: { value: "2" },
+    });
+    expect(within(dialog).getByLabelText(/Estimated unit cost/)).toHaveValue("12");
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add a line" }));
+    const line2 = within(dialog).getByRole("group", { name: "Line 2" });
+    fireEvent.click(within(line2).getByLabelText("Article"));
+    fireEvent.click(await screen.findByText("A-12 - Seal kit"));
+    fireEvent.change(within(line2).getByLabelText("Requested quantity"), {
+      target: { value: "3" },
+    });
+    expect(within(dialog).getByText(/some lines have no estimate/)).toBeInTheDocument();
+    fireEvent.change(within(line2).getByLabelText(/Estimated unit cost/), {
+      target: { value: "4,5" },
+    });
+    expect(within(dialog).queryByText(/some lines have no estimate/)).toBeNull();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create requisition" }));
+    await waitFor(() =>
+      expect(mocks.createInventoryMultiLineRequisition).toHaveBeenCalledWith(
+        expect.objectContaining({
+          lines: [
+            {
+              article_id: 11,
+              preferred_location_id: null,
+              requested_qty: 2,
+              estimated_unit_cost: 12,
+            },
+            {
+              article_id: 12,
+              preferred_location_id: null,
+              requested_qty: 3,
+              estimated_unit_cost: 4.5,
+            },
+          ],
+        }),
+      ),
     );
   });
 });

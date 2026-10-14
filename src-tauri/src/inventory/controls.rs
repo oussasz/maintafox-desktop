@@ -123,6 +123,8 @@ async fn insert_count_transaction<C: ConnectionTrait>(
     reason: Option<&str>,
     actor_id: Option<i64>,
 ) -> AppResult<i64> {
+    // Count postings and reversals are dated today; refused when today falls in a closed period.
+    crate::inventory::periods::ensure_posting_date_open(db, &crate::inventory::fx::today()).await?;
     let entity_sync_id = uuid::Uuid::new_v4().to_string();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,

@@ -1015,6 +1015,8 @@ const ARTICLE_LIST_SELECT: &str = r#"
            COALESCE(a.requires_expiration, 0) AS requires_expiration,
            a.shelf_life_days,
            COALESCE(a.requires_batch_tracking, 0) AS requires_batch_tracking,
+           a.barcode,
+           COALESCE(a.requires_serial_tracking, 0) AS requires_serial_tracking,
            a.is_active, a.row_version, a.created_at, a.updated_at,
            CAST(COALESCE(sb.on_hand_qty, 0) AS REAL) AS on_hand_qty,
            CAST(COALESCE(sb.reserved_qty, 0) AS REAL) AS reserved_qty,
@@ -1128,6 +1130,8 @@ pub async fn list_articles(
                 requires_expiration: row.try_get("", "requires_expiration").unwrap_or(0),
                 shelf_life_days: row.try_get("", "shelf_life_days").ok().flatten(),
                 requires_batch_tracking: row.try_get("", "requires_batch_tracking").unwrap_or(0),
+                barcode: row.try_get("", "barcode").ok().flatten(),
+                requires_serial_tracking: row.try_get("", "requires_serial_tracking").unwrap_or(0),
                 is_active: row.try_get("", "is_active")?,
                 row_version: row.try_get("", "row_version")?,
                 created_at: row.try_get("", "created_at")?,
@@ -1214,8 +1218,9 @@ pub async fn create_article(db: &DatabaseConnection, input: InventoryArticleInpu
             order_multiple_qty, lead_time_days, review_period_days,
             abc_class_code, xyz_class_code,
             is_critical_spare, requires_expiration, shelf_life_days, requires_batch_tracking,
+            barcode, requires_serial_tracking,
             is_active, row_version
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
         [
             entity_sync_id.into(),
             code.clone().into(),
@@ -1256,6 +1261,8 @@ pub async fn create_article(db: &DatabaseConnection, input: InventoryArticleInpu
             (input.requires_expiration.unwrap_or(false) as i64).into(),
             input.shelf_life_days.map_or(Value::BigInt(None), Value::from),
             (input.requires_batch_tracking.unwrap_or(false) as i64).into(),
+            normalize_barcode(input.barcode.as_deref()).map_or(Value::String(None), Value::from),
+            (input.requires_serial_tracking.unwrap_or(false) as i64).into(),
             is_active.into(),
         ],
     ))
@@ -1420,6 +1427,8 @@ pub async fn update_article(
                  requires_expiration = ?,
                  shelf_life_days = ?,
                  requires_batch_tracking = ?,
+                 barcode = ?,
+                 requires_serial_tracking = ?,
                  is_active = ?,
                  row_version = row_version + 1,
                  updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
@@ -1463,6 +1472,8 @@ pub async fn update_article(
                 (input.requires_expiration.unwrap_or(false) as i64).into(),
                 input.shelf_life_days.map_or(Value::BigInt(None), Value::from),
                 (input.requires_batch_tracking.unwrap_or(false) as i64).into(),
+                normalize_barcode(input.barcode.as_deref()).map_or(Value::String(None), Value::from),
+                (input.requires_serial_tracking.unwrap_or(false) as i64).into(),
                 is_active.into(),
                 article_id.into(),
                 expected_row_version.into(),
@@ -1603,6 +1614,11 @@ async fn record_article_field_changes<C: ConnectionTrait>(
         .await?;
     }
     Ok(())
+}
+
+/// Barcodes are compared as typed by a scanner: surrounding spaces removed, empty means none.
+fn normalize_barcode(value: Option<&str>) -> Option<String> {
+    value.map(str::trim).filter(|v| !v.is_empty()).map(str::to_string)
 }
 
 fn opt_f64(v: Option<f64>) -> String {
@@ -1822,6 +1838,31 @@ pub async fn adjust_stock_costed(
     input: InventoryStockAdjustInput,
     unit_cost: Option<f64>,
 ) -> AppResult<InventoryStockBalance> {
+    adjust_stock_full(db, input, AdjustStockOptions { unit_cost, ..Default::default() }).await
+}
+
+/// Extras of a manual movement: entry cost, lot (existing or new) and a back-dated posting date.
+#[derive(Debug, Clone, Default)]
+pub struct AdjustStockOptions {
+    pub unit_cost: Option<f64>,
+    /// Existing lot to move (exits; entries into a known lot).
+    pub lot_id: Option<i64>,
+    /// New lot / serial for an entry of a tracked article.
+    pub new_lot: Option<crate::inventory::domain::NewLotInput>,
+    pub posting_date: Option<String>,
+    pub actor_id: Option<i64>,
+}
+
+pub async fn adjust_stock_full(
+    db: &DatabaseConnection,
+    input: InventoryStockAdjustInput,
+    options: AdjustStockOptions,
+) -> AppResult<InventoryStockBalance> {
+    let unit_cost = options.unit_cost;
+    let posting_date =
+        crate::inventory::periods::resolve_posting_date(db, options.posting_date.as_deref()).await?;
+    let tracking = crate::inventory::lots::article_tracking(db, input.article_id).await?;
+    crate::inventory::lots::ensure_whole_units(&tracking, input.delta_qty.abs())?;
     if input.delta_qty == 0.0 {
         return Err(AppError::ValidationFailed(vec![
             "delta_qty must be different from 0.".to_string()
@@ -1878,52 +1919,90 @@ pub async fn adjust_stock_costed(
     )
     .await?;
 
-    let transaction_id = insert_inventory_transaction(
-        &tx,
-        input.article_id,
-        warehouse_id,
-        input.location_id,
-        None,
-        if input.delta_qty >= 0.0 {
-            "ADJUST_IN"
-        } else {
-            "ADJUST_OUT"
-        },
-        input.delta_qty.abs(),
-        &source_type,
-        None,
-        input.source_ref.as_deref(),
-        input.reason_code.as_deref(),
-        input.notes.as_deref(),
-        None,
-    )
-    .await?;
+    // Lot of the movement: entries of a tracked article name their lot (new or existing), exits
+    // take the chosen lot or FEFO.
+    let lot_allocation: Vec<(Option<i64>, f64)> = if !tracking.is_tracked() {
+        vec![(None, input.delta_qty)]
+    } else if input.delta_qty > 0.0 {
+        if tracking.serial && (input.delta_qty - 1.0).abs() > 1e-9 {
+            return Err(AppError::ValidationFailed(vec![
+                "A serial number stands for exactly one unit: enter serialised items one at a time.".to_string(),
+            ]));
+        }
+        let lot = match (options.lot_id, options.new_lot.as_ref()) {
+            (Some(lot), _) => lot,
+            (None, Some(new_lot)) => {
+                crate::inventory::lots::create_or_reuse_lot(&tx, input.article_id, new_lot, None, options.actor_id)
+                    .await?
+            }
+            (None, None) => {
+                return Err(AppError::ValidationFailed(vec![
+                    "This article is lot/serial-tracked: give the lot or serial number of the entry.".to_string(),
+                ]))
+            }
+        };
+        vec![(Some(lot), input.delta_qty)]
+    } else {
+        let qty = input.delta_qty.abs();
+        match options.lot_id {
+            Some(lot) => {
+                crate::inventory::lots::ensure_lot_available(&tx, lot, input.article_id, input.location_id, qty)
+                    .await?;
+                vec![(Some(lot), input.delta_qty)]
+            }
+            None => crate::inventory::lots::fefo_allocate(&tx, input.article_id, input.location_id, qty)
+                .await?
+                .into_iter()
+                .map(|(lot, q)| (Some(lot), -q))
+                .collect(),
+        }
+    };
+    let mut transaction_id: Option<i64> = None;
+    for (lot_id, delta) in lot_allocation {
+        let movement_id = insert_inventory_transaction(
+            &tx,
+            input.article_id,
+            warehouse_id,
+            input.location_id,
+            None,
+            if delta >= 0.0 { "ADJUST_IN" } else { "ADJUST_OUT" },
+            delta.abs(),
+            &source_type,
+            None,
+            input.source_ref.as_deref(),
+            input.reason_code.as_deref(),
+            input.notes.as_deref(),
+            None,
+        )
+        .await?;
+        if let Some(lot) = lot_id {
+            crate::inventory::lots::set_movement_lot(&tx, movement_id, lot).await?;
+        }
+        crate::inventory::periods::set_movement_posting_date(&tx, movement_id, &posting_date).await?;
+        set_movement_actor(&tx, movement_id, options.actor_id).await?;
+        if unit_cost.is_none() {
+            // Exits (possibly split over lots) and uncosted entries: valued at the average.
+            crate::inventory::valuation::stamp_at_average(&tx, input.article_id, input.location_id, delta, movement_id)
+                .await?;
+        }
+        transaction_id = Some(movement_id);
+    }
+    let transaction_id = transaction_id.expect("at least one movement");
 
-    match unit_cost {
-        Some(cost) => {
-            crate::inventory::valuation::apply_inbound_cost(
-                &tx,
-                input.article_id,
-                input.location_id,
-                on_hand,
-                input.delta_qty,
-                cost,
-                transaction_id,
-                crate::inventory::valuation::COST_SOURCE_MANUAL_ENTRY,
-                input.source_ref.as_deref(),
-            )
-            .await?;
-        }
-        None => {
-            crate::inventory::valuation::stamp_at_average(
-                &tx,
-                input.article_id,
-                input.location_id,
-                input.delta_qty,
-                transaction_id,
-            )
-            .await?;
-        }
+    // A costed entry is a single movement (one lot at most): it updates the weighted average.
+    if let Some(cost) = unit_cost {
+        crate::inventory::valuation::apply_inbound_cost(
+            &tx,
+            input.article_id,
+            input.location_id,
+            on_hand,
+            input.delta_qty,
+            cost,
+            transaction_id,
+            crate::inventory::valuation::COST_SOURCE_MANUAL_ENTRY,
+            input.source_ref.as_deref(),
+        )
+        .await?;
     }
 
     tx.commit().await?;
@@ -2075,6 +2154,9 @@ async fn insert_inventory_transaction<C: ConnectionTrait>(
     notes: Option<&str>,
     entity_sync_id: Option<uuid::Uuid>,
 ) -> AppResult<i64> {
+    // No movement may be dated inside a closed valuation period (business date defaults to
+    // today; back-dated postings are checked by their command before they reach the ledger).
+    crate::inventory::periods::ensure_posting_date_open(db, &crate::inventory::fx::today()).await?;
     let entity_sync_id = entity_sync_id.unwrap_or_else(uuid::Uuid::new_v4).to_string();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -2197,6 +2279,14 @@ async fn load_reservation_by_id<C: ConnectionTrait>(db: &C, reservation_id: i64)
 }
 
 pub async fn reserve_stock(db: &DatabaseConnection, input: InventoryReserveInput) -> AppResult<StockReservation> {
+    let tx = db.begin().await?;
+    let reservation_id = reserve_stock_in(&tx, &input).await?;
+    tx.commit().await?;
+    load_reservation_by_id(db, reservation_id).await
+}
+
+/// Reserves stock inside the caller's transaction and returns the reservation id.
+pub(crate) async fn reserve_stock_in<C: ConnectionTrait>(tx: &C, input: &InventoryReserveInput) -> AppResult<i64> {
     if input.quantity <= 0.0 {
         return Err(AppError::ValidationFailed(vec![
             "quantity must be greater than 0.".to_string()
@@ -2205,9 +2295,8 @@ pub async fn reserve_stock(db: &DatabaseConnection, input: InventoryReserveInput
     if input.source_type.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec!["source_type is required.".to_string()]));
     }
-    let tx = db.begin().await?;
-    let warehouse_id = ensure_active_mutation_context(&tx, input.article_id, input.location_id).await?;
-    let (on_hand, reserved) = get_balance_snapshot(&tx, input.article_id, input.location_id).await?;
+    let warehouse_id = ensure_active_mutation_context(tx, input.article_id, input.location_id).await?;
+    let (on_hand, reserved) = get_balance_snapshot(tx, input.article_id, input.location_id).await?;
     let available = on_hand - reserved;
     if available < input.quantity {
         return Err(AppError::ValidationFailed(vec![format!(
@@ -2216,7 +2305,7 @@ pub async fn reserve_stock(db: &DatabaseConnection, input: InventoryReserveInput
     }
 
     upsert_balance(
-        &tx,
+        tx,
         input.article_id,
         warehouse_id,
         input.location_id,
@@ -2255,7 +2344,7 @@ pub async fn reserve_stock(db: &DatabaseConnection, input: InventoryReserveInput
     let reservation_id: i64 = reservation_id_row.try_get("", "id")?;
 
     insert_inventory_transaction(
-        &tx,
+        tx,
         input.article_id,
         warehouse_id,
         input.location_id,
@@ -2270,54 +2359,92 @@ pub async fn reserve_stock(db: &DatabaseConnection, input: InventoryReserveInput
         None,
     )
     .await?;
-
-    tx.commit().await?;
-    load_reservation_by_id(db, reservation_id).await
+    Ok(reservation_id)
 }
 
+/// Issue against an existing reservation (WO planned / used parts). Kept for the WO module; it
+/// posts through the same path as the issue desk (`inventory::issue::issue_stock`): lots picked
+/// FEFO for tracked articles, cost at the weighted average, closed periods refused.
 pub async fn issue_reserved_stock(db: &DatabaseConnection, input: InventoryIssueInput) -> AppResult<StockReservation> {
-    if input.quantity <= 0.0 {
+    let reservation = load_reservation_by_id(db, input.reservation_id).await?;
+    crate::inventory::issue::issue_stock_with_source(
+        db,
+        crate::inventory::domain::IssueStockRequest {
+            article_id: reservation.article_id,
+            location_id: reservation.location_id,
+            quantity: input.quantity,
+            work_order_id: None,
+            reservation_id: Some(reservation.id),
+            lot_id: None,
+            notes: input.notes.clone(),
+            actor_id: None,
+        },
+        crate::inventory::issue::IssueSourceOverride {
+            source_type: input.source_type.clone(),
+            source_id: input.source_id,
+            source_ref: input.source_ref.clone(),
+        },
+    )
+    .await?;
+    load_reservation_by_id(db, reservation.id).await
+}
+
+/// One ISSUE movement of `quantity` against a reservation, inside the caller's transaction.
+/// Returns the movement id and its weighted-average unit cost (None when the location is not
+/// valued yet).
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn issue_reserved_in<C: ConnectionTrait>(
+    tx: &C,
+    reservation_id: i64,
+    quantity: f64,
+    lot_id: Option<i64>,
+    source_type: Option<&str>,
+    source_id: Option<i64>,
+    source_ref: Option<&str>,
+    notes: Option<&str>,
+    actor_id: Option<i64>,
+) -> AppResult<(i64, Option<f64>)> {
+    if quantity <= 0.0 {
         return Err(AppError::ValidationFailed(vec![
             "quantity must be greater than 0.".to_string()
         ]));
     }
-    let tx = db.begin().await?;
-    let reservation = load_reservation_by_id(&tx, input.reservation_id).await?;
+    let reservation = load_reservation_by_id(tx, reservation_id).await?;
     ensure_reservation_invariants(&reservation)?;
-    ensure_active_mutation_context(&tx, reservation.article_id, reservation.location_id).await?;
+    ensure_active_mutation_context(tx, reservation.article_id, reservation.location_id).await?;
     if reservation.status == "released" {
         return Err(AppError::ValidationFailed(vec![
             "Reservation already released.".to_string()
         ]));
     }
     let remaining_reserved = reservation.quantity_reserved - reservation.quantity_issued;
-    if remaining_reserved < input.quantity {
+    if remaining_reserved + 1e-9 < quantity {
         return Err(AppError::ValidationFailed(vec![format!(
             "Issue exceeds reserved remainder ({remaining_reserved})."
         )]));
     }
 
-    let (on_hand, reserved) = get_balance_snapshot(&tx, reservation.article_id, reservation.location_id).await?;
-    if on_hand < input.quantity || reserved < input.quantity {
+    let (on_hand, reserved) = get_balance_snapshot(tx, reservation.article_id, reservation.location_id).await?;
+    if on_hand + 1e-9 < quantity || reserved + 1e-9 < quantity {
         return Err(AppError::ValidationFailed(vec![
             "Insufficient on-hand/reserved quantity for issue.".to_string(),
         ]));
     }
 
-    let next_issued = reservation.quantity_issued + input.quantity;
-    let next_status = if next_issued >= reservation.quantity_reserved {
+    let next_issued = reservation.quantity_issued + quantity;
+    let next_status = if next_issued + 1e-9 >= reservation.quantity_reserved {
         "consumed"
     } else {
         "partial"
     };
 
     upsert_balance(
-        &tx,
+        tx,
         reservation.article_id,
         reservation.warehouse_id,
         reservation.location_id,
-        on_hand - input.quantity,
-        reserved - input.quantity,
+        (on_hand - quantity).max(0.0),
+        (reserved - quantity).max(0.0),
     )
     .await?;
 
@@ -2334,38 +2461,52 @@ pub async fn issue_reserved_stock(db: &DatabaseConnection, input: InventoryIssue
     ))
     .await?;
 
-    let tx_source_type = input
-        .source_type
-        .clone()
+    let tx_source_type = source_type
+        .map(str::to_string)
         .unwrap_or_else(|| reservation.source_type.clone());
     let issue_id = insert_inventory_transaction(
-        &tx,
+        tx,
         reservation.article_id,
         reservation.warehouse_id,
         reservation.location_id,
         Some(reservation.id),
         "ISSUE",
-        input.quantity,
+        quantity,
         &tx_source_type,
-        input.source_id.or(reservation.source_id),
-        input.source_ref.as_deref().or(reservation.source_ref.as_deref()),
+        source_id.or(reservation.source_id),
+        source_ref.or(reservation.source_ref.as_deref()),
         None,
-        input.notes.as_deref(),
+        notes,
         None,
     )
     .await?;
+    if let Some(lot) = lot_id {
+        crate::inventory::lots::set_movement_lot(tx, issue_id, lot).await?;
+    }
+    set_movement_actor(tx, issue_id, actor_id).await?;
     // Parts issued to a job are valued at the location's weighted-average cost.
-    crate::inventory::valuation::stamp_at_average(
-        &tx,
+    let unit_cost = crate::inventory::valuation::stamp_at_average(
+        tx,
         reservation.article_id,
         reservation.location_id,
-        input.quantity,
+        quantity,
         issue_id,
     )
     .await?;
+    Ok((issue_id, unit_cost))
+}
 
-    tx.commit().await?;
-    load_reservation_by_id(db, reservation.id).await
+/// Records who made a movement (the ledger insert leaves it empty).
+pub(crate) async fn set_movement_actor<C: ConnectionTrait>(tx: &C, transaction_id: i64, actor_id: Option<i64>) -> AppResult<()> {
+    if let Some(actor) = actor_id {
+        tx.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE inventory_transactions SET performed_by_id = ? WHERE id = ?",
+            [actor.into(), transaction_id.into()],
+        ))
+        .await?;
+    }
+    Ok(())
 }
 
 pub async fn return_reserved_stock(
@@ -2423,24 +2564,87 @@ pub async fn return_reserved_stock(
         ],
     ))
     .await?;
-    insert_inventory_transaction(
-        &tx,
-        reservation.article_id,
-        reservation.warehouse_id,
-        reservation.location_id,
-        Some(reservation.id),
-        "RETURN",
-        input.quantity,
-        &reservation.source_type,
-        reservation.source_id,
-        reservation.source_ref.as_deref(),
-        None,
-        input.notes.as_deref(),
-        None,
-    )
-    .await?;
+    // Tracked articles go back into the lots they were issued from (latest issue first); others
+    // return as one movement.
+    let tracking = crate::inventory::lots::article_tracking(&tx, reservation.article_id).await?;
+    let allocation: Vec<(Option<i64>, f64)> = if tracking.is_tracked() {
+        return_lot_allocation(&tx, reservation.id, input.quantity).await?
+    } else {
+        vec![(None, input.quantity)]
+    };
+    for (lot_id, quantity) in allocation {
+        let return_id = insert_inventory_transaction(
+            &tx,
+            reservation.article_id,
+            reservation.warehouse_id,
+            reservation.location_id,
+            Some(reservation.id),
+            "RETURN",
+            quantity,
+            &reservation.source_type,
+            reservation.source_id,
+            reservation.source_ref.as_deref(),
+            None,
+            input.notes.as_deref(),
+            None,
+        )
+        .await?;
+        if let Some(lot) = lot_id {
+            crate::inventory::lots::set_movement_lot(&tx, return_id, lot).await?;
+        }
+        // Returned parts come back at the average they left at (the average is unchanged).
+        crate::inventory::valuation::stamp_at_average(
+            &tx,
+            reservation.article_id,
+            reservation.location_id,
+            quantity,
+            return_id,
+        )
+        .await?;
+    }
     tx.commit().await?;
     load_reservation_by_id(db, reservation.id).await
+}
+
+/// Lots to return `quantity` into: net issued quantity per lot on this reservation, most recent
+/// issue first. Quantity issued before lot tracking (no lot) is returned without a lot.
+async fn return_lot_allocation<C: ConnectionTrait>(
+    tx: &C,
+    reservation_id: i64,
+    quantity: f64,
+) -> AppResult<Vec<(Option<i64>, f64)>> {
+    let rows = tx
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT lot_id,
+                    SUM(CASE movement_type WHEN 'ISSUE' THEN quantity WHEN 'RETURN' THEN -quantity ELSE 0 END) AS net,
+                    MAX(CASE movement_type WHEN 'ISSUE' THEN id ELSE 0 END) AS last_issue
+             FROM inventory_transactions
+             WHERE reservation_id = ? AND movement_type IN ('ISSUE', 'RETURN')
+             GROUP BY lot_id
+             ORDER BY last_issue DESC",
+            [reservation_id.into()],
+        ))
+        .await?;
+    let mut remaining = quantity;
+    let mut allocation = Vec::new();
+    for row in rows {
+        if remaining <= 1e-9 {
+            break;
+        }
+        let net: f64 = row.try_get("", "net")?;
+        if net <= 1e-9 {
+            continue;
+        }
+        let lot_id: Option<i64> = row.try_get("", "lot_id").ok().flatten();
+        let take = net.min(remaining);
+        allocation.push((lot_id, take));
+        remaining -= take;
+    }
+    if remaining > 1e-9 {
+        allocation.push((None, remaining));
+    }
+    Ok(allocation)
 }
 
 pub(crate) async fn release_stock_reservation_with_connection<C: ConnectionTrait>(
@@ -2572,62 +2776,95 @@ pub async fn transfer_stock(
         .source_type
         .clone()
         .unwrap_or_else(|| "INTERNAL_TRANSFER".to_string());
-    let out_id = insert_inventory_transaction(
-        &tx,
-        input.article_id,
-        from_warehouse,
-        input.from_location_id,
-        None,
-        "TRANSFER_OUT",
-        input.quantity,
-        &source_type,
-        input.source_id,
-        input.source_ref.as_deref(),
-        None,
-        input.notes.as_deref(),
-        None,
-    )
-    .await?;
-    let in_id = insert_inventory_transaction(
-        &tx,
-        input.article_id,
-        to_warehouse,
-        input.to_location_id,
-        None,
-        "TRANSFER_IN",
-        input.quantity,
-        &source_type,
-        input.source_id,
-        input.source_ref.as_deref(),
-        None,
-        input.notes.as_deref(),
-        None,
-    )
-    .await?;
-
-    // Transferred parts keep their cost: the source average values the move and is blended
-    // into the destination's weighted average.
-    if let Some(source_avg) = crate::inventory::valuation::stamp_at_average(
-        &tx,
-        input.article_id,
-        input.from_location_id,
-        input.quantity,
-        out_id,
-    )
-    .await?
-    {
-        crate::inventory::valuation::apply_inbound_cost(
+    // Tracked articles move lot by lot (chosen lot, else FEFO) so each lot follows its parts.
+    let tracking = crate::inventory::lots::article_tracking(&tx, input.article_id).await?;
+    crate::inventory::lots::ensure_whole_units(&tracking, input.quantity)?;
+    let allocation: Vec<(Option<i64>, f64)> = if tracking.is_tracked() {
+        match input.lot_id {
+            Some(lot) => {
+                crate::inventory::lots::ensure_lot_available(
+                    &tx,
+                    lot,
+                    input.article_id,
+                    input.from_location_id,
+                    input.quantity,
+                )
+                .await?;
+                vec![(Some(lot), input.quantity)]
+            }
+            None => crate::inventory::lots::fefo_allocate(&tx, input.article_id, input.from_location_id, input.quantity)
+                .await?
+                .into_iter()
+                .map(|(lot, qty)| (Some(lot), qty))
+                .collect(),
+        }
+    } else {
+        vec![(None, input.quantity)]
+    };
+    let mut destination_on_hand = to_on_hand;
+    for (lot_id, quantity) in allocation {
+        let out_id = insert_inventory_transaction(
             &tx,
             input.article_id,
-            input.to_location_id,
-            to_on_hand,
-            input.quantity,
-            source_avg,
-            in_id,
-            crate::inventory::valuation::COST_SOURCE_MOVING_AVG,
+            from_warehouse,
+            input.from_location_id,
+            None,
+            "TRANSFER_OUT",
+            quantity,
+            &source_type,
+            input.source_id,
             input.source_ref.as_deref(),
+            None,
+            input.notes.as_deref(),
+            None,
         )
         .await?;
+        let in_id = insert_inventory_transaction(
+            &tx,
+            input.article_id,
+            to_warehouse,
+            input.to_location_id,
+            None,
+            "TRANSFER_IN",
+            quantity,
+            &source_type,
+            input.source_id,
+            input.source_ref.as_deref(),
+            None,
+            input.notes.as_deref(),
+            None,
+        )
+        .await?;
+        if let Some(lot) = lot_id {
+            crate::inventory::lots::set_movement_lot(&tx, out_id, lot).await?;
+            crate::inventory::lots::set_movement_lot(&tx, in_id, lot).await?;
+        }
+
+        // Transferred parts keep their cost: the source average values the move and is blended
+        // into the destination's weighted average.
+        if let Some(source_avg) = crate::inventory::valuation::stamp_at_average(
+            &tx,
+            input.article_id,
+            input.from_location_id,
+            quantity,
+            out_id,
+        )
+        .await?
+        {
+            crate::inventory::valuation::apply_inbound_cost(
+                &tx,
+                input.article_id,
+                input.to_location_id,
+                destination_on_hand,
+                quantity,
+                source_avg,
+                in_id,
+                crate::inventory::valuation::COST_SOURCE_MOVING_AVG,
+                input.source_ref.as_deref(),
+            )
+            .await?;
+        }
+        destination_on_hand += quantity;
     }
 
     tx.commit().await?;
@@ -2725,11 +2962,13 @@ pub async fn list_transactions(
                 t.location_id, sl.code AS location_code, sl.name AS location_name,
                 t.reservation_id, t.movement_type, t.quantity,
                 t.source_type, t.source_id, t.source_ref,
-                t.reason_code, t.reason, t.performed_by_id, t.performed_at
+                t.reason_code, t.reason, t.performed_by_id, t.performed_at,
+                t.lot_id, lot.lot_number, lot.serial_number, t.posting_date, t.unit_cost, t.extended_cost
          FROM inventory_transactions t
          JOIN articles a ON a.id = t.article_id
          JOIN warehouses w ON w.id = t.warehouse_id
          JOIN stock_locations sl ON sl.id = t.location_id
+         LEFT JOIN inventory_lots lot ON lot.id = t.lot_id
          WHERE 1=1",
     );
     let mut values: Vec<sea_orm::Value> = Vec::new();
@@ -2787,6 +3026,12 @@ pub async fn list_transactions(
                 notes: row.try_get("", "reason")?,
                 performed_by_id: row.try_get("", "performed_by_id")?,
                 performed_at: row.try_get("", "performed_at")?,
+                lot_id: row.try_get("", "lot_id").ok().flatten(),
+                lot_number: row.try_get("", "lot_number").ok().flatten(),
+                serial_number: row.try_get("", "serial_number").ok().flatten(),
+                posting_date: row.try_get("", "posting_date").ok().flatten(),
+                unit_cost: row.try_get("", "unit_cost").ok().flatten(),
+                extended_cost: row.try_get("", "extended_cost").ok().flatten(),
             })
         })
         .collect()
@@ -2960,6 +3205,13 @@ pub async fn evaluate_replenishment(
     Ok(result)
 }
 
+/// ABC classes by annual consumption value: over the last 12 months, the value of what was
+/// consumed (issues to work orders and manual exits to a work order), each movement at its posted
+/// cost, or at the article's current average cost when the movement was not valued. Receipts and
+/// other exits are not consumption. Articles are ranked by value; the cumulative share sets the
+/// class (A up to `procurement.abc_a_pct`, B up to `procurement.abc_b_pct`, else C). Active
+/// articles with no valued consumption are C. Returns the number of articles classified (0 and
+/// no change when nothing valued was consumed).
 pub async fn calculate_abc_classification(db: &DatabaseConnection) -> AppResult<i64> {
     let a_pct: f64 = db
         .query_one(Statement::from_string(
@@ -2978,53 +3230,78 @@ pub async fn calculate_abc_classification(db: &DatabaseConnection) -> AppResult<
         .and_then(|r| r.try_get::<Option<f64>>("", "v").ok().flatten())
         .unwrap_or(95.0);
 
-    // Compute consumption value per article from inventory_transactions over last 12 months
     let rows = db
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT t.article_id, COALESCE(SUM(t.quantity), 0.0) AS total_issued
+            "SELECT t.article_id,
+                    SUM(COALESCE(t.extended_cost,
+                                 t.quantity * (SELECT SUM(sb.on_hand_qty * sb.moving_avg_unit_cost)
+                                                      / NULLIF(SUM(sb.on_hand_qty), 0)
+                                               FROM stock_balances sb
+                                               WHERE sb.article_id = t.article_id
+                                                 AND sb.moving_avg_unit_cost IS NOT NULL))) AS consumption_value
              FROM inventory_transactions t
-             WHERE t.movement_type IN ('ISSUE','ADJUST_OUT','GR_ACCEPT')
-               AND t.performed_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-12 months')
+             WHERE (t.movement_type = 'ISSUE'
+                    OR (t.movement_type = 'ADJUST_OUT' AND t.reason_code = 'SORTIE_OT'))
+               AND COALESCE(t.posting_date, substr(t.performed_at, 1, 10))
+                   >= date('now', '-12 months')
              GROUP BY t.article_id
-             ORDER BY total_issued DESC"
+             HAVING consumption_value > 0
+             ORDER BY consumption_value DESC"
                 .to_string(),
         ))
-        .await
-        .unwrap_or_default();
+        .await?;
 
-    let total: f64 = rows
+    let ranked: Vec<(i64, f64)> = rows
         .iter()
-        .map(|r| r.try_get::<f64>("", "total_issued").unwrap_or(0.0))
-        .sum();
-    if total == 0.0 {
+        .map(|r| {
+            Ok((
+                r.try_get::<i64>("", "article_id")?,
+                r.try_get::<f64>("", "consumption_value")?,
+            ))
+        })
+        .collect::<AppResult<Vec<_>>>()?;
+    let total: f64 = ranked.iter().map(|(_, v)| v).sum();
+    if total <= 0.0 {
         return Ok(0);
     }
 
+    let tx = db.begin().await?;
     let mut cumulative = 0.0;
     let mut updated_count = 0i64;
-    for row in &rows {
-        let article_id: i64 = row.try_get("", "article_id").unwrap_or(0);
-        let qty: f64 = row.try_get("", "total_issued").unwrap_or(0.0);
-        cumulative += qty;
-        let pct = cumulative / total * 100.0;
-        let class = if pct <= a_pct {
+    for (article_id, value) in &ranked {
+        // The class is decided by the share *before* this article, so the article that crosses
+        // the A threshold is still an A item.
+        let share_before = cumulative / total * 100.0;
+        cumulative += value;
+        let class = if share_before < a_pct {
             "A"
-        } else if pct <= b_pct {
+        } else if share_before < b_pct {
             "B"
         } else {
             "C"
         };
-        db.execute(Statement::from_sql_and_values(
+        tx.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE articles SET abc_class_code = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
-            [class.into(), article_id.into()],
+            [class.into(), (*article_id).into()],
         ))
-        .await
-        .ok();
+        .await?;
         updated_count += 1;
     }
-    Ok(updated_count)
+    let ranked_ids: Vec<String> = ranked.iter().map(|(id, _)| id.to_string()).collect();
+    let others = tx
+        .execute(Statement::from_string(
+            DbBackend::Sqlite,
+            format!(
+                "UPDATE articles SET abc_class_code = 'C', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+                 WHERE is_active = 1 AND id NOT IN ({}) AND COALESCE(abc_class_code, '') <> 'C'",
+                ranked_ids.join(",")
+            ),
+        ))
+        .await?;
+    tx.commit().await?;
+    Ok(updated_count + others.rows_affected() as i64)
 }
 
 pub async fn calculate_xyz_classification(db: &DatabaseConnection) -> AppResult<i64> {

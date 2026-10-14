@@ -1,8 +1,13 @@
 //! Inventory bounded context (PRD §6.8).
 
+pub mod approvals;
 pub mod controls;
 pub mod domain;
+pub mod fx;
+pub mod issue;
 pub mod ledger;
+pub mod lots;
+pub mod periods;
 pub mod procurement;
 pub mod queries;
 pub mod suppliers;
@@ -11,3 +16,5 @@ pub mod valuation;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod benchmark_tests;

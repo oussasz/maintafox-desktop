@@ -21,8 +21,8 @@ async fn get_supplier<C: ConnectionTrait>(db: &C, supplier_id: i64) -> AppResult
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, code, name, external_company_id, status_code, payment_terms_code,
-                    currency_value_id, incoterms_code, default_lead_time_days, default_buyer_person_id,
-                    is_active, row_version, created_at, updated_at
+                    currency_value_id, currency_code, incoterms_code, default_lead_time_days,
+                    default_buyer_person_id, is_active, row_version, created_at, updated_at
              FROM inventory_suppliers WHERE id = ?",
             [supplier_id.into()],
         ))
@@ -43,6 +43,7 @@ fn map_supplier_row(row: sea_orm::QueryResult) -> AppResult<InventorySupplier> {
         status_code: row.try_get("", "status_code")?,
         payment_terms_code: row.try_get("", "payment_terms_code")?,
         currency_value_id: row.try_get("", "currency_value_id")?,
+        currency_code: row.try_get("", "currency_code").ok().flatten(),
         incoterms_code: row.try_get("", "incoterms_code")?,
         default_lead_time_days: row.try_get("", "default_lead_time_days")?,
         default_buyer_person_id: row.try_get("", "default_buyer_person_id")?,
@@ -153,8 +154,8 @@ pub async fn list_suppliers(db: &DatabaseConnection) -> AppResult<Vec<InventoryS
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
             "SELECT id, code, name, external_company_id, status_code, payment_terms_code,
-                    currency_value_id, incoterms_code, default_lead_time_days, default_buyer_person_id,
-                    is_active, row_version, created_at, updated_at
+                    currency_value_id, currency_code, incoterms_code, default_lead_time_days,
+                    default_buyer_person_id, is_active, row_version, created_at, updated_at
              FROM inventory_suppliers
              ORDER BY name ASC"
                 .to_string(),
@@ -191,6 +192,11 @@ pub async fn upsert_supplier(
         )]));
     }
     let is_active = input.is_active.unwrap_or(true) as i64;
+    // Supplier invoicing currency; the tenant currency is stored as NULL (no conversion).
+    let currency_code = match crate::inventory::fx::normalize_optional_currency(input.currency_code.as_deref())? {
+        Some(code) if code == crate::inventory::fx::tenant_currency(db).await? => None,
+        other => other,
+    };
 
     if let Some(id) = supplier_id {
         let expected_rv = expected_row_version.ok_or_else(|| {
@@ -217,7 +223,7 @@ pub async fn upsert_supplier(
             DbBackend::Sqlite,
             "UPDATE inventory_suppliers
              SET code = ?, name = ?, external_company_id = ?, status_code = ?, payment_terms_code = ?,
-                 currency_value_id = ?, incoterms_code = ?, default_lead_time_days = ?,
+                 currency_value_id = ?, currency_code = ?, incoterms_code = ?, default_lead_time_days = ?,
                  default_buyer_person_id = ?, is_active = ?, row_version = row_version + 1, updated_at = ?
              WHERE id = ?",
             [
@@ -227,6 +233,7 @@ pub async fn upsert_supplier(
                 input.status_code.into(),
                 input.payment_terms_code.map_or(Value::String(None), Value::from),
                 input.currency_value_id.map_or(Value::BigInt(None), Value::from),
+                currency_code.clone().map_or(Value::String(None), Value::from),
                 input.incoterms_code.map_or(Value::String(None), Value::from),
                 input.default_lead_time_days.map_or(Value::BigInt(None), Value::from),
                 input.default_buyer_person_id.map_or(Value::BigInt(None), Value::from),
@@ -242,8 +249,9 @@ pub async fn upsert_supplier(
             DbBackend::Sqlite,
             "INSERT INTO inventory_suppliers
                 (code, name, external_company_id, status_code, payment_terms_code, currency_value_id,
-                 incoterms_code, default_lead_time_days, default_buyer_person_id, is_active, row_version, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+                 currency_code, incoterms_code, default_lead_time_days, default_buyer_person_id, is_active,
+                 row_version, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
             [
                 input.code.into(),
                 input.name.into(),
@@ -251,6 +259,7 @@ pub async fn upsert_supplier(
                 input.status_code.into(),
                 input.payment_terms_code.map_or(Value::String(None), Value::from),
                 input.currency_value_id.map_or(Value::BigInt(None), Value::from),
+                currency_code.clone().map_or(Value::String(None), Value::from),
                 input.incoterms_code.map_or(Value::String(None), Value::from),
                 input.default_lead_time_days.map_or(Value::BigInt(None), Value::from),
                 input.default_buyer_person_id.map_or(Value::BigInt(None), Value::from),

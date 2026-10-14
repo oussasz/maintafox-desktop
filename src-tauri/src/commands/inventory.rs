@@ -385,10 +385,16 @@ pub async fn list_inventory_stock_balances(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn adjust_inventory_stock(
     input: InventoryStockAdjustInput,
     // Unit cost of a stock entry (tenant currency); updates the weighted-average cost.
     unit_cost: Option<f64>,
+    // Lot of the movement (tracked articles): an existing lot, or a new lot / serial for an entry.
+    lot_id: Option<i64>,
+    new_lot: Option<crate::inventory::domain::NewLotInput>,
+    // Business date of a back-dated movement (YYYY-MM-DD).
+    posting_date: Option<String>,
     state: State<'_, AppState>,
 ) -> AppResult<InventoryStockBalance> {
     let user = require_session!(state);
@@ -398,7 +404,18 @@ pub async fn adjust_inventory_stock(
         crate::rbac::permissions::INV_MANAGE,
         PermissionScope::Global
     );
-    queries::adjust_stock_costed(&state.db, input, unit_cost).await
+    queries::adjust_stock_full(
+        &state.db,
+        input,
+        queries::AdjustStockOptions {
+            unit_cost,
+            lot_id,
+            new_lot,
+            posting_date,
+            actor_id: Some(i64::from(user.user_id)),
+        },
+    )
+    .await
 }
 
 #[tauri::command]
@@ -1564,4 +1581,259 @@ pub async fn convert_unit_quantity(
         article_id,
     )
     .await
+}
+
+// ── Issue desk (migration 184) ───────────────────────────────────────────────
+
+/// Issues stock to a work order from the store (scan + pick). Same posting path as WO part usage.
+#[tauri::command]
+pub async fn issue_inventory_stock_to_work_order(
+    mut request: crate::inventory::domain::IssueStockRequest,
+    state: State<'_, AppState>,
+) -> AppResult<crate::inventory::domain::IssueOutcome> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INV_MANAGE,
+        PermissionScope::Global
+    );
+    // Who issued comes from the session, never from the UI payload.
+    request.actor_id = Some(i64::from(user.user_id));
+    crate::inventory::issue::issue_stock(&state.db, request).await
+}
+
+#[tauri::command]
+pub async fn resolve_inventory_scan(
+    value: String,
+    state: State<'_, AppState>,
+) -> AppResult<crate::inventory::domain::ScanResolution> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INV_VIEW,
+        PermissionScope::Global
+    );
+    crate::inventory::issue::resolve_scan(&state.db, value).await
+}
+
+#[tauri::command]
+pub async fn list_inventory_lot_stock(
+    article_id: i64,
+    location_id: Option<i64>,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::inventory::domain::LotStock>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INV_VIEW,
+        PermissionScope::Global
+    );
+    crate::inventory::lots::list_lot_stock(&state.db, article_id, location_id).await
+}
+
+#[tauri::command]
+pub async fn list_inventory_expiring_lots(
+    within_days: i64,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::inventory::domain::LotStock>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INV_VIEW,
+        PermissionScope::Global
+    );
+    crate::inventory::lots::list_expiring_lots(&state.db, within_days).await
+}
+
+// ── Currencies ───────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn list_currency_exchange_rates(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::inventory::domain::CurrencyExchangeRate>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INV_VIEW,
+        PermissionScope::Global
+    );
+    crate::inventory::fx::list_rates(&state.db).await
+}
+
+#[tauri::command]
+pub async fn create_currency_exchange_rate(
+    input: crate::inventory::domain::CurrencyExchangeRateInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::inventory::domain::CurrencyExchangeRate> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INV_PROCURE,
+        PermissionScope::Global
+    );
+    crate::inventory::fx::create_rate(&state.db, input, Some(i64::from(user.user_id))).await
+}
+
+#[tauri::command]
+pub async fn deactivate_currency_exchange_rate(rate_id: i64, state: State<'_, AppState>) -> AppResult<()> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INV_PROCURE,
+        PermissionScope::Global
+    );
+    crate::inventory::fx::deactivate_rate(&state.db, rate_id).await
+}
+
+#[tauri::command]
+pub async fn resolve_currency_exchange_rate(
+    from_currency: String,
+    on_date: Option<String>,
+    state: State<'_, AppState>,
+) -> AppResult<crate::inventory::domain::ResolvedExchangeRate> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INV_VIEW,
+        PermissionScope::Global
+    );
+    crate::inventory::fx::resolve_rate(&state.db, from_currency, on_date).await
+}
+
+// ── Valuation reports and periods ────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn get_inventory_valuation_report(
+    as_at: Option<String>,
+    group_by: String,
+    state: State<'_, AppState>,
+) -> AppResult<crate::inventory::domain::ValuationReport> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INV_VIEW,
+        PermissionScope::Global
+    );
+    crate::inventory::periods::valuation_report(&state.db, as_at, group_by).await
+}
+
+#[tauri::command]
+pub async fn list_inventory_valuation_periods(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::inventory::domain::InventoryValuationPeriod>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INV_VIEW,
+        PermissionScope::Global
+    );
+    crate::inventory::periods::list_periods(&state.db).await
+}
+
+#[tauri::command]
+pub async fn close_inventory_valuation_period(
+    mut input: crate::inventory::domain::CloseValuationPeriodInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::inventory::domain::InventoryValuationPeriod> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::FIN_POST,
+        PermissionScope::Global
+    );
+    input.actor_id = Some(i64::from(user.user_id));
+    crate::inventory::periods::close_period(&state.db, input).await
+}
+
+// ── Approval limits ──────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn list_procurement_approval_limits(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::inventory::domain::ProcurementApprovalLimit>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INV_VIEW,
+        PermissionScope::Global
+    );
+    crate::inventory::approvals::list_limits(&state.db).await
+}
+
+#[tauri::command]
+pub async fn upsert_procurement_approval_limit(
+    mut input: crate::inventory::domain::ProcurementApprovalLimitInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::inventory::domain::ProcurementApprovalLimit> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_ROLES,
+        PermissionScope::Global
+    );
+    input.actor_id = Some(i64::from(user.user_id));
+    crate::inventory::approvals::upsert_limit(&state.db, input).await
+}
+
+// ── Multi-line requisitions ──────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn create_inventory_multi_line_requisition(
+    mut input: crate::inventory::domain::CreateMultiLineRequisitionInput,
+    state: State<'_, AppState>,
+) -> AppResult<ProcurementRequisition> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INV_PROCURE,
+        PermissionScope::Global
+    );
+    input.actor_id = Some(i64::from(user.user_id));
+    procurement::create_multi_line_requisition(&state.db, input).await
+}
+
+#[tauri::command]
+pub async fn replace_inventory_requisition_lines(
+    mut input: crate::inventory::domain::ReplaceRequisitionLinesInput,
+    state: State<'_, AppState>,
+) -> AppResult<ProcurementRequisition> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INV_PROCURE,
+        PermissionScope::Global
+    );
+    input.actor_id = Some(i64::from(user.user_id));
+    procurement::replace_requisition_lines(&state.db, input).await
+}
+
+#[tauri::command]
+pub async fn set_inventory_purchase_order_line_price(
+    po_line_id: i64,
+    unit_price: Option<f64>,
+    state: State<'_, AppState>,
+) -> AppResult<crate::inventory::domain::PurchaseOrderLine> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INV_PROCURE,
+        PermissionScope::Global
+    );
+    procurement::set_purchase_order_line_price(&state.db, po_line_id, unit_price).await
 }

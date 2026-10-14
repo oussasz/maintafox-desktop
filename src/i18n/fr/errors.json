@@ -62,6 +62,12 @@
     "INTERNAL_ERROR": "Une erreur interne s'est produite."
   },
   "gateError": {
+    "GATE_INV_PERIOD_CLOSED": "Mouvement refusé : cette date tombe dans une période de stock clôturée. Utilisez une date postérieure à la période clôturée.",
+    "GATE_PROC_SELF_APPROVAL": "Approbation refusée : vous ne pouvez pas approuver un document que vous avez vous-même demandé. Un autre approbateur doit l'approuver.",
+    "GATE_PROC_APPROVAL_LIMIT": "Approbation refusée : le montant dépasse votre plafond d'approbation. Un utilisateur disposant d'un plafond supérieur doit l'approuver.",
+    "GATE_PROC_NO_APPROVAL_LIMIT": "Approbation refusée : aucun de vos rôles n'a de plafond d'approbation pour ce type de document.",
+    "GATE_PROC_AMOUNT_UNKNOWN": "Approbation refusée : le montant du document ne peut pas être établi. Saisissez d'abord les prix unitaires de ses lignes.",
+    "GATE_PROC_NO_EXCHANGE_RATE": "Réception refusée : aucun taux de change pour la devise de la commande à la date de réception. Saisissez le taux ou ajoutez-le dans Taux et approbations.",
     "GATE_FMECA_REFERENCE_MODES_NOT_PUBLISHED": "Mise à jour FMECA bloquée : publiez d'abord des valeurs actives dans WORK.FAILURE_MODES.",
     "GATE_FMECA_FAILURE_MODE_NOT_GOVERNED": "Mise à jour FMECA bloquée : le mode de défaillance sélectionné n'est pas gouverné par WORK.FAILURE_MODES publié.",
     "GATE_CLOSEOUT_REFERENCE_MODES_NOT_PUBLISHED": "Clôture bloquée : WORK.FAILURE_MODES ne contient aucune valeur active publiée.",

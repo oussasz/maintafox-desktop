@@ -14,11 +14,14 @@ import {
   type ExtendedArticleInput,
 } from "@/components/inventory/ArticleEditorFields";
 import { InventoryControlsPanel } from "@/components/inventory/InventoryControlsPanel";
+import { InventoryIssueDesk } from "@/components/inventory/InventoryIssueDesk";
+import { InventoryValuationPanel } from "@/components/inventory/InventoryValuationPanel";
 import {
   type ProcurementPanelRequest,
   ProcurementRepairablePanel,
   type ProcurementRepairablePanelHandle,
 } from "@/components/inventory/ProcurementRepairablePanel";
+import { ProcurementRulesPanel } from "@/components/inventory/ProcurementRulesPanel";
 import { UnitConversionsPanel } from "@/components/inventory/UnitConversionsPanel";
 import {
   WarehouseLocationPanel,
@@ -93,9 +96,19 @@ const EMPTY_ARTICLE_FORM: ExtendedArticleInput = {
   requires_expiration: null,
   shelf_life_days: null,
   requires_batch_tracking: null,
+  barcode: null,
+  requires_serial_tracking: null,
 };
 
-type InventoryTab = "master" | "topology" | "procurement" | "controls" | "units";
+type InventoryTab =
+  | "master"
+  | "issueDesk"
+  | "topology"
+  | "procurement"
+  | "controls"
+  | "valuation"
+  | "rules"
+  | "units";
 type ProcurementView = "list" | "kanban";
 
 function readProcurementView(): ProcurementView {
@@ -656,7 +669,12 @@ export function InventoryPage() {
     if (invTab === "procurement") {
       void procurementPanelRef.current?.reload();
     }
-    if (invTab === "controls") {
+    if (
+      invTab === "controls" ||
+      invTab === "issueDesk" ||
+      invTab === "valuation" ||
+      invTab === "rules"
+    ) {
       setControlsReloadToken((v) => v + 1);
     }
     void loadAll();
@@ -761,9 +779,12 @@ export function InventoryPage() {
       >
         <TabsList className="w-fit flex-wrap">
           <TabsTrigger value="master">{t("page.tabs.master")}</TabsTrigger>
+          <TabsTrigger value="issueDesk">{t("page.tabs.issueDesk")}</TabsTrigger>
           <TabsTrigger value="topology">{t("page.tabs.topology")}</TabsTrigger>
           <TabsTrigger value="procurement">{t("page.tabs.procurement")}</TabsTrigger>
           <TabsTrigger value="controls">{t("page.tabs.controls")}</TabsTrigger>
+          <TabsTrigger value="valuation">{t("page.tabs.valuation")}</TabsTrigger>
+          <TabsTrigger value="rules">{t("page.tabs.rules")}</TabsTrigger>
           <TabsTrigger value="units">{t("unitConversions.tab")}</TabsTrigger>
         </TabsList>
 
@@ -847,6 +868,17 @@ export function InventoryPage() {
         </TabsContent>
         <TabsContent value="controls" className="mt-4 space-y-4">
           <InventoryControlsPanel reloadToken={controlsReloadToken} />
+        </TabsContent>
+        <TabsContent value="issueDesk" className="mt-4 space-y-4">
+          {invTab === "issueDesk" ? <InventoryIssueDesk reloadToken={controlsReloadToken} /> : null}
+        </TabsContent>
+        <TabsContent value="valuation" className="mt-4 space-y-4">
+          {invTab === "valuation" ? (
+            <InventoryValuationPanel reloadToken={controlsReloadToken} />
+          ) : null}
+        </TabsContent>
+        <TabsContent value="rules" className="mt-4 space-y-4">
+          {invTab === "rules" ? <ProcurementRulesPanel reloadToken={controlsReloadToken} /> : null}
         </TabsContent>
       </Tabs>
 

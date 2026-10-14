@@ -62,6 +62,12 @@
     "INTERNAL_ERROR": "An internal error occurred."
   },
   "gateError": {
+    "GATE_INV_PERIOD_CLOSED": "Posting refused: this date falls in a closed inventory period. Use a date after the closed period.",
+    "GATE_PROC_SELF_APPROVAL": "Approval refused: you cannot approve a document you requested yourself. Another approver must approve it.",
+    "GATE_PROC_APPROVAL_LIMIT": "Approval refused: the amount is above your approval limit. A user with a higher limit must approve it.",
+    "GATE_PROC_NO_APPROVAL_LIMIT": "Approval refused: none of your roles has an approval limit for this document type.",
+    "GATE_PROC_AMOUNT_UNKNOWN": "Approval refused: the document amount cannot be established. Enter the unit prices of its lines first.",
+    "GATE_PROC_NO_EXCHANGE_RATE": "Receipt refused: no exchange rate for the order currency on the receipt date. Enter the rate or add it under Rates & approvals.",
     "GATE_FMECA_REFERENCE_MODES_NOT_PUBLISHED": "FMECA update blocked: publish active values in WORK.FAILURE_MODES first.",
     "GATE_FMECA_FAILURE_MODE_NOT_GOVERNED": "FMECA update blocked: selected failure mode is not governed by published WORK.FAILURE_MODES.",
     "GATE_CLOSEOUT_REFERENCE_MODES_NOT_PUBLISHED": "Closeout blocked: WORK.FAILURE_MODES has no published active values.",

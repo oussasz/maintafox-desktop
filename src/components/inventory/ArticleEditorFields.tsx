@@ -11,16 +11,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import type {
-  ArticleFamily,
-  InventoryArticleInput,
-  LookupValueOption,
-  StockLocation,
-  Warehouse,
-} from "@shared/ipc-types";
+import type { InventoryArticleInputFull } from "@/services/inventory-service";
+import type { ArticleFamily, LookupValueOption, StockLocation, Warehouse } from "@shared/ipc-types";
 
 /** Article form state: the full item-master payload accepted by the backend. */
-export type ExtendedArticleInput = InventoryArticleInput;
+export type ExtendedArticleInput = InventoryArticleInputFull;
 
 export type ArticleEditorFieldsProps = {
   articleForm: ExtendedArticleInput;
@@ -384,6 +379,22 @@ export function ArticleEditorFields({
           }
         />
       </div>
+      <div className="space-y-1">
+        <label htmlFor="article-field-barcode" className="text-xs text-text-muted">
+          {t("article.fields.barcode")}
+        </label>
+        <Input
+          id="article-field-barcode"
+          className="font-mono"
+          autoComplete="off"
+          value={articleForm.barcode ?? ""}
+          aria-describedby="article-field-barcode-hint"
+          onChange={(e) => setArticleForm((s) => ({ ...s, barcode: e.target.value || null }))}
+        />
+        <p id="article-field-barcode-hint" className="text-xs text-text-muted">
+          {t("article.fields.barcodeHint")}
+        </p>
+      </div>
 
       {/* ── REPLENISHMENT (Phase 2) ── */}
       <SectionTitle>{t("article.sections.replenishment")}</SectionTitle>
@@ -637,6 +648,19 @@ export function ArticleEditorFields({
           />
           <label htmlFor="requires-batch-tracking" className="text-sm">
             {t("article.fields.requiresBatchTracking")}
+          </label>
+        </div>
+        <div className="flex items-center gap-2">
+          <input
+            id="requires-serial-tracking"
+            type="checkbox"
+            checked={articleForm.requires_serial_tracking ?? false}
+            onChange={(e) =>
+              setArticleForm((s) => ({ ...s, requires_serial_tracking: e.target.checked }))
+            }
+          />
+          <label htmlFor="requires-serial-tracking" className="text-sm">
+            {t("article.fields.requiresSerialTracking")}
           </label>
         </div>
       </div>

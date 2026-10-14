@@ -43,6 +43,7 @@ import {
   type PurchaseOrderDetailView,
   getInventoryPurchaseOrderDetail,
   listInventoryDocumentLinks,
+  setInventoryPurchaseOrderLinePrice,
   transitionInventoryPurchaseOrder,
   updateInventoryProcurementPostingState,
   upsertInventoryDocumentLink,
@@ -136,12 +137,17 @@ export function PurchaseOrderWorkspace({
 }: PurchaseOrderWorkspaceProps) {
   const { t, i18n } = useTranslation("inventory");
   const locale = intlLocaleForLanguage(i18n.language);
-  const { formatCurrency } = useFormatters();
-  /** Money in the tenant currency (Settings), "—" when unknown. */
-  const fmtMoney = (n: number | null | undefined) =>
-    n == null || !Number.isFinite(n) ? "—" : formatCurrency(n);
+  const { formatCurrency, currencyCode } = useFormatters();
 
   const [detail, setDetail] = useState<PurchaseOrderDetailView | null>(null);
+  /** Currency the PO is priced in (supplier currency); the tenant currency when none. */
+  const poCurrency = detail?.order.currency_code ?? currencyCode;
+  /** Money in the PO currency, "—" when unknown. */
+  const fmtMoney = (n: number | null | undefined) =>
+    n == null || !Number.isFinite(n) ? "—" : formatCurrency(n, poCurrency);
+  const [priceDraft, setPriceDraft] = useState("");
+  const [priceSaving, setPriceSaving] = useState(false);
+  const [priceError, setPriceError] = useState<unknown>(null);
   const [documents, setDocuments] = useState<InventoryDocumentLink[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -192,6 +198,28 @@ export function PurchaseOrderWorkspace({
     () => detail?.lines.find((l) => l.id === selectedLineId) ?? null,
     [detail, selectedLineId],
   );
+
+  useEffect(() => {
+    setPriceDraft(selectedLine?.unit_price != null ? String(selectedLine.unit_price) : "");
+    setPriceError(null);
+  }, [selectedLine]);
+
+  const parsedPrice = priceDraft.trim() === "" ? null : Number(priceDraft.replace(",", "."));
+  const priceInvalid = parsedPrice !== null && !(parsedPrice >= 0);
+
+  const savePrice = async () => {
+    if (!selectedLine || priceInvalid || priceSaving) return;
+    setPriceSaving(true);
+    setPriceError(null);
+    try {
+      await setInventoryPurchaseOrderLinePrice(selectedLine.id, parsedPrice);
+      await load();
+    } catch (err) {
+      setPriceError(err);
+    } finally {
+      setPriceSaving(false);
+    }
+  };
 
   const lateDays = detail
     ? lateByDays(detail.order.expected_delivery_date, detail.order.status)
@@ -348,6 +376,17 @@ export function PurchaseOrderWorkspace({
                       value={formatOrDash(order.ordered_by_name)}
                     />
                     <Field
+                      label={t("procurement.poWorkspace.fields.currency")}
+                      value={
+                        order.currency_code && order.currency_code !== currencyCode
+                          ? t("procurement.poWorkspace.currencyForeign", {
+                              code: order.currency_code,
+                              tenant: currencyCode,
+                            })
+                          : t("procurement.poForm.currencyTenant", { code: currencyCode })
+                      }
+                    />
+                    <Field
                       label={t("procurement.poWorkspace.fields.createdAt")}
                       value={formatDate(order.created_at, locale)}
                     />
@@ -499,6 +538,47 @@ export function PurchaseOrderWorkspace({
                           </button>
                         );
                       })}
+                      {selectedLine && order.status === "DRAFT" ? (
+                        <PermissionGate permission={P.INV_PROCURE}>
+                          <div className="space-y-1 rounded-md border border-dashed p-3">
+                            <Label htmlFor="po-line-price">
+                              {t("procurement.poWorkspace.price.label", {
+                                article: selectedLine.article_code,
+                                currency: poCurrency,
+                              })}
+                            </Label>
+                            <div className="flex gap-2">
+                              <Input
+                                id="po-line-price"
+                                inputMode="decimal"
+                                className="h-11 tabular-nums"
+                                value={priceDraft}
+                                onChange={(e) => setPriceDraft(e.target.value)}
+                                aria-describedby="po-line-price-hint"
+                              />
+                              <Button
+                                type="button"
+                                className="h-11"
+                                disabled={priceSaving || priceInvalid}
+                                onClick={() => void savePrice()}
+                              >
+                                {t("procurement.poWorkspace.price.save")}
+                              </Button>
+                            </div>
+                            <p id="po-line-price-hint" className="text-xs text-text-muted">
+                              {priceInvalid
+                                ? t("procurement.poWorkspace.price.invalid")
+                                : t("procurement.poWorkspace.price.hint")}
+                            </p>
+                            {priceError ? (
+                              <ErrorState
+                                error={priceError}
+                                title={t("procurement.poWorkspace.price.error")}
+                              />
+                            ) : null}
+                          </div>
+                        </PermissionGate>
+                      ) : null}
                       {selectedLine && selectedLine.remaining_qty > 0 ? (
                         <div>
                           <p className="mb-1 text-xs font-medium text-text-muted">

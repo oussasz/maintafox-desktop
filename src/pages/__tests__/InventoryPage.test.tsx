@@ -164,6 +164,8 @@ function article(overrides: Partial<InventoryArticleRow> = {}): InventoryArticle
     avg_unit_cost: null,
     stock_value: null,
     unvalued_qty: 0,
+    barcode: null,
+    requires_serial_tracking: 0,
     ...overrides,
   };
 }

@@ -73,6 +73,30 @@
       "entryHintNoAverage": "This location has no cost yet: the unit cost entered becomes its average cost.",
       "valuedAtAverage": "Valued at the average cost {{average}} ({{value}}).",
       "notValued": "This location has no cost yet: the movement is not valued."
+    },
+    "lots": {
+      "title": "Lot",
+      "serialTitle": "Serial number",
+      "choice": "Lot / serial",
+      "newLot": "New lot",
+      "newSerial": "New serial number",
+      "fefo": "Automatic — first expiring first",
+      "lotNumber": "Lot number",
+      "serialNumber": "Serial number",
+      "expiry": "Expiry date",
+      "expiryOptional": "Expiry date (optional)",
+      "blockers": {
+        "serialQty": "A serial number stands for one unit: enter serialised items one at a time.",
+        "serial": "Enter the serial number.",
+        "lot": "Enter the lot number.",
+        "expiry": "Enter the expiry date of the lot."
+      }
+    },
+    "postingDate": {
+      "label": "Movement date",
+      "hint": "Today unless the movement happened earlier. Dates inside a closed valuation period are refused.",
+      "blocker": "Enter the movement date.",
+      "future": "The movement date cannot be in the future."
     }
   },
   "detail": {
@@ -321,7 +345,8 @@
         "cancel": "Cancel",
         "close": "Close",
         "menu": "Row actions",
-        "createPo": "Create purchase order"
+        "createPo": "Create purchase order",
+        "editLines": "Edit lines"
       },
       "reject": {
         "title": "Reject requisition",
@@ -348,7 +373,9 @@
       },
       "lines": {
         "title": "Lines",
-        "empty": "No lines."
+        "empty": "No lines.",
+        "estimate": "est. {{cost}} · {{total}}",
+        "noEstimate": "no estimate"
       },
       "hints": {
         "DRAFT": "Draft: submit it so it can be approved.",
@@ -543,7 +570,9 @@
         "status": "Status",
         "paymentTerms": "Payment terms",
         "leadTime": "Default lead time (days)",
-        "active": "Active"
+        "active": "Active",
+        "currency": "Invoicing currency",
+        "currencyHint": "ISO code (e.g. EUR). Leave empty when the supplier invoices in {{currency}}."
       },
       "status": {
         "PREFERRED": "Preferred",
@@ -736,13 +765,45 @@
         "noLines": "Enter a received quantity on at least one line.",
         "location": "Select a receipt location for every line with a received quantity.",
         "overRemaining": "Received quantity cannot exceed the remaining quantity.",
-        "rejectedExceeds": "Rejected quantity cannot exceed the received quantity."
+        "rejectedExceeds": "Rejected quantity cannot exceed the received quantity.",
+        "postingDate": "Enter the receipt date.",
+        "futureDate": "The receipt date cannot be in the future.",
+        "rate": "Enter an exchange rate greater than 0.",
+        "rateMissing": "Enter the {{currency}} exchange rate: none is stored for this date."
       },
       "fulfillmentAction": "Fulfillment action",
       "fulfillmentValues": {
         "STOCK_ONLY": "Stock only",
         "RESERVE_FOR_DEMAND": "Reserve for demand",
         "ISSUE_TO_DEMAND": "Issue to demand"
+      },
+      "postError": "The receipt could not be posted",
+      "postingDate": "Receipt date",
+      "postingDateHint": "Back-dated receipts are refused inside a closed valuation period.",
+      "rate": {
+        "label": "Exchange rate: 1 {{from}} = ? {{to}}",
+        "stored": "Leave empty to use the stored rate {{rate}} (valid from {{date}}).",
+        "none": "No stored rate on this date: enter the rate of the day."
+      },
+      "stockCost": "Stock cost: {{cost}} per unit",
+      "lots": {
+        "title": "Lots received",
+        "serialTitle": "Serial numbers received",
+        "lotNumber": "Lot number",
+        "serialNumber": "Serial number",
+        "expiry": "Expiry date",
+        "expiryOptional": "Expiry date (optional)",
+        "quantity": "Quantity",
+        "remove": "Remove lot {{n}}",
+        "add": "Add a lot",
+        "addSerial": "Add a serial number",
+        "sum": "{{sum}} of {{accepted}} accepted",
+        "errors": {
+          "missing": "{{article}}: enter the lot or serial number of every accepted unit.",
+          "expiry": "{{article}}: enter the expiry date of every lot.",
+          "serialQty": "{{article}}: one serial number stands for exactly one unit.",
+          "sum": "{{article}}: the lots must add up to the accepted quantity."
+        }
       }
     },
     "poWorkspace": {
@@ -772,7 +833,8 @@
         "orderedAt": "Ordered",
         "approvedAt": "Approved",
         "expectedDelivery": "Expected delivery",
-        "orderedBy": "Ordered by"
+        "orderedBy": "Ordered by",
+        "currency": "Currency"
       },
       "lines": {
         "empty": "No lines on this purchase order.",
@@ -828,6 +890,14 @@
         "supplierSig": "Supplier",
         "signature": "Signature",
         "date": "Date"
+      },
+      "currencyForeign": "{{code}} (converted into {{tenant}} at receipt)",
+      "price": {
+        "label": "Agreed unit price for {{article}} ({{currency}})",
+        "save": "Save price",
+        "hint": "Prices can be changed while the order is a draft. Leave empty to clear.",
+        "invalid": "Enter a price of 0 or more.",
+        "error": "The price could not be saved"
       }
     },
     "repairableDetail": {
@@ -922,8 +992,19 @@
       "submit": "Create requisition",
       "blockers": {
         "article": "Choose the article to purchase.",
-        "quantity": "Enter a quantity greater than zero."
-      }
+        "quantity": "Enter a quantity greater than zero.",
+        "cost": "Estimated costs must be 0 or more."
+      },
+      "lineLabel": "Line {{n}}",
+      "addLine": "Add a line",
+      "removeLine": "Remove line {{n}}",
+      "estimatedCost": "Estimated unit cost ({{currency}})",
+      "estimatedCostHint": "Estimated costs give the requisition amount that approval limits are checked against. The article's average cost is proposed when it has one.",
+      "lineTotal": "Line: {{total}}",
+      "total": "Estimated total: {{total}}",
+      "totalIncomplete": "Estimated total: {{total}} (some lines have no estimate)",
+      "editTitle": "Edit the lines of {{number}}",
+      "saveLines": "Save lines"
     },
     "poForm": {
       "requisition": "Approved requisition",
@@ -931,7 +1012,10 @@
       "noApproved": "No approved requisition: approve a requisition first.",
       "supplier": "Supplier",
       "supplierHint": "Blocked suppliers are not offered.",
-      "submit": "Create purchase order"
+      "submit": "Create purchase order",
+      "currency": "Order currency",
+      "currencyTenant": "{{code}} (company currency)",
+      "currencyHint": "Prices on the order are in this currency. Each receipt converts them into the company currency at the rate of the day."
     },
     "lifecycle": {
       "title": "Latest lifecycle events",
@@ -1021,7 +1105,10 @@
       "isCriticalSpare": "Critical spare",
       "requiresExpiration": "Requires expiration tracking",
       "shelfLifeDays": "Shelf life (days)",
-      "requiresBatchTracking": "Requires batch tracking"
+      "requiresBatchTracking": "Requires batch tracking",
+      "barcode": "Barcode",
+      "barcodeHint": "Printed on the item or bin label; scanned at the issue desk.",
+      "requiresSerialTracking": "Serial number per unit"
     },
     "actions": {
       "calculateAbc": "Calculate ABC",
@@ -1219,7 +1306,10 @@
       "master": "Articles",
       "topology": "Warehouses & locations",
       "procurement": "Purchasing & repairables",
-      "controls": "Counts & controls"
+      "controls": "Counts & controls",
+      "issueDesk": "Issue desk",
+      "valuation": "Valuation",
+      "rules": "Rates & approvals"
     },
     "actions": {
       "createArticle": "Create article",
@@ -1366,6 +1456,223 @@
         "sourceRef": "Reference",
         "reason": "Reason",
         "notes": "Notes"
+      }
+    }
+  },
+  "issueDesk": {
+    "title": "Issue desk",
+    "description": "Scan or type a part, choose the work order and issue it. The issue posts the same stock movement as part usage on the work order: the reservation is consumed and the parts are valued at the average cost.",
+    "formLabel": "Issue to a work order",
+    "scan": {
+      "label": "Scan or type an article",
+      "placeholder": "Barcode, article code, lot or serial number",
+      "hint": "A barcode scanner types the code and presses Enter.",
+      "submit": "Find",
+      "notFound": "Nothing found for this code",
+      "matched": {
+        "barcode": "Found by barcode",
+        "article_code": "Found by article code",
+        "lot": "Found by lot / serial number"
+      }
+    },
+    "article": {
+      "clear": "Change article"
+    },
+    "workOrder": {
+      "label": "Work order"
+    },
+    "reservation": {
+      "label": "Planned parts (reservation)",
+      "none": "Direct issue (no reservation)",
+      "option": "{{qty}} {{unit}} reserved — {{location}}"
+    },
+    "location": {
+      "label": "Store location",
+      "placeholder": "Choose the location",
+      "available": "{{qty}} {{unit}} available",
+      "empty": "No stock of this article is available in any location."
+    },
+    "lot": {
+      "label": "Lot / serial number",
+      "auto": "Automatic — first expiring first ({{lot}})",
+      "autoNone": "Automatic — first expiring first",
+      "option": "{{lot}} · {{qty}} {{unit}}",
+      "expires": "expires {{date}}",
+      "expired": "expired",
+      "hint": "Automatic issues from the lot that expires first and skips expired lots."
+    },
+    "quantity": {
+      "label": "Quantity"
+    },
+    "submit": "Issue to work order",
+    "submitting": "Issuing…",
+    "error": "The parts could not be issued",
+    "blockers": {
+      "article": "Scan or type the article.",
+      "workOrder": "Choose the work order the parts go to.",
+      "location": "Choose the location the parts leave from.",
+      "quantity": "Enter a quantity greater than 0.",
+      "tooMuch": "Only {{qty}} {{unit}} can be issued from here."
+    },
+    "outcome": {
+      "title": "{{code}} issued to {{wo}}",
+      "line": "{{qty}} {{unit}}{{lot}} at {{cost}} each",
+      "unvalued": "not valued (no cost yet)",
+      "total": "Total cost: {{total}}",
+      "toast": "{{qty}} {{unit}} of {{code}} issued to {{wo}}"
+    },
+    "expiring": {
+      "title": "Lots expiring within {{days}} days",
+      "window": "Window",
+      "windowOption_one": "{{count}} day",
+      "windowOption_other": "{{count}} days",
+      "empty": "No lot in stock expires within {{days}} days.",
+      "loadError": "Expiring lots could not be loaded",
+      "today": "Expires today",
+      "daysLeft_one": "{{count}} day left",
+      "daysLeft_other": "{{count}} days left",
+      "expired_one": "Expired {{count}} day ago",
+      "expired_other": "Expired {{count}} days ago",
+      "columns": {
+        "article": "Article",
+        "lot": "Lot / serial",
+        "location": "Location",
+        "quantity": "Quantity",
+        "expiry": "Expiry"
+      }
+    }
+  },
+  "valuation": {
+    "title": "Stock valuation",
+    "description": "Stock value in {{currency}} at weighted-average cost, by article, warehouse or family, at a date.",
+    "groupBy": {
+      "label": "Group by",
+      "article": "Article",
+      "warehouse": "Warehouse",
+      "family": "Family"
+    },
+    "asAt": {
+      "label": "As at"
+    },
+    "loadError": "The valuation could not be calculated",
+    "total": "Total value",
+    "unvaluedKpi": "Quantity without cost",
+    "unvaluedHint": "Stock that has never been costed is not in the value.",
+    "basis": "Basis",
+    "frozenValue": "Closed period {{code}}",
+    "frozenHint": "Figures frozen when the period was closed.",
+    "liveValue": "Stock ledger",
+    "liveHint": "Figures replayed from the stock movements up to the date.",
+    "empty": "No stock at this date.",
+    "noFamily": "Without family",
+    "columns": {
+      "code": "Code",
+      "name": "Name",
+      "articles": "Articles",
+      "quantity": "Quantity",
+      "value": "Value",
+      "unvalued": "Without cost"
+    },
+    "periods": {
+      "title": "Closed periods",
+      "description": "A closed period keeps the valuation it had at its last day. Movements dated inside it are refused.",
+      "close": "Close a period",
+      "empty": "No period has been closed yet.",
+      "loadError": "Closed periods could not be loaded",
+      "range": "{{start}} – {{end}}",
+      "columns": {
+        "code": "Period",
+        "dates": "Dates",
+        "value": "Frozen value",
+        "closedBy": "Closed by",
+        "closedAt": "Closed on",
+        "notes": "Notes"
+      }
+    },
+    "close": {
+      "title": "Close a valuation period",
+      "description": "Closing freezes the stock valuation at the last day of the period. Afterwards, any movement dated in the period is refused. This cannot be undone.",
+      "start": "First day",
+      "end": "Last day",
+      "notes": "Notes",
+      "confirm": "Close period",
+      "error": "The period could not be closed",
+      "done": "Period {{code}} closed at {{value}}.",
+      "blockers": {
+        "dates": "Enter the first and the last day.",
+        "order": "The last day must be on or after the first day.",
+        "future": "Only a period that has ended can be closed."
+      }
+    }
+  },
+  "rules": {
+    "fx": {
+      "title": "Exchange rates",
+      "description": "Supplier prices in another currency are converted into {{currency}} when goods are received: the receipt uses the rate entered on it, otherwise the latest rate below valid on the receipt date.",
+      "add": "Add a rate",
+      "empty": "No rate stored. A receipt in a foreign currency then needs its rate entered on the receipt.",
+      "loadError": "Exchange rates could not be loaded",
+      "saved": "Exchange rate saved.",
+      "pair": "1 {{from}} = {{rate}} {{to}}",
+      "active": "In use",
+      "retired": "Retired",
+      "deactivate": "Retire",
+      "columns": {
+        "pair": "Rate",
+        "validFrom": "Valid from",
+        "source": "Source",
+        "createdBy": "Entered by",
+        "status": "Status",
+        "actions": "Actions"
+      },
+      "form": {
+        "description": "The rate converts 1 unit of the supplier currency into {{currency}}.",
+        "from": "Supplier currency (ISO code)",
+        "rate": "Value in {{currency}}",
+        "validFrom": "Valid from",
+        "source": "Source (bank, contract…)",
+        "submit": "Save rate",
+        "error": "The rate could not be saved",
+        "blockers": {
+          "currency": "Enter a 3-letter currency code other than {{currency}}.",
+          "rate": "Enter a rate greater than 0.",
+          "date": "Enter the date the rate applies from."
+        }
+      },
+      "deactivateConfirm": {
+        "title": "Retire this rate?",
+        "description": "Receipts will no longer use 1 {{from}} = {{rate}} {{to}} (valid from {{date}}). Receipts already posted keep the rate they were posted with."
+      }
+    },
+    "limits": {
+      "title": "Approval limits",
+      "description": "Highest amount (in {{currency}}) each role may approve. While no limit is set for a document type, any user with the purchasing permission may approve it. Once one is set, only roles with a limit may approve, up to that limit.",
+      "sod": "Whatever the limits, the person who created a requisition or a purchase order can never approve it.",
+      "loadError": "Approval limits could not be loaded",
+      "rolesUnavailable": "The role list needs role administration rights; only roles that already have a limit are shown.",
+      "empty": "No role to show.",
+      "saved": "Approval limit saved.",
+      "unlimited": "Unlimited",
+      "notAllowed": "Not allowed",
+      "noRule": "No limit set",
+      "edit": "Edit",
+      "editFor": "Edit the {{doc}} limit of {{role}}",
+      "docTypes": {
+        "REQUISITION": "Requisitions",
+        "PURCHASE_ORDER": "Purchase orders"
+      },
+      "columns": {
+        "role": "Role"
+      },
+      "form": {
+        "title": "{{doc}} — {{role}}",
+        "description": "Amounts are in the company currency; purchase orders in another currency are converted at the stored rate of the day.",
+        "maxAmount": "Maximum amount ({{currency}})",
+        "maxHint": "Leave empty for no ceiling.",
+        "active": "Limit in force",
+        "submit": "Save limit",
+        "error": "The limit could not be saved",
+        "blocker": "Enter an amount of 0 or more, or leave it empty."
       }
     }
   }
