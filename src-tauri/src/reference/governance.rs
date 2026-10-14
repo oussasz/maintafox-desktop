@@ -84,12 +84,9 @@ pub const ACTIVE_ENFORCEMENT_PHASE: EnforcementPhase = EnforcementPhase::Target;
 /// Known production domain codes → category (philosophy table).
 fn category_for_known_code(code: &str) -> Option<GovernanceCategory> {
     match normalize_domain_code(code).as_str() {
-        "EQUIPMENT.STATUS"
-        | "EQUIPMENT.CRITICALITY"
-        | "EQUIPMENT.CLASS"
-        | "DI.PRIORITY"
-        | "DI.IMPACT_LEVEL"
-        | "DI.REQUEST_TYPE" => Some(GovernanceCategory::SystemCatalog),
+        "EQUIPMENT.STATUS" | "EQUIPMENT.CRITICALITY" | "DI.PRIORITY" | "DI.IMPACT_LEVEL" | "DI.REQUEST_TYPE" => {
+            Some(GovernanceCategory::SystemCatalog)
+        }
 
         "EQUIPMENT.FAMILY"
         | "EQUIPMENT.SUBFAMILY"
@@ -101,7 +98,11 @@ fn category_for_known_code(code: &str) -> Option<GovernanceCategory> {
         | "WORK.DELAY_REASONS"
         | "WORK.PART_UNUSED_REASON" => Some(GovernanceCategory::OperationalDictionary),
 
-        "WORK.FAILURE_MODES"
+        // Equipment classes (ISO 14224 taxonomy): the product seeds the baseline classes, each plant
+        // adds its own (presses, boilers, transformers, packaging lines, …) through draft → publish.
+        // The seeded classes stay protected (see `system_values_locked`).
+        "EQUIPMENT.CLASS"
+        | "WORK.FAILURE_MODES"
         | "WORK.SYMPTOMS"
         | "WORK.FAILURE_CAUSES"
         | "WORK.FAILURE_EFFECTS"
@@ -135,19 +136,24 @@ fn category_from_legacy_level(governance_level: &str) -> GovernanceCategory {
 
 /// Resolve the effective category for a domain.
 ///
-/// Precedence: stored `governance_category` → known code map → legacy level.
+/// Precedence: known product code map → stored `governance_category` → legacy level.
+///
+/// The product domains of the map are governed by this file alone: the stored column is only a
+/// copy kept aligned by the integrity seeders, and some seeders write a fixed value for it. Letting
+/// the map win keeps one decision for those domains whatever an older seeder or replica stored.
+/// Tenant-created domains (codes outside the map) keep their stored category.
 pub fn resolve_category(
     domain_code: &str,
     legacy_governance_level: &str,
     stored_category: Option<&str>,
 ) -> GovernanceCategory {
+    if let Some(cat) = category_for_known_code(domain_code) {
+        return cat;
+    }
     if let Some(raw) = stored_category {
         if let Some(cat) = GovernanceCategory::parse(raw) {
             return cat;
         }
-    }
-    if let Some(cat) = category_for_known_code(domain_code) {
-        return cat;
     }
     category_from_legacy_level(legacy_governance_level)
 }
@@ -231,6 +237,55 @@ pub fn allows_publish(category: GovernanceCategory) -> bool {
     }
 }
 
+/// Domains whose product-seeded values (`metadata_json.origin = "system"`) are owned by the
+/// startup integrity seeders, which re-apply their label, order and active flag on every run
+/// (`assets::taxonomy_reference`). Tenants extend these domains with their own values; the seeded
+/// values cannot be edited, deactivated or re-parented, because the next startup would silently
+/// undo the change. Local wording for a seeded value goes through aliases.
+fn has_integrity_owned_system_values(code: &str) -> bool {
+    matches!(
+        normalize_domain_code(code).as_str(),
+        "EQUIPMENT.CLASS" | "EQUIPMENT.FAMILY" | "EQUIPMENT.SUBFAMILY" | "EQUIPMENT.STATUS" | "EQUIPMENT.CRITICALITY"
+    )
+}
+
+/// Whether the product-seeded values of this domain are locked for tenants.
+pub fn system_values_locked(domain: &ReferenceDomain) -> bool {
+    has_integrity_owned_system_values(&domain.code)
+}
+
+/// `metadata_json` marks a product-seeded value (`{"origin":"system"}`).
+pub fn metadata_marks_system_origin(metadata_json: Option<&str>) -> bool {
+    let Some(raw) = metadata_json else {
+        return false;
+    };
+    match serde_json::from_str::<serde_json::Value>(raw) {
+        Ok(v) => v.get("origin").and_then(|o| o.as_str()) == Some("system"),
+        Err(_) => false,
+    }
+}
+
+/// Refuses a tenant change to a product-seeded value of a locked domain.
+pub fn assert_system_value_mutable(domain: &ReferenceDomain, value_metadata_json: Option<&str>) -> AppResult<()> {
+    if system_values_locked(domain) && metadata_marks_system_origin(value_metadata_json) {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "Cette valeur est fournie par le produit pour le domaine '{}' et ne peut pas être modifiée              ni désactivée. Ajoutez un alias pour un libellé local, ou créez votre propre valeur.",
+            domain.code
+        )]));
+    }
+    Ok(())
+}
+
+/// Refuses tenant input that claims product origin (only the seeders create system values).
+pub fn assert_not_claiming_system_origin(metadata_json: Option<&str>) -> AppResult<()> {
+    if metadata_marks_system_origin(metadata_json) {
+        return Err(AppError::ValidationFailed(vec![
+            "L'origine « system » est réservée aux valeurs fournies par le produit.".into(),
+        ]));
+    }
+    Ok(())
+}
+
 /// Whether governed publish requires an impact preview (analytical catalogs).
 pub fn requires_publish_impact_preview(domain: &ReferenceDomain) -> bool {
     requires_analytical_protection(domain)
@@ -263,6 +318,8 @@ pub struct ReferenceGovernanceCapabilities {
     pub is_read_only: bool,
     pub requires_analytical_protection: bool,
     pub set_status: Option<String>,
+    /// Product-seeded values of this domain cannot be edited, deactivated or moved by tenants.
+    pub system_values_locked: bool,
 }
 
 /// Build capability snapshot for a domain and optional selected set.
@@ -291,6 +348,7 @@ pub fn capabilities_for(domain: &ReferenceDomain, set: Option<&ReferenceSet>) ->
         is_read_only: read_only,
         requires_analytical_protection: requires_analytical_protection(domain),
         set_status: set.map(|s| s.status.clone()),
+        system_values_locked: system_values_locked(domain),
     }
 }
 

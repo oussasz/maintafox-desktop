@@ -344,6 +344,9 @@ pub async fn publish_reference_set(
     ))
     .await?;
 
+    // Records saved against an earlier version now point at the same code in this version.
+    remap_usage_to_published_set(&txn, set.domain_id, set_id).await?;
+
     txn.commit().await?;
 
     let published_set = sets::get_reference_set(db, set_id).await?;
@@ -357,16 +360,108 @@ pub async fn publish_reference_set(
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
 
-/// Count deactivated values in a set that have no migration map entry.
+/// Re-points every record that uses a value of an earlier version of the domain to the value with
+/// the same code in the newly published set, and returns the number of rows changed.
+///
+/// A draft copies the published values under new ids (`sets::create_draft_set`), so without this
+/// step records would keep pointing at the superseded version once the draft is published: forms
+/// that list the published catalog would no longer find their value, and children in another
+/// domain (equipment families under a class) would hang off a retired parent.
+///
+/// Covered: every foreign key to `reference_values(id)` of the schema outside the catalog tables
+/// (found with `pragma_foreign_key_list`, as the impact preview does), and cross-domain parents in
+/// the live sets of other domains. Codes absent from the new set keep their old target (the impact
+/// preview lists them as removed). A row whose new target would break a uniqueness rule of its
+/// table keeps its old target (`UPDATE OR IGNORE`). Each update goes through the sync capture
+/// triggers like any other edit.
+pub(crate) async fn remap_usage_to_published_set(
+    conn: &impl ConnectionTrait,
+    domain_id: i64,
+    published_set_id: i64,
+) -> AppResult<i64> {
+    // Old value ids of the domain that have a same-code value in the new set.
+    const OLD_IDS: &str = "SELECT ov.id FROM reference_values ov \
+         JOIN reference_sets os ON os.id = ov.set_id \
+         JOIN reference_values nv ON nv.set_id = ? AND nv.code = ov.code \
+         WHERE os.domain_id = ? AND os.id <> ? AND os.status IN ('published', 'superseded')";
+
+    let mut changed: i64 = 0;
+    for (table, column) in super::impact::referencing_columns(conn, "reference_values").await? {
+        let t = quote_ident(&table);
+        let c = quote_ident(&column);
+        let result = conn
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                format!(
+                    "UPDATE OR IGNORE {t} SET {c} = ( \
+                         SELECT nv.id FROM reference_values ov \
+                         JOIN reference_values nv ON nv.set_id = ? AND nv.code = ov.code \
+                         WHERE ov.id = {t}.{c}) \
+                     WHERE {c} IN ({OLD_IDS})"
+                ),
+                [
+                    published_set_id.into(),
+                    published_set_id.into(),
+                    domain_id.into(),
+                    published_set_id.into(),
+                ],
+            ))
+            .await?;
+        changed += result.rows_affected() as i64;
+    }
+
+    // Children kept in other domains (EQUIPMENT.FAMILY under EQUIPMENT.CLASS, …).
+    let result = conn
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "UPDATE reference_values SET parent_id = ( \
+                     SELECT nv.id FROM reference_values ov \
+                     JOIN reference_values nv ON nv.set_id = ? AND nv.code = ov.code \
+                     WHERE ov.id = reference_values.parent_id) \
+                 WHERE set_id IN ( \
+                     SELECT id FROM reference_sets \
+                     WHERE domain_id <> ? AND status IN ('draft', 'validated', 'published')) \
+                   AND parent_id IN ({OLD_IDS})"
+            ),
+            [
+                published_set_id.into(),
+                domain_id.into(),
+                published_set_id.into(),
+                domain_id.into(),
+                published_set_id.into(),
+            ],
+        ))
+        .await?;
+    changed += result.rows_affected() as i64;
+
+    Ok(changed)
+}
+
+fn quote_ident(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
+}
+
+/// Count values the candidate deactivates that have no migration map entry.
+///
+/// A value already inactive in the published set is carried over by the draft copy; it is not a
+/// new deactivation and needs no migration map.
 async fn count_unresolved_deactivations(db: &impl ConnectionTrait, set_id: i64) -> AppResult<i64> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT COUNT(*) AS cnt FROM reference_values rv \
+             JOIN reference_sets cs ON cs.id = rv.set_id \
              WHERE rv.set_id = ? AND rv.is_active = 0 \
                AND NOT EXISTS ( \
                    SELECT 1 FROM reference_value_migrations \
                    WHERE from_value_id = rv.id \
+               ) \
+               AND NOT EXISTS ( \
+                   SELECT 1 FROM reference_values pv \
+                   JOIN reference_sets ps ON ps.id = pv.set_id \
+                   WHERE ps.domain_id = cs.domain_id AND ps.status = 'published' \
+                     AND ps.id <> cs.id AND pv.code = rv.code AND pv.is_active = 0 \
                )",
             [set_id.into()],
         ))

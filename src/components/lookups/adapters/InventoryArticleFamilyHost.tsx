@@ -23,6 +23,7 @@ import type { ReferenceTableCapabilities } from "@/components/lookups/reference-
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { StatusChip } from "@/components/ui/status-chip";
 import { usePermissions } from "@/hooks/use-permissions";
 import {
   createInventoryArticleFamily,
@@ -30,7 +31,7 @@ import {
   listInventoryArticleFamilies,
   updateInventoryArticleFamily,
 } from "@/services/inventory-service";
-import { toErrorMessage } from "@/utils/errors";
+import { referenceErrorText } from "@/stores/reference-error-text";
 import type { ArticleFamily } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -56,6 +57,7 @@ export function InventoryArticleFamilyHost() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [newDraft, setNewDraft] = useState<FamilyDraft | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editingDraft, setEditingDraft] = useState<FamilyDraft>(EMPTY_DRAFT);
@@ -64,10 +66,11 @@ export function InventoryArticleFamilyHost() {
   const loadFamilies = async () => {
     setLoading(true);
     setError(null);
+    setLoadError(null);
     try {
       setFamilies(await listInventoryArticleFamilies());
     } catch (err) {
-      setError(toErrorMessage(err));
+      setLoadError(err);
     } finally {
       setLoading(false);
     }
@@ -105,7 +108,7 @@ export function InventoryArticleFamilyHost() {
       setNewDraft(null);
       await loadFamilies();
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(referenceErrorText(err));
     } finally {
       setSaving(false);
     }
@@ -125,7 +128,7 @@ export function InventoryArticleFamilyHost() {
       cancelEdit();
       await loadFamilies();
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(referenceErrorText(err));
     } finally {
       setSaving(false);
     }
@@ -140,7 +143,8 @@ export function InventoryArticleFamilyHost() {
       setDeleteTarget(null);
       await loadFamilies();
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(referenceErrorText(err));
+      throw err;
     } finally {
       setSaving(false);
     }
@@ -150,12 +154,16 @@ export function InventoryArticleFamilyHost() {
     <ReferenceValueTable
       loading={loading && families.length === 0}
       error={error}
+      loadError={loadError}
+      onRetry={() => void loadFamilies()}
       title={
         <>
           <span className={REF_TABLE_TITLE_CLASS}>{t("synthetic.articleFamilies.title")}</span>
-          <Badge variant="default" className={REF_TABLE_BADGE_CLASS}>
-            {t("synthetic.published")}
-          </Badge>
+          <StatusChip
+            label={t("synthetic.liveTable")}
+            tone="info"
+            title={t("synthetic.liveTableHint")}
+          />
         </>
       }
       toolbar={
@@ -186,12 +194,10 @@ export function InventoryArticleFamilyHost() {
                 code: deleteTarget.code,
               }),
               confirmLabel: t("editor.deactivate"),
-              cancelLabel: t("editor.cancel"),
-              busy: saving,
               onOpenChange: (open) => {
                 if (!open) setDeleteTarget(null);
               },
-              onConfirm: () => void submitDeactivate(),
+              onConfirm: submitDeactivate,
             }
           : null
       }
@@ -252,6 +258,8 @@ export function InventoryArticleFamilyHost() {
               <ReferenceValueTableCell align="right">
                 <div className={REF_TABLE_ACTIONS_GROUP_CLASS}>
                   <Button
+                    aria-label={String(t("editor.save"))}
+                    title={String(t("editor.save"))}
                     variant="ghost"
                     size="icon"
                     className={refTableIconButtonClass()}
@@ -261,6 +269,8 @@ export function InventoryArticleFamilyHost() {
                     <Check className="h-3.5 w-3.5 text-status-success" />
                   </Button>
                   <Button
+                    aria-label={String(t("editor.cancel"))}
+                    title={String(t("editor.cancel"))}
                     variant="ghost"
                     size="icon"
                     className={refTableIconButtonClass()}
@@ -325,6 +335,8 @@ export function InventoryArticleFamilyHost() {
                   {capabilities.canUpdate && isEditing ? (
                     <div className={REF_TABLE_ACTIONS_GROUP_CLASS}>
                       <Button
+                        aria-label={String(t("editor.save"))}
+                        title={String(t("editor.save"))}
                         variant="ghost"
                         size="icon"
                         className={refTableIconButtonClass()}
@@ -334,6 +346,8 @@ export function InventoryArticleFamilyHost() {
                         <Check className="h-3.5 w-3.5 text-status-success" />
                       </Button>
                       <Button
+                        aria-label={String(t("editor.cancel"))}
+                        title={String(t("editor.cancel"))}
                         variant="ghost"
                         size="icon"
                         className={refTableIconButtonClass()}
@@ -345,6 +359,7 @@ export function InventoryArticleFamilyHost() {
                   ) : capabilities.canUpdate ? (
                     <div className={REF_TABLE_ACTIONS_GROUP_CLASS}>
                       <Button
+                        title={String(t("editor.edit"))}
                         variant="ghost"
                         size="icon"
                         className={refTableIconButtonClass()}
@@ -356,6 +371,7 @@ export function InventoryArticleFamilyHost() {
                       </Button>
                       {capabilities.canDeactivateOrDelete && family.is_active === 1 ? (
                         <Button
+                          title={String(t("editor.deactivate"))}
                           variant="ghost"
                           size="icon"
                           className={refTableIconButtonClass()}

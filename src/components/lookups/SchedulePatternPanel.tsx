@@ -33,7 +33,7 @@ import { TimeInput } from "@/components/ui/time-input";
 import { mfCard } from "@/design-system/tokens";
 import { cn } from "@/lib/utils";
 import { getSchedulePattern, upsertSchedulePattern } from "@/services/reference-service";
-import { toErrorMessage } from "@/utils/errors";
+import { referenceErrorText } from "@/stores/reference-error-text";
 import type { ReferenceValue } from "@shared/ipc-types";
 
 export interface SchedulePatternEditorProps {
@@ -83,7 +83,7 @@ export function SchedulePatternEditor({
       setActiveTemplate("personalized");
       setSelectedDay(1);
     } catch (e) {
-      setError(toErrorMessage(e));
+      setError(referenceErrorText(e));
       setDays(defaultEditorDays());
     } finally {
       setLoading(false);
@@ -141,7 +141,7 @@ export function SchedulePatternEditor({
       onSaved?.();
       onRequestClose?.();
     } catch (e) {
-      setError(toErrorMessage(e));
+      setError(referenceErrorText(e));
     } finally {
       setSaving(false);
     }

@@ -501,12 +501,22 @@ pub async fn validate_set(db: &DatabaseConnection, set_id: i64, actor_id: i64) -
     let result = super::validation::validate_reference_set(db, set_id, actor_id).await?;
 
     if result.blocking_count > 0 {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "Le jeu contient {} problème(s) bloquant(s). \
-             Corrigez-les avant de valider. \
-             Rapport de validation : id={}.",
-            result.blocking_count, result.report_id
-        )]));
+        // Name each problem (with the value code) so the user can fix it without a report id.
+        let mut messages = vec![format!(
+            "Le jeu contient {} problème(s) bloquant(s). Corrigez-les avant de valider.",
+            result.blocking_count
+        )];
+        messages.extend(
+            result
+                .issues
+                .iter()
+                .filter(|i| i.severity == super::validation::IssueSeverity::Blocking)
+                .map(|i| match &i.value_code {
+                    Some(code) => format!("{code} : {}", i.message),
+                    None => i.message.clone(),
+                }),
+        );
+        return Err(AppError::ValidationFailed(messages));
     }
 
     db.execute(Statement::from_sql_and_values(
@@ -539,17 +549,30 @@ pub async fn publish_set(db: &DatabaseConnection, set_id: i64, _actor_id: i64) -
         )]));
     }
 
+    let txn = db.begin().await?;
+
     // Supersede the current published set (if any) before publishing the new one.
-    supersede_previous_published(db, set.domain_id, set_id).await?;
+    txn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE reference_sets SET status = 'superseded' \
+         WHERE domain_id = ? AND status = 'published' AND id != ?",
+        [set.domain_id.into(), set_id.into()],
+    ))
+    .await?;
 
     let now = Utc::now().to_rfc3339();
 
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE reference_sets SET status = 'published', published_at = ? WHERE id = ?",
         [now.into(), set_id.into()],
     ))
     .await?;
+
+    // Records saved against an earlier version follow their code into this version.
+    super::publish::remap_usage_to_published_set(&txn, set.domain_id, set_id).await?;
+
+    txn.commit().await?;
 
     get_set_by_id(db, set_id).await
 }

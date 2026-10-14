@@ -18,12 +18,14 @@ import {
   previewRefPublishImpact,
   reactivateReferenceValue,
   updateReferenceValue,
+  validateReferenceSet,
 } from "@/services/reference-service";
-import { toErrorMessage } from "@/utils/errors";
+import { referenceErrorText } from "@/stores/reference-error-text";
 import type {
   CreateReferenceValuePayload,
   ReferenceImpactSummary,
   ReferencePublishReadiness,
+  ReferencePublishResult,
   ReferenceValue,
   UpdateReferenceValuePayload,
 } from "@shared/ipc-types";
@@ -34,6 +36,8 @@ interface ReferenceGovernanceStoreState {
   /** Values for the currently selected set */
   values: ReferenceValue[];
   valuesLoading: boolean;
+  /** The values of the selected set could not be loaded (shown in place of the table). */
+  valuesError: string | null;
   /** ID of the value currently in inline-edit mode (null = none) */
   editingValueId: number | null;
   /** Transient new-value row being created (null = none) */
@@ -58,7 +62,12 @@ interface ReferenceGovernanceStoreState {
 
   loadReadiness: (setId: number) => Promise<void>;
   loadImpact: (setId: number) => Promise<void>;
-  publish: (setId: number) => Promise<void>;
+  /**
+   * Governed publish of a candidate set: validates a draft first (validation engine + report),
+   * then publishes through the readiness gates. Rejects on failure (after refreshing readiness so
+   * the blockers show) so a confirmation dialog can stay open.
+   */
+  validateAndPublish: (setId: number, setStatus: string) => Promise<ReferencePublishResult>;
   clearError: () => void;
 }
 
@@ -71,6 +80,7 @@ function replaceValue(values: ReferenceValue[], updated: ReferenceValue): Refere
 export const useReferenceGovernanceStore = create<ReferenceGovernanceStoreState>()((set, get) => ({
   values: [],
   valuesLoading: false,
+  valuesError: null,
   editingValueId: null,
   newValueDraft: null,
   savingValue: false,
@@ -82,12 +92,19 @@ export const useReferenceGovernanceStore = create<ReferenceGovernanceStoreState>
   error: null,
 
   loadValues: async (setId) => {
-    set({ valuesLoading: true, error: null, editingValueId: null, newValueDraft: null });
+    set({
+      valuesLoading: true,
+      valuesError: null,
+      error: null,
+      editingValueId: null,
+      newValueDraft: null,
+    });
     try {
       const values = await listReferenceValues(setId);
       set({ values });
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      const text = referenceErrorText(err);
+      set({ error: text, valuesError: text });
     } finally {
       set({ valuesLoading: false });
     }
@@ -102,7 +119,7 @@ export const useReferenceGovernanceStore = create<ReferenceGovernanceStoreState>
         editingValueId: null,
       });
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: referenceErrorText(err) });
       throw err;
     } finally {
       set({ savingValue: false });
@@ -115,7 +132,7 @@ export const useReferenceGovernanceStore = create<ReferenceGovernanceStoreState>
       const created = await createReferenceValue(payload);
       set({ values: [created, ...get().values], newValueDraft: null });
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: referenceErrorText(err) });
     } finally {
       set({ savingValue: false });
     }
@@ -127,7 +144,7 @@ export const useReferenceGovernanceStore = create<ReferenceGovernanceStoreState>
       const updated = await deactivateReferenceValue(valueId);
       set({ values: replaceValue(get().values, updated) });
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: referenceErrorText(err) });
     } finally {
       set({ savingValue: false });
     }
@@ -141,7 +158,7 @@ export const useReferenceGovernanceStore = create<ReferenceGovernanceStoreState>
         : await deactivateReferenceValue(valueId);
       set({ values: replaceValue(get().values, updated) });
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: referenceErrorText(err) });
     } finally {
       set({ savingValue: false });
     }
@@ -156,7 +173,7 @@ export const useReferenceGovernanceStore = create<ReferenceGovernanceStoreState>
       const readiness = await computeRefPublishReadiness(setId);
       set({ readiness });
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: referenceErrorText(err) });
     } finally {
       set({ readinessLoading: false });
     }
@@ -168,26 +185,31 @@ export const useReferenceGovernanceStore = create<ReferenceGovernanceStoreState>
       const impactSummary = await previewRefPublishImpact(setId);
       set({ impactSummary });
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: referenceErrorText(err) });
     } finally {
       set({ impactLoading: false });
     }
   },
 
-  publish: async (setId) => {
+  validateAndPublish: async (setId, setStatus) => {
     set({ readinessLoading: true, error: null });
     try {
+      if (setStatus === "draft") {
+        await validateReferenceSet(setId);
+      }
       const result = await governedPublishReferenceSet(setId);
       set({ readiness: result.readiness });
+      return result;
     } catch (err) {
-      set({ error: toErrorMessage(err) });
-      // Reload readiness so UI reflects current blockers
+      set({ error: referenceErrorText(err) });
+      // Reload readiness so the panel shows the current blockers.
       try {
         const readiness = await computeRefPublishReadiness(setId);
         set({ readiness });
       } catch {
-        // Readiness refresh failed — keep original error
+        // Readiness refresh failed — keep the publish error.
       }
+      throw err;
     } finally {
       set({ readinessLoading: false });
     }

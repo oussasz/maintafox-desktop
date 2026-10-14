@@ -35,7 +35,13 @@ import {
   DOMAIN_TREE_SET_INDENT,
   DOMAIN_TREE_TRAIL_CLASS,
 } from "@/components/lookups/domain-browser-ui";
-import { Badge } from "@/components/ui/badge";
+import {
+  REFERENCE_SET_STATUS_TONE,
+  isSyntheticReferenceId,
+  pendingCandidateSet,
+  referenceDomainLabel,
+  referenceSetStatusLabelKey,
+} from "@/components/lookups/reference-set-ui";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -44,6 +50,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { StatusChip } from "@/components/ui/status-chip";
+import { toneOf } from "@/design-system/tone";
 import { usePermissions } from "@/hooks/use-permissions";
 import {
   governanceCategoryLabelKey,
@@ -52,44 +60,9 @@ import {
   visibleSetsForDomain,
 } from "@/lib/reference-governance-ui";
 import { cn } from "@/lib/utils";
-import {
-  INVENTORY_ARTICLE_FAMILY_DOMAIN_ID,
-  INVENTORY_TAX_CATEGORY_DOMAIN_ID,
-  WORK_ORDER_PRIORITIES_DOMAIN_ID,
-  WORK_ORDER_STATUSES_DOMAIN_ID,
-  WORK_ORDER_TYPES_DOMAIN_ID,
-  useReferenceManagerStore,
-} from "@/stores/reference-manager-store";
+import { useReferenceManagerStore } from "@/stores/reference-manager-store";
 import type { ReferenceDomain, ReferenceSet } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
-
-// ── Status badge variant mapping ──────────────────────────────────────────────
-
-function statusBadgeVariant(status: string) {
-  switch (status) {
-    case "published":
-      return "default" as const;
-    case "draft":
-      return "secondary" as const;
-    case "validated":
-      return "outline" as const;
-    default:
-      return "secondary" as const;
-  }
-}
-
-const STATUS_LABEL_KEY = {
-  draft: "browser.status.draft",
-  validated: "browser.status.validated",
-  published: "browser.status.published",
-  superseded: "browser.status.superseded",
-} as const;
-
-type SetStatus = keyof typeof STATUS_LABEL_KEY;
-
-function statusLabelKey(status: string) {
-  return STATUS_LABEL_KEY[status as SetStatus] ?? "browser.status.draft";
-}
 
 // ── Reusable tree row shell ───────────────────────────────────────────────────
 
@@ -145,6 +118,7 @@ interface DomainBrowserPanelProps {
 
 export function DomainBrowserPanel({ onCreateDraftSet }: DomainBrowserPanelProps) {
   const { t } = useTranslation("reference");
+  const label = useCallback((key: string) => String(t(key as "page.title")), [t]);
   const { can } = usePermissions();
 
   const domains = useReferenceManagerStore((s) => s.domains);
@@ -169,7 +143,7 @@ export function DomainBrowserPanel({ onCreateDraftSet }: DomainBrowserPanelProps
     if (!searchFilter.trim()) return domains;
     const lower = searchFilter.toLowerCase();
     return domains.filter((d) => {
-      if (d.name.toLowerCase().includes(lower)) return true;
+      if (referenceDomainLabel(d, label).toLowerCase().includes(lower)) return true;
       if (d.code.toLowerCase().includes(lower)) return true;
       const sets = setsMap[d.id];
       if (
@@ -181,7 +155,7 @@ export function DomainBrowserPanel({ onCreateDraftSet }: DomainBrowserPanelProps
       }
       return false;
     });
-  }, [domains, setsMap, searchFilter]);
+  }, [domains, setsMap, searchFilter, label]);
 
   // ── Flat list for keyboard nav ──────────────────────────────────────────
 
@@ -279,8 +253,12 @@ export function DomainBrowserPanel({ onCreateDraftSet }: DomainBrowserPanelProps
       <div
         ref={treeRef}
         role="tree"
+        tabIndex={0}
         aria-label={t("browser.treeLabel")}
         onKeyDown={handleKeyDown}
+        onFocus={() => {
+          if (focusedIndex < 0 && flatItems.length > 0) setFocusedIndex(0);
+        }}
         className="flex-1 overflow-y-auto overflow-x-hidden py-1"
       >
         {filteredDomains.length === 0 && (
@@ -290,17 +268,8 @@ export function DomainBrowserPanel({ onCreateDraftSet }: DomainBrowserPanelProps
         )}
 
         {filteredDomains.map((domain) => {
-          const isInventoryFamilyDomain = domain.id === INVENTORY_ARTICLE_FAMILY_DOMAIN_ID;
-          const isInventoryTaxDomain = domain.id === INVENTORY_TAX_CATEGORY_DOMAIN_ID;
-          const isWorkOrderTypesDomain = domain.id === WORK_ORDER_TYPES_DOMAIN_ID;
-          const isWorkOrderPrioritiesDomain = domain.id === WORK_ORDER_PRIORITIES_DOMAIN_ID;
-          const isWorkOrderStatusesDomain = domain.id === WORK_ORDER_STATUSES_DOMAIN_ID;
-          const isSynthetic =
-            isInventoryFamilyDomain ||
-            isInventoryTaxDomain ||
-            isWorkOrderTypesDomain ||
-            isWorkOrderPrioritiesDomain ||
-            isWorkOrderStatusesDomain;
+          const isSynthetic = isSyntheticReferenceId(domain.id);
+          const domainLabel = referenceDomainLabel(domain, label);
           const isExpanded = expandedDomainIds.includes(domain.id);
           const isSelected = selectedDomainId === domain.id && selectedSetId === null;
           const category = domain.governance_category;
@@ -313,6 +282,7 @@ export function DomainBrowserPanel({ onCreateDraftSet }: DomainBrowserPanelProps
           const domainCaps = domainCapabilities[domain.id];
           const canCreateDraft =
             can(P.REF_MANAGE) && !isSynthetic && (domainCaps?.can_create_draft_set ?? false);
+          const candidate = pendingCandidateSet(setsMap[domain.id] ?? []);
           const fullCategoryLabel = String(t(governanceCategoryLabelKey(category)));
           const shortCategoryLabel = String(t(governanceCategoryShortLabelKey(category)));
 
@@ -348,8 +318,8 @@ export function DomainBrowserPanel({ onCreateDraftSet }: DomainBrowserPanelProps
                 )}
 
                 {/* 3. Label — flexible, truncates last */}
-                <span className={DOMAIN_TREE_LABEL_CLASS} title={domain.name}>
-                  {domain.name}
+                <span className={DOMAIN_TREE_LABEL_CLASS} title={domainLabel}>
+                  {domainLabel}
                 </span>
 
                 {/* 4. Governance badge — fixed slot, secondary */}
@@ -368,12 +338,12 @@ export function DomainBrowserPanel({ onCreateDraftSet }: DomainBrowserPanelProps
 
                 {/* 5–6. Lock + overflow — far-right rail */}
                 <div className={DOMAIN_TREE_TRAIL_CLASS}>
-                  <div className={DOMAIN_TREE_ICON_SLOT} aria-hidden={!showLock}>
+                  <div className={DOMAIN_TREE_ICON_SLOT}>
                     {showLock ? (
-                      <Lock
-                        className="h-3.5 w-3.5 text-status-warning"
-                        aria-label={t("browser.systemCatalogDomain")}
-                      />
+                      <span title={t("browser.systemCatalogDomain")} className="inline-flex">
+                        <Lock className="h-3.5 w-3.5 text-status-warning" aria-hidden />
+                        <span className="sr-only">{t("browser.systemCatalogDomain")}</span>
+                      </span>
                     ) : null}
                   </div>
                   <div className={DOMAIN_TREE_ICON_SLOT}>
@@ -381,19 +351,36 @@ export function DomainBrowserPanel({ onCreateDraftSet }: DomainBrowserPanelProps
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button
+                            type="button"
                             variant="ghost"
                             size="icon"
-                            className="h-6 w-6 opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+                            className="h-9 w-9"
+                            aria-label={t("browser.domainActions", { domain: domainLabel })}
                             onClick={(e) => e.stopPropagation()}
                           >
-                            <MoreVertical className="h-3.5 w-3.5" />
+                            <MoreVertical className="h-4 w-4" aria-hidden />
                           </Button>
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-44">
-                          <DropdownMenuItem onClick={() => onCreateDraftSet?.(domain.id)}>
-                            <Plus className="mr-2 h-3.5 w-3.5" />
-                            {t("browser.newSet")}
-                          </DropdownMenuItem>
+                        <DropdownMenuContent align="end" className="w-56">
+                          {candidate ? (
+                            <DropdownMenuItem
+                              className="min-h-9"
+                              onClick={() => selectSet(candidate.id, domain.id)}
+                            >
+                              <FolderOpen className="mr-2 h-4 w-4" aria-hidden />
+                              {t("governance.readOnly.openCandidate", {
+                                version: candidate.version_no,
+                              })}
+                            </DropdownMenuItem>
+                          ) : (
+                            <DropdownMenuItem
+                              className="min-h-9"
+                              onClick={() => onCreateDraftSet?.(domain.id)}
+                            >
+                              <Plus className="mr-2 h-4 w-4" aria-hidden />
+                              {t("browser.newSet")}
+                            </DropdownMenuItem>
+                          )}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     ) : null}
@@ -431,10 +418,12 @@ export function DomainBrowserPanel({ onCreateDraftSet }: DomainBrowserPanelProps
                     const setFlatIdx = flatItems.findIndex(
                       (fi) => fi.type === "set" && fi.set.id === refSet.id,
                     );
-                    const setLabel =
-                      category === "operational_dictionary"
-                        ? String(t("browser.workingCatalog"))
-                        : `v${refSet.version_no}`;
+                    const versioned = !isSynthetic && category !== "operational_dictionary";
+                    const setLabel = isSynthetic
+                      ? String(t("browser.liveTable"))
+                      : versioned
+                        ? String(t("editor.version", { version: refSet.version_no }))
+                        : String(t("browser.workingCatalog"));
 
                     return (
                       <DomainTreeRow
@@ -448,14 +437,12 @@ export function DomainBrowserPanel({ onCreateDraftSet }: DomainBrowserPanelProps
                         <span className={DOMAIN_TREE_LABEL_CLASS} title={setLabel}>
                           {setLabel}
                         </span>
-                        {category !== "operational_dictionary" ? (
-                          <Badge
-                            variant={statusBadgeVariant(refSet.status)}
-                            className="h-5 w-[4.5rem] shrink-0 justify-center truncate px-1 text-[10px] font-normal"
-                            title={String(t(statusLabelKey(refSet.status)))}
-                          >
-                            {t(statusLabelKey(refSet.status))}
-                          </Badge>
+                        {versioned ? (
+                          <StatusChip
+                            label={label(referenceSetStatusLabelKey(refSet.status))}
+                            tone={toneOf(REFERENCE_SET_STATUS_TONE, refSet.status)}
+                            className="shrink-0"
+                          />
                         ) : null}
                       </DomainTreeRow>
                     );

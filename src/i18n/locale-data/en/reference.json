@@ -1,16 +1,17 @@
 {
   "page": {
     "title": "Reference Data",
-    "domainCount": "{{count}} domain",
-    "domainCount_plural": "{{count}} domains",
     "refresh": "Refresh",
     "newDomain": "New Domain",
     "import": "Import",
-    "emptyState": "Select a domain to manage its reference values",
-    "valueEditorPlaceholder": "Value editor (under development)",
-    "setId": "Set #{{id}}",
+    "emptyState": "Select a catalogue in the list",
     "noPermission": "You do not have permission to access this page",
-    "retry": "Retry"
+    "retry": "Retry",
+    "domainCount_one": "{{count}} domain",
+    "domainCount_other": "{{count}} domains",
+    "noPermissionHint": "Ask an administrator for permission to view reference data.",
+    "emptyStateHint": "Equipment classes and families, failure modes, criticality, skills, work-order types… Open a version to see and manage its values.",
+    "valuesPane": "Catalogue values"
   },
   "browser": {
     "searchPlaceholder": "Search domains...",
@@ -22,7 +23,7 @@
     "protectedDomain": "Protected domain (analytical)",
     "expand": "Expand",
     "collapse": "Collapse",
-    "newSet": "New Set",
+    "newSet": "New draft",
     "workingCatalog": "Working catalog",
     "renameDomain": "Rename Domain",
     "systemCatalogDomain": "System catalog (read-only)",
@@ -30,8 +31,11 @@
       "draft": "Draft",
       "validated": "Validated",
       "published": "Published",
-      "superseded": "Superseded"
-    }
+      "superseded": "Superseded",
+      "unknown": "Unknown status"
+    },
+    "liveTable": "Live table",
+    "domainActions": "Actions for {{domain}}"
   },
   "governance": {
     "category": {
@@ -47,24 +51,30 @@
       "unknown": "Catalog"
     },
     "readOnly": {
-      "published": "This version is published. Create a draft to modify this reference catalog.",
+      "published": "This version is published and used by forms. Create a draft to add or change values, then publish it.",
       "publishedProtected": "This catalog is published and protected. Modifications are not allowed.",
       "superseded": "This version has been superseded. Create a draft from the published version to make changes.",
       "supersededProtected": "This version has been superseded. Modifications are not allowed.",
-      "systemCatalog": "This system catalog is read-only.",
+      "systemCatalog": "This catalogue is provided by the product and cannot be changed. Add aliases to use your own wording in forms.",
       "createDraft": "Create draft",
       "creatingDraft": "Creating draft…",
       "discardDraft": "Discard draft",
       "discardingDraft": "Discarding…",
       "discardDraftTitle": "Discard draft?",
-      "discardDraftDescription": "This permanently deletes the draft and all of its values. The published catalog is not affected."
-    }
+      "discardDraftDescription": "This permanently deletes the draft and all of its values. The published catalog is not affected.",
+      "candidateInProgress": "A new version (v{{version}}) is being prepared. Changes are made in that version, which is then published.",
+      "openCandidate": "Open version v{{version}}",
+      "noManagePermission": "You can view this catalogue. Changing it requires permission to manage reference data.",
+      "validated": "This version is validated and waiting to be published; it can no longer be edited."
+    },
+    "systemValuesLocked": "Values marked with a padlock are provided by the product: they cannot be edited or deactivated. Add your own values, or aliases for local wording.",
+    "capsError": "The editing rights for this catalogue could not be loaded: no change is offered."
   },
   "editor": {
     "addValue": "Add value",
     "publishSet": "Publish set",
     "protected": "Protected",
-    "emptyState": "No values in this set yet",
+    "emptyState": "No values in this version",
     "colCode": "Code",
     "colLabel": "Label",
     "colDescription": "Description",
@@ -92,7 +102,18 @@
       "noPermission": "You do not have permission to change this value.",
       "systemValue": "System values cannot be modified or removed.",
       "alreadyInactive": "This value is already inactive."
-    }
+    },
+    "version": "Version {{version}}",
+    "publishedOn": "published on {{date}}",
+    "emptyStateCanAdd": "No values yet. Use \"Add value\" or import a CSV file.",
+    "addInProgress": "Finish the value being entered first.",
+    "previousPage": "Previous page",
+    "nextPage": "Next page",
+    "codeImmutable": "The code does not change after creation: it links records to this value.",
+    "systemValue": "Value provided by the product",
+    "activeToggle": "Value \"{{label}}\" active",
+    "editValue": "Edit \"{{label}}\"",
+    "deactivateValue": "Deactivate \"{{label}}\""
   },
   "alias": {
     "title": "Aliases – {{label}}",
@@ -113,7 +134,7 @@
     "preferred": "Preferred"
   },
   "publish": {
-    "title": "Publish Readiness",
+    "title": "Publishing this version",
     "ready": "Ready",
     "notReady": "{{count}} blocker(s)",
     "blockers": "Blockers",
@@ -127,7 +148,7 @@
     "noImpactData": "No impact data available",
     "close": "Close",
     "confirmTitle": "Confirm publish",
-    "confirmDescription": "This will publish the draft set and supersede the current published version.",
+    "confirmDescription": "This version will be put into service and replace the current published version.",
     "confirmProtected": "This is a protected domain. Publishing requires elevated privileges and will be audited.",
     "cancel": "Cancel",
     "confirm": "Publish",
@@ -149,11 +170,28 @@
       "personnel": "Personnel",
       "other": "Other records",
       "external_integrations": "External integrations"
+    },
+    "validateAndPublish": "Validate and publish",
+    "draftHint": "Changes in this draft reach forms only once it is published. Publishing checks the version, shows its impact, then puts it into service.",
+    "validatedHint": "This version is validated. Publishing puts it into service and replaces the current version.",
+    "noPublishPermission": "Publishing requires permission to publish reference data.",
+    "impactLoading": "Computing the impact…",
+    "noRecordAffected": "No record uses a removed or deactivated value.",
+    "unverifiedModules": "Not checked on this computer: {{modules}}.",
+    "remapHint": "Records that use a value kept in this version follow it automatically.",
+    "publishedToast": "Version {{version}} published",
+    "check": {
+      "set_status": "The version must be validated before it is published.",
+      "validation_report_missing": "The version has not been checked yet.",
+      "validation_blockers": "The last check found problems to fix.",
+      "validation_failed": "The last check failed.",
+      "unresolved_migrations": "Values deactivated in this version have no replacement value. Reactivate them, or merge them into another value, before publishing.",
+      "impact_preview_required": "This catalogue is protected: review the impact preview before publishing."
     }
   },
   "import": {
     "title": "Import Reference Values",
-    "description": "Upload a CSV file to import values into the selected set.",
+    "description": "Import a CSV file (columns code, label, description…) into the open draft. The file written by \"Export (CSV)\" can be imported back after editing.",
     "stepUpload": "Upload",
     "stepValidate": "Validate",
     "stepResult": "Result",
@@ -179,7 +217,18 @@
     "created": "Created",
     "updated": "Updated",
     "skipped": "Skipped",
-    "errored": "Errored"
+    "errored": "Errored",
+    "action": {
+      "create": "Create",
+      "update": "Update",
+      "other": "Other"
+    },
+    "rowStatus": {
+      "valid": "Valid",
+      "warning": "Warning",
+      "error": "Error",
+      "other": "Unknown"
+    }
   },
   "woTypes": {
     "panelTitle": "Work order types",
@@ -215,7 +264,8 @@
     "inactive": "Inactive",
     "empty": "No priorities loaded.",
     "deactivateTitle": "Deactivate priority",
-    "deactivateDescription": "Deactivate priority \"{{code}}\"?"
+    "deactivateDescription": "Deactivate priority \"{{code}}\"?",
+    "levelsHint": "Priority levels are set by the product (they drive due dates and dashboards): you can adjust their labels and colours."
   },
   "woStatuses": {
     "panelTitle": "Work order statuses",
@@ -234,7 +284,6 @@
     "empty": "No statuses loaded."
   },
   "synthetic": {
-    "published": "v1 — published",
     "articleFamilies": {
       "title": "Stock article families",
       "add": "Add family",
@@ -262,6 +311,15 @@
     },
     "woStatuses": {
       "colorPlaceholder": "#RRGGBB"
+    },
+    "liveTable": "Live table",
+    "liveTableHint": "This list belongs to another module and has no versions: every change applies immediately.",
+    "domains": {
+      "articleFamilies": "Stock article families",
+      "taxCategories": "Article VAT categories",
+      "woTypes": "Work-order types",
+      "woPriorities": "Work-order priorities",
+      "woStatuses": "Work-order statuses"
     }
   },
   "combobox": {
@@ -345,6 +403,15 @@
       "friday": "Fri",
       "saturday": "Sat",
       "sunday": "Sun"
-    }
+    },
+    "open": "View schedule",
+    "afterCreate": "After creation"
+  },
+  "export": {
+    "action": "Export (CSV)",
+    "dialogTitle": "Save the catalogue values",
+    "done_one": "{{count}} value exported",
+    "done_other": "{{count}} values exported",
+    "nothingToExport": "No values to export"
   }
 }

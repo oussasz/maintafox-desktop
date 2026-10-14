@@ -617,6 +617,15 @@ pub async fn apply_import_batch(
         ))
         .await?;
 
+    // Product-seeded values of locked domains (equipment taxonomy) are never overwritten by an
+    // import; a row naming one of them is skipped.
+    let target_domain = domains::get_reference_domain(db, target_set.domain_id).await?;
+    let locked_system_codes = if crate::reference::governance::system_values_locked(&target_domain) {
+        load_system_value_codes(db, policy.target_set_id).await?
+    } else {
+        std::collections::HashSet::new()
+    };
+
     let txn = db.begin().await?;
 
     let mut created: i64 = 0;
@@ -665,6 +674,16 @@ pub async fn apply_import_batch(
                 continue;
             }
         };
+
+        // Only the product seeders create system values.
+        if crate::reference::governance::metadata_marks_system_origin(input.metadata_json.as_deref()) {
+            errored += 1;
+            continue;
+        }
+        if locked_system_codes.contains(&code) {
+            skipped += 1;
+            continue;
+        }
 
         // Check if this code already exists in the draft set.
         if let Some(existing_id) = existing_in_set.get(&code) {
@@ -894,6 +913,28 @@ async fn load_draft_set_codes(
         map.insert(code, id);
     }
     Ok(map)
+}
+
+/// Codes of the product-seeded values (`origin = system`) of a set.
+async fn load_system_value_codes(db: &DatabaseConnection, set_id: i64) -> AppResult<std::collections::HashSet<String>> {
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT code, metadata_json FROM reference_values WHERE set_id = ?",
+            [set_id.into()],
+        ))
+        .await?;
+    let mut codes = std::collections::HashSet::new();
+    for r in &rows {
+        let code: String = r.try_get("", "code").map_err(|e| decode_err("code", e))?;
+        let metadata: Option<String> = r
+            .try_get("", "metadata_json")
+            .map_err(|e| decode_err("metadata_json", e))?;
+        if crate::reference::governance::metadata_marks_system_origin(metadata.as_deref()) {
+            codes.insert(code);
+        }
+    }
+    Ok(codes)
 }
 
 /// Update an existing reference value with import data.

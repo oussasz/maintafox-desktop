@@ -41,6 +41,8 @@ mod aliases_tests;
 #[cfg(test)]
 mod domains_tests;
 #[cfg(test)]
+mod equipment_class_extension_tests;
+#[cfg(test)]
 mod governance_tests;
 #[cfg(test)]
 mod impact_tests;

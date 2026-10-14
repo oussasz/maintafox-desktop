@@ -28,6 +28,17 @@ Permissions are decided only by `crate::reference::governance`:
 
 **Export:** `export_ref_domain_set` is view-only (`ref.view`). It does **not** need category capability gates (unlike Import / mutate / publish).
 
+For the product domains of the canonical mapping below, the mapping in `governance.rs` wins over
+the stored column (seeders keep that column aligned); tenant-created domains use the stored value.
+
+**Product-seeded values** (`metadata_json.origin = "system"`) of the equipment taxonomy domains are
+locked (`system_values_locked`): they cannot be edited, deactivated or moved, because the startup
+integrity re-applies them. Tenants add their own values and use aliases for local wording.
+
+**Publish keeps links:** publishing a version re-points every record (foreign keys to
+`reference_values`, and parents in other domains) from the earlier versions to the value with the
+same code (`publish::remap_usage_to_published_set`).
+
 Column `reference_domains.governance_category` stores the category; legacy `governance_level` / `is_extendable` remain for compatibility and must not be used for new permission branches.
 
 ---
@@ -75,7 +86,7 @@ Column `reference_domains.governance_category` stores the category; legacy `gove
 |--------|----------|
 | `EQUIPMENT.STATUS` | **A** |
 | `EQUIPMENT.CRITICALITY` | **A** |
-| `EQUIPMENT.CLASS` | **A** |
+| `EQUIPMENT.CLASS` | **C** — product classes seeded and locked; each plant adds its own classes (presses, boilers, …) by draft → publish |
 | `DI.PRIORITY` | **A** |
 | `DI.IMPACT_LEVEL` | **A** |
 | `DI.REQUEST_TYPE` | **A** — closed intake taxonomy (repair default) |

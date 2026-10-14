@@ -378,6 +378,7 @@ pub async fn create_value(
     let set = sets::get_reference_set(db, payload.set_id).await?;
     let domain = domains::get_reference_domain(db, set.domain_id).await?;
     crate::reference::governance::assert_allows_value_mutation(&domain, &set)?;
+    crate::reference::governance::assert_not_claiming_system_origin(payload.metadata_json.as_deref())?;
 
     let code = normalize_code(&payload.code);
     validate_code(&code)?;
@@ -568,6 +569,10 @@ pub async fn update_value(
     let set = sets::get_reference_set(db, existing.set_id).await?;
     let domain = domains::get_reference_domain(db, set.domain_id).await?;
     crate::reference::governance::assert_allows_value_mutation(&domain, &set)?;
+    crate::reference::governance::assert_system_value_mutable(&domain, existing.metadata_json.as_deref())?;
+    if let Some(Some(ref mj)) = payload.metadata_json {
+        crate::reference::governance::assert_not_claiming_system_origin(Some(mj))?;
+    }
 
     let mut sets_clause: Vec<String> = Vec::new();
     let mut values: Vec<sea_orm::Value> = Vec::new();
@@ -634,6 +639,7 @@ pub async fn deactivate_value(db: &DatabaseConnection, value_id: i64, _actor_id:
     let set = sets::get_reference_set(db, existing.set_id).await?;
     let domain = domains::get_reference_domain(db, set.domain_id).await?;
     crate::reference::governance::assert_allows_value_mutation(&domain, &set)?;
+    crate::reference::governance::assert_system_value_mutable(&domain, existing.metadata_json.as_deref())?;
 
     if !existing.is_active {
         return Err(AppError::ValidationFailed(vec![
@@ -659,6 +665,7 @@ pub async fn reactivate_value(db: &DatabaseConnection, value_id: i64, _actor_id:
     let set = sets::get_reference_set(db, existing.set_id).await?;
     let domain = domains::get_reference_domain(db, set.domain_id).await?;
     crate::reference::governance::assert_allows_value_mutation(&domain, &set)?;
+    crate::reference::governance::assert_system_value_mutable(&domain, existing.metadata_json.as_deref())?;
 
     if existing.is_active {
         return Err(AppError::ValidationFailed(vec!["Cette valeur est déjà active.".into()]));
@@ -687,6 +694,7 @@ pub async fn move_value_parent(
     let set = sets::get_reference_set(db, existing.set_id).await?;
     let domain = domains::get_reference_domain(db, set.domain_id).await?;
     crate::reference::governance::assert_allows_value_mutation(&domain, &set)?;
+    crate::reference::governance::assert_system_value_mutable(&domain, existing.metadata_json.as_deref())?;
 
     if let Some(pid) = new_parent_id {
         // Cannot parent to self

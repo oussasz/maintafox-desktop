@@ -92,19 +92,27 @@ fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
 }
 
 fn map_domain(row: &QueryResult) -> AppResult<ReferenceDomain> {
+    let code = row.try_get::<String>("", "code").map_err(|e| decode_err("code", e))?;
+    let governance_level = row
+        .try_get::<String>("", "governance_level")
+        .map_err(|e| decode_err("governance_level", e))?;
+    let stored_category = row
+        .try_get::<String>("", "governance_category")
+        .map_err(|e| decode_err("governance_category", e))?;
+    // Report the category the governance engine applies, so every screen shows the same rules.
+    let governance_category =
+        crate::reference::governance::resolve_category(&code, &governance_level, Some(&stored_category))
+            .as_str()
+            .to_string();
     Ok(ReferenceDomain {
         id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
-        code: row.try_get::<String>("", "code").map_err(|e| decode_err("code", e))?,
+        code,
         name: row.try_get::<String>("", "name").map_err(|e| decode_err("name", e))?,
         structure_type: row
             .try_get::<String>("", "structure_type")
             .map_err(|e| decode_err("structure_type", e))?,
-        governance_level: row
-            .try_get::<String>("", "governance_level")
-            .map_err(|e| decode_err("governance_level", e))?,
-        governance_category: row
-            .try_get::<String>("", "governance_category")
-            .map_err(|e| decode_err("governance_category", e))?,
+        governance_level,
+        governance_category,
         is_extendable: i64_to_bool(
             row.try_get::<i64>("", "is_extendable")
                 .map_err(|e| decode_err("is_extendable", e))?,

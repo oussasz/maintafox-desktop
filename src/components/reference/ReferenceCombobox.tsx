@@ -28,7 +28,7 @@ import {
   getReferenceGovernanceCapabilitiesByCode,
   listPublishedReferenceValuesByDomainCode,
 } from "@/services/reference-service";
-import { toErrorMessage } from "@/utils/errors";
+import { referenceErrorText } from "@/stores/reference-error-text";
 import type { ReferenceGovernanceCapabilities, ReferenceValue } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -171,7 +171,7 @@ export function ReferenceCombobox({
     } catch (err) {
       if (token !== reloadToken.current) return;
       setItems([]);
-      setLoadError(toErrorMessage(err));
+      setLoadError(referenceErrorText(err));
     } finally {
       if (token === reloadToken.current) {
         setLoading(false);
