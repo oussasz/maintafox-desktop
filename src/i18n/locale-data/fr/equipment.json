@@ -182,11 +182,11 @@
       "org_changed": "Déplacé vers une autre unité",
       "parent_changed": "Équipement parent modifié",
       "child_changed": "Composant modifié",
-      "wo_created": "OT {{code}} créé",
-      "wo_started": "OT {{code}} démarré",
-      "wo_closed": "OT {{code}} clôturé",
-      "di_created": "DI {{code}} émise",
-      "di_closed": "DI {{code}} clôturée",
+      "wo_created": "{{code}} créé",
+      "wo_started": "{{code}} démarré",
+      "wo_closed": "{{code}} clôturé",
+      "di_created": "{{code}} émise",
+      "di_closed": "{{code}} clôturée",
       "pm_scheduled": "Préventif {{code}} à échéance",
       "pm_executed": "Préventif {{code}} réalisé",
       "failure_recorded": "Panne enregistrée",
@@ -630,7 +630,9 @@
     "workOrders": "Ordres de travail ({{shown}} sur {{total}})",
     "noWorkOrders": "Aucun ordre de travail sur cet équipement.",
     "requests": "Demandes d’intervention ({{shown}} sur {{total}})",
-    "noRequests": "Aucune demande d’intervention sur cet équipement."
+    "noRequests": "Aucune demande d’intervention sur cet équipement.",
+    "workOrdersTitle": "Ordres de travail",
+    "requestsTitle": "Demandes d’intervention"
   },
   "meters": {
     "add": "Ajouter un compteur",

@@ -52,17 +52,17 @@ export function AssetMaintenanceTab({ asset }: { asset: Asset }) {
   );
   const profile = useLoad(profileLoad, `${asset.id}:${rollUp}:${asset.row_version}`);
 
-  const workLoad = useMemo(
-    () => async () => {
-      const [wos, dis] = await Promise.all([
-        listWos({ equipment_id: asset.id, limit: RECENT_ROWS, offset: 0 }),
-        listDis({ equipment_id: asset.id, limit: RECENT_ROWS, offset: 0 }),
-      ]);
-      return { wos, dis };
-    },
+  // Loaded separately: a failure in one list must not hide the other.
+  const woLoad = useMemo(
+    () => () => listWos({ equipment_id: asset.id, limit: RECENT_ROWS, offset: 0 }),
     [asset.id],
   );
-  const work = useLoad(workLoad, String(asset.id));
+  const diLoad = useMemo(
+    () => () => listDis({ equipment_id: asset.id, limit: RECENT_ROWS, offset: 0 }),
+    [asset.id],
+  );
+  const wos = useLoad(woLoad, String(asset.id));
+  const dis = useLoad(diLoad, String(asset.id));
 
   const p = profile.data;
   const maxYear = p ? Math.max(0, ...p.cost_by_year.map((y) => y.total)) : 0;
@@ -220,72 +220,82 @@ export function AssetMaintenanceTab({ asset }: { asset: Asset }) {
         </>
       )}
 
-      {work.loading && !work.data ? (
-        <LoadingState />
-      ) : work.error || !work.data ? (
-        <ErrorState error={work.error} onRetry={() => void work.reload()} retrying={work.loading} />
-      ) : (
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <DetailSectionCard
-            title={t("maintenance.workOrders", {
-              shown: work.data.wos.items.length,
-              total: work.data.wos.total,
-            })}
-            icon={Wrench}
-          >
-            {work.data.wos.items.length === 0 ? (
-              <p className="text-sm text-text-muted">{t("maintenance.noWorkOrders")}</p>
-            ) : (
-              <ul className="divide-y divide-surface-border">
-                {work.data.wos.items.map((wo) => (
-                  <li key={wo.id} className="flex items-center gap-2 py-2">
-                    <LinkedEntityBadge
-                      entity="work_order"
-                      code={wo.code}
-                      entityId={wo.id}
-                      title={wo.title}
-                    />
-                    <span className="min-w-0 flex-1 truncate text-sm">{wo.title}</span>
-                    <StatusChip
-                      label={t(`ot:status.${statusToI18nKey(wo.status_code ?? "draft")}`)}
-                      tone={toneOf(WO_STATUS_TONE, wo.status_code)}
-                    />
-                  </li>
-                ))}
-              </ul>
-            )}
-          </DetailSectionCard>
-          <DetailSectionCard
-            title={t("maintenance.requests", {
-              shown: work.data.dis.items.length,
-              total: work.data.dis.total,
-            })}
-            icon={ClipboardList}
-          >
-            {work.data.dis.items.length === 0 ? (
-              <p className="text-sm text-text-muted">{t("maintenance.noRequests")}</p>
-            ) : (
-              <ul className="divide-y divide-surface-border">
-                {work.data.dis.items.map((di) => (
-                  <li key={di.id} className="flex items-center gap-2 py-2">
-                    <LinkedEntityBadge
-                      entity="di"
-                      code={di.code}
-                      entityId={di.id}
-                      title={di.title}
-                    />
-                    <span className="min-w-0 flex-1 truncate text-sm">{di.title}</span>
-                    <StatusChip
-                      label={t(`di:status.${diStatusToI18nKey(di.status)}`)}
-                      tone={toneOf(DI_STATUS_TONE, di.status)}
-                    />
-                  </li>
-                ))}
-              </ul>
-            )}
-          </DetailSectionCard>
-        </div>
-      )}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <DetailSectionCard
+          title={
+            wos.data
+              ? t("maintenance.workOrders", {
+                  shown: wos.data.items.length,
+                  total: wos.data.total,
+                })
+              : t("maintenance.workOrdersTitle")
+          }
+          icon={Wrench}
+        >
+          {wos.loading && !wos.data ? (
+            <LoadingState />
+          ) : wos.error || !wos.data ? (
+            <ErrorState
+              error={wos.error}
+              onRetry={() => void wos.reload()}
+              retrying={wos.loading}
+            />
+          ) : wos.data.items.length === 0 ? (
+            <p className="text-sm text-text-muted">{t("maintenance.noWorkOrders")}</p>
+          ) : (
+            <ul className="divide-y divide-surface-border">
+              {wos.data.items.map((wo) => (
+                <li key={wo.id} className="flex items-center gap-2 py-2">
+                  <LinkedEntityBadge
+                    entity="work_order"
+                    code={wo.code}
+                    entityId={wo.id}
+                    title={wo.title}
+                  />
+                  <span className="min-w-0 flex-1 truncate text-sm">{wo.title}</span>
+                  <StatusChip
+                    label={t(`ot:status.${statusToI18nKey(wo.status_code ?? "draft")}`)}
+                    tone={toneOf(WO_STATUS_TONE, wo.status_code)}
+                  />
+                </li>
+              ))}
+            </ul>
+          )}
+        </DetailSectionCard>
+        <DetailSectionCard
+          title={
+            dis.data
+              ? t("maintenance.requests", { shown: dis.data.items.length, total: dis.data.total })
+              : t("maintenance.requestsTitle")
+          }
+          icon={ClipboardList}
+        >
+          {dis.loading && !dis.data ? (
+            <LoadingState />
+          ) : dis.error || !dis.data ? (
+            <ErrorState
+              error={dis.error}
+              onRetry={() => void dis.reload()}
+              retrying={dis.loading}
+            />
+          ) : dis.data.items.length === 0 ? (
+            <p className="text-sm text-text-muted">{t("maintenance.noRequests")}</p>
+          ) : (
+            <ul className="divide-y divide-surface-border">
+              {dis.data.items.map((di) => (
+                <li key={di.id} className="flex items-center gap-2 py-2">
+                  <LinkedEntityBadge entity="di" code={di.code} entityId={di.id} title={di.title} />
+                  <span className="min-w-0 flex-1 truncate text-sm">{di.title}</span>
+                  <StatusChip
+                    label={t(`di:status.${diStatusToI18nKey(di.status)}`)}
+                    tone={toneOf(DI_STATUS_TONE, di.status)}
+                  />
+                </li>
+              ))}
+            </ul>
+          )}
+        </DetailSectionCard>
+      </div>
     </div>
   );
 }

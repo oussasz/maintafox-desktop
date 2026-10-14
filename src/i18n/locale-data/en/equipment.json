@@ -182,11 +182,11 @@
       "org_changed": "Moved to another unit",
       "parent_changed": "Parent equipment changed",
       "child_changed": "Component changed",
-      "wo_created": "Work order {{code}} created",
-      "wo_started": "Work order {{code}} started",
-      "wo_closed": "Work order {{code}} closed",
-      "di_created": "Request {{code}} raised",
-      "di_closed": "Request {{code}} closed",
+      "wo_created": "{{code}} created",
+      "wo_started": "{{code}} started",
+      "wo_closed": "{{code}} closed",
+      "di_created": "{{code}} raised",
+      "di_closed": "{{code}} closed",
       "pm_scheduled": "Preventive {{code}} due",
       "pm_executed": "Preventive {{code}} done",
       "failure_recorded": "Failure recorded",
@@ -630,7 +630,9 @@
     "workOrders": "Work orders ({{shown}} of {{total}})",
     "noWorkOrders": "No work order on this asset.",
     "requests": "Intervention requests ({{shown}} of {{total}})",
-    "noRequests": "No intervention request on this asset."
+    "noRequests": "No intervention request on this asset.",
+    "workOrdersTitle": "Work orders",
+    "requestsTitle": "Intervention requests"
   },
   "meters": {
     "add": "Add a meter",

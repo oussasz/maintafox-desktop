@@ -308,7 +308,7 @@ export function AssetRegistryPage() {
                 <DataTable
                   columns={columns}
                   data={results}
-                  pageSize={25}
+                  pageSize={20}
                   isLoading={loading}
                   skeletonRows={8}
                   onRowClick={(row) => selectAsset(row.id)}
