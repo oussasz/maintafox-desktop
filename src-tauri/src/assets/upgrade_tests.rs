@@ -281,6 +281,50 @@ async fn search_page_reports_the_total_beyond_the_page() {
     );
 }
 
+/// Text search folds case and accents in Rust: the previous SQL folding (dozens of nested
+/// `REPLACE()`) overflowed the SQLCipher parser stack, so every search failed in the app.
+#[tokio::test]
+async fn text_search_is_accent_insensitive_and_ranks_the_code_first() {
+    let db = setup().await;
+    let site = site_with_cost_center(&db).await;
+    let mut exchanger = payload("HX-12", site, None);
+    exchanger.asset_name = "Échangeur à plaques HX-12".into();
+    identity::create_asset(&db, exchanger, 1).await.expect("exchanger");
+    for code in ["PMP-1020", "PMP-102", "PMP-1"] {
+        identity::create_asset(&db, payload(code, site, None), 1)
+            .await
+            .expect("pump");
+    }
+
+    let mut by_name = filters(10, 0);
+    by_name.query = Some("ECHANGEUR".into());
+    let page = search::search_assets_page(&db, by_name).await.expect("name search");
+    assert_eq!(page.total, 1);
+    assert_eq!(page.items[0].asset_code, "HX-12");
+
+    let mut by_code = filters(10, 0);
+    by_code.query = Some("pmp-102".into());
+    let page = search::search_assets_page(&db, by_code).await.expect("code search");
+    assert_eq!(
+        page.items.iter().map(|a| a.asset_code.as_str()).collect::<Vec<_>>(),
+        ["PMP-102", "PMP-1020"],
+        "exact code first, then code prefix"
+    );
+    assert_eq!(page.total, 2);
+
+    let names = search::suggest_asset_names(&db, "échang", Some(5))
+        .await
+        .expect("names");
+    assert_eq!(names.len(), 1);
+    let codes = search::suggest_asset_codes(&db, "pmp-10", Some(5))
+        .await
+        .expect("codes");
+    assert_eq!(
+        codes.iter().map(|a| a.asset_code.as_str()).collect::<Vec<_>>(),
+        ["PMP-102", "PMP-1020"]
+    );
+}
+
 async fn work_order(
     db: &DatabaseConnection,
     code: &str,

@@ -172,6 +172,49 @@
         "this_year": "This year",
         "all": "All"
       }
+    },
+    "titles": {
+      "asset_created": "Asset created",
+      "asset_updated": "Asset updated",
+      "decommissioned": "Asset decommissioned",
+      "assignment_changed": "Assignment changed",
+      "location_changed": "Location changed",
+      "org_changed": "Moved to another unit",
+      "parent_changed": "Parent equipment changed",
+      "child_changed": "Component changed",
+      "wo_created": "Work order {{code}} created",
+      "wo_started": "Work order {{code}} started",
+      "wo_closed": "Work order {{code}} closed",
+      "di_created": "Request {{code}} raised",
+      "di_closed": "Request {{code}} closed",
+      "pm_scheduled": "Preventive {{code}} due",
+      "pm_executed": "Preventive {{code}} done",
+      "failure_recorded": "Failure recorded",
+      "meter_reading": "Meter reading",
+      "document_linked": "Document linked",
+      "photo_added": "Photo added"
+    },
+    "quality": {
+      "accepted": "Accepted",
+      "corrected": "Corrected",
+      "rejected": "Rejected"
+    },
+    "inspectionResult": {
+      "pass": "Compliant",
+      "warning": "Warning",
+      "fail": "Non-compliant",
+      "not_accessible": "Not accessible",
+      "not_done": "Not done"
+    },
+    "failureStatus": {
+      "recorded": "Recorded",
+      "verified": "Verified",
+      "rejected": "Rejected"
+    },
+    "failureSource": {
+      "work_order": "From a work order",
+      "inspection": "From an inspection",
+      "manual": "Entered manually"
     }
   },
   "empty": {
