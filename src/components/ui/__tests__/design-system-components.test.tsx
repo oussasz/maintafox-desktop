@@ -13,7 +13,7 @@ import { describeAppError } from "@/lib/app-error";
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
     t: (key: string, opts?: Record<string, unknown>) =>
-      opts && "shown" in opts ? `${key}:${String(opts.shown)}/${String(opts.total)}` : key,
+      opts && "shown" in opts ? `${key}:${String(opts["shown"])}/${String(opts["total"])}` : key,
     i18n: { language: "fr" },
   }),
 }));
