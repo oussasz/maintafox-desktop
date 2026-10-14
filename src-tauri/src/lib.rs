@@ -1052,6 +1052,17 @@ pub fn run() {
             commands::dashboard::get_overview_kpis,
             commands::dashboard::get_overview_kpi_layout,
             commands::dashboard::save_overview_kpi_layout,
+            // Finance: OT cost flow, budget cockpit, periods, asset costs
+            commands::finance::get_wo_cost_view,
+            commands::finance::upsert_wo_cost_estimate,
+            commands::finance::list_wo_settlements,
+            commands::finance::retry_wo_settlement,
+            commands::finance::get_budget_cockpit,
+            commands::finance::get_budget_cockpit_drilldown,
+            commands::finance::list_budget_periods,
+            commands::finance::close_budget_period,
+            commands::finance::reopen_budget_period,
+            commands::finance::list_asset_cost_history,
         ])
         .run(tauri::generate_context!())
         // EXPECT: If the Tauri context cannot be loaded, the application binary is corrupt or

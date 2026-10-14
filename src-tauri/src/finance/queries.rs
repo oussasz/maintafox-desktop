@@ -1293,7 +1293,10 @@ pub async fn create_budget_actual(
     input: CreateBudgetActualInput,
     allow_posted: bool,
 ) -> AppResult<BudgetActual> {
-    let _ = get_budget_version(db, input.budget_version_id).await?;
+    let version = get_budget_version(db, input.budget_version_id).await?;
+    if let Some(month) = input.period_month.filter(|m| (1..=12).contains(m)) {
+        crate::finance::periods::ensure_period_open(db, version.fiscal_year, month).await?;
+    }
     let budget_bucket = required_trimmed("Budget bucket", &input.budget_bucket)?;
     let source_type = required_trimmed("Source type", &input.source_type)?;
     let source_id = required_trimmed("Source id", &input.source_id)?;

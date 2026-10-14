@@ -623,3 +623,142 @@ pub async fn export_budget_report_pack(
     require_fin_report(&state, user.user_id).await?;
     queries::export_budget_report_pack(&state.db, input).await
 }
+
+// ── Work-order cost flow (estimate, settlement), budget cockpit, periods, asset costs ──────────
+
+#[tauri::command]
+pub async fn get_wo_cost_view(
+    work_order_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<crate::finance::settlement::WoCostView> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::OT_VIEW,
+        PermissionScope::Global
+    );
+    crate::finance::settlement::get_wo_cost_view(&state.db, work_order_id).await
+}
+
+#[tauri::command]
+pub async fn upsert_wo_cost_estimate(
+    input: crate::finance::wo_costing::UpsertWoCostEstimateInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::finance::wo_costing::WoCostEstimate> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::OT_EDIT,
+        PermissionScope::Global
+    );
+    crate::finance::wo_costing::upsert_wo_cost_estimate(&state.db, i64::from(user.user_id), input).await
+}
+
+#[tauri::command]
+pub async fn list_wo_settlements(
+    filter: crate::finance::settlement::WoSettlementFilter,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::finance::settlement::WoCostSettlement>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::FIN_VIEW,
+        PermissionScope::Global
+    );
+    crate::finance::settlement::list_wo_settlements(&state.db, filter).await
+}
+
+#[tauri::command]
+pub async fn retry_wo_settlement(
+    settlement_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<crate::finance::settlement::WoCostSettlement> {
+    let user = require_session!(state);
+    require_fin_post(&state, user.user_id).await?;
+    crate::finance::settlement::retry_pending_settlement(&state.db, settlement_id, i64::from(user.user_id)).await
+}
+
+#[tauri::command]
+pub async fn get_budget_cockpit(
+    filter: crate::finance::cockpit::BudgetCockpitFilter,
+    state: State<'_, AppState>,
+) -> AppResult<crate::finance::cockpit::BudgetCockpit> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::FIN_VIEW,
+        PermissionScope::Global
+    );
+    crate::finance::cockpit::get_budget_cockpit(&state.db, filter).await
+}
+
+#[tauri::command]
+pub async fn get_budget_cockpit_drilldown(
+    filter: crate::finance::cockpit::BudgetCockpitDrilldownFilter,
+    state: State<'_, AppState>,
+) -> AppResult<crate::finance::cockpit::BudgetCockpitDrilldown> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::FIN_VIEW,
+        PermissionScope::Global
+    );
+    crate::finance::cockpit::get_budget_cockpit_drilldown(&state.db, filter).await
+}
+
+#[tauri::command]
+pub async fn list_budget_periods(
+    fiscal_year: i64,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::finance::periods::BudgetPeriod>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::FIN_VIEW,
+        PermissionScope::Global
+    );
+    crate::finance::periods::list_budget_periods(&state.db, fiscal_year).await
+}
+
+/// Closing a month freezes its actuals: posting right (`fin.post`).
+#[tauri::command]
+pub async fn close_budget_period(
+    input: crate::finance::periods::CloseBudgetPeriodInput,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::finance::periods::BudgetPeriod>> {
+    let user = require_session!(state);
+    require_fin_post(&state, user.user_id).await?;
+    crate::finance::periods::close_budget_period(&state.db, i64::from(user.user_id), input).await
+}
+
+/// Reopening a closed month changes reported figures: approval right (`fin.approve` + step-up).
+#[tauri::command]
+pub async fn reopen_budget_period(
+    input: crate::finance::periods::ReopenBudgetPeriodInput,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::finance::periods::BudgetPeriod>> {
+    let user = require_session!(state);
+    require_fin_approve(&state, user.user_id).await?;
+    crate::finance::periods::reopen_budget_period(&state.db, i64::from(user.user_id), input).await
+}
+
+#[tauri::command]
+pub async fn list_asset_cost_history(
+    filter: crate::finance::asset_costs::AssetCostFilter,
+    state: State<'_, AppState>,
+) -> AppResult<crate::finance::asset_costs::AssetCostHistory> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::FIN_VIEW,
+        PermissionScope::Global
+    );
+    crate::finance::asset_costs::list_asset_cost_history(&state.db, filter).await
+}

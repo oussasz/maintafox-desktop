@@ -1,1 +1,500 @@
-{}
+{
+  "page": {
+    "title": "Budget et coûts de maintenance",
+    "description": "Budget, engagements, réalisé et prévision par centre de coût, alimentés par les OT clôturés.",
+    "fiscalYear": "Exercice",
+    "version": "Version budgétaire",
+    "versionAuto": "Version de référence : {{title}}",
+    "noVersion": "Aucune version pour cet exercice"
+  },
+  "tabs": {
+    "cockpit": "Pilotage",
+    "settlements": "Imputations OT",
+    "planning": "Budget",
+    "reviews": "Analyse des écarts",
+    "assets": "Coûts par équipement",
+    "periods": "Clôtures"
+  },
+  "actions": {
+    "cancel": "Annuler",
+    "save": "Enregistrer",
+    "saving": "Enregistrement…",
+    "create": "Créer"
+  },
+  "bucket": {
+    "labor": "Main-d'œuvre",
+    "parts": "Pièces",
+    "services": "Sous-traitance et services",
+    "other": "Autres coûts",
+    "contracts": "Contrats",
+    "shutdown": "Arrêts programmés",
+    "capex": "Investissement",
+    "total": "Total"
+  },
+  "month": {
+    "1": "Janvier",
+    "2": "Février",
+    "3": "Mars",
+    "4": "Avril",
+    "5": "Mai",
+    "6": "Juin",
+    "7": "Juillet",
+    "8": "Août",
+    "9": "Septembre",
+    "10": "Octobre",
+    "11": "Novembre",
+    "12": "Décembre"
+  },
+  "monthShort": {
+    "1": "Jan",
+    "2": "Fév",
+    "3": "Mar",
+    "4": "Avr",
+    "5": "Mai",
+    "6": "Juin",
+    "7": "Juil",
+    "8": "Août",
+    "9": "Sep",
+    "10": "Oct",
+    "11": "Nov",
+    "12": "Déc"
+  },
+  "versionStatus": {
+    "draft": "Brouillon",
+    "submitted": "Soumise",
+    "approved": "Approuvée",
+    "frozen": "Figée",
+    "closed": "Clôturée",
+    "superseded": "Remplacée"
+  },
+  "versionAction": {
+    "submitted": "Soumettre",
+    "approved": "Approuver",
+    "frozen": "Figer",
+    "closed": "Clôturer"
+  },
+  "scenario": {
+    "original": "Budget initial",
+    "approved": "Budget approuvé",
+    "reforecast": "Révision",
+    "what_if": "Simulation"
+  },
+  "periodStatus": {
+    "open": "Ouverte",
+    "closed": "Clôturée"
+  },
+  "reviewStatus": {
+    "open": "Ouverte",
+    "in_review": "En analyse",
+    "actioned": "Action engagée",
+    "accepted": "Acceptée",
+    "closed": "Clôturée"
+  },
+  "reviewAction": {
+    "in_review": "Prendre en charge",
+    "actioned": "Action engagée",
+    "accepted": "Accepter l'écart",
+    "closed": "Clôturer",
+    "open": "Rouvrir"
+  },
+  "driver": {
+    "emergency_break_in": "Dépannages urgents",
+    "vendor_delay": "Retard fournisseur",
+    "labor_overrun": "Dépassement d'heures",
+    "estimate_error": "Erreur d'estimation",
+    "scope_change": "Changement de périmètre",
+    "price_increase": "Hausse de prix",
+    "permit_delay": "Attente de permis",
+    "availability_loss": "Perte de disponibilité",
+    "repeat_failure": "Panne répétitive",
+    "shutdown_scope_growth": "Extension d'arrêt"
+  },
+  "settlement": {
+    "status": {
+      "posted": "Imputé",
+      "pending": "Imputation en attente",
+      "reversed": "Annulé"
+    },
+    "reason": {
+      "no_cost_center": "Aucun centre de coût pour cet OT.",
+      "no_budget_version": "Aucune version budgétaire approuvée pour l'exercice.",
+      "currency_mismatch": "La devise du budget diffère de la devise de l'entreprise.",
+      "period_closed": "Toutes les périodes restantes de l'exercice sont clôturées.",
+      "no_currency": "La devise de l'entreprise n'est pas configurée.",
+      "unknown": "Cause inconnue."
+    },
+    "fix": {
+      "no_cost_center": "Renseignez le centre de coût de l'équipement (ou de son emplacement), ou choisissez-en un dans l'estimation de l'OT, puis relancez l'imputation.",
+      "no_budget_version": "Créez et faites approuver le budget de l'exercice (onglet Budget), puis relancez l'imputation.",
+      "currency_mismatch": "Créez une version budgétaire dans la devise de l'entreprise, puis relancez l'imputation.",
+      "period_closed": "Rouvrez une période de l'exercice (onglet Clôtures), puis relancez l'imputation.",
+      "no_currency": "Configurez la devise dans Paramètres › Localisation, puis relancez l'imputation.",
+      "unknown": "Relancez l'imputation ; si elle reste en attente, contactez l'administrateur."
+    }
+  },
+  "woCost": {
+    "title": "Coûts de l'OT",
+    "loading": "Chargement des coûts…",
+    "loadError": "Les coûts de l'OT n'ont pas pu être chargés.",
+    "costCenter": "Centre de coût : {{code}} — {{name}} ({{source}})",
+    "noCostCenter": "Aucun centre de coût trouvé",
+    "ccSource": {
+      "estimate_override": "choisi sur l'OT",
+      "asset": "de l'équipement",
+      "asset_location": "de l'emplacement de l'équipement",
+      "work_order_entity": "de l'entité de l'OT"
+    },
+    "addEstimate": "Estimer",
+    "editEstimate": "Modifier l'estimation",
+    "tableCaption": "Coûts de l'OT {{code}} par catégorie : estimé, planifié, engagé, réel et écart",
+    "col": {
+      "category": "Catégorie",
+      "estimated": "Estimé",
+      "planned": "Planifié",
+      "committed": "Engagé",
+      "actual": "Réel",
+      "variance": "Écart"
+    },
+    "varianceBase": {
+      "estimated": "Réel moins estimé",
+      "planned": "Réel moins planifié"
+    },
+    "overtimeShare": "Dont heures supplémentaires : {{amount}}",
+    "plannedGap": {
+      "no_expected_hours": "Main-d'œuvre planifiée : renseignez la durée prévue de l'OT.",
+      "no_responsible": "Main-d'œuvre planifiée : affectez un responsable à l'OT.",
+      "no_rate_card": "Main-d'œuvre planifiée : le responsable n'a pas de fiche de taux horaire."
+    },
+    "notice": {
+      "noCostCenter": "Sans centre de coût, l'imputation restera en attente à la clôture : renseignez-le sur l'équipement ou dans l'estimation.",
+      "unpricedHours": "{{hours}} h saisies sans taux horaire ne sont pas valorisées : créez une fiche de taux pour l'intervenant.",
+      "unvaluedParts": "{{qty}} pièce(s) sorties sans coût (article jamais valorisé dans ce magasin).",
+      "overtimeNotCaptured": "Les heures supplémentaires ne sont pas encore distinguées dans les temps saisis : toute la main-d'œuvre est valorisée au taux normal."
+    },
+    "settlement": {
+      "posted": "{{amount}} imputés sur {{cc}}, période {{period}}, le {{date}}.",
+      "pending": "Imputation en attente : {{reason}}",
+      "reversed": "Imputation annulée le {{date}} (réouverture : {{reason}}).",
+      "onClose": "Les coûts seront imputés au budget à la clôture de l'OT."
+    },
+    "details": "Détail ({{labor}} temps, {{parts}} pièces, {{purchases}} achats)",
+    "lines": {
+      "labor": "Main-d'œuvre",
+      "parts": "Pièces",
+      "purchases": "Achats liés à l'OT",
+      "noLabor": "Aucun temps saisi.",
+      "noParts": "Aucune pièce sortie.",
+      "noPurchases": "Aucune commande liée.",
+      "who": "Intervenant",
+      "craft": "Métier",
+      "hours": "Heures",
+      "rate": "Taux",
+      "amount": "Montant",
+      "overtime": "heures sup.",
+      "noRate": "sans taux",
+      "article": "Article",
+      "issued": "Sorti",
+      "returned": "Retourné",
+      "nonStock": "hors stock",
+      "po": "Commande",
+      "item": "Objet",
+      "ordered": "Commandé",
+      "received": "Réceptionné",
+      "open": "Reste engagé",
+      "demand": {
+        "WORK_ORDER": "prestation",
+        "WORK_ORDER_PART": "pièce"
+      }
+    }
+  },
+  "estimate": {
+    "title": "Estimation de l'OT {{code}}",
+    "description": "Montants estimés par catégorie, en {{currency}}. L'estimation sert de référence pour l'écart du réel.",
+    "invalidAmount": "Montant positif attendu.",
+    "total": "Total estimé : {{amount}}",
+    "costCenter": "Centre de coût d'imputation",
+    "ccAutoResolved": "Automatique : {{cc}}",
+    "ccAutoNone": "Automatique (aucun trouvé)",
+    "ccHint": "Par défaut, le centre de coût de l'équipement ou de son emplacement.",
+    "notes": "Hypothèses",
+    "saved": "Estimation de l'OT {{code}} enregistrée.",
+    "saveError": "L'estimation n'a pas été enregistrée."
+  },
+  "kpi": {
+    "budget": "Budget",
+    "budgetHint": "Exercice {{year}}",
+    "committed": "Engagé",
+    "committedHint": "Commandes ouvertes",
+    "actual": "Réel",
+    "actualHint": "OT imputés et saisies",
+    "forecast": "Prévision fin d'exercice",
+    "forecastHint": "Réel + engagé + budget restant",
+    "variance": "Écart",
+    "overrun": "Dépassement prévu",
+    "underrun": "Marge prévue",
+    "consumed": "Consommation",
+    "consumedHint": "Réel / budget",
+    "consumedHintMonth": "Réel / budget annuel, fin {{month}}"
+  },
+  "cockpit": {
+    "loading": "Chargement du pilotage…",
+    "loadError": "Le pilotage budgétaire n'a pas pu être chargé.",
+    "tableTitle": "Par centre de coût et catégorie",
+    "export": "Exporter (CSV)",
+    "exported": "Fichier enregistré : {{path}}",
+    "exportError": "L'export a échoué.",
+    "analyse": "Analyser l'écart",
+    "openReviews_one": "{{count}} analyse en cours",
+    "openReviews_other": "{{count}} analyses en cours",
+    "consumedAria": "Part du budget consommée",
+    "method": "Prévision = réel + engagements ouverts + budget des mois restants (lignes annuelles au prorata). Les engagements sont les commandes et demandes d'achat approuvées liées aux OT, convertis au taux du jour.",
+    "col": {
+      "costCenter": "Centre de coût",
+      "costCenterCode": "Code centre de coût",
+      "costCenterName": "Centre de coût",
+      "category": "Catégorie",
+      "budget": "Budget",
+      "committed": "Engagé",
+      "actual": "Réel",
+      "forecast": "Prévision",
+      "variance": "Écart",
+      "consumed": "Consommé",
+      "reviews": "Analyse"
+    },
+    "empty": {
+      "noCostCenterTitle": "Aucun centre de coût",
+      "noCostCenterBody": "Créez vos centres de coût et rattachez-les aux entités de l'organisation : les coûts des OT y seront imputés.",
+      "noBudgetTitle": "Aucun budget pour {{year}}",
+      "noBudgetBody": "Créez la version budgétaire {{year}}, saisissez les lignes par centre de coût et faites-la approuver pour recevoir les coûts des OT.",
+      "openPlanning": "Ouvrir le budget",
+      "noRowsTitle": "Aucun montant pour cette version",
+      "noRowsBody": "Ajoutez des lignes de budget ; le réel apparaît à la clôture des OT."
+    },
+    "notice": {
+      "notApproved": "Cette version est « {{status}} » : les OT clôturés ne sont imputés qu'à une version approuvée ou figée.",
+      "pending_one": "{{count}} OT clôturé attend son imputation ({{amount}}).",
+      "pending_other": "{{count}} OT clôturés attendent leur imputation ({{amount}}).",
+      "openPending": "Voir les imputations en attente",
+      "unassignedCommitments": "{{amount}} d'engagements portent sur des OT sans centre de coût et ne figurent dans aucune ligne."
+    }
+  },
+  "burn": {
+    "title": "Budget et réel par mois",
+    "budget": "Budget",
+    "actual": "Réel",
+    "monthAria": "{{month}} : budget {{budget}}, réel {{actual}}",
+    "cumulative": "Cumul à date : réel {{actual}} pour un budget de {{budget}}."
+  },
+  "drill": {
+    "title": "{{cc}} · {{bucket}}",
+    "summary": "Réel {{actual}} · engagé {{committed}} · budget {{budget}}",
+    "loadError": "Le détail n'a pas pu être chargé.",
+    "actuals_one": "{{count}} écriture de réel",
+    "actuals_other": "{{count}} écritures de réel",
+    "commitments_one": "{{count}} engagement ouvert",
+    "commitments_other": "{{count}} engagements ouverts",
+    "noActuals": "Aucun réel sur cette ligne.",
+    "noCommitments": "Aucun engagement ouvert.",
+    "reversal": "Contre-passation",
+    "reversed": "Annulé",
+    "col": {
+      "period": "Période",
+      "source": "Origine",
+      "asset": "Équipement",
+      "amount": "Montant",
+      "document": "Document",
+      "workOrder": "OT",
+      "due": "Livraison prévue",
+      "open": "Reste engagé"
+    },
+    "kind": {
+      "purchase_order": "Commande",
+      "requisition": "Demande d'achat",
+      "manual": "Engagement saisi"
+    },
+    "lane": {
+      "regular": "Heures normales",
+      "overtime": "Heures supplémentaires"
+    },
+    "sourceType": {
+      "wo_settlement": "Imputation d'OT",
+      "reversal": "Contre-passation",
+      "manual": "Saisie manuelle"
+    }
+  },
+  "settlements": {
+    "intro": "Chaque OT clôturé est imputé une seule fois au centre de coût et à la période de sa clôture. Une imputation en attente indique ce qu'il faut corriger ; une réouverture d'OT annule l'imputation.",
+    "filter": "Afficher",
+    "filters": {
+      "pending": "En attente",
+      "posted": "Imputés",
+      "reversed": "Annulés",
+      "all": "Tous"
+    },
+    "empty": {
+      "pending": "Aucune imputation en attente",
+      "posted": "Aucun OT imputé",
+      "reversed": "Aucune imputation annulée",
+      "all": "Aucun OT clôturé"
+    },
+    "emptyBody": "Exercice {{year}}.",
+    "loadError": "Les imputations n'ont pas pu être chargées.",
+    "retry": "Imputer",
+    "retryPosted": "OT {{code}} imputé : {{amount}}.",
+    "retryStillPending": "OT {{code}} toujours en attente.",
+    "retryError": "L'imputation a échoué.",
+    "split": "MO {{labor}} · pièces {{parts}} · services {{services}} · autres {{other}}",
+    "col": {
+      "workOrder": "OT",
+      "asset": "Équipement",
+      "closedAt": "Clôturé le",
+      "status": "Imputation",
+      "costCenter": "Centre de coût",
+      "period": "Période",
+      "total": "Montant"
+    }
+  },
+  "planning": {
+    "loadError": "Le budget n'a pas pu être chargé.",
+    "saveError": "L'enregistrement a échoué.",
+    "costCenters": "Centres de coût",
+    "costCentersHint": "Les OT sont imputés au centre de coût de l'équipement, sinon à celui de son emplacement ou de l'entité de l'OT.",
+    "newCostCenter": "Nouveau centre de coût",
+    "editCostCenter": "Modifier {{code}}",
+    "costCenterDialogHint": "Le code doit correspondre au code saisi sur les équipements et les entités de l'organisation.",
+    "costCenterSaved": "Centre de coût {{code}} enregistré.",
+    "noCostCenters": "Aucun centre de coût",
+    "noCostCentersBody": "Créez le premier centre de coût de maintenance.",
+    "orgNodeHint": "Les OT de cette entité (et de ses sous-entités) sans autre centre de coût y sont imputés.",
+    "none": "Aucun",
+    "active": "Actif",
+    "inactive": "Inactif",
+    "versions": "Versions budgétaires {{year}}",
+    "versionsHint": "Brouillon → soumise → approuvée → figée. Seule une version approuvée ou figée reçoit les coûts des OT.",
+    "newVersion": "Nouvelle version",
+    "newVersionHint": "Exercice {{year}}, en {{currency}} (devise de l'entreprise).",
+    "noVersions": "Aucune version pour {{year}}",
+    "noVersionsBody": "Créez la version initiale du budget de l'exercice.",
+    "untitled": "Sans titre",
+    "scenario": "Scénario",
+    "versionTitle": "Titre",
+    "versionMoved": "Version passée à « {{status}} ».",
+    "reforecast": "Réviser",
+    "reforecastTitle": "Révision — {{title}}",
+    "lines": "Lignes de budget — {{title}}",
+    "linesHint": "Montant par centre de coût, catégorie et mois (ou annuel).",
+    "linesLocked": "Version « {{status}} » : les lignes ne sont plus modifiables. Créez une révision pour les changer.",
+    "newLine": "Nouvelle ligne",
+    "editLine": "Modifier la ligne",
+    "lineHint": "Montant en {{currency}}.",
+    "noLines": "Aucune ligne de budget",
+    "noLinesBody": "Ajoutez les montants prévus par centre de coût et catégorie.",
+    "annual": "Annuel",
+    "total": "Total",
+    "col": {
+      "code": "Code",
+      "name": "Libellé",
+      "orgNode": "Entité",
+      "parent": "Centre parent",
+      "state": "État",
+      "actions": "Actions",
+      "costCenter": "Centre de coût",
+      "category": "Catégorie",
+      "period": "Période",
+      "amount": "Montant",
+      "justification": "Justification"
+    }
+  },
+  "reviews": {
+    "intro": "Une analyse d'écart documente la cause d'un dépassement, l'action décidée et son acceptation.",
+    "noVersion": "Aucune version budgétaire",
+    "noVersionBody": "Les analyses d'écart portent sur une version du budget.",
+    "loadError": "Les analyses n'ont pas pu être chargées.",
+    "empty": "Aucune analyse d'écart",
+    "emptyBody": "Ouvrez une analyse depuis le pilotage, sur une ligne en dépassement.",
+    "opened": "Ouverte le {{date}}",
+    "reopenReason": "Rouverte : {{reason}}",
+    "moved": "Analyse passée à « {{status}} ».",
+    "commentLabel": "Commentaire",
+    "reopenLabel": "Motif de réouverture",
+    "confirm": {
+      "in_review": "L'analyse passe en cours d'examen.",
+      "actioned": "Une action corrective a été engagée.",
+      "accepted": "L'écart est accepté (approbation requise).",
+      "closed": "L'analyse est clôturée (approbation requise).",
+      "open": "L'analyse est rouverte avec le motif indiqué."
+    },
+    "newTitle": "Analyser l'écart — {{cc}} · {{bucket}}",
+    "newBody": "Budget {{budget}}, prévision {{forecast}}, écart {{variance}}.",
+    "driver": "Cause",
+    "commentary": "Explication",
+    "commentaryPlaceholder": "Ce qui s'est passé et ce qui sera fait",
+    "owner": "Responsable de l'action : {{name}}",
+    "open": "Ouvrir l'analyse",
+    "created": "Analyse d'écart ouverte.",
+    "saveError": "L'analyse n'a pas été créée."
+  },
+  "assets": {
+    "intro": "Coût de maintenance cumulé de chaque équipement (OT clôturés) comparé à sa valeur de remplacement. Le coût moyen d'un OT correctif sert de coût de défaillance aux études RAMS.",
+    "search": "Rechercher un équipement",
+    "loadError": "Les coûts par équipement n'ont pas pu être chargés.",
+    "emptyTitle": "Aucun coût de maintenance",
+    "emptyBody": "Les coûts apparaissent à la clôture des OT sur les équipements.",
+    "replaceReview": "Réparer ou remplacer ?",
+    "noRav": "valeur de remplacement non renseignée",
+    "ofRav": "{{pct}} de la valeur de remplacement",
+    "split": "MO {{labor}} · pièces {{parts}} · services {{services}}",
+    "correctiveCount_one": "{{count}} OT correctif · moyenne {{avg}}",
+    "correctiveCount_other": "{{count}} OT correctifs · moyenne {{avg}}",
+    "col": {
+      "asset": "Équipement",
+      "rav": "Valeur de remplacement",
+      "lifetime": "Coût cumulé",
+      "lifetimeRav": "Cumul / valeur",
+      "cost12m": "12 derniers mois",
+      "corrective": "Correctif",
+      "years": "5 ans",
+      "lastClosed": "Dernier OT"
+    },
+    "kpi": {
+      "rav": "Valeur de remplacement du parc",
+      "cost12m": "Coût de maintenance",
+      "cost12mHint": "12 mois, équipements valorisés",
+      "costRav": "Coût / valeur de remplacement",
+      "costRavHint": "Indicateur SMRP",
+      "withoutRav": "Sans valeur de remplacement",
+      "withoutRavHint": "À renseigner sur la fiche équipement"
+    }
+  },
+  "periods": {
+    "intro": "Clôturer un mois fige son réel : aucune écriture n'y est plus acceptée et les OT clôturés ensuite sont imputés au mois ouvert suivant. Un mois se clôture une fois terminé et quand tous ses OT sont imputés.",
+    "caption": "Périodes budgétaires {{year}}",
+    "loadError": "Les périodes n'ont pas pu être chargées.",
+    "close": "Clôturer",
+    "reopen": "Rouvrir",
+    "closeTitle": "Clôturer {{month}}",
+    "closeDescription": "Le réel du mois sera figé. Les écritures ultérieures iront au mois ouvert suivant.",
+    "reopenTitle": "Rouvrir {{month}}",
+    "reopenDescription": "Le mois acceptera à nouveau des écritures : les chiffres déjà communiqués peuvent changer.",
+    "notes": "Commentaire",
+    "reason": "Motif de réouverture",
+    "closedToast": "{{month}} clôturé.",
+    "reopenedToast": "{{month}} rouvert.",
+    "closedBy": "Par {{who}} le {{at}}",
+    "reopenedAt": "Rouverte le {{at}}",
+    "blocker": {
+      "closed": "Déjà clôturé.",
+      "future": "Le mois n'est pas terminé.",
+      "pending_one": "{{count}} OT du mois attend son imputation.",
+      "pending_other": "{{count}} OT du mois attendent leur imputation."
+    },
+    "col": {
+      "month": "Mois",
+      "status": "État",
+      "actual": "Réel",
+      "pending": "OT en attente",
+      "closedBy": "Clôture",
+      "actions": "Actions"
+    }
+  }
+}
