@@ -13,14 +13,23 @@ export type OrgIssueLike = Pick<OrgValidationIssue, "code" | "message"> & {
 };
 
 const ISSUE_KEY_PREFIXES = ["governance.issues", "errors", "preview.issues"] as const;
+/** Asset and reference-data commands return the same coded issues, translated in their own namespaces. */
+const OTHER_NAMESPACE_KEY_PREFIXES = ["equipment:errors", "reference:errors"] as const;
+
+function issueKeys(code: string, orgNs: string): string[] {
+  return [
+    ...ISSUE_KEY_PREFIXES.map((prefix) => `${orgNs}${prefix}.${code}`),
+    ...OTHER_NAMESPACE_KEY_PREFIXES.map((prefix) => `${prefix}.${code}`),
+  ];
+}
 
 function translateIssueKey(
   code: string,
   params: Record<string, string>,
   t: (key: string, opts: Record<string, unknown>) => string,
+  orgNs = "",
 ): string | null {
-  for (const prefix of ISSUE_KEY_PREFIXES) {
-    const key = `${prefix}.${code}`;
+  for (const key of issueKeys(code, orgNs)) {
     const translated = t(key, { ...params, defaultValue: "" });
     if (translated && translated !== key && translated.trim() !== "") {
       return translated;
@@ -39,8 +48,11 @@ export function formatOrgValidationIssue(issue: OrgIssueLike, t: TFunction<"org"
 /** Same as formatOrgValidationIssue but uses the global i18n instance (stores/toasts). */
 export function formatOrgIssueWithI18n(issue: OrgIssueLike): string {
   const params = issue.params ?? {};
-  const translated = translateIssueKey(issue.code, params, (key, opts) =>
-    String(i18n.t(`org:${key}`, opts)),
+  const translated = translateIssueKey(
+    issue.code,
+    params,
+    (key, opts) => String(i18n.t(key, opts)),
+    "org:",
   );
   if (translated) return translated;
   return issue.message;

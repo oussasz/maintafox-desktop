@@ -6,6 +6,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  type InventoryArticleRow,
   createInventoryArticle,
   listInventoryArticleFamilies,
   listInventoryArticles,
@@ -15,7 +16,6 @@ import {
 } from "@/services/inventory-service";
 import type {
   ArticleFamily,
-  InventoryArticle,
   InventoryArticleInput,
   StockLocation,
   Warehouse,
@@ -74,7 +74,7 @@ function makeLocation(overrides: Partial<StockLocation> = {}): StockLocation {
   };
 }
 
-function makeArticle(overrides: Partial<InventoryArticle> = {}): InventoryArticle {
+function makeArticle(overrides: Partial<InventoryArticleRow> = {}): InventoryArticleRow {
   return {
     id: 4,
     article_code: "ART-001",
@@ -127,6 +127,12 @@ function makeArticle(overrides: Partial<InventoryArticle> = {}): InventoryArticl
     row_version: 1,
     created_at: TS,
     updated_at: TS,
+    on_hand_qty: 12,
+    reserved_qty: 2,
+    available_qty: 10,
+    avg_unit_cost: null,
+    stock_value: null,
+    unvalued_qty: 0,
     ...overrides,
   };
 }
@@ -148,7 +154,7 @@ function makeInput(overrides: Partial<InventoryArticleInput> = {}): InventoryArt
   };
 }
 
-function primeLists(articles: InventoryArticle[] = [makeArticle()]) {
+function primeLists(articles: InventoryArticleRow[] = [makeArticle()]) {
   mockFamilies.mockResolvedValue([makeFamily()]);
   mockWarehouses.mockResolvedValue([makeWarehouse()]);
   mockLocations.mockResolvedValue([makeLocation()]);
@@ -203,6 +209,16 @@ describe("inventory-store", () => {
       expect(s.loading).toBe(false);
     });
 
+    it("clears a previous load failure once a load succeeds", async () => {
+      primeLists();
+      useInventoryStore.setState({ loadError: new Error("old failure") });
+
+      await useInventoryStore.getState().loadAll();
+
+      expect(useInventoryStore.getState().loadError).toBeNull();
+      expect(useInventoryStore.getState().articles[0]?.available_qty).toBe(10);
+    });
+
     it("passes the current articleSearch to listInventoryArticles", async () => {
       primeLists();
       useInventoryStore.setState({ articleSearch: "bearing" });
@@ -214,7 +230,8 @@ describe("inventory-store", () => {
 
     it("swallows a failure of any list, sets error and keeps previous data", async () => {
       primeLists();
-      mockWarehouses.mockRejectedValueOnce(new Error("warehouses failed"));
+      const failure = new Error("warehouses failed");
+      mockWarehouses.mockRejectedValueOnce(failure);
       const previous = [makeArticle({ id: 99 })];
       useInventoryStore.setState({ articles: previous });
 
@@ -222,6 +239,8 @@ describe("inventory-store", () => {
 
       const s = useInventoryStore.getState();
       expect(s.error).toBe("warehouses failed");
+      // The raw failure is kept for ErrorState (translated by describeAppError).
+      expect(s.loadError).toBe(failure);
       expect(s.articles).toBe(previous);
       expect(s.families).toEqual([]);
       expect(s.loading).toBe(false);
@@ -243,9 +262,9 @@ describe("inventory-store", () => {
     it("creates, then reloads all lists; saving toggles", async () => {
       primeLists();
       const input = makeInput();
-      let resolveCreate: (v: InventoryArticle) => void = () => undefined;
+      let resolveCreate: (v: InventoryArticleRow) => void = () => undefined;
       mockCreate.mockReturnValueOnce(
-        new Promise<InventoryArticle>((r) => {
+        new Promise<InventoryArticleRow>((r) => {
           resolveCreate = r;
         }),
       );

@@ -3,11 +3,12 @@
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use serde::Serialize;
 
+use crate::analytics::as_of::{self, PmDueWindow};
+use crate::analytics::smrp;
 use crate::commands::dashboard::kpi_quality_badge;
 use crate::errors::AppResult;
 use crate::inventory::queries::evaluate_reorder;
 use crate::kpi_definitions;
-use crate::pm::queries::get_pm_due_metrics;
 use crate::reliability::fleet::{pooled_fleet_kpis, FleetWindow};
 use crate::reliability::readiness::DQ_GREEN_THRESHOLD;
 
@@ -21,6 +22,9 @@ pub struct OverviewKpiCell {
     pub previous_value: f64,
     pub available: bool,
     pub quality_badge: Option<String>,
+    /// `false` when no record history lets the measure be rebuilt at the start of the window
+    /// (`previous_value` then repeats `value` and no trend must be shown).
+    pub baseline_available: bool,
     pub value_kind: String,
     pub trend_sense: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -79,6 +83,7 @@ fn count_cell(
         } else {
             None
         },
+        baseline_available: available,
         value_kind: "count".into(),
         trend_sense: trend_sense.into(),
         series: None,
@@ -105,10 +110,17 @@ fn float_cell(
         } else {
             None
         },
+        baseline_available: available,
         value_kind: value_kind.into(),
         trend_sense: trend_sense.into(),
         series: None,
     }
+}
+
+fn without_baseline(mut cell: OverviewKpiCell) -> OverviewKpiCell {
+    cell.baseline_available = false;
+    cell.quality_badge = None;
+    cell
 }
 
 pub async fn build_overview_kpis(
@@ -132,23 +144,14 @@ pub async fn build_overview_kpis(
     };
     let mut cells = Vec::new();
 
+    // Point-in-time measures: now vs the same measure at the start of the horizon (`as_of`).
+    let now = chrono::Utc::now();
+    let start = as_of::days_before(now, OVERVIEW_HORIZON_DAYS);
+
     let (di_now, di_prev) = if perms.can_di {
         (
-            count_scalar(
-                db,
-                "SELECT COUNT(*) AS cnt FROM intervention_requests \
-                 WHERE status NOT IN ('rejected','converted_to_work_order',\
-                 'closed_as_non_executable','archived')",
-            )
-            .await?,
-            count_scalar(
-                db,
-                "SELECT COUNT(*) AS cnt FROM intervention_requests \
-                 WHERE status NOT IN ('rejected','converted_to_work_order',\
-                 'closed_as_non_executable','archived') \
-                 AND created_at <= datetime('now', '-7 days')",
-            )
-            .await?,
+            as_of::di_open_at(db, now, None, None).await?,
+            as_of::di_open_at(db, start, None, None).await?,
         )
     } else {
         (0, 0)
@@ -164,21 +167,8 @@ pub async fn build_overview_kpis(
 
     let (ot_ip_now, ot_ip_prev) = if perms.can_ot {
         (
-            count_scalar(
-                db,
-                "SELECT COUNT(*) AS cnt FROM work_orders wo \
-                 JOIN work_order_statuses s ON s.id = wo.status_id \
-                 WHERE s.code = 'in_progress'",
-            )
-            .await?,
-            count_scalar(
-                db,
-                "SELECT COUNT(*) AS cnt FROM work_orders wo \
-                 JOIN work_order_statuses s ON s.id = wo.status_id \
-                 WHERE s.code = 'in_progress' \
-                 AND wo.updated_at <= datetime('now', '-7 days')",
-            )
-            .await?,
+            as_of::wo_in_progress_at(db, now, None).await?,
+            as_of::wo_in_progress_at(db, start, None).await?,
         )
     } else {
         (0, 0)
@@ -194,24 +184,8 @@ pub async fn build_overview_kpis(
 
     let (ot_od_now, ot_od_prev) = if perms.can_ot {
         (
-            count_scalar(
-                db,
-                "SELECT COUNT(*) AS cnt FROM work_orders wo \
-                 JOIN work_order_statuses s ON s.id = wo.status_id \
-                 WHERE wo.planned_end IS NOT NULL \
-                   AND wo.planned_end < strftime('%Y-%m-%dT%H:%M:%SZ','now') \
-                   AND s.code NOT IN ('closed', 'cancelled')",
-            )
-            .await?,
-            count_scalar(
-                db,
-                "SELECT COUNT(*) AS cnt FROM work_orders wo \
-                 JOIN work_order_statuses s ON s.id = wo.status_id \
-                 WHERE wo.planned_end IS NOT NULL \
-                   AND wo.planned_end < datetime('now', '-7 days') \
-                   AND s.code NOT IN ('closed', 'cancelled')",
-            )
-            .await?,
+            as_of::wo_overdue_at(db, now, None).await?,
+            as_of::wo_overdue_at(db, start, None).await?,
         )
     } else {
         (0, 0)
@@ -225,62 +199,53 @@ pub async fn build_overview_kpis(
         "up-bad",
     ));
 
-    let pm_metrics = if perms.can_pm {
-        Some(get_pm_due_metrics(db).await?)
-    } else {
-        None
-    };
-
-    let pm_overdue = pm_metrics.as_ref().map(|m| m.overdue_count).unwrap_or(0);
-    let pm_overdue_prev = if perms.can_pm {
-        count_scalar(
-            db,
-            "SELECT COUNT(*) AS cnt FROM pm_occurrences \
-             WHERE status NOT IN ('completed','cancelled','missed') \
-               AND due_at IS NOT NULL AND due_at < datetime('now', '-7 days')",
+    // PM compliance (SMRP): occurrences done within tolerance / occurrences due, last 30 days vs
+    // the 30 days before (`analytics::smrp::pm_compliance`).
+    let (pm_comp, pm_comp_prev) = if perms.can_pm {
+        let window = smrp::SmrpWindow::last_days(now, OVERVIEW_HORIZON_DAYS);
+        (
+            smrp::pm_compliance(db, window, now, None).await?,
+            smrp::pm_compliance(db, window.previous(), now, None).await?,
         )
-        .await?
     } else {
-        0
+        (smrp::SmrpRatio::of(0.0, 0.0), smrp::SmrpRatio::of(0.0, 0.0))
     };
-    cells.push(count_cell(
+    let mut pm_cell = float_cell(
         kpi_definitions::overview::PM_COMPLIANCE,
         kpi_definitions::catalog::PM_ADHERENCE,
-        pm_overdue,
-        pm_overdue_prev,
-        perms.can_pm,
+        pm_comp.value_pct.unwrap_or(0.0),
+        pm_comp_prev.value_pct.unwrap_or(0.0),
+        perms.can_pm && pm_comp.value_pct.is_some(),
+        "percent",
         "up-good",
-    ));
+    );
+    pm_cell.baseline_available = pm_cell.available && pm_comp_prev.value_pct.is_some();
+    if !pm_cell.baseline_available {
+        pm_cell.quality_badge = None;
+    }
+    cells.push(pm_cell);
 
-    let pm_today = pm_metrics.as_ref().map(|m| m.due_today_count).unwrap_or(0);
+    let (pm_today, pm_today_prev) = if perms.can_pm {
+        (
+            as_of::pm_due_at(db, now, PmDueWindow::SameDay, None).await?,
+            as_of::pm_due_at(db, start, PmDueWindow::SameDay, None).await?,
+        )
+    } else {
+        (0, 0)
+    };
     cells.push(count_cell(
         kpi_definitions::overview::PM_DUE_TODAY,
         kpi_definitions::catalog::PM_DUE_TODAY,
         pm_today,
-        pm_today,
+        pm_today_prev,
         perms.can_pm,
         "up-bad",
     ));
 
     let (backlog_now, backlog_prev) = if perms.can_ot {
         (
-            sum_scalar(
-                db,
-                "SELECT COALESCE(SUM(COALESCE(wo.expected_duration_hours, 0)), 0) AS total \
-                 FROM work_orders wo \
-                 JOIN work_order_statuses s ON s.id = wo.status_id \
-                 WHERE s.code NOT IN ('closed', 'cancelled', 'completed')",
-            )
-            .await?,
-            sum_scalar(
-                db,
-                "SELECT COALESCE(SUM(COALESCE(wo.expected_duration_hours, 0)), 0) AS total \
-                 FROM work_orders wo \
-                 JOIN work_order_statuses s ON s.id = wo.status_id \
-                 WHERE s.code NOT IN ('closed', 'cancelled', 'completed') \
-                   AND wo.updated_at <= datetime('now', '-7 days')",
-            )
-            .await?,
+            as_of::wo_backlog_hours_at(db, now, None).await?,
+            as_of::wo_backlog_hours_at(db, start, None).await?,
         )
     } else {
         (0.0, 0.0)
@@ -368,43 +333,30 @@ pub async fn build_overview_kpis(
         "up-good",
     ));
 
-    let (crit_now, crit_prev) = if perms.can_eq {
-        (
-            count_scalar(
-                db,
-                "SELECT COUNT(*) AS cnt FROM equipment e \
-                 LEFT JOIN reference_values rs_crit ON rs_crit.id = e.equipment_criticality_ref_id \
-                 LEFT JOIN lookup_values lv ON lv.id = e.criticality_value_id \
-                 WHERE e.deleted_at IS NULL \
-                   AND (rs_crit.code IN ('A', 'critical', 'CRITICAL') \
-                        OR lv.code IN ('A', 'critical', 'CRITICAL')) \
-                   AND e.lifecycle_status IN ('down', 'out_of_service', 'inactive', 'decommissioned')",
-            )
-            .await?,
-            count_scalar(
-                db,
-                "SELECT COUNT(*) AS cnt FROM equipment e \
-                 LEFT JOIN reference_values rs_crit ON rs_crit.id = e.equipment_criticality_ref_id \
-                 LEFT JOIN lookup_values lv ON lv.id = e.criticality_value_id \
-                 WHERE e.deleted_at IS NULL \
-                   AND (rs_crit.code IN ('A', 'critical', 'CRITICAL') \
-                        OR lv.code IN ('A', 'critical', 'CRITICAL')) \
-                   AND e.lifecycle_status IN ('down', 'out_of_service', 'inactive', 'decommissioned') \
-                   AND e.updated_at <= datetime('now', '-7 days')",
-            )
-            .await?,
+    // Critical assets down: asset status is not kept per instant, so there is no baseline.
+    let crit_now = if perms.can_eq {
+        count_scalar(
+            db,
+            "SELECT COUNT(*) AS cnt FROM equipment e \
+             LEFT JOIN reference_values rs_crit ON rs_crit.id = e.equipment_criticality_ref_id \
+             LEFT JOIN lookup_values lv ON lv.id = e.criticality_value_id \
+             WHERE e.deleted_at IS NULL \
+               AND (rs_crit.code IN ('A', 'critical', 'CRITICAL') \
+                    OR lv.code IN ('A', 'critical', 'CRITICAL')) \
+               AND e.lifecycle_status IN ('down', 'out_of_service', 'inactive', 'decommissioned')",
         )
+        .await?
     } else {
-        (0, 0)
+        0
     };
-    cells.push(count_cell(
+    cells.push(without_baseline(count_cell(
         kpi_definitions::overview::CRITICAL_DOWN,
         kpi_definitions::catalog::CRITICAL_DOWN,
         crit_now,
-        crit_prev,
+        crit_now,
         perms.can_eq,
         "up-bad",
-    ));
+    )));
 
     let (stock_out, reorder_n) = if perms.can_inv {
         let stock_out = count_scalar(
@@ -423,22 +375,24 @@ pub async fn build_overview_kpis(
     } else {
         (0, 0)
     };
-    cells.push(count_cell(
+    // Current stock balances only (no per-instant history): no baseline.
+    cells.push(without_baseline(count_cell(
         kpi_definitions::overview::STOCK_OUT,
         kpi_definitions::catalog::STOCK_OUT,
         stock_out,
         stock_out,
         perms.can_inv,
         "up-bad",
-    ));
-    cells.push(count_cell(
+    )));
+    // Current stock balances only (no per-instant history): no baseline.
+    cells.push(without_baseline(count_cell(
         kpi_definitions::overview::REORDER_ALERT,
         kpi_definitions::catalog::REORDER_ALERT,
         reorder_n,
         reorder_n,
         perms.can_inv,
         "up-bad",
-    ));
+    )));
 
     let (cost_now, cost_prev) = if perms.can_fin {
         (

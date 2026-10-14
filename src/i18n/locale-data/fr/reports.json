@@ -125,6 +125,10 @@
       "open_work_orders": {
         "title": "Ordres de travail ouverts par statut",
         "description": "Nombre d’ordres de travail ouverts dans chaque statut."
+      },
+      "monthly_management": {
+        "title": "Rapport mensuel de maintenance",
+        "description": "Dernier mois complet, sous l’en-tête de document de votre société : disponibilité, MTBF/MTTR, indicateurs SMRP, 5 équipements les plus défaillants, coût par centre de coût et par type d’OT."
       }
     }
   },
@@ -221,5 +225,74 @@
     "saved": "Enregistré : {{file}}",
     "openFolder": "Ouvrir le dossier",
     "dismiss": "Masquer ce message"
+  },
+  "smrp": {
+    "title": "Indicateurs SMRP",
+    "subtitle": "Indicateurs de gestion de la maintenance conformes aux métriques SMRP Best Practice, calculés à partir de vos OT, planifications, PM et personnel. {{period}}.",
+    "definitionAria": "Définition de {{title}}",
+    "formula": "Formule",
+    "period": "Période",
+    "unit": "Unité",
+    "open": "Ouvrir la liste",
+    "periodValue": "{{days}} derniers jours ({{from}} – {{to}})",
+    "hoursValue": "{{value}} h",
+    "trendStable": "Stable vs période précédente",
+    "trendPoints": "{{change}} pts vs période précédente",
+    "unitPercent": "Pourcentage (%)",
+    "unitPercentYear": "Pourcentage de la valeur de remplacement par an (%)",
+    "schedule": {
+      "title": "Respect du planning",
+      "none": "Aucun travail planifié ne s’est terminé sur la période.",
+      "detail": "{{done}} réalisées comme planifié sur {{total}} engagées",
+      "formula": "Heures des engagements de planning dont l’OT a été terminé au plus tard le jour engagé ÷ heures engagées. Les engagements qui se terminent plus tard ne sont pas encore comptés."
+    },
+    "mix": {
+      "basisHours": "Sur les heures de main-d’œuvre saisies",
+      "basisCount": "Sur le nombre d’OT (aucune heure de main-d’œuvre saisie)",
+      "detailHours": "{{part}} sur {{total}}",
+      "detailCount": "{{part}} OT sur {{total}}",
+      "none": "Aucun OT terminé sur la période.",
+      "planned": {
+        "title": "Travail planifié",
+        "formula": "Heures de main-d’œuvre des OT terminés de type préventif, conditionnel, inspection, révision et amélioration ÷ heures de tous les OT terminés. Le nombre d’OT est utilisé quand aucune heure n’est saisie."
+      },
+      "reactive": {
+        "title": "Travail réactif",
+        "formula": "Heures de main-d’œuvre des OT terminés de type correctif et urgence ÷ heures de tous les OT terminés."
+      },
+      "emergency": {
+        "title": "Travail d’urgence",
+        "formula": "Heures de main-d’œuvre des OT d’urgence terminés ÷ heures de tous les OT terminés."
+      }
+    },
+    "pm": {
+      "title": "Respect des PM",
+      "none": "Aucune maintenance préventive n’était due sur la période.",
+      "detail": "{{done}} sur {{total}} réalisées dans la tolérance",
+      "formula": "Occurrences de PM réalisées avant la fin de leur fenêtre de tolérance (ou de leur jour d’échéance si le plan n’a pas de tolérance) ÷ occurrences dues sur la période. Les occurrences annulées sont exclues ; celles encore dans leur tolérance ne sont pas encore comptées."
+    },
+    "backlog": {
+      "title": "Carnet de travaux",
+      "weeksValue": "{{value}} semaines",
+      "noCapacity": "{{hours}} de travail, mais la capacité de l’équipe est inconnue : affectez un horaire de travail au personnel actif.",
+      "detail": "{{hours}} prévues sur {{count}} OT ouverts · prêts à planifier : {{ready}}",
+      "capacity": "Capacité retenue : {{hours}} par semaine ({{people}} personnes, selon leur horaire de travail)",
+      "withoutSchedule_one": "{{count}} personne active sans horaire de travail n’est pas comptée",
+      "withoutSchedule_other": "{{count}} personnes actives sans horaire de travail ne sont pas comptées",
+      "withoutEstimate_one": "{{count}} OT ouvert n’a pas d’estimation de durée (compté 0 h)",
+      "withoutEstimate_other": "{{count}} OT ouverts n’ont pas d’estimation de durée (comptés 0 h)",
+      "trend": "{{change}} semaines vs début de période",
+      "formula": "Heures prévues des OT non encore réalisés ÷ heures hebdomadaires de l’équipe. Heures de l’équipe = postes des jours travaillés de l’horaire de chaque personne active.",
+      "unit": "Semaines de travail",
+      "period": "Maintenant, comparé au début de la période choisie"
+    },
+    "rav": {
+      "title": "Coût de maintenance / valeur de remplacement",
+      "needsValue": "Nécessite une valeur de remplacement sur les équipements ({{valued}} sur {{total}} en ont une).",
+      "detail": "{{cost}} par an (annualisé) pour {{rav}} de valeur de remplacement · {{valued}} équipements valorisés sur {{total}}",
+      "formula": "Coût des OT clôturés sur la période pour les équipements ayant une valeur de remplacement, annualisé, ÷ valeur de remplacement totale de ces équipements.",
+      "openAssets": "Ouvrir les équipements"
+    },
+    "wrenchTime": "Non mesuré : le temps outil (part du travail effectif dans le temps payé) nécessite un échantillonnage du travail, non enregistré dans Maintafox."
   }
 }

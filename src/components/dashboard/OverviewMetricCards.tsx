@@ -83,6 +83,7 @@ export function OverviewMetricCards(props: {
   const formatTrend = (
     cell: OverviewKpiCell,
   ): { label: string; sense: VisualMetricTrendSense } | undefined => {
+    if (cell.baseline_available === false) return undefined;
     const pct = trendPercent(cell.value, cell.previous_value);
     if (pct === null) return undefined;
     if (Math.abs(pct) < 0.5) {

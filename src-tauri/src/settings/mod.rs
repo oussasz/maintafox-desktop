@@ -675,7 +675,7 @@ fn validate_policy_json(domain: &str, snapshot_json: &str) -> Vec<PolicyTestResu
                     1440,
                 ));
                 results.push(range_rule("offline_grace_hours", p.offline_grace_hours, 0, 720));
-                results.push(range_rule("step_up_window_minutes", p.step_up_window_minutes, 1, 120));
+                results.push(range_rule("step_up_window_minutes", p.step_up_window_minutes, 1, 30));
                 results.push(range_rule("max_failed_attempts", p.max_failed_attempts, 1, 20));
                 results.push(range_rule("lockout_minutes", p.lockout_minutes, 1, 1440));
                 if p.idle_timeout_minutes > p.absolute_session_minutes {

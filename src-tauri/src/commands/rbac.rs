@@ -61,7 +61,7 @@ pub struct PasswordPolicySettings {
 /// Verify the user's password for a dangerous-action step-up.
 ///
 /// On success, records the verification timestamp in the in-memory session.
-/// The step-up window (`STEP_UP_DURATION_SECS`) starts from this moment.
+/// The step-up window (the session policy `step_up_window_minutes`) starts from this moment.
 #[tauri::command]
 pub async fn verify_step_up(payload: StepUpRequest, state: State<'_, AppState>) -> AppResult<StepUpResponse> {
     let user = require_session!(state);
@@ -100,6 +100,10 @@ pub async fn verify_step_up(payload: StepUpRequest, state: State<'_, AppState>) 
     // Record the step-up timestamp in the session
     let mut sm = state.session.write().await;
     sm.record_step_up();
+    let window_minutes = sm
+        .current
+        .as_ref()
+        .map_or(session_manager::STEP_UP_WINDOW_MINUTES, |s| s.step_up_window_minutes);
 
     crate::audit::emit(
         &state.db,
@@ -112,8 +116,7 @@ pub async fn verify_step_up(payload: StepUpRequest, state: State<'_, AppState>) 
     )
     .await;
 
-    let expires_at =
-        (chrono::Utc::now() + chrono::TimeDelta::seconds(session_manager::STEP_UP_DURATION_SECS as i64)).to_rfc3339();
+    let expires_at = (chrono::Utc::now() + chrono::TimeDelta::minutes(window_minutes)).to_rfc3339();
 
     Ok(StepUpResponse {
         success: true,

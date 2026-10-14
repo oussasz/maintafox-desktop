@@ -3,6 +3,8 @@
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TryGetable};
 use serde::{Deserialize, Serialize};
 
+use crate::analytics::as_of::{self, PmDueWindow};
+use crate::analytics::smrp::{build_smrp_kpis, SmrpKpis, SmrpWindow};
 use crate::errors::AppResult;
 use crate::kpi_definitions;
 use crate::reliability::fleet::{pooled_fleet_kpis, pooled_fleet_series, FleetWindow};
@@ -85,6 +87,8 @@ pub struct AnalyticsExecutiveDashboard {
     pub di_status_segments: Vec<AnalyticsDiStatusSegment>,
     pub reliability_series: Vec<AnalyticsReliabilitySeriesPoint>,
     pub bad_actor_assets: Vec<AnalyticsBadActorAsset>,
+    /// SMRP indicators over the horizon (and the horizon before it); `None` without OT / PM view.
+    pub smrp: Option<SmrpKpis>,
 }
 
 fn normalize_horizon(days: i64) -> i64 {
@@ -139,16 +143,6 @@ fn float_kpi(key: &str, value: Option<f64>, previous: Option<f64>, catalog_id: O
     }
 }
 
-async fn count_i64(db: &DatabaseConnection, sql: &str, binds: Vec<sea_orm::Value>) -> AppResult<i64> {
-    let row = db
-        .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, sql, binds))
-        .await?;
-    match row {
-        Some(r) => Ok(i64::try_get(&r, "", "cnt").unwrap_or(0)),
-        None => Ok(0),
-    }
-}
-
 /// Build executive dashboard projection for the given filter + permission flags.
 #[allow(clippy::too_many_arguments)]
 pub async fn build_executive_dashboard(
@@ -164,141 +158,65 @@ pub async fn build_executive_dashboard(
     let org = filter.org_node_id;
     let org_bind: sea_orm::Value = org.into();
 
-    // ── Ops KPIs (current open counts; org-scoped) ─────────────────────────
+    // ── Ops KPIs: point-in-time counts now vs at the start of the horizon ──
+    // Same measure at both instants (`analytics::as_of`), so the trend is a real change.
+    let now = chrono::Utc::now();
+    let start = as_of::days_before(now, horizon);
+
     let open_dis = if can_di {
-        let sql = "SELECT COUNT(*) AS cnt FROM intervention_requests ir
-             WHERE ir.status NOT IN ('rejected','converted_to_work_order','closed_as_non_executable','archived')
-               AND (? IS NULL OR ir.org_node_id = ?)";
-        let n = count_i64(db, sql, vec![org_bind.clone(), org_bind.clone()]).await?;
-        let prev_sql = "SELECT COUNT(*) AS cnt FROM intervention_requests ir
-             WHERE ir.status NOT IN ('rejected','converted_to_work_order','closed_as_non_executable','archived')
-               AND datetime(ir.created_at) <= datetime('now', ?)
-               AND (? IS NULL OR ir.org_node_id = ?)";
-        let shift = format!("-{horizon} days");
-        let prev = count_i64(db, prev_sql, vec![shift.into(), org_bind.clone(), org_bind.clone()]).await?;
+        let n = as_of::di_open_at(db, now, None, org).await?;
+        let prev = as_of::di_open_at(db, start, None, org).await?;
         int_kpi("open_dis", n, prev, None)
     } else {
         denied_kpi("open_dis", None)
     };
 
     let open_wos = if can_ot {
-        let sql = "SELECT COUNT(*) AS cnt FROM work_orders wo
-             JOIN work_order_statuses s ON s.id = wo.status_id
-             WHERE s.code NOT IN ('closed','cancelled')
-               AND (? IS NULL OR wo.entity_id = ?)";
-        let n = count_i64(db, sql, vec![org_bind.clone(), org_bind.clone()]).await?;
-        let prev_sql = "SELECT COUNT(*) AS cnt FROM work_orders wo
-             JOIN work_order_statuses s ON s.id = wo.status_id
-             WHERE s.code NOT IN ('closed','cancelled')
-               AND datetime(wo.created_at) <= datetime('now', ?)
-               AND (? IS NULL OR wo.entity_id = ?)";
-        let shift = format!("-{horizon} days");
-        let prev = count_i64(db, prev_sql, vec![shift.into(), org_bind.clone(), org_bind.clone()]).await?;
+        let n = as_of::wo_open_at(db, now, org).await?;
+        let prev = as_of::wo_open_at(db, start, org).await?;
         int_kpi("open_wos", n, prev, None)
     } else {
         denied_kpi("open_wos", None)
     };
 
     let total_assets = if can_eq {
-        let sql = "SELECT COUNT(*) AS cnt FROM equipment e
-             WHERE e.deleted_at IS NULL
-               AND (? IS NULL OR e.installed_at_node_id = ?)";
-        let n = count_i64(db, sql, vec![org_bind.clone(), org_bind.clone()]).await?;
-        int_kpi("total_assets", n, n, None)
+        let n = as_of::assets_at(db, now, org).await?;
+        let prev = as_of::assets_at(db, start, org).await?;
+        int_kpi("total_assets", n, prev, None)
     } else {
         denied_kpi("total_assets", None)
     };
 
+    // Overdue items: requests waiting more than 7 days + PM occurrences past due, at each instant.
     let overdue_items = if can_di || can_pm {
         let mut total = 0_i64;
         let mut prev_total = 0_i64;
         if can_di {
-            let di_sql = "SELECT COUNT(*) AS cnt FROM intervention_requests ir
-                 WHERE ir.status NOT IN ('rejected','converted_to_work_order','closed_as_non_executable','archived')
-                   AND datetime(ir.created_at) <= datetime('now', '-7 days')
-                   AND (? IS NULL OR ir.org_node_id = ?)";
-            total += count_i64(db, di_sql, vec![org_bind.clone(), org_bind.clone()]).await?;
-            let di_prev = "SELECT COUNT(*) AS cnt FROM intervention_requests ir
-                 WHERE ir.status NOT IN ('rejected','converted_to_work_order','closed_as_non_executable','archived')
-                   AND datetime(ir.created_at) <= datetime('now', '-14 days')
-                   AND (? IS NULL OR ir.org_node_id = ?)";
-            prev_total += count_i64(db, di_prev, vec![org_bind.clone(), org_bind.clone()]).await?;
+            total += as_of::di_open_at(db, now, Some(7), org).await?;
+            prev_total += as_of::di_open_at(db, start, Some(7), org).await?;
         }
         if can_pm {
-            let pm_sql = "SELECT COUNT(*) AS cnt FROM pm_occurrences po
-                 JOIN pm_plans pp ON pp.id = po.pm_plan_id
-                 LEFT JOIN equipment e ON e.id = pp.asset_scope_id AND pp.asset_scope_type = 'equipment'
-                 WHERE po.status NOT IN ('completed','cancelled','missed')
-                   AND po.due_at IS NOT NULL
-                   AND po.due_at < datetime('now')
-                   AND (? IS NULL OR e.installed_at_node_id = ?)";
-            let pm_overdue_now = count_i64(db, pm_sql, vec![org_bind.clone(), org_bind.clone()]).await?;
-            total += pm_overdue_now;
-            // No shifted PM definition: the PM part of the baseline is the current PM count
-            // (adding `total` here counted the requests twice).
-            prev_total += pm_overdue_now;
+            total += as_of::pm_overdue_at(db, now, org).await?;
+            prev_total += as_of::pm_overdue_at(db, start, org).await?;
         }
         int_kpi("overdue_items", total, prev_total, None)
     } else {
         denied_kpi("overdue_items", None)
     };
 
-    // ── PM due buckets (as-of now; org via plan equipment) ─────────────────
+    // ── PM due buckets: now vs the same bucket at the start of the horizon ──
     let (pm_overdue, pm_due_today, pm_due_next_7d) = if can_pm {
-        let overdue = count_i64(
-            db,
-            "SELECT COUNT(*) AS cnt FROM pm_occurrences po
-             JOIN pm_plans pp ON pp.id = po.pm_plan_id
-             LEFT JOIN equipment e ON e.id = pp.asset_scope_id AND pp.asset_scope_type = 'equipment'
-             WHERE po.status NOT IN ('completed','cancelled','missed')
-               AND po.due_at IS NOT NULL AND po.due_at < datetime('now')
-               AND (? IS NULL OR e.installed_at_node_id = ?)",
-            vec![org_bind.clone(), org_bind.clone()],
-        )
-        .await?;
-        let today = count_i64(
-            db,
-            "SELECT COUNT(*) AS cnt FROM pm_occurrences po
-             JOIN pm_plans pp ON pp.id = po.pm_plan_id
-             LEFT JOIN equipment e ON e.id = pp.asset_scope_id AND pp.asset_scope_type = 'equipment'
-             WHERE po.status NOT IN ('completed','cancelled','missed')
-               AND po.due_at IS NOT NULL AND date(po.due_at) = date('now')
-               AND (? IS NULL OR e.installed_at_node_id = ?)",
-            vec![org_bind.clone(), org_bind.clone()],
-        )
-        .await?;
-        let next7 = count_i64(
-            db,
-            "SELECT COUNT(*) AS cnt FROM pm_occurrences po
-             JOIN pm_plans pp ON pp.id = po.pm_plan_id
-             LEFT JOIN equipment e ON e.id = pp.asset_scope_id AND pp.asset_scope_type = 'equipment'
-             WHERE po.status NOT IN ('completed','cancelled','missed')
-               AND po.due_at IS NOT NULL
-               AND po.due_at >= datetime('now')
-               AND po.due_at <= datetime('now', '+7 days')
-               AND (? IS NULL OR e.installed_at_node_id = ?)",
-            vec![org_bind.clone(), org_bind.clone()],
-        )
-        .await?;
+        let catalog = Some(kpi_definitions::catalog::PM_ADHERENCE);
+        let overdue = as_of::pm_overdue_at(db, now, org).await?;
+        let overdue_prev = as_of::pm_overdue_at(db, start, org).await?;
+        let today = as_of::pm_due_at(db, now, PmDueWindow::SameDay, org).await?;
+        let today_prev = as_of::pm_due_at(db, start, PmDueWindow::SameDay, org).await?;
+        let next7 = as_of::pm_due_at(db, now, PmDueWindow::NextDays(7), org).await?;
+        let next7_prev = as_of::pm_due_at(db, start, PmDueWindow::NextDays(7), org).await?;
         (
-            int_kpi(
-                "pm_overdue",
-                overdue,
-                overdue,
-                Some(kpi_definitions::catalog::PM_ADHERENCE),
-            ),
-            int_kpi(
-                "pm_due_today",
-                today,
-                today,
-                Some(kpi_definitions::catalog::PM_ADHERENCE),
-            ),
-            int_kpi(
-                "pm_due_next_7d",
-                next7,
-                next7,
-                Some(kpi_definitions::catalog::PM_ADHERENCE),
-            ),
+            int_kpi("pm_overdue", overdue, overdue_prev, catalog),
+            int_kpi("pm_due_today", today, today_prev, catalog),
+            int_kpi("pm_due_next_7d", next7, next7_prev, catalog),
         )
     } else {
         (
@@ -620,92 +538,17 @@ pub async fn build_executive_dashboard(
     }
 
     // ── Top 5 bad-actor assets (latest snapshot in horizon, most events) ──
-    let mut bad_actor_assets: Vec<AnalyticsBadActorAsset> = Vec::new();
-    if can_rep {
-        let horizon_shift = format!("-{horizon} days");
-        let sql = if can_ot {
-            "WITH ranked AS (
-                SELECT s.equipment_id, s.event_count, s.mtbf, s.availability,
-                       ROW_NUMBER() OVER (
-                         PARTITION BY s.equipment_id ORDER BY s.period_end DESC, s.id DESC
-                       ) AS rn
-                FROM reliability_kpi_snapshots s
-                JOIN equipment e ON e.id = s.equipment_id
-                WHERE s.equipment_id IS NOT NULL
-                  AND datetime(s.period_end) >= datetime('now', ?)
-                  AND (? IS NULL OR e.installed_at_node_id = ?)
-             )
-             SELECT e.id AS equipment_id,
-                    e.asset_id_code AS asset_code,
-                    e.name AS asset_label,
-                    r.event_count,
-                    r.mtbf,
-                    r.availability,
-                    COALESCE(c.cost, 0) AS cost
-             FROM ranked r
-             JOIN equipment e ON e.id = r.equipment_id
-             LEFT JOIN (
-                SELECT wo.equipment_id, COALESCE(SUM(wo.total_cost), 0) AS cost
-                FROM work_orders wo
-                JOIN work_order_statuses st ON st.id = wo.status_id
-                WHERE st.code = 'closed' AND wo.closed_at IS NOT NULL
-                  AND datetime(wo.closed_at) >= datetime('now', ?)
-                GROUP BY wo.equipment_id
-             ) c ON c.equipment_id = e.id
-             WHERE r.rn = 1
-             ORDER BY r.event_count DESC, e.id ASC
-             LIMIT 5"
-        } else {
-            "WITH ranked AS (
-                SELECT s.equipment_id, s.event_count, s.mtbf, s.availability,
-                       ROW_NUMBER() OVER (
-                         PARTITION BY s.equipment_id ORDER BY s.period_end DESC, s.id DESC
-                       ) AS rn
-                FROM reliability_kpi_snapshots s
-                JOIN equipment e ON e.id = s.equipment_id
-                WHERE s.equipment_id IS NOT NULL
-                  AND datetime(s.period_end) >= datetime('now', ?)
-                  AND (? IS NULL OR e.installed_at_node_id = ?)
-             )
-             SELECT e.id AS equipment_id,
-                    e.asset_id_code AS asset_code,
-                    e.name AS asset_label,
-                    r.event_count,
-                    r.mtbf,
-                    r.availability,
-                    0 AS cost
-             FROM ranked r
-             JOIN equipment e ON e.id = r.equipment_id
-             WHERE r.rn = 1
-             ORDER BY r.event_count DESC, e.id ASC
-             LIMIT 5"
-        };
-        let binds: Vec<sea_orm::Value> = if can_ot {
-            vec![
-                horizon_shift.clone().into(),
-                org_bind.clone(),
-                org_bind.clone(),
-                horizon_shift.into(),
-            ]
-        } else {
-            vec![horizon_shift.into(), org_bind.clone(), org_bind.clone()]
-        };
-        let rows = db
-            .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, sql, binds))
-            .await?;
-        for r in rows {
-            bad_actor_assets.push(AnalyticsBadActorAsset {
-                equipment_id: i64::try_get(&r, "", "equipment_id").unwrap_or(0),
-                asset_code: String::try_get(&r, "", "asset_code").unwrap_or_default(),
-                asset_label: String::try_get(&r, "", "asset_label").unwrap_or_default(),
-                event_count: i64::try_get(&r, "", "event_count").unwrap_or(0),
-                mtbf_hours: f64::try_get(&r, "", "mtbf").ok(),
-                availability: f64::try_get(&r, "", "availability").ok(),
-                maintenance_cost: f64::try_get(&r, "", "cost").unwrap_or(0.0),
-                cost_available: can_ot,
-            });
-        }
-    }
+    let bad_actor_assets = if can_rep {
+        load_bad_actors(db, start, now, org, can_ot, 5).await?
+    } else {
+        Vec::new()
+    };
+
+    let smrp = if can_ot || can_pm {
+        Some(build_smrp_kpis(db, SmrpWindow::last_days(now, horizon), now, org, can_ot, can_pm).await?)
+    } else {
+        None
+    };
 
     Ok(AnalyticsExecutiveDashboard {
         horizon_days: horizon,
@@ -729,5 +572,64 @@ pub async fn build_executive_dashboard(
         di_status_segments,
         reliability_series,
         bad_actor_assets,
+        smrp,
     })
+}
+
+/// Assets with the most failure events on their latest reliability snapshot ending in
+/// `[from, to]`, with the cost of their work orders closed in the same window when `with_cost`.
+pub async fn load_bad_actors(
+    db: &DatabaseConnection,
+    from: chrono::DateTime<chrono::Utc>,
+    to: chrono::DateTime<chrono::Utc>,
+    org: Option<i64>,
+    with_cost: bool,
+    limit: i64,
+) -> AppResult<Vec<AnalyticsBadActorAsset>> {
+    let (from_s, to_s) = (as_of::instant(from), as_of::instant(to));
+    let cost_sql = if with_cost {
+        "(SELECT COALESCE(SUM(wo.total_cost), 0) FROM work_orders wo \
+           JOIN work_order_statuses st ON st.id = wo.status_id \
+          WHERE wo.equipment_id = e.id AND st.code = 'closed' AND wo.closed_at IS NOT NULL \
+            AND datetime(wo.closed_at) >= datetime(?1) AND datetime(wo.closed_at) <= datetime(?2))"
+    } else {
+        "0"
+    };
+    let sql = format!(
+        "WITH ranked AS ( \
+            SELECT s.equipment_id, s.event_count, s.mtbf, s.availability, \
+                   ROW_NUMBER() OVER (PARTITION BY s.equipment_id ORDER BY s.period_end DESC, s.id DESC) AS rn \
+            FROM reliability_kpi_snapshots s \
+            JOIN equipment e ON e.id = s.equipment_id \
+            WHERE s.equipment_id IS NOT NULL \
+              AND datetime(s.period_end) >= datetime(?1) AND datetime(s.period_end) <= datetime(?2) \
+              AND (?3 IS NULL OR e.installed_at_node_id = ?3) \
+         ) \
+         SELECT e.id AS equipment_id, e.asset_id_code AS asset_code, e.name AS asset_label, \
+                r.event_count, r.mtbf, r.availability, {cost_sql} AS cost \
+         FROM ranked r JOIN equipment e ON e.id = r.equipment_id \
+         WHERE r.rn = 1 \
+         ORDER BY r.event_count DESC, e.id ASC \
+         LIMIT ?4"
+    );
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            &sql,
+            vec![from_s.into(), to_s.into(), org.into(), limit.into()],
+        ))
+        .await?;
+    Ok(rows
+        .iter()
+        .map(|r| AnalyticsBadActorAsset {
+            equipment_id: i64::try_get(r, "", "equipment_id").unwrap_or(0),
+            asset_code: String::try_get(r, "", "asset_code").unwrap_or_default(),
+            asset_label: String::try_get(r, "", "asset_label").unwrap_or_default(),
+            event_count: i64::try_get(r, "", "event_count").unwrap_or(0),
+            mtbf_hours: f64::try_get(r, "", "mtbf").ok(),
+            availability: f64::try_get(r, "", "availability").ok(),
+            maintenance_cost: f64::try_get(r, "", "cost").unwrap_or(0.0),
+            cost_available: with_cost,
+        })
+        .collect())
 }

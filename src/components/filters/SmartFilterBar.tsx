@@ -74,12 +74,14 @@ export function SmartFilterBar({
     });
   }, [searchValue]);
 
-  // Emit settled search to the parent once per debounce window.
+  // Emit settled search to the parent once per debounce window. A debounced value that lags
+  // behind the draft is stale (e.g. the parent replaced the value meanwhile): never emit it.
   useEffect(() => {
+    if (debouncedSearch !== draftSearch) return;
     if (debouncedSearch === lastEmittedSearch.current) return;
     lastEmittedSearch.current = debouncedSearch;
     onSearchChange(debouncedSearch);
-  }, [debouncedSearch, onSearchChange]);
+  }, [debouncedSearch, draftSearch, onSearchChange]);
 
   const handleSearchInput = (value: string) => {
     setDraftSearch(value);

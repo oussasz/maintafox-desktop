@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import i18next from "i18next";
 import { createRef, type ReactNode } from "react";
 import { initReactI18next } from "react-i18next";
@@ -67,6 +67,9 @@ vi.mock("@/hooks/use-permissions", () => ({
 }));
 
 vi.mock("@/services/inventory-service", () => mocks);
+// Reference-data lists (demand sources, priorities, document purposes) come from the lookup
+// service; labels used in assertions come from the i18n resources.
+vi.mock("@/services/lookup-service", () => ({ getLookupValues: vi.fn().mockResolvedValue([]) }));
 
 describe("procurement transition targets", () => {
   it("maps requisition decline/close to backend FSM targets", () => {
@@ -88,9 +91,22 @@ describe("procurement transition targets", () => {
   });
 });
 
+/**
+ * Clicks a list row until its detail dialog opens: rows re-render while the reference-data
+ * labels resolve, so a row element found once can be replaced before the click.
+ */
+async function openRow(text: string) {
+  await waitFor(() => {
+    fireEvent.click(screen.getByText(text));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+}
+
 describe("ProcurementRepairablePanel", () => {
   // Real English resources so assertions read like the shipped UI.
   beforeAll(async () => {
+    // Radix Select scrolls the selected option into view; jsdom has no layout.
+    Element.prototype.scrollIntoView = vi.fn();
     if (!i18next.isInitialized) {
       await i18next.use(initReactI18next).init({
         lng: "en",
@@ -178,6 +194,7 @@ describe("ProcurementRepairablePanel", () => {
         posting_state: "PENDING_POSTING",
         posting_error: null,
         requested_by_id: null,
+        requested_by_name: null,
         row_version: 1,
         created_at: "2026-01-01T00:00:00Z",
         updated_at: "2026-01-01T00:00:00Z",
@@ -195,6 +212,7 @@ describe("ProcurementRepairablePanel", () => {
         posting_state: "PENDING_POSTING",
         posting_error: null,
         ordered_by_id: null,
+        ordered_by_name: null,
         ordered_at: null,
         approved_by_id: null,
         approved_at: null,
@@ -224,6 +242,7 @@ describe("ProcurementRepairablePanel", () => {
         posting_state: "PENDING_POSTING",
         posting_error: null,
         ordered_by_id: null,
+        ordered_by_name: null,
         ordered_at: null,
         approved_by_id: null,
         approved_at: null,
@@ -247,25 +266,24 @@ describe("ProcurementRepairablePanel", () => {
     mocks.transitionInventoryRepairableOrder.mockResolvedValue({});
   });
 
-  it("creates a requisition from the create dialog opened via ref", async () => {
+  it("creates a requisition from the create dialog opened via ref, then resets the form", async () => {
     const ref = createRef<ProcurementRepairablePanelHandle>();
     render(<ProcurementRepairablePanel ref={ref} />);
     await waitFor(() =>
       expect(mocks.listInventoryProcurementRequisitions).toHaveBeenCalledTimes(1),
     );
 
-    ref.current?.openCreateRequisition();
-    await waitFor(() => expect(screen.getByText("New requisition")).toBeInTheDocument());
+    act(() => ref.current?.openCreateRequisition());
+    const dialog = await screen.findByRole("dialog", { name: "New purchase requisition" });
 
-    const selects = screen.getAllByRole("combobox");
-    expect(selects[0]).toBeDefined();
-    expect(selects[1]).toBeDefined();
-    fireEvent.click(selects[0] as HTMLElement);
-    fireEvent.click(screen.getByText("A-11 - Bearing"));
-    fireEvent.click(selects[1] as HTMLElement);
-    fireEvent.click(screen.getByText("MAIN/BIN"));
-    fireEvent.change(screen.getByLabelText("Requested quantity"), { target: { value: "5" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create requisition" }));
+    fireEvent.click(within(dialog).getByLabelText("Article"));
+    fireEvent.click(await screen.findByText("A-11 - Bearing"));
+    fireEvent.click(within(dialog).getByLabelText("Delivery location"));
+    fireEvent.click(await screen.findByText("MAIN/BIN"));
+    fireEvent.change(within(dialog).getByLabelText("Requested quantity"), {
+      target: { value: "5" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create requisition" }));
 
     await waitFor(() => {
       expect(mocks.createInventoryProcurementRequisition).toHaveBeenCalledWith(
@@ -273,21 +291,62 @@ describe("ProcurementRepairablePanel", () => {
           article_id: 11,
           preferred_location_id: 101,
           requested_qty: 5,
+          demand_source_type: "REORDER",
         }),
+      );
+    });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "New purchase requisition" })).toBeNull(),
+    );
+
+    // Opening the form again starts from an empty requisition.
+    act(() => ref.current?.openCreateRequisition());
+    const again = await screen.findByRole("dialog", { name: "New purchase requisition" });
+    expect(within(again).getByLabelText("Requested quantity")).toHaveValue(0);
+    expect(within(again).getByRole("button", { name: "Create requisition" })).toBeDisabled();
+    expect(within(again).getByText("Choose the article to purchase.")).toBeInTheDocument();
+  });
+
+  it("pre-fills the article when the page asks for a requisition from an article", async () => {
+    const onRequestHandled = vi.fn();
+    render(
+      <ProcurementRepairablePanel
+        request={{ kind: "create-requisition", articleId: 11, locationId: 101 }}
+        onRequestHandled={onRequestHandled}
+      />,
+    );
+
+    const dialog = await screen.findByRole("dialog", { name: "New purchase requisition" });
+    expect(onRequestHandled).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(within(dialog).getByLabelText("Article")).toHaveTextContent("A-11 - Bearing"),
+    );
+    expect(within(dialog).getByLabelText("Delivery location")).toHaveTextContent("MAIN/BIN");
+    fireEvent.change(within(dialog).getByLabelText("Requested quantity"), {
+      target: { value: "2" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create requisition" }));
+
+    await waitFor(() => {
+      expect(mocks.createInventoryProcurementRequisition).toHaveBeenCalledWith(
+        expect.objectContaining({ article_id: 11, preferred_location_id: 101, requested_qty: 2 }),
       );
     });
   });
 
-  it("cancels a draft requisition with CANCELLED not CLOSED", async () => {
+  it("asks before cancelling a draft requisition and sends CANCELLED, not CLOSED", async () => {
     render(<ProcurementRepairablePanel />);
     await waitFor(() =>
       expect(mocks.listInventoryProcurementRequisitions).toHaveBeenCalledTimes(1),
     );
 
-    fireEvent.click(screen.getByText("REQ-1"));
-    await waitFor(() => expect(screen.getByRole("heading", { name: /REQ-1/ })).toBeInTheDocument());
+    await openRow("REQ-1");
+    const detail = await screen.findByRole("dialog");
+    await waitFor(() => expect(within(detail).getByText("REQ-1")).toBeInTheDocument());
 
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(within(detail).getByRole("button", { name: "Cancel" }));
+    expect(mocks.transitionInventoryProcurementRequisition).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel requisition" }));
 
     await waitFor(() => {
       expect(mocks.transitionInventoryProcurementRequisition).toHaveBeenCalledWith(
@@ -299,17 +358,100 @@ describe("ProcurementRepairablePanel", () => {
     });
   });
 
-  it("cancels a draft PO with CANCELLED not CLOSED", async () => {
+  it("creates the purchase order from an approved requisition's detail", async () => {
+    mocks.listInventoryProcurementRequisitions.mockResolvedValue([
+      {
+        id: 502,
+        req_number: "REQ-2",
+        demand_source_type: "REORDER",
+        demand_source_id: null,
+        demand_source_ref: null,
+        purchase_priority: "HIGH",
+        status: "APPROVED",
+        posting_state: "PENDING_POSTING",
+        posting_error: null,
+        requested_by_id: 7,
+        requested_by_name: "Amina Haddad",
+        row_version: 3,
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+      },
+    ]);
+    mocks.createInventoryPurchaseOrderFromRequisition.mockResolvedValue({ id: 601 });
+
+    render(<ProcurementRepairablePanel />);
+    await openRow("REQ-2");
+    const detail = await screen.findByRole("dialog");
+    expect(within(detail).getByText("Amina Haddad")).toBeInTheDocument();
+    expect(within(detail).getByText("Stock replenishment")).toBeInTheDocument();
+
+    fireEvent.click(within(detail).getByRole("button", { name: "Create purchase order" }));
+    const poDialog = await screen.findByRole("dialog", { name: "Create purchase order" });
+    expect(within(poDialog).getByLabelText("Approved requisition")).toHaveTextContent("REQ-2");
+    fireEvent.click(within(poDialog).getByRole("button", { name: "Create purchase order" }));
+
+    await waitFor(() => {
+      expect(mocks.createInventoryPurchaseOrderFromRequisition).toHaveBeenCalledWith(
+        expect.objectContaining({ requisition_id: 502, supplier_id: null }),
+      );
+    });
+  });
+
+  it("keeps the rejection dialog open with the reason when the rejection fails", async () => {
+    mocks.listInventoryProcurementRequisitions.mockResolvedValue([
+      {
+        id: 503,
+        req_number: "REQ-3",
+        demand_source_type: "MANUAL",
+        demand_source_id: null,
+        demand_source_ref: null,
+        purchase_priority: "NORMAL",
+        status: "SUBMITTED",
+        posting_state: "PENDING_POSTING",
+        posting_error: null,
+        requested_by_id: null,
+        requested_by_name: null,
+        row_version: 1,
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+      },
+    ]);
+    mocks.transitionInventoryProcurementRequisition.mockRejectedValueOnce(
+      new Error("stale row version"),
+    );
+
+    render(<ProcurementRepairablePanel />);
+    await openRow("REQ-3");
+    const detail = await screen.findByRole("dialog");
+    fireEvent.click(within(detail).getByRole("button", { name: "Reject" }));
+
+    const rejectDialog = await screen.findByRole("dialog", { name: "Reject requisition" });
+    fireEvent.change(within(rejectDialog).getByLabelText("Rejection reason"), {
+      target: { value: "Duplicate of REQ-2" },
+    });
+    fireEvent.click(within(rejectDialog).getByRole("button", { name: "Reject requisition" }));
+
+    await waitFor(() =>
+      expect(mocks.transitionInventoryProcurementRequisition).toHaveBeenCalledWith(
+        expect.objectContaining({ next_status: "REJECTED", reason: "Duplicate of REQ-2" }),
+      ),
+    );
+    const stillOpen = await screen.findByRole("dialog", { name: "Reject requisition" });
+    expect(within(stillOpen).getByLabelText("Rejection reason")).toHaveValue("Duplicate of REQ-2");
+  });
+
+  it("asks before cancelling a draft PO and sends CANCELLED, not CLOSED", async () => {
     render(<ProcurementRepairablePanel />);
     await waitFor(() => expect(mocks.listInventoryPurchaseOrders).toHaveBeenCalledTimes(1));
 
     fireEvent.click(screen.getByRole("button", { name: "Purchase orders" }));
-    await waitFor(() => expect(screen.getByText("PO-1")).toBeInTheDocument());
+    await openRow("PO-1");
+    const workspace = await screen.findByRole("dialog");
+    await waitFor(() => expect(within(workspace).getByText("PO-1")).toBeInTheDocument());
 
-    fireEvent.click(screen.getByText("PO-1"));
-    await waitFor(() => expect(screen.getByRole("heading", { name: /PO-1/ })).toBeInTheDocument());
-
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(within(workspace).getByRole("button", { name: "Cancel" }));
+    expect(mocks.transitionInventoryPurchaseOrder).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel purchase order" }));
 
     await waitFor(() => {
       expect(mocks.transitionInventoryPurchaseOrder).toHaveBeenCalledWith(
@@ -321,6 +463,21 @@ describe("ProcurementRepairablePanel", () => {
     });
   });
 
+  it("shows an error with retry instead of empty lists when loading fails", async () => {
+    mocks.listInventoryProcurementRequisitions.mockRejectedValueOnce(new Error("database locked"));
+
+    render(<ProcurementRepairablePanel />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("database locked");
+    expect(screen.queryByText("No requisitions yet.")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: enCommon.ds.state.retry }));
+
+    await waitFor(() =>
+      expect(mocks.listInventoryProcurementRequisitions).toHaveBeenCalledTimes(2),
+    );
+    expect(await screen.findByText("REQ-1")).toBeInTheDocument();
+  });
+
   it("exposes reload on the panel handle", async () => {
     const ref = createRef<ProcurementRepairablePanelHandle>();
     render(<ProcurementRepairablePanel ref={ref} />);
@@ -328,7 +485,9 @@ describe("ProcurementRepairablePanel", () => {
       expect(mocks.listInventoryProcurementRequisitions).toHaveBeenCalledTimes(1),
     );
 
-    await ref.current?.reload();
+    await act(async () => {
+      await ref.current?.reload();
+    });
     await waitFor(() =>
       expect(mocks.listInventoryProcurementRequisitions).toHaveBeenCalledTimes(2),
     );

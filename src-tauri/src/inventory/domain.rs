@@ -115,6 +115,17 @@ pub struct InventoryArticle {
     pub row_version: i64,
     pub created_at: String,
     pub updated_at: String,
+    /// Stock totals over every location (sum of `stock_balances`); 0 when the article has no balance row.
+    pub on_hand_qty: f64,
+    pub reserved_qty: f64,
+    pub available_qty: f64,
+    /// Weighted-average unit cost over the valued locations (tenant currency); None when the
+    /// article has never been received or entered with a cost.
+    pub avg_unit_cost: Option<f64>,
+    /// On-hand quantity × location average cost, summed over valued locations.
+    pub stock_value: Option<f64>,
+    /// On-hand quantity held at locations that have no cost yet (not included in `stock_value`).
+    pub unvalued_qty: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -132,6 +143,8 @@ pub struct InventoryStockBalance {
     pub on_hand_qty: f64,
     pub reserved_qty: f64,
     pub available_qty: f64,
+    /// Weighted-average unit cost at this location (tenant currency); None when never costed.
+    pub moving_avg_unit_cost: Option<f64>,
     pub updated_at: String,
 }
 
@@ -722,6 +735,8 @@ pub struct ProcurementRequisition {
     pub posting_state: String,
     pub posting_error: Option<String>,
     pub requested_by_id: Option<i64>,
+    /// Display name (or username) of `requested_by_id`.
+    pub requested_by_name: Option<String>,
     pub row_version: i64,
     pub created_at: String,
     pub updated_at: String,
@@ -757,6 +772,8 @@ pub struct PurchaseOrder {
     pub posting_state: String,
     pub posting_error: Option<String>,
     pub ordered_by_id: Option<i64>,
+    /// Display name (or username) of `ordered_by_id`.
+    pub ordered_by_name: Option<String>,
     pub ordered_at: Option<String>,
     pub approved_by_id: Option<i64>,
     pub approved_at: Option<String>,
@@ -1078,6 +1095,8 @@ pub struct InventoryCountLine {
     pub is_critical: i64,
     pub approval_required: i64,
     pub approved_by_id: Option<i64>,
+    /// Display name (or username) of the reviewer who approved the variance.
+    pub approved_by_name: Option<String>,
     pub approved_at: Option<String>,
     pub approval_note: Option<String>,
     pub posted_transaction_id: Option<i64>,

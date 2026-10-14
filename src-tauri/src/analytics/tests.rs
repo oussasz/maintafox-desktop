@@ -603,9 +603,10 @@ async fn overview_kpis_count_the_seeded_dataset() {
     );
     assert!(p.cells.iter().all(|c| c.available), "every permission granted");
 
-    // DI: DI1, DI2, DI5 open (DI3 rejected, DI4 converted); a week ago DI2 and DI5 already existed.
+    // DI: DI1, DI2, DI5 open (DI3 rejected, DI4 converted); 30 days ago only DI5 (−40 d) existed.
     let di = cell(&p, k::DI_OPEN);
-    assert_eq!((di.value, di.previous_value), (3.0, 2.0));
+    assert_eq!((di.value, di.previous_value), (3.0, 1.0));
+    assert!(di.baseline_available);
     assert_eq!(di.catalog_id, kpi_definitions::catalog::DI_OPEN);
     assert_eq!(di.quality_badge, None);
     assert_eq!(di.value_kind, "count");
@@ -625,15 +626,19 @@ async fn overview_kpis_count_the_seeded_dataset() {
     let od = cell(&p, k::OT_OVERDUE);
     assert_eq!((od.value, od.previous_value), (1.0, 0.0));
 
-    // PM: O1 overdue (3 days); nothing was more than 7 days overdue; nothing due today.
+    // PM compliance: O1 (due −3 d, not done) and O3 (due −5 d, completed but with no execution
+    // and a completion stamp of today, after its due day) → 0 of 2 on time; nothing due 30–60 days
+    // ago, so no baseline.
     let pm = cell(&p, k::PM_COMPLIANCE);
-    assert_eq!((pm.value, pm.previous_value), (1.0, 0.0));
+    assert_eq!((pm.value, pm.value_kind.as_str()), (0.0, "percent"));
+    assert!(pm.available);
+    assert!(!pm.baseline_available);
     let today = cell(&p, k::PM_DUE_TODAY);
     assert_eq!((today.value, today.previous_value), (0.0, 0.0));
 
-    // Backlog: open WO1 (4 h) + WO2 (6 h); WO2 was last updated 10 days ago.
+    // Backlog: open WO1 (4 h) + WO2 (6 h); 30 days ago only WO4 existed and it was closed at −45 d.
     let bl = cell(&p, k::MAINT_BACKLOG);
-    assert_eq!((bl.value, bl.previous_value), (10.0, 6.0));
+    assert_eq!((bl.value, bl.previous_value), (10.0, 0.0));
     assert_eq!(bl.value_kind, "hours");
     assert_eq!(bl.series, Some(vec![6.0, 4.0]));
 
@@ -657,6 +662,9 @@ async fn overview_kpis_count_the_seeded_dataset() {
     assert!(close(cell(&p, k::DATA_QUALITY).value, 95.0));
 
     assert_eq!(cell(&p, k::CRITICAL_DOWN).value, 0.0);
+    for key in [k::CRITICAL_DOWN, k::STOCK_OUT, k::REORDER_ALERT] {
+        assert!(!cell(&p, key).baseline_available, "{key}: no history to rebuild");
+    }
     assert_eq!(cell(&p, k::STOCK_OUT).value, 0.0);
     assert_eq!(cell(&p, k::REORDER_ALERT).value, 0.0);
 
@@ -814,6 +822,15 @@ async fn executive_dashboard_fleet_wide_values() {
         ),
         (d.e2, 0.0)
     );
+    // SMRP set over the same 30 days: WO3 (closed −5 d, no labour, no hours) is the only
+    // completed work order → counted by work orders.
+    let smrp = x.smrp.expect("smrp");
+    let mix = smrp.work_mix.expect("work mix");
+    assert_eq!((mix.basis.as_str(), mix.work_orders), ("count", 1));
+    let backlog = smrp.backlog.expect("backlog");
+    assert!(close(backlog.backlog_hours, 10.0), "WO1 4 h + WO2 6 h");
+    assert_eq!(backlog.weeks, None, "no crew schedule, no capacity");
+    assert_eq!(smrp.cost_to_rav.expect("rav").value_pct, None, "no replacement value");
 }
 
 #[tokio::test]
@@ -855,7 +872,8 @@ async fn executive_dashboard_pm_only_overdue_baseline() {
     let x = build_executive_dashboard(&db, &filter(30, None), false, false, false, true, false)
         .await
         .expect("dashboard");
-    assert_eq!((x.overdue_items.value, x.overdue_items.previous_value), (1.0, 1.0));
+    // O1 is overdue now; 30 days ago no occurrence existed yet.
+    assert_eq!((x.overdue_items.value, x.overdue_items.previous_value), (1.0, 0.0));
     assert!(!x.open_dis.available);
     assert!(!x.maintenance_cost.available);
     assert!(x.bad_actor_assets.is_empty());
@@ -879,8 +897,8 @@ async fn executive_dashboard_overdue_baseline_counts_each_source_once() {
         .await
         .expect("dashboard");
     assert_eq!(x.overdue_items.value, 3.0);
-    // Baseline: DI waiting > 14 days (DI5) + PM overdue (O1, stable baseline) = 2.
-    assert_eq!(x.overdue_items.previous_value, 2.0);
+    // Baseline 30 days ago: DI5 already waiting > 7 days; no PM occurrence existed yet = 1.
+    assert_eq!(x.overdue_items.previous_value, 1.0);
 }
 
 #[tokio::test]
@@ -914,6 +932,7 @@ async fn executive_dashboard_without_permissions_is_all_denied() {
     assert!(x.workload_days.is_empty());
     assert_eq!(x.workload_quality_badge, None);
     assert_eq!((x.reliability_snapshot_count, x.reliability_total_events), (0, 0));
+    assert!(x.smrp.is_none(), "SMRP needs OT or PM view");
 }
 
 #[tokio::test]

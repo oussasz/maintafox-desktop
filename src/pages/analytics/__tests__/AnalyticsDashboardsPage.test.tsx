@@ -3,8 +3,9 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AnalyticsDashboardsPage } from "@/pages/analytics/AnalyticsDashboardsPage";
+import type { AnalyticsExecutiveDashboardWithSmrp } from "@/services/analytics-dashboard-service";
 import { useSessionStore } from "@/store/session-store";
-import type { AnalyticsExecutiveDashboard, AnalyticsKpiValue } from "@shared/ipc-types";
+import type { AnalyticsKpiValue } from "@shared/ipc-types";
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -32,7 +33,7 @@ function kpi(key: string, value: number, previous: number, available = true): An
   return { key, value, previous_value: previous, available, quality_badge: null, catalog_id: null };
 }
 
-const DATA: AnalyticsExecutiveDashboard = {
+const DATA: AnalyticsExecutiveDashboardWithSmrp = {
   horizon_days: 30,
   org_node_id: null,
   open_dis: kpi("open_dis", 12, 4),
@@ -54,6 +55,7 @@ const DATA: AnalyticsExecutiveDashboard = {
   di_status_segments: [{ status: "in_review", count: 2 }],
   reliability_series: [],
   bad_actor_assets: [],
+  smrp: null,
 };
 
 beforeEach(() => {
@@ -80,10 +82,15 @@ describe("AnalyticsDashboardsPage", () => {
     // 0.875 → 87.5 %, not "0.88"
     expect(screen.getByText(/87[.,]5\s?%/)).toBeInTheDocument();
     expect(screen.queryByText("0.88")).not.toBeInTheDocument();
-    // open counts are "as of now": no "no change" / trend badge
     expect(screen.queryByText("kpi.noChange")).not.toBeInTheDocument();
-    // cost rose 20 % vs previous window
-    expect(screen.getByText(/hub\.dashboards\.trend\.vsPrevious:\+20/)).toBeInTheDocument();
+    // Cost rose 20 % vs the previous window; open requests went from 4 to 12 (+200 %), rebuilt
+    // by the backend at the start of the horizon.
+    expect(screen.getByText(/hub\.dashboards\.trend\.vsPrevious:\+20\s?%$/)).toBeInTheDocument();
+    expect(
+      screen.getAllByText(/hub\.dashboards\.trend\.vsPrevious:\+200\s?%$/).length,
+    ).toBeGreaterThan(0);
+    // Unchanged count (open WOs 7 → 7) reads stable.
+    expect(screen.getAllByText("hub.dashboards.trend.stable").length).toBeGreaterThan(0);
     // DI status chart in words
     expect(screen.getByText("hub.dashboards.diStatus.in_review")).toBeInTheDocument();
   });

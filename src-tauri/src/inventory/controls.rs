@@ -661,11 +661,13 @@ pub async fn list_count_lines(db: &DatabaseConnection, session_id: i64) -> AppRe
             DbBackend::Sqlite,
             "SELECT cl.id, cl.session_id, cl.article_id, a.article_code, a.article_name, cl.warehouse_id, cl.location_id,
                     sl.code AS location_code, cl.system_qty, cl.counted_qty, cl.variance_qty, cl.variance_reason_code,
-                    cl.is_critical, cl.approval_required, cl.approved_by_id, cl.approved_at, cl.approval_note,
+                    cl.is_critical, cl.approval_required, cl.approved_by_id,
+                    COALESCE(ua.display_name, ua.username) AS approved_by_name, cl.approved_at, cl.approval_note,
                     cl.posted_transaction_id, cl.reversed_transaction_id, cl.row_version, cl.created_at, cl.updated_at
              FROM inventory_count_lines cl
              JOIN articles a ON a.id = cl.article_id
              JOIN stock_locations sl ON sl.id = cl.location_id
+             LEFT JOIN user_accounts ua ON ua.id = cl.approved_by_id
              WHERE cl.session_id = ?
              ORDER BY cl.id ASC",
             [session_id.into()],
@@ -715,11 +717,13 @@ async fn get_count_line(db: &DatabaseConnection, line_id: i64) -> AppResult<Inve
             DbBackend::Sqlite,
             "SELECT cl.id, cl.session_id, cl.article_id, a.article_code, a.article_name, cl.warehouse_id, cl.location_id,
                     sl.code AS location_code, cl.system_qty, cl.counted_qty, cl.variance_qty, cl.variance_reason_code,
-                    cl.is_critical, cl.approval_required, cl.approved_by_id, cl.approved_at, cl.approval_note,
+                    cl.is_critical, cl.approval_required, cl.approved_by_id,
+                    COALESCE(ua.display_name, ua.username) AS approved_by_name, cl.approved_at, cl.approval_note,
                     cl.posted_transaction_id, cl.reversed_transaction_id, cl.row_version, cl.created_at, cl.updated_at
              FROM inventory_count_lines cl
              JOIN articles a ON a.id = cl.article_id
              JOIN stock_locations sl ON sl.id = cl.location_id
+             LEFT JOIN user_accounts ua ON ua.id = cl.approved_by_id
              WHERE cl.id = ?",
             [line_id.into()],
         ))
@@ -786,6 +790,7 @@ fn map_count_line(row: sea_orm::QueryResult) -> AppResult<InventoryCountLine> {
         is_critical: row.try_get("", "is_critical")?,
         approval_required: row.try_get("", "approval_required")?,
         approved_by_id: row.try_get("", "approved_by_id")?,
+        approved_by_name: row.try_get("", "approved_by_name").ok().flatten(),
         approved_at: row.try_get("", "approved_at")?,
         approval_note: row.try_get("", "approval_note")?,
         posted_transaction_id: row.try_get("", "posted_transaction_id")?,

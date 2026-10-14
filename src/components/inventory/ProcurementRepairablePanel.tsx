@@ -26,11 +26,16 @@ import { RepairableDetailDialog } from "@/components/inventory/RepairableDetailD
 import { SupplierArticleSourcesSection } from "@/components/inventory/SupplierArticleSourcesSection";
 import { SupplierContactsSection } from "@/components/inventory/SupplierContactsSection";
 import { riskBadgeVariant } from "@/components/inventory/supplier-sourcing";
+import { useLookupOptions } from "@/components/inventory/use-lookup-options";
 import { KanbanBoard } from "@/components/kanban";
 import type { KanbanCard, KanbanColumn, KanbanTone } from "@/components/kanban";
+import { type ViewOption, ViewToggle } from "@/components/layout/ModuleHeaderControls";
+import { KpiTile } from "@/components/metrics/KpiTile";
 import { Timeline } from "@/components/timeline";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { ErrorState } from "@/components/ui/data-state";
 import {
   Dialog,
   DialogContent,
@@ -48,6 +53,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { StatusChip } from "@/components/ui/status-chip";
 import {
   Table,
   TableBody,
@@ -57,10 +63,22 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  POSTING_STATE_TONE,
+  PROCUREMENT_STATUS_TONE,
+  PURCHASE_PRIORITY_TONE,
+  REPAIRABLE_STATUS_TONE,
+  SUPPLIER_STATUS_TONE,
+  toneOf,
+} from "@/design-system/tone";
+import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
 import { formatAssetLabel, formatEntityCode, formatOrDash } from "@/lib/display";
 import { cn } from "@/lib/utils";
 import {
+  type InventoryArticleRow,
+  type ProcurementRequisitionRow,
+  type PurchaseOrderRow,
   createInventoryProcurementRequisition,
   createInventoryPurchaseOrderFromRequisition,
   createInventoryRepairableOrder,
@@ -89,11 +107,9 @@ import {
   upsertInventorySupplier,
   upsertSupplierPrice,
 } from "@/services/inventory-service";
-import { toErrorMessage } from "@/utils/errors";
 import type {
   GoodsReceipt,
   GoodsReceiptLine,
-  InventoryArticle,
   InventoryDocumentLink,
   InventoryStateEvent,
   InventoryStockBalance,
@@ -111,8 +127,23 @@ import type {
 } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
+/** Requisition form values set from another surface (article detail, recommendations). */
+export type RequisitionPrefill = {
+  articleId: number;
+  locationId?: number | null;
+  quantity?: number;
+  sourceType?: string;
+  sourceRef?: string | null;
+  reason?: string | null;
+};
+
+/** One-shot request from the inventory page, handled once the panel is mounted. */
+export type ProcurementPanelRequest =
+  | { kind: "create-requisition"; articleId: number; locationId: number | null }
+  | { kind: "open-purchase-order"; purchaseOrderId: number };
+
 export type ProcurementRepairablePanelHandle = {
-  openCreateRequisition: () => void;
+  openCreateRequisition: (prefill?: RequisitionPrefill) => void;
   openCreatePo: () => void;
   openReceiveGoods: () => void;
   openRepairable: () => void;
@@ -140,6 +171,10 @@ type ProcurementRepairablePanelProps = {
   onViewModeChange?: (mode: "list" | "kanban") => void;
   /** Navigate to an article master record (from repairable detail). */
   onOpenArticle?: (articleId: number) => void;
+  /** Action requested by the page (e.g. "create a requisition for this article"). */
+  request?: ProcurementPanelRequest | null;
+  /** Called once `request` has been acted on, so it does not replay on remount. */
+  onRequestHandled?: () => void;
 };
 
 type SubTab =
@@ -153,6 +188,12 @@ type SubTab =
 const SUPPLIER_STATUSES = ["PREFERRED", "APPROVED", "BLOCKED", "UNDER_EVALUATION"] as const;
 
 const PURCHASE_PRIORITIES = ["EMERGENCY", "HIGH", "NORMAL", "LOW"] as const;
+
+/**
+ * Demand sources a user can pick for a manual requisition. Work-order, repairable, count and PM
+ * requisitions are raised from those records so they keep their link.
+ */
+const MANUAL_DEMAND_SOURCES = ["REORDER", "MANUAL"] as const;
 
 const ALL = "__all__";
 
@@ -175,7 +216,8 @@ const PO_KANBAN_STATUSES = [
   "CANCELLED",
 ] as const;
 
-const PROCUREMENT_STATUS_TONE: Record<string, KanbanTone> = {
+/** Kanban column tones (kanban vocabulary, not status-chip tones). */
+const PROCUREMENT_KANBAN_TONE: Record<string, KanbanTone> = {
   DRAFT: "draft",
   SUBMITTED: "planning",
   APPROVED: "success",
@@ -204,33 +246,13 @@ const REPAIRABLE_ACTION_TARGET: Record<RepairableActionKind, string> = {
   receive: "RETURNED_FROM_REPAIR",
 };
 
-function pctLabel(v: number | null): string {
-  if (v == null) return "—";
-  return `${v.toFixed(1)}%`;
-}
-
-function numLabel(v: number | null, decimals = 1): string {
-  if (v == null) return "—";
-  return v.toFixed(decimals);
-}
-
-function statusBadgeVariant(status: string): "secondary" | "outline" | "destructive" | "default" {
-  if (status === "PREFERRED") return "default";
-  if (status === "BLOCKED") return "destructive";
-  if (status === "APPROVED") return "secondary";
-  return "outline";
-}
-
-/** Shared badge styling for procurement / repairable lifecycle statuses. */
-function lifecycleBadgeVariant(
-  status: string,
-): "secondary" | "outline" | "destructive" | "default" {
-  if (status === "REJECTED" || status === "CANCELLED" || status === "SCRAPPED")
-    return "destructive";
-  if (status === "APPROVED" || status === "RELEASED") return "default";
-  if (status === "CLOSED" || status === "RECEIVED_CLOSED") return "secondary";
-  return "outline";
-}
+/** Destructive / irreversible step waiting for the user's confirmation. */
+type PendingConfirm = {
+  title: string;
+  description: string;
+  confirmLabel: string;
+  run: () => Promise<boolean>;
+};
 
 function includesTerm(term: string, ...fields: Array<string | null | undefined>): boolean {
   if (!term) return true;
@@ -251,7 +273,7 @@ function RowActionsMenu({
       <Button
         variant="ghost"
         size="icon"
-        className="h-8 w-8"
+        className="h-10 w-10"
         aria-label={label}
         onClick={(event) => event.stopPropagation()}
       >
@@ -265,40 +287,92 @@ export const ProcurementRepairablePanel = forwardRef<
   ProcurementRepairablePanelHandle,
   ProcurementRepairablePanelProps
 >(function ProcurementRepairablePanel(props, ref) {
-  const { viewMode: viewModeProp, onViewModeChange, onOpenArticle } = props;
+  const {
+    viewMode: viewModeProp,
+    onViewModeChange,
+    onOpenArticle,
+    request,
+    onRequestHandled,
+  } = props;
   const { t } = useTranslation(["inventory", "common"]);
+  const { formatDate, formatDateTime, formatNumber, formatCurrency, formatPercent } =
+    useFormatters();
   const { can } = usePermissions();
   const canProcure = can(P.INV_PROCURE);
+  const demandSources = useLookupOptions("inventory.demand_source_type");
+  const purchasePriorities = useLookupOptions("inventory.purchase_priority");
+  const documentPurposes = useLookupOptions("inventory.document_link_purpose");
+
+  const qtyLabel = useCallback(
+    (v: number | null | undefined) =>
+      v == null ? "—" : formatNumber(v, { maximumFractionDigits: 3 }),
+    [formatNumber],
+  );
+  const moneyLabel = useCallback(
+    (v: number | null | undefined) => (v == null ? "—" : formatCurrency(v)),
+    [formatCurrency],
+  );
+  const pctLabel = useCallback(
+    (v: number | null | undefined) => (v == null ? "—" : formatPercent(v)),
+    [formatPercent],
+  );
+  const dateLabel = useCallback(
+    (v: string | null | undefined) => (v ? formatDate(v) : "—"),
+    [formatDate],
+  );
+  const sourceLabel = useCallback(
+    (code: string | null | undefined) =>
+      code
+        ? t(`procurement.requisition.sources.${code}`, {
+            defaultValue: demandSources.labelOf(code),
+          })
+        : "—",
+    [demandSources, t],
+  );
+  const priorityLabel = useCallback(
+    (code: string | null | undefined) =>
+      code
+        ? t(`procurement.requisition.priorityValues.${code}`, {
+            defaultValue: purchasePriorities.labelOf(code),
+          })
+        : "—",
+    [purchasePriorities, t],
+  );
 
   // ── Core state ─────────────────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<SubTab>("requisitions");
-  const [articles, setArticles] = useState<InventoryArticle[]>([]);
+  const [articles, setArticles] = useState<InventoryArticleRow[]>([]);
   const [locations, setLocations] = useState<StockLocation[]>([]);
   const [inventorySuppliers, setInventorySuppliers] = useState<InventorySupplier[]>([]);
-  const [requisitions, setRequisitions] = useState<ProcurementRequisition[]>([]);
+  const [requisitions, setRequisitions] = useState<ProcurementRequisitionRow[]>([]);
   const [selectedReqId, setSelectedReqId] = useState<number | null>(null);
   const [reqLines, setReqLines] = useState<ProcurementRequisitionLine[]>([]);
-  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
+  const [reqLinesError, setReqLinesError] = useState<unknown>(null);
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrderRow[]>([]);
   const [selectedPoId, setSelectedPoId] = useState<number | null>(null);
   const [repairables, setRepairables] = useState<RepairableOrder[]>([]);
   const [goodsReceipts, setGoodsReceipts] = useState<GoodsReceipt[]>([]);
   const [selectedGrId, setSelectedGrId] = useState<number | null>(null);
   const [grLines, setGrLines] = useState<GoodsReceiptLine[]>([]);
   const [grLinesLoading, setGrLinesLoading] = useState(false);
+  const [grLinesError, setGrLinesError] = useState<unknown>(null);
   const [stateEvents, setStateEvents] = useState<InventoryStateEvent[]>([]);
   const [dashboard, setDashboard] = useState<ProcurementDashboardSummary | null>(null);
   const [alerts, setAlerts] = useState<ProcurementAlert[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  /** Failure of the last full load: lists are replaced by an ErrorState with retry. */
+  const [loadError, setLoadError] = useState<unknown>(null);
+  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null);
 
   // ── Requisition form ────────────────────────────────────────────────────────
+  // Manual requisitions are stock replenishment or a free demand. Requisitions for a work
+  // order part are raised from the work order (shortage panel), which carries the WO link.
   const [reqArticleId, setReqArticleId] = useState<number>(0);
   const [reqLocationId, setReqLocationId] = useState<number>(0);
   const [reqQty, setReqQty] = useState<number>(0);
   const [reqSourceType, setReqSourceType] = useState("REORDER");
   const [reqSourceRef, setReqSourceRef] = useState<string>("");
-  const [reqReservationId] = useState<string>("");
   const [reqReason, setReqReason] = useState<string>("");
   const [reqPriority, setReqPriority] = useState<string>("NORMAL");
 
@@ -378,6 +452,8 @@ export const ProcurementRepairablePanel = forwardRef<
     SupplierPurchaseHistoryRow[]
   >([]);
   const [supplierScorecardLoading, setSupplierScorecardLoading] = useState(false);
+  const [supplierDetailError, setSupplierDetailError] = useState<unknown>(null);
+  const [supplierDetailVersion, setSupplierDetailVersion] = useState(0);
   const [supplierEditOpen, setSupplierEditOpen] = useState(false);
   const [supplierForm, setSupplierForm] = useState<{
     id: number | null;
@@ -409,13 +485,12 @@ export const ProcurementRepairablePanel = forwardRef<
   // ── Supplier doc link form ──────────────────────────────────────────────────
   const [docLinkFormOpen, setDocLinkFormOpen] = useState(false);
   const [docLinkFormRef, setDocLinkFormRef] = useState<string>("");
-  const [docLinkFormPurpose, setDocLinkFormPurpose] = useState<string>("CONTRACT");
+  const [docLinkFormPurpose, setDocLinkFormPurpose] = useState<string>("");
   const [docLinkFormPrimary, setDocLinkFormPrimary] = useState<boolean>(false);
 
   // ── Data loading ────────────────────────────────────────────────────────────
   const loadAll = useCallback(async () => {
     setLoading(true);
-    setError(null);
     try {
       const [
         articleRows,
@@ -450,23 +525,53 @@ export const ProcurementRepairablePanel = forwardRef<
       setStateEvents(eventRows.slice(0, 20));
       setDashboard(dashboardData);
       setAlerts(alertRows);
+      setLoadError(null);
     } catch (err) {
-      setError(toErrorMessage(err));
+      setLoadError(err);
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useImperativeHandle(ref, () => ({
-    openCreateRequisition: () => {
+  const resetRequisitionForm = useCallback(() => {
+    setReqArticleId(0);
+    setReqLocationId(0);
+    setReqQty(0);
+    setReqSourceType("REORDER");
+    setReqSourceRef("");
+    setReqReason("");
+    setReqPriority("NORMAL");
+  }, []);
+
+  const openRequisitionForm = useCallback(
+    (prefill?: RequisitionPrefill) => {
+      resetRequisitionForm();
+      if (prefill) {
+        setReqArticleId(prefill.articleId);
+        setReqLocationId(prefill.locationId ?? 0);
+        if (prefill.quantity != null) setReqQty(prefill.quantity);
+        if (prefill.sourceType) setReqSourceType(prefill.sourceType);
+        setReqSourceRef(prefill.sourceRef ?? "");
+        setReqReason(prefill.reason ?? "");
+      }
       setActiveTab("requisitions");
       setCreateReqOpen(true);
     },
+    [resetRequisitionForm],
+  );
+
+  const openCreatePoForm = useCallback((requisitionId: number) => {
+    setPoDialogReqId(requisitionId);
+    setPoSupplierId(0);
+    setCreatePoOpen(true);
+  }, []);
+
+  useImperativeHandle(ref, () => ({
+    openCreateRequisition: (prefill?: RequisitionPrefill) => openRequisitionForm(prefill),
     openCreatePo: () => {
       setActiveTab("purchase-orders");
       const approved = requisitions.find((r) => r.status === "APPROVED");
-      setPoDialogReqId(approved?.id ?? 0);
-      setCreatePoOpen(true);
+      openCreatePoForm(approved?.id ?? 0);
     },
     openReceiveGoods: () => {
       setActiveTab("purchase-orders");
@@ -488,6 +593,19 @@ export const ProcurementRepairablePanel = forwardRef<
     void loadAll();
   }, [loadAll]);
 
+  // One-shot requests from the page (article → "create requisition", purchase history → PO).
+  useEffect(() => {
+    if (!request) return;
+    if (request.kind === "create-requisition") {
+      openRequisitionForm({ articleId: request.articleId, locationId: request.locationId });
+    } else {
+      setActiveTab("purchase-orders");
+      setSelectedPoId(request.purchaseOrderId);
+      setPoDetailOpen(true);
+    }
+    onRequestHandled?.();
+  }, [request, onRequestHandled, openRequisitionForm]);
+
   useEffect(() => {
     if (repairArticleId <= 0) {
       setRepairBalances([]);
@@ -503,9 +621,18 @@ export const ProcurementRepairablePanel = forwardRef<
       setReqLines([]);
       return;
     }
+    let cancelled = false;
+    setReqLinesError(null);
     void listInventoryProcurementRequisitionLines(selectedReqId)
-      .then(setReqLines)
-      .catch((err) => setError(toErrorMessage(err)));
+      .then((rows) => {
+        if (!cancelled) setReqLines(rows);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setReqLinesError(err);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [selectedReqId]);
 
   useEffect(() => {
@@ -515,12 +642,13 @@ export const ProcurementRepairablePanel = forwardRef<
     }
     let cancelled = false;
     setGrLinesLoading(true);
+    setGrLinesError(null);
     void listInventoryGoodsReceiptLines(selectedGrId)
       .then((rows) => {
         if (!cancelled) setGrLines(rows);
       })
-      .catch((err) => {
-        if (!cancelled) setError(toErrorMessage(err));
+      .catch((err: unknown) => {
+        if (!cancelled) setGrLinesError(err);
       })
       .finally(() => {
         if (!cancelled) setGrLinesLoading(false);
@@ -561,6 +689,7 @@ export const ProcurementRepairablePanel = forwardRef<
       return;
     }
     setSupplierScorecardLoading(true);
+    setSupplierDetailError(null);
     Promise.all([
       getInventorySupplierScorecard(selectedSupplierId),
       listSupplierPrices(selectedSupplierId),
@@ -573,27 +702,31 @@ export const ProcurementRepairablePanel = forwardRef<
         setSupplierDocs(docs);
         setSupplierPurchaseHistory(history);
       })
-      .catch((err) => setError(toErrorMessage(err)))
+      .catch((err: unknown) => setSupplierDetailError(err))
       .finally(() => setSupplierScorecardLoading(false));
-  }, [selectedSupplierId]);
+  }, [selectedSupplierId, supplierDetailVersion]);
 
   const selectedRequisition = useMemo(
     () => requisitions.find((row) => row.id === selectedReqId) ?? null,
     [requisitions, selectedReqId],
   );
 
+  /**
+   * Runs a mutation then reloads. Resolves to false when the mutation failed: the global IPC
+   * toast already explains why, so callers only decide whether to keep their dialog open.
+   */
   const runSaving = useCallback(
-    async (work: () => Promise<void>) => {
+    async (work: () => Promise<void>): Promise<boolean> => {
       setSaving(true);
-      setError(null);
       try {
         await work();
-        await loadAll();
-      } catch (err) {
-        setError(toErrorMessage(err));
+      } catch {
+        return false;
       } finally {
         setSaving(false);
       }
+      await loadAll();
+      return true;
     },
     [loadAll],
   );
@@ -605,48 +738,65 @@ export const ProcurementRepairablePanel = forwardRef<
 
   /** Row-level requisition transition (list menus, independent of the open detail). */
   const runRequisitionTransition = useCallback(
-    async (row: ProcurementRequisition, nextStatus: string, reason?: string) => {
-      await runSaving(async () => {
+    (row: ProcurementRequisition, nextStatus: string, reason?: string) =>
+      runSaving(async () => {
         await transitionInventoryProcurementRequisition({
           requisition_id: row.id,
           expected_row_version: row.row_version,
           next_status: nextStatus,
           reason: reason ?? null,
         });
-      });
-    },
+      }),
     [runSaving],
   );
 
   const runPurchaseOrderTransition = useCallback(
-    async (row: PurchaseOrder, nextStatus: string) => {
-      await runSaving(async () => {
+    (row: PurchaseOrder, nextStatus: string) =>
+      runSaving(async () => {
         await transitionInventoryPurchaseOrder({
           purchase_order_id: row.id,
           expected_row_version: row.row_version,
           next_status: nextStatus,
         });
-      });
-    },
+      }),
     [runSaving],
   );
 
-  const transitionSelectedRequisition = async (nextStatus: string, reason?: string) => {
-    if (!selectedRequisition) return;
-    await runSaving(async () => {
-      await transitionInventoryProcurementRequisition({
-        requisition_id: selectedRequisition.id,
-        expected_row_version: selectedRequisition.row_version,
-        next_status: nextStatus,
-        reason: reason ?? null,
+  /** Cancelling / closing a requisition is irreversible: ask first. */
+  const confirmRequisitionDecline = useCallback(
+    (row: ProcurementRequisition, target: "CANCELLED" | "CLOSED") => {
+      const kind = target === "CANCELLED" ? "confirmCancel" : "confirmClose";
+      setPendingConfirm({
+        title: t(`procurement.requisitions.${kind}.title`),
+        description: t(`procurement.requisitions.${kind}.description`, {
+          number: row.req_number,
+        }),
+        confirmLabel: t(`procurement.requisitions.${kind}.confirm`),
+        run: () => runRequisitionTransition(row, target),
       });
-    });
-  };
+    },
+    [runRequisitionTransition, t],
+  );
+
+  const confirmPurchaseOrderCancel = useCallback(
+    (row: PurchaseOrder) =>
+      setPendingConfirm({
+        title: t("procurement.purchaseOrders.confirmCancel.title"),
+        description: t("procurement.purchaseOrders.confirmCancel.description", {
+          number: row.po_number,
+        }),
+        confirmLabel: t("procurement.purchaseOrders.confirmCancel.confirm"),
+        run: () => runPurchaseOrderTransition(row, "CANCELLED"),
+      }),
+    [runPurchaseOrderTransition, t],
+  );
 
   const rejectSelectedRequisition = async () => {
     const reason = rejectReason.trim();
-    if (!reason) return;
-    await transitionSelectedRequisition("REJECTED", reason);
+    if (!reason || !selectedRequisition) return;
+    const ok = await runRequisitionTransition(selectedRequisition, "REJECTED", reason);
+    // On failure the dialog stays open with the typed reason so the user can retry.
+    if (!ok) return;
     setRejectOpen(false);
     setRejectReason("");
     setReqDetailOpen(false);
@@ -689,7 +839,7 @@ export const ProcurementRepairablePanel = forwardRef<
   const confirmRepairAction = async (payload: RepairableActionPayload) => {
     if (!repairAction) return;
     const { kind, order } = repairAction;
-    await runSaving(async () => {
+    const ok = await runSaving(async () => {
       await transitionInventoryRepairableOrder({
         order_id: order.id,
         expected_row_version: order.row_version,
@@ -700,7 +850,8 @@ export const ProcurementRepairablePanel = forwardRef<
         return_location_id: payload.return_location_id ?? null,
       });
     });
-    setRepairAction(null);
+    // Keep the capture dialog (and what was typed) open when the transition failed.
+    if (ok) setRepairAction(null);
   };
 
   /** Dispatch needs serial + vendor; reuse existing values when already captured. */
@@ -809,13 +960,21 @@ export const ProcurementRepairablePanel = forwardRef<
 
   // ── Tabs ────────────────────────────────────────────────────────────────────
   const subTabs: Array<{ id: SubTab; label: string }> = [
-    { id: "requisitions", label: "Requisitions" },
-    { id: "purchase-orders", label: "Purchase orders" },
+    { id: "requisitions", label: t("procurement.requisitions.title") },
+    { id: "purchase-orders", label: t("procurement.purchaseOrders.title") },
     { id: "goods-receipts", label: t("procurement.goodsReceipts.title") },
     { id: "repairables", label: t("procurement.repairables.title") },
     { id: "suppliers", label: t("procurement.suppliers.title") },
-    { id: "lifecycle", label: "Last lifecycle events" },
+    { id: "lifecycle", label: t("procurement.lifecycle.title") },
   ];
+
+  const kanbanViewOptions = useMemo<ViewOption<"list" | "kanban">[]>(
+    () => [
+      { value: "list", label: t("page.viewList"), icon: List },
+      { value: "kanban", label: t("page.viewKanban"), icon: Columns3 },
+    ],
+    [t],
+  );
 
   const purchaseOrderById = useMemo(() => {
     const map = new Map<number, PurchaseOrder>();
@@ -867,6 +1026,14 @@ export const ProcurementRepairablePanel = forwardRef<
           },
         });
       }
+      if (row.status === "APPROVED") {
+        actions.push({
+          id: "create-po",
+          label: t("procurement.requisitions.actions.createPo"),
+          permission: P.INV_PROCURE,
+          onClick: () => openCreatePoForm(row.id),
+        });
+      }
       const declineTarget = requisitionDeclineOrCloseTarget(row.status);
       if (declineTarget) {
         actions.push({
@@ -878,12 +1045,18 @@ export const ProcurementRepairablePanel = forwardRef<
           permission: P.INV_PROCURE,
           destructive: declineTarget === "CANCELLED",
           separatorBefore: true,
-          onClick: () => void runRequisitionTransition(row, declineTarget),
+          onClick: () => confirmRequisitionDecline(row, declineTarget),
         });
       }
       return actions;
     },
-    [openRequisitionDetails, runRequisitionTransition, t],
+    [
+      confirmRequisitionDecline,
+      openCreatePoForm,
+      openRequisitionDetails,
+      runRequisitionTransition,
+      t,
+    ],
   );
 
   const purchaseOrderRowActions = useCallback(
@@ -926,12 +1099,12 @@ export const ProcurementRepairablePanel = forwardRef<
           permission: P.INV_PROCURE,
           destructive: true,
           separatorBefore: true,
-          onClick: () => void runPurchaseOrderTransition(row, "CANCELLED"),
+          onClick: () => confirmPurchaseOrderCancel(row),
         });
       }
       return actions;
     },
-    [openPoDetails, openReceiveForPo, runPurchaseOrderTransition, t],
+    [confirmPurchaseOrderCancel, openPoDetails, openReceiveForPo, runPurchaseOrderTransition, t],
   );
 
   const repairableRowActions = useCallback(
@@ -1001,28 +1174,106 @@ export const ProcurementRepairablePanel = forwardRef<
     [openRepairableDetails, startRepairReceive, startRepairSend, t, transitionRepairable],
   );
 
+  // ── Status chips ────────────────────────────────────────────────────────────
+  const procurementStatusChip = useCallback(
+    (status: string) => (
+      <StatusChip
+        label={t(`procurement.statuses.${status}`, { defaultValue: status })}
+        tone={toneOf(PROCUREMENT_STATUS_TONE, status)}
+        dot
+      />
+    ),
+    [t],
+  );
+  const repairableStatusChip = useCallback(
+    (status: string) => (
+      <StatusChip
+        label={t(`procurement.repairableStatuses.${status}`, { defaultValue: status })}
+        tone={toneOf(REPAIRABLE_STATUS_TONE, status)}
+        dot
+      />
+    ),
+    [t],
+  );
+  const priorityChip = useCallback(
+    (priority: string | null) =>
+      priority ? (
+        <StatusChip
+          label={priorityLabel(priority)}
+          tone={toneOf(PURCHASE_PRIORITY_TONE, priority)}
+        />
+      ) : (
+        "—"
+      ),
+    [priorityLabel],
+  );
+  const supplierStatusChip = useCallback(
+    (status: string) => (
+      <StatusChip
+        label={t(`procurement.suppliers.status.${status}`, { defaultValue: status })}
+        tone={toneOf(SUPPLIER_STATUS_TONE, status)}
+      />
+    ),
+    [t],
+  );
+  /** Status label of any procurement entity (requisition, PO, receipt, repairable). */
+  const entityStatusLabel = useCallback(
+    (entityType: string, status: string | null) => {
+      if (!status) return "—";
+      const repairable = entityType.toLowerCase().includes("repair");
+      return repairable
+        ? t(`procurement.repairableStatuses.${status}`, { defaultValue: status })
+        : t(`procurement.statuses.${status}`, { defaultValue: status });
+    },
+    [t],
+  );
+
   // ── Column definitions ──────────────────────────────────────────────────────
-  const reqColumns: ColumnDef<ProcurementRequisition>[] = useMemo(
+  const reqColumns: ColumnDef<ProcurementRequisitionRow>[] = useMemo(
     () => [
-      { accessorKey: "req_number", header: t("procurement.requisitions.columns.number") },
+      {
+        accessorKey: "req_number",
+        header: t("procurement.requisitions.columns.number"),
+        cell: ({ row }) => <span className="font-mono text-xs">{row.original.req_number}</span>,
+      },
       {
         accessorKey: "purchase_priority",
         header: t("procurement.requisition.priority"),
-        cell: ({ row }) => formatOrDash(row.original.purchase_priority),
+        cell: ({ row }) => priorityChip(row.original.purchase_priority),
       },
       {
         accessorKey: "status",
         header: t("procurement.requisitions.columns.status"),
+        cell: ({ row }) => procurementStatusChip(row.original.status),
+      },
+      {
+        id: "source",
+        accessorFn: (req) => sourceLabel(req.demand_source_type),
+        header: t("procurement.requisitions.columns.source"),
         cell: ({ row }) => (
-          <Badge variant={lifecycleBadgeVariant(row.original.status)}>
-            {t(`procurement.statuses.${row.original.status}`, {
-              defaultValue: row.original.status,
-            })}
-          </Badge>
+          <span className="text-xs">
+            {sourceLabel(row.original.demand_source_type)}
+            {row.original.demand_source_ref ? (
+              <span className="text-text-muted"> · {row.original.demand_source_ref}</span>
+            ) : null}
+          </span>
         ),
       },
-      { accessorKey: "demand_source_type", header: t("procurement.requisitions.columns.source") },
-      { accessorKey: "updated_at", header: t("procurement.requisitions.columns.updated") },
+      {
+        id: "requested_by",
+        accessorFn: (req) => req.requested_by_name ?? "",
+        header: t("procurement.requisitions.columns.requestedBy"),
+        cell: ({ row }) => (
+          <span className="text-xs text-text-muted">{row.original.requested_by_name ?? "—"}</span>
+        ),
+      },
+      {
+        accessorKey: "updated_at",
+        header: t("procurement.requisitions.columns.updated"),
+        cell: ({ row }) => (
+          <span className="text-xs text-text-muted">{formatDateTime(row.original.updated_at)}</span>
+        ),
+      },
       {
         id: "actions",
         header: t("procurement.requisitions.columns.actions"),
@@ -1035,28 +1286,54 @@ export const ProcurementRepairablePanel = forwardRef<
         ),
       },
     ],
-    [requisitionRowActions, t],
+    [formatDateTime, priorityChip, procurementStatusChip, requisitionRowActions, sourceLabel, t],
   );
 
-  const poColumns: ColumnDef<PurchaseOrder>[] = useMemo(
+  const poColumns: ColumnDef<PurchaseOrderRow>[] = useMemo(
     () => [
-      { accessorKey: "po_number", header: t("procurement.purchaseOrders.columns.number") },
+      {
+        accessorKey: "po_number",
+        header: t("procurement.purchaseOrders.columns.number"),
+        cell: ({ row }) => <span className="font-mono text-xs">{row.original.po_number}</span>,
+      },
       {
         accessorKey: "status",
         header: t("procurement.purchaseOrders.columns.status"),
+        cell: ({ row }) => procurementStatusChip(row.original.status),
+      },
+      {
+        id: "supplier",
+        accessorFn: (po) => po.supplier_name ?? po.supplier_company_name ?? "",
+        header: t("procurement.purchaseOrders.columns.supplier"),
+        cell: ({ row }) =>
+          row.original.supplier_name ??
+          row.original.supplier_company_name ??
+          t("procurement.purchaseOrders.noSupplier"),
+      },
+      {
+        id: "ordered_by",
+        accessorFn: (po) => po.ordered_by_name ?? "",
+        header: t("procurement.purchaseOrders.columns.orderedBy"),
         cell: ({ row }) => (
-          <Badge variant={lifecycleBadgeVariant(row.original.status)}>
-            {t(`procurement.statuses.${row.original.status}`, {
-              defaultValue: row.original.status,
-            })}
-          </Badge>
+          <span className="text-xs text-text-muted">{row.original.ordered_by_name ?? "—"}</span>
         ),
       },
       {
-        accessorKey: "supplier_company_name",
-        header: t("procurement.purchaseOrders.columns.supplier"),
+        accessorKey: "expected_delivery_date",
+        header: t("procurement.purchaseOrders.columns.expectedDelivery"),
+        cell: ({ row }) => (
+          <span className="text-xs text-text-muted">
+            {dateLabel(row.original.expected_delivery_date)}
+          </span>
+        ),
       },
-      { accessorKey: "updated_at", header: t("procurement.purchaseOrders.columns.updated") },
+      {
+        accessorKey: "updated_at",
+        header: t("procurement.purchaseOrders.columns.updated"),
+        cell: ({ row }) => (
+          <span className="text-xs text-text-muted">{formatDateTime(row.original.updated_at)}</span>
+        ),
+      },
       {
         id: "actions",
         header: t("procurement.purchaseOrders.columns.actions"),
@@ -1069,13 +1346,22 @@ export const ProcurementRepairablePanel = forwardRef<
         ),
       },
     ],
-    [purchaseOrderRowActions, t],
+    [dateLabel, formatDateTime, procurementStatusChip, purchaseOrderRowActions, t],
   );
 
   const repairColumns: ColumnDef<RepairableOrder>[] = useMemo(
     () => [
-      { accessorKey: "order_code", header: t("procurement.repairables.columns.order") },
-      { accessorKey: "article_code", header: t("procurement.repairables.columns.article") },
+      {
+        accessorKey: "order_code",
+        header: t("procurement.repairables.columns.order"),
+        cell: ({ row }) => <span className="font-mono text-xs">{row.original.order_code}</span>,
+      },
+      {
+        id: "article",
+        accessorFn: (order) => order.article_code,
+        header: t("procurement.repairables.columns.article"),
+        cell: ({ row }) => formatAssetLabel(row.original.article_code, row.original.article_name),
+      },
       { accessorKey: "source_location_code", header: t("procurement.repairables.columns.source") },
       {
         id: "vendor",
@@ -1085,15 +1371,15 @@ export const ProcurementRepairablePanel = forwardRef<
       {
         accessorKey: "status",
         header: t("procurement.repairables.columns.status"),
+        cell: ({ row }) => repairableStatusChip(row.original.status),
+      },
+      {
+        accessorKey: "updated_at",
+        header: t("procurement.repairables.columns.updated"),
         cell: ({ row }) => (
-          <Badge variant={lifecycleBadgeVariant(row.original.status)}>
-            {t(`procurement.repairableStatuses.${row.original.status}`, {
-              defaultValue: row.original.status,
-            })}
-          </Badge>
+          <span className="text-xs text-text-muted">{formatDateTime(row.original.updated_at)}</span>
         ),
       },
-      { accessorKey: "updated_at", header: t("procurement.repairables.columns.updated") },
       {
         id: "actions",
         header: t("procurement.repairables.columns.actions"),
@@ -1106,12 +1392,16 @@ export const ProcurementRepairablePanel = forwardRef<
         ),
       },
     ],
-    [repairableRowActions, t],
+    [formatDateTime, repairableRowActions, repairableStatusChip, t],
   );
 
   const grColumns: ColumnDef<GoodsReceipt>[] = useMemo(
     () => [
-      { accessorKey: "gr_number", header: t("procurement.goodsReceipts.columns.number") },
+      {
+        accessorKey: "gr_number",
+        header: t("procurement.goodsReceipts.columns.number"),
+        cell: ({ row }) => <span className="font-mono text-xs">{row.original.gr_number}</span>,
+      },
       {
         id: "purchase_order",
         header: t("procurement.goodsReceipts.columns.po"),
@@ -1121,7 +1411,7 @@ export const ProcurementRepairablePanel = forwardRef<
           return (
             <Button
               variant="link"
-              className="h-auto p-0"
+              className="h-auto p-0 font-mono"
               onClick={(event) => {
                 event.stopPropagation();
                 openPoDetails(po.id);
@@ -1135,26 +1425,28 @@ export const ProcurementRepairablePanel = forwardRef<
       {
         accessorKey: "status",
         header: t("procurement.goodsReceipts.columns.status"),
-        cell: ({ row }) => (
-          <Badge variant={lifecycleBadgeVariant(row.original.status)}>
-            {t(`procurement.statuses.${row.original.status}`, {
-              defaultValue: row.original.status,
-            })}
-          </Badge>
-        ),
+        cell: ({ row }) => procurementStatusChip(row.original.status),
       },
       {
         accessorKey: "posting_state",
         header: t("procurement.goodsReceipts.columns.posting"),
-        cell: ({ row }) =>
-          t(`procurement.postingStates.${row.original.posting_state}`, {
-            defaultValue: row.original.posting_state,
-          }),
+        cell: ({ row }) => (
+          <StatusChip
+            label={t(`procurement.postingStates.${row.original.posting_state}`, {
+              defaultValue: row.original.posting_state,
+            })}
+            tone={toneOf(POSTING_STATE_TONE, row.original.posting_state)}
+          />
+        ),
       },
       {
         accessorKey: "received_at",
         header: t("procurement.goodsReceipts.columns.receivedAt"),
-        cell: ({ row }) => formatOrDash(row.original.received_at),
+        cell: ({ row }) => (
+          <span className="text-xs text-text-muted">
+            {row.original.received_at ? formatDateTime(row.original.received_at) : "—"}
+          </span>
+        ),
       },
       {
         id: "actions",
@@ -1179,21 +1471,47 @@ export const ProcurementRepairablePanel = forwardRef<
         ),
       },
     ],
-    [openGoodsReceipt, openPoDetails, purchaseOrderById, t],
+    [formatDateTime, openGoodsReceipt, openPoDetails, procurementStatusChip, purchaseOrderById, t],
   );
 
   const eventColumns: ColumnDef<InventoryStateEvent>[] = useMemo(
     () => [
-      { accessorKey: "entity_type", header: "Entity" },
+      {
+        accessorKey: "entity_type",
+        header: t("procurement.lifecycle.columns.entity"),
+        cell: ({ row }) =>
+          t(`procurement.lifecycle.entities.${row.original.entity_type.toLowerCase()}`, {
+            defaultValue: row.original.entity_type,
+          }),
+      },
       {
         id: "transition",
-        header: "Transition",
-        cell: ({ row }) => `${row.original.from_status ?? "—"} -> ${row.original.to_status}`,
+        header: t("procurement.lifecycle.columns.transition"),
+        cell: ({ row }) => (
+          <span className="text-xs">
+            {entityStatusLabel(row.original.entity_type, row.original.from_status)}
+            <span aria-hidden className="mx-1">
+              →
+            </span>
+            <span className="sr-only">{t("procurement.lifecycle.to")}</span>
+            {entityStatusLabel(row.original.entity_type, row.original.to_status)}
+          </span>
+        ),
       },
-      { accessorKey: "reason", header: "Reason" },
-      { accessorKey: "changed_at", header: "Changed" },
+      {
+        accessorKey: "reason",
+        header: t("procurement.lifecycle.columns.reason"),
+        cell: ({ row }) => formatOrDash(row.original.note ?? row.original.reason),
+      },
+      {
+        accessorKey: "changed_at",
+        header: t("procurement.lifecycle.columns.changedAt"),
+        cell: ({ row }) => (
+          <span className="text-xs text-text-muted">{formatDateTime(row.original.changed_at)}</span>
+        ),
+      },
     ],
-    [],
+    [entityStatusLabel, formatDateTime, t],
   );
 
   const supplierColumns: ColumnDef<InventorySupplier>[] = useMemo(
@@ -1203,13 +1521,7 @@ export const ProcurementRepairablePanel = forwardRef<
       {
         accessorKey: "status_code",
         header: t("procurement.suppliers.columns.status"),
-        cell: ({ row }) => (
-          <Badge variant={statusBadgeVariant(row.original.status_code)}>
-            {t(`procurement.suppliers.status.${row.original.status_code}`, {
-              defaultValue: row.original.status_code,
-            })}
-          </Badge>
-        ),
+        cell: ({ row }) => supplierStatusChip(row.original.status_code),
       },
       {
         accessorKey: "default_lead_time_days",
@@ -1217,7 +1529,7 @@ export const ProcurementRepairablePanel = forwardRef<
         cell: ({ row }) => row.original.default_lead_time_days ?? "—",
       },
     ],
-    [t],
+    [supplierStatusChip, t],
   );
 
   // ── Derived lists ───────────────────────────────────────────────────────────
@@ -1230,9 +1542,15 @@ export const ProcurementRepairablePanel = forwardRef<
     const term = reqSearch.trim().toLowerCase();
     return requisitions.filter((row) => {
       if (reqStatusFilter !== ALL && row.status !== reqStatusFilter) return false;
-      return includesTerm(term, row.req_number, row.demand_source_ref, row.demand_source_type);
+      return includesTerm(
+        term,
+        row.req_number,
+        row.demand_source_ref,
+        sourceLabel(row.demand_source_type),
+        row.requested_by_name,
+      );
     });
-  }, [requisitions, reqSearch, reqStatusFilter]);
+  }, [requisitions, reqSearch, reqStatusFilter, sourceLabel]);
 
   const filteredPurchaseOrders = useMemo(() => {
     const term = poSearch.trim().toLowerCase();
@@ -1248,7 +1566,7 @@ export const ProcurementRepairablePanel = forwardRef<
       REQ_KANBAN_STATUSES.map((status) => ({
         id: status,
         label: t(`procurement.statuses.${status}`, { defaultValue: status }),
-        tone: PROCUREMENT_STATUS_TONE[status] ?? "muted",
+        tone: PROCUREMENT_KANBAN_TONE[status] ?? "muted",
       })),
     [t],
   );
@@ -1259,13 +1577,22 @@ export const ProcurementRepairablePanel = forwardRef<
         id: String(req.id),
         columnId: req.status,
         code: req.req_number,
-        title: req.demand_source_type,
+        title: [sourceLabel(req.demand_source_type), req.demand_source_ref]
+          .filter(Boolean)
+          .join(" · "),
         ...(req.purchase_priority
-          ? { badges: [{ label: req.purchase_priority, tone: "warning" as const }] }
+          ? {
+              badges: [
+                {
+                  label: priorityLabel(req.purchase_priority),
+                  tone: "warning" as const,
+                },
+              ],
+            }
           : {}),
         selected: selectedReqId === req.id,
       })),
-    [filteredRequisitions, selectedReqId],
+    [filteredRequisitions, priorityLabel, selectedReqId, sourceLabel],
   );
 
   const poKanbanColumns = useMemo<KanbanColumn[]>(
@@ -1273,7 +1600,7 @@ export const ProcurementRepairablePanel = forwardRef<
       PO_KANBAN_STATUSES.map((status) => ({
         id: status,
         label: t(`procurement.statuses.${status}`, { defaultValue: status }),
-        tone: PROCUREMENT_STATUS_TONE[status] ?? "muted",
+        tone: PROCUREMENT_KANBAN_TONE[status] ?? "muted",
       })),
     [t],
   );
@@ -1285,8 +1612,9 @@ export const ProcurementRepairablePanel = forwardRef<
         columnId: po.status,
         code: po.po_number,
         title:
+          po.supplier_name ??
           po.supplier_company_name ??
-          t("procurement.purchaseOrders.noSupplier", { defaultValue: "No supplier" }),
+          t("procurement.purchaseOrders.noSupplier"),
         selected: selectedPoId === po.id,
       })),
     [filteredPurchaseOrders, selectedPoId, t],
@@ -1472,16 +1800,21 @@ export const ProcurementRepairablePanel = forwardRef<
   };
 
   // ── Requisition form JSX ────────────────────────────────────────────────────
+  const reqArticle = useMemo(
+    () => articles.find((a) => a.id === reqArticleId) ?? null,
+    [articles, reqArticleId],
+  );
+
   const requisitionForm = (
-    <div className="grid gap-2 md:grid-cols-2">
+    <div className="grid gap-3 md:grid-cols-2">
       <div className="space-y-1">
-        <Label>Article</Label>
+        <Label htmlFor="inv-req-article">{t("procurement.requisitionForm.article")}</Label>
         <Select value={String(reqArticleId)} onValueChange={(v) => setReqArticleId(Number(v))}>
-          <SelectTrigger>
-            <SelectValue placeholder="Article" />
+          <SelectTrigger id="inv-req-article">
+            <SelectValue placeholder={t("procurement.requisitionForm.selectArticle")} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="0">Select article</SelectItem>
+            <SelectItem value="0">{t("procurement.requisitionForm.selectArticle")}</SelectItem>
             {articles.map((a) => (
               <SelectItem key={a.id} value={String(a.id)}>
                 {a.article_code} - {a.article_name}
@@ -1489,15 +1822,24 @@ export const ProcurementRepairablePanel = forwardRef<
             ))}
           </SelectContent>
         </Select>
+        {reqArticle ? (
+          <p className="text-xs text-text-muted">
+            {t("procurement.requisitionForm.stockHint", {
+              available: qtyLabel(reqArticle.available_qty),
+              reorderPoint: qtyLabel(reqArticle.reorder_point),
+              unit: reqArticle.unit_code,
+            })}
+          </p>
+        ) : null}
       </div>
       <div className="space-y-1">
-        <Label>Preferred location</Label>
+        <Label htmlFor="inv-req-location">{t("procurement.requisitionForm.location")}</Label>
         <Select value={String(reqLocationId)} onValueChange={(v) => setReqLocationId(Number(v))}>
-          <SelectTrigger>
-            <SelectValue placeholder="Preferred location" />
+          <SelectTrigger id="inv-req-location">
+            <SelectValue placeholder={t("procurement.requisitionForm.noLocation")} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="0">No preferred location</SelectItem>
+            <SelectItem value="0">{t("procurement.requisitionForm.noLocation")}</SelectItem>
             {locations.map((l) => (
               <SelectItem key={l.id} value={String(l.id)}>
                 {l.warehouse_code}/{l.code}
@@ -1507,7 +1849,7 @@ export const ProcurementRepairablePanel = forwardRef<
         </Select>
       </div>
       <div className="space-y-1">
-        <Label htmlFor="inv-req-qty">Requested quantity</Label>
+        <Label htmlFor="inv-req-qty">{t("procurement.requisitionForm.quantity")}</Label>
         <Input
           id="inv-req-qty"
           type="number"
@@ -1518,42 +1860,82 @@ export const ProcurementRepairablePanel = forwardRef<
         />
       </div>
       <div className="space-y-1">
-        <Label>{t("procurement.requisition.priority")}</Label>
+        <Label htmlFor="inv-req-priority">{t("procurement.requisition.priority")}</Label>
         <Select value={reqPriority} onValueChange={setReqPriority}>
-          <SelectTrigger>
+          <SelectTrigger id="inv-req-priority">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
             {PURCHASE_PRIORITIES.map((p) => (
               <SelectItem key={p} value={p}>
-                {t(`procurement.requisition.priorityValues.${p}`, { defaultValue: p })}
+                {priorityLabel(p)}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
       </div>
       <div className="space-y-1">
-        <Label>Demand source type</Label>
+        <Label htmlFor="inv-req-source">{t("procurement.requisitionForm.source")}</Label>
         <Select value={reqSourceType} onValueChange={setReqSourceType}>
-          <SelectTrigger>
+          <SelectTrigger id="inv-req-source">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="REORDER">REORDER</SelectItem>
-            <SelectItem value="RESERVATION">RESERVATION</SelectItem>
+            {MANUAL_DEMAND_SOURCES.map((code) => (
+              <SelectItem key={code} value={code}>
+                {sourceLabel(code)}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
+        <p className="text-xs text-text-muted">{t("procurement.requisitionForm.sourceHint")}</p>
       </div>
       <div className="space-y-1">
-        <Label>Demand source ref (optional)</Label>
-        <Input value={reqSourceRef} onChange={(e) => setReqSourceRef(e.target.value)} />
+        <Label htmlFor="inv-req-source-ref">{t("procurement.requisitionForm.sourceRef")}</Label>
+        <Input
+          id="inv-req-source-ref"
+          value={reqSourceRef}
+          onChange={(e) => setReqSourceRef(e.target.value)}
+        />
       </div>
       <div className="space-y-1 md:col-span-2">
-        <Label>Reason</Label>
-        <Input value={reqReason} onChange={(e) => setReqReason(e.target.value)} />
+        <Label htmlFor="inv-req-reason">{t("procurement.requisitionForm.reason")}</Label>
+        <Input
+          id="inv-req-reason"
+          value={reqReason}
+          onChange={(e) => setReqReason(e.target.value)}
+        />
       </div>
     </div>
   );
+
+  const reqFormBlocker =
+    reqArticleId <= 0
+      ? t("procurement.requisitionForm.blockers.article")
+      : reqQty <= 0
+        ? t("procurement.requisitionForm.blockers.quantity")
+        : null;
+
+  const submitRequisition = async () => {
+    const ok = await runSaving(async () => {
+      await createInventoryProcurementRequisition({
+        article_id: reqArticleId,
+        preferred_location_id: reqLocationId > 0 ? reqLocationId : null,
+        requested_qty: reqQty,
+        demand_source_type: reqSourceType,
+        demand_source_ref: reqSourceRef.trim() || null,
+        source_reservation_id: null,
+        source_reorder_trigger: reqSourceType === "REORDER" ? "threshold_crossed" : null,
+        purchase_priority: reqPriority || null,
+        reason: reqReason.trim() || null,
+        // The requester is recorded by the backend from the signed-in session.
+        actor_id: null,
+      });
+    });
+    if (!ok) return;
+    setCreateReqOpen(false);
+    resetRequisitionForm();
+  };
 
   const selectedSupplier = useMemo(
     () => inventorySuppliers.find((s) => s.id === selectedSupplierId) ?? null,
@@ -1562,670 +1944,758 @@ export const ProcurementRepairablePanel = forwardRef<
 
   // ── Dashboard KPI strip ─────────────────────────────────────────────────────
   const kpiStrip = dashboard ? (
-    <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-10">
-      {(
-        [
-          {
-            label: t("procurement.dashboard.openRequisitions"),
-            value: dashboard.open_requisitions,
-            onClick: () => {
-              setActiveTab("requisitions");
-              setReqStatusFilter("__all__");
-            },
-          },
-          {
-            label: t("procurement.dashboard.openPos"),
-            value: dashboard.open_pos,
-            onClick: () => setActiveTab("purchase-orders"),
-          },
-          {
-            label: t("procurement.dashboard.latePos"),
-            value: dashboard.overdue_pos,
-            alert: dashboard.overdue_pos > 0,
-            onClick: () => setActiveTab("purchase-orders"),
-          },
-          {
-            label: t("procurement.dashboard.receivingToday", {
-              defaultValue: "Receiving today",
-            }),
-            value: dashboard.receiving_today_count,
-            onClick: () => setActiveTab("purchase-orders"),
-          },
-          {
-            label: t("procurement.dashboard.pendingApprovals"),
-            value: dashboard.pending_approval_pos,
-            onClick: () => {
-              setActiveTab("purchase-orders");
-              setPoStatusFilter("SUBMITTED");
-            },
-          },
-          {
-            label: t("procurement.dashboard.stockouts"),
-            value: dashboard.low_stock_articles,
-            alert: dashboard.low_stock_articles > 0,
-          },
-          {
-            label: t("procurement.dashboard.criticalStockouts"),
-            value: dashboard.critical_low_stock_articles,
-            alert: dashboard.critical_low_stock_articles > 0,
-          },
-          {
-            label: t("procurement.dashboard.activeSuppliers", {
-              defaultValue: "Active suppliers",
-            }),
-            value: dashboard.active_suppliers_count,
-            onClick: () => setActiveTab("suppliers"),
-          },
-          {
-            label: t("procurement.dashboard.repairablesInRepair", {
-              defaultValue: "Repairables in repair",
-            }),
-            value: dashboard.repairables_in_repair,
-            onClick: () => setActiveTab("repairables"),
-          },
-          {
-            label: t("procurement.dashboard.pendingReceipts"),
-            value: dashboard.pending_receipts,
-            onClick: () => setActiveTab("purchase-orders"),
-          },
-        ] as Array<{ label: string; value: number; alert?: boolean; onClick?: () => void }>
-      ).map((kpi) => (
-        <button
-          key={kpi.label}
-          type="button"
-          onClick={kpi.onClick}
-          className={cn(
-            "rounded-md border p-2.5 text-left transition",
-            kpi.onClick ? "cursor-pointer hover:bg-muted" : "cursor-default",
-            kpi.alert && kpi.value > 0 ? "border-status-warning/40 bg-status-warning/5" : "",
-          )}
-        >
-          <div
-            className={cn(
-              "text-lg font-bold tabular-nums",
-              kpi.alert && kpi.value > 0 ? "text-status-warning" : "",
-            )}
-          >
-            {kpi.value}
-          </div>
-          <div className="mt-0.5 text-[11px] text-text-muted">{kpi.label}</div>
-        </button>
-      ))}
+    <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+      <KpiTile
+        label={t("procurement.dashboard.openRequisitions")}
+        value={formatNumber(dashboard.open_requisitions)}
+        onOpen={() => {
+          setActiveTab("requisitions");
+          setReqStatusFilter(ALL);
+        }}
+      />
+      <KpiTile
+        label={t("procurement.dashboard.pendingApprovals")}
+        value={formatNumber(dashboard.pending_approval_pos)}
+        {...(dashboard.pending_approval_pos > 0 ? { tone: "attention" as const } : {})}
+        onOpen={() => {
+          setActiveTab("purchase-orders");
+          setPoStatusFilter("SUBMITTED");
+        }}
+      />
+      <KpiTile
+        label={t("procurement.dashboard.openPos")}
+        value={formatNumber(dashboard.open_pos)}
+        onOpen={() => {
+          setActiveTab("purchase-orders");
+          setPoStatusFilter(ALL);
+        }}
+      />
+      <KpiTile
+        label={t("procurement.dashboard.latePos")}
+        value={formatNumber(dashboard.overdue_pos)}
+        {...(dashboard.overdue_pos > 0 ? { tone: "danger" as const } : {})}
+        onOpen={() => {
+          setActiveTab("purchase-orders");
+          setPoStatusFilter(ALL);
+        }}
+      />
+      <KpiTile
+        label={t("procurement.dashboard.pendingReceipts")}
+        value={formatNumber(dashboard.pending_receipts)}
+        hint={t("procurement.dashboard.receivingTodayHint", {
+          count: dashboard.receiving_today_count,
+        })}
+        onOpen={() => {
+          setActiveTab("purchase-orders");
+          setPoStatusFilter("APPROVED");
+        }}
+      />
+      <KpiTile
+        label={t("procurement.dashboard.stockouts")}
+        value={formatNumber(dashboard.low_stock_articles)}
+        hint={t("procurement.dashboard.stockoutsHint")}
+        {...(dashboard.low_stock_articles > 0 ? { tone: "warning" as const } : {})}
+      />
+      <KpiTile
+        label={t("procurement.dashboard.criticalStockouts")}
+        value={formatNumber(dashboard.critical_low_stock_articles)}
+        hint={t("procurement.dashboard.criticalStockoutsHint")}
+        {...(dashboard.critical_low_stock_articles > 0 ? { tone: "danger" as const } : {})}
+      />
+      <KpiTile
+        label={t("procurement.dashboard.repairablesInRepair")}
+        value={formatNumber(dashboard.repairables_in_repair)}
+        onOpen={() => setActiveTab("repairables")}
+      />
+      <KpiTile
+        label={t("procurement.dashboard.activeSuppliers")}
+        value={formatNumber(dashboard.active_suppliers_count)}
+        onOpen={() => setActiveTab("suppliers")}
+      />
     </div>
   ) : null;
 
+  /** Next step of the open requisition, shown next to its lifecycle buttons. */
+  const requisitionStepHint = selectedRequisition
+    ? t(`procurement.requisitions.hints.${selectedRequisition.status}`, {
+        defaultValue: t("procurement.requisitions.hints.terminal"),
+      })
+    : null;
+
   return (
     <div className="space-y-4">
-      {error ? (
-        <div className="rounded-md border border-destructive/30 bg-destructive/10 p-2 text-sm">
-          {error}
-        </div>
-      ) : null}
+      {/* A failed load replaces the procurement content; dialogs below stay usable. */}
+      {loadError ? (
+        <ErrorState
+          error={loadError}
+          title={t("procurement.loadError")}
+          onRetry={() => void loadAll()}
+          retrying={loading}
+        />
+      ) : (
+        <>
+          {kpiStrip}
+          <ProcurementAlertCards
+            alerts={alerts}
+            onNavigate={(tab) => {
+              setActiveTab(tab);
+              if (tab === "purchase-orders") setPoStatusFilter(ALL);
+              if (tab === "repairables") setRepairStatusFilter(ALL);
+            }}
+          />
 
-      {kpiStrip}
+          <ProcurementRecommendationsPanel
+            onCreateRequisitionPrefill={(rec) =>
+              openRequisitionForm({
+                articleId: rec.article_id,
+                quantity: rec.suggested_reorder_qty,
+                sourceType: "REORDER",
+                sourceRef: rec.warehouse_code,
+                reason: rec.reason ?? null,
+              })
+            }
+            onCreated={() => loadAll()}
+          />
 
-      <ProcurementAlertCards
-        alerts={alerts}
-        onNavigate={(tab) => {
-          setActiveTab(tab);
-          if (tab === "purchase-orders") setPoStatusFilter("__all__");
-          if (tab === "repairables") setRepairStatusFilter("__all__");
-        }}
-      />
-
-      <ProcurementRecommendationsPanel
-        onCreateRequisitionPrefill={(rec) => {
-          setReqArticleId(rec.article_id);
-          setReqQty(rec.suggested_reorder_qty);
-          setReqSourceType("REORDER");
-          setReqSourceRef(rec.warehouse_code);
-          setReqReason(rec.reason ?? "");
-          setActiveTab("requisitions");
-          setCreateReqOpen(true);
-        }}
-        onCreated={() => loadAll()}
-      />
-
-      <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
-        {/* Sub-tab sidebar */}
-        <div className="rounded-md border p-2">
-          <div className="space-y-1">
-            {subTabs.map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setActiveTab(tab.id)}
-                className={cn(
-                  "w-full rounded-md px-3 py-2 text-left text-sm transition",
-                  activeTab === tab.id ? "bg-primary text-primary-foreground" : "hover:bg-muted",
-                )}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="min-w-0 space-y-4">
-          {/* ── REQUISITIONS ── */}
-          {activeTab === "requisitions" ? (
-            <div className="rounded-md border p-4">
-              <h3 className="mb-2 text-sm font-semibold">Requisitions</h3>
-              <div className="mb-2 flex flex-wrap items-center gap-2">
-                <SmartFilterBar
-                  className="min-w-0 flex-1"
-                  searchPlaceholder={t("procurement.requisitions.searchPlaceholder")}
-                  searchValue={reqSearchInput}
-                  onSearchInputChange={setReqSearchInput}
-                  onSearchChange={setReqSearch}
-                  filters={reqFilterDefs}
-                  resultCount={filteredRequisitions.length}
-                  onReset={resetReqFilters}
-                />
-                {!viewFromParent ? (
-                  <div className="flex items-center gap-0.5 rounded-md border p-0.5">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant={reqView === "list" ? "default" : "ghost"}
-                      className="h-7 px-2"
-                      onClick={() => setReqView("list")}
-                      title="List view"
-                    >
-                      <List className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant={reqView === "kanban" ? "default" : "ghost"}
-                      className="h-7 px-2"
-                      onClick={() => setReqView("kanban")}
-                      title="Kanban view"
-                    >
-                      <Columns3 className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                ) : null}
+          <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
+            {/* Sub-tab sidebar */}
+            <nav className="rounded-md border p-2" aria-label={t("procurement.sectionsLabel")}>
+              <div className="space-y-1">
+                {subTabs.map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    aria-current={activeTab === tab.id ? "page" : undefined}
+                    onClick={() => setActiveTab(tab.id)}
+                    className={cn(
+                      "min-h-11 w-full rounded-md px-3 py-2 text-left text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      activeTab === tab.id
+                        ? "bg-primary text-primary-foreground"
+                        : "hover:bg-muted",
+                    )}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
               </div>
-              {reqView === "kanban" ? (
-                <div className="mb-3">
-                  <KanbanBoard
-                    columns={reqKanbanColumns}
-                    cards={reqKanbanCards}
-                    onCardClick={(card) => openRequisitionDetails(Number(card.id))}
-                    emptyColumnLabel={t("kanban.emptyColumn", { ns: "common" })}
-                    aria-label={t("procurement.requisitions.title", {
-                      defaultValue: "Requisitions board",
-                    })}
-                  />
-                </div>
+            </nav>
+
+            <div className="min-w-0 space-y-4">
+              {/* ── REQUISITIONS ── */}
+              {activeTab === "requisitions" ? (
+                <section className="rounded-md border p-4">
+                  <h3 className="mb-2 text-sm font-semibold">
+                    {t("procurement.requisitions.title")}
+                  </h3>
+                  <div className="mb-2 flex flex-wrap items-center gap-2">
+                    <SmartFilterBar
+                      className="min-w-0 flex-1"
+                      searchPlaceholder={t("procurement.requisitions.searchPlaceholder")}
+                      searchValue={reqSearchInput}
+                      onSearchInputChange={setReqSearchInput}
+                      onSearchChange={setReqSearch}
+                      filters={reqFilterDefs}
+                      resultCount={filteredRequisitions.length}
+                      onReset={resetReqFilters}
+                    />
+                    {!viewFromParent ? (
+                      <ViewToggle
+                        value={reqView}
+                        options={kanbanViewOptions}
+                        onChange={setReqView}
+                      />
+                    ) : null}
+                  </div>
+                  {reqView === "kanban" ? (
+                    <div className="mb-3">
+                      <KanbanBoard
+                        columns={reqKanbanColumns}
+                        cards={reqKanbanCards}
+                        onCardClick={(card) => openRequisitionDetails(Number(card.id))}
+                        emptyColumnLabel={t("kanban.emptyColumn", { ns: "common" })}
+                        aria-label={t("procurement.requisitions.boardLabel")}
+                      />
+                    </div>
+                  ) : null}
+                  {reqView === "list" ? (
+                    <div className="mb-3">
+                      {!loading && requisitions.length === 0 ? (
+                        <EmptyState
+                          title={t("procurement.requisitions.empty")}
+                          description={t("procurement.requisitions.emptyDescription")}
+                          {...(canProcure
+                            ? {
+                                actionLabel: t("procurement.recommendations.createRequisition"),
+                                onAction: () => openRequisitionForm(),
+                              }
+                            : {})}
+                        />
+                      ) : (
+                        <DataTable
+                          columns={reqColumns}
+                          data={filteredRequisitions}
+                          isLoading={loading}
+                          searchable={false}
+                          onRowClick={(req) => openRequisitionDetails(req.id)}
+                        />
+                      )}
+                    </div>
+                  ) : null}
+                </section>
               ) : null}
-              {reqView === "list" ? (
-                <div className="mb-3">
-                  {!loading && requisitions.length === 0 ? (
+
+              {/* ── PURCHASE ORDERS ── */}
+              {activeTab === "purchase-orders" ? (
+                <section className="rounded-md border p-4">
+                  <h3 className="mb-3 text-sm font-semibold">
+                    {t("procurement.purchaseOrders.title")}
+                  </h3>
+                  <div className="mb-3 flex flex-wrap items-center gap-2">
+                    <SmartFilterBar
+                      className="min-w-0 flex-1"
+                      searchPlaceholder={t("procurement.purchaseOrders.searchPlaceholder")}
+                      searchValue={poSearchInput}
+                      onSearchInputChange={setPoSearchInput}
+                      onSearchChange={setPoSearch}
+                      filters={poFilterDefs}
+                      resultCount={filteredPurchaseOrders.length}
+                      onReset={resetPoFilters}
+                    />
+                    {!viewFromParent ? (
+                      <ViewToggle
+                        value={reqView}
+                        options={kanbanViewOptions}
+                        onChange={setReqView}
+                      />
+                    ) : null}
+                  </div>
+                  {reqView === "kanban" ? (
+                    <div className="mb-3">
+                      <KanbanBoard
+                        columns={poKanbanColumns}
+                        cards={poKanbanCards}
+                        onCardClick={(card) => openPoDetails(Number(card.id))}
+                        emptyColumnLabel={t("kanban.emptyColumn", { ns: "common" })}
+                        aria-label={t("procurement.purchaseOrders.boardLabel")}
+                      />
+                    </div>
+                  ) : !loading && purchaseOrders.length === 0 ? (
                     <EmptyState
-                      title={t("procurement.requisitions.empty")}
-                      description={t("procurement.requisitions.emptyDescription")}
+                      title={t("procurement.purchaseOrders.empty")}
+                      description={t("procurement.purchaseOrders.emptyDescription")}
                       {...(canProcure
                         ? {
-                            actionLabel: t("procurement.recommendations.createRequisition"),
-                            onAction: () => setCreateReqOpen(true),
+                            actionLabel: t("procurement.purchaseOrders.create"),
+                            onAction: () => openCreatePoForm(approvedRequisitions[0]?.id ?? 0),
                           }
                         : {})}
                     />
                   ) : (
                     <DataTable
-                      columns={reqColumns}
-                      data={filteredRequisitions}
+                      columns={poColumns}
+                      data={filteredPurchaseOrders}
                       isLoading={loading}
                       searchable={false}
-                      onRowClick={(req) => openRequisitionDetails(req.id)}
+                      onRowClick={(po) => openPoDetails(po.id)}
                     />
                   )}
-                </div>
+                </section>
               ) : null}
-            </div>
-          ) : null}
 
-          {/* ── PURCHASE ORDERS ── */}
-          {activeTab === "purchase-orders" ? (
-            <div className="rounded-md border p-4">
-              <h3 className="mb-3 text-sm font-semibold">Purchase orders</h3>
-              <div className="mb-3">
-                <SmartFilterBar
-                  searchPlaceholder={t("procurement.purchaseOrders.searchPlaceholder")}
-                  searchValue={poSearchInput}
-                  onSearchInputChange={setPoSearchInput}
-                  onSearchChange={setPoSearch}
-                  filters={poFilterDefs}
-                  resultCount={filteredPurchaseOrders.length}
-                  onReset={resetPoFilters}
-                />
-              </div>
-              {reqView === "kanban" ? (
-                <div className="mb-3">
-                  <KanbanBoard
-                    columns={poKanbanColumns}
-                    cards={poKanbanCards}
-                    onCardClick={(card) => openPoDetails(Number(card.id))}
-                    emptyColumnLabel={t("kanban.emptyColumn", { ns: "common" })}
-                    aria-label={t("procurement.purchaseOrders.title", {
-                      defaultValue: "Purchase orders board",
-                    })}
-                  />
-                </div>
-              ) : !loading && purchaseOrders.length === 0 ? (
-                <EmptyState
-                  title={t("procurement.purchaseOrders.empty")}
-                  description={t("procurement.purchaseOrders.emptyDescription")}
-                  {...(canProcure
-                    ? {
-                        actionLabel: t("procurement.purchaseOrders.create"),
-                        onAction: () => {
-                          setPoDialogReqId(approvedRequisitions[0]?.id ?? 0);
-                          setCreatePoOpen(true);
-                        },
-                      }
-                    : {})}
-                />
-              ) : (
-                <DataTable
-                  columns={poColumns}
-                  data={filteredPurchaseOrders}
-                  isLoading={loading}
-                  searchable={false}
-                  onRowClick={(po) => openPoDetails(po.id)}
-                />
-              )}
-            </div>
-          ) : null}
-
-          {/* ── REPAIRABLES ── */}
-          {activeTab === "repairables" ? (
-            <div className="rounded-md border p-4">
-              <h3 className="mb-2 text-sm font-semibold">{t("procurement.repairables.title")}</h3>
-              <div className="mb-3">
-                <SmartFilterBar
-                  searchPlaceholder={t("procurement.repairables.searchPlaceholder")}
-                  searchValue={repairSearchInput}
-                  onSearchInputChange={setRepairSearchInput}
-                  onSearchChange={setRepairSearch}
-                  filters={repairFilterDefs}
-                  resultCount={filteredRepairables.length}
-                  onReset={resetRepairFilters}
-                />
-              </div>
-              {!loading && repairables.length === 0 ? (
-                <EmptyState
-                  title={t("procurement.repairables.empty")}
-                  description={t("procurement.repairables.emptyDescription")}
-                  {...(canProcure
-                    ? {
-                        actionLabel: t("procurement.repairables.create"),
-                        onAction: () => setRepairOpen(true),
-                      }
-                    : {})}
-                />
-              ) : (
-                <DataTable
-                  columns={repairColumns}
-                  data={filteredRepairables}
-                  isLoading={loading}
-                  searchable={false}
-                  onRowClick={(order) => openRepairableDetails(order.id)}
-                />
-              )}
-            </div>
-          ) : null}
-
-          {/* ── GOODS RECEIPTS ── */}
-          {activeTab === "goods-receipts" ? (
-            <div className="rounded-md border p-4">
-              <h3 className="mb-3 text-sm font-semibold">{t("procurement.goodsReceipts.title")}</h3>
-              {!loading && goodsReceipts.length === 0 ? (
-                <EmptyState
-                  title={t("procurement.goodsReceipts.empty")}
-                  description={t("procurement.goodsReceipts.emptyDescription")}
-                  {...(canProcure
-                    ? {
-                        actionLabel: t("procurement.receive.title"),
-                        onAction: () => {
-                          setReceiveInitialPoId(null);
-                          setReceiveOpen(true);
-                        },
-                      }
-                    : {})}
-                />
-              ) : (
-                <DataTable
-                  columns={grColumns}
-                  data={goodsReceipts}
-                  isLoading={loading}
-                  searchable={false}
-                  onRowClick={(receipt) => openGoodsReceipt(receipt.id)}
-                />
-              )}
-              {selectedGrId ? (
-                <div className="mt-4 rounded-md border p-3">
-                  <h4 className="mb-2 text-xs font-semibold uppercase text-text-muted">
-                    {t("procurement.goodsReceipts.lines.title")}
-                  </h4>
-                  {grLinesLoading ? (
-                    <p className="text-sm text-text-muted">
-                      {t("procurement.goodsReceipts.lines.loading")}
-                    </p>
-                  ) : grLines.length === 0 ? (
-                    <p className="text-sm text-text-muted">
-                      {t("procurement.goodsReceipts.lines.empty")}
-                    </p>
+              {/* ── REPAIRABLES ── */}
+              {activeTab === "repairables" ? (
+                <section className="rounded-md border p-4">
+                  <h3 className="mb-2 text-sm font-semibold">
+                    {t("procurement.repairables.title")}
+                  </h3>
+                  <div className="mb-3">
+                    <SmartFilterBar
+                      searchPlaceholder={t("procurement.repairables.searchPlaceholder")}
+                      searchValue={repairSearchInput}
+                      onSearchInputChange={setRepairSearchInput}
+                      onSearchChange={setRepairSearch}
+                      filters={repairFilterDefs}
+                      resultCount={filteredRepairables.length}
+                      onReset={resetRepairFilters}
+                    />
+                  </div>
+                  {!loading && repairables.length === 0 ? (
+                    <EmptyState
+                      title={t("procurement.repairables.empty")}
+                      description={t("procurement.repairables.emptyDescription")}
+                      {...(canProcure
+                        ? {
+                            actionLabel: t("procurement.repairables.create"),
+                            onAction: () => setRepairOpen(true),
+                          }
+                        : {})}
+                    />
                   ) : (
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>
-                            {t("procurement.goodsReceipts.lines.columns.article")}
-                          </TableHead>
-                          <TableHead>
-                            {t("procurement.goodsReceipts.lines.columns.location")}
-                          </TableHead>
-                          <TableHead className="text-right">
-                            {t("procurement.goodsReceipts.lines.columns.received")}
-                          </TableHead>
-                          <TableHead className="text-right">
-                            {t("procurement.goodsReceipts.lines.columns.accepted")}
-                          </TableHead>
-                          <TableHead className="text-right">
-                            {t("procurement.goodsReceipts.lines.columns.rejected")}
-                          </TableHead>
-                          <TableHead>
-                            {t("procurement.goodsReceipts.lines.columns.reason")}
-                          </TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {grLines.map((line) => (
-                          <TableRow key={line.id}>
-                            <TableCell>
-                              {formatAssetLabel(line.article_code, line.article_name)}
-                            </TableCell>
-                            <TableCell>{line.location_code}</TableCell>
-                            <TableCell className="text-right tabular-nums">
-                              {line.received_qty}
-                            </TableCell>
-                            <TableCell className="text-right tabular-nums">
-                              {line.accepted_qty}
-                            </TableCell>
-                            <TableCell className="text-right tabular-nums">
-                              {line.rejected_qty}
-                            </TableCell>
-                            <TableCell>{formatOrDash(line.rejection_reason)}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
+                    <DataTable
+                      columns={repairColumns}
+                      data={filteredRepairables}
+                      isLoading={loading}
+                      searchable={false}
+                      onRowClick={(order) => openRepairableDetails(order.id)}
+                    />
                   )}
-                </div>
+                </section>
               ) : null}
-            </div>
-          ) : null}
 
-          {/* ── SUPPLIERS ── */}
-          {activeTab === "suppliers" ? (
-            <div className="rounded-md border p-4">
-              <div className="mb-3 flex items-center justify-between">
-                <h3 className="text-sm font-semibold">{t("procurement.suppliers.title")}</h3>
-                <PermissionGate permission={P.INV_MANAGE}>
-                  <Button size="sm" onClick={openNewSupplierForm}>
-                    {t("procurement.suppliers.new")}
-                  </Button>
-                </PermissionGate>
-              </div>
-
-              <SmartFilterBar
-                searchPlaceholder={t("procurement.suppliers.search")}
-                searchValue={supplierSearchInput}
-                onSearchInputChange={setSupplierSearchInput}
-                onSearchChange={(q) => setSupplierSearch(q.trim())}
-                filters={[
-                  {
-                    id: "status",
-                    kind: "select",
-                    label: t("procurement.suppliers.columns.status"),
-                    value: supplierStatusFilter,
-                    onChange: (v) => setSupplierStatusFilter(v ?? "__all__"),
-                    options: SUPPLIER_STATUSES.map((s) => ({
-                      value: s,
-                      label: t(`procurement.suppliers.status.${s}`, { defaultValue: s }),
-                    })),
-                  },
-                ]}
-                resultCount={filteredInventorySuppliers.length}
-                onReset={() => {
-                  setSupplierSearchInput("");
-                  setSupplierSearch("");
-                  setSupplierStatusFilter("__all__");
-                }}
-              />
-
-              <div className="mt-3 grid gap-4 lg:grid-cols-[1fr_380px]">
-                <DataTable
-                  columns={supplierColumns}
-                  data={filteredInventorySuppliers}
-                  isLoading={loading}
-                  searchable={false}
-                  onRowClick={(s) => setSelectedSupplierId(s.id)}
-                />
-
-                {selectedSupplierId ? (
-                  <div className="space-y-4">
-                    {/* Supplier header */}
-                    <div className="flex items-start justify-between rounded-md border p-3">
-                      <div>
-                        <div className="font-semibold">
-                          {selectedSupplier?.code} — {selectedSupplier?.name}
-                        </div>
-                        {selectedSupplier ? (
-                          <Badge
-                            variant={statusBadgeVariant(selectedSupplier.status_code)}
-                            className="mt-1 text-[10px]"
-                          >
-                            {t(`procurement.suppliers.status.${selectedSupplier.status_code}`, {
-                              defaultValue: selectedSupplier.status_code,
-                            })}
-                          </Badge>
-                        ) : null}
-                      </div>
-                      <PermissionGate permission={P.INV_MANAGE}>
-                        <div className="flex gap-2">
-                          {selectedSupplier ? (
-                            <>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => openEditSupplierForm(selectedSupplier)}
-                              >
-                                Edit
-                              </Button>
-                              {selectedSupplier.is_active === 1 ? (
-                                <Button
-                                  size="sm"
-                                  variant="destructive"
-                                  disabled={saving}
-                                  onClick={() =>
-                                    void runSaving(async () => {
-                                      await deactivateInventorySupplier(
-                                        selectedSupplier.id,
-                                        selectedSupplier.row_version,
-                                      );
-                                      setSelectedSupplierId(null);
-                                    })
-                                  }
-                                >
-                                  Deactivate
-                                </Button>
-                              ) : null}
-                            </>
-                          ) : null}
-                        </div>
-                      </PermissionGate>
+              {/* ── GOODS RECEIPTS ── */}
+              {activeTab === "goods-receipts" ? (
+                <section className="rounded-md border p-4">
+                  <h3 className="mb-3 text-sm font-semibold">
+                    {t("procurement.goodsReceipts.title")}
+                  </h3>
+                  {!loading && goodsReceipts.length === 0 ? (
+                    <EmptyState
+                      title={t("procurement.goodsReceipts.empty")}
+                      description={t("procurement.goodsReceipts.emptyDescription")}
+                      {...(canProcure
+                        ? {
+                            actionLabel: t("procurement.receive.title"),
+                            onAction: () => {
+                              setReceiveInitialPoId(null);
+                              setReceiveOpen(true);
+                            },
+                          }
+                        : {})}
+                    />
+                  ) : (
+                    <DataTable
+                      columns={grColumns}
+                      data={goodsReceipts}
+                      isLoading={loading}
+                      searchable={false}
+                      onRowClick={(receipt) => openGoodsReceipt(receipt.id)}
+                    />
+                  )}
+                  {selectedGrId ? (
+                    <div className="mt-4 rounded-md border p-3">
+                      <h4 className="mb-2 text-xs font-semibold uppercase text-text-muted">
+                        {t("procurement.goodsReceipts.lines.title")}
+                      </h4>
+                      {grLinesError ? (
+                        <ErrorState
+                          error={grLinesError}
+                          onRetry={() => {
+                            const id = selectedGrId;
+                            setSelectedGrId(null);
+                            window.setTimeout(() => setSelectedGrId(id), 0);
+                          }}
+                        />
+                      ) : grLinesLoading ? (
+                        <p className="text-sm text-text-muted">
+                          {t("procurement.goodsReceipts.lines.loading")}
+                        </p>
+                      ) : grLines.length === 0 ? (
+                        <p className="text-sm text-text-muted">
+                          {t("procurement.goodsReceipts.lines.empty")}
+                        </p>
+                      ) : (
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>
+                                {t("procurement.goodsReceipts.lines.columns.article")}
+                              </TableHead>
+                              <TableHead>
+                                {t("procurement.goodsReceipts.lines.columns.location")}
+                              </TableHead>
+                              <TableHead className="text-right">
+                                {t("procurement.goodsReceipts.lines.columns.received")}
+                              </TableHead>
+                              <TableHead className="text-right">
+                                {t("procurement.goodsReceipts.lines.columns.accepted")}
+                              </TableHead>
+                              <TableHead className="text-right">
+                                {t("procurement.goodsReceipts.lines.columns.rejected")}
+                              </TableHead>
+                              <TableHead>
+                                {t("procurement.goodsReceipts.lines.columns.reason")}
+                              </TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {grLines.map((line) => (
+                              <TableRow key={line.id}>
+                                <TableCell>
+                                  {formatAssetLabel(line.article_code, line.article_name)}
+                                </TableCell>
+                                <TableCell>{line.location_code}</TableCell>
+                                <TableCell className="text-right tabular-nums">
+                                  {qtyLabel(line.received_qty)}
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums">
+                                  {qtyLabel(line.accepted_qty)}
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums">
+                                  {qtyLabel(line.rejected_qty)}
+                                </TableCell>
+                                <TableCell>{formatOrDash(line.rejection_reason)}</TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      )}
                     </div>
+                  ) : null}
+                </section>
+              ) : null}
 
-                    {/* Scorecard */}
-                    {supplierScorecardLoading ? (
-                      <div className="rounded-md border p-3 text-sm text-text-muted">Loading…</div>
-                    ) : supplierScorecard ? (
-                      <div className="rounded-md border p-3">
-                        <div className="mb-2 text-xs font-semibold">
-                          {t("procurement.suppliers.scorecard.title")}
-                        </div>
-                        <div className="grid grid-cols-2 gap-1.5 text-xs">
-                          {(
-                            [
-                              [
-                                t("procurement.suppliers.scorecard.otif"),
-                                pctLabel(supplierScorecard.on_time_delivery_pct),
-                              ],
-                              [
-                                t("procurement.suppliers.scorecard.avgLeadTime"),
-                                numLabel(supplierScorecard.avg_lead_time_days),
-                              ],
-                              [
-                                t("procurement.suppliers.scorecard.deliveryAccuracy"),
-                                pctLabel(supplierScorecard.delivery_accuracy_pct),
-                              ],
-                              [
-                                t("procurement.suppliers.scorecard.avgPrice"),
-                                numLabel(supplierScorecard.avg_price, 2),
-                              ],
-                              [
-                                t("procurement.suppliers.scorecard.openPos"),
-                                String(supplierScorecard.open_po_count),
-                              ],
-                              [
-                                t("procurement.suppliers.scorecard.completedPos"),
-                                String(supplierScorecard.completed_po_count),
-                              ],
-                              [
-                                t("procurement.suppliers.scorecard.lastPurchase"),
-                                supplierScorecard.last_purchase_at
-                                  ? new Date(
-                                      supplierScorecard.last_purchase_at,
-                                    ).toLocaleDateString()
-                                  : "—",
-                              ],
-                              [
-                                t("procurement.suppliers.scorecard.rejectedPct"),
-                                pctLabel(supplierScorecard.rejected_pct),
-                              ],
-                            ] as [string, string][]
-                          ).map(([label, value]) => (
-                            <div key={label} className="flex justify-between gap-2">
-                              <span className="text-text-muted">{label}</span>
-                              <span className="font-medium tabular-nums">{value}</span>
+              {/* ── SUPPLIERS ── */}
+              {activeTab === "suppliers" ? (
+                <section className="rounded-md border p-4">
+                  <div className="mb-3 flex items-center justify-between">
+                    <h3 className="text-sm font-semibold">{t("procurement.suppliers.title")}</h3>
+                    <PermissionGate permission={P.INV_MANAGE}>
+                      <Button className="h-11" onClick={openNewSupplierForm}>
+                        {t("procurement.suppliers.new")}
+                      </Button>
+                    </PermissionGate>
+                  </div>
+
+                  <SmartFilterBar
+                    searchPlaceholder={t("procurement.suppliers.search")}
+                    searchValue={supplierSearchInput}
+                    onSearchInputChange={setSupplierSearchInput}
+                    onSearchChange={(q) => setSupplierSearch(q.trim())}
+                    filters={[
+                      {
+                        id: "status",
+                        kind: "select",
+                        label: t("procurement.suppliers.columns.status"),
+                        value: supplierStatusFilter,
+                        onChange: (v) => setSupplierStatusFilter(v ?? "__all__"),
+                        options: SUPPLIER_STATUSES.map((s) => ({
+                          value: s,
+                          label: t(`procurement.suppliers.status.${s}`, { defaultValue: s }),
+                        })),
+                      },
+                    ]}
+                    resultCount={filteredInventorySuppliers.length}
+                    onReset={() => {
+                      setSupplierSearchInput("");
+                      setSupplierSearch("");
+                      setSupplierStatusFilter("__all__");
+                    }}
+                  />
+
+                  <div className="mt-3 grid gap-4 lg:grid-cols-[1fr_380px]">
+                    <DataTable
+                      columns={supplierColumns}
+                      data={filteredInventorySuppliers}
+                      isLoading={loading}
+                      searchable={false}
+                      onRowClick={(s) => setSelectedSupplierId(s.id)}
+                      isRowSelected={(s) => s.id === selectedSupplierId}
+                    />
+
+                    {selectedSupplierId ? (
+                      <div className="space-y-4">
+                        {/* Supplier header */}
+                        <div className="flex items-start justify-between gap-2 rounded-md border p-3">
+                          <div className="min-w-0">
+                            <div className="font-semibold">
+                              {selectedSupplier?.code} — {selectedSupplier?.name}
                             </div>
-                          ))}
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-text-muted">
-                              {t("procurement.suppliers.scorecard.risk")}
-                            </span>
-                            <Badge
-                              variant={riskBadgeVariant(supplierScorecard.risk_level)}
-                              className="h-4 text-[9px]"
-                            >
-                              {t(`procurement.suppliers.risk.${supplierScorecard.risk_level}`, {
-                                defaultValue: supplierScorecard.risk_level,
-                              })}
-                            </Badge>
+                            {selectedSupplier ? (
+                              <div className="mt-1">
+                                {supplierStatusChip(selectedSupplier.status_code)}
+                              </div>
+                            ) : null}
                           </div>
+                          <PermissionGate permission={P.INV_MANAGE}>
+                            <div className="flex flex-wrap justify-end gap-2">
+                              {selectedSupplier ? (
+                                <>
+                                  <Button
+                                    variant="outline"
+                                    className="h-11"
+                                    onClick={() => openEditSupplierForm(selectedSupplier)}
+                                  >
+                                    {t("common:action.edit")}
+                                  </Button>
+                                  {selectedSupplier.is_active === 1 ? (
+                                    <Button
+                                      variant="destructive"
+                                      className="h-11"
+                                      disabled={saving}
+                                      onClick={() =>
+                                        setPendingConfirm({
+                                          title: t("procurement.suppliers.confirmDeactivate.title"),
+                                          description: t(
+                                            "procurement.suppliers.confirmDeactivate.description",
+                                            { name: selectedSupplier.name },
+                                          ),
+                                          confirmLabel: t(
+                                            "procurement.suppliers.confirmDeactivate.confirm",
+                                          ),
+                                          run: async () => {
+                                            const ok = await runSaving(async () => {
+                                              await deactivateInventorySupplier(
+                                                selectedSupplier.id,
+                                                selectedSupplier.row_version,
+                                              );
+                                            });
+                                            if (ok) setSelectedSupplierId(null);
+                                            return ok;
+                                          },
+                                        })
+                                      }
+                                    >
+                                      {t("procurement.suppliers.deactivate")}
+                                    </Button>
+                                  ) : null}
+                                </>
+                              ) : null}
+                            </div>
+                          </PermissionGate>
                         </div>
 
-                        <div className="mt-3">
-                          <div className="mb-1.5 text-xs font-semibold">
-                            {t("procurement.suppliers.scorecard.lastDeliveries")}
+                        {supplierDetailError ? (
+                          <ErrorState
+                            error={supplierDetailError}
+                            title={t("procurement.suppliers.detailLoadError")}
+                            onRetry={() => setSupplierDetailVersion((v) => v + 1)}
+                            retrying={supplierScorecardLoading}
+                          />
+                        ) : null}
+
+                        {/* Scorecard */}
+                        {supplierScorecardLoading ? (
+                          <div className="rounded-md border p-3 text-sm text-text-muted">
+                            {t("common:action.loading")}
                           </div>
-                          {supplierScorecard.last_deliveries.length === 0 ? (
+                        ) : supplierScorecard ? (
+                          <div className="rounded-md border p-3">
+                            <div className="mb-2 text-xs font-semibold">
+                              {t("procurement.suppliers.scorecard.title")}
+                            </div>
+                            <div className="grid grid-cols-2 gap-1.5 text-xs">
+                              {(
+                                [
+                                  [
+                                    t("procurement.suppliers.scorecard.otif"),
+                                    pctLabel(supplierScorecard.on_time_delivery_pct),
+                                  ],
+                                  [
+                                    t("procurement.suppliers.scorecard.avgLeadTime"),
+                                    qtyLabel(supplierScorecard.avg_lead_time_days),
+                                  ],
+                                  [
+                                    t("procurement.suppliers.scorecard.deliveryAccuracy"),
+                                    pctLabel(supplierScorecard.delivery_accuracy_pct),
+                                  ],
+                                  [
+                                    t("procurement.suppliers.scorecard.avgPrice"),
+                                    moneyLabel(supplierScorecard.avg_price),
+                                  ],
+                                  [
+                                    t("procurement.suppliers.scorecard.openPos"),
+                                    formatNumber(supplierScorecard.open_po_count),
+                                  ],
+                                  [
+                                    t("procurement.suppliers.scorecard.completedPos"),
+                                    formatNumber(supplierScorecard.completed_po_count),
+                                  ],
+                                  [
+                                    t("procurement.suppliers.scorecard.lastPurchase"),
+                                    dateLabel(supplierScorecard.last_purchase_at),
+                                  ],
+                                  [
+                                    t("procurement.suppliers.scorecard.rejectedPct"),
+                                    pctLabel(supplierScorecard.rejected_pct),
+                                  ],
+                                ] as [string, string][]
+                              ).map(([label, value]) => (
+                                <div key={label} className="flex justify-between gap-2">
+                                  <span className="text-text-muted">{label}</span>
+                                  <span className="font-medium tabular-nums">{value}</span>
+                                </div>
+                              ))}
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-text-muted">
+                                  {t("procurement.suppliers.scorecard.risk")}
+                                </span>
+                                <Badge
+                                  variant={riskBadgeVariant(supplierScorecard.risk_level)}
+                                  className="h-4 text-[9px]"
+                                >
+                                  {t(`procurement.suppliers.risk.${supplierScorecard.risk_level}`, {
+                                    defaultValue: supplierScorecard.risk_level,
+                                  })}
+                                </Badge>
+                              </div>
+                            </div>
+
+                            <div className="mt-3">
+                              <div className="mb-1.5 text-xs font-semibold">
+                                {t("procurement.suppliers.scorecard.lastDeliveries")}
+                              </div>
+                              {supplierScorecard.last_deliveries.length === 0 ? (
+                                <p className="text-xs text-text-muted">
+                                  {t("procurement.suppliers.scorecard.lastDeliveriesEmpty")}
+                                </p>
+                              ) : (
+                                <Table>
+                                  <TableHeader>
+                                    <TableRow>
+                                      <TableHead className="h-7 px-2 text-xs">
+                                        {t(
+                                          "procurement.suppliers.scorecard.deliveryColumns.receivedAt",
+                                        )}
+                                      </TableHead>
+                                      <TableHead className="h-7 px-2 text-xs">
+                                        {t("procurement.suppliers.scorecard.deliveryColumns.po")}
+                                      </TableHead>
+                                      <TableHead className="h-7 px-2 text-xs">
+                                        {t(
+                                          "procurement.suppliers.scorecard.deliveryColumns.article",
+                                        )}
+                                      </TableHead>
+                                      <TableHead className="h-7 px-2 text-right text-xs">
+                                        {t(
+                                          "procurement.suppliers.scorecard.deliveryColumns.orderedQty",
+                                        )}
+                                      </TableHead>
+                                      <TableHead className="h-7 px-2 text-right text-xs">
+                                        {t(
+                                          "procurement.suppliers.scorecard.deliveryColumns.acceptedQty",
+                                        )}
+                                      </TableHead>
+                                      <TableHead className="h-7 px-2 text-right text-xs">
+                                        {t(
+                                          "procurement.suppliers.scorecard.deliveryColumns.rejectedQty",
+                                        )}
+                                      </TableHead>
+                                      <TableHead className="h-7 px-2 text-right text-xs">
+                                        {t(
+                                          "procurement.suppliers.scorecard.deliveryColumns.leadTime",
+                                        )}
+                                      </TableHead>
+                                    </TableRow>
+                                  </TableHeader>
+                                  <TableBody>
+                                    {supplierScorecard.last_deliveries.map((delivery, index) => (
+                                      <TableRow
+                                        key={`${delivery.po_number}-${delivery.article_code}-${index}`}
+                                      >
+                                        <TableCell className="px-2 py-1.5 text-xs">
+                                          {dateLabel(delivery.received_at)}
+                                        </TableCell>
+                                        <TableCell className="px-2 py-1.5 font-mono text-xs">
+                                          {(() => {
+                                            const poId = purchaseOrderIdByNumber.get(
+                                              delivery.po_number,
+                                            );
+                                            if (!poId) return formatEntityCode(delivery.po_number);
+                                            return (
+                                              <button
+                                                type="button"
+                                                className="font-mono font-medium text-primary hover:underline"
+                                                onClick={() => openPoDetails(poId)}
+                                              >
+                                                {formatEntityCode(delivery.po_number)}
+                                              </button>
+                                            );
+                                          })()}
+                                        </TableCell>
+                                        <TableCell className="px-2 py-1.5 text-xs">
+                                          {formatAssetLabel(
+                                            delivery.article_code,
+                                            delivery.article_name,
+                                          )}
+                                        </TableCell>
+                                        <TableCell className="px-2 py-1.5 text-right text-xs tabular-nums">
+                                          {qtyLabel(delivery.ordered_qty)}
+                                        </TableCell>
+                                        <TableCell className="px-2 py-1.5 text-right text-xs tabular-nums">
+                                          {qtyLabel(delivery.accepted_qty)}
+                                        </TableCell>
+                                        <TableCell className="px-2 py-1.5 text-right text-xs tabular-nums">
+                                          {qtyLabel(delivery.rejected_qty)}
+                                        </TableCell>
+                                        <TableCell className="px-2 py-1.5 text-right text-xs tabular-nums">
+                                          {qtyLabel(delivery.actual_lead_time_days)}
+                                        </TableCell>
+                                      </TableRow>
+                                    ))}
+                                  </TableBody>
+                                </Table>
+                              )}
+                            </div>
+                          </div>
+                        ) : null}
+
+                        <SupplierArticleSourcesSection
+                          supplierId={selectedSupplierId}
+                          articles={articles}
+                          onChanged={() => void loadAll()}
+                        />
+
+                        <SupplierContactsSection supplierId={selectedSupplierId} />
+
+                        {/* Purchase history */}
+                        <div className="rounded-md border p-3">
+                          <div className="mb-2 text-xs font-semibold">
+                            {t("procurement.suppliers.purchaseHistory.title")}
+                          </div>
+                          {supplierPurchaseHistory.length === 0 ? (
                             <p className="text-xs text-text-muted">
-                              {t("procurement.suppliers.scorecard.lastDeliveriesEmpty")}
+                              {t("procurement.suppliers.purchaseHistory.empty")}
                             </p>
                           ) : (
                             <Table>
                               <TableHeader>
                                 <TableRow>
                                   <TableHead className="h-7 px-2 text-xs">
-                                    {t(
-                                      "procurement.suppliers.scorecard.deliveryColumns.receivedAt",
-                                    )}
+                                    {t("procurement.suppliers.purchaseHistory.columns.orderedAt")}
                                   </TableHead>
                                   <TableHead className="h-7 px-2 text-xs">
-                                    {t("procurement.suppliers.scorecard.deliveryColumns.po")}
+                                    {t("procurement.suppliers.purchaseHistory.columns.po")}
                                   </TableHead>
                                   <TableHead className="h-7 px-2 text-xs">
-                                    {t("procurement.suppliers.scorecard.deliveryColumns.article")}
+                                    {t("procurement.suppliers.purchaseHistory.columns.article")}
                                   </TableHead>
                                   <TableHead className="h-7 px-2 text-right text-xs">
-                                    {t(
-                                      "procurement.suppliers.scorecard.deliveryColumns.orderedQty",
-                                    )}
+                                    {t("procurement.suppliers.purchaseHistory.columns.orderedQty")}
                                   </TableHead>
                                   <TableHead className="h-7 px-2 text-right text-xs">
-                                    {t(
-                                      "procurement.suppliers.scorecard.deliveryColumns.acceptedQty",
-                                    )}
+                                    {t("procurement.suppliers.purchaseHistory.columns.unitPrice")}
                                   </TableHead>
-                                  <TableHead className="h-7 px-2 text-right text-xs">
-                                    {t(
-                                      "procurement.suppliers.scorecard.deliveryColumns.rejectedQty",
-                                    )}
-                                  </TableHead>
-                                  <TableHead className="h-7 px-2 text-right text-xs">
-                                    {t("procurement.suppliers.scorecard.deliveryColumns.leadTime")}
+                                  <TableHead className="h-7 px-2 text-xs">
+                                    {t("procurement.suppliers.purchaseHistory.columns.status")}
                                   </TableHead>
                                 </TableRow>
                               </TableHeader>
                               <TableBody>
-                                {supplierScorecard.last_deliveries.map((delivery, index) => (
-                                  <TableRow
-                                    key={`${delivery.po_number}-${delivery.article_code}-${index}`}
-                                  >
+                                {supplierPurchaseHistory.map((row) => (
+                                  <TableRow key={`${row.purchase_order_id}-${row.article_id}`}>
                                     <TableCell className="px-2 py-1.5 text-xs">
-                                      {delivery.received_at
-                                        ? new Date(delivery.received_at).toLocaleDateString()
-                                        : "—"}
-                                    </TableCell>
-                                    <TableCell className="px-2 py-1.5 font-mono text-xs">
-                                      {(() => {
-                                        const poId = purchaseOrderIdByNumber.get(
-                                          delivery.po_number,
-                                        );
-                                        if (!poId) return formatEntityCode(delivery.po_number);
-                                        return (
-                                          <button
-                                            type="button"
-                                            className="font-mono font-medium text-primary hover:underline"
-                                            onClick={() => openPoDetails(poId)}
-                                          >
-                                            {formatEntityCode(delivery.po_number)}
-                                          </button>
-                                        );
-                                      })()}
+                                      {dateLabel(row.ordered_at)}
                                     </TableCell>
                                     <TableCell className="px-2 py-1.5 text-xs">
-                                      {formatAssetLabel(
-                                        delivery.article_code,
-                                        delivery.article_name,
-                                      )}
+                                      <button
+                                        type="button"
+                                        className="font-mono font-medium text-primary hover:underline"
+                                        onClick={() => openPoDetails(row.purchase_order_id)}
+                                      >
+                                        {formatEntityCode(row.po_number)}
+                                      </button>
+                                    </TableCell>
+                                    <TableCell className="px-2 py-1.5 text-xs">
+                                      {formatAssetLabel(row.article_code, row.article_name)}
                                     </TableCell>
                                     <TableCell className="px-2 py-1.5 text-right text-xs tabular-nums">
-                                      {numLabel(delivery.ordered_qty)}
+                                      {qtyLabel(row.ordered_qty)}
                                     </TableCell>
                                     <TableCell className="px-2 py-1.5 text-right text-xs tabular-nums">
-                                      {numLabel(delivery.accepted_qty)}
+                                      {moneyLabel(row.unit_price)}
                                     </TableCell>
-                                    <TableCell className="px-2 py-1.5 text-right text-xs tabular-nums">
-                                      {numLabel(delivery.rejected_qty)}
-                                    </TableCell>
-                                    <TableCell className="px-2 py-1.5 text-right text-xs tabular-nums">
-                                      {numLabel(delivery.actual_lead_time_days)}
+                                    <TableCell className="px-2 py-1.5 text-xs">
+                                      {procurementStatusChip(row.status)}
                                     </TableCell>
                                   </TableRow>
                                 ))}
@@ -2233,241 +2703,199 @@ export const ProcurementRepairablePanel = forwardRef<
                             </Table>
                           )}
                         </div>
+
+                        {/* Price list */}
+                        <div className="rounded-md border p-3">
+                          <div className="mb-2 flex items-center justify-between">
+                            <div className="text-xs font-semibold">
+                              {t("procurement.suppliers.prices.title")}
+                            </div>
+                            <PermissionGate permission={P.INV_MANAGE}>
+                              <Button
+                                variant="outline"
+                                className="h-10"
+                                onClick={() => {
+                                  setPriceFormArticleId(0);
+                                  setPriceFormUnitPrice("");
+                                  setPriceFormMinQty("");
+                                  setPriceFormValidFrom("");
+                                  setPriceFormOpen(true);
+                                }}
+                              >
+                                {t("procurement.suppliers.prices.new")}
+                              </Button>
+                            </PermissionGate>
+                          </div>
+                          {supplierPrices.length === 0 ? (
+                            <p className="text-xs text-text-muted">
+                              {t("procurement.suppliers.prices.empty")}
+                            </p>
+                          ) : (
+                            <div className="space-y-1.5 text-xs">
+                              {supplierPrices.map((price) => (
+                                <div
+                                  key={price.id}
+                                  className="flex flex-wrap items-center gap-2 rounded border border-surface-border p-1.5"
+                                >
+                                  <span className="font-medium">
+                                    {price.article_code} — {price.article_name}
+                                  </span>
+                                  <span className="tabular-nums">
+                                    {moneyLabel(price.unit_price)}
+                                  </span>
+                                  {price.min_order_qty ? (
+                                    <span className="text-text-muted">
+                                      {t("procurement.suppliers.prices.minQtyValue", {
+                                        qty: qtyLabel(price.min_order_qty),
+                                      })}
+                                    </span>
+                                  ) : null}
+                                  {price.valid_from ? (
+                                    <span className="text-text-muted">
+                                      {t("procurement.suppliers.prices.validFromValue", {
+                                        date: dateLabel(price.valid_from),
+                                      })}
+                                    </span>
+                                  ) : null}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Document links */}
+                        <div className="rounded-md border p-3">
+                          <div className="mb-2 flex items-center justify-between">
+                            <div className="text-xs font-semibold">
+                              {t("procurement.suppliers.documents.title")}
+                            </div>
+                            <PermissionGate permission={P.INV_MANAGE}>
+                              <Button
+                                variant="outline"
+                                className="h-10"
+                                onClick={() => {
+                                  setDocLinkFormRef("");
+                                  setDocLinkFormPurpose(documentPurposes.options[0]?.code ?? "");
+                                  setDocLinkFormPrimary(false);
+                                  setDocLinkFormOpen(true);
+                                }}
+                              >
+                                {t("procurement.suppliers.documents.new")}
+                              </Button>
+                            </PermissionGate>
+                          </div>
+                          {supplierDocs.length === 0 ? (
+                            <p className="text-xs text-text-muted">
+                              {t("procurement.suppliers.documents.empty")}
+                            </p>
+                          ) : (
+                            <div className="space-y-1.5 text-xs">
+                              {supplierDocs.map((doc) => (
+                                <div
+                                  key={doc.id}
+                                  className="flex flex-wrap items-center gap-2 rounded border border-surface-border p-1.5"
+                                >
+                                  <span className="break-all font-medium">{doc.document_ref}</span>
+                                  <span className="text-text-muted">
+                                    {documentPurposes.labelOf(doc.link_purpose)}
+                                  </span>
+                                  {doc.is_primary === 1 ? (
+                                    <Badge variant="secondary" className="h-4 text-[9px]">
+                                      {t("procurement.suppliers.documents.fields.primary")}
+                                    </Badge>
+                                  ) : null}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     ) : null}
+                  </div>
+                </section>
+              ) : null}
 
-                    <SupplierArticleSourcesSection
-                      supplierId={selectedSupplierId}
-                      articles={articles}
-                      onChanged={() => void loadAll()}
-                    />
-
-                    <SupplierContactsSection supplierId={selectedSupplierId} />
-
-                    {/* Purchase history */}
-                    <div className="rounded-md border p-3">
-                      <div className="mb-2 text-xs font-semibold">
-                        {t("procurement.suppliers.purchaseHistory.title")}
-                      </div>
-                      {supplierPurchaseHistory.length === 0 ? (
-                        <p className="text-xs text-text-muted">
-                          {t("procurement.suppliers.purchaseHistory.empty")}
-                        </p>
-                      ) : (
-                        <Table>
-                          <TableHeader>
-                            <TableRow>
-                              <TableHead className="h-7 px-2 text-xs">
-                                {t("procurement.suppliers.purchaseHistory.columns.orderedAt")}
-                              </TableHead>
-                              <TableHead className="h-7 px-2 text-xs">
-                                {t("procurement.suppliers.purchaseHistory.columns.po")}
-                              </TableHead>
-                              <TableHead className="h-7 px-2 text-xs">
-                                {t("procurement.suppliers.purchaseHistory.columns.article")}
-                              </TableHead>
-                              <TableHead className="h-7 px-2 text-right text-xs">
-                                {t("procurement.suppliers.purchaseHistory.columns.orderedQty")}
-                              </TableHead>
-                              <TableHead className="h-7 px-2 text-right text-xs">
-                                {t("procurement.suppliers.purchaseHistory.columns.unitPrice")}
-                              </TableHead>
-                              <TableHead className="h-7 px-2 text-xs">
-                                {t("procurement.suppliers.purchaseHistory.columns.status")}
-                              </TableHead>
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {supplierPurchaseHistory.map((row) => (
-                              <TableRow key={`${row.purchase_order_id}-${row.article_id}`}>
-                                <TableCell className="px-2 py-1.5 text-xs">
-                                  {row.ordered_at
-                                    ? new Date(row.ordered_at).toLocaleDateString()
-                                    : "—"}
-                                </TableCell>
-                                <TableCell className="px-2 py-1.5 text-xs">
-                                  <button
-                                    type="button"
-                                    className="font-mono font-medium text-primary hover:underline"
-                                    onClick={() => openPoDetails(row.purchase_order_id)}
-                                  >
-                                    {formatEntityCode(row.po_number)}
-                                  </button>
-                                </TableCell>
-                                <TableCell className="px-2 py-1.5 text-xs">
-                                  {formatAssetLabel(row.article_code, row.article_name)}
-                                </TableCell>
-                                <TableCell className="px-2 py-1.5 text-right text-xs tabular-nums">
-                                  {numLabel(row.ordered_qty)}
-                                </TableCell>
-                                <TableCell className="px-2 py-1.5 text-right text-xs tabular-nums">
-                                  {numLabel(row.unit_price, 2)}
-                                </TableCell>
-                                <TableCell className="px-2 py-1.5 text-xs">
-                                  <Badge variant="outline" className="h-4 text-[9px]">
-                                    {row.status}
-                                  </Badge>
-                                </TableCell>
-                              </TableRow>
-                            ))}
-                          </TableBody>
-                        </Table>
-                      )}
-                    </div>
-
-                    {/* Price list */}
-                    <div className="rounded-md border p-3">
-                      <div className="mb-2 flex items-center justify-between">
-                        <div className="text-xs font-semibold">
-                          {t("procurement.suppliers.prices.title")}
-                        </div>
-                        <PermissionGate permission={P.INV_MANAGE}>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => {
-                              setPriceFormArticleId(0);
-                              setPriceFormUnitPrice("");
-                              setPriceFormMinQty("");
-                              setPriceFormValidFrom("");
-                              setPriceFormOpen(true);
-                            }}
-                          >
-                            {t("procurement.suppliers.prices.new")}
-                          </Button>
-                        </PermissionGate>
-                      </div>
-                      {supplierPrices.length === 0 ? (
-                        <p className="text-xs text-text-muted">
-                          {t("procurement.suppliers.prices.empty")}
-                        </p>
-                      ) : (
-                        <div className="space-y-1.5 text-xs">
-                          {supplierPrices.map((price) => (
-                            <div
-                              key={price.id}
-                              className="flex flex-wrap items-center gap-2 rounded border border-surface-border p-1.5"
-                            >
-                              <span className="font-medium">
-                                {price.article_code} — {price.article_name}
-                              </span>
-                              <span className="tabular-nums">{price.unit_price.toFixed(2)}</span>
-                              {price.min_order_qty ? (
-                                <span className="text-text-muted">min {price.min_order_qty}</span>
-                              ) : null}
-                              {price.valid_from ? (
-                                <span className="text-text-muted">
-                                  from {new Date(price.valid_from).toLocaleDateString()}
-                                </span>
-                              ) : null}
-                            </div>
+              {/* ── LIFECYCLE EVENTS ── */}
+              {activeTab === "lifecycle" ? (
+                <section className="rounded-md border p-4">
+                  <h3 className="mb-1 text-sm font-semibold">{t("procurement.lifecycle.title")}</h3>
+                  <p className="mb-3 text-xs text-text-muted">{t("procurement.lifecycle.hint")}</p>
+                  <div className="mb-3 grid gap-2 md:grid-cols-4">
+                    <div className="space-y-1">
+                      <Label htmlFor="inv-event-article" className="text-xs">
+                        {t("procurement.lifecycle.filters.article")}
+                      </Label>
+                      <Select value={eventArticleFilter} onValueChange={setEventArticleFilter}>
+                        <SelectTrigger id="inv-event-article" className="h-10 text-sm">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__all__">
+                            {t("procurement.lifecycle.filters.allArticles")}
+                          </SelectItem>
+                          {articles.map((a) => (
+                            <SelectItem key={a.id} value={String(a.id)}>
+                              {a.article_code}
+                            </SelectItem>
                           ))}
-                        </div>
-                      )}
+                        </SelectContent>
+                      </Select>
                     </div>
-
-                    {/* Document links */}
-                    <div className="rounded-md border p-3">
-                      <div className="mb-2 flex items-center justify-between">
-                        <div className="text-xs font-semibold">
-                          {t("procurement.suppliers.documents.title")}
-                        </div>
-                        <PermissionGate permission={P.INV_MANAGE}>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => {
-                              setDocLinkFormRef("");
-                              setDocLinkFormPurpose("CONTRACT");
-                              setDocLinkFormPrimary(false);
-                              setDocLinkFormOpen(true);
-                            }}
-                          >
-                            {t("procurement.suppliers.documents.new")}
-                          </Button>
-                        </PermissionGate>
-                      </div>
-                      {supplierDocs.length === 0 ? (
-                        <p className="text-xs text-text-muted">
-                          {t("procurement.suppliers.documents.empty")}
-                        </p>
-                      ) : (
-                        <div className="space-y-1.5 text-xs">
-                          {supplierDocs.map((doc) => (
-                            <div
-                              key={doc.id}
-                              className="flex flex-wrap items-center gap-2 rounded border border-surface-border p-1.5"
-                            >
-                              <span className="break-all font-medium">{doc.document_ref}</span>
-                              <span className="text-text-muted">{doc.link_purpose}</span>
-                              {doc.is_primary === 1 ? (
-                                <Badge variant="secondary" className="h-4 text-[9px]">
-                                  Primary
-                                </Badge>
-                              ) : null}
-                            </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="inv-event-warehouse" className="text-xs">
+                        {t("procurement.lifecycle.filters.warehouse")}
+                      </Label>
+                      <Select value={eventWarehouseFilter} onValueChange={setEventWarehouseFilter}>
+                        <SelectTrigger id="inv-event-warehouse" className="h-10 text-sm">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__all__">
+                            {t("procurement.lifecycle.filters.allWarehouses")}
+                          </SelectItem>
+                          {warehouseOptions.map((w) => (
+                            <SelectItem key={w} value={w}>
+                              {w}
+                            </SelectItem>
                           ))}
-                        </div>
-                      )}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="inv-event-from" className="text-xs">
+                        {t("procurement.lifecycle.filters.from")}
+                      </Label>
+                      <Input
+                        id="inv-event-from"
+                        type="date"
+                        value={eventFromDate}
+                        onChange={(e) => setEventFromDate(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="inv-event-to" className="text-xs">
+                        {t("procurement.lifecycle.filters.to")}
+                      </Label>
+                      <Input
+                        id="inv-event-to"
+                        type="date"
+                        value={eventToDate}
+                        onChange={(e) => setEventToDate(e.target.value)}
+                      />
                     </div>
                   </div>
-                ) : null}
-              </div>
+                  <DataTable
+                    columns={eventColumns}
+                    data={filteredEvents}
+                    isLoading={loading}
+                    searchable={false}
+                  />
+                </section>
+              ) : null}
             </div>
-          ) : null}
-
-          {/* ── LIFECYCLE EVENTS ── */}
-          {activeTab === "lifecycle" ? (
-            <div className="rounded-md border p-4">
-              <h3 className="mb-2 text-sm font-semibold">Latest lifecycle events</h3>
-              <div className="mb-3 grid gap-2 md:grid-cols-4">
-                <Select value={eventArticleFilter} onValueChange={setEventArticleFilter}>
-                  <SelectTrigger className="h-8 text-sm">
-                    <SelectValue placeholder="Article" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__all__">All articles</SelectItem>
-                    {articles.map((a) => (
-                      <SelectItem key={a.id} value={String(a.id)}>
-                        {a.article_code}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Select value={eventWarehouseFilter} onValueChange={setEventWarehouseFilter}>
-                  <SelectTrigger className="h-8 text-sm">
-                    <SelectValue placeholder="Warehouse" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__all__">All warehouses</SelectItem>
-                    {warehouseOptions.map((w) => (
-                      <SelectItem key={w} value={w}>
-                        {w}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Input
-                  type="date"
-                  value={eventFromDate}
-                  onChange={(e) => setEventFromDate(e.target.value)}
-                />
-                <Input
-                  type="date"
-                  value={eventToDate}
-                  onChange={(e) => setEventToDate(e.target.value)}
-                />
-              </div>
-              <DataTable
-                columns={eventColumns}
-                data={filteredEvents}
-                isLoading={loading}
-                searchable={false}
-              />
-            </div>
-          ) : null}
-        </div>
-      </div>
+          </div>
+        </>
+      )}
 
       {/* ── DIALOGS ── */}
       {/* Requisition detail dialog */}
@@ -2477,66 +2905,58 @@ export const ProcurementRepairablePanel = forwardRef<
             <DialogTitle className="flex flex-wrap items-center gap-2">
               {selectedRequisition ? (
                 <>
-                  <span>{selectedRequisition.req_number}</span>
-                  <Badge variant={lifecycleBadgeVariant(selectedRequisition.status)}>
-                    {t(`procurement.statuses.${selectedRequisition.status}`, {
-                      defaultValue: selectedRequisition.status,
-                    })}
-                  </Badge>
+                  <span className="font-mono">{selectedRequisition.req_number}</span>
+                  {procurementStatusChip(selectedRequisition.status)}
                 </>
               ) : (
-                "Request details"
+                t("procurement.requisitions.detailTitle")
               )}
             </DialogTitle>
           </DialogHeader>
           {selectedRequisition ? (
             <div className="space-y-3">
+              <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 rounded-md border p-3 text-sm">
+                <dt className="text-text-muted">{t("procurement.requisitions.fields.source")}</dt>
+                <dd>{sourceLabel(selectedRequisition.demand_source_type)}</dd>
+                <dt className="text-text-muted">
+                  {t("procurement.requisitions.fields.sourceRef")}
+                </dt>
+                <dd>{selectedRequisition.demand_source_ref ?? "—"}</dd>
+                <dt className="text-text-muted">{t("procurement.requisition.priority")}</dt>
+                <dd>{priorityChip(selectedRequisition.purchase_priority)}</dd>
+                <dt className="text-text-muted">
+                  {t("procurement.requisitions.fields.requestedBy")}
+                </dt>
+                <dd>{selectedRequisition.requested_by_name ?? "—"}</dd>
+                <dt className="text-text-muted">
+                  {t("procurement.requisitions.fields.createdAt")}
+                </dt>
+                <dd>{formatDateTime(selectedRequisition.created_at)}</dd>
+                <dt className="text-text-muted">
+                  {t("procurement.requisitions.fields.updatedAt")}
+                </dt>
+                <dd>{formatDateTime(selectedRequisition.updated_at)}</dd>
+              </dl>
               <div className="rounded-md border p-3 text-sm">
-                <div>
-                  <span className="text-text-muted">Source type:</span>{" "}
-                  {selectedRequisition.demand_source_type}
-                </div>
-                <div>
-                  <span className="text-text-muted">Source ref:</span>{" "}
-                  {selectedRequisition.demand_source_ref ?? "—"}
-                </div>
-                {selectedRequisition.purchase_priority ? (
-                  <div>
-                    <span className="text-text-muted">
-                      {t("procurement.requisition.priority")}:
-                    </span>{" "}
-                    <span className="font-medium">
-                      {t(
-                        `procurement.requisition.priorityValues.${selectedRequisition.purchase_priority}`,
-                        { defaultValue: selectedRequisition.purchase_priority },
-                      )}
-                    </span>
-                  </div>
-                ) : null}
-                <div>
-                  <span className="text-text-muted">Created:</span> {selectedRequisition.created_at}
-                </div>
-                <div>
-                  <span className="text-text-muted">Updated:</span> {selectedRequisition.updated_at}
-                </div>
-              </div>
-              <div className="rounded-md border p-3 text-sm">
-                <div className="mb-2 font-medium">Lines</div>
-                {reqLines.length === 0 ? (
-                  <div className="text-text-muted">No lines</div>
+                <div className="mb-2 font-medium">{t("procurement.requisitions.lines.title")}</div>
+                {reqLinesError ? (
+                  <ErrorState error={reqLinesError} />
+                ) : reqLines.length === 0 ? (
+                  <div className="text-text-muted">{t("procurement.requisitions.lines.empty")}</div>
                 ) : (
-                  <div className="space-y-1">
+                  <ul className="space-y-1">
                     {reqLines.map((line) => (
-                      <div key={line.id}>
-                        {line.article_code} — {line.article_name} × {line.requested_qty}
+                      <li key={line.id}>
+                        {line.article_code} — {line.article_name} ×{" "}
+                        <span className="tabular-nums">{qtyLabel(line.requested_qty)}</span>
                         {line.preferred_location_code ? (
                           <span className="ml-2 text-xs text-text-muted">
                             → {line.preferred_location_code}
                           </span>
                         ) : null}
-                      </div>
+                      </li>
                     ))}
-                  </div>
+                  </ul>
                 )}
               </div>
               <div className="rounded-md border p-3 text-sm">
@@ -2573,38 +2993,50 @@ export const ProcurementRepairablePanel = forwardRef<
                         </>
                       ),
                       timestamp: event.changed_at,
-                      ...(event.reason ? { description: event.reason } : {}),
+                      ...(event.reason && event.reason !== "requisition_created"
+                        ? { description: event.reason }
+                        : {}),
                     })}
                   />
                 )}
               </div>
+              {requisitionStepHint ? (
+                <p id="inv-req-step-hint" className="text-xs text-text-muted" role="status">
+                  {requisitionStepHint}
+                </p>
+              ) : null}
             </div>
           ) : (
-            <p className="text-sm text-text-muted">No requisition selected.</p>
+            <p className="text-sm text-text-muted">{t("procurement.requisitions.noSelection")}</p>
           )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setReqDetailOpen(false)}>
-              Close
+          <DialogFooter className="flex-wrap gap-2">
+            <Button variant="outline" className="h-11" onClick={() => setReqDetailOpen(false)}>
+              {t("common:action.close")}
             </Button>
             {selectedRequisition ? (
               <PermissionGate permission={P.INV_PROCURE}>
                 <>
                   <Button
                     variant="outline"
+                    className="h-11"
+                    aria-describedby="inv-req-step-hint"
                     disabled={saving || selectedRequisition.status !== "DRAFT"}
-                    onClick={() => void transitionSelectedRequisition("SUBMITTED")}
+                    onClick={() => void runRequisitionTransition(selectedRequisition, "SUBMITTED")}
                   >
-                    Submit
+                    {t("procurement.requisitions.actions.submit")}
                   </Button>
                   <Button
+                    className="h-11"
+                    aria-describedby="inv-req-step-hint"
                     disabled={saving || selectedRequisition.status !== "SUBMITTED"}
-                    onClick={() => void transitionSelectedRequisition("APPROVED")}
+                    onClick={() => void runRequisitionTransition(selectedRequisition, "APPROVED")}
                   >
-                    Approve
+                    {t("procurement.requisitions.actions.approve")}
                   </Button>
                   {selectedRequisition.status === "SUBMITTED" ? (
                     <Button
                       variant="destructive"
+                      className="h-11"
                       disabled={saving}
                       onClick={() => {
                         setRejectReason("");
@@ -2614,21 +3046,28 @@ export const ProcurementRepairablePanel = forwardRef<
                       {t("procurement.requisitions.actions.reject")}
                     </Button>
                   ) : null}
+                  {selectedRequisition.status === "APPROVED" ? (
+                    <Button
+                      className="h-11"
+                      disabled={saving}
+                      onClick={() => openCreatePoForm(selectedRequisition.id)}
+                    >
+                      {t("procurement.requisitions.actions.createPo")}
+                    </Button>
+                  ) : null}
                   {(() => {
                     const target = requisitionDeclineOrCloseTarget(selectedRequisition.status);
                     if (!target) return null;
-                    const label =
-                      selectedRequisition.status === "APPROVED" ||
-                      selectedRequisition.status === "PARTIALLY_RECEIVED"
-                        ? "Close"
-                        : "Cancel";
                     return (
                       <Button
                         variant="destructive"
+                        className="h-11"
                         disabled={saving}
-                        onClick={() => void transitionSelectedRequisition(target)}
+                        onClick={() => confirmRequisitionDecline(selectedRequisition, target)}
                       >
-                        {label}
+                        {target === "CLOSED"
+                          ? t("procurement.requisitions.actions.close")
+                          : t("procurement.requisitions.actions.cancel")}
                       </Button>
                     );
                   })()}
@@ -2640,7 +3079,7 @@ export const ProcurementRepairablePanel = forwardRef<
       </Dialog>
 
       {/* Requisition rejection dialog — reason is mandatory and terminal. */}
-      <Dialog open={rejectOpen} onOpenChange={setRejectOpen}>
+      <Dialog open={rejectOpen} onOpenChange={(open) => !saving && setRejectOpen(open)}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>{t("procurement.requisitions.reject.title")}</DialogTitle>
@@ -2658,12 +3097,18 @@ export const ProcurementRepairablePanel = forwardRef<
               placeholder={t("procurement.requisitions.reject.reasonPlaceholder")}
             />
           </div>
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button variant="outline" onClick={() => setRejectOpen(false)}>
-              {t("procurement.receive.cancel")}
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              className="h-11"
+              disabled={saving}
+              onClick={() => setRejectOpen(false)}
+            >
+              {t("common:action.cancel")}
             </Button>
             <Button
               variant="destructive"
+              className="h-11"
               disabled={saving || !rejectReason.trim()}
               onClick={() => void rejectSelectedRequisition()}
             >
@@ -2722,44 +3167,43 @@ export const ProcurementRepairablePanel = forwardRef<
       />
 
       {/* Create requisition dialog */}
-      <Dialog open={createReqOpen} onOpenChange={setCreateReqOpen}>
+      <Dialog
+        open={createReqOpen}
+        onOpenChange={(open) => {
+          setCreateReqOpen(open);
+          if (!open) resetRequisitionForm();
+        }}
+      >
         <DialogContent
           className="max-h-[90vh] max-w-2xl overflow-y-auto"
           onPointerDownOutside={(e) => e.preventDefault()}
         >
           <DialogHeader>
-            <DialogTitle>New requisition</DialogTitle>
+            <DialogTitle>{t("procurement.requisitionForm.title")}</DialogTitle>
           </DialogHeader>
           {requisitionForm}
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button type="button" variant="outline" onClick={() => setCreateReqOpen(false)}>
-              Cancel
+          {reqFormBlocker ? (
+            <p id="inv-req-form-blocker" role="status" className="text-xs text-text-muted">
+              {reqFormBlocker}
+            </p>
+          ) : null}
+          <DialogFooter className="gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11"
+              onClick={() => setCreateReqOpen(false)}
+            >
+              {t("common:action.cancel")}
             </Button>
             <Button
               type="button"
-              disabled={saving || reqArticleId <= 0 || reqQty <= 0}
-              onClick={() =>
-                void runSaving(async () => {
-                  await createInventoryProcurementRequisition({
-                    article_id: reqArticleId,
-                    preferred_location_id: reqLocationId > 0 ? reqLocationId : null,
-                    requested_qty: reqQty,
-                    demand_source_type: reqSourceType,
-                    demand_source_ref: reqSourceRef.trim() || null,
-                    source_reservation_id: reqReservationId.trim()
-                      ? Number(reqReservationId)
-                      : null,
-                    source_reorder_trigger:
-                      reqSourceType === "REORDER" ? "threshold_crossed" : null,
-                    purchase_priority: reqPriority || null,
-                    reason: reqReason.trim() || null,
-                    actor_id: null,
-                  });
-                  setCreateReqOpen(false);
-                })
-              }
+              className="h-11"
+              aria-describedby={reqFormBlocker ? "inv-req-form-blocker" : undefined}
+              disabled={saving || reqFormBlocker !== null}
+              onClick={() => void submitRequisition()}
             >
-              Create requisition
+              {t("procurement.requisitionForm.submit")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -2769,20 +3213,20 @@ export const ProcurementRepairablePanel = forwardRef<
       <Dialog open={createPoOpen} onOpenChange={setCreatePoOpen}>
         <DialogContent className="max-w-lg" onPointerDownOutside={(e) => e.preventDefault()}>
           <DialogHeader>
-            <DialogTitle>Create purchase order</DialogTitle>
+            <DialogTitle>{t("procurement.purchaseOrders.create")}</DialogTitle>
           </DialogHeader>
           <div className="grid gap-3 py-2">
             <div className="space-y-1">
-              <Label>Approved requisition</Label>
+              <Label htmlFor="inv-po-requisition">{t("procurement.poForm.requisition")}</Label>
               <Select
                 value={String(poDialogReqId)}
                 onValueChange={(v) => setPoDialogReqId(Number(v))}
               >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select requisition" />
+                <SelectTrigger id="inv-po-requisition">
+                  <SelectValue placeholder={t("procurement.poForm.selectRequisition")} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="0">Select requisition</SelectItem>
+                  <SelectItem value="0">{t("procurement.poForm.selectRequisition")}</SelectItem>
                   {approvedRequisitions.map((req) => (
                     <SelectItem key={req.id} value={String(req.id)}>
                       {req.req_number}
@@ -2790,18 +3234,21 @@ export const ProcurementRepairablePanel = forwardRef<
                   ))}
                 </SelectContent>
               </Select>
+              {approvedRequisitions.length === 0 ? (
+                <p className="text-xs text-text-muted">{t("procurement.poForm.noApproved")}</p>
+              ) : null}
             </div>
             <div className="space-y-1">
-              <Label>Supplier</Label>
+              <Label htmlFor="inv-po-supplier">{t("procurement.poForm.supplier")}</Label>
               <Select
                 value={String(poSupplierId)}
                 onValueChange={(v) => setPoSupplierId(Number(v))}
               >
-                <SelectTrigger>
-                  <SelectValue placeholder="Supplier" />
+                <SelectTrigger id="inv-po-supplier">
+                  <SelectValue placeholder={t("procurement.purchaseOrders.noSupplier")} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="0">No supplier</SelectItem>
+                  <SelectItem value="0">{t("procurement.purchaseOrders.noSupplier")}</SelectItem>
                   {nonBlockedSuppliers.map((s) => (
                     <SelectItem key={s.id} value={String(s.id)}>
                       {s.code} — {s.name}
@@ -2809,31 +3256,49 @@ export const ProcurementRepairablePanel = forwardRef<
                   ))}
                 </SelectContent>
               </Select>
+              <p className="text-xs text-text-muted">{t("procurement.poForm.supplierHint")}</p>
             </div>
           </div>
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button type="button" variant="outline" onClick={() => setCreatePoOpen(false)}>
-              Cancel
+          <DialogFooter className="gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11"
+              onClick={() => setCreatePoOpen(false)}
+            >
+              {t("common:action.cancel")}
             </Button>
             <Button
               type="button"
+              className="h-11"
               disabled={
                 saving ||
                 poDialogReqId <= 0 ||
                 !approvedRequisitions.some((r) => r.id === poDialogReqId)
               }
               onClick={() =>
-                void runSaving(async () => {
-                  await createInventoryPurchaseOrderFromRequisition({
-                    requisition_id: poDialogReqId,
-                    supplier_id: poSupplierId > 0 ? poSupplierId : null,
-                    actor_id: null,
+                void (async () => {
+                  const created = { id: null as number | null };
+                  const ok = await runSaving(async () => {
+                    const po = await createInventoryPurchaseOrderFromRequisition({
+                      requisition_id: poDialogReqId,
+                      supplier_id: poSupplierId > 0 ? poSupplierId : null,
+                      // The buyer is recorded by the backend from the signed-in session.
+                      actor_id: null,
+                    });
+                    created.id = po.id;
                   });
+                  if (!ok) return;
                   setCreatePoOpen(false);
-                })
+                  setReqDetailOpen(false);
+                  if (created.id != null) {
+                    setActiveTab("purchase-orders");
+                    openPoDetails(created.id);
+                  }
+                })()
               }
             >
-              Create PO
+              {t("procurement.poForm.submit")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -2861,15 +3326,17 @@ export const ProcurementRepairablePanel = forwardRef<
           <DialogHeader>
             <DialogTitle>{t("procurement.repairables.form.title")}</DialogTitle>
           </DialogHeader>
-          <div className="grid gap-2 md:grid-cols-2">
+          <div className="grid gap-3 md:grid-cols-2">
             <div className="space-y-1">
-              <Label>{t("procurement.repairables.form.article")}</Label>
+              <Label htmlFor="inv-repair-article">
+                {t("procurement.repairables.form.article")}
+              </Label>
               <Select
                 value={String(repairArticleId)}
                 onValueChange={(v) => setRepairArticleId(Number(v))}
               >
-                <SelectTrigger>
-                  <SelectValue placeholder={t("procurement.repairables.form.article")} />
+                <SelectTrigger id="inv-repair-article">
+                  <SelectValue placeholder={t("procurement.repairables.form.selectArticle")} />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="0">
@@ -2884,13 +3351,15 @@ export const ProcurementRepairablePanel = forwardRef<
               </Select>
             </div>
             <div className="space-y-1">
-              <Label>{t("procurement.repairables.form.sourceLocation")}</Label>
+              <Label htmlFor="inv-repair-source">
+                {t("procurement.repairables.form.sourceLocation")}
+              </Label>
               <Select
                 value={String(repairSourceLocationId)}
                 onValueChange={(v) => setRepairSourceLocationId(Number(v))}
               >
-                <SelectTrigger>
-                  <SelectValue placeholder={t("procurement.repairables.form.sourceLocation")} />
+                <SelectTrigger id="inv-repair-source">
+                  <SelectValue placeholder={t("procurement.repairables.form.selectSource")} />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="0">
@@ -2905,13 +3374,15 @@ export const ProcurementRepairablePanel = forwardRef<
               </Select>
             </div>
             <div className="space-y-1">
-              <Label>{t("procurement.repairables.form.returnLocation")}</Label>
+              <Label htmlFor="inv-repair-return">
+                {t("procurement.repairables.form.returnLocation")}
+              </Label>
               <Select
                 value={String(repairReturnLocationId)}
                 onValueChange={(v) => setRepairReturnLocationId(Number(v))}
               >
-                <SelectTrigger>
-                  <SelectValue placeholder={t("procurement.repairables.form.returnLocation")} />
+                <SelectTrigger id="inv-repair-return">
+                  <SelectValue placeholder={t("procurement.repairables.form.noReturnLocation")} />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="0">
@@ -2945,13 +3416,13 @@ export const ProcurementRepairablePanel = forwardRef<
               />
             </div>
             <div className="space-y-1">
-              <Label>{t("procurement.repairables.form.vendor")}</Label>
+              <Label htmlFor="inv-repair-vendor">{t("procurement.repairables.form.vendor")}</Label>
               <Select
                 value={String(repairVendorId)}
                 onValueChange={(v) => setRepairVendorId(Number(v))}
               >
-                <SelectTrigger>
-                  <SelectValue placeholder={t("procurement.repairables.form.vendor")} />
+                <SelectTrigger id="inv-repair-vendor">
+                  <SelectValue placeholder={t("procurement.repairables.form.noVendor")} />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="0">{t("procurement.repairables.form.noVendor")}</SelectItem>
@@ -2978,7 +3449,7 @@ export const ProcurementRepairablePanel = forwardRef<
                 {t("procurement.repairables.form.balancesTitle")}
               </div>
               {repairBalances.length === 0 ? (
-                <div className="text-muted-foreground">
+                <div className="text-text-muted">
                   {t("procurement.repairables.form.balancesEmpty")}
                 </div>
               ) : (
@@ -2987,9 +3458,9 @@ export const ProcurementRepairablePanel = forwardRef<
                     <li key={`${b.id}-${b.location_id}`}>
                       {b.warehouse_code}/{b.location_code}:{" "}
                       {t("procurement.repairables.form.balanceRow", {
-                        onHand: b.on_hand_qty,
-                        reserved: b.reserved_qty,
-                        available: b.available_qty,
+                        onHand: qtyLabel(b.on_hand_qty),
+                        reserved: qtyLabel(b.reserved_qty),
+                        available: qtyLabel(b.available_qty),
                       })}
                     </li>
                   ))}
@@ -2997,30 +3468,45 @@ export const ProcurementRepairablePanel = forwardRef<
               )}
             </div>
           ) : null}
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button type="button" variant="outline" onClick={() => setRepairOpen(false)}>
+          <DialogFooter className="gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11"
+              onClick={() => setRepairOpen(false)}
+            >
               {t("procurement.repairables.form.cancel")}
             </Button>
             <Button
               type="button"
+              className="h-11"
               disabled={
                 saving || repairArticleId <= 0 || repairSourceLocationId <= 0 || repairQty <= 0
               }
               onClick={() =>
-                void runSaving(async () => {
-                  await createInventoryRepairableOrder({
-                    article_id: repairArticleId,
-                    quantity: repairQty,
-                    source_location_id: repairSourceLocationId,
-                    return_location_id: repairReturnLocationId > 0 ? repairReturnLocationId : null,
-                    reason: repairReason.trim() || null,
-                    serial_number: repairSerial.trim() || null,
-                    vendor_supplier_id: repairVendorId > 0 ? repairVendorId : null,
+                void (async () => {
+                  const ok = await runSaving(async () => {
+                    await createInventoryRepairableOrder({
+                      article_id: repairArticleId,
+                      quantity: repairQty,
+                      source_location_id: repairSourceLocationId,
+                      return_location_id:
+                        repairReturnLocationId > 0 ? repairReturnLocationId : null,
+                      reason: repairReason.trim() || null,
+                      serial_number: repairSerial.trim() || null,
+                      vendor_supplier_id: repairVendorId > 0 ? repairVendorId : null,
+                    });
                   });
+                  if (!ok) return;
+                  setRepairArticleId(0);
+                  setRepairQty(0);
+                  setRepairSourceLocationId(0);
+                  setRepairReturnLocationId(0);
+                  setRepairReason("");
                   setRepairSerial("");
                   setRepairVendorId(0);
                   setRepairOpen(false);
-                })
+                })()
               }
             >
               {t("procurement.repairables.form.submit")}
@@ -3039,26 +3525,30 @@ export const ProcurementRepairablePanel = forwardRef<
           </DialogHeader>
           <div className="grid gap-3 md:grid-cols-2">
             <div className="space-y-1">
-              <Label>{t("procurement.suppliers.fields.code")}</Label>
+              <Label htmlFor="inv-supplier-code">{t("procurement.suppliers.fields.code")}</Label>
               <Input
+                id="inv-supplier-code"
                 value={supplierForm.code}
                 onChange={(e) => setSupplierForm((s) => ({ ...s, code: e.target.value }))}
               />
             </div>
             <div className="space-y-1 md:col-span-1">
-              <Label>{t("procurement.suppliers.fields.name")}</Label>
+              <Label htmlFor="inv-supplier-name">{t("procurement.suppliers.fields.name")}</Label>
               <Input
+                id="inv-supplier-name"
                 value={supplierForm.name}
                 onChange={(e) => setSupplierForm((s) => ({ ...s, name: e.target.value }))}
               />
             </div>
             <div className="space-y-1">
-              <Label>{t("procurement.suppliers.fields.status")}</Label>
+              <Label htmlFor="inv-supplier-status">
+                {t("procurement.suppliers.fields.status")}
+              </Label>
               <Select
                 value={supplierForm.statusCode}
                 onValueChange={(v) => setSupplierForm((s) => ({ ...s, statusCode: v }))}
               >
-                <SelectTrigger>
+                <SelectTrigger id="inv-supplier-status">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -3071,8 +3561,11 @@ export const ProcurementRepairablePanel = forwardRef<
               </Select>
             </div>
             <div className="space-y-1">
-              <Label>{t("procurement.suppliers.fields.leadTime")}</Label>
+              <Label htmlFor="inv-supplier-lead">
+                {t("procurement.suppliers.fields.leadTime")}
+              </Label>
               <Input
+                id="inv-supplier-lead"
                 type="number"
                 min={0}
                 value={supplierForm.defaultLeadTimeDays}
@@ -3082,8 +3575,11 @@ export const ProcurementRepairablePanel = forwardRef<
               />
             </div>
             <div className="space-y-1">
-              <Label>{t("procurement.suppliers.fields.paymentTerms")}</Label>
+              <Label htmlFor="inv-supplier-terms">
+                {t("procurement.suppliers.fields.paymentTerms")}
+              </Label>
               <Input
+                id="inv-supplier-terms"
                 value={supplierForm.paymentTermsCode}
                 onChange={(e) =>
                   setSupplierForm((s) => ({ ...s, paymentTermsCode: e.target.value }))
@@ -3094,21 +3590,23 @@ export const ProcurementRepairablePanel = forwardRef<
               <input
                 type="checkbox"
                 id="supplier-active"
+                className="h-4 w-4"
                 checked={supplierForm.isActive}
                 onChange={(e) => setSupplierForm((s) => ({ ...s, isActive: e.target.checked }))}
               />
               <Label htmlFor="supplier-active">{t("procurement.suppliers.fields.active")}</Label>
             </div>
           </div>
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button variant="outline" onClick={() => setSupplierEditOpen(false)}>
-              Cancel
+          <DialogFooter className="gap-2">
+            <Button variant="outline" className="h-11" onClick={() => setSupplierEditOpen(false)}>
+              {t("common:action.cancel")}
             </Button>
             <Button
+              className="h-11"
               disabled={saving || !supplierForm.code.trim() || !supplierForm.name.trim()}
               onClick={() => void saveSupplierForm()}
             >
-              Save
+              {t("common:action.save")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -3122,16 +3620,20 @@ export const ProcurementRepairablePanel = forwardRef<
           </DialogHeader>
           <div className="grid gap-3">
             <div className="space-y-1">
-              <Label>{t("procurement.suppliers.prices.fields.article")}</Label>
+              <Label htmlFor="inv-price-article">
+                {t("procurement.suppliers.prices.fields.article")}
+              </Label>
               <Select
                 value={String(priceFormArticleId)}
                 onValueChange={(v) => setPriceFormArticleId(Number(v))}
               >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select article" />
+                <SelectTrigger id="inv-price-article">
+                  <SelectValue placeholder={t("procurement.requisitionForm.selectArticle")} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="0">Select article</SelectItem>
+                  <SelectItem value="0">
+                    {t("procurement.requisitionForm.selectArticle")}
+                  </SelectItem>
                   {articles.map((a) => (
                     <SelectItem key={a.id} value={String(a.id)}>
                       {a.article_code} — {a.article_name}
@@ -3141,8 +3643,11 @@ export const ProcurementRepairablePanel = forwardRef<
               </Select>
             </div>
             <div className="space-y-1">
-              <Label>{t("procurement.suppliers.prices.fields.unitPrice")}</Label>
+              <Label htmlFor="inv-price-unit">
+                {t("procurement.suppliers.prices.fields.unitPrice")}
+              </Label>
               <Input
+                id="inv-price-unit"
                 type="number"
                 min={0}
                 step="0.01"
@@ -3151,8 +3656,11 @@ export const ProcurementRepairablePanel = forwardRef<
               />
             </div>
             <div className="space-y-1">
-              <Label>{t("procurement.suppliers.prices.fields.minQty")}</Label>
+              <Label htmlFor="inv-price-min">
+                {t("procurement.suppliers.prices.fields.minQty")}
+              </Label>
               <Input
+                id="inv-price-min"
                 type="number"
                 min={0}
                 step="0.01"
@@ -3161,23 +3669,27 @@ export const ProcurementRepairablePanel = forwardRef<
               />
             </div>
             <div className="space-y-1">
-              <Label>{t("procurement.suppliers.prices.fields.validFrom")}</Label>
+              <Label htmlFor="inv-price-from">
+                {t("procurement.suppliers.prices.fields.validFrom")}
+              </Label>
               <Input
+                id="inv-price-from"
                 type="date"
                 value={priceFormValidFrom}
                 onChange={(e) => setPriceFormValidFrom(e.target.value)}
               />
             </div>
           </div>
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button variant="outline" onClick={() => setPriceFormOpen(false)}>
-              Cancel
+          <DialogFooter className="gap-2">
+            <Button variant="outline" className="h-11" onClick={() => setPriceFormOpen(false)}>
+              {t("common:action.cancel")}
             </Button>
             <Button
+              className="h-11"
               disabled={saving || priceFormArticleId <= 0 || !priceFormUnitPrice}
               onClick={() => void savePriceForm()}
             >
-              Save
+              {t("common:action.save")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -3188,15 +3700,16 @@ export const ProcurementRepairablePanel = forwardRef<
         purchaseOrders={purchaseOrders}
         repairables={repairables}
         onRequisitionClick={(req) => {
-          setSelectedReqId(req.id);
           setActiveTab("requisitions");
+          openRequisitionDetails(req.id);
         }}
         onPurchaseOrderClick={(po) => {
-          setSelectedPoId(po.id);
           setActiveTab("purchase-orders");
+          openPoDetails(po.id);
         }}
-        onRepairableClick={() => {
+        onRepairableClick={(order) => {
           setActiveTab("repairables");
+          openRepairableDetails(order.id);
         }}
       />
 
@@ -3208,31 +3721,41 @@ export const ProcurementRepairablePanel = forwardRef<
           </DialogHeader>
           <div className="grid gap-3">
             <div className="space-y-1">
-              <Label>{t("procurement.suppliers.documents.fields.ref")}</Label>
+              <Label htmlFor="inv-doc-ref">{t("procurement.suppliers.documents.fields.ref")}</Label>
               <Input
+                id="inv-doc-ref"
                 value={docLinkFormRef}
                 onChange={(e) => setDocLinkFormRef(e.target.value)}
-                placeholder="e.g. contract-2024.pdf or https://…"
+                placeholder={t("procurement.suppliers.documents.refPlaceholder")}
               />
             </div>
             <div className="space-y-1">
-              <Label>{t("procurement.suppliers.documents.fields.purpose")}</Label>
+              <Label htmlFor="inv-doc-purpose">
+                {t("procurement.suppliers.documents.fields.purpose")}
+              </Label>
               <Select value={docLinkFormPurpose} onValueChange={setDocLinkFormPurpose}>
-                <SelectTrigger>
-                  <SelectValue />
+                <SelectTrigger id="inv-doc-purpose">
+                  <SelectValue placeholder={t("procurement.suppliers.documents.selectPurpose")} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="CONTRACT">Contract</SelectItem>
-                  <SelectItem value="CERTIFICATE">Certificate</SelectItem>
-                  <SelectItem value="DATASHEET">Datasheet</SelectItem>
-                  <SelectItem value="OTHER">Other</SelectItem>
+                  {documentPurposes.options.map((purpose) => (
+                    <SelectItem key={purpose.id} value={purpose.code}>
+                      {documentPurposes.labelOf(purpose.code)}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
+              {documentPurposes.error ? (
+                <p className="text-xs text-text-muted">
+                  {t("procurement.suppliers.documents.purposesUnavailable")}
+                </p>
+              ) : null}
             </div>
             <div className="flex items-center gap-2">
               <input
                 type="checkbox"
                 id="doc-link-primary"
+                className="h-4 w-4"
                 checked={docLinkFormPrimary}
                 onChange={(e) => setDocLinkFormPrimary(e.target.checked)}
               />
@@ -3241,19 +3764,37 @@ export const ProcurementRepairablePanel = forwardRef<
               </Label>
             </div>
           </div>
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button variant="outline" onClick={() => setDocLinkFormOpen(false)}>
-              Cancel
+          <DialogFooter className="gap-2">
+            <Button variant="outline" className="h-11" onClick={() => setDocLinkFormOpen(false)}>
+              {t("common:action.cancel")}
             </Button>
             <Button
-              disabled={saving || !docLinkFormRef.trim()}
+              className="h-11"
+              disabled={saving || !docLinkFormRef.trim() || !docLinkFormPurpose}
               onClick={() => void saveDocLinkForm()}
             >
-              Save
+              {t("common:action.save")}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ConfirmDialog
+        open={pendingConfirm !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingConfirm(null);
+        }}
+        title={pendingConfirm?.title ?? ""}
+        description={pendingConfirm?.description ?? ""}
+        confirmLabel={pendingConfirm?.confirmLabel ?? ""}
+        destructive
+        onConfirm={async () => {
+          if (!pendingConfirm) return;
+          const ok = await pendingConfirm.run();
+          // A rejected promise keeps the confirmation open (the toast explains the failure).
+          if (!ok) throw new Error("action failed");
+        }}
+      />
     </div>
   );
 });

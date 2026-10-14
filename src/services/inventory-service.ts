@@ -180,7 +180,41 @@ const InventoryArticleSchema = z.object({
   row_version: z.number(),
   created_at: z.string(),
   updated_at: z.string(),
+  on_hand_qty: z.number(),
+  reserved_qty: z.number(),
+  available_qty: z.number(),
+  avg_unit_cost: z.number().nullable(),
+  stock_value: z.number().nullable(),
+  unvalued_qty: z.number(),
 });
+
+/**
+ * Article master row as returned by `list_inventory_articles`: the item master plus its stock
+ * totals summed over every location (one backend query, no per-article balance calls) and its
+ * valuation — weighted-average unit cost and stock value in the tenant currency.
+ */
+export type InventoryArticleRow = InventoryArticle & {
+  on_hand_qty: number;
+  reserved_qty: number;
+  available_qty: number;
+  /** Weighted-average unit cost over valued locations; null when never costed. */
+  avg_unit_cost: number | null;
+  /** On hand × location average cost over valued locations; null when nothing is valued. */
+  stock_value: number | null;
+  /** On-hand quantity at locations without a cost yet (not in `stock_value`). */
+  unvalued_qty: number;
+};
+
+/** True when the article has a reorder point and its available stock is at or below it. */
+export function isBelowReorderPoint(
+  article: Pick<InventoryArticleRow, "reorder_point" | "available_qty" | "is_active">,
+): boolean {
+  return (
+    article.is_active === 1 &&
+    article.reorder_point > 0 &&
+    article.available_qty <= article.reorder_point
+  );
+}
 
 const InventoryArticleInputSchema = z.object({
   article_code: z.string().trim().min(1),
@@ -274,8 +308,14 @@ const InventoryStockBalanceSchema = z.object({
   on_hand_qty: z.number(),
   reserved_qty: z.number(),
   available_qty: z.number(),
+  moving_avg_unit_cost: z.number().nullable(),
   updated_at: z.string(),
 });
+
+/** Stock balance of one location, with its weighted-average unit cost (tenant currency). */
+export type InventoryStockBalanceRow = InventoryStockBalance & {
+  moving_avg_unit_cost: number | null;
+};
 
 const InventoryTaxCategorySchema = z.object({
   id: z.number(),
@@ -621,10 +661,16 @@ const ProcurementRequisitionSchema = z.object({
   posting_state: z.string(),
   posting_error: z.string().nullable(),
   requested_by_id: z.number().nullable(),
+  requested_by_name: z.string().nullable(),
   row_version: z.number(),
   created_at: z.string(),
   updated_at: z.string(),
 });
+
+/** Requisition as listed by the backend, with the requester's display name. */
+export type ProcurementRequisitionRow = ProcurementRequisition & {
+  requested_by_name: string | null;
+};
 
 const ProcurementRequisitionLineSchema = z.object({
   id: z.number(),
@@ -653,6 +699,7 @@ const PurchaseOrderSchema = z.object({
   posting_state: z.string(),
   posting_error: z.string().nullable(),
   ordered_by_id: z.number().nullable(),
+  ordered_by_name: z.string().nullable(),
   ordered_at: z.string().nullable(),
   approved_by_id: z.number().nullable(),
   approved_at: z.string().nullable(),
@@ -661,6 +708,9 @@ const PurchaseOrderSchema = z.object({
   created_at: z.string(),
   updated_at: z.string(),
 });
+
+/** Purchase order as listed by the backend, with the buyer's display name. */
+export type PurchaseOrderRow = PurchaseOrder & { ordered_by_name: string | null };
 
 const PurchaseOrderLineSchema = z.object({
   id: z.number(),
@@ -841,6 +891,7 @@ const InventoryCountLineSchema = z.object({
   is_critical: z.number(),
   approval_required: z.number(),
   approved_by_id: z.number().nullable(),
+  approved_by_name: z.string().nullable(),
   approved_at: z.string().nullable(),
   approval_note: z.string().nullable(),
   posted_transaction_id: z.number().nullable(),
@@ -849,6 +900,9 @@ const InventoryCountLineSchema = z.object({
   created_at: z.string(),
   updated_at: z.string(),
 });
+
+/** Count line with the display name of the reviewer who approved its variance. */
+export type InventoryCountLineRow = InventoryCountLine & { approved_by_name: string | null };
 
 const InventoryReconciliationRunSchema = z.object({
   id: z.number(),
@@ -1033,11 +1087,13 @@ export function evaluateInventoryUnitCost(
   );
 }
 
-export function listInventoryArticles(filter: InventoryArticleFilter): Promise<InventoryArticle[]> {
+export function listInventoryArticles(
+  filter: InventoryArticleFilter,
+): Promise<InventoryArticleRow[]> {
   return invokeParsed("list_inventory_articles", { filter }, z.array(InventoryArticleSchema));
 }
 
-export function createInventoryArticle(input: InventoryArticleInput): Promise<InventoryArticle> {
+export function createInventoryArticle(input: InventoryArticleInput): Promise<InventoryArticleRow> {
   return invokeParsed(
     "create_inventory_article",
     { input: InventoryArticleInputSchema.parse(input) },
@@ -1049,7 +1105,7 @@ export function updateInventoryArticle(
   articleId: number,
   expectedRowVersion: number,
   input: InventoryArticleInput,
-): Promise<InventoryArticle> {
+): Promise<InventoryArticleRow> {
   return invokeParsed(
     "update_inventory_article",
     { articleId, expectedRowVersion, input: InventoryArticleInputSchema.parse(input) },
@@ -1059,7 +1115,7 @@ export function updateInventoryArticle(
 
 export function listInventoryStockBalances(
   filter: InventoryStockFilter,
-): Promise<InventoryStockBalance[]> {
+): Promise<InventoryStockBalanceRow[]> {
   return invokeParsed(
     "list_inventory_stock_balances",
     { filter },
@@ -1067,10 +1123,15 @@ export function listInventoryStockBalances(
   );
 }
 
+/**
+ * Manual stock movement. `unitCost` (tenant currency) is accepted on entries only: it updates the
+ * location's weighted-average cost. Exits and entries without a cost are valued at the average.
+ */
 export function adjustInventoryStock(
   input: InventoryStockAdjustInput,
-): Promise<InventoryStockBalance> {
-  return invokeParsed("adjust_inventory_stock", { input }, InventoryStockBalanceSchema);
+  unitCost: number | null = null,
+): Promise<InventoryStockBalanceRow> {
+  return invokeParsed("adjust_inventory_stock", { input, unitCost }, InventoryStockBalanceSchema);
 }
 
 export function reserveInventoryStock(input: InventoryReserveInput): Promise<StockReservation> {
@@ -1131,7 +1192,7 @@ export function listInventoryProcurementSuppliers(): Promise<ProcurementSupplier
   );
 }
 
-export function listInventoryProcurementRequisitions(): Promise<ProcurementRequisition[]> {
+export function listInventoryProcurementRequisitions(): Promise<ProcurementRequisitionRow[]> {
   return invokeParsed(
     "list_inventory_procurement_requisitions",
     undefined,
@@ -1185,7 +1246,7 @@ export function transitionInventoryPurchaseOrder(
   return invokeParsed("transition_inventory_purchase_order", { input }, PurchaseOrderSchema);
 }
 
-export function listInventoryPurchaseOrders(): Promise<PurchaseOrder[]> {
+export function listInventoryPurchaseOrders(): Promise<PurchaseOrderRow[]> {
   return invokeParsed("list_inventory_purchase_orders", undefined, z.array(PurchaseOrderSchema));
 }
 
@@ -1199,9 +1260,14 @@ export function listInventoryPurchaseOrderLines(
   );
 }
 
+/** Purchase order detail with the buyer's display name on the order. */
+export type PurchaseOrderDetailView = Omit<PurchaseOrderDetail, "order"> & {
+  order: PurchaseOrderRow;
+};
+
 export function getInventoryPurchaseOrderDetail(
   purchaseOrderId: number,
-): Promise<PurchaseOrderDetail> {
+): Promise<PurchaseOrderDetailView> {
   return invokeParsed(
     "get_inventory_purchase_order_detail",
     { purchaseOrderId },
@@ -1346,7 +1412,7 @@ export function listInventoryCountSessions(): Promise<InventoryCountSession[]> {
   );
 }
 
-export function listInventoryCountLines(sessionId: number): Promise<InventoryCountLine[]> {
+export function listInventoryCountLines(sessionId: number): Promise<InventoryCountLineRow[]> {
   return invokeParsed(
     "list_inventory_count_lines",
     { sessionId },

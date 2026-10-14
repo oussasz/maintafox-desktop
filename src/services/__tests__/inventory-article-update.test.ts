@@ -7,11 +7,14 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { mockInvoke } from "@/test/mocks/tauri";
-import type { InventoryArticle } from "@shared/ipc-types";
 
-import { articleToInput, updateInventoryArticle } from "../inventory-service";
+import {
+  type InventoryArticleRow,
+  articleToInput,
+  updateInventoryArticle,
+} from "../inventory-service";
 
-function storedArticle(): InventoryArticle {
+function storedArticle(): InventoryArticleRow {
   return {
     id: 7,
     article_code: "ROUL-6204",
@@ -64,6 +67,12 @@ function storedArticle(): InventoryArticle {
     row_version: 3,
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
+    on_hand_qty: 8,
+    reserved_qty: 1,
+    available_qty: 7,
+    avg_unit_cost: null,
+    stock_value: null,
+    unvalued_qty: 0,
   };
 }
 

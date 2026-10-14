@@ -81,7 +81,7 @@
     "otInProgress": "WOs in progress",
     "otOverdue": "Overdue WOs",
     "mttr": "Avg MTTR",
-    "pmCompliance": "PM overdue",
+    "pmCompliance": "PM compliance",
     "pmDueToday": "PM due today",
     "maintBacklog": "Maint. backlog",
     "availability": "Fleet operational availability (A_o)",
@@ -108,7 +108,8 @@
       "percent": "%"
     },
     "alertNormal": "Normal",
-    "alertAttention": "Attention"
+    "alertAttention": "Attention",
+    "contextPmCompliance": "Done within tolerance, last 30 days"
   },
   "dev": {
     "kpiValidation": "KPI validation (SQL samples)",

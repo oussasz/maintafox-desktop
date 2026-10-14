@@ -1434,3 +1434,190 @@ async fn list_stock_balances_includes_synthetic_zero_when_no_balance_row() {
     assert!(after[0].id > 0);
     assert!((after[0].on_hand_qty - 3.0).abs() < f64::EPSILON);
 }
+
+#[tokio::test]
+async fn list_articles_returns_stock_totals_per_article() {
+    let db = setup_db().await;
+    let stocked_id = create_test_article(&db, "INV-TOT-001").await;
+    let empty_id = create_test_article(&db, "INV-TOT-002").await;
+    let location_id = main_location_id(&db).await;
+
+    queries::adjust_stock(
+        &db,
+        InventoryStockAdjustInput {
+            article_id: stocked_id,
+            location_id,
+            delta_qty: 8.0,
+            reason_code: Some("ENTREE_ACHAT".to_string()),
+            notes: None,
+            source_ref: None,
+        },
+    )
+    .await
+    .expect("adjust");
+    queries::reserve_stock(
+        &db,
+        InventoryReserveInput {
+            article_id: stocked_id,
+            location_id,
+            quantity: 3.0,
+            source_type: "WO".to_string(),
+            source_id: Some(1),
+            source_ref: None,
+            notes: None,
+        },
+    )
+    .await
+    .expect("reserve");
+
+    let rows = queries::list_articles(
+        &db,
+        InventoryArticleFilter {
+            search: Some("INV-TOT".to_string()),
+        },
+    )
+    .await
+    .expect("list articles");
+    let stocked = rows.iter().find(|a| a.id == stocked_id).expect("stocked article");
+    assert!((stocked.on_hand_qty - 8.0).abs() < f64::EPSILON);
+    assert!((stocked.reserved_qty - 3.0).abs() < f64::EPSILON);
+    assert!((stocked.available_qty - 5.0).abs() < f64::EPSILON);
+
+    let empty = rows.iter().find(|a| a.id == empty_id).expect("article without balance");
+    assert!(empty.on_hand_qty.abs() < f64::EPSILON);
+    assert!(empty.reserved_qty.abs() < f64::EPSILON);
+    assert!(empty.available_qty.abs() < f64::EPSILON);
+}
+
+#[tokio::test]
+async fn work_order_exit_requires_an_existing_work_order_reference() {
+    let db = setup_db().await;
+    let article_id = create_test_article(&db, "INV-WO-EXIT").await;
+    let location_id = main_location_id(&db).await;
+    queries::adjust_stock(
+        &db,
+        InventoryStockAdjustInput {
+            article_id,
+            location_id,
+            delta_qty: 5.0,
+            reason_code: Some("ENTREE_ACHAT".to_string()),
+            notes: None,
+            source_ref: None,
+        },
+    )
+    .await
+    .expect("seed stock");
+
+    let exit = |source_ref: Option<&str>| InventoryStockAdjustInput {
+        article_id,
+        location_id,
+        delta_qty: -1.0,
+        reason_code: Some("SORTIE_OT".to_string()),
+        notes: None,
+        source_ref: source_ref.map(str::to_string),
+    };
+
+    let missing = queries::adjust_stock(&db, exit(None)).await;
+    assert!(
+        matches!(missing, Err(AppError::ValidationFailed(_))),
+        "exit without OT must fail"
+    );
+    let unknown = queries::adjust_stock(&db, exit(Some("OT-DOES-NOT-EXIST"))).await;
+    assert!(
+        matches!(unknown, Err(AppError::ValidationFailed(_))),
+        "unknown OT must fail"
+    );
+
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO work_orders (code, type_id, status_id, title, row_version, created_at, updated_at)
+         VALUES (?, (SELECT id FROM work_order_types ORDER BY id LIMIT 1),
+                 (SELECT id FROM work_order_statuses WHERE code = 'in_progress'), 'Pump repair', 1,
+                 datetime('now'), datetime('now'))",
+        ["OT-TEST-0001".into()],
+    ))
+    .await
+    .expect("insert work order");
+
+    let balance = queries::adjust_stock(&db, exit(Some("OT-TEST-0001")))
+        .await
+        .expect("exit to an existing OT");
+    assert!((balance.on_hand_qty - 4.0).abs() < f64::EPSILON);
+}
+
+#[tokio::test]
+async fn costed_entries_maintain_weighted_average_and_article_stock_value() {
+    let db = setup_db().await;
+    let article_id = create_test_article(&db, "INV-WAC-001").await;
+    let location_id = main_location_id(&db).await;
+    let entry = |qty: f64| InventoryStockAdjustInput {
+        article_id,
+        location_id,
+        delta_qty: qty,
+        reason_code: Some("ENTREE_ACHAT".to_string()),
+        notes: None,
+        source_ref: None,
+    };
+
+    // 10 @ 4.00 then 10 @ 6.00 → average 5.00, value 100.
+    queries::adjust_stock_costed(&db, entry(10.0), Some(4.0))
+        .await
+        .expect("entry 1");
+    let balance = queries::adjust_stock_costed(&db, entry(10.0), Some(6.0))
+        .await
+        .expect("entry 2");
+    assert!((balance.moving_avg_unit_cost.expect("avg") - 5.0).abs() < 1e-9);
+
+    // An exit is valued at the average and does not change it.
+    let after_exit = queries::adjust_stock_costed(&db, entry(-4.0), None)
+        .await
+        .expect("exit");
+    assert!((after_exit.moving_avg_unit_cost.expect("avg") - 5.0).abs() < 1e-9);
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT unit_cost, extended_cost, cost_source_type FROM inventory_transactions
+             WHERE article_id = ? AND movement_type = 'ADJUST_OUT'",
+            [article_id.into()],
+        ))
+        .await
+        .expect("query")
+        .expect("exit movement");
+    let exit_cost: f64 = row.try_get("", "extended_cost").expect("extended_cost");
+    assert!((exit_cost - 20.0).abs() < 1e-9);
+    let source: String = row.try_get("", "cost_source_type").expect("source");
+    assert_eq!(source, "MOVING_AVG");
+
+    // An exit carrying its own cost is refused.
+    assert!(matches!(
+        queries::adjust_stock_costed(&db, entry(-1.0), Some(3.0)).await,
+        Err(AppError::ValidationFailed(_))
+    ));
+    // A negative cost is refused.
+    assert!(matches!(
+        queries::adjust_stock_costed(&db, entry(1.0), Some(-3.0)).await,
+        Err(AppError::ValidationFailed(_))
+    ));
+
+    let articles = queries::list_articles(
+        &db,
+        InventoryArticleFilter {
+            search: Some("INV-WAC".to_string()),
+        },
+    )
+    .await
+    .expect("list");
+    let article = articles.iter().find(|a| a.id == article_id).expect("article");
+    assert!((article.avg_unit_cost.expect("avg") - 5.0).abs() < 1e-9);
+    assert!((article.stock_value.expect("value") - 80.0).abs() < 1e-9);
+    assert!(article.unvalued_qty.abs() < f64::EPSILON);
+}
+
+#[test]
+fn weighted_moving_average_blends_by_quantity() {
+    use crate::inventory::valuation::weighted_moving_average;
+    assert!((weighted_moving_average(10.0, Some(4.0), 10.0, 6.0) - 5.0).abs() < 1e-9);
+    // First costed receipt on uncosted stock takes the receipt price.
+    assert!((weighted_moving_average(5.0, None, 5.0, 8.0) - 8.0).abs() < 1e-9);
+    assert!((weighted_moving_average(0.0, Some(3.0), 2.0, 7.0) - 7.0).abs() < 1e-9);
+}
