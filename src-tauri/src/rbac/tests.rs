@@ -17,7 +17,7 @@ mod tests {
     use std::collections::HashSet;
 
     use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
-    use sea_orm_migration::MigratorTrait;
+
     use uuid::Uuid;
 
     use crate::auth::{password, password_policy, pin, session_manager};
@@ -29,19 +29,7 @@ mod tests {
 
     /// Spin up a fresh in-memory SQLite with all migrations + system seed data.
     async fn setup_db() -> DatabaseConnection {
-        let db = sea_orm::Database::connect("sqlite::memory:")
-            .await
-            .expect("in-memory SQLite");
-
-        db.execute(Statement::from_string(
-            DbBackend::Sqlite,
-            "PRAGMA foreign_keys = ON;".to_string(),
-        ))
-        .await
-        .expect("enable FK");
-
-        crate::migrations::Migrator::up(&db, None).await.expect("migrations");
-        crate::db::seeder::seed_system_data(&db).await.expect("seeder");
+        let db = crate::db::test_db::seeded().await;
 
         db
     }

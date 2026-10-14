@@ -5,7 +5,7 @@ use sea_orm::{DatabaseConnection, TransactionTrait};
 
 use crate::audit::chain::{verify_audit_chain, ChainProblemKind};
 use crate::audit::writer::{write_audit_event, write_audit_event_in, AuditEventInput};
-use crate::sync::test_support::{exec, scalar_i64, started_db, RowFactory, TestServer};
+use crate::sync::test_support::{exec, scalar_i64, started_db, started_device_db, RowFactory, TestServer};
 
 fn event(action: &str, target_id: Option<String>, actor_id: Option<i64>) -> AuditEventInput {
     AuditEventInput {
@@ -144,8 +144,8 @@ async fn older_unchained_events_are_counted_not_failed() {
 #[tokio::test]
 async fn another_device_verifies_the_chain_it_received() {
     let mut server = TestServer::new();
-    let a = started_db().await;
-    let b = started_db().await;
+    let a = started_device_db().await;
+    let b = started_device_db().await;
     let mut factory_a = RowFactory::for_device(1);
     let mut factory_b = RowFactory::for_device(2);
     // Different local ids on the two devices for the same user.

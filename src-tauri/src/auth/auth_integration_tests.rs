@@ -14,24 +14,7 @@ mod tests {
 
     /// Helper: create an in-memory DB with all migrations + seeder applied.
     async fn setup_db() -> sea_orm::DatabaseConnection {
-        let db = sea_orm::Database::connect("sqlite::memory:")
-            .await
-            .expect("in-memory SQLite");
-
-        use sea_orm::{ConnectionTrait, DbBackend, Statement};
-        db.execute(Statement::from_string(
-            DbBackend::Sqlite,
-            "PRAGMA foreign_keys = ON;".to_string(),
-        ))
-        .await
-        .expect("enable FK");
-
-        use sea_orm_migration::MigratorTrait;
-        crate::migrations::Migrator::up(&db, None).await.expect("migrations");
-
-        crate::db::seeder::seed_system_data(&db).await.expect("seeder");
-
-        db
+        crate::db::test_db::seeded().await
     }
 
     async fn admin_user_id(db: &sea_orm::DatabaseConnection) -> i32 {

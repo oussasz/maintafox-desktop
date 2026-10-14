@@ -1,7 +1,6 @@
 //! SP07 observability cross-module integration tests (roadmap 04).
 
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
-use sea_orm_migration::MigratorTrait;
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use uuid::Uuid;
 
 use crate::activity::emitter::{emit_activity_event, emit_di_event, emit_wo_event, ActivityEventInput};
@@ -27,24 +26,7 @@ use crate::wo::parts::{self, AddPartInput};
 use crate::wo::queries;
 
 async fn setup_db() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:")
-        .await
-        .expect("in-memory SQLite should connect");
-
-    db.execute(Statement::from_string(
-        DbBackend::Sqlite,
-        "PRAGMA foreign_keys = ON;".to_string(),
-    ))
-    .await
-    .expect("PRAGMA foreign_keys");
-
-    crate::migrations::Migrator::up(&db, None)
-        .await
-        .expect("migrations should apply cleanly");
-
-    crate::db::seeder::seed_system_data(&db)
-        .await
-        .expect("seeder should run cleanly");
+    let db = crate::db::test_db::seeded().await;
 
     db
 }

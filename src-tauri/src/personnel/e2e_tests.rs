@@ -2,8 +2,7 @@
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
-    use sea_orm_migration::MigratorTrait;
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
     use crate::errors::AppError;
     use crate::personnel::domain::{PersonnelCreateInput, PersonnelListFilter, PersonnelUpdateInput};
@@ -15,18 +14,7 @@ mod tests {
     use crate::wo::queries as wo_queries;
 
     async fn setup() -> sea_orm::DatabaseConnection {
-        let db = Database::connect("sqlite::memory:").await.expect("connect");
-
-        db.execute(Statement::from_string(
-            DbBackend::Sqlite,
-            "PRAGMA foreign_keys = ON;".to_string(),
-        ))
-        .await
-        .expect("PRAGMA foreign_keys");
-
-        crate::migrations::Migrator::up(&db, None).await.expect("migrations");
-
-        crate::db::seeder::seed_system_data(&db).await.expect("seeder");
+        let db = crate::db::test_db::seeded().await;
 
         db
     }

@@ -1,5 +1,4 @@
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
-use sea_orm_migration::MigratorTrait;
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 use crate::auth::rbac::{self, PermissionScope};
 use crate::errors::AppError;
@@ -11,11 +10,7 @@ use crate::pm::domain::{
 use crate::pm::queries;
 
 async fn setup_db() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:").await.expect("in-memory sqlite");
-    crate::migrations::Migrator::up(&db, None).await.expect("migrations");
-    crate::db::seeder::seed_system_data(&db)
-        .await
-        .expect("seed system data");
+    let db = crate::db::test_db::seeded().await;
     db.execute(Statement::from_string(
         DbBackend::Sqlite,
         "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY)".to_string(),

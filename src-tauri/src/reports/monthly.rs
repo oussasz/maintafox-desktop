@@ -611,11 +611,9 @@ mod tests {
 
     #[tokio::test]
     async fn monthly_report_builds_and_is_listed() {
-        use sea_orm::{ConnectionTrait, Database};
-        use sea_orm_migration::MigratorTrait;
-        let db = Database::connect("sqlite::memory:").await.expect("db");
-        crate::migrations::Migrator::up(&db, None).await.expect("migrations");
-        crate::db::seeder::seed_system_data(&db).await.expect("seed");
+        use sea_orm::ConnectionTrait;
+
+        let db = crate::db::test_db::seeded().await;
         db.execute_unprepared(
             "INSERT INTO app_settings (setting_key, setting_scope, setting_value_json, category, setting_risk, validation_status, last_modified_at) VALUES ('documents.default_header', 'tenant', '{\"version\":1,\"html\":\"<p>ACME Industries</p><p>Oran</p>\"}', 'documents', 'low', 'valid', datetime('now')) ON CONFLICT(setting_key, setting_scope) DO UPDATE SET setting_value_json = excluded.setting_value_json",
         )

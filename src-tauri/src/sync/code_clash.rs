@@ -303,7 +303,7 @@ mod tests {
     use super::*;
     use crate::sync::domain::{ResolveSyncConflictInput, SyncConflictFilter};
     use crate::sync::queries::{list_sync_conflicts, resolve_sync_conflict};
-    use crate::sync::test_support::{exec, scalar_i64, scalar_opt_text, started_db, TestServer};
+    use crate::sync::test_support::{exec, scalar_i64, scalar_opt_text, started_device_db, TestServer};
 
     async fn add_person(db: &sea_orm::DatabaseConnection, esid: &str, code: &str) {
         exec(
@@ -326,8 +326,8 @@ mod tests {
 
     #[tokio::test]
     async fn new_numbers_differ_between_devices_and_ignore_old_ones() {
-        let a = started_db().await;
-        let b = started_db().await;
+        let a = started_device_db().await;
+        let b = started_device_db().await;
         add_person(&a, "p-old", "PER-0009").await;
         let on_a = PERSONNEL.next_number(&a).await.expect("number on A");
         let on_b = PERSONNEL.next_number(&b).await.expect("number on B");
@@ -343,8 +343,8 @@ mod tests {
     #[tokio::test]
     async fn a_clash_is_shown_then_renumbered_by_a_person() {
         let mut server = TestServer::new();
-        let a = started_db().await;
-        let b = started_db().await;
+        let a = started_device_db().await;
+        let b = started_device_db().await;
         // Numbered alike on two devices before device codes existed.
         add_person(&a, "person-from-a", "PER-0007").await;
         add_person(&b, "person-from-b", "PER-0007").await;
