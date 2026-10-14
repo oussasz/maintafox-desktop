@@ -179,6 +179,7 @@ mod tests {
             rams_utilization_factor: Some(1.0),
             org_node_id,
             commissioned_at: Some("2024-03-15T00:00:00Z".to_string()),
+            commercial: None,
         }
     }
 

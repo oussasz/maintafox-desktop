@@ -22,6 +22,7 @@ import {
 import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { parseReferenceCsv } from "@/components/lookups/reference-csv";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -33,6 +34,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { StatusChip } from "@/components/ui/status-chip";
+import { mfTone, type Tone, toneOf } from "@/design-system/tone";
 import {
   applyRefImportBatch,
   createRefImportBatch,
@@ -40,6 +43,7 @@ import {
   stageRefImportRows,
   validateRefImportBatch,
 } from "@/services/reference-service";
+import { referenceErrorText } from "@/stores/reference-error-text";
 import type {
   ImportRowInput,
   RefImportApplyResult,
@@ -47,68 +51,6 @@ import type {
   RefImportPreview,
   RefImportRow,
 } from "@shared/ipc-types";
-
-// ── CSV parse helper (simple, header-based) ───────────────────────────────
-
-function parseCsv(text: string): ImportRowInput[] {
-  const lines = text.split(/\r?\n/).filter((l) => l.trim());
-  if (lines.length < 2) return [];
-
-  const headerLine = lines[0];
-  if (!headerLine) return [];
-  const headers = headerLine.split(",").map((h) => h.trim().toLowerCase());
-  const rows: ImportRowInput[] = [];
-
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i];
-    if (!line) continue;
-    const values = line.split(",").map((v) => v.trim());
-    const row: ImportRowInput = {};
-
-    headers.forEach((header, idx) => {
-      const val = values[idx] ?? "";
-      if (!val) return;
-
-      switch (header) {
-        case "code":
-          row.code = val;
-          break;
-        case "label":
-          row.label = val;
-          break;
-        case "description":
-          row.description = val;
-          break;
-        case "parent_code":
-          row.parent_code = val;
-          break;
-        case "sort_order":
-          row.sort_order = Number.parseInt(val, 10) || null;
-          break;
-        case "color_hex":
-          row.color_hex = val;
-          break;
-        case "icon_name":
-          row.icon_name = val;
-          break;
-        case "semantic_tag":
-          row.semantic_tag = val;
-          break;
-        case "external_code":
-          row.external_code = val;
-          break;
-        case "metadata_json":
-          row.metadata_json = val;
-          break;
-      }
-    });
-
-    if (row.code || row.label) {
-      rows.push(row);
-    }
-  }
-  return rows;
-}
 
 async function sha256Hex(text: string): Promise<string> {
   const data = new TextEncoder().encode(text);
@@ -185,7 +127,7 @@ export function ReferenceImportWizard({
 
       setError(null);
       const text = await file.text();
-      const rows = parseCsv(text);
+      const rows = parseReferenceCsv(text);
 
       if (rows.length === 0) {
         setError(t("import.noRows"));
@@ -210,7 +152,7 @@ export function ReferenceImportWizard({
       setBatch(stagedBatch);
       setStep("validate");
     } catch (err) {
-      setError(String(err));
+      setError(referenceErrorText(err));
     } finally {
       setLoading(false);
     }
@@ -228,7 +170,7 @@ export function ReferenceImportWizard({
       const prev = await getRefImportPreview(batch.id);
       setPreview(prev);
     } catch (err) {
-      setError(String(err));
+      setError(referenceErrorText(err));
     } finally {
       setLoading(false);
     }
@@ -248,7 +190,7 @@ export function ReferenceImportWizard({
       setResult(res);
       setStep("result");
     } catch (err) {
-      setError(String(err));
+      setError(referenceErrorText(err));
     } finally {
       setLoading(false);
     }
@@ -261,7 +203,9 @@ export function ReferenceImportWizard({
     [preview],
   );
 
-  const canApply = batch && (batch.error_rows === 0 || (batch.error_rows === 0 && includeWarnings));
+  // Rows in error are never applied; the others are, warnings only when the user includes them.
+  const applicableRows = batch ? batch.valid_rows + (includeWarnings ? batch.warning_rows : 0) : 0;
+  const canApply = applicableRows > 0;
 
   return (
     <Dialog open={open} onOpenChange={(o) => (o ? undefined : handleClose())}>
@@ -291,7 +235,10 @@ export function ReferenceImportWizard({
 
         {/* Error banner */}
         {error && (
-          <div className="flex items-start gap-2 rounded border border-status-danger/20 bg-status-danger/5 p-3 text-xs text-status-danger">
+          <div
+            role="alert"
+            className={`flex items-start gap-2 rounded border p-3 text-xs ${mfTone.danger.panel} ${mfTone.danger.text}`}
+          >
             <XCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
             <span>{error}</span>
           </div>
@@ -385,7 +332,13 @@ export function ReferenceImportWizard({
                         <td className="px-2 py-1">
                           <RowStatusBadge status={row.validation_status} />
                         </td>
-                        <td className="px-2 py-1">{row.proposed_action ?? "—"}</td>
+                        <td className="px-2 py-1">
+                          {row.proposed_action
+                            ? t(`import.action.${row.proposed_action}`, {
+                                defaultValue: t("import.action.other"),
+                              })
+                            : "—"}
+                        </td>
                         <td className="px-2 py-1 text-text-muted">
                           {row.messages.map((m) => (
                             <span key={`${row.id}-${m.category}-${m.severity}`} className="block">
@@ -489,9 +442,9 @@ function SummaryCard({
   variant?: "success" | "warning" | "error";
 }) {
   const colors = {
-    success: "text-status-success",
-    warning: "text-status-warning",
-    error: "text-status-danger",
+    success: mfTone.success.text,
+    warning: mfTone.warning.text,
+    error: mfTone.danger.text,
   };
   return (
     <div className="rounded border border-surface-border p-2">
@@ -503,34 +456,21 @@ function SummaryCard({
   );
 }
 
+const ROW_STATUS_TONE: Record<string, Tone> = {
+  valid: "success",
+  warning: "warning",
+  error: "danger",
+};
+
 function RowStatusBadge({ status }: { status: string }) {
-  switch (status) {
-    case "valid":
-      return (
-        <Badge variant="default" className="text-[10px] bg-green-500">
-          <CheckCircle2 className="h-2.5 w-2.5 mr-0.5" />
-          valid
-        </Badge>
-      );
-    case "warning":
-      return (
-        <Badge variant="secondary" className="text-[10px] bg-yellow-500/20 text-yellow-700">
-          <AlertTriangle className="h-2.5 w-2.5 mr-0.5" />
-          warning
-        </Badge>
-      );
-    case "error":
-      return (
-        <Badge variant="destructive" className="text-[10px]">
-          <XCircle className="h-2.5 w-2.5 mr-0.5" />
-          error
-        </Badge>
-      );
-    default:
-      return (
-        <Badge variant="outline" className="text-[10px]">
-          {status}
-        </Badge>
-      );
-  }
+  const { t } = useTranslation("reference");
+  const tone = toneOf(ROW_STATUS_TONE, status);
+  const icon = status === "valid" ? CheckCircle2 : status === "error" ? XCircle : AlertTriangle;
+  return (
+    <StatusChip
+      label={t(`import.rowStatus.${status}`, { defaultValue: t("import.rowStatus.other") })}
+      tone={tone}
+      icon={icon}
+    />
+  );
 }

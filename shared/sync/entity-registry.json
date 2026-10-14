@@ -425,6 +425,17 @@
       "sync_status": "synced"
     },
     {
+      "entity_type": "equipment_criticality_assessments",
+      "scope": "tenant",
+      "conflict_policy": "append_only",
+      "apply_priority": 5,
+      "parents": [
+        "equipment",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
       "entity_type": "equipment_hierarchy",
       "scope": "tenant",
       "conflict_policy": "operator_review",
@@ -449,6 +460,18 @@
       "apply_priority": 5,
       "parents": [
         "equipment"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "equipment_spare_parts",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 5,
+      "parents": [
+        "equipment",
+        "articles",
+        "user_accounts"
       ],
       "sync_status": "synced"
     },

@@ -15,7 +15,7 @@ import {
   listReferenceSets,
   getReferenceGovernanceCapabilities,
 } from "@/services/reference-service";
-import { toErrorMessage } from "@/utils/errors";
+import { referenceErrorText } from "@/stores/reference-error-text";
 import type {
   ReferenceDomain,
   ReferenceGovernanceCapabilities,
@@ -279,7 +279,7 @@ export const useReferenceManagerStore = create<ReferenceManagerStoreState>()((se
         },
       });
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: referenceErrorText(err) });
     } finally {
       set({ domainsLoading: false });
     }
@@ -357,7 +357,7 @@ export const useReferenceManagerStore = create<ReferenceManagerStoreState>()((se
         }
       }
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: referenceErrorText(err) });
     } finally {
       set({
         setsLoading: { ...get().setsLoading, [domainId]: false },

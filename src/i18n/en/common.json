@@ -167,8 +167,10 @@
       "work_order": "Open work order {{code}}",
       "di": "Open request {{code}}",
       "permit": "Open permit {{code}}",
-      "pm_plan": "Open preventive maintenance plan {{code}}"
-    }
+      "pm_plan": "Open preventive maintenance plan {{code}}",
+      "asset": "Open asset {{code}}"
+    },
+    "asset": "{{code}}"
   },
   "time": {
     "just_now": "Just now",

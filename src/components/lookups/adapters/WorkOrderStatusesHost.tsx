@@ -23,9 +23,10 @@ import type { ReferenceTableCapabilities } from "@/components/lookups/reference-
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { StatusChip } from "@/components/ui/status-chip";
 import { usePermissions } from "@/hooks/use-permissions";
 import { listWorkOrderStatuses, updateWorkOrderStatus } from "@/services/wo-service";
-import { toErrorMessage } from "@/utils/errors";
+import { referenceErrorText } from "@/stores/reference-error-text";
 import type { WorkOrderStatusOption } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -43,16 +44,18 @@ export function WorkOrderStatusesHost() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editingDraft, setEditingDraft] = useState({ label: "", color: "" });
 
   const loadRows = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setLoadError(null);
     try {
       setRows(await listWorkOrderStatuses());
     } catch (err) {
-      setError(toErrorMessage(err));
+      setLoadError(err);
     } finally {
       setLoading(false);
     }
@@ -85,7 +88,7 @@ export function WorkOrderStatusesHost() {
       cancelEdit();
       await loadRows();
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(referenceErrorText(err));
     } finally {
       setSaving(false);
     }
@@ -95,12 +98,16 @@ export function WorkOrderStatusesHost() {
     <ReferenceValueTable
       loading={loading && rows.length === 0}
       error={error}
+      loadError={loadError}
+      onRetry={() => void loadRows()}
       title={
         <>
           <span className={REF_TABLE_TITLE_CLASS}>{t("woStatuses.panelTitle")}</span>
-          <Badge variant="default" className={REF_TABLE_BADGE_CLASS}>
-            {t("synthetic.published")}
-          </Badge>
+          <StatusChip
+            label={t("synthetic.liveTable")}
+            tone="info"
+            title={t("synthetic.liveTableHint")}
+          />
         </>
       }
       banner={
@@ -188,6 +195,8 @@ export function WorkOrderStatusesHost() {
                     isEditing ? (
                       <div className={REF_TABLE_ACTIONS_GROUP_CLASS}>
                         <Button
+                          aria-label={String(t("editor.save"))}
+                          title={String(t("editor.save"))}
                           variant="ghost"
                           size="icon"
                           className={refTableIconButtonClass()}
@@ -201,6 +210,8 @@ export function WorkOrderStatusesHost() {
                           <Check className="h-3.5 w-3.5 text-status-success" />
                         </Button>
                         <Button
+                          aria-label={String(t("editor.cancel"))}
+                          title={String(t("editor.cancel"))}
                           variant="ghost"
                           size="icon"
                           className={refTableIconButtonClass()}
@@ -212,6 +223,7 @@ export function WorkOrderStatusesHost() {
                     ) : (
                       <div className={REF_TABLE_ACTIONS_GROUP_CLASS}>
                         <Button
+                          title={String(t("editor.edit"))}
                           variant="ghost"
                           size="icon"
                           className={refTableIconButtonClass()}

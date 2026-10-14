@@ -20,8 +20,14 @@
 //!   commissioned_at      → equipment.commissioning_date
 //!   decommissioned_at    → equipment.decommissioned_at (added in migration 010)
 //!   maintainable_boundary→ equipment.maintainable_boundary (added in migration 010)
+//!   purchase_date        → equipment.purchase_date        (migration 005, commercial data)
+//!   warranty_expiry_date → equipment.warranty_expiry_date (migration 005)
+//!   replacement_value    → equipment.replacement_value    (migration 005, tenant currency)
+//!   cost_center_code     → equipment.cost_center_code     (migration 005, `cost_centers.code`)
+//!   notes                → equipment.notes                (migration 005)
+//!   org_cost_center_code → nearest org node (self or ancestor) carrying `cost_center_code`
 
-use crate::errors::{AppError, AppResult};
+use crate::errors::{issue_params, org_validation_failed, AppError, AppResult};
 use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
@@ -56,11 +62,37 @@ pub struct Asset {
     pub org_node_name: Option<String>,
     pub commissioned_at: Option<String>,
     pub decommissioned_at: Option<String>,
+    pub purchase_date: Option<String>,
+    pub warranty_expiry_date: Option<String>,
+    pub replacement_value: Option<f64>,
+    /// Cost centre set on the asset itself (overrides the location's).
+    pub cost_center_code: Option<String>,
+    /// Cost centre of the installation location (nearest org node carrying one).
+    pub org_cost_center_code: Option<String>,
+    pub notes: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     pub deleted_at: Option<String>,
     pub row_version: i64,
 }
+
+/// Commercial and warranty data of an asset (SAP PM "general data" / Maximo "purchase" tab).
+/// Every field is replaced as given: `None` clears it.
+#[derive(Debug, Default, Clone, Deserialize)]
+pub struct AssetCommercialInput {
+    /// `YYYY-MM-DD`.
+    pub purchase_date: Option<String>,
+    /// `YYYY-MM-DD`; not before the purchase date.
+    pub warranty_expiry_date: Option<String>,
+    /// Replacement value in the tenant currency; zero or positive.
+    pub replacement_value: Option<f64>,
+    /// Code of an active `cost_centers` row.
+    pub cost_center_code: Option<String>,
+    pub notes: Option<String>,
+}
+
+/// Longest free-text note kept on an asset.
+pub const ASSET_NOTES_MAX_CHARS: usize = 4000;
 
 /// Payload for creating an asset. Codes are resolved to FKs during validation.
 #[derive(Debug, Deserialize)]
@@ -80,6 +112,9 @@ pub struct CreateAssetPayload {
     pub rams_utilization_factor: Option<f64>,
     pub org_node_id: i64,
     pub commissioned_at: Option<String>,
+    /// Optional commercial / warranty data saved with the asset.
+    #[serde(default)]
+    pub commercial: Option<AssetCommercialInput>,
 }
 
 /// Payload for updating asset identity fields. Only provided fields are changed.
@@ -143,6 +178,16 @@ pub(crate) const ASSET_SELECT: &str = r"
     n.name             AS org_node_name,
     e.commissioning_date AS commissioned_at,
     e.decommissioned_at,
+    e.purchase_date,
+    e.warranty_expiry_date,
+    e.replacement_value,
+    e.cost_center_code,
+    (SELECT a.cost_center_code FROM org_nodes a
+      WHERE n.ancestor_path LIKE a.ancestor_path || '%'
+        AND a.deleted_at IS NULL
+        AND TRIM(COALESCE(a.cost_center_code, '')) <> ''
+      ORDER BY a.depth DESC LIMIT 1) AS org_cost_center_code,
+    e.notes,
     e.created_at,
     e.updated_at,
     e.deleted_at,
@@ -239,6 +284,24 @@ pub(crate) fn map_asset(row: &QueryResult) -> AppResult<Asset> {
         decommissioned_at: row
             .try_get::<Option<String>>("", "decommissioned_at")
             .map_err(|e| decode_err("decommissioned_at", e))?,
+        purchase_date: row
+            .try_get::<Option<String>>("", "purchase_date")
+            .map_err(|e| decode_err("purchase_date", e))?,
+        warranty_expiry_date: row
+            .try_get::<Option<String>>("", "warranty_expiry_date")
+            .map_err(|e| decode_err("warranty_expiry_date", e))?,
+        replacement_value: row
+            .try_get::<Option<f64>>("", "replacement_value")
+            .map_err(|e| decode_err("replacement_value", e))?,
+        cost_center_code: row
+            .try_get::<Option<String>>("", "cost_center_code")
+            .map_err(|e| decode_err("cost_center_code", e))?,
+        org_cost_center_code: row
+            .try_get::<Option<String>>("", "org_cost_center_code")
+            .map_err(|e| decode_err("org_cost_center_code", e))?,
+        notes: row
+            .try_get::<Option<String>>("", "notes")
+            .map_err(|e| decode_err("notes", e))?,
         created_at: row
             .try_get::<String>("", "created_at")
             .map_err(|e| decode_err("created_at", e))?,
@@ -651,6 +714,102 @@ pub(crate) async fn assert_asset_code_unique(
     Ok(())
 }
 
+/// Commercial data checked and normalised, ready to be written.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub(crate) struct ValidatedCommercial {
+    pub purchase_date: Option<String>,
+    pub warranty_expiry_date: Option<String>,
+    pub replacement_value: Option<f64>,
+    pub cost_center_code: Option<String>,
+    pub notes: Option<String>,
+}
+
+fn non_blank(v: Option<&str>) -> Option<String> {
+    v.map(str::trim).filter(|s| !s.is_empty()).map(ToString::to_string)
+}
+
+fn parse_calendar_date(field: &str, raw: Option<&str>) -> AppResult<Option<chrono::NaiveDate>> {
+    let Some(text) = non_blank(raw) else {
+        return Ok(None);
+    };
+    chrono::NaiveDate::parse_from_str(&text, "%Y-%m-%d")
+        .map(Some)
+        .map_err(|_| {
+            org_validation_failed(
+                "ASSET_DATE_INVALID",
+                format!("{field} must be a calendar date (YYYY-MM-DD)."),
+                issue_params(&[("field", field.to_string()), ("value", text.clone())]),
+            )
+        })
+}
+
+/// Checks commercial data: calendar dates, warranty not ending before purchase, a finite
+/// non-negative replacement value, an active cost centre, and the note length.
+pub(crate) async fn validate_commercial(
+    db: &impl ConnectionTrait,
+    input: &AssetCommercialInput,
+) -> AppResult<ValidatedCommercial> {
+    let purchase = parse_calendar_date("purchase_date", input.purchase_date.as_deref())?;
+    let warranty = parse_calendar_date("warranty_expiry_date", input.warranty_expiry_date.as_deref())?;
+    if let (Some(p), Some(w)) = (purchase, warranty) {
+        if w < p {
+            return Err(org_validation_failed(
+                "ASSET_WARRANTY_BEFORE_PURCHASE",
+                "The warranty cannot end before the purchase date.",
+                issue_params(&[("purchase", p.to_string()), ("warranty", w.to_string())]),
+            ));
+        }
+    }
+    if let Some(value) = input.replacement_value {
+        if !value.is_finite() || value < 0.0 {
+            return Err(org_validation_failed(
+                "ASSET_REPLACEMENT_VALUE_INVALID",
+                "The replacement value must be zero or a positive amount.",
+                issue_params(&[("value", value.to_string())]),
+            ));
+        }
+    }
+    let mut cost_center_code = None;
+    if let Some(code) = non_blank(input.cost_center_code.as_deref()) {
+        let found = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT code FROM cost_centers WHERE UPPER(code) = UPPER(?) AND is_active = 1",
+                [code.clone().into()],
+            ))
+            .await?
+            .ok_or_else(|| {
+                org_validation_failed(
+                    "ASSET_COST_CENTER_UNKNOWN",
+                    format!("Cost centre '{code}' does not exist or is inactive."),
+                    issue_params(&[("code", code.clone())]),
+                )
+            })?;
+        cost_center_code = Some(
+            found
+                .try_get::<String>("", "code")
+                .map_err(|e| decode_err("cost_centers.code", e))?,
+        );
+    }
+    let notes = non_blank(input.notes.as_deref());
+    if let Some(ref n) = notes {
+        if n.chars().count() > ASSET_NOTES_MAX_CHARS {
+            return Err(org_validation_failed(
+                "ASSET_NOTES_TOO_LONG",
+                format!("Notes are limited to {ASSET_NOTES_MAX_CHARS} characters."),
+                issue_params(&[("max", ASSET_NOTES_MAX_CHARS.to_string())]),
+            ));
+        }
+    }
+    Ok(ValidatedCommercial {
+        purchase_date: purchase.map(|d| d.to_string()),
+        warranty_expiry_date: warranty.map(|d| d.to_string()),
+        replacement_value: input.replacement_value,
+        cost_center_code,
+        notes,
+    })
+}
+
 // ─── Service functions ────────────────────────────────────────────────────────
 
 /// List assets with optional filters. Returns resolved codes via JOINs.
@@ -794,6 +953,11 @@ pub async fn create_asset(db: &DatabaseConnection, payload: CreateAssetPayload, 
         None
     };
 
+    let commercial = match payload.commercial {
+        Some(ref input) => validate_commercial(&txn, input).await?,
+        None => ValidatedCommercial::default(),
+    };
+
     // ── Maintainable boundary guard ──────────────────────────────────────
     // A non-maintainable asset should not be marked in-service unless the
     // class policy allows it. For now, warn-level validation only.
@@ -812,8 +976,9 @@ pub async fn create_asset(db: &DatabaseConnection, payload: CreateAssetPayload, 
            installed_at_node_id, manufacturer, model, serial_number,
            maintainable_boundary, rams_schedule_reference_value_id, rams_utilization_factor,
            commissioning_date, decommissioned_at,
+           purchase_date, warranty_expiry_date, replacement_value, cost_center_code, notes,
            created_at, updated_at, row_version)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
         [
             entity_sync_id.clone().into(),
             asset_code.into(),
@@ -835,6 +1000,11 @@ pub async fn create_asset(db: &DatabaseConnection, payload: CreateAssetPayload, 
             rams_utilization_factor.into(),
             payload.commissioned_at.into(),
             decommissioned_at.into(),
+            commercial.purchase_date.into(),
+            commercial.warranty_expiry_date.into(),
+            commercial.replacement_value.into(),
+            commercial.cost_center_code.into(),
+            commercial.notes.into(),
             now.clone().into(),
             now.into(),
         ],
@@ -1122,6 +1292,71 @@ pub async fn update_asset_identity(
     txn.commit().await?;
 
     tracing::info!(asset_id, "asset identity updated");
+    Ok(asset)
+}
+
+/// Replaces the commercial and warranty data of an asset (optimistic concurrency on `row_version`).
+pub async fn update_asset_commercial(
+    db: &DatabaseConnection,
+    asset_id: i64,
+    input: AssetCommercialInput,
+    expected_row_version: i64,
+) -> AppResult<Asset> {
+    let txn = db.begin().await?;
+    let commercial = validate_commercial(&txn, &input).await?;
+    let result = txn
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE equipment SET purchase_date = ?, warranty_expiry_date = ?, replacement_value = ?, \
+             cost_center_code = ?, notes = ?, updated_at = ?, row_version = row_version + 1 \
+             WHERE id = ? AND row_version = ? AND deleted_at IS NULL",
+            [
+                commercial.purchase_date.into(),
+                commercial.warranty_expiry_date.into(),
+                commercial.replacement_value.into(),
+                commercial.cost_center_code.into(),
+                commercial.notes.into(),
+                Utc::now().to_rfc3339().into(),
+                asset_id.into(),
+                expected_row_version.into(),
+            ],
+        ))
+        .await?;
+    if result.rows_affected() == 0 {
+        let exists = txn
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT row_version FROM equipment WHERE id = ? AND deleted_at IS NULL",
+                [asset_id.into()],
+            ))
+            .await?;
+        return Err(match exists {
+            None => AppError::NotFound {
+                entity: "equipment".into(),
+                id: asset_id.to_string(),
+            },
+            Some(_) => org_validation_failed(
+                "ASSET_STALE_VERSION",
+                "This asset was changed by someone else. Reload it and try again.",
+                issue_params(&[]),
+            ),
+        });
+    }
+    let sql = format!("SELECT {ASSET_SELECT} {ASSET_FROM} WHERE e.id = ?");
+    let row = txn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            sql,
+            [asset_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "equipment".into(),
+            id: asset_id.to_string(),
+        })?;
+    let asset = map_asset(&row)?;
+    txn.commit().await?;
+    tracing::info!(asset_id, "asset commercial data updated");
     Ok(asset)
 }
 

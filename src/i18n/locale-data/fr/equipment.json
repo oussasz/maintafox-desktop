@@ -14,7 +14,8 @@
       "status": "Statut",
       "criticality": "Criticité",
       "family": "Famille",
-      "parentName": "Équipement parent"
+      "parentName": "Équipement parent",
+      "primaryMeter": "Compteur principal"
     },
     "filters": {
       "status": "Statut",
@@ -49,7 +50,25 @@
       "serialNumber": "N° de série",
       "commissioningDate": "Date de mise en service",
       "endOfLifeDate": "Date de fin de vie",
-      "technicalNotes": "Notes techniques"
+      "technicalNotes": "Notes techniques",
+      "maintainableBoundary": "Élément maintenable (ISO 14224)",
+      "decommissionedAt": "Déclassé le"
+    },
+    "loadingTitle": "Chargement de l’équipement…",
+    "noClassification": "Ni classe ni localisation renseignées",
+    "retiredHint": "Un équipement déclassé ou mis au rebut ne peut plus recevoir de travaux.",
+    "close": "Fermer",
+    "yes": "Oui",
+    "no": "Non",
+    "tabs": {
+      "overview": "Vue d’ensemble",
+      "structure": "Structure",
+      "maintenance": "Maintenance",
+      "meters": "Compteurs",
+      "spares": "Pièces de rechange",
+      "documents": "Documents et photos",
+      "criticality": "Criticité",
+      "history": "Historique"
     }
   },
   "form": {
@@ -76,7 +95,8 @@
     "standby": "En veille",
     "scrapped": "Mis au rebut",
     "inStock": "En stock",
-    "outOfService": "Hors service"
+    "outOfService": "Hors service",
+    "spare": "Pièce de rechange"
   },
   "action": {
     "addMeter": "Ajouter un compteur",
@@ -152,7 +172,51 @@
         "this_year": "Cette année",
         "all": "Tout"
       }
-    }
+    },
+    "titles": {
+      "asset_created": "Équipement créé",
+      "asset_updated": "Équipement modifié",
+      "decommissioned": "Équipement déclassé",
+      "assignment_changed": "Affectation modifiée",
+      "location_changed": "Emplacement modifié",
+      "org_changed": "Déplacé vers une autre unité",
+      "parent_changed": "Équipement parent modifié",
+      "child_changed": "Composant modifié",
+      "wo_created": "{{code}} créé",
+      "wo_started": "{{code}} démarré",
+      "wo_closed": "{{code}} clôturé",
+      "di_created": "{{code}} émise",
+      "di_closed": "{{code}} clôturée",
+      "pm_scheduled": "Préventif {{code}} à échéance",
+      "pm_executed": "Préventif {{code}} réalisé",
+      "failure_recorded": "Panne enregistrée",
+      "meter_reading": "Relevé de compteur",
+      "document_linked": "Document lié",
+      "photo_added": "Photo ajoutée"
+    },
+    "quality": {
+      "accepted": "Accepté",
+      "corrected": "Corrigé",
+      "rejected": "Rejeté"
+    },
+    "inspectionResult": {
+      "pass": "Conforme",
+      "warning": "Alerte",
+      "fail": "Non conforme",
+      "not_accessible": "Inaccessible",
+      "not_done": "Non réalisé"
+    },
+    "failureStatus": {
+      "recorded": "Enregistrée",
+      "verified": "Vérifiée",
+      "rejected": "Rejetée"
+    },
+    "failureSource": {
+      "work_order": "Issue d’un ordre de travail",
+      "inspection": "Issue d’une inspection",
+      "manual": "Saisie manuelle"
+    },
+    "title": "Historique de l’équipement"
   },
   "empty": {
     "list": "Aucun équipement trouvé.",
@@ -205,7 +269,8 @@
       "noEvents": "Aucun événement de cycle de vie enregistré.",
       "primary": "Principal",
       "documentCount": "{{count}} document(s) lié(s)"
-    }
+    },
+    "import": "Importer"
   },
   "createForm": {
     "button": "Créer un actif",
@@ -466,5 +531,249 @@
     "context_copy_code": "Copier le code",
     "context_move_to": "Déplacer vers...",
     "context_decommission": "Décommissionner..."
+  },
+  "criticality": {
+    "critical": "Critique",
+    "important": "Importante",
+    "standard": "Standard",
+    "low": "Faible",
+    "notRated": "Non évaluée"
+  },
+  "warranty": {
+    "state": {
+      "active": "Sous garantie jusqu’au {{date}}",
+      "expiring": "Fin de garantie le {{date}}",
+      "expired": "Garantie terminée le {{date}}"
+    },
+    "expiredShort": "Expirée",
+    "daysLeft_one": "{{count}} jour restant",
+    "daysLeft_other": "{{count}} jours restants"
+  },
+  "commercial": {
+    "title": "Achat et garantie",
+    "edit": "Modifier achat et garantie",
+    "purchaseDate": "Date d’achat",
+    "warrantyExpiry": "Fin de garantie",
+    "replacementValue": "Valeur de remplacement",
+    "replacementValueHint": "Coût d’achat et d’installation d’un équipement équivalent neuf aujourd’hui (devise du site).",
+    "costCenter": "Centre de coût",
+    "costCenterOwn": "Défini sur l’équipement",
+    "costCenterInherited": "Hérité de la localisation",
+    "costCenterNone": "Aucun",
+    "costCenterHint": "Gardez « localisation » pour utiliser le centre de coût du lieu d’installation (actuellement : {{inherited}}).",
+    "costCenterNoPermission": "Le choix d’un centre de coût nécessite le droit de consultation Budget.",
+    "costCenterUseLocation": "Centre de coût de la localisation",
+    "notes": "Notes",
+    "dialogTitle": "Achat et garantie — {{code}}",
+    "dialogDescription": "Données commerciales utilisées pour les recours en garantie et les décisions de remplacement.",
+    "cancel": "Annuler",
+    "save": "Enregistrer",
+    "saving": "Enregistrement…",
+    "errors": {
+      "value": "Saisissez zéro ou un montant positif.",
+      "warrantyBeforePurchase": "La garantie ne peut pas finir avant la date d’achat.",
+      "notesTooLong": "Les notes sont limitées à {{max}} caractères."
+    }
+  },
+  "rams": {
+    "title": "Profil de fiabilité",
+    "schedule": "Régime de fonctionnement",
+    "scheduleNone": "Non défini (24 h/24 supposé)",
+    "utilization": "Facteur d’utilisation (K_u)",
+    "hint": "Utilisé par le module RAMS pour convertir le temps calendaire en temps de fonctionnement."
+  },
+  "structure": {
+    "parent": "Équipement parent",
+    "noParent": "Cet équipement n’est rattaché à aucun équipement parent.",
+    "components_one": "Composants ({{count}})",
+    "components_other": "Composants ({{count}})",
+    "noComponents": "Aucun composant enregistré sous cet équipement.",
+    "addComponent": "Ajouter un composant",
+    "relation": {
+      "PARENT_CHILD": "Parent — enfant",
+      "INSTALLED_IN": "Installé dans",
+      "DRIVES": "Entraîne",
+      "FEEDS": "Alimente",
+      "INSTALLED": "Installé",
+      "other": "Lié"
+    }
+  },
+  "maintenance": {
+    "rollUp": "Inclure les composants",
+    "rollUpScope_one": "Chiffres de cet équipement seul.",
+    "rollUpScope_other": "Chiffres de cet équipement et de ses composants ({{count}} équipements).",
+    "openRams": "Ouvrir dans RAMS",
+    "kpi": {
+      "workOrders": "Ordres de travail",
+      "openHint_one": "{{count}} en cours",
+      "openHint_other": "{{count}} en cours",
+      "failures": "Pannes (correctif et urgence)",
+      "lastFailure": "Dernière le {{date}}",
+      "noFailure": "Aucune panne enregistrée",
+      "downtime": "Arrêts",
+      "hours": "h",
+      "downtimeHint": "Saisis sur les ordres de travail",
+      "costLifetime": "Coût de maintenance (depuis l’origine)",
+      "costSplit": "Main-d’œuvre {{labor}} · Pièces {{parts}} · Prestations {{services}}",
+      "costRecent": "Coût de maintenance ({{months}} derniers mois)",
+      "costVsReplacement": "Coût / valeur de remplacement",
+      "replacementHint": "Valeur de remplacement {{value}}",
+      "noReplacementValue": "Renseignez la valeur de remplacement pour comparer"
+    },
+    "costByYear": "Coût par année",
+    "noCost": "Aucun coût d’ordre de travail enregistré.",
+    "woCount_one": "({{count}} OT)",
+    "woCount_other": "({{count}} OT)",
+    "pmPlans": "Plans préventifs",
+    "noPmPlans": "Aucun plan préventif ne cible cet équipement.",
+    "nextDue": "Prochaine échéance {{date}}",
+    "noNextDue": "Aucune échéance",
+    "workOrders": "Ordres de travail ({{shown}} sur {{total}})",
+    "noWorkOrders": "Aucun ordre de travail sur cet équipement.",
+    "requests": "Demandes d’intervention ({{shown}} sur {{total}})",
+    "noRequests": "Aucune demande d’intervention sur cet équipement.",
+    "workOrdersTitle": "Ordres de travail",
+    "requestsTitle": "Demandes d’intervention"
+  },
+  "meters": {
+    "add": "Ajouter un compteur",
+    "emptyHint": "Ajoutez un compteur d’heures, de cycles ou de distance pour planifier la maintenance à l’usage.",
+    "inactive": "Inactif",
+    "lastRead": "Dernier relevé {{date}}",
+    "neverRead": "Aucun relevé",
+    "expectedRate": "prévu {{rate}} {{unit}}/jour",
+    "record": "Saisir un relevé",
+    "showHistory": "Voir les relevés",
+    "hideHistory": "Masquer les relevés",
+    "noReadings": "Aucun relevé enregistré.",
+    "historyCaption": "Relevés de {{name}}",
+    "readingAt": "Relevé le",
+    "value": "Valeur",
+    "source": "Origine",
+    "reference": "Référence",
+    "referenceHint": "Par exemple la ronde, l’ordre de travail ou le capteur qui a fourni la valeur.",
+    "recordTitle": "Nouveau relevé — {{name}}",
+    "currentValue": "Valeur actuelle : {{value}} {{unit}}",
+    "errors": {
+      "number": "Saisissez un nombre.",
+      "belowCurrent": "La valeur ne peut pas être inférieure au relevé actuel ({{current}}).",
+      "future": "Un relevé ne peut pas être dans le futur.",
+      "positive": "Saisissez zéro ou un nombre positif."
+    },
+    "addTitle": "Nouveau compteur — {{code}}",
+    "name": "Nom",
+    "code": "Code",
+    "type": "Type",
+    "typePlaceholder": "Choisir un type",
+    "unit": "Unité",
+    "unitHint": "Par exemple h, cycles, km, m³.",
+    "initial": "Relevé initial",
+    "rate": "Utilisation prévue par jour",
+    "rateHint": "Sert à prévoir la maintenance basée sur le compteur.",
+    "rollover": "Valeur de retour à zéro",
+    "rolloverHint": "Valeur à laquelle le compteur repart de zéro, le cas échéant.",
+    "primary": "Compteur principal de l’équipement"
+  },
+  "spares": {
+    "criticalShort_one": "{{count}} pièce critique en rupture ou en stock insuffisant.",
+    "criticalShort_other": "{{count}} pièces critiques en rupture ou en stock insuffisant.",
+    "summary_one": "{{count}} pièce de rechange référencée.",
+    "summary_other": "{{count}} pièces de rechange référencées.",
+    "noInventoryPermission": "L’ajout de pièces nécessite le droit de consultation Stock.",
+    "add": "Ajouter une pièce",
+    "empty": "Aucune pièce de rechange référencée pour cet équipement.",
+    "emptyHint": "Listez les pièces nécessaires pour préparer les ordres de travail et le stock.",
+    "caption": "Pièces de rechange de {{code}}",
+    "article": "Article",
+    "position": "Position sur l’équipement",
+    "quantity": "Quantité montée",
+    "stock": "Stock",
+    "actions": "Actions",
+    "critical": "Pièce critique",
+    "articleInactive": "Article inactif",
+    "stockState": {
+      "ok": "{{available}} disponible(s)",
+      "short": "Seulement {{available}} disponible(s)",
+      "out": "En rupture"
+    },
+    "onHand": "{{qty}} en stock",
+    "editLine": "Modifier {{code}}",
+    "removeLine": "Retirer {{code}}",
+    "removeTitle": "Retirer cette pièce de rechange ?",
+    "removeDescription": "{{code}} ne sera plus référencé comme pièce de rechange de {{asset}}. L’article reste en stock.",
+    "remove": "Retirer",
+    "editTitle": "Pièce de rechange {{code}}",
+    "addTitle": "Nouvelle pièce de rechange — {{code}}",
+    "searchPlaceholder": "Rechercher par code ou désignation d’article",
+    "noArticle": "Aucun article trouvé.",
+    "alreadyListed": "Déjà référencé",
+    "positionHint": "Par exemple « roulement côté accouplement ».",
+    "criticalLabel": "Pièce critique : doit toujours être en stock",
+    "errors": {
+      "quantity": "Saisissez une quantité supérieure à zéro.",
+      "tooLong": "Limité à {{max}} caractères."
+    },
+    "openArticle": "Ouvrir l’article {{code}} dans le stock"
+  },
+  "documents": {
+    "title": "Documents",
+    "noPermission": "La consultation des documents nécessite le droit Documentation.",
+    "saved": "{{name}} enregistré.",
+    "size": "{{kb}} Ko",
+    "download": "Télécharger",
+    "downloadNamed": "Télécharger {{name}}",
+    "upload": "Ajouter un document",
+    "uploadTitle": "Nouveau document — {{code}}",
+    "category": "Catégorie",
+    "file": "Fichier",
+    "tooBig": "Le fichier dépasse {{mb}} Mo.",
+    "docTitle": "Titre"
+  },
+  "critMethod": {
+    "title": "Évaluation de la criticité",
+    "current": "Classe actuelle :",
+    "explain": "Chaque conséquence est notée de {{min}} (négligeable) à {{max}} (catastrophique) et la probabilité de défaillance de {{min}} (rare) à {{max}} (fréquente). Risque = conséquence la plus forte × probabilité. Classe A à partir de {{a}}, B à partir de {{b}}, C à partir de {{c}}, sinon D. Une note sécurité ou environnement de {{hse}} donne toujours la classe A.",
+    "categories": {
+      "safety": "Sécurité",
+      "environment": "Environnement",
+      "production": "Production",
+      "quality": "Qualité",
+      "cost": "Coût de maintenance",
+      "likelihood": "Probabilité de défaillance"
+    },
+    "hints": {
+      "safety": "Risque de blessure en cas de défaillance",
+      "environment": "Fuite, rejet ou dépassement réglementaire",
+      "production": "Perte de production, arrêt de ligne",
+      "quality": "Produit non conforme ou à reprendre",
+      "cost": "Coût et durée de la réparation",
+      "likelihood": "Fréquence des défaillances de l’équipement"
+    },
+    "preview": "Conséquence {{consequence}} × probabilité {{likelihood}} = risque {{risk}}",
+    "hseOverride": "Classe A en raison de la conséquence sécurité / environnement.",
+    "previewPending": "Calcul…",
+    "rationale": "Justification",
+    "rationalePlaceholder": "Pourquoi ces notes (redondance, pièces, historique…)",
+    "save": "Enregistrer l’évaluation",
+    "noPermission": "L’évaluation de la criticité nécessite le droit de gestion des équipements.",
+    "history": "Historique des évaluations",
+    "noHistory": "Aucune évaluation : la classe a été saisie à la main.",
+    "historyLine": "Risque {{risk}} (classe précédente {{previous}})",
+    "historyScores": "S {{s}} · E {{e}} · P {{p}} · Q {{q}} · C {{c}} · Pr {{l}}"
+  },
+  "errors": {
+    "ASSET_DATE_INVALID": "Saisissez une date de calendrier.",
+    "ASSET_WARRANTY_BEFORE_PURCHASE": "La garantie ne peut pas finir avant la date d’achat.",
+    "ASSET_REPLACEMENT_VALUE_INVALID": "La valeur de remplacement doit être nulle ou positive.",
+    "ASSET_COST_CENTER_UNKNOWN": "Le centre de coût {{code}} n’existe pas ou est inactif.",
+    "ASSET_NOTES_TOO_LONG": "Les notes sont limitées à {{max}} caractères.",
+    "ASSET_STALE_VERSION": "Cet équipement a été modifié par quelqu’un d’autre. Rechargez-le puis réessayez.",
+    "ASSET_CRITICALITY_SCORE_OUT_OF_RANGE": "Chaque note doit être comprise entre {{min}} et {{max}}.",
+    "ASSET_CRITICALITY_RATIONALE_TOO_LONG": "La justification est limitée à {{max}} caractères.",
+    "ASSET_SPARE_QUANTITY_INVALID": "La quantité doit être supérieure à zéro.",
+    "ASSET_SPARE_POSITION_TOO_LONG": "La position est limitée à {{max}} caractères.",
+    "ASSET_SPARE_NOTES_TOO_LONG": "Les notes sont limitées à {{max}} caractères.",
+    "ASSET_SPARE_ARTICLE_INACTIVE": "L’article {{code}} est inactif.",
+    "ASSET_SPARE_DUPLICATE": "L’article {{code}} est déjà dans les pièces de rechange de cet équipement."
   }
 }

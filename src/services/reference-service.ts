@@ -101,6 +101,7 @@ export const ReferenceGovernanceCapabilitiesSchema = z.object({
   is_read_only: z.boolean(),
   requires_analytical_protection: z.boolean(),
   set_status: z.string().nullable(),
+  system_values_locked: z.boolean(),
 });
 
 // â”€â”€ Domain commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

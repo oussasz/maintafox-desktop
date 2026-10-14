@@ -12,8 +12,10 @@ Every right-pane editor must keep this order:
 
 1. Header (`px-4 py-3 border-b`)
    - Left: entity/domain title
-   - Left: set lifecycle badge when the pane is set-backed (`v{n} — {status}`)
-     - Example: `v1 — published`
+   - Left: the real version and lifecycle of the selected set: `Version {n}` + `StatusChip`
+     (`REFERENCE_SET_STATUS_TONE`, translated status), and the publication date via `useFormatters`
+     - Category B (working catalogue) shows "Working catalogue" instead of a version
+     - Synthetic domains (live tables of other modules) show "Live table", never a version
    - Right: primary create action (`variant="outline" size="sm" className="gap-1.5"`)
 2. Error banner (`px-4 py-2`, red background, `AlertTriangle` icon)
 3. Table area (`flex-1 overflow-auto`)
@@ -30,14 +32,12 @@ Every right-pane editor must keep this order:
 - Editing row: add `bg-primary/5`
 - Code column: monospace text when read-only
 - Description column: muted, truncated style
-- Status column: use `Badge`, not plain text
-  - active: `Badge variant="default" className="text-[10px]"`
-  - inactive/new: `Badge variant="secondary" className="text-[10px]"`
+- Status column: switch + translated label; set and row states use `StatusChip`, never raw codes
 
 ## Action Buttons
 
-- Row actions must use compact icon buttons:
-  - `variant="ghost" size="icon" className="h-6 w-6"`
+- Row actions use icon buttons of at least 36 px (`refTableIconButtonClass()`), each with an
+  accessible name (`aria-label`)
 - Icons should follow standard semantics:
   - save: `Check` with `text-status-success`
   - cancel: `X`
@@ -47,8 +47,8 @@ Every right-pane editor must keep this order:
 ## Confirmation and Destructive Flows
 
 - Do not use `window.confirm`.
-- Use dialog-based confirmation (`Dialog`, `DialogHeader`, `DialogFooter`).
-- Confirm button must be `variant="destructive"`.
+- Use the design-system `ConfirmDialog` (through `ReferenceValueTable`'s `confirm` prop); its
+  `onConfirm` returns the promise so the dialog stays open when the action fails.
 
 ## Real Data Rule
 
@@ -60,6 +60,7 @@ If an action is not implemented yet, do not render it.
 - `pnpm typecheck` passes
 - lints clear on modified lookups components
 - no placeholder/disabled-only buttons left in the pane
-- all statuses shown as badges, not plain text
-- header contains set badge (`v{n} — {status}`) for set-backed panes
+- all statuses shown as `StatusChip` with translated labels
+- header shows the real version and status for versioned panes; no version for live tables
+- a disabled or missing action always has a visible reason (banner or `title`)
 - destructive actions use confirm dialog

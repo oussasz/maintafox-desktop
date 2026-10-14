@@ -14,7 +14,8 @@
       "status": "Status",
       "criticality": "Criticality",
       "family": "Family",
-      "parentName": "Parent equipment"
+      "parentName": "Parent equipment",
+      "primaryMeter": "Main meter"
     },
     "filters": {
       "status": "Status",
@@ -49,7 +50,25 @@
       "serialNumber": "Serial number",
       "commissioningDate": "Commissioning date",
       "endOfLifeDate": "End-of-life date",
-      "technicalNotes": "Technical notes"
+      "technicalNotes": "Technical notes",
+      "maintainableBoundary": "Maintainable item (ISO 14224)",
+      "decommissionedAt": "Decommissioned on"
+    },
+    "loadingTitle": "Loading the asset…",
+    "noClassification": "No class or location yet",
+    "retiredHint": "Decommissioned or scrapped assets cannot receive new work.",
+    "close": "Close",
+    "yes": "Yes",
+    "no": "No",
+    "tabs": {
+      "overview": "Overview",
+      "structure": "Structure",
+      "maintenance": "Maintenance",
+      "meters": "Meters",
+      "spares": "Spare parts",
+      "documents": "Documents & photos",
+      "criticality": "Criticality",
+      "history": "History"
     }
   },
   "form": {
@@ -76,7 +95,8 @@
     "standby": "Standby",
     "scrapped": "Scrapped",
     "inStock": "In stock",
-    "outOfService": "Out of service"
+    "outOfService": "Out of service",
+    "spare": "Spare unit"
   },
   "action": {
     "addMeter": "Add meter",
@@ -152,7 +172,51 @@
         "this_year": "This year",
         "all": "All"
       }
-    }
+    },
+    "titles": {
+      "asset_created": "Asset created",
+      "asset_updated": "Asset updated",
+      "decommissioned": "Asset decommissioned",
+      "assignment_changed": "Assignment changed",
+      "location_changed": "Location changed",
+      "org_changed": "Moved to another unit",
+      "parent_changed": "Parent equipment changed",
+      "child_changed": "Component changed",
+      "wo_created": "{{code}} created",
+      "wo_started": "{{code}} started",
+      "wo_closed": "{{code}} closed",
+      "di_created": "{{code}} raised",
+      "di_closed": "{{code}} closed",
+      "pm_scheduled": "Preventive {{code}} due",
+      "pm_executed": "Preventive {{code}} done",
+      "failure_recorded": "Failure recorded",
+      "meter_reading": "Meter reading",
+      "document_linked": "Document linked",
+      "photo_added": "Photo added"
+    },
+    "quality": {
+      "accepted": "Accepted",
+      "corrected": "Corrected",
+      "rejected": "Rejected"
+    },
+    "inspectionResult": {
+      "pass": "Compliant",
+      "warning": "Warning",
+      "fail": "Non-compliant",
+      "not_accessible": "Not accessible",
+      "not_done": "Not done"
+    },
+    "failureStatus": {
+      "recorded": "Recorded",
+      "verified": "Verified",
+      "rejected": "Rejected"
+    },
+    "failureSource": {
+      "work_order": "From a work order",
+      "inspection": "From an inspection",
+      "manual": "Entered manually"
+    },
+    "title": "Asset history"
   },
   "empty": {
     "list": "No equipment found.",
@@ -205,7 +269,8 @@
       "noEvents": "No lifecycle events recorded.",
       "primary": "Primary",
       "documentCount": "{{count}} document(s) linked"
-    }
+    },
+    "import": "Import"
   },
   "createForm": {
     "button": "Create asset",
@@ -466,5 +531,249 @@
     "context_copy_code": "Copy code",
     "context_move_to": "Move to...",
     "context_decommission": "Decommission..."
+  },
+  "criticality": {
+    "critical": "Critical",
+    "important": "Important",
+    "standard": "Standard",
+    "low": "Low",
+    "notRated": "Not rated"
+  },
+  "warranty": {
+    "state": {
+      "active": "Under warranty until {{date}}",
+      "expiring": "Warranty ends {{date}}",
+      "expired": "Warranty ended {{date}}"
+    },
+    "expiredShort": "Expired",
+    "daysLeft_one": "{{count}} day left",
+    "daysLeft_other": "{{count}} days left"
+  },
+  "commercial": {
+    "title": "Purchase & warranty",
+    "edit": "Edit purchase & warranty",
+    "purchaseDate": "Purchase date",
+    "warrantyExpiry": "End of warranty",
+    "replacementValue": "Replacement value",
+    "replacementValueHint": "Cost to buy and install a new equivalent asset today (tenant currency).",
+    "costCenter": "Cost centre",
+    "costCenterOwn": "Set on this asset",
+    "costCenterInherited": "From its location",
+    "costCenterNone": "None",
+    "costCenterHint": "Keep \"location\" to use the cost centre of the installation location (currently: {{inherited}}).",
+    "costCenterNoPermission": "Choosing a cost centre needs the Budget view permission.",
+    "costCenterUseLocation": "Use the location's cost centre",
+    "notes": "Notes",
+    "dialogTitle": "Purchase & warranty — {{code}}",
+    "dialogDescription": "Commercial data used for warranty claims and replacement decisions.",
+    "cancel": "Cancel",
+    "save": "Save",
+    "saving": "Saving…",
+    "errors": {
+      "value": "Enter zero or a positive amount.",
+      "warrantyBeforePurchase": "The warranty cannot end before the purchase date.",
+      "notesTooLong": "Notes are limited to {{max}} characters."
+    }
+  },
+  "rams": {
+    "title": "Reliability profile",
+    "schedule": "Operating schedule",
+    "scheduleNone": "Not set (24/7 assumed)",
+    "utilization": "Utilisation factor (K_u)",
+    "hint": "Used by RAMS to convert calendar time into operating time."
+  },
+  "structure": {
+    "parent": "Parent equipment",
+    "noParent": "This asset is not attached to a parent equipment.",
+    "components_one": "Components ({{count}})",
+    "components_other": "Components ({{count}})",
+    "noComponents": "No component registered under this asset.",
+    "addComponent": "Add a component",
+    "relation": {
+      "PARENT_CHILD": "Parent — child",
+      "INSTALLED_IN": "Installed in",
+      "DRIVES": "Drives",
+      "FEEDS": "Feeds",
+      "INSTALLED": "Installed",
+      "other": "Linked"
+    }
+  },
+  "maintenance": {
+    "rollUp": "Include components",
+    "rollUpScope_one": "Figures for this asset only.",
+    "rollUpScope_other": "Figures for this asset and its components ({{count}} assets).",
+    "openRams": "Open in RAMS",
+    "kpi": {
+      "workOrders": "Work orders",
+      "openHint_one": "{{count}} open",
+      "openHint_other": "{{count}} open",
+      "failures": "Failures (corrective & emergency)",
+      "lastFailure": "Last on {{date}}",
+      "noFailure": "No failure recorded",
+      "downtime": "Downtime",
+      "hours": "h",
+      "downtimeHint": "Recorded on the work orders",
+      "costLifetime": "Maintenance cost (lifetime)",
+      "costSplit": "Labour {{labor}} · Parts {{parts}} · Services {{services}}",
+      "costRecent": "Maintenance cost (last {{months}} months)",
+      "costVsReplacement": "Cost vs replacement value",
+      "replacementHint": "Replacement value {{value}}",
+      "noReplacementValue": "Set a replacement value to compare"
+    },
+    "costByYear": "Cost by year",
+    "noCost": "No work order cost recorded yet.",
+    "woCount_one": "({{count}} WO)",
+    "woCount_other": "({{count}} WOs)",
+    "pmPlans": "Preventive plans",
+    "noPmPlans": "No preventive plan targets this asset.",
+    "nextDue": "Next due {{date}}",
+    "noNextDue": "Nothing due",
+    "workOrders": "Work orders ({{shown}} of {{total}})",
+    "noWorkOrders": "No work order on this asset.",
+    "requests": "Intervention requests ({{shown}} of {{total}})",
+    "noRequests": "No intervention request on this asset.",
+    "workOrdersTitle": "Work orders",
+    "requestsTitle": "Intervention requests"
+  },
+  "meters": {
+    "add": "Add a meter",
+    "emptyHint": "Add a running-hours, cycles or distance meter to plan maintenance on usage.",
+    "inactive": "Inactive",
+    "lastRead": "Last reading {{date}}",
+    "neverRead": "No reading yet",
+    "expectedRate": "expected {{rate}} {{unit}}/day",
+    "record": "Record a reading",
+    "showHistory": "Show readings",
+    "hideHistory": "Hide readings",
+    "noReadings": "No reading recorded.",
+    "historyCaption": "Readings of {{name}}",
+    "readingAt": "Read on",
+    "value": "Value",
+    "source": "Source",
+    "reference": "Reference",
+    "referenceHint": "For example the round, work order or sensor that gave the value.",
+    "recordTitle": "New reading — {{name}}",
+    "currentValue": "Current value: {{value}} {{unit}}",
+    "errors": {
+      "number": "Enter a number.",
+      "belowCurrent": "The value cannot be lower than the current reading ({{current}}).",
+      "future": "A reading cannot be in the future.",
+      "positive": "Enter zero or a positive number."
+    },
+    "addTitle": "New meter — {{code}}",
+    "name": "Name",
+    "code": "Code",
+    "type": "Type",
+    "typePlaceholder": "Choose a type",
+    "unit": "Unit",
+    "unitHint": "For example h, cycles, km, m³.",
+    "initial": "Initial reading",
+    "rate": "Expected use per day",
+    "rateHint": "Used to forecast meter-based maintenance.",
+    "rollover": "Rollover value",
+    "rolloverHint": "Value at which the counter restarts from zero, if any.",
+    "primary": "Main meter of the asset"
+  },
+  "spares": {
+    "criticalShort_one": "{{count}} critical spare is short in stock.",
+    "criticalShort_other": "{{count}} critical spares are short in stock.",
+    "summary_one": "{{count}} spare part listed.",
+    "summary_other": "{{count}} spare parts listed.",
+    "noInventoryPermission": "Adding parts needs the Inventory view permission.",
+    "add": "Add a spare part",
+    "empty": "No spare part listed for this asset.",
+    "emptyHint": "List the parts this asset needs so work orders and stock can be planned.",
+    "caption": "Spare parts of {{code}}",
+    "article": "Article",
+    "position": "Position on the asset",
+    "quantity": "Quantity installed",
+    "stock": "Stock",
+    "actions": "Actions",
+    "critical": "Critical spare",
+    "articleInactive": "Article inactive",
+    "stockState": {
+      "ok": "{{available}} available",
+      "short": "Only {{available}} available",
+      "out": "Out of stock"
+    },
+    "onHand": "{{qty}} on hand",
+    "editLine": "Edit {{code}}",
+    "removeLine": "Remove {{code}}",
+    "removeTitle": "Remove this spare part?",
+    "removeDescription": "{{code}} will no longer be listed as a spare part of {{asset}}. The article stays in stock.",
+    "remove": "Remove",
+    "editTitle": "Spare part {{code}}",
+    "addTitle": "New spare part — {{code}}",
+    "searchPlaceholder": "Search by article code or name",
+    "noArticle": "No article found.",
+    "alreadyListed": "Already listed",
+    "positionHint": "For example \"drive-end bearing\".",
+    "criticalLabel": "Critical spare: must always be in stock",
+    "errors": {
+      "quantity": "Enter a quantity greater than zero.",
+      "tooLong": "Limited to {{max}} characters."
+    },
+    "openArticle": "Open article {{code}} in stock"
+  },
+  "documents": {
+    "title": "Documents",
+    "noPermission": "Viewing documents needs the Documentation view permission.",
+    "saved": "{{name}} saved.",
+    "size": "{{kb}} KB",
+    "download": "Download",
+    "downloadNamed": "Download {{name}}",
+    "upload": "Add a document",
+    "uploadTitle": "New document — {{code}}",
+    "category": "Category",
+    "file": "File",
+    "tooBig": "The file is larger than {{mb}} MB.",
+    "docTitle": "Title"
+  },
+  "critMethod": {
+    "title": "Criticality assessment",
+    "current": "Current class:",
+    "explain": "Each consequence is scored {{min}} (negligible) to {{max}} (catastrophic) and the likelihood of failure {{min}} (rare) to {{max}} (frequent). Risk = highest consequence × likelihood. Class A from {{a}}, B from {{b}}, C from {{c}}, otherwise D. A safety or environment score of {{hse}} always gives class A.",
+    "categories": {
+      "safety": "Safety",
+      "environment": "Environment",
+      "production": "Production",
+      "quality": "Quality",
+      "cost": "Maintenance cost",
+      "likelihood": "Likelihood of failure"
+    },
+    "hints": {
+      "safety": "Injury risk if the asset fails",
+      "environment": "Spill, emission or permit breach",
+      "production": "Lost output, stop of the line",
+      "quality": "Off-spec product or rework",
+      "cost": "Repair cost and duration",
+      "likelihood": "How often this asset fails"
+    },
+    "preview": "Consequence {{consequence}} × likelihood {{likelihood}} = risk {{risk}}",
+    "hseOverride": "Class A because of the safety / environment consequence.",
+    "previewPending": "Computing…",
+    "rationale": "Justification",
+    "rationalePlaceholder": "Why these scores (redundancy, spares, history…)",
+    "save": "Save the assessment",
+    "noPermission": "Assessing criticality needs the equipment management permission.",
+    "history": "Assessment history",
+    "noHistory": "No assessment yet: the class was set by hand.",
+    "historyLine": "Risk {{risk}} (previous class {{previous}})",
+    "historyScores": "S {{s}} · E {{e}} · P {{p}} · Q {{q}} · C {{c}} · L {{l}}"
+  },
+  "errors": {
+    "ASSET_DATE_INVALID": "Enter the date as a calendar date.",
+    "ASSET_WARRANTY_BEFORE_PURCHASE": "The warranty cannot end before the purchase date.",
+    "ASSET_REPLACEMENT_VALUE_INVALID": "The replacement value must be zero or a positive amount.",
+    "ASSET_COST_CENTER_UNKNOWN": "Cost centre {{code}} does not exist or is inactive.",
+    "ASSET_NOTES_TOO_LONG": "Notes are limited to {{max}} characters.",
+    "ASSET_STALE_VERSION": "This asset was changed by someone else. Reload it and try again.",
+    "ASSET_CRITICALITY_SCORE_OUT_OF_RANGE": "Each score must be between {{min}} and {{max}}.",
+    "ASSET_CRITICALITY_RATIONALE_TOO_LONG": "The justification is limited to {{max}} characters.",
+    "ASSET_SPARE_QUANTITY_INVALID": "The quantity must be greater than zero.",
+    "ASSET_SPARE_POSITION_TOO_LONG": "The position is limited to {{max}} characters.",
+    "ASSET_SPARE_NOTES_TOO_LONG": "Notes are limited to {{max}} characters.",
+    "ASSET_SPARE_ARTICLE_INACTIVE": "Article {{code}} is inactive.",
+    "ASSET_SPARE_DUPLICATE": "Article {{code}} is already in this asset's spare parts."
   }
 }

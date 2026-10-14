@@ -24,6 +24,7 @@ import type { ReferenceTableCapabilities } from "@/components/lookups/reference-
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { StatusChip } from "@/components/ui/status-chip";
 import { Switch } from "@/components/ui/switch";
 import { usePermissions } from "@/hooks/use-permissions";
 import {
@@ -32,13 +33,23 @@ import {
   listWorkOrderTypes,
   updateWorkOrderType,
 } from "@/services/wo-service";
+import { referenceErrorText } from "@/stores/reference-error-text";
 import { refreshWorkOrderTypesCatalog } from "@/stores/work-order-types-catalog-store";
-import { toErrorMessage } from "@/utils/errors";
 import type { WorkOrderTypeOption } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
+/** i18n key of a product work-order type in the `ot` namespace (same labels as the OT screens). */
+function systemTypeKey(code: string): string {
+  return `type.${code === "condition_based" ? "conditionBased" : code}`;
+}
+
 export function WorkOrderTypesHost() {
   const { t } = useTranslation("reference");
+  const { t: tOt } = useTranslation("ot");
+  // Product types are labelled in the user's language like on the work-order screens; the
+  // stored label (written by the WO module) is the fallback. Plant types keep their own label.
+  const typeLabel = (row: WorkOrderTypeOption) =>
+    row.is_system ? String(tOt(systemTypeKey(row.code), { defaultValue: row.label })) : row.label;
   const { can } = usePermissions();
   const canManage = can(P.REF_MANAGE);
   const capabilities: ReferenceTableCapabilities = {
@@ -51,6 +62,7 @@ export function WorkOrderTypesHost() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [newDraft, setNewDraft] = useState<{ code: string; label: string } | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editingDraft, setEditingDraft] = useState({ code: "", label: "" });
@@ -59,10 +71,11 @@ export function WorkOrderTypesHost() {
   const loadRows = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setLoadError(null);
     try {
       setRows(await listWorkOrderTypes());
     } catch (err) {
-      setError(toErrorMessage(err));
+      setLoadError(err);
     } finally {
       setLoading(false);
     }
@@ -97,7 +110,7 @@ export function WorkOrderTypesHost() {
       setNewDraft(null);
       await afterMutation();
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(referenceErrorText(err));
     } finally {
       setSaving(false);
     }
@@ -115,7 +128,7 @@ export function WorkOrderTypesHost() {
       cancelEdit();
       await afterMutation();
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(referenceErrorText(err));
     } finally {
       setSaving(false);
     }
@@ -129,7 +142,7 @@ export function WorkOrderTypesHost() {
       await updateWorkOrderType(row.id, { is_active: next });
       await afterMutation();
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(referenceErrorText(err));
     } finally {
       setSaving(false);
     }
@@ -144,7 +157,8 @@ export function WorkOrderTypesHost() {
       setDeleteTarget(null);
       await afterMutation();
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(referenceErrorText(err));
+      throw err;
     } finally {
       setSaving(false);
     }
@@ -154,12 +168,16 @@ export function WorkOrderTypesHost() {
     <ReferenceValueTable
       loading={loading && rows.length === 0}
       error={error}
+      loadError={loadError}
+      onRetry={() => void loadRows()}
       title={
         <>
           <span className={REF_TABLE_TITLE_CLASS}>{t("woTypes.panelTitle")}</span>
-          <Badge variant="default" className={REF_TABLE_BADGE_CLASS}>
-            {t("synthetic.published")}
-          </Badge>
+          <StatusChip
+            label={t("synthetic.liveTable")}
+            tone="info"
+            title={t("synthetic.liveTableHint")}
+          />
         </>
       }
       toolbar={
@@ -188,12 +206,10 @@ export function WorkOrderTypesHost() {
               title: t("woTypes.deleteTitle"),
               description: t("woTypes.deleteDescription", { code: deleteTarget.code }),
               confirmLabel: t("alias.delete"),
-              cancelLabel: t("editor.cancel"),
-              busy: saving,
               onOpenChange: (open) => {
                 if (!open) setDeleteTarget(null);
               },
-              onConfirm: () => void submitDelete(),
+              onConfirm: submitDelete,
             }
           : null
       }
@@ -241,6 +257,8 @@ export function WorkOrderTypesHost() {
               <ReferenceValueTableCell align="right">
                 <div className={REF_TABLE_ACTIONS_GROUP_CLASS}>
                   <Button
+                    aria-label={String(t("editor.save"))}
+                    title={String(t("editor.save"))}
                     variant="ghost"
                     size="icon"
                     className={refTableIconButtonClass()}
@@ -250,6 +268,8 @@ export function WorkOrderTypesHost() {
                     <Check className="h-3.5 w-3.5 text-status-success" />
                   </Button>
                   <Button
+                    aria-label={String(t("editor.cancel"))}
+                    title={String(t("editor.cancel"))}
                     variant="ghost"
                     size="icon"
                     className={refTableIconButtonClass()}
@@ -308,7 +328,7 @@ export function WorkOrderTypesHost() {
                       onChange={(e) => setEditingDraft((s) => ({ ...s, label: e.target.value }))}
                     />
                   ) : (
-                    row.label
+                    typeLabel(row)
                   )}
                 </ReferenceValueTableCell>
                 <ReferenceValueTableCell>
@@ -339,6 +359,8 @@ export function WorkOrderTypesHost() {
                     isEditing ? (
                       <div className={REF_TABLE_ACTIONS_GROUP_CLASS}>
                         <Button
+                          aria-label={String(t("editor.save"))}
+                          title={String(t("editor.save"))}
                           variant="ghost"
                           size="icon"
                           className={refTableIconButtonClass()}
@@ -350,6 +372,8 @@ export function WorkOrderTypesHost() {
                           <Check className="h-3.5 w-3.5 text-status-success" />
                         </Button>
                         <Button
+                          aria-label={String(t("editor.cancel"))}
+                          title={String(t("editor.cancel"))}
                           variant="ghost"
                           size="icon"
                           className={refTableIconButtonClass()}

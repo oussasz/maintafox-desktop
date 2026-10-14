@@ -11,6 +11,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
+import { orgErrorText } from "@/components/org/org-display";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -34,7 +35,6 @@ import {
   listOrgRelationshipRules,
 } from "@/services/org-service";
 import { useOrgGovernanceStore } from "@/stores/org-governance-store";
-import { formatOrgIpcError } from "@/utils/errors";
 import type { OrgNodeType, OrgRelationshipRule } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -80,7 +80,7 @@ export function OrgRelationshipRulesPanel({
       setTypes(tList.filter((x) => x.is_active));
       setRules(rList);
     } catch (e) {
-      setError(formatOrgIpcError(e));
+      setError(orgErrorText(e));
     } finally {
       setLoading(false);
     }
@@ -119,7 +119,7 @@ export function OrgRelationshipRulesPanel({
       onChanged();
       void loadPublishValidation(structureModelId);
     } catch (e) {
-      setError(formatOrgIpcError(e));
+      setError(orgErrorText(e));
     } finally {
       setSaving(false);
     }
@@ -135,7 +135,7 @@ export function OrgRelationshipRulesPanel({
       onChanged();
       void loadPublishValidation(structureModelId);
     } catch (e) {
-      setError(formatOrgIpcError(e));
+      setError(orgErrorText(e));
     } finally {
       setSaving(false);
     }

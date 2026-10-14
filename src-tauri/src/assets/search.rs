@@ -27,7 +27,28 @@ pub struct AssetSearchFilters {
     /// KPI strip click-to-filter focus (`status_down` | `critical_at_risk` | `open_work` | `stale_meters`).
     #[serde(default)]
     pub registry_focus: Option<String>,
+    /// Rows to skip (paged registry list).
+    #[serde(default)]
+    pub offset: Option<u64>,
+    /// Canonical criticality classes (`A`..`D`).
+    #[serde(default)]
+    pub criticality_codes: Option<Vec<String>>,
+    /// When true, `org_node_ids` also matches assets installed anywhere below those nodes.
+    #[serde(default)]
+    pub org_subtree: Option<bool>,
 }
+
+/// One page of the registry list and the number of assets matching the filters.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssetSearchPage {
+    pub items: Vec<AssetSearchResult>,
+    pub total: i64,
+}
+
+/// Largest page the registry list may request.
+pub const SEARCH_PAGE_MAX: u64 = 200;
+/// Page size used when the caller gives none.
+pub const SEARCH_PAGE_DEFAULT: u64 = 100;
 
 /// Filters for the shared AssetPicker empty-query / typed suggestions.
 #[derive(Debug, Deserialize)]
@@ -109,73 +130,6 @@ pub fn fold_search_text(input: &str) -> String {
         }
     }
     out
-}
-
-/// SQLite expression that folds a text column the same way as [`fold_search_text`].
-fn sql_fold_expr(column_sql: &str) -> String {
-    // Nest REPLACE for diacritics then LOWER for ASCII case.
-    // Order: map accented chars → base, then LOWER.
-    let pairs = [
-        ("à", "a"),
-        ("á", "a"),
-        ("â", "a"),
-        ("ä", "a"),
-        ("ã", "a"),
-        ("å", "a"),
-        ("À", "a"),
-        ("Á", "a"),
-        ("Â", "a"),
-        ("Ä", "a"),
-        ("è", "e"),
-        ("é", "e"),
-        ("ê", "e"),
-        ("ë", "e"),
-        ("È", "e"),
-        ("É", "e"),
-        ("Ê", "e"),
-        ("Ë", "e"),
-        ("ì", "i"),
-        ("í", "i"),
-        ("î", "i"),
-        ("ï", "i"),
-        ("Ì", "i"),
-        ("Í", "i"),
-        ("Î", "i"),
-        ("Ï", "i"),
-        ("ò", "o"),
-        ("ó", "o"),
-        ("ô", "o"),
-        ("ö", "o"),
-        ("õ", "o"),
-        ("Ò", "o"),
-        ("Ó", "o"),
-        ("Ô", "o"),
-        ("Ö", "o"),
-        ("ù", "u"),
-        ("ú", "u"),
-        ("û", "u"),
-        ("ü", "u"),
-        ("Ù", "u"),
-        ("Ú", "u"),
-        ("Û", "u"),
-        ("Ü", "u"),
-        ("ý", "y"),
-        ("ÿ", "y"),
-        ("ç", "c"),
-        ("Ç", "c"),
-        ("ñ", "n"),
-        ("Ñ", "n"),
-    ];
-    let mut expr = column_sql.to_string();
-    for (from, to) in pairs {
-        expr = format!("REPLACE({expr}, '{from}', '{to}')");
-    }
-    // Multi-char ligatures
-    expr = format!("REPLACE({expr}, 'œ', 'oe')");
-    expr = format!("REPLACE({expr}, 'Œ', 'oe')");
-    expr = format!("REPLACE({expr}, 'æ', 'ae')");
-    expr = format!("REPLACE({expr}, 'Æ', 'ae')");
-    format!("LOWER({expr})")
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -418,6 +372,99 @@ async fn usage_asset_ids(db: &DatabaseConnection, user_id: Option<i64>, limit: u
     Ok(ids)
 }
 
+// ─── Text matching ────────────────────────────────────────────────────────────
+
+/// Ids of the live assets matching a search text, best match first.
+///
+/// Matching is done here with [`fold_search_text`] rather than in SQL: folding accents in SQL
+/// needs dozens of nested `REPLACE()` calls per column, which overflows the parser stack of the
+/// SQLCipher build ("parser stack overflow"), so every text search failed in the app.
+/// Rank: exact code, then code prefix, then code / name / serial number / external id containing
+/// the text; ties ordered by code.
+pub(crate) async fn ranked_text_matches(db: &impl ConnectionTrait, query: &str) -> AppResult<Vec<i64>> {
+    #[cfg(test)]
+    TEXT_MATCH_SCANS.with(|c| c.set(c.get() + 1));
+    let folded = fold_search_text(query.trim());
+    if folded.is_empty() {
+        return Ok(Vec::new());
+    }
+    let rows = db
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT e.id, e.asset_id_code, e.name, COALESCE(e.serial_number, '') AS serial_number \
+             FROM equipment e WHERE e.deleted_at IS NULL"
+                .to_string(),
+        ))
+        .await?;
+    let external = db
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT asset_id, external_id FROM asset_external_ids WHERE valid_to IS NULL".to_string(),
+        ))
+        .await?;
+    let mut external_match: std::collections::HashSet<i64> = std::collections::HashSet::new();
+    for row in &external {
+        let asset_id: i64 = row.try_get("", "asset_id").map_err(|e| decode_err("asset_id", e))?;
+        let ext: String = row
+            .try_get("", "external_id")
+            .map_err(|e| decode_err("external_id", e))?;
+        if fold_search_text(&ext).contains(&folded) {
+            external_match.insert(asset_id);
+        }
+    }
+    let mut ranked: Vec<(u8, String, i64)> = Vec::new();
+    for row in &rows {
+        let id: i64 = row.try_get("", "id").map_err(|e| decode_err("id", e))?;
+        let code: String = row
+            .try_get("", "asset_id_code")
+            .map_err(|e| decode_err("asset_id_code", e))?;
+        let name: String = row.try_get("", "name").map_err(|e| decode_err("name", e))?;
+        let serial: String = row
+            .try_get("", "serial_number")
+            .map_err(|e| decode_err("serial_number", e))?;
+        let code_f = fold_search_text(&code);
+        let rank = if code_f == folded {
+            0
+        } else if code_f.starts_with(&folded) {
+            1
+        } else if code_f.contains(&folded)
+            || fold_search_text(&name).contains(&folded)
+            || fold_search_text(&serial).contains(&folded)
+            || external_match.contains(&id)
+        {
+            2
+        } else {
+            continue;
+        };
+        ranked.push((rank, code, id));
+    }
+    ranked.sort();
+    Ok(ranked.into_iter().map(|(_, _, id)| id).collect())
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Number of [`ranked_text_matches`] scans on this thread (tests bound the scans per request).
+    pub(crate) static TEXT_MATCH_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Ranked matches of the filters' search text (`None` without a text). Compute it once per
+/// request and pass it to the queries that need it.
+pub(crate) async fn text_matches_for(
+    db: &impl ConnectionTrait,
+    filters: &AssetSearchFilters,
+) -> AppResult<Option<Vec<i64>>> {
+    match filters.query.as_deref().map(str::trim).filter(|q| !q.is_empty()) {
+        Some(q) => Ok(Some(ranked_text_matches(db, q).await?)),
+        None => Ok(None),
+    }
+}
+
+/// JSON array of ids, bound once and read with `json_each` (no bind-variable limit).
+pub(crate) fn ids_json(ids: &[i64]) -> String {
+    serde_json::to_string(ids).unwrap_or_else(|_| "[]".into())
+}
+
 // ─── SQL fragments ────────────────────────────────────────────────────────────
 
 /// Enriched SELECT for search results. Class / family / subfamily / criticality /
@@ -490,7 +537,11 @@ pub(crate) const METRICS_FROM: &str = r"
 ";
 
 /// Build WHERE + binds shared by search and registry metrics (SmartFilterBar scope).
-pub(crate) fn build_asset_scope_where(filters: &AssetSearchFilters) -> (String, Vec<sea_orm::Value>) {
+/// `text_matches`: ids from [`ranked_text_matches`] when the filters carry a search text.
+pub(crate) fn build_asset_scope_where(
+    filters: &AssetSearchFilters,
+    text_matches: Option<&[i64]>,
+) -> (String, Vec<sea_orm::Value>) {
     let mut where_clauses = vec!["e.deleted_at IS NULL".to_string()];
     let mut binds: Vec<sea_orm::Value> = Vec::new();
 
@@ -499,27 +550,9 @@ pub(crate) fn build_asset_scope_where(filters: &AssetSearchFilters) -> (String, 
             .push("COALESCE(rs_stat.code, e.lifecycle_status) NOT IN ('DECOMMISSIONED', 'SCRAPPED')".to_string());
     }
 
-    let folded_query = filters
-        .query
-        .as_ref()
-        .map(|q| fold_search_text(q.trim()))
-        .filter(|q| !q.is_empty());
-
-    if let Some(ref folded) = folded_query {
-        let code_fold = sql_fold_expr("e.asset_id_code");
-        let name_fold = sql_fold_expr("e.name");
-        let serial_fold = sql_fold_expr("COALESCE(e.serial_number, '')");
-        let ext_fold = sql_fold_expr("external_id");
-        where_clauses.push(format!(
-            "({code_fold} LIKE ? OR {name_fold} LIKE ? OR {serial_fold} LIKE ? \
-             OR e.id IN (SELECT asset_id FROM asset_external_ids \
-               WHERE {ext_fold} LIKE ? AND valid_to IS NULL))"
-        ));
-        let pattern = format!("%{folded}%");
-        binds.push(pattern.clone().into());
-        binds.push(pattern.clone().into());
-        binds.push(pattern.clone().into());
-        binds.push(pattern.into());
+    if let Some(ids) = text_matches {
+        where_clauses.push("e.id IN (SELECT value FROM json_each(?))".to_string());
+        binds.push(ids_json(ids).into());
     }
 
     if let Some(ref codes) = filters.class_codes {
@@ -557,9 +590,25 @@ pub(crate) fn build_asset_scope_where(filters: &AssetSearchFilters) -> (String, 
     if let Some(ref ids) = filters.org_node_ids {
         if !ids.is_empty() {
             let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
-            where_clauses.push(format!("e.installed_at_node_id IN ({placeholders})"));
+            if filters.org_subtree.unwrap_or(false) {
+                where_clauses.push(format!(
+                    "e.installed_at_node_id IN (                       SELECT d.id FROM org_nodes d                        JOIN org_nodes a ON d.ancestor_path LIKE a.ancestor_path || '%'                        WHERE a.id IN ({placeholders}))"
+                ));
+            } else {
+                where_clauses.push(format!("e.installed_at_node_id IN ({placeholders})"));
+            }
             for &node_id in ids {
                 binds.push(node_id.into());
+            }
+        }
+    }
+
+    if let Some(ref codes) = filters.criticality_codes {
+        if !codes.is_empty() {
+            let placeholders = codes.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+            where_clauses.push(format!("COALESCE(rs_crit.code, lv.code) IN ({placeholders})"));
+            for code in codes {
+                binds.push(code.clone().into());
             }
         }
     }
@@ -635,32 +684,35 @@ pub(crate) fn build_asset_scope_where(filters: &AssetSearchFilters) -> (String, 
 /// then code prefix, then name/serial partial match. Matching is accent- and
 /// case-insensitive.
 pub async fn search_assets(db: &DatabaseConnection, filters: AssetSearchFilters) -> AppResult<Vec<AssetSearchResult>> {
-    let (where_sql, mut binds) = build_asset_scope_where(&filters);
+    let text_matches = text_matches_for(db, &filters).await?;
+    search_assets_with(db, &filters, text_matches.as_deref()).await
+}
 
-    let folded_query = filters
-        .query
-        .as_ref()
-        .map(|q| fold_search_text(q.trim()))
-        .filter(|q| !q.is_empty());
+/// One page of results for already computed text matches. Matches are joined once through
+/// `json_each` and ordered by their position in the ranked list (rank, then code).
+async fn search_assets_with(
+    db: &DatabaseConnection,
+    filters: &AssetSearchFilters,
+    text_matches: Option<&[i64]>,
+) -> AppResult<Vec<AssetSearchResult>> {
+    let (where_sql, where_binds) = build_asset_scope_where(filters, None);
+    let row_offset = filters.offset.unwrap_or(0);
+    let row_limit = filters.limit.unwrap_or(SEARCH_PAGE_DEFAULT).min(SEARCH_PAGE_MAX);
 
-    let row_limit = filters.limit.unwrap_or(100).min(200);
-
-    let order_sql = if let Some(ref folded) = folded_query {
-        let code_fold = sql_fold_expr("e.asset_id_code");
-        binds.push(folded.clone().into());
-        binds.push(format!("{folded}%").into());
-        format!(
-            "ORDER BY \
-                CASE WHEN {code_fold} = ? THEN 0 \
-                     WHEN {code_fold} LIKE ? THEN 1 \
-                     ELSE 2 END, \
-                e.asset_id_code ASC"
-        )
-    } else {
-        "ORDER BY e.asset_id_code ASC".to_string()
+    let mut binds: Vec<sea_orm::Value> = Vec::new();
+    let (join_sql, order_sql) = match text_matches {
+        Some(ids) => {
+            binds.push(ids_json(ids).into());
+            ("JOIN json_each(?) r ON r.value = e.id", "ORDER BY r.key")
+        }
+        None => ("", "ORDER BY e.asset_id_code ASC"),
     };
+    binds.extend(where_binds);
 
-    let sql = format!("SELECT {SEARCH_SELECT} {SEARCH_FROM} WHERE {where_sql} {order_sql} LIMIT {row_limit}");
+    let sql = format!(
+        "SELECT {SEARCH_SELECT} {SEARCH_FROM} {join_sql} WHERE {where_sql} {order_sql} \
+         LIMIT {row_limit} OFFSET {row_offset}"
+    );
 
     let rows = db
         .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, binds))
@@ -669,6 +721,22 @@ pub async fn search_assets(db: &DatabaseConnection, filters: AssetSearchFilters)
     let mut results: Vec<AssetSearchResult> = rows.iter().map(map_search_result).collect::<AppResult<_>>()?;
     enrich_org_paths(db, &mut results).await?;
     Ok(results)
+}
+
+/// Paged registry list: one page of [`search_assets`] plus the total matching the same filters.
+/// The text matches are computed once and shared by the count and the page.
+pub async fn search_assets_page(db: &DatabaseConnection, filters: AssetSearchFilters) -> AppResult<AssetSearchPage> {
+    let text_matches = text_matches_for(db, &filters).await?;
+    let (where_sql, binds) = build_asset_scope_where(&filters, text_matches.as_deref());
+    let count_sql = format!("SELECT COUNT(*) AS total {METRICS_FROM} WHERE {where_sql}");
+    let total: i64 = db
+        .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, &count_sql, binds))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("asset count query returned no row")))?
+        .try_get("", "total")
+        .map_err(|e| decode_err("total", e))?;
+    let items = search_assets_with(db, &filters, text_matches.as_deref()).await?;
+    Ok(AssetSearchPage { items, total })
 }
 
 /// Suggestions for the shared AssetPicker.
@@ -697,6 +765,9 @@ pub async fn suggest_picker_assets(
                 include_decommissioned: Some(include_decommissioned),
                 limit: Some(limit),
                 registry_focus: None,
+                offset: None,
+                criticality_codes: None,
+                org_subtree: None,
             },
         )
         .await?;
@@ -732,34 +803,32 @@ pub async fn suggest_asset_codes(
     prefix: &str,
     limit: Option<u64>,
 ) -> AppResult<Vec<AssetSuggestion>> {
-    let trimmed = prefix.trim();
-    if trimmed.is_empty() {
+    let folded = fold_search_text(prefix.trim());
+    if folded.is_empty() {
         return Ok(Vec::new());
     }
+    let row_limit = usize::try_from(limit.unwrap_or(10).min(50)).unwrap_or(10);
+    let rows = suggestion_rows(db).await?;
+    let mut out: Vec<AssetSuggestion> = rows
+        .into_iter()
+        .filter(|s| fold_search_text(&s.asset_code).starts_with(&folded))
+        .collect();
+    out.sort_by(|a, b| a.asset_code.cmp(&b.asset_code));
+    out.truncate(row_limit);
+    Ok(out)
+}
 
-    let folded = fold_search_text(trimmed);
-    let pattern = format!("{folded}%");
-    let row_limit = limit.unwrap_or(10).min(50);
-    let code_fold = sql_fold_expr("e.asset_id_code");
-
-    let sql = format!(
-        "SELECT e.id, e.asset_id_code AS asset_code, e.name AS asset_name, \
-                e.lifecycle_status AS status_code \
-         FROM equipment e \
-         WHERE e.deleted_at IS NULL \
-           AND {code_fold} LIKE ? \
-         ORDER BY e.asset_id_code ASC \
-         LIMIT {row_limit}"
-    );
-
+/// Every live asset as a suggestion row (code, name, status); matching happens in Rust.
+async fn suggestion_rows(db: &DatabaseConnection) -> AppResult<Vec<AssetSuggestion>> {
     let rows = db
-        .query_all(Statement::from_sql_and_values(
+        .query_all(Statement::from_string(
             DbBackend::Sqlite,
-            &sql,
-            [pattern.into()],
+            "SELECT e.id, e.asset_id_code AS asset_code, e.name AS asset_name, \
+                    e.lifecycle_status AS status_code \
+             FROM equipment e WHERE e.deleted_at IS NULL"
+                .to_string(),
         ))
         .await?;
-
     rows.iter().map(map_suggestion).collect()
 }
 
@@ -770,35 +839,19 @@ pub async fn suggest_asset_names(
     partial: &str,
     limit: Option<u64>,
 ) -> AppResult<Vec<AssetSuggestion>> {
-    let trimmed = partial.trim();
-    if trimmed.is_empty() {
+    let folded = fold_search_text(partial.trim());
+    if folded.is_empty() {
         return Ok(Vec::new());
     }
-
-    let folded = fold_search_text(trimmed);
-    let pattern = format!("%{folded}%");
-    let row_limit = limit.unwrap_or(10).min(50);
-    let name_fold = sql_fold_expr("e.name");
-
-    let sql = format!(
-        "SELECT e.id, e.asset_id_code AS asset_code, e.name AS asset_name, \
-                e.lifecycle_status AS status_code \
-         FROM equipment e \
-         WHERE e.deleted_at IS NULL \
-           AND {name_fold} LIKE ? \
-         ORDER BY e.name ASC \
-         LIMIT {row_limit}"
-    );
-
-    let rows = db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            &sql,
-            [pattern.into()],
-        ))
-        .await?;
-
-    rows.iter().map(map_suggestion).collect()
+    let row_limit = usize::try_from(limit.unwrap_or(10).min(50)).unwrap_or(10);
+    let rows = suggestion_rows(db).await?;
+    let mut out: Vec<AssetSuggestion> = rows
+        .into_iter()
+        .filter(|s| fold_search_text(&s.asset_name).contains(&folded))
+        .collect();
+    out.sort_by(|a, b| a.asset_name.cmp(&b.asset_name));
+    out.truncate(row_limit);
+    Ok(out)
 }
 
 #[cfg(test)]

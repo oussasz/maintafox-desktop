@@ -394,7 +394,7 @@ pub async fn list_asset_history_events(
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT wo.id, wo.code, wo.title, wo.created_at, wo.actual_start, wo.closed_at, \
-                    wo.actual_duration_hours, wos.label AS status_label, \
+                    wo.actual_duration_hours, wos.code AS status_label, \
                     COALESCE(resp.display_name, resp.username) AS actor_label \
              FROM work_orders wo \
              LEFT JOIN work_order_statuses wos ON wos.id = wo.status_id \
@@ -699,7 +699,7 @@ pub async fn list_asset_history_events(
             "failure_recorded",
             occurred_at,
             "Failure recorded",
-            source_type.map(|st| format!("Source: {st}")),
+            None,
             None,
             downtime_h.map(|h| (h * 60.0).round() as i64),
             status,

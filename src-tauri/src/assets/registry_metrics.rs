@@ -4,7 +4,7 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, Value};
 use serde::Serialize;
 
 use crate::assets::health::{self, AssetHealthScore};
-use crate::assets::search::{build_asset_scope_where, AssetSearchFilters, METRICS_FROM};
+use crate::assets::search::{build_asset_scope_where, text_matches_for, AssetSearchFilters, METRICS_FROM};
 use crate::errors::AppResult;
 use crate::kpi_definitions;
 
@@ -97,7 +97,8 @@ pub async fn get_equipment_registry_metrics(
     db: &DatabaseConnection,
     filters: AssetSearchFilters,
 ) -> AppResult<EquipmentRegistryMetricsPayload> {
-    let (where_sql, binds) = build_asset_scope_where(&filters);
+    let text_matches = text_matches_for(db, &filters).await?;
+    let (where_sql, binds) = build_asset_scope_where(&filters, text_matches.as_deref());
     let scoped_total = count_scoped_total(db, &where_sql, &binds).await?;
 
     // ── EQUIP_STATUS_SUMMARY ──────────────────────────────────────────────

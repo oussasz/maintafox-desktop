@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 
+import { useFormatters } from "@/hooks/use-formatters";
 import type { AssetHistorySummary } from "@shared/ipc-types";
 
 type Translator = ReturnType<typeof useTranslation<"equipment">>["t"];
@@ -16,12 +17,13 @@ function humanizeAge(days: number | null, t: Translator) {
 
 export function AssetLifeSummaryStrip({ summary }: { summary: AssetHistorySummary | null }) {
   const { t } = useTranslation("equipment");
+  const { formatDate } = useFormatters();
 
   const rows = useMemo(
     () => [
       {
         label: t("history.summary.created"),
-        value: summary?.created_at ? new Date(summary.created_at).toLocaleDateString() : "—",
+        value: summary?.created_at ? formatDate(summary.created_at) : "—",
       },
       {
         label: t("history.summary.age"),
@@ -47,7 +49,7 @@ export function AssetLifeSummaryStrip({ summary }: { summary: AssetHistorySummar
             : "—",
       },
     ],
-    [summary, t],
+    [summary, t, formatDate],
   );
 
   return (

@@ -13,6 +13,7 @@ import { z } from "zod";
 import { invoke } from "@/lib/ipc-invoke";
 import type {
   AssignEquipmentPayload,
+  AssignOrReplaceResponsibilityPayload,
   AssignResponsibilityPayload,
   CreateOrgNodePayload,
   MoveOrgNodePayload,
@@ -195,8 +196,12 @@ export async function listOrgNodeResponsibilities(
   return z.array(OrgNodeResponsibilitySchema).parse(raw) as OrgNodeResponsibility[];
 }
 
+/**
+ * Assign a responsibility. With `replace_active: true` the current active assignee of the same
+ * type is ended in the same transaction (handover).
+ */
 export async function assignOrgNodeResponsibility(
-  payload: AssignResponsibilityPayload,
+  payload: AssignResponsibilityPayload | AssignOrReplaceResponsibilityPayload,
 ): Promise<OrgNodeResponsibility> {
   const raw = await invoke<unknown>("assign_org_node_responsibility", { payload });
   return OrgNodeResponsibilitySchema.parse(raw) as OrgNodeResponsibility;

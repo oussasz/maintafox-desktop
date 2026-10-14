@@ -1,16 +1,17 @@
 {
   "page": {
     "title": "Données de référence",
-    "domainCount": "{{count}} domaine",
-    "domainCount_plural": "{{count}} domaines",
     "refresh": "Actualiser",
     "newDomain": "Nouveau domaine",
     "import": "Importer",
-    "emptyState": "Sélectionnez un domaine pour gérer ses valeurs de référence",
-    "valueEditorPlaceholder": "Éditeur de valeurs (en cours de développement)",
-    "setId": "Set #{{id}}",
+    "emptyState": "Sélectionnez un référentiel dans la liste",
     "noPermission": "Vous n'avez pas la permission d'accéder à cette page",
-    "retry": "Réessayer"
+    "retry": "Réessayer",
+    "domainCount_one": "{{count}} domaine",
+    "domainCount_other": "{{count}} domaines",
+    "noPermissionHint": "Demandez à un administrateur la permission de consulter les données de référence.",
+    "emptyStateHint": "Classes et familles d'équipement, modes de défaillance, criticités, compétences, types d'OT… Ouvrez une version pour voir et gérer ses valeurs.",
+    "valuesPane": "Valeurs du référentiel"
   },
   "browser": {
     "searchPlaceholder": "Rechercher des domaines...",
@@ -22,7 +23,7 @@
     "protectedDomain": "Domaine protégé (analytique)",
     "expand": "Développer",
     "collapse": "Réduire",
-    "newSet": "Nouveau jeu",
+    "newSet": "Nouveau brouillon",
     "workingCatalog": "Catalogue de travail",
     "renameDomain": "Renommer le domaine",
     "systemCatalogDomain": "Catalogue système (lecture seule)",
@@ -30,8 +31,11 @@
       "draft": "Brouillon",
       "validated": "Validé",
       "published": "Publié",
-      "superseded": "Remplacé"
-    }
+      "superseded": "Remplacé",
+      "unknown": "Statut inconnu"
+    },
+    "liveTable": "Table en direct",
+    "domainActions": "Actions pour {{domain}}"
   },
   "governance": {
     "category": {
@@ -47,24 +51,30 @@
       "unknown": "Catalogue"
     },
     "readOnly": {
-      "published": "Cette version est publiée. Créez un brouillon pour modifier ce référentiel.",
+      "published": "Cette version est publiée et utilisée par les formulaires. Créez un brouillon pour ajouter ou modifier des valeurs, puis publiez-le.",
       "publishedProtected": "Ce référentiel est publié et protégé. Les modifications ne sont pas autorisées.",
       "superseded": "Cette version a été remplacée. Créez un brouillon à partir de la version publiée pour modifier ce référentiel.",
       "supersededProtected": "Cette version a été remplacée. Les modifications ne sont pas autorisées.",
-      "systemCatalog": "Ce catalogue système est en lecture seule.",
+      "systemCatalog": "Ce catalogue est fourni par le produit et ne peut pas être modifié. Ajoutez des alias pour utiliser vos propres libellés dans les formulaires.",
       "createDraft": "Créer un brouillon",
       "creatingDraft": "Création du brouillon…",
       "discardDraft": "Abandonner le brouillon",
       "discardingDraft": "Abandon…",
       "discardDraftTitle": "Abandonner le brouillon ?",
-      "discardDraftDescription": "Cette action supprime définitivement le brouillon et toutes ses valeurs. Le catalogue publié n’est pas modifié."
-    }
+      "discardDraftDescription": "Cette action supprime définitivement le brouillon et toutes ses valeurs. Le catalogue publié n’est pas modifié.",
+      "candidateInProgress": "Une nouvelle version (v{{version}}) est en préparation. Les modifications se font dans cette version, puis elle est publiée.",
+      "openCandidate": "Ouvrir la version v{{version}}",
+      "noManagePermission": "Vous pouvez consulter ce référentiel. Sa modification demande la permission de gérer les données de référence.",
+      "validated": "Cette version est validée et attend sa publication ; elle ne peut plus être modifiée."
+    },
+    "systemValuesLocked": "Les valeurs marquées d'un cadenas sont fournies par le produit : elles ne peuvent être ni modifiées ni désactivées. Ajoutez vos propres valeurs, ou des alias pour un libellé local.",
+    "capsError": "Les droits de modification de ce référentiel n'ont pas pu être chargés : aucune modification n'est proposée."
   },
   "editor": {
     "addValue": "Ajouter une valeur",
     "publishSet": "Publier le jeu",
     "protected": "Protégé",
-    "emptyState": "Aucune valeur dans ce jeu",
+    "emptyState": "Aucune valeur dans cette version",
     "colCode": "Code",
     "colLabel": "Libellé",
     "colDescription": "Description",
@@ -92,7 +102,18 @@
       "noPermission": "Vous n'avez pas la permission de modifier cette valeur.",
       "systemValue": "Les valeurs système ne peuvent pas être modifiées ni supprimées.",
       "alreadyInactive": "Cette valeur est déjà inactive."
-    }
+    },
+    "version": "Version {{version}}",
+    "publishedOn": "publiée le {{date}}",
+    "emptyStateCanAdd": "Aucune valeur pour le moment. Utilisez « Ajouter une valeur » ou importez un fichier CSV.",
+    "addInProgress": "Terminez d'abord la valeur en cours de saisie.",
+    "previousPage": "Page précédente",
+    "nextPage": "Page suivante",
+    "codeImmutable": "Le code ne change pas après la création : il relie les enregistrements à cette valeur.",
+    "systemValue": "Valeur fournie par le produit",
+    "activeToggle": "Valeur « {{label}} » active",
+    "editValue": "Modifier « {{label}} »",
+    "deactivateValue": "Désactiver « {{label}} »"
   },
   "alias": {
     "title": "Alias – {{label}}",
@@ -113,7 +134,7 @@
     "preferred": "Préféré"
   },
   "publish": {
-    "title": "Prêt à publier",
+    "title": "Publication de cette version",
     "ready": "Prêt",
     "notReady": "{{count}} bloquant(s)",
     "blockers": "Bloquants",
@@ -127,7 +148,7 @@
     "noImpactData": "Aucune donnée d'impact disponible",
     "close": "Fermer",
     "confirmTitle": "Confirmer la publication",
-    "confirmDescription": "Ceci publiera le jeu brouillon et remplacera la version publiée actuelle.",
+    "confirmDescription": "Cette version sera mise en service et remplacera la version publiée actuelle.",
     "confirmProtected": "Il s'agit d'un domaine protégé. La publication nécessite des privilèges élevés et sera auditée.",
     "cancel": "Annuler",
     "confirm": "Publier",
@@ -149,11 +170,28 @@
       "personnel": "Personnel",
       "other": "Autres enregistrements",
       "external_integrations": "Intégrations externes"
+    },
+    "validateAndPublish": "Valider et publier",
+    "draftHint": "Les modifications de ce brouillon ne sont visibles dans les formulaires qu'après la publication. La publication vérifie la version, montre son impact puis la met en service.",
+    "validatedHint": "Cette version est validée. La publication la met en service et remplace la version actuelle.",
+    "noPublishPermission": "La publication demande la permission de publier les données de référence.",
+    "impactLoading": "Calcul de l'impact…",
+    "noRecordAffected": "Aucun enregistrement n'utilise une valeur retirée ou désactivée.",
+    "unverifiedModules": "Non vérifié sur ce poste : {{modules}}.",
+    "remapHint": "Les enregistrements qui utilisent une valeur conservée suivent automatiquement la nouvelle version.",
+    "publishedToast": "Version {{version}} publiée",
+    "check": {
+      "set_status": "La version doit être validée avant sa publication.",
+      "validation_report_missing": "La version n'a pas encore été vérifiée.",
+      "validation_blockers": "La dernière vérification a trouvé des problèmes à corriger.",
+      "validation_failed": "La dernière vérification a échoué.",
+      "unresolved_migrations": "Des valeurs désactivées dans cette version n'ont pas de valeur de remplacement. Réactivez-les, ou fusionnez-les dans une autre valeur, avant de publier.",
+      "impact_preview_required": "Ce référentiel est protégé : consultez l'aperçu de l'impact avant de publier."
     }
   },
   "import": {
     "title": "Importer des valeurs de référence",
-    "description": "Téléchargez un fichier CSV pour importer des valeurs dans le jeu sélectionné.",
+    "description": "Importez un fichier CSV (colonnes code, label, description…) dans le brouillon ouvert. Le fichier exporté par « Exporter (CSV) » peut être réimporté après modification.",
     "stepUpload": "Télécharger",
     "stepValidate": "Valider",
     "stepResult": "Résultat",
@@ -179,7 +217,18 @@
     "created": "Créés",
     "updated": "Mis à jour",
     "skipped": "Ignorés",
-    "errored": "En erreur"
+    "errored": "En erreur",
+    "action": {
+      "create": "Création",
+      "update": "Mise à jour",
+      "other": "Autre"
+    },
+    "rowStatus": {
+      "valid": "Valide",
+      "warning": "Avertissement",
+      "error": "Erreur",
+      "other": "Inconnu"
+    }
   },
   "woTypes": {
     "panelTitle": "Types d'ordre de travail",
@@ -215,7 +264,8 @@
     "inactive": "Inactif",
     "empty": "Aucune priorité chargée.",
     "deactivateTitle": "Désactiver la priorité",
-    "deactivateDescription": "Désactiver la priorité « {{code}} » ?"
+    "deactivateDescription": "Désactiver la priorité « {{code}} » ?",
+    "levelsHint": "Les niveaux de priorité sont fixés par le produit (ils pilotent les délais et les tableaux de bord) : vous pouvez ajuster leurs libellés et leurs couleurs."
   },
   "woStatuses": {
     "panelTitle": "Statuts d'ordre de travail",
@@ -234,7 +284,6 @@
     "empty": "Aucun statut chargé."
   },
   "synthetic": {
-    "published": "v1 — publié",
     "articleFamilies": {
       "title": "Familles d’articles de stock",
       "add": "Ajouter une famille",
@@ -262,6 +311,15 @@
     },
     "woStatuses": {
       "colorPlaceholder": "#RRGGBB"
+    },
+    "liveTable": "Table en direct",
+    "liveTableHint": "Cette liste appartient à un autre module et n'a pas de versions : chaque modification s'applique immédiatement.",
+    "domains": {
+      "articleFamilies": "Familles d'articles de stock",
+      "taxCategories": "Catégories TVA des articles",
+      "woTypes": "Types d'ordre de travail",
+      "woPriorities": "Priorités d'ordre de travail",
+      "woStatuses": "Statuts d'ordre de travail"
     }
   },
   "combobox": {
@@ -345,6 +403,15 @@
       "friday": "Ven",
       "saturday": "Sam",
       "sunday": "Dim"
-    }
+    },
+    "open": "Voir l'horaire",
+    "afterCreate": "Après création"
+  },
+  "export": {
+    "action": "Exporter (CSV)",
+    "dialogTitle": "Enregistrer les valeurs du référentiel",
+    "done_one": "{{count}} valeur exportée",
+    "done_other": "{{count}} valeurs exportées",
+    "nothingToExport": "Aucune valeur à exporter"
   }
 }

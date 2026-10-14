@@ -106,6 +106,7 @@ function makeCaps(
     is_read_only: false,
     requires_analytical_protection: false,
     set_status: null,
+    system_values_locked: false,
     ...overrides,
   };
 }

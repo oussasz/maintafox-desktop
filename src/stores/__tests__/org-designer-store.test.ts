@@ -229,30 +229,32 @@ describe("org-designer-store", () => {
       expect(useOrgDesignerStore.getState().workspaceMode).toBe("published");
     });
 
-    it("formats the error, keeps the old snapshot and clears loading on failure", async () => {
+    it("keeps the raw error, the old snapshot and clears loading on failure", async () => {
       const previous = makeSnapshot();
       useOrgDesignerStore.setState({ snapshot: previous });
-      mockGetSnapshot.mockRejectedValueOnce(new Error("Validation failed: model locked"));
+      const failure = new Error("Validation failed: model locked");
+      mockGetSnapshot.mockRejectedValueOnce(failure);
 
       await expect(useOrgDesignerStore.getState().loadSnapshot()).resolves.toBeUndefined();
 
       const s = useOrgDesignerStore.getState();
-      // formatOrgIpcError strips the "Validation failed:" prefix.
-      expect(s.error).toBe("model locked");
+      // Rendered by ErrorState (describeAppError), never as raw text.
+      expect(s.error).toBe(failure);
       expect(s.snapshot).toEqual(previous);
       expect(s.loading).toBe(false);
     });
 
-    it("joins structured IPC validation details into the error", async () => {
-      mockGetSnapshot.mockRejectedValueOnce({
+    it("keeps structured IPC errors intact for describeAppError", async () => {
+      const failure = {
         code: "VALIDATION_FAILED",
         message: "Validation failed",
         details: [{ message: "first problem" }, { message: "second problem" }],
-      });
+      };
+      mockGetSnapshot.mockRejectedValueOnce(failure);
 
       await useOrgDesignerStore.getState().loadSnapshot();
 
-      expect(useOrgDesignerStore.getState().error).toBe("first problem; second problem");
+      expect(useOrgDesignerStore.getState().error).toEqual(failure);
     });
   });
 
@@ -347,7 +349,7 @@ describe("org-designer-store", () => {
       expect(s.previewPayload).toEqual(payload);
     });
 
-    it("closes the drawer and sets the error when the preview fails", async () => {
+    it("closes the drawer and leaves the page error alone when the preview fails", async () => {
       mockPreview.mockRejectedValueOnce(new Error("Node not found"));
 
       await expect(
@@ -355,7 +357,8 @@ describe("org-designer-store", () => {
       ).resolves.toBeUndefined();
 
       const s = useOrgDesignerStore.getState();
-      expect(s.error).toBe("Node not found");
+      // The global IPC toast reports preview failures; the tree stays usable.
+      expect(s.error).toBeNull();
       expect(s.previewOpen).toBe(false);
       expect(s.previewPayload).toBeNull();
       expect(s.preview).toBeNull();

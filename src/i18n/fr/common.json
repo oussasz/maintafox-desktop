@@ -167,8 +167,10 @@
       "work_order": "Ouvrir l’ordre de travail {{code}}",
       "di": "Ouvrir la demande {{code}}",
       "permit": "Ouvrir le permis {{code}}",
-      "pm_plan": "Ouvrir le plan de maintenance préventive {{code}}"
-    }
+      "pm_plan": "Ouvrir le plan de maintenance préventive {{code}}",
+      "asset": "Ouvrir l’équipement {{code}}"
+    },
+    "asset": "{{code}}"
   },
   "time": {
     "just_now": "À l'instant",

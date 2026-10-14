@@ -834,6 +834,14 @@
     {
       "entity_type": "procurement_approval_limits",
       "scope": "tenant"
+    },
+    {
+      "entity_type": "equipment_criticality_assessments",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "equipment_spare_parts",
+      "scope": "tenant"
     }
   ]
 }

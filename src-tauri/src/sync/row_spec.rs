@@ -397,6 +397,11 @@ pub const ROW_SPECS: &[RowSpec] = &[
     ),
     spec("asset_external_ids", &[r("asset_id", "equipment")]),
     spec("asset_photos", &[]),
+    spec("equipment_spare_parts", &[]),
+    spec(
+        "equipment_criticality_assessments",
+        &[hist("equipment_id", "equipment"), hist("assessed_by_id", USER)],
+    ),
     spec(
         "library_documents",
         &[r("equipment_id", "equipment"), r("uploaded_by_id", USER)],

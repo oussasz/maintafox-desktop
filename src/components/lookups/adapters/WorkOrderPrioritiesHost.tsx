@@ -24,11 +24,12 @@ import type { ReferenceTableCapabilities } from "@/components/lookups/reference-
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { StatusChip } from "@/components/ui/status-chip";
 import { Switch } from "@/components/ui/switch";
 import { usePermissions } from "@/hooks/use-permissions";
 import { listWorkOrderPriorities, updateWorkOrderPriority } from "@/services/wo-service";
+import { referenceErrorText } from "@/stores/reference-error-text";
 import { refreshWorkOrderPrioritiesCatalog } from "@/stores/work-order-priorities-catalog-store";
-import { toErrorMessage } from "@/utils/errors";
 import type { WorkOrderPriorityOption } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -46,6 +47,7 @@ export function WorkOrderPrioritiesHost() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editingDraft, setEditingDraft] = useState({ label: "", label_fr: "" });
   const [deactivateTarget, setDeactivateTarget] = useState<WorkOrderPriorityOption | null>(null);
@@ -53,10 +55,11 @@ export function WorkOrderPrioritiesHost() {
   const loadRows = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setLoadError(null);
     try {
       setRows(await listWorkOrderPriorities());
     } catch (err) {
-      setError(toErrorMessage(err));
+      setLoadError(err);
     } finally {
       setLoading(false);
     }
@@ -91,7 +94,7 @@ export function WorkOrderPrioritiesHost() {
       cancelEdit();
       await afterMutation();
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(referenceErrorText(err));
     } finally {
       setSaving(false);
     }
@@ -105,7 +108,7 @@ export function WorkOrderPrioritiesHost() {
       await updateWorkOrderPriority(row.id, { is_active: next });
       await afterMutation();
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(referenceErrorText(err));
     } finally {
       setSaving(false);
     }
@@ -120,7 +123,8 @@ export function WorkOrderPrioritiesHost() {
       setDeactivateTarget(null);
       await afterMutation();
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(referenceErrorText(err));
+      throw err;
     } finally {
       setSaving(false);
     }
@@ -130,13 +134,22 @@ export function WorkOrderPrioritiesHost() {
     <ReferenceValueTable
       loading={loading && rows.length === 0}
       error={error}
+      loadError={loadError}
+      onRetry={() => void loadRows()}
       title={
         <>
           <span className={REF_TABLE_TITLE_CLASS}>{t("woPriorities.panelTitle")}</span>
-          <Badge variant="default" className={REF_TABLE_BADGE_CLASS}>
-            {t("synthetic.published")}
-          </Badge>
+          <StatusChip
+            label={t("synthetic.liveTable")}
+            tone="info"
+            title={t("synthetic.liveTableHint")}
+          />
         </>
+      }
+      banner={
+        <p className="border-b border-surface-border px-4 py-2 text-xs text-text-muted">
+          {t("woPriorities.levelsHint")}
+        </p>
       }
       emptyLabel={t("woPriorities.empty")}
       showEmpty={rows.length === 0}
@@ -149,12 +162,10 @@ export function WorkOrderPrioritiesHost() {
                 code: deactivateTarget.code,
               }),
               confirmLabel: t("editor.deactivate"),
-              cancelLabel: t("editor.cancel"),
-              busy: saving,
               onOpenChange: (open) => {
                 if (!open) setDeactivateTarget(null);
               },
-              onConfirm: () => void submitDeactivate(),
+              onConfirm: submitDeactivate,
             }
           : null
       }
@@ -269,6 +280,8 @@ export function WorkOrderPrioritiesHost() {
                     isEditing ? (
                       <div className={REF_TABLE_ACTIONS_GROUP_CLASS}>
                         <Button
+                          aria-label={String(t("editor.save"))}
+                          title={String(t("editor.save"))}
                           variant="ghost"
                           size="icon"
                           className={refTableIconButtonClass()}
@@ -280,6 +293,8 @@ export function WorkOrderPrioritiesHost() {
                           <Check className="h-3.5 w-3.5 text-status-success" />
                         </Button>
                         <Button
+                          aria-label={String(t("editor.cancel"))}
+                          title={String(t("editor.cancel"))}
                           variant="ghost"
                           size="icon"
                           className={refTableIconButtonClass()}

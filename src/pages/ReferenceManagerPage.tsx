@@ -1,78 +1,75 @@
 /**
  * ReferenceManagerPage.tsx
  *
- * Two-pane workspace for governing reference domains, sets, and values.
- * Left: DomainBrowserPanel (domain → set hierarchy).
- * Right: ReferenceValueEditor (real domains) or synthetic adapter hosts.
+ * Reference data (catalogues) of the plant: equipment classes and families, failure codes,
+ * criticality, skills, work-order types, … Two-pane workspace inside the standard module shell:
+ * left the domain → version tree, right the values of the selected version (ReferenceValueEditor)
+ * or the live table of another module (synthetic adapters).
  */
 
-import { AlertTriangle, Database, Download, RefreshCw } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { Database } from "lucide-react";
+import { useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 
+import { RefreshButton } from "@/components/layout/ModuleHeaderControls";
+import { ModulePageShell } from "@/components/layout/ModulePageShell";
 import { DomainBrowserPanel } from "@/components/lookups/DomainBrowserPanel";
-import { ReferenceImportWizard } from "@/components/lookups/ReferenceImportWizard";
 import { ReferenceValueEditor } from "@/components/lookups/ReferenceValueEditor";
 import { InventoryArticleFamilyHost } from "@/components/lookups/adapters/InventoryArticleFamilyHost";
 import { InventoryTaxCategoryHost } from "@/components/lookups/adapters/InventoryTaxCategoryHost";
 import { WorkOrderPrioritiesHost } from "@/components/lookups/adapters/WorkOrderPrioritiesHost";
 import { WorkOrderStatusesHost } from "@/components/lookups/adapters/WorkOrderStatusesHost";
 import { WorkOrderTypesHost } from "@/components/lookups/adapters/WorkOrderTypesHost";
+import {
+  REFERENCE_SET_STATUS_TONE,
+  isSyntheticReferenceId,
+  isWorkingCatalogCategory,
+  pendingCandidateSet,
+  referenceDomainLabel,
+  referenceSetStatusLabelKey,
+} from "@/components/lookups/reference-set-ui";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
+import { ErrorState, LoadingState } from "@/components/ui/data-state";
+import { EmptyState } from "@/components/ui/empty-state";
+import { StatusChip } from "@/components/ui/status-chip";
 import { mfLayout } from "@/design-system/tokens";
+import { toneOf } from "@/design-system/tone";
 import { usePermissions } from "@/hooks/use-permissions";
-import { useReferenceCapabilities } from "@/hooks/use-reference-capabilities";
 import { createDraftReferenceSet } from "@/services/reference-service";
 import {
   INVENTORY_ARTICLE_FAMILY_DOMAIN_ID,
-  INVENTORY_ARTICLE_FAMILY_SET_ID,
   INVENTORY_TAX_CATEGORY_DOMAIN_ID,
-  INVENTORY_TAX_CATEGORY_SET_ID,
   WORK_ORDER_PRIORITIES_DOMAIN_ID,
-  WORK_ORDER_PRIORITIES_SET_ID,
   WORK_ORDER_STATUSES_DOMAIN_ID,
-  WORK_ORDER_STATUSES_SET_ID,
   WORK_ORDER_TYPES_DOMAIN_ID,
-  WORK_ORDER_TYPES_SET_ID,
   useReferenceManagerStore,
 } from "@/stores/reference-manager-store";
 import { refreshWorkOrderPrioritiesCatalog } from "@/stores/work-order-priorities-catalog-store";
 import { refreshWorkOrderTypesCatalog } from "@/stores/work-order-types-catalog-store";
 import { P } from "@shared/rbac/permissions.generated";
 
-const SYNTHETIC_REF_SELECTIONS: ReadonlyArray<readonly [number, number]> = [
-  [INVENTORY_ARTICLE_FAMILY_DOMAIN_ID, INVENTORY_ARTICLE_FAMILY_SET_ID],
-  [INVENTORY_TAX_CATEGORY_DOMAIN_ID, INVENTORY_TAX_CATEGORY_SET_ID],
-  [WORK_ORDER_TYPES_DOMAIN_ID, WORK_ORDER_TYPES_SET_ID],
-  [WORK_ORDER_PRIORITIES_DOMAIN_ID, WORK_ORDER_PRIORITIES_SET_ID],
-  [WORK_ORDER_STATUSES_DOMAIN_ID, WORK_ORDER_STATUSES_SET_ID],
-];
-
-function isSyntheticRefSelection(domainId: number | null, setId: number | null): boolean {
-  if (domainId == null || setId == null) return false;
-  return SYNTHETIC_REF_SELECTIONS.some(([d, s]) => d === domainId && s === setId);
-}
-
-// ── Status label key mapping (shared with DomainBrowserPanel) ─────────────
-
-const STATUS_LABEL_KEY = {
-  draft: "browser.status.draft",
-  validated: "browser.status.validated",
-  published: "browser.status.published",
-  superseded: "browser.status.superseded",
-} as const;
-
-type SetStatus = keyof typeof STATUS_LABEL_KEY;
-
-function statusLabelKey(status: string) {
-  return STATUS_LABEL_KEY[status as SetStatus] ?? "browser.status.draft";
+/** Right pane for the live tables of other modules shown in the tree (no versions). */
+function SyntheticDomainHost({ domainId }: { domainId: number }) {
+  switch (domainId) {
+    case INVENTORY_ARTICLE_FAMILY_DOMAIN_ID:
+      return <InventoryArticleFamilyHost />;
+    case INVENTORY_TAX_CATEGORY_DOMAIN_ID:
+      return <InventoryTaxCategoryHost />;
+    case WORK_ORDER_TYPES_DOMAIN_ID:
+      return <WorkOrderTypesHost />;
+    case WORK_ORDER_PRIORITIES_DOMAIN_ID:
+      return <WorkOrderPrioritiesHost />;
+    case WORK_ORDER_STATUSES_DOMAIN_ID:
+      return <WorkOrderStatusesHost />;
+    default:
+      return null;
+  }
 }
 
 export function ReferenceManagerPage() {
   const { t } = useTranslation("reference");
   const { can, isLoading: permLoading } = usePermissions();
+  const label = useCallback((key: string) => String(t(key as "page.title")), [t]);
 
   const domains = useReferenceManagerStore((s) => s.domains);
   const domainsLoading = useReferenceManagerStore((s) => s.domainsLoading);
@@ -84,45 +81,31 @@ export function ReferenceManagerPage() {
   const loadSetsForDomain = useReferenceManagerStore((s) => s.loadSetsForDomain);
   const selectSet = useReferenceManagerStore((s) => s.selectSet);
 
-  const [importOpen, setImportOpen] = useState(false);
-
-  // Initial load
   useEffect(() => {
     void loadDomains();
   }, [loadDomains]);
 
-  // ── Breadcrumb segments ─────────────────────────────────────────────────
-
-  const selectedDomain = selectedDomainId ? domains.find((d) => d.id === selectedDomainId) : null;
-
+  const selectedDomain =
+    selectedDomainId != null ? (domains.find((d) => d.id === selectedDomainId) ?? null) : null;
   const selectedSet =
-    selectedSetId && selectedDomainId
-      ? setsMap[selectedDomainId]?.find((s) => s.id === selectedSetId)
+    selectedSetId != null && selectedDomainId != null
+      ? (setsMap[selectedDomainId]?.find((s) => s.id === selectedSetId) ?? null)
       : null;
-
-  const { caps: selectedCaps } = useReferenceCapabilities(
-    selectedDomainId,
-    selectedSetId,
-    selectedSet?.status ?? null,
-  );
-  const canImportValues = Boolean(
-    selectedCaps?.can_create_value &&
-    can(P.REF_MANAGE) &&
-    selectedDomainId != null &&
-    selectedDomainId > 0,
-  );
-
-  // ── Callbacks ───────────────────────────────────────────────────────────
+  const synthetic = isSyntheticReferenceId(selectedDomainId);
 
   const handleRefresh = useCallback(() => {
     void loadDomains();
     void refreshWorkOrderTypesCatalog();
     void refreshWorkOrderPrioritiesCatalog();
-    if (selectedDomainId) {
+    if (selectedDomainId != null) {
       void loadSetsForDomain(selectedDomainId);
     }
   }, [loadDomains, loadSetsForDomain, selectedDomainId]);
 
+  /**
+   * "New draft" from the tree. On failure the global toast explains why (for instance a draft
+   * already exists); the tree is then reloaded and an existing draft is opened.
+   */
   const handleCreateDraftSet = useCallback(
     async (domainId: number) => {
       try {
@@ -130,178 +113,106 @@ export function ReferenceManagerPage() {
         await loadSetsForDomain(domainId);
         selectSet(draft.id, domainId);
       } catch {
-        // Error handled by store / toast in future iteration
+        await loadSetsForDomain(domainId);
+        const candidate = pendingCandidateSet(
+          useReferenceManagerStore.getState().setsMap[domainId] ?? [],
+        );
+        if (candidate) selectSet(candidate.id, domainId);
       }
     },
     [loadSetsForDomain, selectSet],
   );
 
-  // ── Permission gate ─────────────────────────────────────────────────────
-
   if (permLoading) {
-    return (
-      <div className="flex h-full items-center justify-center">
-        <div className="h-6 w-6 animate-spin rounded-full border-2 border-surface-3 border-t-primary" />
-      </div>
-    );
+    return <LoadingState className="h-full" />;
   }
 
   if (!can(P.REF_VIEW)) {
     return (
       <div className="flex h-full items-center justify-center p-6">
-        <div className="text-center space-y-3">
-          <AlertTriangle className="h-8 w-8 mx-auto text-status-danger" />
-          <p className="text-sm text-status-danger">{t("page.noPermission")}</p>
-        </div>
+        <EmptyState title={t("page.noPermission")} description={t("page.noPermissionHint")} />
       </div>
     );
   }
 
-  // ── Loading state (initial) ─────────────────────────────────────────────
+  const headerLeft = (
+    <div className="flex min-w-0 flex-wrap items-center gap-2">
+      <Database className="h-5 w-5 shrink-0 text-text-muted" aria-hidden />
+      <h1 className={mfLayout.moduleTitle}>{t("page.title")}</h1>
+      {domains.length > 0 ? (
+        <Badge
+          variant="secondary"
+          className={mfLayout.moduleCount}
+          title={t("page.domainCount", { count: domains.length })}
+        >
+          {domains.length}
+        </Badge>
+      ) : null}
+      {selectedDomain ? (
+        <>
+          <span className="text-text-muted" aria-hidden>
+            /
+          </span>
+          <span className="truncate text-sm text-text-secondary">
+            {referenceDomainLabel(selectedDomain, label)}
+          </span>
+        </>
+      ) : null}
+      {selectedSet &&
+      !synthetic &&
+      !isWorkingCatalogCategory(selectedDomain?.governance_category) ? (
+        <>
+          <span className="text-sm text-text-secondary">
+            {t("editor.version", { version: selectedSet.version_no })}
+          </span>
+          <StatusChip
+            label={label(referenceSetStatusLabelKey(selectedSet.status))}
+            tone={toneOf(REFERENCE_SET_STATUS_TONE, selectedSet.status)}
+          />
+        </>
+      ) : null}
+    </div>
+  );
 
+  let workspace: React.ReactNode;
   if (domainsLoading && domains.length === 0) {
-    return (
-      <div className="flex h-full items-center justify-center">
-        <div className="h-6 w-6 animate-spin rounded-full border-2 border-surface-3 border-t-primary" />
+    workspace = <LoadingState className="flex-1" />;
+  } else if (error && domains.length === 0) {
+    workspace = (
+      <div className="flex-1 p-6">
+        <ErrorState error={error} onRetry={() => void loadDomains()} retrying={domainsLoading} />
       </div>
     );
-  }
-
-  // ── Error state (fatal) ─────────────────────────────────────────────────
-
-  if (error && domains.length === 0) {
-    return (
-      <div className="flex h-full items-center justify-center p-6">
-        <div className="text-center space-y-3">
-          <AlertTriangle className="h-8 w-8 mx-auto text-status-danger" />
-          <p className="text-sm text-status-danger">{error}</p>
-          <Button variant="outline" size="sm" onClick={() => void loadDomains()}>
-            {t("page.retry")}
-          </Button>
-        </div>
+  } else {
+    workspace = (
+      <div className="flex min-h-0 flex-1">
+        <DomainBrowserPanel onCreateDraftSet={(domainId) => void handleCreateDraftSet(domainId)} />
+        <main className="min-w-0 flex-1" aria-label={t("page.valuesPane")}>
+          {synthetic && selectedDomainId != null && selectedSetId != null ? (
+            <SyntheticDomainHost domainId={selectedDomainId} />
+          ) : selectedSetId != null && selectedDomainId != null ? (
+            <ReferenceValueEditor setId={selectedSetId} domainId={selectedDomainId} />
+          ) : (
+            <div className="flex h-full items-center justify-center p-6">
+              <EmptyState
+                icon={<Database className="h-10 w-10" aria-hidden />}
+                title={t("page.emptyState")}
+                description={t("page.emptyStateHint")}
+              />
+            </div>
+          )}
+        </main>
       </div>
     );
   }
 
   return (
-    <div className={mfLayout.moduleRoot}>
-      {/* ── Page header — DI/OT pattern ───────────────────────────────── */}
-      <div className={mfLayout.moduleHeader}>
-        <div className="flex min-w-0 flex-1 items-center gap-3">
-          <Database className={mfLayout.moduleHeaderIcon} />
-
-          {/* Breadcrumb */}
-          <nav className="flex items-center gap-1.5 text-sm min-w-0">
-            <span className="font-semibold text-text-primary">{t("page.title")}</span>
-            {selectedDomain && (
-              <>
-                <Separator orientation="vertical" className="h-4 mx-1" />
-                <span className="text-text-secondary truncate">{selectedDomain.name}</span>
-              </>
-            )}
-            {selectedSet && selectedDomain?.governance_category !== "operational_dictionary" && (
-              <>
-                <Separator orientation="vertical" className="h-4 mx-1" />
-                <span className="text-text-secondary">v{selectedSet.version_no}</span>
-                <Badge
-                  variant={
-                    selectedSet.status === "published"
-                      ? "default"
-                      : selectedSet.status === "draft"
-                        ? "secondary"
-                        : "outline"
-                  }
-                  className="text-[10px] ml-1"
-                >
-                  {t(statusLabelKey(selectedSet.status))}
-                </Badge>
-              </>
-            )}
-          </nav>
-
-          <Badge variant="secondary" className="text-xs shrink-0">
-            {t("page.domainCount", { count: domains.length })}
-          </Badge>
-        </div>
-
-        {/* Action buttons */}
-        <div className={mfLayout.moduleHeaderActions}>
-          {canImportValues ? (
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-1.5"
-              onClick={() => setImportOpen(true)}
-              disabled={
-                !selectedDomainId ||
-                !selectedSetId ||
-                isSyntheticRefSelection(selectedDomainId, selectedSetId)
-              }
-            >
-              <Download className="h-3.5 w-3.5" />
-              {t("page.import")}
-            </Button>
-          ) : null}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleRefresh}
-            disabled={domainsLoading}
-            className="gap-1.5"
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${domainsLoading ? "animate-spin" : ""}`} />
-            {t("page.refresh")}
-          </Button>
-        </div>
-      </div>
-
-      {/* ── Two-pane workspace ─────────────────────────────────────────── */}
-      <div className="flex flex-1 min-h-0">
-        {/* Left pane: domain browser */}
-        <DomainBrowserPanel onCreateDraftSet={(domainId) => void handleCreateDraftSet(domainId)} />
-
-        {/* Right pane: value editor area */}
-        <main className="flex-1 min-w-0">
-          {selectedDomainId === INVENTORY_ARTICLE_FAMILY_DOMAIN_ID &&
-          selectedSetId === INVENTORY_ARTICLE_FAMILY_SET_ID ? (
-            <InventoryArticleFamilyHost />
-          ) : selectedDomainId === INVENTORY_TAX_CATEGORY_DOMAIN_ID &&
-            selectedSetId === INVENTORY_TAX_CATEGORY_SET_ID ? (
-            <InventoryTaxCategoryHost />
-          ) : selectedDomainId === WORK_ORDER_TYPES_DOMAIN_ID &&
-            selectedSetId === WORK_ORDER_TYPES_SET_ID ? (
-            <WorkOrderTypesHost />
-          ) : selectedDomainId === WORK_ORDER_PRIORITIES_DOMAIN_ID &&
-            selectedSetId === WORK_ORDER_PRIORITIES_SET_ID ? (
-            <WorkOrderPrioritiesHost />
-          ) : selectedDomainId === WORK_ORDER_STATUSES_DOMAIN_ID &&
-            selectedSetId === WORK_ORDER_STATUSES_SET_ID ? (
-            <WorkOrderStatusesHost />
-          ) : selectedSetId && selectedDomainId ? (
-            <ReferenceValueEditor setId={selectedSetId} domainId={selectedDomainId} />
-          ) : (
-            <div className="flex h-full items-center justify-center p-6">
-              <div className="text-center space-y-2">
-                <Database className="h-10 w-10 mx-auto text-text-muted/40" />
-                <p className="text-sm text-text-muted">{t("page.emptyState")}</p>
-              </div>
-            </div>
-          )}
-        </main>
-      </div>
-
-      {/* Import wizard */}
-      {selectedDomainId &&
-        selectedSetId &&
-        !isSyntheticRefSelection(selectedDomainId, selectedSetId) && (
-          <ReferenceImportWizard
-            domainId={selectedDomainId}
-            targetSetId={selectedSetId}
-            open={importOpen}
-            onOpenChange={setImportOpen}
-            onComplete={handleRefresh}
-          />
-        )}
-    </div>
+    <ModulePageShell
+      headerLeft={headerLeft}
+      actions={<RefreshButton onRefresh={handleRefresh} loading={domainsLoading} />}
+      bodyClassName={null}
+    >
+      {workspace}
+    </ModulePageShell>
   );
 }

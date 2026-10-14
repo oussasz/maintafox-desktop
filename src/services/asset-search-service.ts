@@ -12,6 +12,7 @@ import type {
   AssetPickerSuggestFilters,
   AssetPickerSuggestions,
   AssetSearchFilters,
+  AssetSearchPage,
   AssetSearchResult,
   AssetSuggestion,
   EquipmentRegistryMetricsPayload,
@@ -63,6 +64,14 @@ export const AssetPickerSuggestionsSchema = z.object({
 export async function searchAssets(filters: AssetSearchFilters): Promise<AssetSearchResult[]> {
   const raw = await invoke<unknown>("search_assets", { filters });
   return z.array(AssetSearchResultSchema).parse(raw) as AssetSearchResult[];
+}
+
+/** One page of the registry list plus the number of assets matching the same filters. */
+export async function searchAssetsPage(filters: AssetSearchFilters): Promise<AssetSearchPage> {
+  const raw = await invoke<unknown>("search_assets_page", { filters });
+  return z
+    .object({ items: z.array(AssetSearchResultSchema), total: z.number() })
+    .parse(raw) as AssetSearchPage;
 }
 
 const EquipmentRegistryMetricCellSchema = z.object({

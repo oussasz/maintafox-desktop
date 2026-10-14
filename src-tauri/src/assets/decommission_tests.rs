@@ -161,6 +161,7 @@ mod tests {
                 rams_utilization_factor: Some(1.0),
                 org_node_id,
                 commissioned_at: None,
+                commercial: None,
             },
             1,
         )

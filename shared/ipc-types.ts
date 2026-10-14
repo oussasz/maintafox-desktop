@@ -1730,6 +1730,8 @@ export interface ReferenceGovernanceCapabilities {
   is_read_only: boolean;
   requires_analytical_protection: boolean;
   set_status: string | null;
+  /** Product-seeded values (`origin: system`) of this domain cannot be edited or deactivated. */
+  system_values_locked: boolean;
 }
 
 export interface CreateReferenceDomainPayload {
@@ -2025,6 +2027,15 @@ export interface Asset {
   org_node_name: string | null;
   commissioned_at: string | null;
   decommissioned_at: string | null;
+  /** Commercial / warranty data (`YYYY-MM-DD`, tenant currency). */
+  purchase_date?: string | null;
+  warranty_expiry_date?: string | null;
+  replacement_value?: number | null;
+  /** Cost centre set on the asset (overrides the location's). */
+  cost_center_code?: string | null;
+  /** Cost centre of the installation location (nearest org node carrying one). */
+  org_cost_center_code?: string | null;
+  notes?: string | null;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -2074,6 +2085,8 @@ export interface CreateAssetPayload {
   rams_utilization_factor?: number | null;
   org_node_id: number;
   commissioned_at?: string | null;
+  /** Commercial / warranty data saved with the asset. */
+  commercial?: AssetCommercialInput | null;
 }
 
 export interface UpdateAssetIdentityPayload {
@@ -2272,6 +2285,12 @@ export interface AssetSearchFilters {
   limit?: number | null;
   /** KPI strip click-to-filter focus. */
   registry_focus?: "status_down" | "critical_at_risk" | "open_work" | "stale_meters" | null;
+  /** Rows to skip (paged registry list). */
+  offset?: number | null;
+  /** Canonical criticality classes A–D. */
+  criticality_codes?: string[] | null;
+  /** When true, `org_node_ids` also matches assets installed below those nodes. */
+  org_subtree?: boolean | null;
 }
 
 export type EquipmentRegistryMetricValueKind = "count" | "percent";
@@ -9701,4 +9720,156 @@ export interface WorkPermitListFilter {
   asset_id?: number;
   linked_work_order_id?: number;
   limit?: number;
+}
+
+// ─── Organization — designer actions (append-only) ────────────────────────────
+
+/** Preview action names: what `preview_org_change` accepts and returns in `OrgImpactPreview.action`. */
+export type OrgPreviewActionName = OrgImpactPreview["action"];
+
+/**
+ * `assign_org_node_responsibility` payload with handover: when `replace_active` is true the
+ * current active assignment of the same type on the node is ended in the same transaction.
+ */
+export interface AssignOrReplaceResponsibilityPayload extends AssignResponsibilityPayload {
+  replace_active: boolean;
+}
+
+// ── Asset registry upgrade (paging, commercial data, maintenance profile, spares, criticality) ──
+
+export interface AssetSearchPage {
+  items: AssetSearchResult[];
+  total: number;
+}
+
+/** Commercial and warranty data; every field is replaced as given (null clears it). */
+export interface AssetCommercialInput {
+  purchase_date: string | null;
+  warranty_expiry_date: string | null;
+  replacement_value: number | null;
+  cost_center_code: string | null;
+  notes: string | null;
+}
+
+export interface AssetCostBreakdown {
+  labor: number;
+  parts: number;
+  services: number;
+  total: number;
+}
+
+export interface AssetYearCost {
+  year: number;
+  total: number;
+  work_order_count: number;
+}
+
+export interface AssetPmPlanLink {
+  id: number;
+  code: string;
+  title: string;
+  lifecycle_status: string;
+  next_due_at: string | null;
+}
+
+export interface AssetMaintenanceProfile {
+  asset_id: number;
+  include_descendants: boolean;
+  asset_count: number;
+  work_order_count: number;
+  open_work_order_count: number;
+  failure_work_order_count: number;
+  planned_work_order_count: number;
+  downtime_hours: number;
+  last_failure_at: string | null;
+  cost_lifetime: AssetCostBreakdown;
+  cost_recent: AssetCostBreakdown;
+  recent_window_months: number;
+  cost_by_year: AssetYearCost[];
+  replacement_value: number | null;
+  cost_to_replacement_ratio: number | null;
+  pm_plans: AssetPmPlanLink[];
+}
+
+export interface AssetSparePart {
+  id: number;
+  asset_id: number;
+  article_id: number;
+  article_code: string;
+  article_name: string;
+  unit_label: string | null;
+  article_is_active: boolean;
+  quantity: number;
+  position_label: string | null;
+  is_critical_spare: boolean;
+  notes: string | null;
+  on_hand_qty: number;
+  available_qty: number;
+  min_stock: number;
+  row_version: number;
+}
+
+export interface SparePartInput {
+  quantity: number;
+  position_label: string | null;
+  is_critical_spare: boolean;
+  notes: string | null;
+}
+
+export interface ArticleAssetUsage {
+  asset_id: number;
+  asset_code: string;
+  asset_name: string;
+  quantity: number;
+  is_critical_spare: boolean;
+}
+
+export interface CriticalityMethod {
+  code: string;
+  score_min: number;
+  score_max: number;
+  class_a_min_risk: number;
+  class_b_min_risk: number;
+  class_c_min_risk: number;
+  hse_override_score: number;
+}
+
+export interface CriticalityScores {
+  safety: number;
+  environment: number;
+  production: number;
+  quality: number;
+  cost: number;
+  likelihood: number;
+}
+
+export interface CriticalityResult {
+  method_code: string;
+  consequence: number;
+  risk_score: number;
+  resulting_class: "A" | "B" | "C" | "D";
+  hse_override: boolean;
+}
+
+export interface CriticalityAssessment {
+  id: number;
+  asset_id: number;
+  method_code: string;
+  safety_score: number;
+  environment_score: number;
+  production_score: number;
+  quality_score: number;
+  cost_score: number;
+  likelihood_score: number;
+  risk_score: number;
+  resulting_class: string;
+  previous_class: string | null;
+  rationale: string | null;
+  assessed_by_name: string | null;
+  assessed_at: string;
+}
+
+export interface AssessCriticalityResult {
+  assessment: CriticalityAssessment;
+  asset: Asset;
 }

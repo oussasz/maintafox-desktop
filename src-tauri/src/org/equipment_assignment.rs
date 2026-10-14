@@ -5,6 +5,8 @@
 //! read and update that column.
 
 use crate::errors::{AppError, AppResult};
+use crate::org::fail::{fail, fail_params};
+use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement};
 use serde::{Deserialize, Serialize};
 
@@ -58,7 +60,7 @@ pub async fn list_equipment_by_node(db: &DatabaseConnection, node_id: i64) -> Ap
             r"SELECT e.id, e.asset_id_code, e.name, e.lifecycle_status,
                      e.installed_at_node_id, NULL AS current_node_name
               FROM equipment e
-              WHERE e.installed_at_node_id = ?
+              WHERE e.installed_at_node_id = ? AND e.deleted_at IS NULL
               ORDER BY e.asset_id_code ASC",
             [node_id.into()],
         ))
@@ -83,7 +85,8 @@ pub async fn search_unassigned_equipment(
               FROM equipment e
               LEFT JOIN org_nodes n ON n.id = e.installed_at_node_id AND n.deleted_at IS NULL
               WHERE (e.asset_id_code LIKE ? OR e.name LIKE ?)
-                AND e.lifecycle_status NOT IN ('decommissioned', 'scrapped')
+                AND e.deleted_at IS NULL
+                AND UPPER(e.lifecycle_status) NOT IN ('DECOMMISSIONED', 'SCRAPPED')
               ORDER BY e.asset_id_code ASC
               LIMIT ?",
             [pattern.clone().into(), pattern.into(), limit.into()],
@@ -96,11 +99,63 @@ pub async fn search_unassigned_equipment(
 pub async fn assign_equipment_to_node(db: &DatabaseConnection, payload: AssignEquipmentPayload) -> AppResult<()> {
     crate::org::model_scope::assert_org_node_active(db, payload.node_id).await?;
 
+    // Only units whose level hosts assets can receive equipment.
+    let hosts_assets = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT t.can_host_assets AS can_host_assets FROM org_nodes n \
+             JOIN org_node_types t ON t.id = n.node_type_id \
+             WHERE n.id = ? AND n.deleted_at IS NULL",
+            [payload.node_id.into()],
+        ))
+        .await?
+        .map(|row| {
+            row.try_get::<i32>("", "can_host_assets").map(|v| v != 0).map_err(|e| {
+                AppError::Internal(anyhow::anyhow!(
+                    "org node type decode failed for column 'can_host_assets': {e}"
+                ))
+            })
+        })
+        .transpose()?
+        .unwrap_or(false);
+    if !hosts_assets {
+        return Err(fail(
+            "ORG_NODE_CANNOT_HOST_ASSETS",
+            "This organization level cannot host equipment.",
+        ));
+    }
+
+    // Retired equipment cannot be placed in the structure.
+    let status = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT lifecycle_status FROM equipment WHERE id = ? AND deleted_at IS NULL",
+            [payload.equipment_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "equipment".to_string(),
+            id: payload.equipment_id.to_string(),
+        })?
+        .try_get::<String>("", "lifecycle_status")
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("equipment row decode: {e}")))?;
+    let status_upper = status.trim().to_ascii_uppercase();
+    if status_upper == "DECOMMISSIONED" || status_upper == "SCRAPPED" {
+        return Err(fail_params(
+            "ORG_EQUIPMENT_RETIRED",
+            format!("Equipment with status '{status}' cannot be assigned to an organization unit."),
+            &[("status", status)],
+        ));
+    }
+
+    // Bump updated_at / row_version like every other equipment write (sync and edit conflicts).
+    let now = Utc::now().to_rfc3339();
     let affected = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "UPDATE equipment SET installed_at_node_id = ? WHERE id = ?",
-            [payload.node_id.into(), payload.equipment_id.into()],
+            "UPDATE equipment SET installed_at_node_id = ?, updated_at = ?, \
+             row_version = row_version + 1 WHERE id = ? AND deleted_at IS NULL",
+            [payload.node_id.into(), now.into(), payload.equipment_id.into()],
         ))
         .await?;
     if affected.rows_affected() == 0 {
@@ -122,8 +177,9 @@ pub async fn unassign_equipment_from_node(db: &DatabaseConnection, equipment_id:
     let affected = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "UPDATE equipment SET installed_at_node_id = NULL WHERE id = ?",
-            [equipment_id.into()],
+            "UPDATE equipment SET installed_at_node_id = NULL, updated_at = ?, \
+             row_version = row_version + 1 WHERE id = ? AND deleted_at IS NULL",
+            [Utc::now().to_rfc3339().into(), equipment_id.into()],
         ))
         .await?;
     if affected.rows_affected() == 0 {

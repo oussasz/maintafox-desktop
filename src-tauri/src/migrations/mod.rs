@@ -170,6 +170,7 @@ mod m20261014_000180_reliability_study_models;
 mod m20261014_000182_pm_windows_fanout_timing;
 mod m20261014_000183_meter_lifetime;
 mod m20261014_000184_inventory_lots_fx_periods_approvals;
+mod m20261014_000185_asset_spares_criticality;
 mod m20261101_000036_activity_audit_log;
 mod m20261201_000037_observability_permissions;
 mod m_test;
@@ -352,6 +353,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261014_000182_pm_windows_fanout_timing::Migration),
             Box::new(m20261014_000183_meter_lifetime::Migration),
             Box::new(m20261014_000184_inventory_lots_fx_periods_approvals::Migration),
+            Box::new(m20261014_000185_asset_spares_criticality::Migration),
             Box::new(m_test::Migration),
         ]
     }

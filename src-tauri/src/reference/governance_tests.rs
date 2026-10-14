@@ -3,9 +3,10 @@
 use crate::reference::domains::ReferenceDomain;
 use crate::reference::governance::{
     allows_create_draft_set, allows_operational_create, allows_publish, allows_value_mutation,
-    assert_allows_operational_create, assert_allows_value_mutation, capabilities_for, category_of,
-    default_is_extendable, derive_category_for_persist, requires_analytical_protection,
-    requires_publish_impact_preview, resolve_category, EnforcementPhase, GovernanceCategory, ACTIVE_ENFORCEMENT_PHASE,
+    assert_allows_operational_create, assert_allows_value_mutation, assert_system_value_mutable, capabilities_for,
+    category_of, default_is_extendable, derive_category_for_persist, metadata_marks_system_origin,
+    requires_analytical_protection, requires_publish_impact_preview, resolve_category, system_values_locked,
+    EnforcementPhase, GovernanceCategory, ACTIVE_ENFORCEMENT_PHASE,
 };
 use crate::reference::sets::ReferenceSet;
 
@@ -41,6 +42,10 @@ fn set_with_status(status: &str) -> ReferenceSet {
 fn known_codes_map_to_philosophy_categories() {
     assert_eq!(
         resolve_category("EQUIPMENT.CLASS", "system_seeded", None),
+        GovernanceCategory::ControlledCatalog
+    );
+    assert_eq!(
+        resolve_category("EQUIPMENT.STATUS", "system_seeded", None),
         GovernanceCategory::SystemCatalog
     );
     assert_eq!(
@@ -113,16 +118,63 @@ fn capabilities_snapshot_for_family_published() {
 }
 
 #[test]
-fn capabilities_snapshot_for_class_is_read_only() {
-    let class = domain("EQUIPMENT.CLASS", "system_seeded", "system_catalog", false);
+fn capabilities_snapshot_for_status_is_read_only() {
+    let status = domain("EQUIPMENT.STATUS", "system_seeded", "system_catalog", false);
     let draft = set_with_status("draft");
-    let caps = capabilities_for(&class, Some(&draft));
+    let caps = capabilities_for(&status, Some(&draft));
     assert!(caps.is_read_only);
     assert!(!caps.can_create_value);
     assert!(!caps.can_create_draft_set);
     assert!(!caps.can_discard_draft_set);
     assert!(!caps.can_publish);
     assert!(!caps.can_operational_create);
+    assert!(caps.system_values_locked);
+}
+
+/// The class catalogue is extended by each plant through draft → publish. A seeder that still
+/// stores `system_catalog` for it must not make it read-only again.
+#[test]
+fn capabilities_snapshot_for_class_is_controlled_and_locks_seeded_values() {
+    let class = domain("EQUIPMENT.CLASS", "system_seeded", "system_catalog", false);
+    assert_eq!(category_of(&class), GovernanceCategory::ControlledCatalog);
+    let draft = set_with_status("draft");
+    let caps = capabilities_for(&class, Some(&draft));
+    assert_eq!(caps.category, "controlled_catalog");
+    assert!(!caps.is_read_only);
+    assert!(caps.can_create_value);
+    assert!(caps.can_update_value);
+    assert!(caps.can_deactivate_value);
+    assert!(caps.can_create_draft_set);
+    assert!(caps.can_discard_draft_set);
+    assert!(caps.can_publish);
+    assert!(!caps.can_operational_create);
+    assert!(caps.system_values_locked);
+    let published = set_with_status("published");
+    let caps_pub = capabilities_for(&class, Some(&published));
+    assert!(!caps_pub.can_create_value);
+    assert!(caps_pub.can_create_draft_set);
+}
+
+#[test]
+fn seeded_values_of_locked_domains_are_protected() {
+    let class = domain("EQUIPMENT.CLASS", "system_seeded", "controlled_catalog", false);
+    assert!(assert_system_value_mutable(&class, Some(r#"{"origin":"system"}"#)).is_err());
+    assert!(assert_system_value_mutable(&class, None).is_ok());
+    assert!(assert_system_value_mutable(&class, Some(r#"{"origin":"tenant"}"#)).is_ok());
+    // Domains without integrity-owned values keep their seeded rows editable.
+    let symptom = domain("DI.SYMPTOM", "tenant_managed", "operational_dictionary", true);
+    assert!(!system_values_locked(&symptom));
+    assert!(assert_system_value_mutable(&symptom, Some(r#"{"origin":"system"}"#)).is_ok());
+    assert!(metadata_marks_system_origin(Some(r#"{"origin":"system","x":1}"#)));
+    assert!(!metadata_marks_system_origin(Some("not json")));
+}
+
+#[test]
+fn stored_category_still_applies_to_tenant_domains() {
+    assert_eq!(
+        resolve_category("PLANT.LOCAL", "tenant_managed", Some("controlled_catalog")),
+        GovernanceCategory::ControlledCatalog
+    );
 }
 
 #[test]
@@ -156,7 +208,7 @@ fn analytical_protection_matches_legacy_protected_analytical() {
     assert!(requires_analytical_protection(&di_priority));
     assert!(requires_publish_impact_preview(&di_priority));
 
-    let class = domain("EQUIPMENT.CLASS", "system_seeded", "system_catalog", false);
+    let class = domain("EQUIPMENT.CLASS", "system_seeded", "controlled_catalog", false);
     assert!(!requires_analytical_protection(&class));
 }
 
@@ -170,10 +222,10 @@ fn assert_operational_create_family_ok_class_rejected() {
 }
 
 #[test]
-fn assert_value_mutation_class_rejected_even_on_draft() {
-    let class = domain("EQUIPMENT.CLASS", "system_seeded", "system_catalog", false);
+fn assert_value_mutation_system_catalog_rejected_even_on_draft() {
+    let criticality = domain("EQUIPMENT.CRITICALITY", "system_seeded", "system_catalog", false);
     let draft = set_with_status("draft");
-    let err = assert_allows_value_mutation(&class, &draft).expect_err("A read-only");
+    let err = assert_allows_value_mutation(&criticality, &draft).expect_err("A read-only");
     match err {
         crate::errors::AppError::ValidationFailed(msgs) => {
             let joined = msgs.join(" ");

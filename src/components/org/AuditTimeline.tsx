@@ -78,9 +78,11 @@ export function AuditTimeline() {
           size="sm"
           onClick={() => void loadAuditEvents()}
           disabled={auditLoading}
-          className="h-7 w-7 p-0"
+          className="h-9 w-9 p-0"
+          aria-label={t("governance.refreshTimeline")}
+          title={t("governance.refreshTimeline")}
         >
-          <RefreshCw className={`h-3.5 w-3.5 ${auditLoading ? "animate-spin" : ""}`} />
+          <RefreshCw className={`h-4 w-4 ${auditLoading ? "animate-spin" : ""}`} aria-hidden />
         </Button>
       </div>
 
