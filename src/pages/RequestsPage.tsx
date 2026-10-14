@@ -8,16 +8,7 @@
  */
 
 import type { ColumnDef } from "@tanstack/react-table";
-import {
-  BarChart3,
-  CalendarDays,
-  ClipboardList,
-  Columns3,
-  Filter,
-  List,
-  Plus,
-  RefreshCw,
-} from "lucide-react";
+import { BarChart3, CalendarDays, ClipboardList, Columns3, List, Plus } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router-dom";
@@ -37,24 +28,26 @@ import { DiReturnDialog } from "@/components/di/DiReturnDialog";
 import { DiReviewPanel } from "@/components/di/DiReviewPanel";
 import { DiSlaRulesPanel } from "@/components/di/DiSlaRulesPanel";
 import { DI_DISPOSITION_FILTER_CODES } from "@/components/di/disposition-meta";
-import { DI_STATUS_STYLE, diStatusToI18nKey } from "@/components/di/status-meta";
+import { diStatusToI18nKey } from "@/components/di/status-meta";
 import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
 import type { SmartFilterDef } from "@/components/filters/smart-filter-types";
-import { Badge } from "@/components/ui/badge";
+import {
+  FilterToggleButton,
+  RefreshButton,
+  type ViewOption,
+  ViewToggle,
+} from "@/components/layout/ModuleHeaderControls";
+import { ModulePageShell } from "@/components/layout/ModulePageShell";
 import { Button } from "@/components/ui/button";
+import { ErrorState, TruncationNotice } from "@/components/ui/data-state";
+import { StatusChip } from "@/components/ui/status-chip";
 import { mfLayout } from "@/design-system/tokens";
+import { DI_STATUS_TONE, DI_URGENCY_TONE, toneOf } from "@/design-system/tone";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useDiStore } from "@/stores/di-store";
 import { formatDate as formatDiDate, intlLocaleForLanguage } from "@/utils/format-date";
 import type { InterventionRequest } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
-
-const URGENCY_STYLE: Record<string, string> = {
-  low: "bg-green-100 text-green-800",
-  medium: "bg-yellow-100 text-yellow-800",
-  high: "bg-orange-100 text-orange-800",
-  critical: "bg-red-100 text-red-700",
-};
 
 type ViewMode = "list" | "kanban" | "calendar" | "dashboard";
 
@@ -77,8 +70,11 @@ export function RequestsPage() {
   const items = useDiStore((s) => s.items);
   const total = useDiStore((s) => s.total);
   const loading = useDiStore((s) => s.loading);
+  const loadingMore = useDiStore((s) => s.loadingMore);
+  const listError = useDiStore((s) => s.listError);
   const activeDi = useDiStore((s) => s.activeDi);
   const loadDis = useDiStore((s) => s.loadDis);
+  const loadMoreDis = useDiStore((s) => s.loadMoreDis);
   const openDi = useDiStore((s) => s.openDi);
   const closeDi = useDiStore((s) => s.closeDi);
   const openCreateForm = useDiStore((s) => s.openCreateForm);
@@ -165,7 +161,7 @@ export function RequestsPage() {
 
   const STATUS_OPTIONS = useMemo(
     () =>
-      Object.keys(DI_STATUS_STYLE).map((code) => ({
+      Object.keys(DI_STATUS_TONE).map((code) => ({
         value: code,
         label: t(`status.${diStatusToI18nKey(code)}` as const),
       })),
@@ -376,11 +372,7 @@ export function RequestsPage() {
         cell: ({ row }) => (
           <span className="font-mono text-xs inline-flex items-center gap-1.5 flex-wrap">
             {row.original.code}
-            {row.original.is_modified && (
-              <Badge className="bg-amber-100 text-amber-800 border-0 text-[9px] px-1 py-0">
-                {t("review.modified")}
-              </Badge>
-            )}
+            {row.original.is_modified && <StatusChip label={t("review.modified")} tone="warning" />}
             <LinkedEntityBadge
               entity="work_order"
               code={row.original.converted_to_wo_code}
@@ -399,17 +391,26 @@ export function RequestsPage() {
         ),
       },
       {
+        id: "equipment",
+        accessorFn: (di) => di.asset_label ?? di.asset_code ?? "",
+        header: t("list.columns.equipment"),
+        cell: ({ row }) => (
+          <span className="text-xs text-text-muted">
+            {row.original.asset_label ?? row.original.asset_code ?? "—"}
+          </span>
+        ),
+      },
+      {
         accessorKey: "status",
         header: t("list.columns.status"),
         cell: ({ row }) => {
           const s = row.original.status;
           return (
-            <Badge
-              variant="outline"
-              className={`text-[10px] border-0 ${DI_STATUS_STYLE[s] ?? "bg-gray-100 text-gray-600"}`}
-            >
-              {t(`status.${diStatusToI18nKey(s)}` as const)}
-            </Badge>
+            <StatusChip
+              label={t(`status.${diStatusToI18nKey(s)}` as const)}
+              tone={toneOf(DI_STATUS_TONE, s)}
+              dot
+            />
           );
         },
       },
@@ -418,11 +419,7 @@ export function RequestsPage() {
         header: t("list.columns.priority"),
         cell: ({ row }) => {
           const u = row.original.reported_urgency;
-          return (
-            <Badge variant="outline" className={`text-[10px] border-0 ${URGENCY_STYLE[u] ?? ""}`}>
-              {t(`priority.${u}`)}
-            </Badge>
-          );
+          return <StatusChip label={t(`priority.${u}`)} tone={toneOf(DI_URGENCY_TONE, u)} />;
         },
       },
       {
@@ -445,141 +442,100 @@ export function RequestsPage() {
     [t, dateLocale],
   );
 
-  return (
-    <div className={mfLayout.moduleRoot}>
-      {/* ── Page header ──────────────────────────────────────────────── */}
-      <div className={mfLayout.moduleHeader}>
-        <div className={mfLayout.moduleTitleRow}>
-          <ClipboardList className={mfLayout.moduleHeaderIcon} />
-          <h1 className={mfLayout.moduleTitle}>{t("page.title")}</h1>
-          <Badge variant="secondary" className="text-xs">
-            {total}
-          </Badge>
-        </div>
+  const viewOptions: ViewOption<ViewMode>[] = [
+    { value: "list", label: t("page.viewList"), icon: List },
+    { value: "kanban", label: t("page.viewKanban"), icon: Columns3 },
+    { value: "calendar", label: t("page.viewCalendar"), icon: CalendarDays },
+    { value: "dashboard", label: t("page.viewDashboard"), icon: BarChart3 },
+  ];
+  const activeFilterCount = [statusFilter, priorityFilter, dispositionFilter].filter(
+    Boolean,
+  ).length;
+  const showListError = listError != null && items.length === 0;
+  const recordView = view === "list" || view === "kanban" || view === "calendar";
 
-        <div className={mfLayout.moduleHeaderActions}>
-          {/* New DI button */}
+  return (
+    <ModulePageShell
+      icon={ClipboardList}
+      title={t("page.title")}
+      count={total}
+      bodyClassName={null}
+      actions={
+        <>
           <PermissionGate permission={P.DI_CREATE}>
-            <Button size="sm" onClick={() => openCreateForm()} className="gap-1.5">
-              <Plus className="h-3.5 w-3.5" />
+            <Button onClick={() => openCreateForm()} className={mfLayout.primaryAction}>
+              <Plus className="h-4 w-4" aria-hidden />
               {t("action.create")}
             </Button>
           </PermissionGate>
-
-          {/* View toggle */}
-          <div className={mfLayout.viewToggleGroup}>
-            <Button
-              variant={view === "list" ? "default" : "ghost"}
-              size="sm"
-              className={mfLayout.viewToggleButton}
-              onClick={() => switchView("list")}
-              title={t("page.viewList")}
-            >
-              <List className="h-3.5 w-3.5" />
-            </Button>
-            <Button
-              variant={view === "kanban" ? "default" : "ghost"}
-              size="sm"
-              className={mfLayout.viewToggleButton}
-              onClick={() => switchView("kanban")}
-              title={t("page.viewKanban")}
-            >
-              <Columns3 className="h-3.5 w-3.5" />
-            </Button>
-            <Button
-              variant={view === "calendar" ? "default" : "ghost"}
-              size="sm"
-              className={mfLayout.viewToggleButton}
-              onClick={() => switchView("calendar")}
-              title={t("page.viewCalendar")}
-            >
-              <CalendarDays className="h-3.5 w-3.5" />
-            </Button>
-            <Button
-              variant={view === "dashboard" ? "default" : "ghost"}
-              size="sm"
-              className={mfLayout.viewToggleButton}
-              onClick={() => switchView("dashboard")}
-              title={t("page.viewDashboard")}
-            >
-              <BarChart3 className="h-3.5 w-3.5" />
-            </Button>
-          </div>
-
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={toggleFilters}
-            title={t("page.filterSettings")}
-            className="gap-1.5"
-          >
-            <Filter className="h-3.5 w-3.5" />
-          </Button>
-
+          <ViewToggle value={view} options={viewOptions} onChange={switchView} />
+          <FilterToggleButton
+            open={showFilters}
+            onToggle={toggleFilters}
+            activeCount={activeFilterCount}
+          />
           {can(P.DI_ADMIN) && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setSlaOpen(true)}
-              title={t("sla.title")}
-              className="gap-1.5"
-            >
+            <Button variant="outline" className="h-11" onClick={() => setSlaOpen(true)}>
               {t("sla.title")}
             </Button>
           )}
-
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => void loadDis()}
-            disabled={loading}
-            className="gap-1.5"
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-          </Button>
+          <RefreshButton onRefresh={() => void loadDis()} loading={loading} />
+        </>
+      }
+      filterBar={
+        <>
+          {showFilters && (
+            <SmartFilterBar
+              searchPlaceholder={t("search.placeholder")}
+              searchValue={searchInput}
+              onSearchInputChange={setSearchInput}
+              onSearchChange={onSearchChange}
+              filters={filterDefs}
+              resultCount={total}
+              onReset={resetFilters}
+            />
+          )}
+          {/* Review queue (approvers only) */}
+          <PermissionGate anyOf={[P.DI_SCREEN, P.DI_REVIEW]}>
+            <DiReviewPanel />
+          </PermissionGate>
+        </>
+      }
+    >
+      {recordView && showListError ? (
+        <div className="p-4">
+          <ErrorState error={listError} onRetry={() => void loadDis()} retrying={loading} />
         </div>
-      </div>
-
-      {showFilters && (
-        <SmartFilterBar
-          searchPlaceholder={t("search.placeholder")}
-          searchValue={searchInput}
-          onSearchInputChange={setSearchInput}
-          onSearchChange={onSearchChange}
-          filters={filterDefs}
-          resultCount={items.length}
-          onReset={resetFilters}
-        />
+      ) : null}
+      {recordView && !showListError && items.length < total ? (
+        <div className="px-4 pt-3">
+          <TruncationNotice
+            shown={items.length}
+            total={total}
+            onLoadMore={() => void loadMoreDis()}
+            loadingMore={loadingMore}
+          />
+        </div>
+      ) : null}
+      {view === "list" && !showListError && (
+        <div className="p-4">
+          <DataTable
+            columns={columns}
+            data={items}
+            pageSize={20}
+            isLoading={loading}
+            skeletonRows={8}
+            onRowClick={(row) => void openDi(row.id)}
+          />
+        </div>
       )}
-
-      {/* ── Review panel (approvers only) ────────────────────────── */}
-      <PermissionGate anyOf={[P.DI_SCREEN, P.DI_REVIEW]}>
-        <DiReviewPanel />
-      </PermissionGate>
-
-      {/* ── Main workspace ───────────────────────────────────────────── */}
-      <div className={mfLayout.moduleWorkspace}>
-        <div className={mfLayout.moduleWorkspaceInner}>
-          {view === "list" && (
-            <div className="p-4">
-              <DataTable
-                columns={columns}
-                data={items}
-                searchable
-                pageSize={20}
-                isLoading={loading}
-                skeletonRows={8}
-                onRowClick={(row) => void openDi(row.id)}
-              />
-            </div>
-          )}
-          {view === "kanban" && <DiKanbanBoard items={items} onCardClick={handleCardClick} />}
-          {view === "calendar" && (
-            <DiCalendarView items={items} onChipClick={(di) => void openDi(di.id)} />
-          )}
-          {view === "dashboard" && <DiDashboardView />}
-        </div>
-      </div>
+      {view === "kanban" && !showListError && (
+        <DiKanbanBoard items={items} onCardClick={handleCardClick} />
+      )}
+      {view === "calendar" && !showListError && (
+        <DiCalendarView items={items} onChipClick={(di) => void openDi(di.id)} />
+      )}
+      {view === "dashboard" && <DiDashboardView />}
 
       {/* ── Archive section (collapsible) ─────────────────────────────── */}
       <DiArchivePanel refreshKey={archiveRefreshKey} onRowClick={(di) => void openDi(di.id)} />
@@ -600,6 +556,6 @@ export function RequestsPage() {
       <DiReturnDialog />
 
       {can(P.DI_ADMIN) && <DiSlaRulesPanel open={slaOpen} onClose={() => setSlaOpen(false)} />}
-    </div>
+    </ModulePageShell>
   );
 }

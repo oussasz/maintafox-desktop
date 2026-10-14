@@ -42,7 +42,7 @@ import type {
   WorkOrder,
 } from "@shared/ipc-types";
 
-import { useWoStore } from "../wo-store";
+import { useWoStore, WO_LIST_PAGE_SIZE } from "../wo-store";
 
 vi.mock("@/services/wo-service", async (importOriginal) => {
   const actual = await importOriginal<typeof WoService>();
@@ -238,7 +238,7 @@ describe("wo-store", () => {
     expect(s.createPrefillEquipmentId).toBeNull();
     expect(s.showCompletionDialog).toBe(false);
     expect(s.completionErrors).toEqual([]);
-    expect(s.filter).toEqual({ limit: 50, offset: 0 });
+    expect(s.filter).toEqual({ limit: WO_LIST_PAGE_SIZE, offset: 0 });
     expect(s.loading).toBe(false);
     expect(s.saving).toBe(false);
     expect(s.error).toBeNull();
@@ -252,7 +252,7 @@ describe("wo-store", () => {
       setFilter({ status_codes: ["draft"] });
       setFilter({ search: "pump", offset: 50 });
       expect(useWoStore.getState().filter).toEqual({
-        limit: 50,
+        limit: WO_LIST_PAGE_SIZE,
         offset: 50,
         status_codes: ["draft"],
         search: "pump",
@@ -262,7 +262,7 @@ describe("wo-store", () => {
     it("does not mutate the shared default filter object across resets", () => {
       useWoStore.getState().setFilter({ offset: 100 });
       useWoStore.setState(initial, true);
-      expect(useWoStore.getState().filter).toEqual({ limit: 50, offset: 0 });
+      expect(useWoStore.getState().filter).toEqual({ limit: WO_LIST_PAGE_SIZE, offset: 0 });
     });
   });
 
@@ -280,7 +280,7 @@ describe("wo-store", () => {
       d.resolve({ items: [makeWo(), makeWo({ id: 2 })], total: 7 });
       await p;
 
-      expect(listWos).toHaveBeenCalledWith({ limit: 50, offset: 0, search: "seal" });
+      expect(listWos).toHaveBeenCalledWith({ limit: WO_LIST_PAGE_SIZE, offset: 0, search: "seal" });
       const s = useWoStore.getState();
       expect(s.items).toHaveLength(2);
       expect(s.total).toBe(7);
@@ -296,9 +296,51 @@ describe("wo-store", () => {
 
       const s = useWoStore.getState();
       expect(s.error).toBe("list failed");
+      expect(s.listError).toEqual({ code: "DB", message: "list failed" });
       expect(s.items).toBe(previous);
       expect(s.total).toBe(1);
       expect(s.loading).toBe(false);
+    });
+
+    it("always reloads from the first page, whatever offset the filter holds", async () => {
+      useWoStore.getState().setFilter({ offset: 400 });
+      await useWoStore.getState().loadWos();
+      expect(listWos).toHaveBeenCalledWith({ limit: WO_LIST_PAGE_SIZE, offset: 0 });
+    });
+  });
+
+  describe("loadMoreWos", () => {
+    it("appends the next page after the items already loaded, skipping duplicates", async () => {
+      useWoStore.setState({ items: [makeWo({ id: 1 }), makeWo({ id: 2 })], total: 4 });
+      vi.mocked(listWos).mockResolvedValueOnce({
+        items: [makeWo({ id: 2 }), makeWo({ id: 3 }), makeWo({ id: 4 })],
+        total: 4,
+      });
+
+      await useWoStore.getState().loadMoreWos();
+
+      expect(listWos).toHaveBeenCalledWith({ limit: WO_LIST_PAGE_SIZE, offset: 2 });
+      const s = useWoStore.getState();
+      expect(s.items.map((w) => w.id)).toEqual([1, 2, 3, 4]);
+      expect(s.loadingMore).toBe(false);
+    });
+
+    it("does nothing when every record is already loaded", async () => {
+      useWoStore.setState({ items: [makeWo({ id: 1 })], total: 1 });
+      await useWoStore.getState().loadMoreWos();
+      expect(listWos).not.toHaveBeenCalled();
+    });
+
+    it("keeps the loaded pages when the next page fails", async () => {
+      const loaded = [makeWo({ id: 1 })];
+      useWoStore.setState({ items: loaded, total: 3 });
+      vi.mocked(listWos).mockRejectedValueOnce({ code: "DB", message: "boom" });
+
+      await useWoStore.getState().loadMoreWos();
+
+      const s = useWoStore.getState();
+      expect(s.items).toBe(loaded);
+      expect(s.loadingMore).toBe(false);
     });
 
     it("keeps the list of the latest filter when an older list answers last", async () => {

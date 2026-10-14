@@ -21,7 +21,7 @@ import {
   resolveDiOriginLabel,
   useDiReferenceLabels,
 } from "@/components/di/di-reference-labels";
-import { DI_STATUS_STYLE, diStatusToI18nKey } from "@/components/di/status-meta";
+import { DI_STATUS_STYLE, DI_URGENCY_STYLE, diStatusToI18nKey } from "@/components/di/status-meta";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -47,13 +47,6 @@ import type { InterventionRequest } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
-
-const URGENCY_STYLE: Record<string, string> = {
-  critical: "bg-red-100 text-red-700",
-  high: "bg-orange-100 text-orange-800",
-  medium: "bg-yellow-100 text-yellow-800",
-  low: "bg-green-100 text-green-800",
-};
 
 function esc(v: string): string {
   return v
@@ -390,7 +383,7 @@ export function DiApprovalDialog() {
                   </Badge>
                   <Badge
                     variant="outline"
-                    className={`text-[10px] border-0 ${URGENCY_STYLE[di.reported_urgency] ?? ""}`}
+                    className={`text-[10px] border-0 ${DI_URGENCY_STYLE[di.reported_urgency] ?? ""}`}
                   >
                     {t(`priority.${di.reported_urgency}`)}
                   </Badge>

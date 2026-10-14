@@ -111,7 +111,7 @@
     "dangerousAction": "This is a sensitive action and requires confirmation. Continue?"
   },
   "pagination": {
-    "showing": "Showing {{from}}\u2013{{to}} of {{total}}",
+    "showing": "Showing {{from}}–{{to}} of {{total}}",
     "firstPage": "First page",
     "lastPage": "Last page",
     "nextPage": "Next page",
@@ -186,6 +186,36 @@
       "exportFailedTitle": "Export failed",
       "printStartedTitle": "Print started",
       "printStartedDescription": "The label was sent to the printer."
+    }
+  },
+  "ds": {
+    "state": {
+      "loading": "Loading…",
+      "loadErrorTitle": "This content could not be loaded",
+      "retry": "Try again",
+      "technicalDetails": "Technical details",
+      "truncated": "Showing {{shown}} of {{total}}.",
+      "loadMore": "Load more"
+    },
+    "view": {
+      "label": "Display",
+      "list": "List",
+      "kanban": "Board",
+      "calendar": "Calendar",
+      "dashboard": "Dashboard"
+    },
+    "toolbar": {
+      "showFilters": "Show filters",
+      "hideFilters": "Hide filters",
+      "refresh": "Refresh",
+      "refreshing": "Refreshing…"
+    },
+    "confirm": {
+      "title": "Please confirm",
+      "cancel": "Cancel"
+    },
+    "kpi": {
+      "open": "Open the list"
     }
   }
 }

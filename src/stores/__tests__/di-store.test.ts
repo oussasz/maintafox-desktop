@@ -10,7 +10,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { mockInvoke } from "@/test/mocks/tauri";
 import type { InterventionRequest } from "@shared/ipc-types";
 
-import { useDiStore } from "../di-store";
+import { DI_LIST_PAGE_SIZE, useDiStore } from "../di-store";
 
 // ── Fixture ───────────────────────────────────────────────────────────────────
 
@@ -65,8 +65,10 @@ function resetStore() {
     activeDi: null,
     filter: { limit: 50, offset: 0 },
     loading: false,
+    loadingMore: false,
     saving: false,
     error: null,
+    listError: null,
   });
 }
 
@@ -231,5 +233,59 @@ describe("di-store — Supervisor Verification S3", () => {
     expect(result.code).toBe("DI-0003");
     expect(useDiStore.getState().items).toHaveLength(2);
     expect(useDiStore.getState().saving).toBe(false);
+  });
+});
+
+describe("di-store — paging and load errors", () => {
+  it("loads pages of DI_LIST_PAGE_SIZE from the first record", async () => {
+    useDiStore.setState({ filter: { limit: DI_LIST_PAGE_SIZE, offset: 400 } });
+    mockInvoke.mockResolvedValueOnce({ items: [makeDi()], total: 1 });
+
+    await useDiStore.getState().loadDis();
+
+    const [, args] = mockInvoke.mock.calls[0] as [string, { filter: Record<string, unknown> }];
+    expect(args.filter).toMatchObject({ limit: DI_LIST_PAGE_SIZE, offset: 0 });
+  });
+
+  it("appends the next page and skips records already loaded", async () => {
+    useDiStore.setState({
+      items: [makeDi({ id: 1 }), makeDi({ id: 2, code: "DI-0002" })],
+      total: 3,
+    });
+    mockInvoke.mockResolvedValueOnce({
+      items: [makeDi({ id: 2, code: "DI-0002" }), makeDi({ id: 3, code: "DI-0003" })],
+      total: 3,
+    });
+
+    await useDiStore.getState().loadMoreDis();
+
+    const [, args] = mockInvoke.mock.calls[0] as [string, { filter: Record<string, unknown> }];
+    expect(args.filter).toMatchObject({ offset: 2 });
+    expect(useDiStore.getState().items.map((d) => d.id)).toEqual([1, 2, 3]);
+    expect(useDiStore.getState().loadingMore).toBe(false);
+  });
+
+  it("keeps the raw failure for the error state and stops loading", async () => {
+    mockInvoke.mockRejectedValueOnce({ code: "DATABASE_ERROR", message: "disk I/O error" });
+
+    await useDiStore.getState().loadDis();
+
+    const s = useDiStore.getState();
+    expect(s.listError).toEqual({ code: "DATABASE_ERROR", message: "disk I/O error" });
+    expect(s.loading).toBe(false);
+  });
+
+  it("keeps the list of the latest load when an older load answers last", async () => {
+    let resolveOlder!: (v: unknown) => void;
+    mockInvoke
+      .mockReturnValueOnce(new Promise((r) => (resolveOlder = r)))
+      .mockResolvedValueOnce({ items: [makeDi({ id: 7, code: "DI-0007" })], total: 1 });
+
+    const older = useDiStore.getState().loadDis();
+    await useDiStore.getState().loadDis();
+    resolveOlder({ items: [makeDi({ id: 1 }), makeDi({ id: 2, code: "DI-0002" })], total: 2 });
+    await older;
+
+    expect(useDiStore.getState().items.map((d) => d.id)).toEqual([7]);
   });
 });

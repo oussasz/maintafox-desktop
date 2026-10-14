@@ -39,8 +39,9 @@ import { useDiReferenceLabels } from "@/components/di/di-reference-labels";
 import { dispositionLabelKey } from "@/components/di/disposition-meta";
 import {
   DI_STATUS_STYLE,
-  TERMINAL_DI_STATES,
+  DI_URGENCY_STYLE,
   diStatusToI18nKey,
+  TERMINAL_DI_STATES,
 } from "@/components/di/status-meta";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -67,13 +68,6 @@ import { useDiStore } from "@/stores/di-store";
 import { formatDate as formatDiDate, intlLocaleForLanguage } from "@/utils/format-date";
 import type { DiSlaStatus, DiTransitionRow, InterventionRequest } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
-
-const URGENCY_STYLE: Record<string, string> = {
-  low: "bg-green-100 text-green-800",
-  medium: "bg-yellow-100 text-yellow-800",
-  high: "bg-orange-100 text-orange-800",
-  critical: "bg-red-100 text-red-700",
-};
 
 // ── Props ───────────────────────────────────────────────────────────────────
 
@@ -357,7 +351,7 @@ export function DiDetailDialog({ di, transitions, open, onClose }: DiDetailDialo
                 value={
                   <Badge
                     variant="outline"
-                    className={`text-[10px] border-0 ${URGENCY_STYLE[di.reported_urgency] ?? ""}`}
+                    className={`text-[10px] border-0 ${DI_URGENCY_STYLE[di.reported_urgency] ?? ""}`}
                   >
                     {t(`priority.${di.reported_urgency}`)}
                   </Badge>

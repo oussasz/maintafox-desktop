@@ -4,10 +4,10 @@
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 
 import { i18n } from "@/i18n/config";
-import { formatOrgIssuesWithI18n } from "@/lib/format-org-validation-issue";
+import { describeAppError } from "@/lib/app-error";
 import { pushAppToast } from "@/store/app-toast-store";
 import { useAuthInterceptorStore } from "@/store/auth-interceptor-store";
-import { extractIpcValidationDetails, formatOrgIpcError, toErrorMessage } from "@/utils/errors";
+import { toErrorMessage } from "@/utils/errors";
 
 /** Commands invoked during bootstrap where a toast would be noisy or misleading. */
 const SILENT_IPC_COMMANDS = new Set(["health_check", "get_app_info", "get_task_status"]);
@@ -206,32 +206,7 @@ function notifyInvokeFailure(cmd: string, err: unknown): void {
     return;
   }
 
-  const i18nKey = code ? `errors:appError.${code}` : "";
-  const gateCodeMatch = rawMsg.match(/(GATE_[A-Z0-9_]+)(?::[A-Za-z0-9_=,\-./]+)?/);
-  const gateCode = gateCodeMatch?.[1] ?? "";
-  const gateI18nKey = gateCode ? `errors:gateError.${gateCode}` : "";
-  const title =
-    gateI18nKey && i18n.exists(gateI18nKey)
-      ? String(i18n.t(gateI18nKey))
-      : i18nKey && i18n.exists(i18nKey)
-        ? String(i18n.t(i18nKey))
-        : rawMsg;
-
-  const details = extractIpcValidationDetails(err);
-  const coded = details.filter((d) => d.code);
-  let desc: string | null = null;
-  if (coded.length > 0) {
-    desc = formatOrgIssuesWithI18n(coded);
-  } else if (details.length > 0) {
-    desc = details.map((d) => d.message).join("; ");
-  } else if (title !== rawMsg && rawMsg) {
-    desc = formatOrgIpcError(err);
-  }
-
-  // Avoid duplicating the same text in title and description.
-  if (desc && desc === title) {
-    desc = null;
-  }
+  const { title, description: desc } = describeAppError(err);
 
   pushAppToast({
     title,

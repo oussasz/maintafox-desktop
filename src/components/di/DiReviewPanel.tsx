@@ -23,6 +23,7 @@ import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 
 import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
+import { DI_URGENCY_STYLE } from "@/components/di/status-meta";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -42,13 +43,6 @@ const URGENCY_ORDER: Record<string, number> = {
   high: 3,
   medium: 2,
   low: 1,
-};
-
-const URGENCY_STYLE: Record<string, string> = {
-  critical: "bg-red-100 text-red-700",
-  high: "bg-orange-100 text-orange-800",
-  medium: "bg-yellow-100 text-yellow-800",
-  low: "bg-green-100 text-green-800",
 };
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -257,7 +251,7 @@ function ReviewRow({
       {/* Priority */}
       <Badge
         variant="outline"
-        className={`text-[10px] border-0 shrink-0 ${URGENCY_STYLE[di.reported_urgency] ?? ""}`}
+        className={`text-[10px] border-0 shrink-0 ${DI_URGENCY_STYLE[di.reported_urgency] ?? ""}`}
       >
         {t(`priority.${di.reported_urgency}`)}
       </Badge>

@@ -6,6 +6,7 @@ import { AlertTriangle, Loader2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { DI_URGENCY_STYLE } from "@/components/di/status-meta";
 import { ReferenceCombobox } from "@/components/reference/ReferenceCombobox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -28,13 +29,6 @@ import { useDiStore } from "@/stores/di-store";
 import type { InterventionRequest } from "@shared/ipc-types";
 
 const CONVERT_ONLY_DISPOSITIONS = ["converted_to_wo"] as const;
-
-const URGENCY_STYLE: Record<string, string> = {
-  critical: "bg-red-100 text-red-700",
-  high: "bg-orange-100 text-orange-800",
-  medium: "bg-yellow-100 text-yellow-800",
-  low: "bg-green-100 text-green-800",
-};
 
 function RelatedDiPicker({
   valueCode,
@@ -251,7 +245,7 @@ export function DiCloseDialog() {
             <span className="font-semibold truncate">{di.title}</span>
             <Badge
               variant="outline"
-              className={`text-[10px] border-0 ml-auto ${URGENCY_STYLE[di.reported_urgency] ?? ""}`}
+              className={`text-[10px] border-0 ml-auto ${DI_URGENCY_STYLE[di.reported_urgency] ?? ""}`}
             >
               {t(`priority.${di.reported_urgency}`)}
             </Badge>

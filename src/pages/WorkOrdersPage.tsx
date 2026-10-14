@@ -11,11 +11,9 @@ import {
   BarChart3,
   CalendarDays,
   Columns3,
-  Filter,
   List,
   MoreHorizontal,
   Plus,
-  RefreshCw,
   Shield,
   Wrench,
 } from "lucide-react";
@@ -27,8 +25,16 @@ import { PermissionGate } from "@/components/PermissionGate";
 import { DataTable } from "@/components/data/DataTable";
 import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
 import type { SmartFilterDef } from "@/components/filters/smart-filter-types";
-import { Badge } from "@/components/ui/badge";
+import {
+  FilterToggleButton,
+  RefreshButton,
+  type ViewOption,
+  ViewToggle,
+} from "@/components/layout/ModuleHeaderControls";
+import { ModulePageShell } from "@/components/layout/ModulePageShell";
 import { Button } from "@/components/ui/button";
+import { ErrorState, TruncationNotice } from "@/components/ui/data-state";
+import { StatusChip } from "@/components/ui/status-chip";
 import { WoArchivePanel } from "@/components/wo/WoArchivePanel";
 import { WoCalendarView } from "@/components/wo/WoCalendarView";
 import { WoCancelDialog } from "@/components/wo/WoCancelDialog";
@@ -41,17 +47,31 @@ import { WoIntegrityWorkbench } from "@/components/wo/WoIntegrityWorkbench";
 import { WoKanbanView } from "@/components/wo/WoKanbanView";
 import { printWoFiche } from "@/components/wo/WoPrintFiche";
 import { mfLayout } from "@/design-system/tokens";
+import { WO_STATUS_TONE, toneOf } from "@/design-system/tone";
+import { usePermissions } from "@/hooks/use-permissions";
 import { useWoStore } from "@/stores/wo-store";
 import { useWorkOrderPrioritiesCatalog } from "@/stores/work-order-priorities-catalog-store";
 import { useWorkOrderTypesCatalog } from "@/stores/work-order-types-catalog-store";
 import { toErrorMessage } from "@/utils/errors";
 import { formatDate } from "@/utils/format-date";
-import { isWoLifecycleState, WO_LIFECYCLE_STATES } from "@/utils/wo-lifecycle";
-import { STATUS_STYLE, statusToI18nKey } from "@/utils/wo-status";
+import { WO_LIFECYCLE_STATES, isWoLifecycleState } from "@/utils/wo-lifecycle";
+import { statusToI18nKey } from "@/utils/wo-status";
 import type { WorkOrder } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
 type WoViewMode = "list" | "kanban" | "calendar" | "dashboard" | "integrity";
+
+/** Current lifecycle status codes offered as filters (legacy aliases are display-only). */
+const WO_FILTER_STATUSES = [
+  "draft",
+  "planning",
+  "ready",
+  "in_progress",
+  "on_hold",
+  "completed",
+  "closed",
+  "cancelled",
+] as const;
 
 // ── Component ───────────────────────────────────────────────────────────────
 
@@ -60,7 +80,11 @@ export function WorkOrdersPage() {
   const items = useWoStore((s) => s.items);
   const total = useWoStore((s) => s.total);
   const loading = useWoStore((s) => s.loading);
+  const loadingMore = useWoStore((s) => s.loadingMore);
+  const listError = useWoStore((s) => s.listError);
   const loadWos = useWoStore((s) => s.loadWos);
+  const loadMoreWos = useWoStore((s) => s.loadMoreWos);
+  const { can } = usePermissions();
   const openWo = useWoStore((s) => s.openWo);
   const activeWo = useWoStore((s) => s.activeWo);
   const detailLoading = useWoStore((s) => s.detailLoading);
@@ -103,7 +127,7 @@ export function WorkOrdersPage() {
 
   const STATUS_OPTIONS = useMemo(
     () =>
-      Object.keys(STATUS_STYLE).map((code) => ({
+      WO_FILTER_STATUSES.map((code) => ({
         value: code,
         label: t(`status.${statusToI18nKey(code)}`),
       })),
@@ -301,7 +325,8 @@ export function WorkOrdersPage() {
         ),
       },
       {
-        accessorKey: "equipment_name",
+        id: "equipment",
+        accessorFn: (wo) => wo.asset_label ?? "",
         header: t("list.columns.equipment"),
         cell: ({ row }) => (
           <span className="text-xs text-text-muted">{row.original.asset_label ?? "—"}</span>
@@ -313,19 +338,19 @@ export function WorkOrdersPage() {
         cell: ({ row }) => <span className="text-xs">{row.original.type_label ?? "—"}</span>,
       },
       {
-        accessorKey: "status",
+        id: "status",
+        accessorFn: (wo) => wo.status_code ?? "draft",
         header: t("list.columns.status"),
         cell: ({ row }) => {
           const s = row.original.status_code ?? "draft";
           const lc = row.original.lifecycle_state;
           return (
             <div className="flex flex-col items-start gap-0.5">
-              <Badge
-                variant="outline"
-                className={`text-[10px] border-0 ${STATUS_STYLE[s] ?? "bg-gray-100 text-gray-600"}`}
-              >
-                {t(`status.${statusToI18nKey(s)}`)}
-              </Badge>
+              <StatusChip
+                label={t(`status.${statusToI18nKey(s)}`)}
+                tone={toneOf(WO_STATUS_TONE, s)}
+                dot
+              />
               {isWoLifecycleState(lc) ? (
                 <span className="text-[10px] text-text-muted">{t(`lifecycle.${lc}`)}</span>
               ) : null}
@@ -334,11 +359,12 @@ export function WorkOrdersPage() {
         },
       },
       {
-        accessorKey: "assigned_to_name",
+        id: "responsible",
+        accessorFn: (wo) => wo.responsible_display_name ?? wo.responsible_username ?? "",
         header: t("list.columns.assignedTo"),
         cell: ({ row }) => (
           <span className="text-xs text-text-muted">
-            {row.original.responsible_username ?? "—"}
+            {row.original.responsible_display_name ?? row.original.responsible_username ?? "—"}
           </span>
         ),
       },
@@ -362,8 +388,6 @@ export function WorkOrdersPage() {
                 wo={wo}
                 onViewDetail={(item) => void openWo(item.id)}
                 onEdit={(item) => openCreateForm(item)}
-                onStart={(item) => void openWo(item.id)}
-                onComplete={(item) => void openWo(item.id)}
                 onPrint={(item) => {
                   setPrintError(null);
                   printWoFiche(item, t, i18n.resolvedLanguage || i18n.language || "fr").catch(
@@ -372,9 +396,13 @@ export function WorkOrdersPage() {
                 }}
                 onCancel={(item) => setCancelTarget(item)}
               >
-                <Button variant="ghost" size="sm" className="h-7 w-7 p-0">
-                  <MoreHorizontal className="h-4 w-4" />
-                  <span className="sr-only">{t("contextMenu.viewDetail")}</span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-10 w-10 p-0"
+                  aria-label={t("contextMenu.actionsFor", { code: wo.code })}
+                >
+                  <MoreHorizontal className="h-4 w-4" aria-hidden />
                 </Button>
               </WoContextMenu>
             </div>
@@ -385,150 +413,119 @@ export function WorkOrdersPage() {
     [t, i18n.language, i18n.resolvedLanguage, openWo, openCreateForm],
   );
 
-  return (
-    <div className={mfLayout.moduleRoot}>
-      {printError ? (
-        <p
-          role="alert"
-          className="mx-4 mt-2 rounded-md bg-status-danger/10 px-3 py-2 text-sm text-status-danger"
-        >
-          {t("print.failed", { message: printError })}
-        </p>
-      ) : null}
-      {/* ── Page header ──────────────────────────────────────────────── */}
-      <div className={mfLayout.moduleHeader}>
-        <div className={mfLayout.moduleTitleRow}>
-          <Wrench className={mfLayout.moduleHeaderIcon} />
-          <h1 className={mfLayout.moduleTitle}>{t("page.title")}</h1>
-          <Badge variant="secondary" className="text-xs">
-            {total}
-          </Badge>
-        </div>
+  const viewOptions = useMemo<ViewOption<WoViewMode>[]>(
+    () => [
+      { value: "list", label: t("page.viewList"), icon: List },
+      { value: "kanban", label: t("page.viewKanban"), icon: Columns3 },
+      { value: "calendar", label: t("page.viewCalendar"), icon: CalendarDays },
+      { value: "dashboard", label: t("page.viewDashboard"), icon: BarChart3 },
+      {
+        value: "integrity",
+        label: t("page.viewIntegrity"),
+        icon: Shield,
+        hidden: !can(P.INTEGRITY_REPAIR),
+      },
+    ],
+    [t, can],
+  );
 
-        <div className={mfLayout.moduleHeaderActions}>
-          {/* New WO button */}
+  // A view hidden by permissions (e.g. remembered from another account) falls back to the list.
+  const activeView: WoViewMode =
+    viewOptions.find((o) => o.value === view && !o.hidden)?.value ?? "list";
+
+  const activeFilterCount = [statusFilter, lifecycleFilter, typeFilter, priorityFilter].filter(
+    Boolean,
+  ).length;
+
+  const showListError = listError != null && items.length === 0;
+  const recordView = activeView === "list" || activeView === "kanban" || activeView === "calendar";
+
+  return (
+    <ModulePageShell
+      icon={Wrench}
+      title={t("page.title")}
+      count={total}
+      bodyClassName={null}
+      actions={
+        <>
           <PermissionGate permission={P.OT_CREATE}>
-            <Button size="sm" onClick={() => openCreateForm()} className="gap-1.5">
-              <Plus className="h-3.5 w-3.5" />
+            <Button onClick={() => openCreateForm()} className={mfLayout.primaryAction}>
+              <Plus className="h-4 w-4" aria-hidden />
               {t("action.create")}
             </Button>
           </PermissionGate>
-
-          {/* View toggle */}
-          <div className={mfLayout.viewToggleGroup}>
-            <Button
-              variant={view === "list" ? "default" : "ghost"}
-              size="sm"
-              className={mfLayout.viewToggleButton}
-              onClick={() => switchView("list")}
-              title={t("page.viewList")}
+          <ViewToggle value={activeView} options={viewOptions} onChange={switchView} />
+          <FilterToggleButton
+            open={showFilters}
+            onToggle={toggleFilters}
+            activeCount={activeFilterCount}
+          />
+          <RefreshButton onRefresh={() => void loadWos()} loading={loading} />
+        </>
+      }
+      filterBar={
+        <>
+          {printError ? (
+            <p
+              role="alert"
+              className="mx-6 mt-2 rounded-md border border-tone-danger-border bg-tone-danger-bg px-3 py-2 text-sm text-tone-danger-fg"
             >
-              <List className="h-3.5 w-3.5" />
-            </Button>
-            <Button
-              variant={view === "kanban" ? "default" : "ghost"}
-              size="sm"
-              className={mfLayout.viewToggleButton}
-              onClick={() => switchView("kanban")}
-              title={t("page.viewKanban")}
-            >
-              <Columns3 className="h-3.5 w-3.5" />
-            </Button>
-            <Button
-              variant={view === "calendar" ? "default" : "ghost"}
-              size="sm"
-              className={mfLayout.viewToggleButton}
-              onClick={() => switchView("calendar")}
-              title={t("page.viewCalendar")}
-            >
-              <CalendarDays className="h-3.5 w-3.5" />
-            </Button>
-            <Button
-              variant={view === "dashboard" ? "default" : "ghost"}
-              size="sm"
-              className={mfLayout.viewToggleButton}
-              onClick={() => switchView("dashboard")}
-              title={t("page.viewDashboard")}
-            >
-              <BarChart3 className="h-3.5 w-3.5" />
-            </Button>
-            <Button
-              variant={view === "integrity" ? "default" : "ghost"}
-              size="sm"
-              className={mfLayout.viewToggleButton}
-              onClick={() => switchView("integrity")}
-              title={t("page.viewIntegrity")}
-            >
-              <Shield className="h-3.5 w-3.5" />
-            </Button>
-          </div>
-
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={toggleFilters}
-            title={t("page.filterSettings")}
-            className="gap-1.5"
-          >
-            <Filter className="h-3.5 w-3.5" />
-          </Button>
-
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => void loadWos()}
-            disabled={loading}
-            className="gap-1.5"
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-          </Button>
+              {t("print.failed", { message: printError })}
+            </p>
+          ) : null}
+          {showFilters && (
+            <SmartFilterBar
+              searchPlaceholder={t("search.placeholder")}
+              searchValue={searchInput}
+              onSearchInputChange={setSearchInput}
+              onSearchChange={onSearchChange}
+              filters={filterDefs}
+              resultCount={total}
+              onReset={resetFilters}
+            />
+          )}
+          {/* Requests awaiting conversion (ot.edit permission) */}
+          <PermissionGate permission={P.OT_EDIT}>
+            <WoDiManagementPanel />
+          </PermissionGate>
+        </>
+      }
+    >
+      {recordView && showListError ? (
+        <div className="p-4">
+          <ErrorState error={listError} onRetry={() => void loadWos()} retrying={loading} />
         </div>
-      </div>
-
-      {/* ── Filters ──────────────────────────────────────────────────── */}
-      {showFilters && (
-        <SmartFilterBar
-          searchPlaceholder={t("search.placeholder")}
-          searchValue={searchInput}
-          onSearchInputChange={setSearchInput}
-          onSearchChange={onSearchChange}
-          filters={filterDefs}
-          resultCount={total}
-          onReset={resetFilters}
-        />
+      ) : null}
+      {recordView && !showListError && items.length < total ? (
+        <div className="px-4 pt-3">
+          <TruncationNotice
+            shown={items.length}
+            total={total}
+            onLoadMore={() => void loadMoreWos()}
+            loadingMore={loadingMore}
+          />
+        </div>
+      ) : null}
+      {activeView === "integrity" && <WoIntegrityWorkbench />}
+      {activeView === "list" && !showListError && (
+        <div className="p-4">
+          <DataTable
+            columns={columns}
+            data={items}
+            pageSize={20}
+            isLoading={loading}
+            skeletonRows={8}
+            onRowClick={(row) => void openWo(row.id)}
+          />
+        </div>
       )}
-
-      {/* ── DI management panel (ot.edit permission) ─────────────────── */}
-      <PermissionGate permission={P.OT_EDIT}>
-        <WoDiManagementPanel />
-      </PermissionGate>
-
-      {/* ── Main workspace ───────────────────────────────────────────── */}
-      <div className={mfLayout.moduleWorkspace}>
-        <div className={mfLayout.moduleWorkspaceInner}>
-          {view === "integrity" && <WoIntegrityWorkbench />}
-          {view === "list" && (
-            <div className="p-4">
-              <DataTable
-                columns={columns}
-                data={items}
-                searchable
-                pageSize={20}
-                isLoading={loading}
-                skeletonRows={8}
-                onRowClick={(row) => void openWo(row.id)}
-              />
-            </div>
-          )}
-          {view === "kanban" && (
-            <WoKanbanView items={items} onCardClick={(wo) => void openWo(wo.id)} />
-          )}
-          {view === "calendar" && (
-            <WoCalendarView items={items} onSelect={(wo) => void openWo(wo.id)} />
-          )}
-          {view === "dashboard" && <WoDashboardView />}
-        </div>
-      </div>
+      {activeView === "kanban" && !showListError && (
+        <WoKanbanView items={items} onCardClick={(wo) => void openWo(wo.id)} />
+      )}
+      {activeView === "calendar" && !showListError && (
+        <WoCalendarView items={items} onSelect={(wo) => void openWo(wo.id)} />
+      )}
+      {activeView === "dashboard" && <WoDashboardView />}
 
       {/* ── Archive panel ────────────────────────────────────────── */}
       <WoArchivePanel onRowClick={(wo) => void openWo(wo.id)} />
@@ -551,6 +548,6 @@ export function WorkOrdersPage() {
           if (!open) setCancelTarget(null);
         }}
       />
-    </div>
+    </ModulePageShell>
   );
 }

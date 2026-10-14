@@ -727,6 +727,7 @@
     }
   },
   "contextMenu": {
+    "actionsFor": "Actions for {{code}}",
     "viewDetail": "View detail",
     "edit": "Edit",
     "start": "Start",

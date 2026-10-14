@@ -727,6 +727,7 @@
     }
   },
   "contextMenu": {
+    "actionsFor": "Actions pour {{code}}",
     "viewDetail": "Voir détail",
     "edit": "Modifier",
     "start": "Démarrer",

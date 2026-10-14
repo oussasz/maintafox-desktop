@@ -27,11 +27,11 @@ export const DEFAULT_MARGIN: ChartMargin = {
 // properties are not available outside the DOM cascade.
 
 export const CHART_COLORS = {
-  primary: "#003d8f",
-  primaryLight: "#4d7bc5",
-  primaryDark: "#002b6a",
-  accent: "#f0a500",
-  accentDark: "#c47f00",
+  primary: "#0049ac",
+  primaryLight: "#4d7fd0",
+  primaryDark: "#003a8c",
+  accent: "#f68714",
+  accentDark: "#e8780a",
   success: "#198754",
   danger: "#dc3545",
   warning: "#ffc107",
