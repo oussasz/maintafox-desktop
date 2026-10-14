@@ -17,6 +17,11 @@ if (typeof globalThis.ResizeObserver === "undefined") {
   } as unknown as typeof globalThis.ResizeObserver;
 }
 
+// jsdom has no layout: Radix Select / menus call scrollIntoView on the highlighted item.
+if (typeof Element.prototype.scrollIntoView !== "function") {
+  Element.prototype.scrollIntoView = function scrollIntoView() {};
+}
+
 afterEach(() => {
   cleanup();
   // Reset localStorage to prevent Zustand persist cross-contamination
