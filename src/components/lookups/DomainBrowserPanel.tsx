@@ -235,7 +235,7 @@ export function DomainBrowserPanel({ onCreateDraftSet }: DomainBrowserPanelProps
   );
 
   return (
-    <aside className="flex h-full w-[min(100%,20rem)] min-w-[16rem] shrink-0 flex-col border-r border-surface-border">
+    <aside className="flex h-full w-[min(100%,24rem)] min-w-[20rem] shrink-0 flex-col border-r border-surface-border">
       {/* Search */}
       <div className="border-b border-surface-border p-3">
         <div className="relative">
