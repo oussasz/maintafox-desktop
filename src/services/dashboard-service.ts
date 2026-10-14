@@ -85,6 +85,7 @@ const OverviewKpiCellSchema = z.object({
   value: z.number(),
   previous_value: z.number(),
   available: z.boolean(),
+  baseline_available: z.boolean().optional(),
   quality_badge: z.string().nullable().optional(),
   value_kind: z.enum(["count", "percent", "hours", "currency"]),
   trend_sense: z.enum(["up-good", "up-bad", "neutral"]),

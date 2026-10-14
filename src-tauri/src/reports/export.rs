@@ -40,14 +40,14 @@ impl ReportLocale {
         }
     }
 
-    fn pick(self, fr: &'static str, en: &'static str) -> &'static str {
+    pub(crate) fn pick(self, fr: &'static str, en: &'static str) -> &'static str {
         match self {
             Self::Fr => fr,
             Self::En => en,
         }
     }
 
-    fn generated_at(self, now: chrono::DateTime<chrono::Utc>) -> String {
+    pub(crate) fn generated_at(self, now: chrono::DateTime<chrono::Utc>) -> String {
         match self {
             Self::Fr => format!("Généré le {} (UTC)", now.format("%d/%m/%Y à %H:%M")),
             Self::En => format!("Generated on {} (UTC)", now.format("%Y-%m-%d at %H:%M")),
@@ -55,7 +55,7 @@ impl ReportLocale {
     }
 
     /// Decimal with `decimals` places; French uses a comma separator.
-    fn decimal(self, value: f64, decimals: usize) -> String {
+    pub(crate) fn decimal(self, value: f64, decimals: usize) -> String {
         let s = format!("{value:.decimals$}");
         match self {
             Self::Fr => s.replace('.', ","),
@@ -63,7 +63,7 @@ impl ReportLocale {
         }
     }
 
-    fn percent(self, ratio: f64) -> String {
+    pub(crate) fn percent(self, ratio: f64) -> String {
         match self {
             Self::Fr => format!("{} %", self.decimal(ratio * 100.0, 1)),
             Self::En => format!("{}%", self.decimal(ratio * 100.0, 1)),
@@ -173,6 +173,9 @@ pub async fn export_report_document(
     match template_code {
         "dashboard_summary" => export_dashboard_summary(db, &fmt, locale).await,
         "open_work_orders" => export_open_work_orders(db, &fmt, locale).await,
+        crate::reports::monthly::TEMPLATE_CODE => {
+            crate::reports::monthly::export_monthly_management(db, &fmt, locale).await
+        }
         _ => Err(AppError::ValidationFailed(vec![format!(
             "Unknown template: {template_code}"
         )])),

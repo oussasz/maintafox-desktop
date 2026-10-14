@@ -125,6 +125,10 @@
       "open_work_orders": {
         "title": "Open work orders by status",
         "description": "Number of open work orders in each status."
+      },
+      "monthly_management": {
+        "title": "Monthly maintenance report",
+        "description": "Last complete month, under your company document header: availability, MTBF/MTTR, SMRP indicators, top 5 bad actors, cost by cost centre and by work-order type."
       }
     }
   },
@@ -221,5 +225,74 @@
     "saved": "Saved: {{file}}",
     "openFolder": "Open folder",
     "dismiss": "Hide this message"
+  },
+  "smrp": {
+    "title": "SMRP indicators",
+    "subtitle": "Maintenance management indicators in line with SMRP Best Practice metrics, computed from your work orders, schedules, PM and personnel. {{period}}.",
+    "definitionAria": "Definition of {{title}}",
+    "formula": "Formula",
+    "period": "Period",
+    "unit": "Unit",
+    "open": "Open the list",
+    "periodValue": "Last {{days}} days ({{from}} – {{to}})",
+    "hoursValue": "{{value}} h",
+    "trendStable": "Stable vs previous period",
+    "trendPoints": "{{change}} pts vs previous period",
+    "unitPercent": "Percentage (%)",
+    "unitPercentYear": "Percentage of replacement value per year (%)",
+    "schedule": {
+      "title": "Schedule compliance",
+      "none": "No scheduled work ended in this period.",
+      "detail": "{{done}} completed as scheduled out of {{total}} committed",
+      "formula": "Hours of schedule commitments whose work order was completed by the end of the committed day ÷ hours committed. Commitments that end later are not counted yet."
+    },
+    "mix": {
+      "basisHours": "Based on recorded labour hours",
+      "basisCount": "Based on work-order counts (no labour hours recorded)",
+      "detailHours": "{{part}} of {{total}}",
+      "detailCount": "{{part}} of {{total}} work orders",
+      "none": "No work order completed in this period.",
+      "planned": {
+        "title": "Planned work",
+        "formula": "Labour hours of completed preventive, condition-based, inspection, overhaul and improvement work orders ÷ labour hours of all completed work orders. Work-order counts are used when no labour hours are recorded."
+      },
+      "reactive": {
+        "title": "Reactive work",
+        "formula": "Labour hours of completed corrective and emergency work orders ÷ labour hours of all completed work orders."
+      },
+      "emergency": {
+        "title": "Emergency work",
+        "formula": "Labour hours of completed emergency work orders ÷ labour hours of all completed work orders."
+      }
+    },
+    "pm": {
+      "title": "PM compliance",
+      "none": "No preventive maintenance was due in this period.",
+      "detail": "{{done}} of {{total}} done within tolerance",
+      "formula": "PM occurrences done by the end of their tolerance window (or of their due day when the plan has no tolerance) ÷ PM occurrences due in the period. Cancelled occurrences are excluded; occurrences still within their tolerance are not counted yet."
+    },
+    "backlog": {
+      "title": "Backlog",
+      "weeksValue": "{{value}} weeks",
+      "noCapacity": "{{hours}} of work, but no crew capacity is known: give active personnel a work schedule.",
+      "detail": "{{hours}} planned on {{count}} open work orders · ready to schedule: {{ready}}",
+      "capacity": "Capacity used: {{hours}} per week ({{people}} people, from their work schedules)",
+      "withoutSchedule_one": "{{count}} active person without a work schedule is not counted",
+      "withoutSchedule_other": "{{count}} active people without a work schedule are not counted",
+      "withoutEstimate_one": "{{count}} open work order has no time estimate (counted as 0 h)",
+      "withoutEstimate_other": "{{count}} open work orders have no time estimate (counted as 0 h)",
+      "trend": "{{change}} weeks vs start of period",
+      "formula": "Planned hours of work orders not yet done ÷ weekly crew hours. Crew hours = working-day shifts of the work schedule of each active person.",
+      "unit": "Weeks of work",
+      "period": "Now, compared with the start of the selected period"
+    },
+    "rav": {
+      "title": "Maintenance cost / replacement value",
+      "needsValue": "Needs a replacement value on assets ({{valued}} of {{total}} assets have one).",
+      "detail": "{{cost}} a year (annualised) on {{rav}} of replacement value · {{valued}} of {{total}} assets valued",
+      "formula": "Cost of work orders closed in the period on assets that have a replacement value, annualised, ÷ total replacement value of those assets.",
+      "openAssets": "Open the assets"
+    },
+    "wrenchTime": "Not measured: wrench time (share of hands-on work in paid time) needs work sampling, which is not recorded in Maintafox."
   }
 }

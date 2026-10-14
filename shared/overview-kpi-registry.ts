@@ -121,16 +121,18 @@ export const OVERVIEW_KPI_REGISTRY: OverviewKpiRegistryEntry[] = [
     unitKey: "overviewKpi.unit.hours",
   },
   {
-    // Value is the number of overdue PM occurrences (label "PM overdue"): more is worse.
+    // SMRP PM compliance (%): occurrences done within tolerance ÷ occurrences due, last 30 days
+    // (`analytics::smrp::pm_compliance`). Higher is better.
     semanticKey: OVERVIEW_KPI_SEMANTIC_KEYS.PM_COMPLIANCE,
     catalogId: ANALYTICS_HUB_KPI_CATALOG_IDS.PM_ADHERENCE,
     permission: P.PM_VIEW,
-    trendSense: "up-bad",
-    valueKind: "count",
-    vizKind: "alert",
+    trendSense: "up-good",
+    valueKind: "percent",
+    vizKind: "gauge",
     drillPath: "/pm",
     labelKey: "overviewKpi.pmCompliance",
-    contextKey: "overviewKpi.contextPmPipeline",
+    contextKey: "overviewKpi.contextPmCompliance",
+    unitKey: "overviewKpi.unit.percent",
   },
   {
     semanticKey: OVERVIEW_KPI_SEMANTIC_KEYS.PM_DUE_TODAY,

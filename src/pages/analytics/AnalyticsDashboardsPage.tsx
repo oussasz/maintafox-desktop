@@ -6,6 +6,7 @@ import { useNavigate } from "react-router-dom";
 import { AnalyticsCustomizeDialog } from "@/components/analytics/AnalyticsCustomizeDialog";
 import { AnalyticsDiStatusChart } from "@/components/analytics/AnalyticsDiStatusChart";
 import { AnalyticsWorkloadChart } from "@/components/analytics/AnalyticsWorkloadChart";
+import { SmrpIndicatorsSection } from "@/components/analytics/SmrpIndicatorsSection";
 import { type KpiTrend, periodTrend } from "@/components/analytics/analytics-kpi-trend";
 import { VisualMetricCard } from "@/components/metrics/VisualMetricCard";
 import { Button } from "@/components/ui/button";
@@ -24,6 +25,7 @@ import { isSessionActiveForBackgroundWork } from "@/lib/session-ready";
 import {
   getAnalyticsDashboardLayout,
   getAnalyticsExecutiveDashboard,
+  type AnalyticsExecutiveDashboardWithSmrp,
 } from "@/services/analytics-dashboard-service";
 import { listOrgTree } from "@/services/org-node-service";
 import { useSessionStore } from "@/store/session-store";
@@ -35,7 +37,7 @@ import {
   mergeWithDefaultAnalyticsLayout,
   parseAnalyticsDashboardLayoutJson,
 } from "@shared/analytics-dashboard-layout";
-import type { AnalyticsExecutiveDashboard, OrgTreeRow } from "@shared/ipc-types";
+import type { OrgTreeRow } from "@shared/ipc-types";
 import {
   ANALYTICS_RAMS_BASE_PATH,
   DASHBOARD_KPI_DRILL_PATH,
@@ -58,8 +60,8 @@ interface KpiProps {
   available: boolean;
   unit?: string;
   /**
-   * Only for figures with a true previous window (reliability, cost). Current open counts have
-   * no historical snapshot, so they show no trend rather than a misleading one.
+   * Change vs the same measure at the start of the horizon (counts are rebuilt at that instant
+   * from lifecycle dates by the backend, `analytics::as_of`).
    */
   trend?: KpiTrend | null;
   onOpen?: () => void;
@@ -78,7 +80,7 @@ export function AnalyticsDashboardsPage() {
   const [horizon, setHorizon] = useState<Horizon>(30);
   const [orgNodeId, setOrgNodeId] = useState<number | null>(null);
   const [orgRows, setOrgRows] = useState<OrgTreeRow[]>([]);
-  const [data, setData] = useState<AnalyticsExecutiveDashboard | null>(null);
+  const [data, setData] = useState<AnalyticsExecutiveDashboardWithSmrp | null>(null);
   const [layout, setLayout] = useState<AnalyticsDashboardLayoutV1 | null>(null);
   const [layoutSaved, setLayoutSaved] = useState(false);
   const [error, setError] = useState<unknown>(null);
@@ -233,6 +235,7 @@ export function AnalyticsDashboardsPage() {
               context: now,
               value: count(data?.open_dis.value),
               available: data?.open_dis.available ?? false,
+              trend: periodTrend(data?.open_dis, "up-bad"),
               onOpen: () => navigate(DASHBOARD_KPI_DRILL_PATH[DASHBOARD_KPI_KEYS.OPEN_DIS]),
             })}
             {renderKpi({
@@ -240,6 +243,7 @@ export function AnalyticsDashboardsPage() {
               context: now,
               value: count(data?.open_wos.value),
               available: data?.open_wos.available ?? false,
+              trend: periodTrend(data?.open_wos, "up-bad"),
               onOpen: () => navigate(DASHBOARD_KPI_DRILL_PATH[DASHBOARD_KPI_KEYS.OPEN_WOS]),
             })}
             {renderKpi({
@@ -247,6 +251,7 @@ export function AnalyticsDashboardsPage() {
               context: t("hub.dashboards.context.inService"),
               value: count(data?.total_assets.value),
               available: data?.total_assets.available ?? false,
+              trend: periodTrend(data?.total_assets, "up-good"),
               onOpen: () => navigate(DASHBOARD_KPI_DRILL_PATH[DASHBOARD_KPI_KEYS.TOTAL_ASSETS]),
             })}
             {renderKpi({
@@ -254,6 +259,7 @@ export function AnalyticsDashboardsPage() {
               context: t("hub.dashboards.context.overdue"),
               value: count(data?.overdue_items.value),
               available: data?.overdue_items.available ?? false,
+              trend: periodTrend(data?.overdue_items, "up-bad"),
               onOpen: () => navigate(DASHBOARD_KPI_DRILL_PATH[DASHBOARD_KPI_KEYS.OVERDUE_ITEMS]),
             })}
           </div>
@@ -266,6 +272,7 @@ export function AnalyticsDashboardsPage() {
               context: now,
               value: count(data?.pm_overdue.value),
               available: data?.pm_overdue.available ?? false,
+              trend: periodTrend(data?.pm_overdue, "up-bad"),
               onOpen: () => navigate("/pm"),
             })}
             {renderKpi({
@@ -273,6 +280,7 @@ export function AnalyticsDashboardsPage() {
               context: t("hub.dashboards.context.today"),
               value: count(data?.pm_due_today.value),
               available: data?.pm_due_today.available ?? false,
+              trend: periodTrend(data?.pm_due_today, "up-bad"),
               onOpen: () => navigate("/pm"),
             })}
             {renderKpi({
@@ -280,6 +288,7 @@ export function AnalyticsDashboardsPage() {
               context: t("hub.dashboards.context.next7"),
               value: count(data?.pm_due_next_7d.value),
               available: data?.pm_due_next_7d.available ?? false,
+              trend: periodTrend(data?.pm_due_next_7d, "up-bad"),
               onOpen: () => navigate("/pm"),
             })}
           </div>
@@ -449,6 +458,7 @@ export function AnalyticsDashboardsPage() {
         <LoadingState label={t("hub.dashboards.loading")} />
       ) : (
         <div className="space-y-4">
+          <SmrpIndicatorsSection smrp={data?.smrp ?? null} />
           {visibleWidgets.map((w) => (
             <Fragment key={w.id}>{renderWidget(w.id)}</Fragment>
           ))}

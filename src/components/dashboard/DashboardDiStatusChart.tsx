@@ -3,20 +3,33 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 
+import { diStatusLabel } from "@/components/analytics/AnalyticsDiStatusChart";
 import {
-  CHART_PALETTE,
   DEFAULT_MARGIN,
   getInnerDimensions,
   useContainerSize,
 } from "@/components/charts/chart-utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { DI_WORKFLOW_STATUS_TONE, type Tone, toneOf } from "@/design-system/tone";
 import { getDashboardDiStatusChart } from "@/services/dashboard-service";
 import type { DashboardDiStatusChart as DiStatusModel } from "@shared/ipc-types";
 
-const MARGIN = { ...DEFAULT_MARGIN, left: 120, bottom: 28 };
+const MARGIN = { ...DEFAULT_MARGIN, left: 170, bottom: 28 };
+
+/** SVG fill per status tone (static class names so Tailwind keeps them). */
+const TONE_FILL: Record<Tone, string> = {
+  neutral: "fill-tone-neutral-fg",
+  info: "fill-tone-info-fg",
+  progress: "fill-tone-progress-fg",
+  attention: "fill-tone-attention-fg",
+  warning: "fill-tone-warning-fg",
+  success: "fill-tone-success-fg",
+  danger: "fill-tone-danger-fg",
+};
 
 export function DashboardDiStatusChart() {
   const { t } = useTranslation("dashboard");
+  const { t: tr } = useTranslation("reports");
   const navigate = useNavigate();
   const [model, setModel] = useState<DiStatusModel | null>(null);
   const [loading, setLoading] = useState(true);
@@ -67,10 +80,10 @@ export function DashboardDiStatusChart() {
       .selectAll("text")
       .attr("class", "fill-current text-[10px]");
     d3.select(yAxisRef.current)
-      .call(d3.axisLeft(yScale) as never)
+      .call(d3.axisLeft(yScale).tickFormat((code) => diStatusLabel(tr, String(code))) as never)
       .selectAll("text")
       .attr("class", "fill-current text-[10px]");
-  }, [xScale, yScale, innerHeight]);
+  }, [xScale, yScale, innerHeight, tr]);
 
   if (loading) {
     return (
@@ -109,15 +122,23 @@ export function DashboardDiStatusChart() {
             {width > 0 && (
               <svg width={width} height={height} role="img" aria-label={t("widgets.diStatus.aria")}>
                 <g transform={`translate(${MARGIN.left},${MARGIN.top})`}>
-                  {segments.map((s, i) => {
+                  {segments.map((s) => {
                     const y = yScale(s.status) ?? 0;
                     const w = xScale(s.count);
                     const h = yScale.bandwidth();
-                    const fill = CHART_PALETTE[i % CHART_PALETTE.length];
+                    const tone = toneOf(DI_WORKFLOW_STATUS_TONE, s.status);
                     return (
-                      <rect key={s.status} x={0} y={y} width={w} height={h} fill={fill} rx={2}>
+                      <rect
+                        key={s.status}
+                        x={0}
+                        y={y}
+                        width={w}
+                        height={h}
+                        className={TONE_FILL[tone]}
+                        rx={2}
+                      >
                         <title>
-                          {s.status}: {s.count}
+                          {diStatusLabel(tr, s.status)}: {s.count}
                         </title>
                       </rect>
                     );

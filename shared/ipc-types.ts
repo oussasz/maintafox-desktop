@@ -4418,6 +4418,8 @@ export interface OverviewKpiCell {
   value: number;
   previous_value: number;
   available: boolean;
+  /** False when the value at the start of the window cannot be rebuilt (no history): no trend shown. */
+  baseline_available?: boolean | undefined;
   quality_badge?: string | null | undefined;
   value_kind: OverviewKpiValueKind;
   trend_sense: OverviewKpiTrendSense;

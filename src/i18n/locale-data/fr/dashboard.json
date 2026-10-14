@@ -81,7 +81,7 @@
     "otInProgress": "OT en cours",
     "otOverdue": "OT en retard",
     "mttr": "MTTR moy.",
-    "pmCompliance": "MP en retard",
+    "pmCompliance": "Respect des MP",
     "pmDueToday": "MP dues aujourd'hui",
     "maintBacklog": "Arriéré maintenance",
     "availability": "Disponibilité opérationnelle parc (A_o)",
@@ -108,7 +108,8 @@
       "percent": "%"
     },
     "alertNormal": "Normal",
-    "alertAttention": "Attention"
+    "alertAttention": "Attention",
+    "contextPmCompliance": "Réalisées dans la tolérance, 30 derniers jours"
   },
   "dev": {
     "kpiValidation": "Validation KPI (échantillons SQL)",
