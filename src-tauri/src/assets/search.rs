@@ -382,6 +382,8 @@ async fn usage_asset_ids(db: &DatabaseConnection, user_id: Option<i64>, limit: u
 /// Rank: exact code, then code prefix, then code / name / serial number / external id containing
 /// the text; ties ordered by code.
 pub(crate) async fn ranked_text_matches(db: &impl ConnectionTrait, query: &str) -> AppResult<Vec<i64>> {
+    #[cfg(test)]
+    TEXT_MATCH_SCANS.with(|c| c.set(c.get() + 1));
     let folded = fold_search_text(query.trim());
     if folded.is_empty() {
         return Ok(Vec::new());
@@ -438,6 +440,24 @@ pub(crate) async fn ranked_text_matches(db: &impl ConnectionTrait, query: &str) 
     }
     ranked.sort();
     Ok(ranked.into_iter().map(|(_, _, id)| id).collect())
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Number of [`ranked_text_matches`] scans on this thread (tests bound the scans per request).
+    pub(crate) static TEXT_MATCH_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Ranked matches of the filters' search text (`None` without a text). Compute it once per
+/// request and pass it to the queries that need it.
+pub(crate) async fn text_matches_for(
+    db: &impl ConnectionTrait,
+    filters: &AssetSearchFilters,
+) -> AppResult<Option<Vec<i64>>> {
+    match filters.query.as_deref().map(str::trim).filter(|q| !q.is_empty()) {
+        Some(q) => Ok(Some(ranked_text_matches(db, q).await?)),
+        None => Ok(None),
+    }
 }
 
 /// JSON array of ids, bound once and read with `json_each` (no bind-variable limit).
@@ -664,23 +684,34 @@ pub(crate) fn build_asset_scope_where(
 /// then code prefix, then name/serial partial match. Matching is accent- and
 /// case-insensitive.
 pub async fn search_assets(db: &DatabaseConnection, filters: AssetSearchFilters) -> AppResult<Vec<AssetSearchResult>> {
-    let text_matches = match filters.query.as_deref().map(str::trim).filter(|q| !q.is_empty()) {
-        Some(q) => Some(ranked_text_matches(db, q).await?),
-        None => None,
-    };
-    let (where_sql, mut binds) = build_asset_scope_where(&filters, text_matches.as_deref());
+    let text_matches = text_matches_for(db, &filters).await?;
+    search_assets_with(db, &filters, text_matches.as_deref()).await
+}
+
+/// One page of results for already computed text matches. Matches are joined once through
+/// `json_each` and ordered by their position in the ranked list (rank, then code).
+async fn search_assets_with(
+    db: &DatabaseConnection,
+    filters: &AssetSearchFilters,
+    text_matches: Option<&[i64]>,
+) -> AppResult<Vec<AssetSearchResult>> {
+    let (where_sql, where_binds) = build_asset_scope_where(filters, None);
     let row_offset = filters.offset.unwrap_or(0);
     let row_limit = filters.limit.unwrap_or(SEARCH_PAGE_DEFAULT).min(SEARCH_PAGE_MAX);
 
-    let order_sql = if let Some(ref ids) = text_matches {
-        binds.push(ids_json(ids).into());
-        "ORDER BY (SELECT r.key FROM json_each(?) r WHERE r.value = e.id), e.asset_id_code ASC".to_string()
-    } else {
-        "ORDER BY e.asset_id_code ASC".to_string()
+    let mut binds: Vec<sea_orm::Value> = Vec::new();
+    let (join_sql, order_sql) = match text_matches {
+        Some(ids) => {
+            binds.push(ids_json(ids).into());
+            ("JOIN json_each(?) r ON r.value = e.id", "ORDER BY r.key")
+        }
+        None => ("", "ORDER BY e.asset_id_code ASC"),
     };
+    binds.extend(where_binds);
 
     let sql = format!(
-        "SELECT {SEARCH_SELECT} {SEARCH_FROM} WHERE {where_sql} {order_sql} LIMIT {row_limit} OFFSET {row_offset}"
+        "SELECT {SEARCH_SELECT} {SEARCH_FROM} {join_sql} WHERE {where_sql} {order_sql} \
+         LIMIT {row_limit} OFFSET {row_offset}"
     );
 
     let rows = db
@@ -693,11 +724,9 @@ pub async fn search_assets(db: &DatabaseConnection, filters: AssetSearchFilters)
 }
 
 /// Paged registry list: one page of [`search_assets`] plus the total matching the same filters.
+/// The text matches are computed once and shared by the count and the page.
 pub async fn search_assets_page(db: &DatabaseConnection, filters: AssetSearchFilters) -> AppResult<AssetSearchPage> {
-    let text_matches = match filters.query.as_deref().map(str::trim).filter(|q| !q.is_empty()) {
-        Some(q) => Some(ranked_text_matches(db, q).await?),
-        None => None,
-    };
+    let text_matches = text_matches_for(db, &filters).await?;
     let (where_sql, binds) = build_asset_scope_where(&filters, text_matches.as_deref());
     let count_sql = format!("SELECT COUNT(*) AS total {METRICS_FROM} WHERE {where_sql}");
     let total: i64 = db
@@ -706,7 +735,7 @@ pub async fn search_assets_page(db: &DatabaseConnection, filters: AssetSearchFil
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("asset count query returned no row")))?
         .try_get("", "total")
         .map_err(|e| decode_err("total", e))?;
-    let items = search_assets(db, filters).await?;
+    let items = search_assets_with(db, &filters, text_matches.as_deref()).await?;
     Ok(AssetSearchPage { items, total })
 }
 

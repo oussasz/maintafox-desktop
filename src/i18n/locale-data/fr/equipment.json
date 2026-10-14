@@ -215,7 +215,8 @@
       "work_order": "Issue d’un ordre de travail",
       "inspection": "Issue d’une inspection",
       "manual": "Saisie manuelle"
-    }
+    },
+    "title": "Historique de l’équipement"
   },
   "empty": {
     "list": "Aucun équipement trouvé.",

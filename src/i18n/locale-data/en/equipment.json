@@ -215,7 +215,8 @@
       "work_order": "From a work order",
       "inspection": "From an inspection",
       "manual": "Entered manually"
-    }
+    },
+    "title": "Asset history"
   },
   "empty": {
     "list": "No equipment found.",

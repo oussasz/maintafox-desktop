@@ -325,6 +325,52 @@ async fn text_search_is_accent_insensitive_and_ranks_the_code_first() {
     );
 }
 
+/// A registry of a few thousand assets: one text-match scan per page request (count and page
+/// share it), ranking by exact code / prefix / code order, and every match counted.
+#[tokio::test]
+async fn paged_text_search_scans_once_on_a_large_registry() {
+    let db = setup().await;
+    let site = site_with_cost_center(&db).await;
+    identity::create_asset(&db, payload("PMP-0001", site, None), 1)
+        .await
+        .expect("template");
+    exec(
+        &db,
+        "INSERT INTO equipment (entity_sync_id, asset_id_code, name, class_id, lifecycle_status, \
+            criticality_value_id, equipment_status_ref_id, equipment_criticality_ref_id, \
+            equipment_class_ref_id, installed_at_node_id, maintainable_boundary, \
+            rams_utilization_factor, created_at, updated_at, row_version) \
+         WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 3000) \
+         SELECT 'bulk-' || i, printf('BLK-%04d', i), 'Pompe ' || i, t.class_id, t.lifecycle_status, \
+            t.criticality_value_id, t.equipment_status_ref_id, t.equipment_criticality_ref_id, \
+            t.equipment_class_ref_id, t.installed_at_node_id, t.maintainable_boundary, \
+            t.rams_utilization_factor, t.created_at, t.updated_at, 1 \
+         FROM n, equipment t WHERE t.asset_id_code = 'PMP-0001'",
+    )
+    .await;
+
+    let scans = || search::TEXT_MATCH_SCANS.with(std::cell::Cell::get);
+    let before = scans();
+    let mut f = filters(50, 0);
+    f.query = Some("blk-2".into());
+    let page = search::search_assets_page(&db, f).await.expect("prefix search");
+    assert_eq!(scans() - before, 1, "count and page share one scan");
+    assert_eq!(page.total, 1000, "BLK-2000 .. BLK-2999");
+    assert_eq!(page.items.len(), 50);
+    assert_eq!(page.items[0].asset_code, "BLK-2000");
+    assert_eq!(page.items[49].asset_code, "BLK-2049");
+
+    let mut exact = filters(5, 0);
+    exact.query = Some("blk-2500".into());
+    let page = search::search_assets_page(&db, exact).await.expect("exact search");
+    assert_eq!(page.items[0].asset_code, "BLK-2500");
+
+    let mut second = filters(50, 50);
+    second.query = Some("blk-2".into());
+    let page = search::search_assets_page(&db, second).await.expect("second page");
+    assert_eq!(page.items[0].asset_code, "BLK-2050");
+}
+
 async fn work_order(
     db: &DatabaseConnection,
     code: &str,

@@ -109,7 +109,14 @@ pub async fn assign_equipment_to_node(db: &DatabaseConnection, payload: AssignEq
             [payload.node_id.into()],
         ))
         .await?
-        .map(|row| row.try_get::<bool>("", "can_host_assets").unwrap_or(false))
+        .map(|row| {
+            row.try_get::<i32>("", "can_host_assets").map(|v| v != 0).map_err(|e| {
+                AppError::Internal(anyhow::anyhow!(
+                    "org node type decode failed for column 'can_host_assets': {e}"
+                ))
+            })
+        })
+        .transpose()?
         .unwrap_or(false);
     if !hosts_assets {
         return Err(fail(
