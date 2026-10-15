@@ -245,7 +245,7 @@ pub(crate) const UNIT_SEEDS: &[UnitSeed] = &[
         "U",
         "Unité (pièce)",
         "Unit (piece)",
-        "u",
+        "pcs",
         UnitDimension::Count,
         Some("H87"),
     ),
