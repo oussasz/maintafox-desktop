@@ -194,9 +194,6 @@ const VALID_VERIFICATION_RESULTS: &[&str] = &["pass", "fail", "monitor"];
 
 const VALID_RECURRENCE_LEVELS: &[&str] = &["none", "low", "medium", "high"];
 
-/// WO types that require failure coding and root cause before closure.
-const FAILURE_REQUIRED_TYPE_CODES: &[&str] = &["corrective", "emergency"];
-
 const FAILURE_DETAIL_SELECT: &str = "\
     SELECT fd.id, fd.work_order_id, fd.symptom_id, fd.failure_mode_id, fd.failure_cause_id, \
            fd.failure_effect_id, fd.is_temporary_repair, fd.is_permanent_repair, \
@@ -437,26 +434,6 @@ async fn log_transition(
         acted_at,
     )
     .await
-}
-
-/// Load the WO type code (e.g. "corrective", "preventive").
-async fn load_wo_type_code(txn: &impl ConnectionTrait, wo_id: i64) -> AppResult<String> {
-    let row = txn
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT wot.code AS type_code \
-             FROM work_orders wo \
-             JOIN work_order_types wot ON wot.id = wo.type_id \
-             WHERE wo.id = ?",
-            [wo_id.into()],
-        ))
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            entity: "WorkOrder".into(),
-            id: wo_id.to_string(),
-        })?;
-    row.try_get::<String>("", "type_code")
-        .map_err(|e| decode_err("type_code", e))
 }
 
 struct CloseoutPolicyRow {
@@ -1054,9 +1031,10 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
     assert_action_allowed(&current_status, WoAction::Close).map_err(|e| AppError::ValidationFailed(vec![e]))?;
     guard_wo_transition(&current_status, &WoStatus::Closed).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
-    // ── Load WO type code for type-dependent checks ───────────────────────
-    let type_code = load_wo_type_code(&txn, input.wo_id).await?;
-    let is_failure_required = FAILURE_REQUIRED_TYPE_CODES.contains(&type_code.as_str());
+    // ── Corrective work (EN 13306 nature) requires failure coding and root cause ──
+    let is_failure_required = crate::wo::types::work_order_nature(&txn, input.wo_id)
+        .await?
+        .is_some_and(|n| n.is_corrective());
 
     let wo_scope = txn
         .query_one(Statement::from_sql_and_values(

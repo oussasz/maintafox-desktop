@@ -494,15 +494,15 @@ pub const ROW_SPECS: &[RowSpec] = &[
         &[hist("di_id", "intervention_requests"), hist("actor_id", USER)],
     ),
     // ── Work orders ─────────────────────────────────────────────────────────────────────────
-    spec("work_order_types", &[]),
     spec("work_order_statuses", &[]),
-    spec("urgency_levels", &[]),
     spec("delay_reason_codes", &[]),
     spec("closeout_validation_policies", &[]),
     spec(
         "work_orders",
         &[
-            r("type_id", "work_order_types"),
+            // OT type and urgency level: values of the SYSTEM lists `WORK.ORDER_TYPES` and
+            // `WORK.URGENCY` (migration 198).
+            r("type_id", "reference_values"),
             r("status_id", "work_order_statuses"),
             r("equipment_id", "equipment"),
             r("location_id", "org_nodes"),
@@ -512,7 +512,7 @@ pub const ROW_SPECS: &[RowSpec] = &[
             r("primary_responsible_id", USER),
             r("planning_approved_by_id", USER),
             r("assigned_team_id", "teams"),
-            r("urgency_id", "urgency_levels"),
+            r("urgency_id", "reference_values"),
             r("source_di_id", "intervention_requests"),
             // Never written by any command yet: synchronised only while empty.
             unmapped("component_id"),

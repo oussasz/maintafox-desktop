@@ -260,19 +260,23 @@ async fn initial_renewal(
 }
 
 async fn load_pm_removals(db: &DatabaseConnection, equipment_id: i64, start: &str, end: &str) -> AppResult<Vec<PmRow>> {
+    // Preventive renewals: work orders of a preventive nature (EN 13306).
+    let preventive = crate::wo::types::nature_sql_list(&crate::wo::types::MaintenanceNature::PREVENTIVE);
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT wo.id, wo.code, COALESCE(wo.actual_end, wo.mechanically_completed_at, wo.closed_at) AS done_at
+            format!(
+                "SELECT wo.id, wo.code, COALESCE(wo.actual_end, wo.mechanically_completed_at, wo.closed_at) AS done_at
              FROM work_orders wo
-             JOIN work_order_types t ON t.id = wo.type_id
+             JOIN reference_values t ON t.id = wo.type_id
              JOIN work_order_statuses st ON st.id = wo.status_id
-             WHERE wo.equipment_id = ? AND t.code = 'preventive'
+             WHERE wo.equipment_id = ? AND t.semantic_tag IN ({preventive})
                AND (st.macro_state IN ('completed', 'closed') OR st.code IN ('completed', 'closed'))
                AND COALESCE(wo.actual_end, wo.mechanically_completed_at, wo.closed_at) IS NOT NULL
                AND datetime(COALESCE(wo.actual_end, wo.mechanically_completed_at, wo.closed_at)) >= datetime(?)
                AND datetime(COALESCE(wo.actual_end, wo.mechanically_completed_at, wo.closed_at)) <= datetime(?)
-             ORDER BY datetime(done_at) ASC, wo.id ASC",
+             ORDER BY datetime(done_at) ASC, wo.id ASC"
+            ),
             [equipment_id.into(), start.into(), end.into()],
         ))
         .await?;

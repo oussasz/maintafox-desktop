@@ -32,7 +32,7 @@ function makeDi(overrides: Partial<InterventionRequest> = {}): InterventionReque
     safety_flag: false,
     environmental_flag: false,
     quality_flag: false,
-    reported_urgency: "medium",
+    reported_urgency: "normal",
     validated_urgency: null,
     observed_at: null,
     submitted_at: "2026-04-01T10:00:00Z",
@@ -226,7 +226,7 @@ describe("di-store — Supervisor Verification S3", () => {
       safety_flag: false,
       environmental_flag: false,
       quality_flag: false,
-      reported_urgency: "medium",
+      reported_urgency: "normal",
       submitter_id: 42,
     });
 

@@ -21,6 +21,8 @@ use crate::reference::{
 };
 
 const SYSTEM_CODES: &[&str] = &["DI.DISPOSITION", "EQUIPMENT.CRITICALITY", "EQUIPMENT.STATUS"];
+/// SYSTEM lists added by migration 198 (shared urgency scale, OT types and their natures).
+const SYSTEM_CODES_198: &[&str] = &["WORK.MAINTENANCE_NATURES", "WORK.ORDER_TYPES", "WORK.URGENCY"];
 
 fn assert_gate<T: std::fmt::Debug>(result: Result<T, AppError>, what: &str) {
     match result {
@@ -114,7 +116,14 @@ async fn backfill_marks_only_the_maintafox_lists_system() {
         .filter(|(_, a)| a == "system")
         .map(|(c, _)| c.as_str())
         .collect();
-    assert_eq!(system, SYSTEM_CODES.iter().copied().collect::<BTreeSet<_>>());
+    assert_eq!(
+        system,
+        SYSTEM_CODES
+            .iter()
+            .chain(SYSTEM_CODES_198)
+            .copied()
+            .collect::<BTreeSet<_>>()
+    );
     for (code, audience) in &rows {
         assert!(
             audience == "system" || audience == "company",
@@ -125,7 +134,7 @@ async fn backfill_marks_only_the_maintafox_lists_system() {
         "EQUIPMENT.CLASS",
         "EQUIPMENT.FAMILY",
         "ORG.SCHEDULE_CLASS",
-        "DI.SYMPTOM",
+        "WORK.SYMPTOMS",
         "WORK.FAILURE_MODES",
     ] {
         assert!(
@@ -141,7 +150,7 @@ async fn audience_column_rejects_other_values() {
     let err = db
         .execute(Statement::from_string(
             DbBackend::Sqlite,
-            "UPDATE reference_domains SET audience = 'tenant' WHERE code = 'DI.SYMPTOM'".to_string(),
+            "UPDATE reference_domains SET audience = 'tenant' WHERE code = 'WORK.SYMPTOMS'".to_string(),
         ))
         .await
         .expect_err("CHECK constraint");
@@ -458,15 +467,15 @@ async fn seeded_system_lists_are_read_only_for_users() {
 #[tokio::test]
 async fn company_working_dictionary_stays_editable() {
     let db = crate::db::test_db::seeded().await;
-    let symptom = domains::get_reference_domain_by_code(&db, "DI.SYMPTOM")
+    let symptom = domains::get_reference_domain_by_code(&db, "DI.ORIGIN")
         .await
-        .expect("DI.SYMPTOM");
+        .expect("DI.ORIGIN");
     assert_eq!(symptom.audience, DomainAudience::Company);
     let created = values::create_operational_value(
         &db,
         values::CreateOperationalReferenceValuePayload {
-            domain_code: "DI.SYMPTOM".into(),
-            label: "Odeur de brûlé".into(),
+            domain_code: "DI.ORIGIN".into(),
+            label: "Sous-traitant".into(),
             description: None,
             parent_id: None,
             code: None,
@@ -475,9 +484,9 @@ async fn company_working_dictionary_stays_editable() {
     )
     .await
     .expect("plant symptom");
-    values::update_value(&db, created.id, label_update("Odeur de brûlé (moteur)"), 1)
+    values::update_value(&db, created.id, label_update("Sous-traitant de maintenance"), 1)
         .await
-        .expect("edit plant symptom");
+        .expect("edit plant origin");
     let caps = governance::capabilities_for(&symptom, None);
     assert!(caps.can_operational_create && !caps.is_read_only);
     assert_eq!(caps.audience, "company");
@@ -528,8 +537,9 @@ async fn integrity_pass_still_writes_system_lists_and_restores_their_audience() 
     exec(
         &db,
         "UPDATE reference_domains SET audience = CASE code \
-            WHEN 'EQUIPMENT.STATUS' THEN 'company' WHEN 'DI.SYMPTOM' THEN 'system' \
-            WHEN 'WORK.SYMPTOMS' THEN 'system' ELSE audience END",
+            WHEN 'EQUIPMENT.STATUS' THEN 'company' WHEN 'DI.ORIGIN' THEN 'system' \
+            WHEN 'WORK.SYMPTOMS' THEN 'system' WHEN 'WORK.URGENCY' THEN 'company' \
+            WHEN 'WORK.ORDER_TYPES' THEN 'company' ELSE audience END",
     )
     .await;
 
@@ -549,8 +559,10 @@ async fn integrity_pass_still_writes_system_lists_and_restores_their_audience() 
     let of = |code: &str| rows.iter().find(|(c, _)| c == code).map(|(_, a)| a.clone());
     assert_eq!(of("EQUIPMENT.STATUS").as_deref(), Some("system"));
     assert_eq!(of("EQUIPMENT.CRITICALITY").as_deref(), Some("system"));
-    assert_eq!(of("DI.SYMPTOM").as_deref(), Some("company"));
+    assert_eq!(of("DI.ORIGIN").as_deref(), Some("company"));
     assert_eq!(of("WORK.SYMPTOMS").as_deref(), Some("company"));
+    assert_eq!(of("WORK.URGENCY").as_deref(), Some("system"));
+    assert_eq!(of("WORK.ORDER_TYPES").as_deref(), Some("system"));
 }
 
 // ─── Module catalogs (OT types, statuses, article families…) ─────────────────
@@ -558,15 +570,12 @@ async fn integrity_pass_still_writes_system_lists_and_restores_their_audience() 
 #[test]
 fn module_catalog_audiences() {
     assert_eq!(
-        module_catalog_audience("WO.WORK_ORDER_TYPES"),
-        Some(DomainAudience::System)
-    );
-    assert_eq!(
         module_catalog_audience("WO.WORK_ORDER_STATUSES"),
         Some(DomainAudience::System)
     );
+    // The plant's view of the shared urgency scale (labels and target times only).
     assert_eq!(
-        module_catalog_audience("WO.WORK_ORDER_PRIORITIES"),
+        module_catalog_audience("WORK.URGENCY_SCALE"),
         Some(DomainAudience::Company)
     );
     assert_eq!(
@@ -577,18 +586,19 @@ fn module_catalog_audiences() {
         module_catalog_audience("INVENTORY.TAX_CATEGORY"),
         Some(DomainAudience::Company)
     );
-    assert_eq!(MODULE_CATALOGS.len(), 5);
+    // OT types are a SYSTEM reference domain since migration 198, no longer a module table.
+    assert_eq!(module_catalog_audience("WO.WORK_ORDER_TYPES"), None);
+    assert_eq!(MODULE_CATALOGS.len(), 4);
 
-    assert_gate(assert_module_catalog_editable("WO.WORK_ORDER_TYPES"), "OT types");
     assert_gate(assert_module_catalog_editable("WO.WORK_ORDER_STATUSES"), "OT statuses");
     assert!(assert_module_catalog_editable("INVENTORY.ARTICLE_FAMILY").is_ok());
-    assert!(assert_module_catalog_editable("WO.WORK_ORDER_PRIORITIES").is_ok());
+    assert!(assert_module_catalog_editable("WORK.URGENCY_SCALE").is_ok());
     assert!(matches!(
         assert_module_catalog_editable("WO.UNKNOWN"),
         Err(AppError::Internal(_))
     ));
 
-    let json = serde_json::to_value(MODULE_CATALOGS[2]).expect("json");
-    assert_eq!(json["code"], "WO.WORK_ORDER_TYPES");
+    let json = serde_json::to_value(MODULE_CATALOGS[3]).expect("json");
+    assert_eq!(json["code"], "WO.WORK_ORDER_STATUSES");
     assert_eq!(json["audience"], "system");
 }

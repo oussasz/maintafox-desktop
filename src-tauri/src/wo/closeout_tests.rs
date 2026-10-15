@@ -198,7 +198,8 @@ mod tests {
                 source_rca_cause_text: None,
                 entity_id: None,
                 planner_id: None,
-                urgency_id: Some(3),
+                urgency_code: Some("normal".into()),
+                subtype_code: None,
                 title: "Closeout test WO".into(),
                 description: Some("Integration test for closeout".into()),
                 notes: None,
@@ -240,7 +241,7 @@ mod tests {
                 shift: None,
                 expected_duration_hours: Some(8.0),
                 planned_downtime_hours: None,
-                urgency_id: None,
+                urgency_code: None,
             },
         )
         .await

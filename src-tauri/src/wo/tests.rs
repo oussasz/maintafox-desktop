@@ -168,7 +168,8 @@ mod tests {
                 source_rca_cause_text: None,
                 entity_id: None,
                 planner_id: None,
-                urgency_id: Some(3),
+                urgency_code: Some("normal".into()),
+                subtype_code: None,
                 title: title.to_string(),
                 description: Some("test WO".into()),
                 notes: None,
@@ -271,7 +272,7 @@ mod tests {
                 shift: None,
                 expected_duration_hours: Some(8.0),
                 planned_downtime_hours: None,
-                urgency_id: None,
+                urgency_code: None,
             },
         )
         .await
@@ -503,7 +504,7 @@ mod tests {
                 shift: None,
                 expected_duration_hours: Some(8.0),
                 planned_downtime_hours: None,
-                urgency_id: None,
+                urgency_code: None,
             },
         )
         .await;
@@ -986,7 +987,7 @@ mod tests {
                 shift: None,
                 expected_duration_hours: Some(8.0),
                 planned_downtime_hours: None,
-                urgency_id: None,
+                urgency_code: None,
             },
         )
         .await;
@@ -1048,7 +1049,8 @@ mod tests {
                 source_rca_cause_text: None,
                 entity_id: Some(1),
                 planner_id: None,
-                urgency_id: Some(4),
+                urgency_code: Some("high".into()),
+                subtype_code: None,
                 title: "WO from DI".into(),
                 description: Some("Full lifecycle".into()),
                 notes: None,
@@ -1137,7 +1139,7 @@ mod tests {
                 shift: None,
                 expected_duration_hours: Some(8.0),
                 planned_downtime_hours: None,
-                urgency_id: None,
+                urgency_code: None,
             },
         )
         .await

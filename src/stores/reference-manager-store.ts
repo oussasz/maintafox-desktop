@@ -24,9 +24,8 @@ import type {
 } from "@shared/ipc-types";
 
 /**
- * Domains seeded in demo/legacy data that are superseded by synthetic sidebar entries
- * backed by real tables (`urgency_levels`, `work_order_types`, etc.).
- * `WORK.PRIORITY` duplicates "Priorités d'ordre de travail" (synthetic -104).
+ * Domains seeded in demo/legacy data that are superseded by a synthetic sidebar entry.
+ * `WORK.PRIORITY` duplicates the urgency scale (synthetic -104, `WORK.URGENCY`).
  */
 const SUPERSEDED_REFERENCE_DOMAIN_CODES = new Set<string>(["WORK.PRIORITY"]);
 
@@ -34,10 +33,9 @@ export const INVENTORY_ARTICLE_FAMILY_DOMAIN_ID = -101;
 export const INVENTORY_ARTICLE_FAMILY_SET_ID = -101;
 export const INVENTORY_TAX_CATEGORY_DOMAIN_ID = -102;
 export const INVENTORY_TAX_CATEGORY_SET_ID = -102;
-export const WORK_ORDER_TYPES_DOMAIN_ID = -103;
-export const WORK_ORDER_TYPES_SET_ID = -103;
-export const WORK_ORDER_PRIORITIES_DOMAIN_ID = -104;
-export const WORK_ORDER_PRIORITIES_SET_ID = -104;
+/** Company attributes (labels, target times) of the shared DI / OT urgency scale. */
+export const URGENCY_SCALE_DOMAIN_ID = -104;
+export const URGENCY_SCALE_SET_ID = -104;
 export const WORK_ORDER_STATUSES_DOMAIN_ID = -105;
 export const WORK_ORDER_STATUSES_SET_ID = -105;
 
@@ -101,21 +99,11 @@ const SYNTHETIC_CATALOGS: readonly SyntheticCatalog[] = [
     "Catégories TVA articles de stock",
     TENANT_DICTIONARY,
   ),
-  syntheticCatalog(WORK_ORDER_TYPES_DOMAIN_ID, "WO.WORK_ORDER_TYPES", "Types d'ordre de travail", {
+  syntheticCatalog(URGENCY_SCALE_DOMAIN_ID, "WORK.URGENCY_SCALE", "Échelle d'urgence (DI / OT)", {
     governance_level: "protected_analytical",
     governance_category: "system_catalog",
-    is_extendable: true,
+    is_extendable: false,
   }),
-  syntheticCatalog(
-    WORK_ORDER_PRIORITIES_DOMAIN_ID,
-    "WO.WORK_ORDER_PRIORITIES",
-    "Priorités d'ordre de travail",
-    {
-      governance_level: "protected_analytical",
-      governance_category: "system_catalog",
-      is_extendable: false,
-    },
-  ),
   syntheticCatalog(
     WORK_ORDER_STATUSES_DOMAIN_ID,
     "WO.WORK_ORDER_STATUSES",

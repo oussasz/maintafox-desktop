@@ -16,10 +16,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::errors::{AppError, AppResult};
 
-/// Work order types raised by a failure (`work_order_types.code`, system catalogue).
-pub const FAILURE_WO_TYPES: &[&str] = &["corrective", "emergency"];
-/// Work order types that are planned maintenance (`work_order_types.code`, system catalogue).
-pub const PLANNED_WO_TYPES: &[&str] = &["preventive", "inspection", "condition_based"];
+// Failure work = corrective natures, planned maintenance = preventive natures (EN 13306 nature of
+// the OT type, `wo::types::MaintenanceNature`).
 /// Window of the "recent" cost figure, in months.
 pub const RECENT_COST_WINDOW_MONTHS: u32 = 12;
 
@@ -139,12 +137,12 @@ pub async fn get_asset_maintenance_profile(
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             format!(
-                "SELECT wo.id, t.code AS type_code, s.code AS status_code, s.macro_state, \
+                "SELECT wo.id, t.semantic_tag AS nature_code, s.code AS status_code, s.macro_state, \
                     COALESCE(wo.downtime_hours, 0.0) AS downtime_hours, \
                     COALESCE(wo.actual_start, wo.created_at) AS failure_at, \
                     COALESCE(wo.closed_at, wo.actual_end, wo.actual_start, wo.created_at) AS cost_at \
                  FROM work_orders wo \
-                 JOIN work_order_types t ON t.id = wo.type_id \
+                 LEFT JOIN reference_values t ON t.id = wo.type_id \
                  JOIN work_order_statuses s ON s.id = wo.status_id \
                  WHERE wo.equipment_id IN ({placeholders}) AND s.code <> 'cancelled'"
             ),
@@ -179,14 +177,17 @@ pub async fn get_asset_maintenance_profile(
 
     for row in &wo_rows {
         let wo_id: i64 = get(row, "id")?;
-        let type_code: String = get(row, "type_code")?;
+        let nature_code: Option<String> = get(row, "nature_code")?;
+        let nature = nature_code
+            .as_deref()
+            .and_then(crate::wo::types::MaintenanceNature::parse);
         let macro_state: String = get(row, "macro_state")?;
         let cost_at: String = get(row, "cost_at")?;
         profile.work_order_count += 1;
         if macro_state != "closed" && macro_state != "cancelled" {
             profile.open_work_order_count += 1;
         }
-        if FAILURE_WO_TYPES.contains(&type_code.as_str()) {
+        if nature.is_some_and(|n| n.is_corrective()) {
             profile.failure_work_order_count += 1;
             let failure_at: String = get(row, "failure_at")?;
             if profile
@@ -196,7 +197,7 @@ pub async fn get_asset_maintenance_profile(
             {
                 profile.last_failure_at = Some(failure_at);
             }
-        } else if PLANNED_WO_TYPES.contains(&type_code.as_str()) {
+        } else if nature.is_some_and(|n| n.is_preventive()) {
             profile.planned_work_order_count += 1;
         }
         profile.downtime_hours += get::<f64>(row, "downtime_hours")?;

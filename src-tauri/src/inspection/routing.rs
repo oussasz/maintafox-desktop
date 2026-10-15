@@ -240,7 +240,8 @@ pub async fn route_inspection_anomaly_to_wo(
         source_rca_cause_text: None,
         entity_id: None,
         planner_id: None,
-        urgency_id: crate::di::conversion::resolve_wo_urgency_id(db, severity_urgency_code(a.severity)).await?,
+        urgency_code: Some(severity_urgency_code(a.severity).to_string()),
+        subtype_code: None,
         title,
         description: Some(description),
         notes: None,
@@ -301,13 +302,8 @@ pub async fn defer_inspection_anomaly(
     Ok(updated)
 }
 
-/// Urgency of a request or work order raised from a finding, as a code of the governed DI.PRIORITY
-/// list (low / medium / high / critical), which the work-order urgency levels share.
+/// Urgency of a request or work order raised from a finding: a level of the shared DI / OT
+/// scale (`reference::urgency_scale::severity_urgency`, one severity step per level).
 pub(crate) fn severity_urgency_code(severity: i64) -> &'static str {
-    match severity {
-        i64::MIN..=2 => "low",
-        3 => "medium",
-        4 => "high",
-        _ => "critical",
-    }
+    crate::reference::urgency_scale::severity_urgency(severity).as_str()
 }

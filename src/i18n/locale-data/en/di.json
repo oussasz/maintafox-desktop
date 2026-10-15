@@ -42,6 +42,7 @@
       "history": "History"
     },
     "fields": {
+      "sourceInspectionRound": "Inspection round",
       "number": "Number",
       "subject": "Subject",
       "description": "Description",
@@ -197,12 +198,6 @@
     "closed": "Closed",
     "cancelled": "Cancelled"
   },
-  "priority": {
-    "low": "Low",
-    "medium": "Medium",
-    "high": "High",
-    "critical": "Critical"
-  },
   "action": {
     "create": "New Request",
     "approve": "Approve",
@@ -245,6 +240,7 @@
   "sla": {
     "title": "SLA Rules",
     "description": "Configure response and resolution targets for each urgency level.",
+    "scaleHint": "The target times of a level for every request are set in the urgency scale (Reference data). The rules below are the exceptions by origin or asset criticality.",
     "loading": "Loading rules…",
     "empty": "No SLA rules configured.",
     "columns": {

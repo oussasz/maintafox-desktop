@@ -14,13 +14,15 @@ import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 
 import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
+import { UrgencyBadge } from "@/components/common/urgency/UrgencyBadge";
+import { urgencyLabelFor } from "@/components/common/urgency/use-urgency-scale";
 import {
   fetchDiSymptomLabel,
   loadDiOriginLabelMap,
   resolveDiOriginLabel,
   useDiReferenceLabels,
 } from "@/components/di/di-reference-labels";
-import { DI_STATUS_STYLE, DI_URGENCY_STYLE, diStatusToI18nKey } from "@/components/di/status-meta";
+import { DI_STATUS_STYLE, diStatusToI18nKey } from "@/components/di/status-meta";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -67,6 +69,7 @@ function printApprovalSheet(
   locale: string,
   originLabel: string,
   symptomLabel: string,
+  urgencyLabel: string,
 ) {
   const now = new Date().toLocaleString(locale);
   const fmt = (iso: string) => {
@@ -110,7 +113,7 @@ function printApprovalSheet(
     <tr><th>${t("approvalPrint.thCode")}</th><td>${esc(di.code)}</td></tr>
     <tr><th>${t("approvalPrint.thTitle")}</th><td>${esc(di.title)}</td></tr>
     <tr><th>${t("approvalPrint.thStatus")}</th><td>${esc(di.status)}</td></tr>
-    <tr><th>${t("approvalPrint.thPriority")}</th><td>${esc(di.reported_urgency)}</td></tr>
+    <tr><th>${t("approvalPrint.thPriority")}</th><td>${esc(urgencyLabel)}</td></tr>
     <tr><th>${t("approvalPrint.thOrigin")}</th><td>${esc(originLabel)}</td></tr>
     ${
       symptomLabel
@@ -306,9 +309,10 @@ export function DiApprovalDialog() {
     if (!di) return;
     const tPrint = i18n.getFixedT(i18n.language, "di");
     void (async () => {
-      const [originMap, symptomText] = await Promise.all([
+      const [originMap, symptomText, urgencyText] = await Promise.all([
         loadDiOriginLabelMap(),
         fetchDiSymptomLabel(di.symptom_code_id),
+        urgencyLabelFor(di.validated_urgency ?? di.reported_urgency, i18n.language),
       ]);
       printApprovalSheet(
         di,
@@ -318,6 +322,7 @@ export function DiApprovalDialog() {
         intlLocaleForLanguage(i18n.language),
         resolveDiOriginLabel(originMap, di.origin_type),
         symptomText,
+        urgencyText,
       );
     })();
   }, [di, approverName, note, i18n]);
@@ -393,12 +398,7 @@ export function DiApprovalDialog() {
                   >
                     {t(`status.${diStatusToI18nKey(di.status)}` as const)}
                   </Badge>
-                  <Badge
-                    variant="outline"
-                    className={`text-[10px] border-0 ${DI_URGENCY_STYLE[di.reported_urgency] ?? ""}`}
-                  >
-                    {t(`priority.${di.reported_urgency}`)}
-                  </Badge>
+                  <UrgencyBadge code={di.validated_urgency ?? di.reported_urgency} />
                 </div>
 
                 {/* Equipment */}

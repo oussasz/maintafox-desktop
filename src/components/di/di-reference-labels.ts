@@ -11,7 +11,8 @@ import {
 } from "@/services/reference-service";
 
 const DOMAIN_ORIGIN = "DI.ORIGIN";
-const DOMAIN_SYMPTOM = "DI.SYMPTOM";
+/** Failure symptoms shared by requests, the OT close-out and RAMS (ISO 14224). */
+const DOMAIN_SYMPTOM = "WORK.SYMPTOMS";
 const DOMAIN_REQUEST_TYPE = "DI.REQUEST_TYPE";
 
 /** code (upper) → label */

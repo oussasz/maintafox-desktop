@@ -2,9 +2,12 @@
 //!
 //! Phase 2 - Sub-phase 04 - File 03 - Sprint S1 / Phase 1 completion.
 //!
-//! SLA rules are admin-managed workflow policy in `di_sla_rules`. The engine
-//! resolves the most specific matching rule for a given urgency + origin +
-//! criticality combination and computes breach flags from DI timestamps.
+//! The target times of a request come from the shared DI / OT urgency scale
+//! (`reference::urgency_scale`, `WORK.URGENCY`): each level carries the plant's target
+//! response and completion times and its escalation threshold. `di_sla_rules` holds the
+//! exceptions only: a rule for one urgency level and an origin and/or an asset criticality
+//! overrides the level's targets. The engine resolves the most specific matching rule, falls
+//! back to the level's targets, and computes breach flags from DI timestamps.
 
 use crate::assets::identity::normalize_criticality_to_canon;
 use crate::errors::{AppError, AppResult};
@@ -307,7 +310,7 @@ fn status_from_frozen(di: &InterventionRequest) -> AppResult<DiSlaStatus> {
     })
 }
 
-fn status_from_rule(di: &InterventionRequest, rule: &DiSlaRule) -> AppResult<DiSlaStatus> {
+fn status_from_rule(di: &InterventionRequest, rule: &SlaTargets) -> AppResult<DiSlaStatus> {
     let submitted_at = parse_iso(&di.submitted_at)?;
     let now = Utc::now().naive_utc();
 
@@ -352,7 +355,7 @@ fn status_from_rule(di: &InterventionRequest, rule: &DiSlaRule) -> AppResult<DiS
     ));
 
     Ok(DiSlaStatus {
-        rule_id: Some(rule.id),
+        rule_id: rule.rule_id,
         target_response_hours: Some(rule.target_response_hours),
         target_resolution_hours: Some(rule.target_resolution_hours),
         sla_deadline: Some(sla_deadline),
@@ -422,6 +425,41 @@ pub async fn resolve_sla_rule(
     Ok(None)
 }
 
+/// Targets that apply to a request: from a matching rule, else from its urgency level.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SlaTargets {
+    /// The rule that applied, `None` when the level's own targets apply.
+    pub rule_id: Option<i64>,
+    pub target_response_hours: i64,
+    pub target_resolution_hours: i64,
+    pub escalation_threshold_hours: i64,
+}
+
+/// Most specific rule for urgency + origin + criticality, else the targets of the urgency level
+/// on the shared scale. `None` when neither exists (a level without targets).
+pub async fn resolve_sla_targets(
+    db: &impl ConnectionTrait,
+    urgency: &str,
+    origin_type: &str,
+    criticality_class: Option<&str>,
+) -> AppResult<Option<SlaTargets>> {
+    if let Some(rule) = resolve_sla_rule(db, urgency, origin_type, criticality_class).await? {
+        return Ok(Some(SlaTargets {
+            rule_id: Some(rule.id),
+            target_response_hours: rule.target_response_hours,
+            target_resolution_hours: rule.target_resolution_hours,
+            escalation_threshold_hours: rule.escalation_threshold_hours,
+        }));
+    }
+    let level = crate::reference::urgency_scale::get_urgency_level(db, urgency).await?;
+    Ok(level.and_then(|l| l.targets()).map(|t| SlaTargets {
+        rule_id: None,
+        target_response_hours: t.response_hours,
+        target_resolution_hours: t.completion_hours,
+        escalation_threshold_hours: t.escalation_hours,
+    }))
+}
+
 /// Freeze SLA targets/deadlines on a DI once. Idempotent (`sla_response_deadline IS NULL`).
 pub async fn freeze_sla_on_di(db: &impl ConnectionTrait, di: &InterventionRequest) -> AppResult<InterventionRequest> {
     if di_has_frozen_sla(di) {
@@ -429,7 +467,7 @@ pub async fn freeze_sla_on_di(db: &impl ConnectionTrait, di: &InterventionReques
     }
 
     let criticality_class = lookup_asset_criticality(db, di.equipment_id).await?;
-    let rule = resolve_sla_rule(db, &di.reported_urgency, &di.origin_type, criticality_class.as_deref()).await?;
+    let rule = resolve_sla_targets(db, &di.reported_urgency, &di.origin_type, criticality_class.as_deref()).await?;
 
     let Some(rule) = rule else {
         return Ok(di.clone());
@@ -454,7 +492,9 @@ pub async fn freeze_sla_on_di(db: &impl ConnectionTrait, di: &InterventionReques
             sla_resolution_deadline = ? \
          WHERE id = ? AND sla_response_deadline IS NULL",
         [
-            rule.id.into(),
+            rule.rule_id
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::from(None::<i64>)),
             rule.target_response_hours.into(),
             rule.target_resolution_hours.into(),
             rule.escalation_threshold_hours.into(),
@@ -467,7 +507,7 @@ pub async fn freeze_sla_on_di(db: &impl ConnectionTrait, di: &InterventionReques
 
     // Re-read is caller's responsibility when full row needed; patch local clone.
     let mut updated = di.clone();
-    updated.sla_rule_id = Some(rule.id);
+    updated.sla_rule_id = rule.rule_id;
     updated.sla_target_response_hours = Some(rule.target_response_hours);
     updated.sla_target_resolution_hours = Some(rule.target_resolution_hours);
     updated.sla_escalation_threshold_hours = Some(rule.escalation_threshold_hours);
@@ -496,7 +536,7 @@ pub async fn compute_sla_status(db: &impl ConnectionTrait, di: &InterventionRequ
     }
 
     let criticality_class = lookup_asset_criticality(db, di.equipment_id).await?;
-    let rule = resolve_sla_rule(db, &di.reported_urgency, &di.origin_type, criticality_class.as_deref()).await?;
+    let rule = resolve_sla_targets(db, &di.reported_urgency, &di.origin_type, criticality_class.as_deref()).await?;
 
     let Some(rule) = rule else {
         return Ok(empty_status());
@@ -607,7 +647,8 @@ pub async fn list_sla_rules(db: &impl ConnectionTrait) -> AppResult<Vec<DiSlaRul
     let rows = db
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT * FROM di_sla_rules ORDER BY urgency_level, origin_type".to_string(),
+            "SELECT r.* FROM di_sla_rules r              LEFT JOIN reference_values lvl ON lvl.code = r.urgency_level AND lvl.set_id IN (                  SELECT rs.id FROM reference_sets rs JOIN reference_domains d ON d.id = rs.domain_id                   WHERE d.code = 'WORK.URGENCY' AND rs.status = 'published')              ORDER BY r.is_active DESC, COALESCE(lvl.sort_order, 99), r.origin_type, r.asset_criticality_class"
+                .to_string(),
         ))
         .await?;
 
@@ -620,12 +661,18 @@ pub async fn list_sla_rules(db: &impl ConnectionTrait) -> AppResult<Vec<DiSlaRul
 
 /// Update an existing SLA rule. Permission check (di.admin) is in the command layer.
 pub async fn update_sla_rule(db: &impl ConnectionTrait, input: SlaRuleUpdateInput) -> AppResult<DiSlaRule> {
-    let valid_urgencies = ["low", "medium", "high", "critical"];
-    if !valid_urgencies.contains(&input.urgency_level.as_str()) {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "Niveau d'urgence invalide : '{}'. Valeurs autorisées : low, medium, high, critical.",
-            input.urgency_level
-        )]));
+    let urgency = crate::reference::urgency_scale::validate_urgency_code(&input.urgency_level)?;
+    let origin_type = input.origin_type.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let criticality = input
+        .asset_criticality_class
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    if input.is_active && origin_type.is_none() && criticality.is_none() {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_SLA_RULE_NEEDS_SCOPE: une règle SLA s'applique à une origine et/ou une criticité ;              les délais d'un niveau pour toutes les demandes se règlent dans l'échelle d'urgence."
+                .into(),
+        ]));
     }
 
     if input.target_response_hours <= 0 || input.target_resolution_hours <= 0 || input.escalation_threshold_hours <= 0 {
@@ -649,14 +696,12 @@ pub async fn update_sla_rule(db: &impl ConnectionTrait, input: SlaRuleUpdateInpu
              WHERE id = ?",
             [
                 input.name.into(),
-                input.urgency_level.into(),
-                input
-                    .origin_type
-                    .map(sea_orm::Value::from)
+                urgency.as_str().into(),
+                origin_type
+                    .map(|s| sea_orm::Value::from(s.to_string()))
                     .unwrap_or(sea_orm::Value::from(None::<String>)),
-                input
-                    .asset_criticality_class
-                    .map(sea_orm::Value::from)
+                criticality
+                    .map(|s| sea_orm::Value::from(s.to_string()))
                     .unwrap_or(sea_orm::Value::from(None::<String>)),
                 input.target_response_hours.into(),
                 input.target_resolution_hours.into(),

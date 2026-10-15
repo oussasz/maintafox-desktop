@@ -164,8 +164,24 @@ pub struct WorkOrder {
     pub type_code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub type_label: Option<String>,
+    /// The plant's sub-type (`WORK.ORDER_SUBTYPES`), under the nature of the OT type.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub urgency_level: Option<i64>,
+    pub subtype_id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subtype_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subtype_label: Option<String>,
+    /// EN 13306 maintenance nature of the OT type (`wo::types::MaintenanceNature` code).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nature_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nature_label: Option<String>,
+    /// Level of the shared DI / OT urgency scale (`emergency` … `low`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub urgency_code: Option<String>,
+    /// 1 = most urgent … 5 = least urgent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub urgency_rank: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub urgency_label: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -198,6 +214,16 @@ pub struct WorkOrder {
     pub schedule_commitment_id: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schedule_frozen: Option<bool>,
+    /// Inspection round of the finding the OT comes from (directly, or through its request).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_inspection_round_id: Option<i64>,
+    /// Code and name of the round's inspection template (a round has no code of its own).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_inspection_round_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_inspection_round_title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_inspection_round_scheduled_at: Option<String>,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -240,7 +266,12 @@ pub struct WoCreateInput {
     pub source_rca_cause_text: Option<String>,
     pub entity_id: Option<i64>,
     pub planner_id: Option<i64>,
-    pub urgency_id: Option<i64>,
+    /// Level of the shared urgency scale (`emergency`, `urgent`, `high`, `normal`, `low`).
+    #[serde(default)]
+    pub urgency_code: Option<String>,
+    /// The plant's sub-type (`WORK.ORDER_SUBTYPES` code); must belong to the type's nature.
+    #[serde(default)]
+    pub subtype_code: Option<String>,
     pub title: String,
     pub description: Option<String>,
     pub notes: Option<String>,
@@ -268,7 +299,13 @@ pub struct WoDraftUpdateInput {
     pub shift: Option<String>,
     pub expected_duration_hours: Option<f64>,
     pub notes: Option<String>,
-    pub urgency_id: Option<i64>,
+    /// Level of the shared urgency scale.
+    #[serde(default)]
+    pub urgency_code: Option<String>,
+    /// The plant's sub-type; an empty string removes it. When the type changes without a
+    /// sub-type, the sub-type is removed (it belonged to the former type's nature).
+    #[serde(default)]
+    pub subtype_code: Option<String>,
     pub requires_permit: Option<bool>,
 }
 
@@ -484,7 +521,13 @@ pub fn map_work_order(row: &QueryResult) -> AppResult<WorkOrder> {
         status_color: row.try_get::<Option<String>>("", "status_color").unwrap_or(None),
         type_code: row.try_get::<Option<String>>("", "type_code").unwrap_or(None),
         type_label: row.try_get::<Option<String>>("", "type_label").unwrap_or(None),
-        urgency_level: row.try_get::<Option<i64>>("", "urgency_level").unwrap_or(None),
+        subtype_id: row.try_get::<Option<i64>>("", "subtype_id").unwrap_or(None),
+        subtype_code: row.try_get::<Option<String>>("", "subtype_code").unwrap_or(None),
+        subtype_label: row.try_get::<Option<String>>("", "subtype_label").unwrap_or(None),
+        nature_code: row.try_get::<Option<String>>("", "nature_code").unwrap_or(None),
+        nature_label: row.try_get::<Option<String>>("", "nature_label").unwrap_or(None),
+        urgency_code: row.try_get::<Option<String>>("", "urgency_code").unwrap_or(None),
+        urgency_rank: row.try_get::<Option<i64>>("", "urgency_rank").unwrap_or(None),
         urgency_label: row.try_get::<Option<String>>("", "urgency_label").unwrap_or(None),
         urgency_color: row.try_get::<Option<String>>("", "urgency_color").unwrap_or(None),
         asset_code: row.try_get::<Option<String>>("", "asset_code").unwrap_or(None),
@@ -512,6 +555,18 @@ pub fn map_work_order(row: &QueryResult) -> AppResult<WorkOrder> {
             .flatten()
             .map(|v| v != 0)
             .or_else(|| row.try_get::<i64>("", "schedule_frozen").ok().map(|v| v != 0)),
+        source_inspection_round_id: row
+            .try_get::<Option<i64>>("", "source_inspection_round_id")
+            .unwrap_or(None),
+        source_inspection_round_code: row
+            .try_get::<Option<String>>("", "source_inspection_round_code")
+            .unwrap_or(None),
+        source_inspection_round_title: row
+            .try_get::<Option<String>>("", "source_inspection_round_title")
+            .unwrap_or(None),
+        source_inspection_round_scheduled_at: row
+            .try_get::<Option<String>>("", "source_inspection_round_scheduled_at")
+            .unwrap_or(None),
     })
 }
 

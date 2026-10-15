@@ -22,6 +22,7 @@ import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
+import { useUrgencyScale } from "@/components/common/urgency/use-urgency-scale";
 import { DataTable } from "@/components/data/DataTable";
 import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
 import type { SmartFilterDef } from "@/components/filters/smart-filter-types";
@@ -46,17 +47,17 @@ import { WoFormDialog } from "@/components/wo/WoFormDialog";
 import { WoIntegrityWorkbench } from "@/components/wo/WoIntegrityWorkbench";
 import { WoKanbanView } from "@/components/wo/WoKanbanView";
 import { printWoFiche } from "@/components/wo/WoPrintFiche";
+import { useWoTypeLabels } from "@/components/wo/use-wo-type-labels";
 import { mfLayout } from "@/design-system/tokens";
 import { WO_STATUS_TONE, toneOf } from "@/design-system/tone";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useWoStore } from "@/stores/wo-store";
-import { useWorkOrderPrioritiesCatalog } from "@/stores/work-order-priorities-catalog-store";
 import { useWorkOrderTypesCatalog } from "@/stores/work-order-types-catalog-store";
 import { toErrorMessage } from "@/utils/errors";
 import { formatDate } from "@/utils/format-date";
 import { WO_LIFECYCLE_STATES, isWoLifecycleState } from "@/utils/wo-lifecycle";
 import { statusToI18nKey } from "@/utils/wo-status";
-import type { WorkOrder } from "@shared/ipc-types";
+import type { UrgencyCode, WorkOrder } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
 type WoViewMode = "list" | "kanban" | "calendar" | "dashboard" | "integrity";
@@ -101,8 +102,8 @@ export function WorkOrdersPage() {
   const [cancelTarget, setCancelTarget] = useState<WorkOrder | null>(null);
   const woTypes = useWorkOrderTypesCatalog((s) => s.types);
   const loadWoTypes = useWorkOrderTypesCatalog((s) => s.load);
-  const woPriorities = useWorkOrderPrioritiesCatalog((s) => s.priorities);
-  const loadWoPriorities = useWorkOrderPrioritiesCatalog((s) => s.load);
+  const { levels: urgencyLevels, labelOf: urgencyLabelOf } = useUrgencyScale();
+  const { typeLabel } = useWoTypeLabels();
 
   // ── Search / filters (SmartFilterBar) ─────────────────────────────────
 
@@ -140,22 +141,18 @@ export function WorkOrdersPage() {
         .filter((type) => type.is_active)
         .map((type) => ({
           value: type.code,
-          label: t(`type.${type.code === "condition_based" ? "conditionBased" : type.code}`, {
-            defaultValue: type.label,
-          }),
+          label: typeLabel(type.code, type.label),
         })),
-    [woTypes, t],
+    [woTypes, typeLabel],
   );
 
   const PRIORITY_OPTIONS = useMemo(
     () =>
-      woPriorities
-        .filter((p) => p.is_active)
-        .map((p) => ({
-          value: String(p.level),
-          label: i18n.language.toLowerCase().startsWith("fr") ? p.label_fr : p.label,
-        })),
-    [woPriorities, i18n.language],
+      urgencyLevels.map((level) => ({
+        value: level.code,
+        label: urgencyLabelOf(level.code),
+      })),
+    [urgencyLevels, urgencyLabelOf],
   );
 
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
@@ -207,7 +204,7 @@ export function WorkOrdersPage() {
   const handlePriorityFilter = useCallback(
     (val: string | null) => {
       setPriorityFilter(val);
-      setFilter({ urgency_level: val ? Number(val) : null });
+      setFilter({ urgency_code: val ? (val as UrgencyCode) : null });
       void loadWos();
     },
     [setFilter, loadWos],
@@ -224,7 +221,7 @@ export function WorkOrdersPage() {
       status_codes: null,
       lifecycle_states: null,
       type_codes: null,
-      urgency_level: null,
+      urgency_code: null,
     });
     void loadWos();
   }, [setFilter, loadWos]);
@@ -291,10 +288,6 @@ export function WorkOrdersPage() {
     void loadWoTypes();
   }, [loadWoTypes]);
 
-  useEffect(() => {
-    void loadWoPriorities();
-  }, [loadWoPriorities]);
-
   const switchView = useCallback((v: WoViewMode) => {
     setView(v);
     localStorage.setItem("wo-view-mode", v);
@@ -335,7 +328,11 @@ export function WorkOrdersPage() {
       {
         accessorKey: "type_label",
         header: t("list.columns.type"),
-        cell: ({ row }) => <span className="text-xs">{row.original.type_label ?? "—"}</span>,
+        cell: ({ row }) => (
+          <span className="text-xs">
+            {typeLabel(row.original.type_code, row.original.type_label) || "—"}
+          </span>
+        ),
       },
       {
         id: "status",
@@ -410,7 +407,7 @@ export function WorkOrdersPage() {
         },
       },
     ],
-    [t, i18n.language, i18n.resolvedLanguage, openWo, openCreateForm],
+    [t, i18n.language, i18n.resolvedLanguage, openWo, openCreateForm, typeLabel],
   );
 
   const viewOptions = useMemo<ViewOption<WoViewMode>[]>(

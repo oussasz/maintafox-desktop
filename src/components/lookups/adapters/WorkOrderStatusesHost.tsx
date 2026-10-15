@@ -187,7 +187,7 @@ export function WorkOrderStatusesHost() {
                     variant={row.is_system ? "outline" : "secondary"}
                     className={REF_TABLE_BADGE_CLASS}
                   >
-                    {row.is_system ? t("woPriorities.systemBadge") : t("woPriorities.customBadge")}
+                    {row.is_system ? t("woStatuses.systemBadge") : t("woStatuses.customBadge")}
                   </Badge>
                 </ReferenceValueTableCell>
                 <ReferenceValueTableCell align="right">

@@ -194,16 +194,19 @@ async fn cost_by_cost_centre(db: &DatabaseConnection, w: SmrpWindow) -> AppResul
         .collect())
 }
 
-/// Cost of work orders closed in the month, by work-order type.
-async fn cost_by_wo_type(db: &DatabaseConnection, w: SmrpWindow) -> AppResult<Vec<(String, f64, i64)>> {
+/// Cost of work orders closed in the month, by work-order type: `(label FR, label EN, total, count)`,
+/// the labels read from the OT type list (`WORK.ORDER_TYPES`).
+async fn cost_by_wo_type(db: &DatabaseConnection, w: SmrpWindow) -> AppResult<Vec<(String, String, f64, i64)>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT t.code AS code, COALESCE(SUM(wo.total_cost), 0) AS total, COUNT(*) AS n \
-             FROM work_orders wo JOIN work_order_types t ON t.id = wo.type_id \
+            "SELECT t.label AS label_fr, \
+                    COALESCE(json_extract(t.metadata_json, '$.label_en'), t.label) AS label_en, \
+                    COALESCE(SUM(wo.total_cost), 0) AS total, COUNT(*) AS n \
+             FROM work_orders wo JOIN reference_values t ON t.id = wo.type_id \
              WHERE wo.closed_at IS NOT NULL \
                AND datetime(wo.closed_at) >= datetime(?) AND datetime(wo.closed_at) < datetime(?) \
-             GROUP BY t.code ORDER BY total DESC",
+             GROUP BY t.id ORDER BY total DESC",
             vec![instant(w.from).into(), instant(w.to).into()],
         ))
         .await?;
@@ -211,26 +214,13 @@ async fn cost_by_wo_type(db: &DatabaseConnection, w: SmrpWindow) -> AppResult<Ve
         .iter()
         .map(|r| {
             (
-                String::try_get(r, "", "code").unwrap_or_default(),
+                String::try_get(r, "", "label_fr").unwrap_or_default(),
+                String::try_get(r, "", "label_en").unwrap_or_default(),
                 f64::try_get(r, "", "total").unwrap_or(0.0),
                 i64::try_get(r, "", "n").unwrap_or(0),
             )
         })
         .collect())
-}
-
-fn wo_type_label(locale: ReportLocale, code: &str) -> String {
-    let l = match code {
-        "corrective" => locale.pick("Correctif", "Corrective"),
-        "preventive" => locale.pick("Préventif", "Preventive"),
-        "improvement" => locale.pick("Amélioration", "Improvement"),
-        "inspection" => locale.pick("Inspection", "Inspection"),
-        "emergency" => locale.pick("Urgence", "Emergency"),
-        "overhaul" => locale.pick("Révision", "Overhaul"),
-        "condition_based" => locale.pick("Conditionnel", "Condition-based"),
-        _ => locale.pick("Autre type", "Other type"),
-    };
-    l.to_string()
 }
 
 /// Everything the report shows, gathered once for PDF and XLSX.
@@ -243,7 +233,7 @@ pub struct MonthlyData {
     pub smrp: SmrpKpis,
     pub bad_actors: Vec<AnalyticsBadActorAsset>,
     pub cost_centres: Vec<CostLine>,
-    pub cost_by_type: Vec<(String, f64, i64)>,
+    pub cost_by_type: Vec<(String, String, f64, i64)>,
 }
 
 pub async fn gather(db: &DatabaseConnection, locale: ReportLocale, now: DateTime<Utc>) -> AppResult<MonthlyData> {
@@ -438,9 +428,9 @@ pub async fn export_monthly_management(
     let by_type: Vec<Vec<String>> = d
         .cost_by_type
         .iter()
-        .map(|(code, total, n)| {
+        .map(|(label_fr, label_en, total, n)| {
             vec![
-                wo_type_label(locale, code),
+                locale.pick_owned(label_fr, label_en),
                 n.to_string(),
                 money(locale, *total, &d.currency),
             ]

@@ -976,7 +976,7 @@ async fn an_out_of_tolerance_anomaly_becomes_a_linked_request_with_a_written_tit
     );
     // Urgency and impact are real codes of the governed DI lists, so conversion to an OT keeps them.
     assert_eq!(di.reported_urgency, routing::severity_urgency_code(anomaly.severity));
-    assert!(["low", "medium", "high", "critical"].contains(&di.reported_urgency.as_str()));
+    assert!(["low", "normal", "high", "urgent", "emergency"].contains(&di.reported_urgency.as_str()));
     assert_eq!(di.impact_level, "unknown");
     assert!(di.description.contains("Reading 90"));
     assert_eq!(anomaly.linked_di_id, Some(di.id));
@@ -1016,7 +1016,10 @@ async fn a_follow_up_needs_equipment_and_a_work_order_links_back() {
     let wo_type: String = db
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT code FROM work_order_types ORDER BY id LIMIT 1".to_string(),
+            "SELECT v.code FROM reference_values v JOIN reference_sets s ON s.id = v.set_id \
+             JOIN reference_domains d ON d.id = s.domain_id \
+             WHERE d.code = 'WORK.ORDER_TYPES' AND v.code = 'corrective'"
+                .to_string(),
         ))
         .await
         .expect("query")
@@ -1769,6 +1772,6 @@ fn finding_severity_maps_to_governed_urgency_codes() {
     use routing::severity_urgency_code as code;
     assert_eq!(
         [code(1), code(2), code(3), code(4), code(5)],
-        ["low", "low", "medium", "high", "critical"]
+        ["low", "normal", "high", "urgent", "emergency"]
     );
 }

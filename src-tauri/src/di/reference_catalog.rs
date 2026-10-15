@@ -1,15 +1,16 @@
 //! DI reference catalog membership checks (equipment-parity).
 //!
-//! Origin and symptom are Category B domains (`DI.ORIGIN`, `DI.SYMPTOM`).
-//! Create/update writes must resolve against the latest published active set —
-//! free-text codes / unknown ids are rejected.
+//! Origin is the Category B domain `DI.ORIGIN`. The symptom is a value of the failure-symptom
+//! list shared with the OT close-out and RAMS (`WORK.SYMPTOMS`, ISO 14224; migration 199 merged
+//! the former `DI.SYMPTOM` into it). Create/update writes must resolve against the latest
+//! published active set — free-text codes / unknown ids are rejected.
 
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
 use crate::errors::{AppError, AppResult};
 
 const DOMAIN_ORIGIN: &str = "DI.ORIGIN";
-const DOMAIN_SYMPTOM: &str = "DI.SYMPTOM";
+const DOMAIN_SYMPTOM: &str = crate::wo::closeout_reference_catalog::DOMAIN_SYMPTOMS;
 const DOMAIN_REQUEST_TYPE: &str = "DI.REQUEST_TYPE";
 const DOMAIN_DISPOSITION: &str = "DI.DISPOSITION";
 
@@ -126,7 +127,7 @@ pub async fn validate_di_disposition(db: &impl ConnectionTrait, disposition_code
     Ok(code)
 }
 
-/// Validate `symptom_code_id` against published active `DI.SYMPTOM` by id.
+/// Validate `symptom_code_id` against the published active shared symptom list by id.
 pub async fn validate_di_symptom_id(db: &impl ConnectionTrait, symptom_id: i64) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_sql_and_values(
@@ -156,7 +157,7 @@ pub async fn require_di_symptom_id(db: &impl ConnectionTrait, symptom_code_id: O
     Ok(id)
 }
 
-/// Resolve a published active `DI.SYMPTOM` id by code (for system-generated DIs).
+/// Resolve a published active symptom id by code (for system-generated DIs).
 pub async fn resolve_di_symptom_id_by_code(db: &impl ConnectionTrait, code: &str) -> AppResult<Option<i64>> {
     let code = code.trim();
     if code.is_empty() {

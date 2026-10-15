@@ -8,7 +8,7 @@ use tokio::time::{interval, Duration};
 
 use crate::notifications::emitter::{emit_device_event, NotificationEventInput};
 
-use super::domain::map_intervention_request;
+use super::domain::{map_intervention_request, IR_COLS, IR_JOINS, IR_JOIN_COLS};
 use super::sla::{compute_sla_status, mark_resolution_breach_notified, mark_response_breach_notified};
 
 const DEFAULT_POLL_INTERVAL_SECS: u64 = 300;
@@ -21,39 +21,6 @@ const OPEN_STATUSES: &str = "(\
     'approved', \
     'deferred'\
 )";
-
-const IR_COLS: &str = "\
-    ir.id, ir.code, ir.equipment_id, ir.sub_asset_ref, ir.org_node_id, ir.status, \
-    ir.title, ir.description, ir.origin_type, ir.request_type, ir.symptom_code_id, \
-    ir.impact_level, ir.production_impact, ir.safety_flag, ir.environmental_flag, \
-    ir.quality_flag, ir.reported_urgency, ir.validated_urgency, \
-    ir.observed_at, ir.submitted_at, \
-    ir.reviewer_id, ir.screened_at, ir.approved_at, \
-    ir.deferred_until, ir.declined_at, ir.closed_at, ir.archived_at, \
-    ir.converted_to_wo_id, ir.converted_at, \
-    ir.sla_rule_id, ir.sla_target_response_hours, ir.sla_target_resolution_hours, \
-    ir.sla_escalation_threshold_hours, ir.sla_response_deadline, ir.sla_resolution_deadline, \
-    ir.sla_response_breach_notified_at, ir.sla_resolution_breach_notified_at, \
-    ir.reviewer_note, ir.classification_code_id, \
-    ir.is_recurrence_flag, ir.recurrence_di_id, ir.source_inspection_anomaly_id, \
-    ir.disposition_code, ir.disposition_notes, ir.related_di_id, ir.closed_by_id, ir.deferred_from_status, \
-    ir.row_version, ir.submitter_id, ir.created_at, ir.updated_at";
-
-const IR_JOIN_COLS: &str = "\
-    eq.asset_id_code AS asset_code, eq.name AS asset_label, \
-    org.code AS org_node_code, org.name AS org_node_label, \
-    COALESCE(us.display_name, us.username) AS submitter_display_name, \
-    COALESCE(ur.display_name, ur.username) AS reviewer_display_name, \
-    wo.code AS converted_to_wo_code, wo.title AS converted_to_wo_title, \
-    related_di.code AS related_di_code";
-
-const IR_JOINS: &str = "\
-    LEFT JOIN equipment eq ON eq.id = ir.equipment_id \
-    LEFT JOIN org_nodes org ON org.id = ir.org_node_id \
-    LEFT JOIN user_accounts us ON us.id = ir.submitter_id \
-    LEFT JOIN user_accounts ur ON ur.id = ir.reviewer_id \
-    LEFT JOIN work_orders wo ON wo.id = ir.converted_to_wo_id \
-    LEFT JOIN intervention_requests related_di ON related_di.id = ir.related_di_id";
 
 pub async fn start_di_sla_poller(db: DatabaseConnection) {
     let mut secs = read_poll_interval_secs(&db).await;

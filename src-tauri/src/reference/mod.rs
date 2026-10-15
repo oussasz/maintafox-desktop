@@ -21,6 +21,8 @@
 //!   `imports`    — staged import/export pipeline with row-level diagnostics
 //!   `search`     — alias-aware ranked search across canonical fields and aliases
 //!   `publish`    — publish readiness engine and impact preview
+//!   `urgency_scale` — shared DI / OT urgency scale (`WORK.URGENCY`) and its company attributes
+//!   `retirement` — moving links off a merged list and deleting it (data migrations)
 
 pub mod aliases;
 pub mod audience;
@@ -31,10 +33,12 @@ pub mod imports;
 pub mod migrations;
 pub mod protected;
 pub mod publish;
+pub mod retirement;
 pub mod schedule_patterns;
 pub mod search;
 pub mod sets;
 pub mod system_catalog_integrity;
+pub mod urgency_scale;
 pub mod validation;
 pub mod values;
 
@@ -64,6 +68,8 @@ mod schedule_patterns_tests;
 mod search_tests;
 #[cfg(test)]
 mod sets_tests;
+#[cfg(test)]
+mod shared_lists_tests;
 #[cfg(test)]
 mod system_catalog_integrity_tests;
 #[cfg(test)]

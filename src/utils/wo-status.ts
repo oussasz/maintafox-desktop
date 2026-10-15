@@ -5,7 +5,7 @@
  * Legacy snake_case codes from old data are remapped here for display purposes only.
  */
 
-import { toneChipMap, URGENCY_TONE, WO_STATUS_TONE } from "@/design-system/tone";
+import { toneChipMap, WO_STATUS_TONE } from "@/design-system/tone";
 
 /** Canonical i18n key for each lifecycle status */
 export type WoStatusKey =
@@ -51,6 +51,3 @@ export function statusToI18nKey(s: string): WoStatusKey {
 
 /** Chip classes per status — derived from the shared tone vocabulary (design-system/tone.ts). */
 export const STATUS_STYLE: Record<string, string> = toneChipMap(WO_STATUS_TONE);
-
-/** Chip classes per urgency level 1–5. */
-export const URGENCY_STYLE: Record<string, string> = toneChipMap(URGENCY_TONE);

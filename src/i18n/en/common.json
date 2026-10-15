@@ -168,9 +168,11 @@
       "di": "Open request {{code}}",
       "permit": "Open permit {{code}}",
       "pm_plan": "Open preventive maintenance plan {{code}}",
-      "asset": "Open asset {{code}}"
+      "asset": "Open asset {{code}}",
+      "inspection_round": "Open inspection round {{code}}"
     },
-    "asset": "{{code}}"
+    "asset": "{{code}}",
+    "inspection_round": "Round {{code}}"
   },
   "time": {
     "just_now": "Just now",
@@ -223,5 +225,13 @@
     "kpi": {
       "open": "Open the list"
     }
+  },
+  "urgency": {
+    "placeholder": "Choose an urgency level",
+    "loading": "Loading the scale…",
+    "loadError": "The urgency scale could not be loaded.",
+    "none": "No urgency",
+    "targetsShort": "Response ≤ {{response}} h · completion ≤ {{completion}} h",
+    "targetsTooltip": "Target times: response ≤ {{response}} h, completion ≤ {{completion}} h"
   }
 }

@@ -51,8 +51,7 @@ export function pendingCandidateSet(sets: readonly ReferenceSet[]): ReferenceSet
 const SYNTHETIC_DOMAIN_NAME_KEY: Record<string, string> = {
   "INVENTORY.ARTICLE_FAMILY": "synthetic.domains.articleFamilies",
   "INVENTORY.TAX_CATEGORY": "synthetic.domains.taxCategories",
-  "WO.WORK_ORDER_TYPES": "synthetic.domains.woTypes",
-  "WO.WORK_ORDER_PRIORITIES": "synthetic.domains.woPriorities",
+  "WORK.URGENCY_SCALE": "synthetic.domains.urgencyScale",
   "WO.WORK_ORDER_STATUSES": "synthetic.domains.woStatuses",
 };
 

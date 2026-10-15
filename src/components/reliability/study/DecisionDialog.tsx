@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { woTypeLabel } from "@/components/wo/use-wo-type-labels";
 import { useFormatters } from "@/hooks/use-formatters";
 import {
   type DecisionKind,
@@ -27,6 +28,7 @@ import {
   listReliabilityDecisionApprovers,
 } from "@/services/reliability-study-service";
 import { listWorkOrderTypes } from "@/services/wo-service";
+import type { WorkOrderTypeOption } from "@shared/ipc-types";
 
 import { RAMS_SELECT_CLASS } from "./rams-ui";
 
@@ -57,7 +59,7 @@ export function DecisionDialog({
   prefill: DecisionPrefill | null;
   onCreated: () => void;
 }) {
-  const { t } = useTranslation("reliability");
+  const { t, i18n } = useTranslation("reliability");
   const { formatNumber } = useFormatters();
   const [title, setTitle] = useState("");
   const [kind, setKind] = useState<DecisionKind>("pm_interval");
@@ -65,7 +67,7 @@ export function DecisionDialog({
   const [planId, setPlanId] = useState<number | null>(null);
   const [interval, setInterval] = useState("");
   const [equipmentId, setEquipmentId] = useState<number | null>(null);
-  const [woTypes, setWoTypes] = useState<{ code: string; label: string }[]>([]);
+  const [woTypes, setWoTypes] = useState<WorkOrderTypeOption[]>([]);
   const [woType, setWoType] = useState("");
   const [approvers, setApprovers] = useState<{ user_id: number; display_name: string }[]>([]);
   const [approver, setApprover] = useState<number | null>(null);
@@ -97,11 +99,12 @@ export function DecisionDialog({
         const usable = a.pm_plans.filter((p) => p.interval_hours != null);
         setPlans(usable);
         setPlanId(prefill?.pmPlanId ?? a.selected_pm_plan_id ?? usable[0]?.pm_plan_id ?? null);
-        const active = types
-          .filter((x) => x.is_active)
-          .map((x) => ({ code: x.code, label: x.label }));
+        const active = types.filter((x) => x.is_active);
         setWoTypes(active);
-        setWoType(active.find((x) => x.code === "corrective")?.code ?? active[0]?.code ?? "");
+        // A reliability decision acts on a failure: deferred corrective work by default (EN 13306).
+        setWoType(
+          active.find((x) => x.nature === "corrective_deferred")?.code ?? active[0]?.code ?? "",
+        );
         setApprovers(people);
         if (usable.length === 0 && (prefill?.kind ?? "pm_interval") === "pm_interval")
           setKind("one_off_wo");
@@ -235,7 +238,7 @@ export function DecisionDialog({
                 >
                   {woTypes.map((w) => (
                     <option key={w.code} value={w.code}>
-                      {t(`rams.decision.woTypes.${w.code}`, { defaultValue: w.label })}
+                      {woTypeLabel(w, i18n.language)}
                     </option>
                   ))}
                 </select>

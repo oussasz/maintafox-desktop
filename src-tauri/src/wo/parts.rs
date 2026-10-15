@@ -275,9 +275,9 @@ async fn load_wo_source_context(db: &DatabaseConnection, wo_id: i64) -> AppResul
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT wo.code AS wo_code, wo.source_di_id, wot.code AS type_code
+            "SELECT wo.code AS wo_code, wo.source_di_id, wot.semantic_tag AS nature_code
              FROM work_orders wo
-             JOIN work_order_types wot ON wot.id = wo.type_id
+             LEFT JOIN reference_values wot ON wot.id = wo.type_id
              WHERE wo.id = ?",
             [wo_id.into()],
         ))
@@ -290,8 +290,15 @@ async fn load_wo_source_context(db: &DatabaseConnection, wo_id: i64) -> AppResul
     let source_di_id: Option<i64> = row
         .try_get("", "source_di_id")
         .map_err(|e| decode_err("source_di_id", e))?;
-    let type_code: String = row.try_get("", "type_code").map_err(|e| decode_err("type_code", e))?;
-    let source_type = if type_code.eq_ignore_ascii_case("preventive") {
+    let nature_code: Option<String> = row
+        .try_get("", "nature_code")
+        .map_err(|e| decode_err("nature_code", e))?;
+    // Parts consumed by preventive work (any preventive nature, EN 13306) are PM demand.
+    let is_preventive = nature_code
+        .as_deref()
+        .and_then(crate::wo::types::MaintenanceNature::parse)
+        .is_some_and(|n| n.is_preventive());
+    let source_type = if is_preventive {
         "PM_WO".to_string()
     } else {
         "WO".to_string()

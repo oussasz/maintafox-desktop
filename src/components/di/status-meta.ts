@@ -1,4 +1,4 @@
-import { DI_STATUS_TONE, DI_URGENCY_TONE, toneChipMap } from "@/design-system/tone";
+import { DI_STATUS_TONE, toneChipMap } from "@/design-system/tone";
 
 export type DiStatusKey =
   | "new"
@@ -12,9 +12,6 @@ export type DiStatusKey =
   | "cancelled";
 
 export const DI_STATUS_STYLE: Record<string, string> = toneChipMap(DI_STATUS_TONE);
-
-/** Chip classes per DI urgency (low / medium / high / critical). */
-export const DI_URGENCY_STYLE: Record<string, string> = toneChipMap(DI_URGENCY_TONE);
 
 export const TERMINAL_DI_STATES = new Set(["closed"]);
 

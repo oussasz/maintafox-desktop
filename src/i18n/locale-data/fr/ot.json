@@ -77,15 +77,15 @@
     },
     "type": {
       "label": "Type",
-      "loading": "Chargement..."
+      "loading": "Chargement...",
+      "nature": "Nature : {{nature}}"
+    },
+    "subtype": {
+      "label": "Sous-type",
+      "none": "Aucun sous-type"
     },
     "urgency": {
-      "label": "Urgence",
-      "veryLow": "Très basse",
-      "low": "Basse",
-      "medium": "Normale",
-      "high": "Haute",
-      "critical": "Critique"
+      "label": "Urgence"
     },
     "equipment": {
       "label": "Équipement",
@@ -139,16 +139,6 @@
     "mechanicallyComplete": "Mécaniquement complet",
     "technicallyVerified": "Techniquement vérifié",
     "verified": "Vérifié"
-  },
-  "type": {
-    "corrective": "Correctif",
-    "preventive": "Préventif",
-    "predictive": "Prédictif",
-    "improvement": "Amélioration",
-    "inspection": "Inspection",
-    "overhaul": "Révision générale",
-    "conditionBased": "Conditionnel",
-    "permit": "Permis de travail"
   },
   "action": {
     "create": "Nouvel OT",
@@ -707,6 +697,9 @@
       "history": "Historique"
     },
     "fields": {
+      "subtype": "Sous-type",
+      "sourceInspectionRound": "Tournée d'inspection",
+      "nature": "Nature (EN 13306)",
       "number": "Numéro",
       "title": "Titre",
       "description": "Description",
@@ -771,6 +764,7 @@
     "lifecycleDistribution": "Répartition par cycle de vie",
     "statusDistribution": "Répartition par statut",
     "urgencyDistribution": "Répartition par urgence",
+    "noUrgency": "Sans urgence",
     "completionTrend": "Tendance de clôture",
     "backlogByEntity": "Arriéré par entité",
     "backlogHeatmap": {

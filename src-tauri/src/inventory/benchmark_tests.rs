@@ -108,7 +108,7 @@ async fn work_order(db: &DatabaseConnection, code: &str, status_code: &str) -> i
     exec(
         db,
         "INSERT INTO work_orders (code, type_id, status_id, title, row_version, created_at, updated_at)
-         VALUES (?, (SELECT id FROM work_order_types ORDER BY id LIMIT 1),
+         VALUES (?, (SELECT v.id FROM reference_values v JOIN reference_sets s ON s.id = v.set_id JOIN reference_domains d ON d.id = s.domain_id WHERE d.code = 'WORK.ORDER_TYPES' AND v.code = 'corrective'),
                  (SELECT id FROM work_order_statuses WHERE code = ?), 'Pump repair', 1,
                  datetime('now'), datetime('now'))",
         vec![code.into(), status_code.into()],

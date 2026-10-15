@@ -80,7 +80,7 @@ describe("reference-service — domain audience", () => {
 
   it("reads the module catalog classification from the backend", async () => {
     ipc.invoke.mockResolvedValueOnce([
-      { code: "WO.WORK_ORDER_TYPES", audience: "system" },
+      { code: "WO.WORK_ORDER_STATUSES", audience: "system" },
       { code: "INVENTORY.ARTICLE_FAMILY", audience: "company" },
     ]);
 
@@ -88,7 +88,7 @@ describe("reference-service — domain audience", () => {
 
     expect(ipc.invoke).toHaveBeenCalledWith("list_reference_module_catalogs");
     expect(catalogs).toEqual([
-      { code: "WO.WORK_ORDER_TYPES", audience: "system" },
+      { code: "WO.WORK_ORDER_STATUSES", audience: "system" },
       { code: "INVENTORY.ARTICLE_FAMILY", audience: "company" },
     ]);
   });

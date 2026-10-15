@@ -25,7 +25,8 @@ pub struct WoScheduleSaveInput {
     pub planned_end: Option<String>,
     pub shift: Option<String>,
     pub expected_duration_hours: Option<f64>,
-    pub urgency_id: Option<i64>,
+    /// Level of the shared DI / OT urgency scale (`emergency` … `low`); `None` keeps the current one.
+    pub urgency_code: Option<String>,
     pub planned_downtime_hours: Option<f64>,
 }
 
@@ -88,6 +89,10 @@ pub async fn save_schedule(db: &DatabaseConnection, input: WoScheduleSaveInput) 
 
     let txn = db.begin().await?;
     let (from_code, status, _) = load_wo_status(&txn, input.wo_id).await?;
+    let urgency_id = match input.urgency_code.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
+        Some(code) => Some(crate::reference::urgency_scale::urgency_value_id(&txn, code).await?),
+        None => None,
+    };
 
     let action = match status {
         WoStatus::Planning => WoAction::EditSchedule,
@@ -131,8 +136,7 @@ pub async fn save_schedule(db: &DatabaseConnection, input: WoScheduleSaveInput) 
                     .clone()
                     .map(sea_orm::Value::from)
                     .unwrap_or(sea_orm::Value::from(None::<String>)),
-                input
-                    .urgency_id
+                urgency_id
                     .map(sea_orm::Value::from)
                     .unwrap_or(sea_orm::Value::from(None::<i64>)),
                 input
@@ -171,8 +175,7 @@ pub async fn save_schedule(db: &DatabaseConnection, input: WoScheduleSaveInput) 
                     .clone()
                     .map(sea_orm::Value::from)
                     .unwrap_or(sea_orm::Value::from(None::<String>)),
-                input
-                    .urgency_id
+                urgency_id
                     .map(sea_orm::Value::from)
                     .unwrap_or(sea_orm::Value::from(None::<i64>)),
                 input

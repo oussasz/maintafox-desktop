@@ -77,9 +77,7 @@ pub const SEEDED_ROWS: &[(&str, &str, &str)] = &[
           WHERE v.id = t.reference_value_id) || ':' || t.day_of_week",
         "1 = 1",
     ),
-    ("urgency_levels", "CAST(t.level AS TEXT)", "1 = 1"),
     ("work_order_statuses", "t.code", "1 = 1"),
-    ("work_order_types", "t.code", "1 = 1"),
     ("inventory_valuation_policies", "t.code", "1 = 1"),
     // Derived from the published EQUIPMENT.CLASS catalog on every device.
     ("equipment_classes", "t.code", "1 = 1"),

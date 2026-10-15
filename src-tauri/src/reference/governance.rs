@@ -85,18 +85,22 @@ pub const ACTIVE_ENFORCEMENT_PHASE: EnforcementPhase = EnforcementPhase::Target;
 /// Known production domain codes → category (philosophy table).
 fn category_for_known_code(code: &str) -> Option<GovernanceCategory> {
     match normalize_domain_code(code).as_str() {
-        "EQUIPMENT.STATUS" | "EQUIPMENT.CRITICALITY" | "DI.PRIORITY" | "DI.IMPACT_LEVEL" | "DI.REQUEST_TYPE" => {
-            Some(GovernanceCategory::SystemCatalog)
-        }
+        "EQUIPMENT.STATUS"
+        | "EQUIPMENT.CRITICALITY"
+        | "DI.IMPACT_LEVEL"
+        | "WORK.URGENCY"
+        | "WORK.MAINTENANCE_NATURES"
+        | "WORK.ORDER_TYPES" => Some(GovernanceCategory::SystemCatalog),
 
         "EQUIPMENT.FAMILY"
         | "EQUIPMENT.SUBFAMILY"
-        | "DI.SYMPTOM"
         | "DI.ORIGIN"
         | "DI.DISPOSITION"
         | "PERSONNEL.SKILLS"
         | "ORG.SCHEDULE_CLASS"
         | "WORK.DELAY_REASONS"
+        // A plant's own OT sub-types, each under one protected maintenance nature (owner, 2026-10-15).
+        | "WORK.ORDER_SUBTYPES"
         | "WORK.PART_UNUSED_REASON" => Some(GovernanceCategory::OperationalDictionary),
 
         // Equipment classes (ISO 14224 taxonomy): the product seeds the baseline classes, each plant
@@ -107,7 +111,9 @@ fn category_for_known_code(code: &str) -> Option<GovernanceCategory> {
         | "WORK.SYMPTOMS"
         | "WORK.FAILURE_CAUSES"
         | "WORK.FAILURE_EFFECTS"
-        | "PM.MAINTENANCE_TASK_LIST" => Some(GovernanceCategory::ControlledCatalog),
+        | "PM.MAINTENANCE_TASK_LIST"
+        // Request types differ per plant and are extended through draft → publish (owner, 2026-10-15).
+        | "DI.REQUEST_TYPE" => Some(GovernanceCategory::ControlledCatalog),
 
         _ => None,
     }
@@ -116,10 +122,7 @@ fn category_for_known_code(code: &str) -> Option<GovernanceCategory> {
 /// Domains that require analytical publish impact / protected delete semantics.
 /// Subset of Category A (not all system catalogs).
 fn is_analytical_system_code(code: &str) -> bool {
-    matches!(
-        normalize_domain_code(code).as_str(),
-        "DI.PRIORITY" | "DI.IMPACT_LEVEL" | "DI.REQUEST_TYPE"
-    )
+    matches!(normalize_domain_code(code).as_str(), "DI.IMPACT_LEVEL")
 }
 
 fn normalize_domain_code(code: &str) -> String {

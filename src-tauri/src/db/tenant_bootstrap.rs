@@ -259,7 +259,7 @@ async fn seed_generic_demo_sandbox(db: &DatabaseConnection, tenant_id: &str, roo
         pump_id,
         line_id,
         submitter_id,
-        "medium",
+        "normal",
         now,
     )
     .await?;
@@ -279,8 +279,8 @@ async fn seed_generic_demo_sandbox(db: &DatabaseConnection, tenant_id: &str, roo
     let draft_status_id = resolve_work_order_status_id(db, "draft").await?;
     let corrective_type_id = resolve_work_order_type_id(db, "corrective").await?;
     let preventive_type_id = resolve_work_order_type_id(db, "preventive").await?;
-    let urgency_medium_id = resolve_urgency_id(db, 3).await?;
-    let urgency_high_id = resolve_urgency_id(db, 4).await?;
+    let urgency_medium_id = Some(crate::reference::urgency_scale::urgency_value_id(db, "normal").await?);
+    let urgency_high_id = Some(crate::reference::urgency_scale::urgency_value_id(db, "high").await?);
 
     let wo_1 = ensure_work_order(
         db,
@@ -650,25 +650,7 @@ async fn resolve_work_order_status_id(db: &DatabaseConnection, code: &str) -> Ap
 }
 
 async fn resolve_work_order_type_id(db: &DatabaseConnection, code: &str) -> AppResult<i64> {
-    let row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT id FROM work_order_types WHERE code = ? LIMIT 1",
-            [code.into()],
-        ))
-        .await?;
-    Ok(row.and_then(|r| i64::try_get(&r, "", "id").ok()).unwrap_or(1))
-}
-
-async fn resolve_urgency_id(db: &DatabaseConnection, level: i64) -> AppResult<Option<i64>> {
-    let row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT id FROM urgency_levels WHERE level = ? LIMIT 1",
-            [level.into()],
-        ))
-        .await?;
-    Ok(row.and_then(|r| i64::try_get(&r, "", "id").ok()))
+    crate::wo::types::resolve_work_order_type_id_by_code(db, code).await
 }
 
 async fn last_insert_id(db: &impl ConnectionTrait) -> AppResult<i64> {

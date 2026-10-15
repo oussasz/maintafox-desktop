@@ -18,14 +18,13 @@ export type ReferenceTypeId =
   | "equipment.criticality"
   | "equipment.status"
   | "di.origin"
-  | "di.symptom"
-  | "di.priority"
   | "di.impact"
   | "di.request_type"
   | "di.disposition"
   | "personnel.skills"
   | "org.schedule_class"
   | "work.symptom"
+  | "work.order_subtype"
   | "work.failure_mode"
   | "work.failure_cause"
   | "work.failure_effect"
@@ -125,24 +124,6 @@ export const REFERENCE_TYPE_REGISTRY: Record<ReferenceTypeId, ReferenceTypeConfi
     emptyMessageFr: "Aucune origine disponible",
     emptyMessageEn: "No origin available",
   },
-  "di.symptom": {
-    id: "di.symptom",
-    domainCode: "DI.SYMPTOM",
-    entityLabelFr: "symptôme",
-    entityLabelEn: "symptom",
-    gender: "m",
-    emptyMessageFr: "Aucun symptôme disponible",
-    emptyMessageEn: "No symptom available",
-  },
-  "di.priority": {
-    id: "di.priority",
-    domainCode: "DI.PRIORITY",
-    entityLabelFr: "priorité",
-    entityLabelEn: "priority",
-    gender: "f",
-    emptyMessageFr: "Aucune priorité disponible",
-    emptyMessageEn: "No priority available",
-  },
   "di.impact": {
     id: "di.impact",
     domainCode: "DI.IMPACT_LEVEL",
@@ -188,6 +169,17 @@ export const REFERENCE_TYPE_REGISTRY: Record<ReferenceTypeId, ReferenceTypeConfi
     valueExtensions: ["schedule_pattern"],
     emptyMessageFr: "Aucune classe horaire disponible",
     emptyMessageEn: "No schedule class available",
+  },
+  "work.order_subtype": {
+    id: "work.order_subtype",
+    domainCode: "WORK.ORDER_SUBTYPES",
+    entityLabelFr: "sous-type d'OT",
+    entityLabelEn: "work-order sub-type",
+    gender: "m",
+    // Each sub-type hangs under one protected EN 13306 maintenance nature.
+    parentDomainCode: "WORK.MAINTENANCE_NATURES",
+    emptyMessageFr: "Aucun sous-type pour cette nature",
+    emptyMessageEn: "No sub-type for this nature",
   },
   "work.symptom": {
     id: "work.symptom",

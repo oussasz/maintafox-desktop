@@ -25,7 +25,10 @@ pub struct WoAnalyticsSnapshot {
     pub asset_id: Option<i64>,
     pub asset_code: Option<String>,
     pub entity_id: Option<i64>,
-    pub urgency_level: Option<i64>,
+    /// Level of the shared DI / OT urgency scale.
+    pub urgency_code: Option<String>,
+    /// EN 13306 maintenance nature of the OT type.
+    pub nature_code: Option<String>,
     pub source_di_id: Option<i64>,
     // Execution times
     pub submitted_at: Option<String>,
@@ -178,7 +181,7 @@ pub async fn get_wo_analytics_snapshot(db: &impl ConnectionTrait, wo_id: i64) ->
                 wo.equipment_id AS asset_id, \
                 eq.asset_id_code AS asset_code, \
                 wo.entity_id, \
-                ul.level AS urgency_level, \
+                ul.code AS urgency_code, wot.semantic_tag AS nature_code, \
                 wo.source_di_id, \
                 wo.created_at AS submitted_at, \
                 wo.actual_start, \
@@ -203,9 +206,9 @@ pub async fn get_wo_analytics_snapshot(db: &impl ConnectionTrait, wo_id: i64) ->
                 wo.planned_start, \
                 wos.code AS status_code \
              FROM work_orders wo \
-             JOIN work_order_types    wot ON wot.id = wo.type_id \
+             JOIN reference_values    wot ON wot.id = wo.type_id \
              JOIN work_order_statuses wos ON wos.id = wo.status_id \
-             LEFT JOIN urgency_levels  ul ON ul.id  = wo.urgency_id \
+             LEFT JOIN reference_values ul ON ul.id = wo.urgency_id \
              LEFT JOIN equipment       eq ON eq.id  = wo.equipment_id \
              WHERE wo.id = ?",
             [wo_id.into()],
@@ -317,9 +320,12 @@ pub async fn get_wo_analytics_snapshot(db: &impl ConnectionTrait, wo_id: i64) ->
         entity_id: row
             .try_get::<Option<i64>>("", "entity_id")
             .map_err(|e| decode_err("entity_id", e))?,
-        urgency_level: row
-            .try_get::<Option<i64>>("", "urgency_level")
-            .map_err(|e| decode_err("urgency_level", e))?,
+        urgency_code: row
+            .try_get::<Option<String>>("", "urgency_code")
+            .map_err(|e| decode_err("urgency_code", e))?,
+        nature_code: row
+            .try_get::<Option<String>>("", "nature_code")
+            .map_err(|e| decode_err("nature_code", e))?,
         source_di_id: row
             .try_get::<Option<i64>>("", "source_di_id")
             .map_err(|e| decode_err("source_di_id", e))?,

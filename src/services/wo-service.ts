@@ -9,10 +9,7 @@ import { z } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
 import type {
-  CreateWorkOrderTypeInput,
-  UpdateWorkOrderPriorityInput,
   UpdateWorkOrderStatusInput,
-  UpdateWorkOrderTypeInput,
   WoApprovePlanningInput,
   WoAssignInput,
   WoBacklogHeatmap,
@@ -41,8 +38,8 @@ import type {
   WoStatsPayload,
   WoSubmitInput,
   WorkOrder,
-  WorkOrderPriorityOption,
   WorkOrderStatusOption,
+  WorkOrderSubtypeOption,
   WorkOrderTypeOption,
 } from "@shared/ipc-types";
 
@@ -129,7 +126,23 @@ export const WorkOrderSchema = z.object({
   status_color: z.string().nullable().optional(),
   type_code: z.string().nullable().optional(),
   type_label: z.string().nullable().optional(),
-  urgency_level: z.number().nullable().optional(),
+  nature_code: z
+    .enum([
+      "corrective_immediate",
+      "corrective_deferred",
+      "preventive_predetermined",
+      "preventive_condition_based",
+      "preventive_predictive",
+      "improvement",
+    ])
+    .nullable()
+    .optional(),
+  nature_label: z.string().nullable().optional(),
+  subtype_id: z.number().nullable().optional(),
+  subtype_code: z.string().nullable().optional(),
+  subtype_label: z.string().nullable().optional(),
+  urgency_code: z.enum(["emergency", "urgent", "high", "normal", "low"]).nullable().optional(),
+  urgency_rank: z.number().nullable().optional(),
   urgency_label: z.string().nullable().optional(),
   urgency_color: z.string().nullable().optional(),
   asset_code: z.string().nullable().optional(),
@@ -147,6 +160,10 @@ export const WorkOrderSchema = z.object({
   schedule_commitment_id: z.number().nullable().optional(),
   schedule_frozen: z.boolean().nullable().optional(),
   lifecycle_state: z.string().nullable().optional(),
+  source_inspection_round_id: z.number().nullable().optional(),
+  source_inspection_round_code: z.string().nullable().optional(),
+  source_inspection_round_title: z.string().nullable().optional(),
+  source_inspection_round_scheduled_at: z.string().nullable().optional(),
 });
 
 export const WoTransitionRowSchema = z.object({
@@ -172,22 +189,32 @@ const WoGetResponseSchema = z.object({
   transitions: z.array(WoTransitionRowSchema),
 });
 
+const NatureCodeSchema = z.enum([
+  "corrective_immediate",
+  "corrective_deferred",
+  "preventive_predetermined",
+  "preventive_condition_based",
+  "preventive_predictive",
+  "improvement",
+]);
+
 const WorkOrderTypeOptionSchema = z.object({
   id: z.number(),
   code: z.string(),
   label: z.string(),
+  label_en: z.string(),
+  nature: NatureCodeSchema.nullable(),
+  nature_label: z.string().nullable(),
+  nature_label_en: z.string().nullable(),
   is_system: z.boolean(),
   is_active: z.boolean(),
 });
 
-const WorkOrderPriorityOptionSchema = z.object({
+const WorkOrderSubtypeOptionSchema = z.object({
   id: z.number(),
-  level: z.number(),
   code: z.string(),
   label: z.string(),
-  label_fr: z.string(),
-  hex_color: z.string(),
-  is_system: z.boolean(),
+  nature: NatureCodeSchema.nullable(),
   is_active: z.boolean(),
 });
 
@@ -293,36 +320,10 @@ export async function listWorkOrderTypes(): Promise<WorkOrderTypeOption[]> {
   return z.array(WorkOrderTypeOptionSchema).parse(raw) as WorkOrderTypeOption[];
 }
 
-export async function createWorkOrderType(
-  input: CreateWorkOrderTypeInput,
-): Promise<WorkOrderTypeOption> {
-  const raw = await invoke<unknown>("create_work_order_type", { input });
-  return WorkOrderTypeOptionSchema.parse(raw) as WorkOrderTypeOption;
-}
-
-export async function updateWorkOrderType(
-  id: number,
-  input: UpdateWorkOrderTypeInput,
-): Promise<WorkOrderTypeOption> {
-  const raw = await invoke<unknown>("update_work_order_type", { id, input });
-  return WorkOrderTypeOptionSchema.parse(raw) as WorkOrderTypeOption;
-}
-
-export async function deleteWorkOrderType(id: number): Promise<void> {
-  await invoke("delete_work_order_type", { id });
-}
-
-export async function listWorkOrderPriorities(): Promise<WorkOrderPriorityOption[]> {
-  const raw = await invoke<unknown>("list_work_order_priorities");
-  return z.array(WorkOrderPriorityOptionSchema).parse(raw) as WorkOrderPriorityOption[];
-}
-
-export async function updateWorkOrderPriority(
-  id: number,
-  input: UpdateWorkOrderPriorityInput,
-): Promise<WorkOrderPriorityOption> {
-  const raw = await invoke<unknown>("update_work_order_priority", { id, input });
-  return WorkOrderPriorityOptionSchema.parse(raw) as WorkOrderPriorityOption;
+/** The plant's OT sub-types (`WORK.ORDER_SUBTYPES`) with the nature each belongs to. */
+export async function listWorkOrderSubtypes(): Promise<WorkOrderSubtypeOption[]> {
+  const raw = await invoke<unknown>("list_work_order_subtypes");
+  return z.array(WorkOrderSubtypeOptionSchema).parse(raw) as WorkOrderSubtypeOption[];
 }
 
 export async function listWorkOrderStatuses(): Promise<WorkOrderStatusOption[]> {

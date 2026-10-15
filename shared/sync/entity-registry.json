@@ -1853,7 +1853,7 @@
       "parents": [
         "teams",
         "personnel",
-        "urgency_levels",
+        "reference_values",
         "intervention_requests",
         "work_orders",
         "pm_occurrences"
@@ -2001,14 +2001,6 @@
         "articles",
         "user_accounts"
       ],
-      "sync_status": "synced"
-    },
-    {
-      "entity_type": "urgency_levels",
-      "scope": "tenant",
-      "conflict_policy": "operator_review",
-      "apply_priority": 0,
-      "parents": [],
       "sync_status": "synced"
     },
     {
@@ -2222,14 +2214,6 @@
       "sync_status": "synced"
     },
     {
-      "entity_type": "work_order_types",
-      "scope": "tenant",
-      "conflict_policy": "operator_review",
-      "apply_priority": 0,
-      "parents": [],
-      "sync_status": "synced"
-    },
-    {
       "entity_type": "work_order_verifications",
       "scope": "tenant",
       "conflict_policy": "operator_review",
@@ -2253,10 +2237,9 @@
         "equipment",
         "teams",
         "intervention_requests",
-        "work_order_types",
+        "reference_values",
         "work_order_statuses",
-        "org_nodes",
-        "urgency_levels"
+        "org_nodes"
       ],
       "sync_status": "synced"
     },

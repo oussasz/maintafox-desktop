@@ -77,15 +77,15 @@
     },
     "type": {
       "label": "Type",
-      "loading": "Loading..."
+      "loading": "Loading...",
+      "nature": "Nature: {{nature}}"
+    },
+    "subtype": {
+      "label": "Sub-type",
+      "none": "No sub-type"
     },
     "urgency": {
-      "label": "Urgency",
-      "veryLow": "Very low",
-      "low": "Low",
-      "medium": "Medium",
-      "high": "High",
-      "critical": "Critical"
+      "label": "Urgency"
     },
     "equipment": {
       "label": "Equipment",
@@ -139,16 +139,6 @@
     "mechanicallyComplete": "Mechanically complete",
     "technicallyVerified": "Technically verified",
     "verified": "Verified"
-  },
-  "type": {
-    "corrective": "Corrective",
-    "preventive": "Preventive",
-    "predictive": "Predictive",
-    "improvement": "Improvement",
-    "inspection": "Inspection",
-    "overhaul": "Overhaul",
-    "conditionBased": "Condition-based",
-    "permit": "Work permit"
   },
   "action": {
     "create": "New WO",
@@ -707,6 +697,9 @@
       "history": "History"
     },
     "fields": {
+      "subtype": "Sub-type",
+      "sourceInspectionRound": "Inspection round",
+      "nature": "Nature (EN 13306)",
       "number": "Number",
       "title": "Title",
       "description": "Description",
@@ -771,6 +764,7 @@
     "lifecycleDistribution": "Lifecycle Distribution",
     "statusDistribution": "Status Distribution",
     "urgencyDistribution": "Urgency Breakdown",
+    "noUrgency": "No urgency",
     "completionTrend": "Completion Trend",
     "backlogByEntity": "Backlog by Entity",
     "backlogHeatmap": {

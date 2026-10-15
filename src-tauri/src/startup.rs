@@ -189,19 +189,15 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
         warn!("startup: system seed returned error (non-fatal): {e}");
     }
 
-    // Phase 3a: enforce mandatory WO type contract to prevent cross-environment drift.
-    info!("startup: enforcing work_order_types integrity");
-    if let Err(e) = crate::wo::types::ensure_required_work_order_types(&app_state.db).await {
-        let reason = format!("Work order type integrity check failed: {e}");
-        error!("{reason}");
-        emit_event(&app, StartupEvent::Failed { reason: reason.clone() });
-        window.show().ok();
-        return Err(crate::errors::AppError::Internal(anyhow::anyhow!(reason)));
-    }
-
-    info!("startup: enforcing urgency_levels (work order priorities) integrity");
-    if let Err(e) = crate::wo::priorities::ensure_required_urgency_levels(&app_state.db).await {
-        let reason = format!("Urgency levels integrity check failed: {e}");
+    // Phase 3a: the work-order types with their maintenance natures and the shared DI / OT
+    // urgency scale are SYSTEM reference lists the workflow rules depend on.
+    info!("startup: enforcing work-order types / natures and urgency scale integrity");
+    let catalogs = async {
+        crate::wo::types::ensure_work_order_type_catalog(&app_state.db).await?;
+        crate::reference::urgency_scale::ensure_urgency_scale(&app_state.db).await
+    };
+    if let Err(e) = catalogs.await {
+        let reason = format!("Work order type / urgency scale integrity check failed: {e}");
         error!("{reason}");
         emit_event(&app, StartupEvent::Failed { reason: reason.clone() });
         window.show().ok();

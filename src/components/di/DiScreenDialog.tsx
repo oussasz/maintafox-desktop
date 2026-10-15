@@ -11,6 +11,8 @@ import { ClipboardCheck, Loader2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { UrgencySelect } from "@/components/common/urgency/UrgencySelect";
+import { useUrgencyScale } from "@/components/common/urgency/use-urgency-scale";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -33,14 +35,11 @@ import { listPublishedReferenceValuesByDomainCode } from "@/services/reference-s
 import { useDiReviewStore } from "@/stores/di-review-store";
 import type { InterventionRequest, ReferenceValue } from "@shared/ipc-types";
 
-/** DI urgency scale (backend `DiUrgency`), lowest first. */
-export const DI_URGENCY_CODES = ["low", "medium", "high", "critical"] as const;
-
 /**
- * Classification uses the published DI symptom catalogue (`DI.SYMPTOM`): the same
- * reference the conversion propagates to the WO failure details.
+ * Classification uses the failure-symptom list shared by requests, the OT close-out and RAMS
+ * (`WORK.SYMPTOMS`, ISO 14224): the value the conversion carries onto the WO failure details.
  */
-const CLASSIFICATION_DOMAIN = "DI.SYMPTOM";
+const CLASSIFICATION_DOMAIN = "WORK.SYMPTOMS";
 const NONE = "__none";
 
 interface DiScreenDialogProps {
@@ -54,7 +53,8 @@ interface DiScreenDialogProps {
 export function DiScreenDialog({ di, open, onOpenChange, onScreened }: DiScreenDialogProps) {
   const { t } = useTranslation("di");
   const screen = useDiReviewStore((s) => s.screen);
-  const [urgency, setUrgency] = useState<string>("medium");
+  const [urgency, setUrgency] = useState<string>("");
+  const { labelOf: urgencyLabel } = useUrgencyScale();
   const [classificationId, setClassificationId] = useState<string>(NONE);
   const [note, setNote] = useState("");
   const [classifications, setClassifications] = useState<ReferenceValue[]>([]);
@@ -127,21 +127,15 @@ export function DiScreenDialog({ di, open, onOpenChange, onScreened }: DiScreenD
         <div className="space-y-4 py-2">
           <div className="space-y-1.5">
             <Label htmlFor="di-screen-urgency">{t("screening.validatedUrgency")}</Label>
-            <Select value={urgency} onValueChange={setUrgency}>
-              <SelectTrigger id="di-screen-urgency" className="h-11">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {DI_URGENCY_CODES.map((code) => (
-                  <SelectItem key={code} value={code}>
-                    {t(`priority.${code}`)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <UrgencySelect
+              id="di-screen-urgency"
+              value={urgency || null}
+              onChange={setUrgency}
+              className="h-11"
+            />
             <p className="text-xs text-text-muted">
               {urgencyChanged
-                ? t("screening.urgencyChanged", { reported: t(`priority.${di.reported_urgency}`) })
+                ? t("screening.urgencyChanged", { reported: urgencyLabel(di.reported_urgency) })
                 : t("screening.urgencyAsReported")}
             </p>
           </div>

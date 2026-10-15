@@ -15,6 +15,8 @@ import { useSearchParams } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
+import { UrgencyBadge } from "@/components/common/urgency/UrgencyBadge";
+import { useUrgencyScale } from "@/components/common/urgency/use-urgency-scale";
 import { DataTable } from "@/components/data/DataTable";
 import { DiApprovalDialog } from "@/components/di/DiApprovalDialog";
 import { DiArchivePanel } from "@/components/di/DiArchivePanel";
@@ -42,7 +44,7 @@ import { Button } from "@/components/ui/button";
 import { ErrorState, TruncationNotice } from "@/components/ui/data-state";
 import { StatusChip } from "@/components/ui/status-chip";
 import { mfLayout } from "@/design-system/tokens";
-import { DI_STATUS_TONE, DI_URGENCY_TONE, toneOf } from "@/design-system/tone";
+import { DI_STATUS_TONE, toneOf } from "@/design-system/tone";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useDiStore } from "@/stores/di-store";
 import { formatDate as formatDiDate, intlLocaleForLanguage } from "@/utils/format-date";
@@ -168,13 +170,14 @@ export function RequestsPage() {
     [t],
   );
 
+  const { levels: urgencyLevels, labelOf: urgencyLabel } = useUrgencyScale();
   const PRIORITY_OPTIONS = useMemo(
     () =>
-      ["low", "medium", "high", "critical"].map((code) => ({
-        value: code,
-        label: t(`priority.${code}`),
+      urgencyLevels.map((level) => ({
+        value: level.code,
+        label: urgencyLabel(level.code),
       })),
-    [t],
+    [urgencyLevels, urgencyLabel],
   );
 
   const onSearchChange = useCallback(
@@ -419,7 +422,7 @@ export function RequestsPage() {
         header: t("list.columns.priority"),
         cell: ({ row }) => {
           const u = row.original.reported_urgency;
-          return <StatusChip label={t(`priority.${u}`)} tone={toneOf(DI_URGENCY_TONE, u)} />;
+          return <UrgencyBadge code={u} />;
         },
       },
       {

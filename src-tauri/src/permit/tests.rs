@@ -478,7 +478,8 @@ async fn assigned_wo_requiring_permit(db: &DatabaseConnection, asset_id: i64) ->
             source_rca_cause_text: None,
             entity_id: Some(1),
             planner_id: None,
-            urgency_id: Some(3),
+            urgency_code: Some("normal".into()),
+            subtype_code: None,
             title: "Replace breaker".into(),
             description: None,
             notes: None,
@@ -513,7 +514,7 @@ async fn assigned_wo_requiring_permit(db: &DatabaseConnection, asset_id: i64) ->
             planned_end: Some("2026-04-10T16:00:00Z".into()),
             shift: None,
             expected_duration_hours: Some(8.0),
-            urgency_id: None,
+            urgency_code: None,
             planned_downtime_hours: None,
         },
     )

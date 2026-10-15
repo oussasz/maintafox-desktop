@@ -13,6 +13,7 @@ import { Calendar as CalendarIcon, User } from "lucide-react";
 import { useCallback, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 
+import { urgencyKanbanTone, useUrgencyScale } from "@/components/common/urgency/use-urgency-scale";
 import { KanbanBoard } from "@/components/kanban";
 import type { KanbanBadge, KanbanCard, KanbanColumn, KanbanTone } from "@/components/kanban";
 import type { WorkOrder } from "@shared/ipc-types";
@@ -50,15 +51,6 @@ const COLUMN_META: { id: string; labelKey: string; tone: KanbanTone }[] = [
   { id: "cancelled", labelKey: "kanban.columnCancelled", tone: "cancelled" },
 ];
 
-/** Same urgency tone vocabulary as DI. */
-const URGENCY_TONE: Record<number, KanbanTone> = {
-  1: "low",
-  2: "medium",
-  3: "medium",
-  4: "high",
-  5: "critical",
-};
-
 function shortDate(iso: string | null | undefined): string {
   if (!iso) return "—";
   try {
@@ -78,6 +70,7 @@ interface WoKanbanViewProps {
 
 export function WoKanbanView({ items, onCardClick }: WoKanbanViewProps) {
   const { t } = useTranslation(["ot", "common"]);
+  const { labelOf: urgencyLabel } = useUrgencyScale();
   const byId = useRef(new Map<string, WorkOrder>());
 
   const columns = useMemo<KanbanColumn[]>(
@@ -95,11 +88,11 @@ export function WoKanbanView({ items, onCardClick }: WoKanbanViewProps) {
     const result = items.map<KanbanCard>((wo) => {
       const id = String(wo.id);
       map.set(id, wo);
-      const urgencyTone = URGENCY_TONE[wo.urgency_id ?? 0];
+      const urgencyTone = urgencyKanbanTone(wo.urgency_code);
       const badges: KanbanBadge[] = [];
-      if (wo.urgency_label) {
+      if (wo.urgency_code) {
         badges.push({
-          label: wo.urgency_label,
+          label: urgencyLabel(wo.urgency_code),
           ...(urgencyTone ? { tone: urgencyTone } : {}),
         });
       }
@@ -120,7 +113,7 @@ export function WoKanbanView({ items, onCardClick }: WoKanbanViewProps) {
     });
     byId.current = map;
     return result;
-  }, [items, t]);
+  }, [items, t, urgencyLabel]);
 
   const handleCardClick = useCallback(
     (card: KanbanCard) => {

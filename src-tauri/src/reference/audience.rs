@@ -20,7 +20,7 @@
 //! seeders write their rows with their own SQL and are not affected.
 //!
 //! The Données de référence tree also shows a few catalogs that are module tables rather than
-//! reference domains (OT types, OT statuses, article families…). Their audience is declared here in
+//! reference domains (OT statuses, the urgency scale's company attributes, article families…). Their audience is declared here in
 //! [`MODULE_CATALOGS`] and served to the UI by `list_reference_module_catalogs`, so the frontend has
 //! no list of its own.
 
@@ -181,10 +181,15 @@ pub struct ModuleCatalog {
     pub audience: DomainAudience,
 }
 
-/// Audience of the module catalogs. OT types and statuses drive the work-order workflow (natures,
-/// status machine), so they belong to the program. Article families and tax categories are the
-/// company's own. OT priorities stay COMPANY (visible, as before) until the owner decides on the
-/// shared OT/DI urgency scale.
+/// Audience of the module catalogs. The OT statuses drive the work-order state machine, so they
+/// belong to the program. Article families and tax categories are the company's own.
+///
+/// `WORK.URGENCY_SCALE` is the plant's view of the shared DI / OT urgency scale: the five levels
+/// are the SYSTEM domain `WORK.URGENCY` (fixed codes, hidden from the generic editor), and this
+/// catalog edits only their company attributes, labels and target times
+/// (`reference::urgency_scale`). The OT types and their EN 13306 natures are SYSTEM reference
+/// domains since migration 198 (`WORK.ORDER_TYPES`, `WORK.MAINTENANCE_NATURES`), hidden like any
+/// SYSTEM domain.
 pub const MODULE_CATALOGS: &[ModuleCatalog] = &[
     ModuleCatalog {
         code: "INVENTORY.ARTICLE_FAMILY",
@@ -195,20 +200,16 @@ pub const MODULE_CATALOGS: &[ModuleCatalog] = &[
         audience: DomainAudience::Company,
     },
     ModuleCatalog {
-        code: "WO.WORK_ORDER_TYPES",
-        audience: DomainAudience::System,
-    },
-    ModuleCatalog {
-        code: "WO.WORK_ORDER_PRIORITIES",
+        code: MODULE_CATALOG_URGENCY_SCALE,
         audience: DomainAudience::Company,
     },
     ModuleCatalog {
-        code: "WO.WORK_ORDER_STATUSES",
+        code: MODULE_CATALOG_WORK_ORDER_STATUSES,
         audience: DomainAudience::System,
     },
 ];
 
-pub const MODULE_CATALOG_WORK_ORDER_TYPES: &str = "WO.WORK_ORDER_TYPES";
+pub const MODULE_CATALOG_URGENCY_SCALE: &str = "WORK.URGENCY_SCALE";
 pub const MODULE_CATALOG_WORK_ORDER_STATUSES: &str = "WO.WORK_ORDER_STATUSES";
 
 /// Audience of a module catalog, `None` for an unknown code.

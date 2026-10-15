@@ -47,6 +47,14 @@ impl ReportLocale {
         }
     }
 
+    /// Same as [`Self::pick`] for labels read from data (reference lists).
+    pub(crate) fn pick_owned(self, fr: &str, en: &str) -> String {
+        match self {
+            Self::Fr => fr.to_string(),
+            Self::En => en.to_string(),
+        }
+    }
+
     pub(crate) fn generated_at(self, now: chrono::DateTime<chrono::Utc>) -> String {
         match self {
             Self::Fr => format!("Généré le {} (UTC)", now.format("%d/%m/%Y à %H:%M")),

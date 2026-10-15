@@ -230,42 +230,28 @@
       "other": "Inconnu"
     }
   },
-  "woTypes": {
-    "panelTitle": "Types d'ordre de travail",
-    "colCode": "Code",
-    "colLabel": "Libellé",
-    "colSystem": "Origine",
-    "colActive": "Actif",
-    "colActions": "Actions",
-    "systemBadge": "Système",
-    "customBadge": "Personnalisé",
-    "lockedHint": "Code verrouillé (type système)",
-    "addType": "Ajouter un type",
-    "deleteTitle": "Supprimer le type",
-    "deleteDescription": "Supprimer définitivement le type « {{code}} » ?",
-    "empty": "Aucun type chargé.",
-    "active": "Actif",
-    "inactive": "Inactif"
-  },
-  "woPriorities": {
-    "panelTitle": "Priorités d'ordre de travail",
+  "urgencyScale": {
+    "panelTitle": "Échelle d'urgence (DI / OT)",
+    "hint": "Une seule échelle pour les demandes et les ordres de travail. Les cinq niveaux sont fixés par Maintafox (ils pilotent le SLA des demandes, l'ordre du carnet de travaux et les indicateurs) : vous ajustez leurs libellés et leurs délais cibles. Les délais « valeurs de départ » sont proposés par le produit et sont à valider par le site.",
+    "colRank": "Rang",
     "colLevel": "Niveau",
-    "colCode": "Code",
-    "colSystem": "Origine",
-    "colLabelEn": "Libellé (EN)",
     "colLabelFr": "Libellé (FR)",
-    "colColor": "Couleur",
-    "colActive": "Actif",
+    "colLabelEn": "Libellé (EN)",
+    "colResponse": "Prise en charge",
+    "colCompletion": "Réalisation",
+    "colEscalation": "Seuil d'alerte",
+    "colSource": "Délais",
     "colActions": "Actions",
-    "systemBadge": "Système",
-    "customBadge": "Personnalisé",
-    "lockedHint": "Priorité système (code et niveau protégés)",
-    "active": "Actif",
-    "inactive": "Inactif",
-    "empty": "Aucune priorité chargée.",
-    "deactivateTitle": "Désactiver la priorité",
-    "deactivateDescription": "Désactiver la priorité « {{code}} » ?",
-    "levelsHint": "Les niveaux de priorité sont fixés par le produit (ils pilotent les délais et les tableaux de bord) : vous pouvez ajuster leurs libellés et leurs couleurs."
+    "hours_one": "{{count}} h",
+    "hours_other": "{{count}} h",
+    "lockedHint": "Niveau fixé par Maintafox (code et rang protégés)",
+    "editLevel": "Modifier le niveau « {{level}} »",
+    "sourceStarter": "Valeurs de départ",
+    "sourceStarterHint": "Délais proposés par Maintafox, à valider ou ajuster par le site.",
+    "sourceSlaRule": "Repris des règles SLA",
+    "sourceSlaRuleHint": "Délais repris de l'ancienne règle SLA « toutes origines » de ce niveau.",
+    "sourceCompany": "Paramétré par le site",
+    "empty": "Échelle non chargée."
   },
   "woStatuses": {
     "panelTitle": "Statuts d'ordre de travail",
@@ -281,7 +267,9 @@
     "terminalYes": "Oui",
     "terminalNo": "Non",
     "lockedHint": "Code statut verrouillé (contrat moteur)",
-    "empty": "Aucun statut chargé."
+    "empty": "Aucun statut chargé.",
+    "systemBadge": "Système",
+    "customBadge": "Personnalisé"
   },
   "synthetic": {
     "articleFamilies": {
@@ -306,9 +294,6 @@
       "deactivateTitle": "Désactiver la catégorie TVA",
       "deactivateDescription": "Désactiver la catégorie TVA « {{code}} » ?"
     },
-    "woTypes": {
-      "codePlaceholder": "type_personnalise"
-    },
     "woStatuses": {
       "colorPlaceholder": "#RRGGBB"
     },
@@ -317,9 +302,8 @@
     "domains": {
       "articleFamilies": "Familles d'articles de stock",
       "taxCategories": "Catégories TVA des articles",
-      "woTypes": "Types d'ordre de travail",
-      "woPriorities": "Priorités d'ordre de travail",
-      "woStatuses": "Statuts d'ordre de travail"
+      "woStatuses": "Statuts d'ordre de travail",
+      "urgencyScale": "Échelle d'urgence (DI / OT)"
     }
   },
   "combobox": {

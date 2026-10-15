@@ -250,8 +250,65 @@ pub fn code_from_label(label: &str) -> AppResult<String> {
 fn allows_cross_domain_parent(child_domain_code: &str, parent_domain_code: &str) -> bool {
     matches!(
         (child_domain_code, parent_domain_code),
-        ("EQUIPMENT.FAMILY", "EQUIPMENT.CLASS") | ("EQUIPMENT.SUBFAMILY", "EQUIPMENT.FAMILY")
+        ("EQUIPMENT.FAMILY", "EQUIPMENT.CLASS")
+            | ("EQUIPMENT.SUBFAMILY", "EQUIPMENT.FAMILY")
+            | ("WORK.ORDER_SUBTYPES", "WORK.MAINTENANCE_NATURES")
     )
+}
+
+/// Domains whose every value must hang under a value of another domain: a plant's OT sub-type
+/// belongs to exactly one protected EN 13306 maintenance nature (`wo::types`).
+fn required_parent_domain(child_domain_code: &str) -> Option<&'static str> {
+    match child_domain_code.trim().to_ascii_uppercase().as_str() {
+        "WORK.ORDER_SUBTYPES" => Some("WORK.MAINTENANCE_NATURES"),
+        _ => None,
+    }
+}
+
+/// Refuses a value of a domain with a required parent domain whose parent is missing or lives
+/// in another domain.
+async fn assert_required_parent(db: &DatabaseConnection, set_id: i64, parent_id: Option<i64>) -> AppResult<()> {
+    let child = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT d.code AS domain_code FROM reference_sets rs \
+               JOIN reference_domains d ON d.id = rs.domain_id WHERE rs.id = ?",
+            [set_id.into()],
+        ))
+        .await?;
+    let Some(child) = child else {
+        return Ok(());
+    };
+    let child_domain: String = child
+        .try_get("", "domain_code")
+        .map_err(|e| decode_err("child.domain_code", e))?;
+    let Some(required) = required_parent_domain(&child_domain) else {
+        return Ok(());
+    };
+    let refusal = || {
+        AppError::ValidationFailed(vec![format!(
+            "GATE_REF_PARENT_REQUIRED: chaque valeur de '{child_domain}' doit être rattachée à une valeur de '{required}'."
+        )])
+    };
+    let Some(pid) = parent_id else {
+        return Err(refusal());
+    };
+    let parent_domain: Option<String> = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT d.code AS domain_code FROM reference_values rv \
+               JOIN reference_sets rs ON rs.id = rv.set_id \
+               JOIN reference_domains d ON d.id = rs.domain_id WHERE rv.id = ?",
+            [pid.into()],
+        ))
+        .await?
+        .map(|r| r.try_get::<String>("", "domain_code"))
+        .transpose()
+        .map_err(|e| decode_err("parent.domain_code", e))?;
+    if parent_domain.as_deref().map(|d| d.eq_ignore_ascii_case(required)) != Some(true) {
+        return Err(refusal());
+    }
+    Ok(())
 }
 
 /// Validates that a parent_id exists and is valid for the target set/domain.
@@ -389,6 +446,7 @@ pub async fn create_value(
     if let Some(pid) = payload.parent_id {
         validate_parent(db, payload.set_id, pid).await?;
     }
+    assert_required_parent(db, payload.set_id, payload.parent_id).await?;
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -501,6 +559,7 @@ pub async fn create_operational_value(
     if let Some(pid) = payload.parent_id {
         validate_parent(db, set_id, pid).await?;
     }
+    assert_required_parent(db, set_id, payload.parent_id).await?;
 
     // The value row and its sync outbox entry commit together.
     let txn = db.begin().await?;
@@ -712,6 +771,7 @@ pub async fn move_value_parent(
         validate_parent(db, existing.set_id, pid).await?;
         detect_cycle(db, value_id, pid).await?;
     }
+    assert_required_parent(db, existing.set_id, new_parent_id).await?;
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,

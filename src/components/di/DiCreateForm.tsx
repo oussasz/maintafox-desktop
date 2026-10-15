@@ -13,6 +13,7 @@ import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } f
 import { useTranslation } from "react-i18next";
 
 import { AssetPicker } from "@/components/assets/AssetPicker";
+import { UrgencySelect } from "@/components/common/urgency/UrgencySelect";
 import { DiAttachmentPanel } from "@/components/di/DiAttachmentPanel";
 import {
   EntityFormAttachments,
@@ -493,7 +494,7 @@ export function DiCreateForm({
         >
           <ReferenceCombobox
             id="symptom_code_id"
-            referenceType="di.symptom"
+            referenceType="work.symptom"
             valueMode="id"
             value={symptomCodeId != null ? String(symptomCodeId) : null}
             onChange={(idStr) => {
@@ -513,16 +514,13 @@ export function DiCreateForm({
           error={fieldError("reported_urgency")}
           required
         >
-          <ReferenceCombobox
+          <UrgencySelect
             id="reported_urgency"
-            referenceType="di.priority"
             value={urgency || null}
             onChange={(code) => {
-              setUrgency(code ?? "");
+              setUrgency(code);
               markTouched("reported_urgency");
             }}
-            allowClear={false}
-            allowCreate={false}
             placeholder={t("form.priority.placeholder")}
             aria-invalid={Boolean(fieldError("reported_urgency"))}
           />

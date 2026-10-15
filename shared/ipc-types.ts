@@ -3980,7 +3980,39 @@ export type DiOriginType =
   | "production"
   | "external";
 
-export type DiUrgency = "low" | "medium" | "high" | "critical";
+/**
+ * Level of the urgency scale shared by requests (DI) and work orders (OT) — reference list
+ * `WORK.URGENCY`, rank 1 (emergency) to 5 (low). Labels and target times come from
+ * `list_urgency_levels`, never from the frontend.
+ */
+export type UrgencyCode = "emergency" | "urgent" | "high" | "normal" | "low";
+
+/** One level of the shared DI / OT urgency scale with the plant's labels and target times. */
+export interface UrgencyLevel {
+  /** `reference_values.id` (what work orders store as `urgency_id`). */
+  id: number;
+  code: UrgencyCode;
+  /** 1 = most urgent … 5 = least urgent. */
+  rank: number;
+  label_fr: string;
+  label_en: string;
+  description: string | null;
+  color_hex: string | null;
+  response_target_hours: number | null;
+  completion_target_hours: number | null;
+  escalation_threshold_hours: number | null;
+  /** `starter` (product values to review), `company` (saved by the plant) or `di_sla_rule`. */
+  targets_source: "starter" | "company" | "di_sla_rule" | string;
+}
+
+/** Company attributes of a level (the levels themselves are fixed by Maintafox). */
+export interface UpdateUrgencyLevelInput {
+  label_fr: string;
+  label_en: string;
+  response_target_hours: number;
+  completion_target_hours: number;
+  escalation_threshold_hours: number;
+}
 
 export type DiImpactLevel = "unknown" | "none" | "minor" | "major" | "critical";
 
@@ -4002,8 +4034,9 @@ export interface InterventionRequest {
   safety_flag: boolean;
   environmental_flag: boolean;
   quality_flag: boolean;
-  reported_urgency: DiUrgency;
-  validated_urgency: DiUrgency | null;
+  /** Level of the shared DI / OT urgency scale. */
+  reported_urgency: UrgencyCode;
+  validated_urgency: UrgencyCode | null;
   observed_at: string | null;
   submitted_at: string;
   reviewer_id: number | null;
@@ -4049,6 +4082,13 @@ export interface InterventionRequest {
   converted_to_wo_code?: string | null;
   converted_to_wo_title?: string | null;
   related_di_code?: string | null;
+  /** Inspection round of the finding the request was raised from. */
+  source_inspection_anomaly_id?: number | null;
+  source_inspection_round_id?: number | null;
+  /** Code / name of the round's inspection template (a round has no code of its own). */
+  source_inspection_round_code?: string | null;
+  source_inspection_round_title?: string | null;
+  source_inspection_round_scheduled_at?: string | null;
 }
 
 export interface DiListFilter {
@@ -4684,7 +4724,17 @@ export interface WorkOrder {
   status_color?: string | null;
   type_code?: string | null;
   type_label?: string | null;
-  urgency_level?: number | null;
+  /** The plant's sub-type (`WORK.ORDER_SUBTYPES`), under the nature of the OT type. */
+  subtype_id?: number | null;
+  subtype_code?: string | null;
+  subtype_label?: string | null;
+  /** EN 13306 maintenance nature of the OT type (`MaintenanceNatureCode`). */
+  nature_code?: MaintenanceNatureCode | null;
+  nature_label?: string | null;
+  /** Level of the shared DI / OT urgency scale. */
+  urgency_code?: UrgencyCode | null;
+  /** 1 = most urgent … 5 = least urgent. */
+  urgency_rank?: number | null;
   urgency_label?: string | null;
   urgency_color?: string | null;
   asset_code?: string | null;
@@ -4706,6 +4756,11 @@ export interface WorkOrder {
   schedule_frozen?: boolean | null;
   /** PRD §6.5 lifecycle state derived from the WO's facts (Rust `wo::lifecycle`). */
   lifecycle_state?: string | null;
+  /** Inspection round of the finding the OT comes from (directly or through its request). */
+  source_inspection_round_id?: number | null;
+  source_inspection_round_code?: string | null;
+  source_inspection_round_title?: string | null;
+  source_inspection_round_scheduled_at?: string | null;
 }
 
 export interface WoTransitionRow {
@@ -4722,43 +4777,38 @@ export interface WoTransitionRow {
   lifecycle_state?: string | null;
 }
 
+/** EN 13306 maintenance nature (reference list `WORK.MAINTENANCE_NATURES`, fixed by Maintafox). */
+export type MaintenanceNatureCode =
+  | "corrective_immediate"
+  | "corrective_deferred"
+  | "preventive_predetermined"
+  | "preventive_condition_based"
+  | "preventive_predictive"
+  | "improvement";
+
+/** A plant's OT sub-type (COMPANY list `WORK.ORDER_SUBTYPES`) under one protected nature. */
+export interface WorkOrderSubtypeOption {
+  id: number;
+  code: string;
+  label: string;
+  nature: MaintenanceNatureCode | null;
+  is_active: boolean;
+}
+
+/** OT type (reference list `WORK.ORDER_TYPES`, fixed by Maintafox) with its protected nature. */
 export interface WorkOrderTypeOption {
+  /** `reference_values.id` (what work orders store as `type_id`). */
   id: number;
   code: string;
+  /** French label. */
   label: string;
+  label_en: string;
+  /** Null only for a type carried over from a plant's own list without a nature. */
+  nature: MaintenanceNatureCode | null;
+  nature_label: string | null;
+  nature_label_en: string | null;
   is_system: boolean;
   is_active: boolean;
-}
-
-/** Tenant-defined work order type (inserted with `is_system = 0`). */
-export interface CreateWorkOrderTypeInput {
-  code: string;
-  label: string;
-}
-
-/** Partial update; omitted fields are left unchanged on the server. */
-export interface UpdateWorkOrderTypeInput {
-  label?: string | null;
-  code?: string | null;
-  is_active?: boolean | null;
-}
-
-/** Urgency / priority row (`urgency_levels`). */
-export interface WorkOrderPriorityOption {
-  id: number;
-  level: number;
-  code: string;
-  label: string;
-  label_fr: string;
-  hex_color: string;
-  is_system: boolean;
-  is_active: boolean;
-}
-
-export interface UpdateWorkOrderPriorityInput {
-  label?: string | null;
-  label_fr?: string | null;
-  is_active?: boolean | null;
 }
 
 /** Lifecycle status row (`work_order_statuses`) — codes & sequence are engine-managed. */
@@ -4789,7 +4839,10 @@ export interface WoCreateInput {
   source_rca_cause_text?: string | null;
   entity_id?: number | null;
   planner_id?: number | null;
-  urgency_id?: number | null;
+  /** Level of the shared DI / OT urgency scale. */
+  urgency_code?: UrgencyCode | null;
+  /** The plant's sub-type code; must belong to the nature of the OT type. */
+  subtype_code?: string | null;
   title: string;
   description?: string | null;
   notes?: string | null;
@@ -4814,7 +4867,9 @@ export interface WoDraftUpdateInput {
   shift?: WoShift | null;
   expected_duration_hours?: number | null;
   notes?: string | null;
-  urgency_id?: number | null;
+  urgency_code?: UrgencyCode | null;
+  /** Sub-type code; "" removes it. Changing the type without a sub-type removes it. */
+  subtype_code?: string | null;
   requires_permit?: boolean;
 }
 
@@ -4827,7 +4882,7 @@ export interface WoListFilter {
   entity_id?: number | null;
   planner_id?: number | null;
   primary_responsible_id?: number | null;
-  urgency_level?: number | null;
+  urgency_code?: UrgencyCode | null;
   source_di_id?: number | null;
   search?: string | null;
   date_from?: string | null;
@@ -4868,7 +4923,7 @@ export interface WoPlanInput {
   shift?: WoShift | null;
   expected_duration_hours?: number | null;
   planned_downtime_hours?: number | null;
-  urgency_id?: number | null;
+  urgency_code?: UrgencyCode | null;
 }
 
 export interface WoAssignInput {

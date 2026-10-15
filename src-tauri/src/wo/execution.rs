@@ -27,7 +27,9 @@ pub struct WoPlanInput {
     pub planned_end: Option<String>,
     pub shift: Option<String>,
     pub expected_duration_hours: Option<f64>,
-    pub urgency_id: Option<i64>,
+    /// Level of the shared DI / OT urgency scale (`emergency` … `low`).
+    #[serde(default)]
+    pub urgency_code: Option<String>,
     pub planned_downtime_hours: Option<f64>,
 }
 
@@ -200,7 +202,7 @@ pub async fn plan_wo(db: &DatabaseConnection, input: WoPlanInput) -> AppResult<W
             planned_end: input.planned_end,
             shift: input.shift,
             expected_duration_hours: input.expected_duration_hours,
-            urgency_id: input.urgency_id,
+            urgency_code: input.urgency_code,
             planned_downtime_hours: input.planned_downtime_hours,
         },
     )
@@ -732,13 +734,13 @@ async fn collect_completion_gates(conn: &impl ConnectionTrait, wo_id: i64) -> Ap
         },
     });
 
-    // ── RAMS (corrective / emergency only) ────────────────────────────────
+    // ── RAMS (corrective natures only, EN 13306) ──────────────────────────
     let wo_type_row = conn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT wot.code AS type_code, wo.root_cause_summary \
+            "SELECT wot.semantic_tag AS nature_code, wo.root_cause_summary \
              FROM work_orders wo \
-             JOIN work_order_types wot ON wot.id = wo.type_id \
+             LEFT JOIN reference_values wot ON wot.id = wo.type_id \
              WHERE wo.id = ?",
             [wo_id.into()],
         ))
@@ -747,10 +749,13 @@ async fn collect_completion_gates(conn: &impl ConnectionTrait, wo_id: i64) -> Ap
             entity: "WorkOrder".into(),
             id: wo_id.to_string(),
         })?;
-    let type_code: String = wo_type_row
-        .try_get("", "type_code")
-        .map_err(|e| decode_err("type_code", e))?;
-    let rams_required = matches!(type_code.as_str(), "corrective" | "emergency");
+    let nature_code: Option<String> = wo_type_row
+        .try_get("", "nature_code")
+        .map_err(|e| decode_err("nature_code", e))?;
+    let rams_required = nature_code
+        .as_deref()
+        .and_then(crate::wo::types::MaintenanceNature::parse)
+        .is_some_and(|n| n.is_corrective());
 
     let mut symptom_ok = true;
     let mut failure_mode_ok = true;

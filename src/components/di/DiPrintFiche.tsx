@@ -6,6 +6,7 @@
 
 import type { TFunction } from "i18next";
 
+import { urgencyLabelFor } from "@/components/common/urgency/use-urgency-scale";
 import {
   fetchDiSymptomLabel,
   loadDiOriginLabelMap,
@@ -47,6 +48,8 @@ function buildHtml(
   originText: string,
   symptomText: string,
   letterheadHtml: string,
+  urgencyR: string,
+  urgencyV: string | null,
 ): string {
   const letterhead = wrapDocumentHeaderBlock(letterheadHtml);
   const fmt = (iso: string | null | undefined) => {
@@ -72,10 +75,6 @@ function buildHtml(
 
   const sk = diStatusToI18nKey(di.status);
   const statusText = t(`status.${sk}` as "status.new");
-  const urgencyR = t(`priority.${di.reported_urgency}` as "priority.low");
-  const urgencyV = di.validated_urgency
-    ? t(`priority.${di.validated_urgency}` as "priority.low")
-    : null;
   const impactText = t(`form.impact.${di.impact_level}` as "form.impact.unknown", {
     defaultValue: di.impact_level,
   });
@@ -237,13 +236,15 @@ export async function printDiFiche(di: InterventionRequest): Promise<void> {
   try {
     const t = i18n.getFixedT(i18n.language, "di");
     const locale = intlLocaleForLanguage(i18n.language);
-    const [originMap, symptomText, letterheadHtml] = await Promise.all([
+    const [originMap, symptomText, letterheadHtml, urgencyR, urgencyV] = await Promise.all([
       loadDiOriginLabelMap(),
       fetchDiSymptomLabel(di.symptom_code_id),
       loadDocumentHeaderHtml(),
+      urgencyLabelFor(di.reported_urgency, i18n.language),
+      di.validated_urgency ? urgencyLabelFor(di.validated_urgency, i18n.language) : null,
     ]);
     const originText = resolveDiOriginLabel(originMap, di.origin_type);
-    html = buildHtml(di, t, locale, originText, symptomText, letterheadHtml);
+    html = buildHtml(di, t, locale, originText, symptomText, letterheadHtml, urgencyR, urgencyV);
   } catch {
     // Last-resort fallback so the print action still works even if i18n/template generation fails.
     html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(di.code)}</title></head><body><h1>${esc(di.code)}</h1><p>${esc(di.title)}</p><pre>${esc(di.description)}</pre></body></html>`;

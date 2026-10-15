@@ -26,7 +26,7 @@ const CANDIDATE_JOIN_COLS: &str = "\
     END AS source_title, \
     CASE WHEN t.id IS NOT NULL THEN t.name || ' (' || t.code || ')' ELSE NULL END AS assigned_team_label, \
     p.full_name AS assigned_personnel_name, \
-    ul.label AS priority_label";
+    ul.label AS priority_label, ul.code AS priority_code, ul.sort_order AS priority_rank";
 const CANDIDATE_JOINS: &str = "\
     LEFT JOIN work_orders wo ON sc.source_type = 'work_order' AND wo.id = sc.source_id \
     LEFT JOIN pm_occurrences po ON sc.source_type = 'pm_occurrence' AND po.id = sc.source_id \
@@ -34,7 +34,7 @@ const CANDIDATE_JOINS: &str = "\
     LEFT JOIN intervention_requests ir ON sc.source_type = 'inspection_follow_up' AND ir.id = sc.source_id \
     LEFT JOIN teams t ON t.id = sc.assigned_team_id \
     LEFT JOIN personnel p ON p.id = sc.assigned_personnel_id \
-    LEFT JOIN urgency_levels ul ON ul.id = sc.priority_id";
+    LEFT JOIN reference_values ul ON ul.id = sc.priority_id";
 const CONFLICT_COLS: &str =
     "id,candidate_id,conflict_type,reference_type,reference_id,reason_code,severity,details_json,resolved_at,created_at";
 
@@ -149,6 +149,8 @@ fn map_candidate(row: &QueryResult) -> AppResult<ScheduleCandidate> {
             .try_get::<Option<String>>("", "assigned_personnel_name")
             .unwrap_or(None),
         priority_label: row.try_get::<Option<String>>("", "priority_label").unwrap_or(None),
+        priority_code: row.try_get::<Option<String>>("", "priority_code").unwrap_or(None),
+        priority_rank: row.try_get::<Option<i64>>("", "priority_rank").unwrap_or(None),
     })
 }
 
@@ -266,7 +268,7 @@ pub async fn list_schedule_candidates(
          FROM schedule_candidates sc
          {CANDIDATE_JOINS}
          WHERE {}
-         ORDER BY sc.readiness_status DESC, sc.readiness_score DESC, sc.updated_at DESC
+         ORDER BY sc.readiness_status DESC, COALESCE(ul.sort_order, 99) ASC, sc.readiness_score DESC, sc.updated_at DESC
          LIMIT ?",
         where_sql.join(" AND ")
     );
@@ -332,6 +334,7 @@ async fn refresh_from_work_orders(db: &impl ConnectionTrait, limit: i64) -> AppR
                     wo.planned_start AS window_start,
                     wo.planned_end AS window_end,
                     wo.expected_duration_hours,
+                    wo.urgency_id,
                     wos.code AS status_code
                  FROM work_orders wo
                  JOIN work_order_statuses wos ON wos.id = wo.status_id
@@ -366,6 +369,7 @@ async fn refresh_from_work_orders(db: &impl ConnectionTrait, limit: i64) -> AppR
         let status_code: String = row
             .try_get("", "status_code")
             .map_err(|e| decode_err("status_code", e))?;
+        let urgency_id: Option<i64> = row.try_get("", "urgency_id").map_err(|e| decode_err("urgency_id", e))?;
 
         let prerequisite_status = if status_code == "waiting_for_prerequisite" {
             "blocked"
@@ -377,11 +381,12 @@ async fn refresh_from_work_orders(db: &impl ConnectionTrait, limit: i64) -> AppR
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "INSERT INTO schedule_candidates
-                    (entity_sync_id, source_type, source_id, source_di_id, assigned_personnel_id, assigned_team_id, window_start, window_end, estimated_duration_hours, prerequisite_status, permit_status, shutdown_requirement)
+                    (entity_sync_id, source_type, source_id, source_di_id, assigned_personnel_id, assigned_team_id, window_start, window_end, estimated_duration_hours, prerequisite_status, permit_status, shutdown_requirement, priority_id)
                  VALUES
-                    (?, 'work_order', ?, ?, ?, ?, ?, ?, ?, ?, 'unknown', NULL)
+                    (?, 'work_order', ?, ?, ?, ?, ?, ?, ?, ?, 'unknown', NULL, ?)
                  ON CONFLICT(source_type, source_id) DO UPDATE SET
                     source_di_id = excluded.source_di_id,
+                    priority_id = excluded.priority_id,
                     assigned_personnel_id = excluded.assigned_personnel_id,
                     assigned_team_id = excluded.assigned_team_id,
                     window_start = excluded.window_start,
@@ -400,6 +405,7 @@ async fn refresh_from_work_orders(db: &impl ConnectionTrait, limit: i64) -> AppR
                     window_end.into(),
                     estimated_duration_hours.into(),
                     prerequisite_status.to_string().into(),
+                    urgency_id.into(),
                 ],
             ))
             .await?;
@@ -557,7 +563,7 @@ async fn refresh_from_approved_di(db: &impl ConnectionTrait, limit: i64) -> AppR
             "SELECT
                 ir.id AS source_id,
                 ir.submitted_at AS window_start,
-                datetime(ir.submitted_at, '+4 hours') AS window_end,
+                COALESCE(ir.validated_urgency, ir.reported_urgency) AS urgency_code,
                 4.0 AS estimated_duration_hours,
                 ir.deferred_until
              FROM intervention_requests ir
@@ -575,7 +581,24 @@ async fn refresh_from_approved_di(db: &impl ConnectionTrait, limit: i64) -> AppR
         let window_start: Option<String> = row
             .try_get("", "window_start")
             .map_err(|e| decode_err("window_start", e))?;
-        let window_end: Option<String> = row.try_get("", "window_end").map_err(|e| decode_err("window_end", e))?;
+        let urgency_code: String = row
+            .try_get("", "urgency_code")
+            .map_err(|e| decode_err("urgency_code", e))?;
+        // The request's level on the shared urgency scale: its id ranks the backlog and its
+        // completion target closes the planning window.
+        let level = crate::reference::urgency_scale::get_urgency_level(db, &urgency_code).await?;
+        let priority_id = level.as_ref().map(|l| l.id);
+        let window_end: Option<String> = match (
+            window_start.as_deref(),
+            level.as_ref().and_then(|l| l.completion_target_hours),
+        ) {
+            (Some(start), Some(hours)) => chrono::DateTime::parse_from_rfc3339(start).ok().map(|t| {
+                (t + chrono::Duration::hours(hours))
+                    .format("%Y-%m-%dT%H:%M:%SZ")
+                    .to_string()
+            }),
+            _ => None,
+        };
         let estimated_duration_hours: Option<f64> = row
             .try_get("", "estimated_duration_hours")
             .map_err(|e| decode_err("estimated_duration_hours", e))?;
@@ -588,11 +611,12 @@ async fn refresh_from_approved_di(db: &impl ConnectionTrait, limit: i64) -> AppR
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "INSERT INTO schedule_candidates
-                    (entity_sync_id, source_type, source_id, source_di_id, window_start, window_end, estimated_duration_hours, prerequisite_status, permit_status)
+                    (entity_sync_id, source_type, source_id, source_di_id, window_start, window_end, estimated_duration_hours, prerequisite_status, permit_status, priority_id)
                  VALUES
-                    (?, 'inspection_follow_up', ?, ?, ?, ?, ?, ?, 'unknown')
+                    (?, 'inspection_follow_up', ?, ?, ?, ?, ?, ?, 'unknown', ?)
                  ON CONFLICT(source_type, source_id) DO UPDATE SET
                     source_di_id = excluded.source_di_id,
+                    priority_id = excluded.priority_id,
                     window_start = excluded.window_start,
                     window_end = excluded.window_end,
                     estimated_duration_hours = excluded.estimated_duration_hours,
@@ -607,6 +631,7 @@ async fn refresh_from_approved_di(db: &impl ConnectionTrait, limit: i64) -> AppR
                     window_end.into(),
                     estimated_duration_hours.into(),
                     prerequisite_status.to_string().into(),
+                    priority_id.into(),
                 ],
             ))
             .await?;

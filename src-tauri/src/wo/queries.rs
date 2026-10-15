@@ -81,7 +81,9 @@ pub struct WoListFilter {
     pub entity_id: Option<i64>,
     pub planner_id: Option<i64>,
     pub primary_responsible_id: Option<i64>,
-    pub urgency_level: Option<i64>,
+    /// Level of the shared urgency scale (`emergency` … `low`).
+    #[serde(default)]
+    pub urgency_code: Option<String>,
     pub source_di_id: Option<i64>,
     pub search: Option<String>,
     pub date_from: Option<String>,
@@ -116,7 +118,7 @@ const WO_COLS: &str = "\
     wo.source_ram_ishikawa_diagram_id, wo.source_ishikawa_flow_node_id, wo.source_rca_cause_text, \
     wo.entity_id, \
     wo.planner_id, wo.approver_id, wo.assigned_team_id, wo.primary_responsible_id, \
-    wo.urgency_id, wo.title, wo.description, \
+    wo.urgency_id, wo.subtype_id, wo.title, wo.description, \
     wo.planned_start, wo.planned_end, wo.shift, wo.scheduled_at, \
     wo.actual_start, wo.actual_end, \
     wo.mechanically_completed_at, wo.technically_verified_at, \
@@ -137,7 +139,11 @@ const WO_COLS: &str = "\
 const WO_JOIN_COLS: &str = "\
     wos.code  AS status_code,  wos.label AS status_label,  wos.color AS status_color, \
     wot.code  AS type_code,    wot.label AS type_label, \
-    ul.level  AS urgency_level, ul.label AS urgency_label, ul.hex_color AS urgency_color, \
+    wot.semantic_tag AS nature_code, wnat.label AS nature_label, \
+    wst.code AS subtype_code, wst.label AS subtype_label, \
+    ul.code AS urgency_code, ul.sort_order AS urgency_rank, ul.label AS urgency_label, ul.color_hex AS urgency_color, \
+    src_round.id AS source_inspection_round_id, src_tpl.code AS source_inspection_round_code, \
+    src_tpl.name AS source_inspection_round_title, src_round.scheduled_at AS source_inspection_round_scheduled_at, \
     ar.asset_id_code AS asset_code, ar.name AS asset_label, \
     COALESCE(up.display_name, up.username) AS planner_username, \
     COALESCE(ur.display_name, ur.username) AS responsible_username, \
@@ -162,12 +168,20 @@ const LIFECYCLE: &str = crate::wo::lifecycle::SQL_CASE;
 
 const WO_JOINS: &str = "\
     LEFT JOIN work_order_statuses wos ON wos.id = wo.status_id \
-    LEFT JOIN work_order_types    wot ON wot.id = wo.type_id \
-    LEFT JOIN urgency_levels      ul  ON ul.id  = wo.urgency_id \
+    LEFT JOIN reference_values    wot ON wot.id = wo.type_id \
+    LEFT JOIN reference_values    wnat ON wnat.code = wot.semantic_tag AND wnat.set_id IN ( \
+        SELECT nrs.id FROM reference_sets nrs JOIN reference_domains nd ON nd.id = nrs.domain_id \
+         WHERE nd.code = 'WORK.MAINTENANCE_NATURES' AND nrs.status = 'published') \
+    LEFT JOIN reference_values    ul  ON ul.id  = wo.urgency_id \
+    LEFT JOIN reference_values    wst ON wst.id = wo.subtype_id \
     LEFT JOIN equipment           ar  ON ar.id  = wo.equipment_id \
     LEFT JOIN user_accounts       up  ON up.id  = wo.planner_id \
     LEFT JOIN user_accounts       ur  ON ur.id  = wo.primary_responsible_id \
     LEFT JOIN intervention_requests irdi ON irdi.id = wo.source_di_id \
+    LEFT JOIN inspection_anomalies src_anomaly \
+           ON src_anomaly.id = COALESCE(wo.source_inspection_anomaly_id, irdi.source_inspection_anomaly_id) \
+    LEFT JOIN inspection_rounds src_round ON src_round.id = src_anomaly.round_id \
+    LEFT JOIN inspection_templates src_tpl ON src_tpl.id = src_round.template_id \
     LEFT JOIN teams tm ON tm.id = wo.assigned_team_id AND tm.deleted_at IS NULL";
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -240,10 +254,13 @@ pub async fn list_work_orders(db: &DatabaseConnection, filter: WoListFilter) -> 
         binds.push(source_di_id.into());
     }
 
-    // ── Urgency filter (by level number) ─────────────────────────────────
-    if let Some(urgency_level) = filter.urgency_level {
-        where_clauses.push("ul.level = ?".to_string());
-        binds.push(urgency_level.into());
+    // ── Urgency filter (level of the shared scale) ───────────────────────
+    if let Some(ref urgency_code) = filter.urgency_code {
+        if !urgency_code.trim().is_empty() {
+            let level = crate::reference::urgency_scale::validate_urgency_code(urgency_code)?;
+            where_clauses.push("ul.code = ?".to_string());
+            binds.push(level.as_str().into());
+        }
     }
 
     // ── Date range filter (on created_at) ────────────────────────────────
@@ -363,7 +380,12 @@ pub async fn create_work_order(db: &DatabaseConnection, input: WoCreateInput) ->
     let txn = db.begin().await?;
 
     let equipment_id = input.equipment_id.filter(|&e| e > 0);
-    let urgency_id = input.urgency_id.filter(|&u| u > 0);
+    let urgency_code = input
+        .urgency_code
+        .as_deref()
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+        .map(str::to_string);
     let mut entity_id = input.entity_id.filter(|&e| e > 0);
 
     let creator_ok = txn
@@ -428,22 +450,17 @@ pub async fn create_work_order(db: &DatabaseConnection, input: WoCreateInput) ->
         }
     }
 
-    if let Some(uid) = urgency_id {
-        let ex = txn
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT 1 AS ok FROM urgency_levels WHERE id = ?",
-                [uid.into()],
-            ))
-            .await?;
-        if ex.is_none() {
-            return Err(AppError::ValidationFailed(vec![format!(
-                "Priorité / urgence introuvable (urgency_id={uid})."
-            )]));
-        }
-    }
+    // Level of the shared DI / OT urgency scale (`WORK.URGENCY`).
+    let urgency_id = match urgency_code.as_deref() {
+        Some(code) => Some(crate::reference::urgency_scale::urgency_value_id(&txn, code).await?),
+        None => None,
+    };
 
     let type_id = resolve_work_order_type_id_by_code(&txn, &input.type_code).await?;
+    let subtype_id = match input.subtype_code.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
+        Some(code) => Some(crate::wo::types::resolve_subtype_for_type(&txn, code, type_id).await?),
+        None => None,
+    };
 
     // If source_di_id is provided, verify the DI exists
     if let Some(di_id) = input.source_di_id {
@@ -546,12 +563,12 @@ pub async fn create_work_order(db: &DatabaseConnection, input: WoCreateInput) ->
             code, type_id, status_id, equipment_id, location_id, \
             source_di_id, source_inspection_anomaly_id, \
             source_ram_ishikawa_diagram_id, source_ishikawa_flow_node_id, source_rca_cause_text, \
-            entity_id, planner_id, requester_id, urgency_id, \
+            entity_id, planner_id, requester_id, urgency_id, subtype_id, \
             title, description, notes, \
             planned_start, planned_end, shift, expected_duration_hours, \
             requires_permit, entity_sync_id, \
             row_version, created_at, updated_at\
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
         [
             code.clone().into(),
             type_id.into(),
@@ -594,6 +611,9 @@ pub async fn create_work_order(db: &DatabaseConnection, input: WoCreateInput) ->
                 .unwrap_or(sea_orm::Value::from(None::<i64>)),
             input.creator_id.into(),
             urgency_id
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::from(None::<i64>)),
+            subtype_id
                 .map(sea_orm::Value::from)
                 .unwrap_or(sea_orm::Value::from(None::<i64>)),
             input.title.into(),
@@ -732,10 +752,30 @@ pub async fn update_wo_draft_fields(
         sets.push("title = ?".into());
         values.push(title.clone().into());
     }
-    if let Some(type_code) = input.type_code.as_ref() {
-        let type_id = resolve_work_order_type_id_by_code(&txn, type_code).await?;
-        sets.push("type_id = ?".into());
-        values.push(type_id.into());
+    let new_type_id = match input.type_code.as_ref() {
+        Some(type_code) => {
+            let type_id = resolve_work_order_type_id_by_code(&txn, type_code).await?;
+            sets.push("type_id = ?".into());
+            values.push(type_id.into());
+            Some(type_id)
+        }
+        None => None,
+    };
+    match input.subtype_code.as_deref().map(str::trim) {
+        Some("") => {
+            sets.push("subtype_id = NULL".into());
+        }
+        Some(code) => {
+            let type_id = new_type_id.unwrap_or(current.type_id);
+            let subtype_id = crate::wo::types::resolve_subtype_for_type(&txn, code, type_id).await?;
+            sets.push("subtype_id = ?".into());
+            values.push(subtype_id.into());
+        }
+        None if new_type_id.is_some_and(|t| t != current.type_id) => {
+            // The sub-type belonged to the former type's nature.
+            sets.push("subtype_id = NULL".into());
+        }
+        None => {}
     }
     if let Some(equipment_id) = input.equipment_id {
         sets.push("equipment_id = ?".into());
@@ -769,7 +809,8 @@ pub async fn update_wo_draft_fields(
         sets.push("notes = ?".into());
         values.push(notes.clone().into());
     }
-    if let Some(urgency_id) = input.urgency_id {
+    if let Some(ref urgency_code) = input.urgency_code {
+        let urgency_id = crate::reference::urgency_scale::urgency_value_id(&txn, urgency_code).await?;
         sets.push("urgency_id = ?".into());
         values.push(urgency_id.into());
     }

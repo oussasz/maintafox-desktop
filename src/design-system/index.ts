@@ -18,7 +18,6 @@ export {
 } from "./tokens";
 export {
   DI_STATUS_TONE,
-  DI_URGENCY_TONE,
   mfTone,
   toneChipMap,
   toneOf,

@@ -11,6 +11,7 @@ import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } f
 import { useTranslation } from "react-i18next";
 
 import { AssetPicker } from "@/components/assets/AssetPicker";
+import { UrgencySelect } from "@/components/common/urgency/UrgencySelect";
 import { FormField } from "@/components/ui/FormField";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,30 +29,24 @@ import { describeAppError } from "@/lib/app-error";
 import { assetToSearchResult } from "@/lib/asset-to-search-result";
 import { getStoredRamsEquipmentId } from "@/pages/reliability/rams-equipment-context";
 import { getAssetByIdSilent } from "@/services/asset-service";
+import { listWorkOrderSubtypes } from "@/services/wo-service";
+import { useUrgencyScaleStore } from "@/stores/urgency-scale-store";
 import { useWoStore } from "@/stores/wo-store";
-import { useWorkOrderPrioritiesCatalog } from "@/stores/work-order-priorities-catalog-store";
 import { useWorkOrderTypesCatalog } from "@/stores/work-order-types-catalog-store";
 import type {
   AssetSearchResult,
+  UrgencyCode,
   WoCreateInput,
   WorkOrder,
-  WorkOrderPriorityOption,
+  WorkOrderSubtypeOption,
 } from "@shared/ipc-types";
 
 import { WoPermitRequirementField } from "./WoPermitRequirementField";
+import { woNatureLabel, woTypeLabel } from "./use-wo-type-labels";
 
 const TITLE_MAX = 200;
-
-function priorityDisplayLabel(p: WorkOrderPriorityOption, lang: string): string {
-  return lang.toLowerCase().startsWith("fr") ? p.label_fr : p.label;
-}
-
-function parseOptionalIdString(raw: string): number | null {
-  const s = raw.trim();
-  if (!s) return null;
-  const n = Number(s);
-  return Number.isFinite(n) ? n : null;
-}
+/** Select value for "no sub-type" (Radix Select needs a non-empty value). */
+const NO_SUBTYPE = "__none";
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -130,17 +125,16 @@ export function WoCreateForm({
   const loadWoTypes = useWorkOrderTypesCatalog((s) => s.load);
   const woTypes = useMemo(() => woTypesCatalog.filter((item) => item.is_active), [woTypesCatalog]);
 
-  const prioritiesCatalog = useWorkOrderPrioritiesCatalog((s) => s.priorities);
-  const prioritiesLoading = useWorkOrderPrioritiesCatalog((s) => s.loading);
-  const prioritiesError = useWorkOrderPrioritiesCatalog((s) => s.error);
-  const loadPriorities = useWorkOrderPrioritiesCatalog((s) => s.load);
-  const activePriorities = useMemo(
-    () => prioritiesCatalog.filter((p) => p.is_active),
-    [prioritiesCatalog],
-  );
+  // Shared DI / OT urgency scale (levels fixed by Maintafox, labels / targets by the plant).
+  const urgencyLevels = useUrgencyScaleStore((s) => s.levels);
+  const prioritiesLoading = useUrgencyScaleStore((s) => s.loading);
+  const prioritiesError = useUrgencyScaleStore((s) => s.error);
 
   const [typeCode, setTypeCode] = useState<string>(initial?.type_code ?? "");
-  const [urgencyId, setUrgencyId] = useState<string>(initial?.urgency_id?.toString() ?? "");
+  // The plant's sub-types (COMPANY list), each under one maintenance nature.
+  const [subtypes, setSubtypes] = useState<WorkOrderSubtypeOption[]>([]);
+  const [subtypeCode, setSubtypeCode] = useState<string>(initial?.subtype_code ?? "");
+  const [urgencyId, setUrgencyId] = useState<string>(initial?.urgency_code ?? "");
   const [plannedStart, setPlannedStart] = useState(initial?.planned_start ?? "");
   const [plannedEnd, setPlannedEnd] = useState(initial?.planned_end ?? "");
   const [expectedDuration, setExpectedDuration] = useState(
@@ -164,8 +158,28 @@ export function WoCreateForm({
   }, [loadWoTypes]);
 
   useEffect(() => {
-    void loadPriorities();
-  }, [loadPriorities]);
+    let cancelled = false;
+    listWorkOrderSubtypes()
+      .then((rows) => {
+        if (!cancelled) setSubtypes(rows.filter((r) => r.is_active));
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setSubmitError(describeAppError(err).title);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /** Sub-types of the selected type's nature (EN 13306); the rules keep reading the nature. */
+  const selectedNature = woTypes.find((w) => w.code === typeCode)?.nature ?? null;
+  const subtypeOptions = useMemo(
+    () => (selectedNature ? subtypes.filter((st) => st.nature === selectedNature) : []),
+    [subtypes, selectedNature],
+  );
+  useEffect(() => {
+    if (subtypeCode && !subtypeOptions.some((st) => st.code === subtypeCode)) setSubtypeCode("");
+  }, [subtypeCode, subtypeOptions]);
 
   useEffect(() => {
     if (isEdit) return;
@@ -175,16 +189,6 @@ export function WoCreateForm({
     const firstType = woTypes.at(0);
     setTypeCode(firstType?.code ?? "");
   }, [isEdit, woTypes, typeCode]);
-
-  useEffect(() => {
-    if (isEdit) return;
-    if (activePriorities.length === 0) return;
-    const ids = new Set(activePriorities.map((p) => String(p.id)));
-    if (urgencyId && ids.has(urgencyId)) return;
-    const firstPri = activePriorities.at(0);
-    if (!firstPri) return;
-    setUrgencyId(String(firstPri.id));
-  }, [isEdit, activePriorities, urgencyId]);
 
   // ── Equipment pre-fill for edit mode (once per opened WO; no loop after user clears) ──
 
@@ -233,10 +237,9 @@ export function WoCreateForm({
 
   /** Create flow always requires an explicit type; edit only when the catalog has rows. */
   const requireType = !isEdit || woTypes.length > 0;
-  const requireUrgency = activePriorities.length > 0;
+  const requireUrgency = urgencyLevels.length > 0;
   const requireEquipment = !isEdit;
-  const urgencyIdValid =
-    !requireUrgency || activePriorities.some((p) => String(p.id) === urgencyId.trim());
+  const urgencyIdValid = !requireUrgency || urgencyLevels.some((l) => l.code === urgencyId.trim());
   const selectedEquipmentId =
     selectedAsset != null && selectedAsset.id > 0 ? selectedAsset.id : null;
 
@@ -289,7 +292,8 @@ export function WoCreateForm({
           description: description.trim() || null,
           type_code: typeCode || null,
           equipment_id: resolvedEquipmentId,
-          urgency_id: parseOptionalIdString(urgencyId),
+          urgency_code: urgencyId ? (urgencyId as UrgencyCode) : null,
+          subtype_code: subtypeCode,
           planned_start: plannedStart || null,
           planned_end: plannedEnd || null,
           expected_duration_hours: expectedDuration ? Number(expectedDuration) : null,
@@ -304,7 +308,8 @@ export function WoCreateForm({
           description: description.trim() || null,
           type_code: typeCode.trim(),
           equipment_id: resolvedEquipmentId,
-          urgency_id: parseOptionalIdString(urgencyId),
+          urgency_code: urgencyId ? (urgencyId as UrgencyCode) : null,
+          subtype_code: subtypeCode || null,
           planned_start: plannedStart || null,
           planned_end: plannedEnd || null,
           expected_duration_hours: expectedDuration ? Number(expectedDuration) : null,
@@ -332,6 +337,7 @@ export function WoCreateForm({
     typeCode,
     selectedEquipmentId,
     urgencyId,
+    subtypeCode,
     plannedStart,
     plannedEnd,
     expectedDuration,
@@ -370,16 +376,46 @@ export function WoCreateForm({
               />
             </SelectTrigger>
             <SelectContent>
-              {woTypes.map((wt) => (
-                <SelectItem key={wt.id} value={wt.code}>
-                  {t(`type.${wt.code === "condition_based" ? "conditionBased" : wt.code}`, {
-                    defaultValue: wt.label,
-                  })}
-                </SelectItem>
-              ))}
+              {woTypes.map((wt) => {
+                const nature = woNatureLabel(wt, i18n.language);
+                return (
+                  <SelectItem key={wt.id} value={wt.code}>
+                    <span className="flex flex-col">
+                      <span>{woTypeLabel(wt, i18n.language)}</span>
+                      {nature ? (
+                        <span className="text-[11px] text-text-muted">
+                          {t("form.type.nature", { nature })}
+                        </span>
+                      ) : null}
+                    </span>
+                  </SelectItem>
+                );
+              })}
             </SelectContent>
           </Select>
         </FormField>
+
+        {/* Sub-type (plant list, under the type's nature) */}
+        {subtypeOptions.length > 0 ? (
+          <FormField name="subtype" label={t("form.subtype.label")}>
+            <Select
+              value={subtypeCode || NO_SUBTYPE}
+              onValueChange={(v) => setSubtypeCode(v === NO_SUBTYPE ? "" : v)}
+            >
+              <SelectTrigger id="wo-subtype" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NO_SUBTYPE}>{t("form.subtype.none")}</SelectItem>
+                {subtypeOptions.map((st) => (
+                  <SelectItem key={st.id} value={st.code}>
+                    {st.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </FormField>
+        ) : null}
 
         {/* Equipment */}
         <FormField
@@ -406,26 +442,17 @@ export function WoCreateForm({
           error={fieldError("urgencyId")}
           required={requireUrgency}
         >
-          <Select
-            {...(urgencyId ? { value: urgencyId } : {})}
-            onValueChange={(v) => {
-              setUrgencyId(v);
+          <UrgencySelect
+            id="wo-urgency"
+            value={urgencyId || null}
+            onChange={(code) => {
+              setUrgencyId(code);
               markTouched("urgencyId");
             }}
-          >
-            <SelectTrigger className="w-full">
-              <SelectValue placeholder={prioritiesLoading ? "…" : t("form.urgency.label")} />
-            </SelectTrigger>
-            <SelectContent>
-              {activePriorities.map((p) => (
-                <SelectItem key={p.id} value={String(p.id)}>
-                  <span style={{ color: p.hex_color }}>
-                    {priorityDisplayLabel(p, i18n.language)}
-                  </span>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            placeholder={t("form.urgency.label")}
+            className="w-full"
+            aria-invalid={Boolean(fieldError("urgencyId"))}
+          />
         </FormField>
 
         {/* Title */}

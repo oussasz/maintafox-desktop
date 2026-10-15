@@ -1,17 +1,24 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import enCommon from "@/i18n/en/common.json";
 import enDi from "@/i18n/locale-data/en/di.json";
-import type { InterventionRequest } from "@shared/ipc-types";
+import { useUrgencyScaleStore } from "@/stores/urgency-scale-store";
+import type { InterventionRequest, UrgencyLevel } from "@shared/ipc-types";
 
 import { DiDeferDialog, localIsoDate } from "../DiDeferDialog";
 import { DiScreenDialog } from "../DiScreenDialog";
 
-function lookup(key: string): string | undefined {
+function lookupIn(root: unknown, key: string): string | undefined {
   const value = key
     .split(".")
-    .reduce<unknown>((node, part) => (node as Record<string, unknown> | undefined)?.[part], enDi);
+    .reduce<unknown>((node, part) => (node as Record<string, unknown> | undefined)?.[part], root);
   return typeof value === "string" ? value : undefined;
+}
+
+/** `di` keys, then the shared `common` keys (urgency select). */
+function lookup(key: string): string | undefined {
+  return lookupIn(enDi, key) ?? lookupIn(enCommon, key);
 }
 
 vi.mock("react-i18next", () => ({
@@ -33,6 +40,30 @@ vi.mock("@/stores/di-review-store", () => ({
 const ref = vi.hoisted(() => ({ listPublishedReferenceValuesByDomainCode: vi.fn() }));
 vi.mock("@/services/reference-service", () => ref);
 
+/** The shared DI / OT urgency scale as the backend serves it (labels set by the plant). */
+const LEVELS: UrgencyLevel[] = [
+  ["emergency", 1, "Urgence", "Emergency"],
+  ["urgent", 2, "Urgent", "Urgent"],
+  ["high", 3, "Haute", "High"],
+  ["normal", 4, "Normale", "Normal"],
+  ["low", 5, "Basse", "Low"],
+].map(([code, rank, fr, en]) => ({
+  id: 100 + (rank as number),
+  code: code as UrgencyLevel["code"],
+  rank: rank as number,
+  label_fr: fr as string,
+  label_en: en as string,
+  description: null,
+  color_hex: null,
+  response_target_hours: 4,
+  completion_target_hours: 24,
+  escalation_threshold_hours: 8,
+  targets_source: "company",
+}));
+vi.mock("@/services/urgency-scale-service", () => ({
+  listUrgencyLevels: vi.fn(() => Promise.resolve(LEVELS)),
+}));
+
 vi.mock("@/hooks/use-session", () => ({
   useSession: () => ({ info: { user_id: 5 } }),
 }));
@@ -42,7 +73,7 @@ const DI = {
   code: "DI-0031",
   row_version: 3,
   status: "in_review",
-  reported_urgency: "medium",
+  reported_urgency: "normal",
   validated_urgency: null,
   classification_code_id: null,
   symptom_code_id: 77,
@@ -52,6 +83,7 @@ const DI = {
 describe("DiScreenDialog", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    useUrgencyScaleStore.setState({ levels: LEVELS, loaded: true, loading: false, error: null });
     ref.listPublishedReferenceValuesByDomainCode.mockResolvedValue([
       { id: 77, code: "VIB", label: "Vibration", is_active: true },
       { id: 78, code: "LEAK", label: "Leak", is_active: true },
@@ -62,7 +94,8 @@ describe("DiScreenDialog", () => {
   it("sends what the reviewer chose, not the reported values", async () => {
     const onScreened = vi.fn();
     render(<DiScreenDialog di={DI} open onOpenChange={vi.fn()} onScreened={onScreened} />);
-    expect(ref.listPublishedReferenceValuesByDomainCode).toHaveBeenCalledWith("DI.SYMPTOM");
+    // Classification uses the failure-symptom list shared with the OT close-out (ISO 14224).
+    expect(ref.listPublishedReferenceValuesByDomainCode).toHaveBeenCalledWith("WORK.SYMPTOMS");
     expect(screen.getByText(enDi.screening.urgencyAsReported)).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText(enDi.screening.note), {
@@ -75,7 +108,7 @@ describe("DiScreenDialog", () => {
         di_id: 31,
         actor_id: 0,
         expected_row_version: 3,
-        validated_urgency: "medium",
+        validated_urgency: "normal",
         classification_code_id: 77,
         reviewer_note: "Bearing noise confirmed on site",
       }),

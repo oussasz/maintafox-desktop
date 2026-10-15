@@ -97,8 +97,8 @@ describe("reference set presentation", () => {
     expect(referenceSetStatusLabelKey("published")).toBe("browser.status.published");
     expect(referenceSetStatusLabelKey("weird")).toBe("browser.status.unknown");
     const t = (key: string) => `t:${key}`;
-    expect(referenceDomainLabel({ id: -103, code: "WO.WORK_ORDER_TYPES", name: "x" }, t)).toBe(
-      "t:synthetic.domains.woTypes",
+    expect(referenceDomainLabel({ id: -104, code: "WORK.URGENCY_SCALE", name: "x" }, t)).toBe(
+      "t:synthetic.domains.urgencyScale",
     );
     expect(referenceDomainLabel({ id: 5, code: "EQUIPMENT.CLASS", name: "Classes" }, t)).toBe(
       "Classes",

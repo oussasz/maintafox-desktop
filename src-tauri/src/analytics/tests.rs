@@ -142,7 +142,7 @@ async fn seed_dataset(db: &DatabaseConnection) -> Data {
         .await;
     }
 
-    let type_id = scalar(db, "SELECT id FROM work_order_types ORDER BY id LIMIT 1").await;
+    let type_id = scalar(db, "SELECT v.id FROM reference_values v JOIN reference_sets s ON s.id = v.set_id JOIN reference_domains d ON d.id = s.domain_id WHERE d.code = 'WORK.ORDER_TYPES' AND v.code = 'corrective'").await;
     for (code, status, eq, node, hours, planned_end, closed_at, cost, created) in [
         (
             "WO-1",
