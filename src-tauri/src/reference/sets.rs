@@ -383,6 +383,7 @@ pub async fn get_reference_set(db: &DatabaseConnection, set_id: i64) -> AppResul
 /// new draft in one transaction. When none exists (bootstrap), the draft is empty.
 pub async fn create_draft_set(db: &DatabaseConnection, domain_id: i64, actor_id: i64) -> AppResult<ReferenceSet> {
     let domain = super::domains::get_reference_domain(db, domain_id).await?;
+    super::audience::assert_domain_editable(&domain)?;
     super::governance::assert_allows_create_draft_set(&domain)?;
     assert_no_active_draft(db, domain_id).await?;
 
@@ -427,6 +428,7 @@ pub async fn create_draft_set(db: &DatabaseConnection, domain_id: i64, actor_id:
 pub async fn discard_draft_set(db: &DatabaseConnection, set_id: i64) -> AppResult<()> {
     let set = get_set_by_id(db, set_id).await?;
     let domain = super::domains::get_reference_domain(db, set.domain_id).await?;
+    super::audience::assert_domain_editable(&domain)?;
     super::governance::assert_allows_create_draft_set(&domain)?;
 
     if set.status != SET_STATUS_DRAFT {
@@ -488,6 +490,7 @@ pub async fn discard_draft_set(db: &DatabaseConnection, set_id: i64) -> AppResul
 /// of the outcome.
 pub async fn validate_set(db: &DatabaseConnection, set_id: i64, actor_id: i64) -> AppResult<ReferenceSet> {
     let set = get_set_by_id(db, set_id).await?;
+    super::audience::assert_domain_id_editable(db, set.domain_id).await?;
 
     if set.status != SET_STATUS_DRAFT {
         return Err(AppError::ValidationFailed(vec![format!(
@@ -539,6 +542,7 @@ pub async fn validate_set(db: &DatabaseConnection, set_id: i64, actor_id: i64) -
 pub async fn publish_set(db: &DatabaseConnection, set_id: i64, _actor_id: i64) -> AppResult<ReferenceSet> {
     let set = get_set_by_id(db, set_id).await?;
     let domain = super::domains::get_reference_domain(db, set.domain_id).await?;
+    super::audience::assert_domain_editable(&domain)?;
     super::governance::assert_allows_publish(&domain)?;
 
     if set.status != SET_STATUS_VALIDATED {

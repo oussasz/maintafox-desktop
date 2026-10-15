@@ -82,6 +82,14 @@ async fn ensure_domain(conn: &impl ConnectionTrait, code: &str, name: &str) -> A
         [code.to_ascii_uppercase().into()],
     ))
     .await?;
+    // Company lists: each plant adjusts its cost categories and variance reasons in Données de
+    // référence (the product values settlement posts to stay locked by governance).
+    crate::reference::audience::declare_domain_audience(
+        conn,
+        code,
+        crate::reference::audience::DomainAudience::Company,
+    )
+    .await?;
     Ok(())
 }
 

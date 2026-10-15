@@ -1710,10 +1710,23 @@ export interface ReferenceDomain {
   governance_level: string;
   /** A/B/C: system_catalog | operational_dictionary | controlled_catalog */
   governance_category: string;
+  /**
+   * Who maintains the list. `system`: shipped by Maintafox, hidden from Données de référence and
+   * read-only (pickers still list its values). `company`: configured by the plant.
+   */
+  audience: ReferenceDomainAudience;
   is_extendable: boolean;
   validation_rules_json: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export type ReferenceDomainAudience = "system" | "company";
+
+/** A module table (OT types, article families…) listed in the Données de référence tree. */
+export interface ReferenceModuleCatalog {
+  code: string;
+  audience: ReferenceDomainAudience;
 }
 
 /** Capability snapshot from governance engine (Manager / Combobox SSOT). */
@@ -1732,6 +1745,8 @@ export interface ReferenceGovernanceCapabilities {
   set_status: string | null;
   /** Product-seeded values (`origin: system`) of this domain cannot be edited or deactivated. */
   system_values_locked: boolean;
+  /** `system` domains are read-only whatever their category. */
+  audience: ReferenceDomainAudience;
 }
 
 export interface CreateReferenceDomainPayload {
@@ -7644,6 +7659,16 @@ export interface InspectionRound {
   review_note: string | null;
   completion_percentage: number | null;
   row_version: number;
+  /** Schedule that generated the round (null for a round scheduled by hand). */
+  schedule_id: number | null;
+  /** Identity of the occurrence in its schedule. */
+  due_basis: string | null;
+  /** The round may still be done until then; an unstarted round is missed afterwards. */
+  window_end_at: string | null;
+  assigned_team_id: number | null;
+  /** Meter threshold of a meter-triggered round. */
+  due_meter_value: number | null;
+  missed_at: string | null;
 }
 
 export interface InspectionCheckpointDraft {
@@ -7687,6 +7712,7 @@ export interface ScheduleInspectionRoundInput {
   scheduled_at?: string | null;
   assigned_to_id?: number | null;
   explicit_template_version_id?: number | null;
+  assigned_team_id?: number | null;
 }
 
 export interface InspectionTemplateVersionsFilter {
@@ -7750,6 +7776,7 @@ export interface RouteInspectionAnomalyToWoInput {
   expected_row_version: number;
   type_code: string;
   title?: string | null;
+  description?: string | null;
 }
 
 export interface DeferInspectionAnomalyInput {
@@ -7809,6 +7836,11 @@ export interface InspectionRoundSummary {
   /** The version asks for a supervisor review even after a clean round. */
   requires_review: boolean;
   assigned_to_name: string | null;
+  assigned_team_name: string | null;
+  schedule_code: string | null;
+  schedule_name: string | null;
+  /** Still to do and its planned time has passed. */
+  is_overdue: boolean;
   reviewed_by_name: string | null;
   checkpoint_count: number;
   recorded_count: number;
@@ -7821,6 +7853,32 @@ export interface InspectionRoundSummary {
 export interface InspectionRoundSummaryFilter {
   statuses?: string[] | null;
   limit?: number | null;
+  offset?: number | null;
+  /** Only rounds still to do whose planned time has passed. */
+  overdue_only?: boolean | null;
+  /** Planned between these instants (RFC 3339, inclusive). */
+  due_from?: string | null;
+  due_to?: string | null;
+  schedule_id?: number | null;
+  /** Checklist name or code, assignee, team or schedule containing this text. */
+  search?: string | null;
+}
+
+export interface InspectionRoundPage {
+  items: InspectionRoundSummary[];
+  total: number;
+}
+
+/** A previous result of the same checkpoint (same template, same code) in another round. */
+export interface InspectionCheckpointHistoryPoint {
+  round_id: number;
+  round_scheduled_at: string | null;
+  recorded_at: string;
+  result_status: string;
+  numeric_value: number | null;
+  text_value: string | null;
+  boolean_value: boolean | null;
+  comment: string | null;
 }
 
 export interface InspectionRunnerCheckpoint {
@@ -7833,6 +7891,8 @@ export interface InspectionRunnerCheckpoint {
   sync_state: InspectionRowSyncState;
   /** What is still required before the round can be completed: result, photo, comment. */
   missing: string[];
+  /** Latest results of this checkpoint in earlier rounds, newest first. */
+  history: InspectionCheckpointHistoryPoint[];
 }
 
 export interface InspectionRoundRunner {
@@ -7874,6 +7934,152 @@ export interface InspectionReliabilitySignalsFilter {
 
 export interface RefreshInspectionReliabilitySignalsInput {
   window_days: number;
+}
+
+// ── Recurring inspection rounds, module figures, anomaly follow-up (Phase 6.3) ──
+
+export type InspectionTriggerKind = "calendar" | "meter";
+
+export interface InspectionSchedule {
+  id: number;
+  entity_sync_id: string;
+  code: string;
+  name: string;
+  template_id: number;
+  trigger_kind: string;
+  interval_unit: string | null;
+  interval_value: number | null;
+  anchor_at: string | null;
+  meter_id: number | null;
+  meter_interval: number | null;
+  meter_start_reading: number | null;
+  assigned_to_id: number | null;
+  assigned_team_id: number | null;
+  grace_hours: number;
+  horizon_days: number;
+  is_active: boolean;
+  last_generated_at: string | null;
+  row_version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InspectionScheduleSummary {
+  schedule: InspectionSchedule;
+  template_code: string;
+  template_name: string;
+  assigned_to_name: string | null;
+  assigned_team_name: string | null;
+  meter_name: string | null;
+  meter_unit: string | null;
+  meter_asset_id: number | null;
+  meter_asset_code: string | null;
+  meter_lifetime_reading: number | null;
+  next_due_at: string | null;
+  open_round_count: number;
+  overdue_round_count: number;
+  missed_round_count: number;
+}
+
+export interface SaveInspectionScheduleInput {
+  id?: number | null;
+  expected_row_version?: number | null;
+  code: string;
+  name: string;
+  template_id: number;
+  trigger_kind: InspectionTriggerKind;
+  interval_unit?: string | null;
+  interval_value?: number | null;
+  anchor_at?: string | null;
+  meter_id?: number | null;
+  meter_interval?: number | null;
+  meter_start_reading?: number | null;
+  assigned_to_id?: number | null;
+  assigned_team_id?: number | null;
+  grace_hours: number;
+  horizon_days: number;
+  is_active: boolean;
+}
+
+export interface GenerateInspectionRoundsInput {
+  as_of?: string | null;
+  schedule_id?: number | null;
+}
+
+export interface InspectionScheduleIssue {
+  schedule_code: string;
+  message: string;
+}
+
+export interface GenerateInspectionRoundsResult {
+  generated: number;
+  skipped: number;
+  missed: number;
+  round_ids: number[];
+  issues: InspectionScheduleIssue[];
+}
+
+export interface InspectionKpisInput {
+  period_days: number;
+}
+
+export interface InspectionKpis {
+  period_start: string;
+  period_end: string;
+  due_count: number;
+  done_count: number;
+  done_on_time_count: number;
+  missed_count: number;
+  overdue_count: number;
+  compliance_pct: number | null;
+  open_anomaly_count: number;
+}
+
+export interface InspectionAnomalyRowFilter {
+  statuses?: string[] | null;
+  round_id?: number | null;
+  limit?: number | null;
+  offset?: number | null;
+}
+
+/** An anomaly with its round, checkpoint, equipment, reading and follow-up record. */
+export interface InspectionAnomalyRow {
+  anomaly: InspectionAnomaly;
+  round_status: string;
+  round_scheduled_at: string | null;
+  round_completed_at: string | null;
+  template_code: string;
+  template_name: string;
+  checkpoint_id: number | null;
+  checkpoint_code: string | null;
+  checkpoint_description: string | null;
+  check_type: string | null;
+  measurement_unit: string | null;
+  normal_min: number | null;
+  normal_max: number | null;
+  warning_min: number | null;
+  warning_max: number | null;
+  asset_id: number | null;
+  asset_code: string | null;
+  asset_name: string | null;
+  asset_has_location: boolean;
+  result_status: string | null;
+  numeric_value: number | null;
+  text_value: string | null;
+  result_comment: string | null;
+  recorded_at: string | null;
+  violation_direction: "above" | "below" | null;
+  violation_limit: number | null;
+  linked_di_code: string | null;
+  linked_di_title: string | null;
+  linked_di_status: string | null;
+  linked_wo_code: string | null;
+  linked_wo_title: string | null;
+}
+
+export interface InspectionAnomalyPage {
+  items: InspectionAnomalyRow[];
+  total: number;
 }
 
 export interface PersonnelReadinessRow {

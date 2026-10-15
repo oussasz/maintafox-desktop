@@ -11,8 +11,8 @@
 //!   missing, nothing is booked: the settlement is recorded `pending` with its reason, shown on
 //!   the OT and in the Finance worklist, and Finance settles it once the cause is fixed.
 //! - Idempotent and sync-safe: while an OT has a `posted` or `pending` settlement, closing again
-//!   does nothing; the settlement and every actual carry a deterministic sync identity (OT sync id
-//!   + close cycle, actual source id), inserted `OR IGNORE`, so two devices settling the same OT
+//!   does nothing; the settlement and every actual carry a deterministic sync identity (the OT sync id
+//!   and close cycle; the actual source id), inserted `OR IGNORE`, so two devices settling the same OT
 //!   produce the same rows and the budget counts them once.
 //! - cancel: an OT cancelled after consuming labour, parts or services is settled like a closed one.
 //! - late costs: when a settled OT's cost changes (receipt, issue, return or labour recorded after

@@ -1652,8 +1652,7 @@ pub async fn reopen_wo(db: &DatabaseConnection, input: WoReopenInput) -> AppResu
     .await?;
 
     // Reverse the cost settlement of the closed cycle (nothing to do when reopened from completed).
-    crate::finance::settlement::reverse_work_order_settlement(&txn, input.wo_id, input.actor_id, &input.reason)
-        .await?;
+    crate::finance::settlement::reverse_work_order_settlement(&txn, input.wo_id, input.actor_id, &input.reason).await?;
 
     crate::wo::workflow::events::emit_action_event(
         &txn,

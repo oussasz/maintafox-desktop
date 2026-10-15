@@ -19,7 +19,6 @@ mod tests {
         ensure_system_reference_catalog_integrity(&db)
             .await
             .expect("initial integrity");
-        publish::clear_impact_cache();
         db
     }
 

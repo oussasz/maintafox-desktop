@@ -59,6 +59,23 @@ Column `reference_domains.governance_category` stores the category; legacy `gove
 4. Reference Manager and ReferenceCombobox obey the **same** category rules.
 5. Near-term persistence for B: one hidden working set (`status=published`) with set/version UI hidden (schema flatten later).
 
+### Audience: SYSTEM vs COMPANY (owner rule, migration 196)
+
+Independent of A/B/C, every domain stores `reference_domains.audience`:
+
+- **system** — a list shipped and maintained by Maintafox that the program's logic depends on
+  (`EQUIPMENT.STATUS`, `EQUIPMENT.CRITICALITY`, `DI.DISPOSITION`). Not listed in Données de
+  référence, and every user-facing write (domain, sets, values, aliases, imports, merge, publish)
+  is refused with `GATE_REF_SYSTEM_DOMAIN_READ_ONLY`, whatever the category. Pickers, links and
+  ids are unchanged. Only seeders (migrations, `system_catalog_integrity`, module seeders) write it.
+- **company** — a list that differs per plant; shown in Données de référence and governed by its
+  A/B/C category as above (A = visible but read-only).
+
+Domains created by users are always `company`; seeders declare the audience of the domains they
+create. The module tables shown in the tree (OT types/statuses/priorities, article families, tax
+categories) get their audience from `reference::audience::MODULE_CATALOGS`
+(`list_reference_module_catalogs`); OT types and statuses are `system`.
+
 ---
 
 ## Behavioral matrix

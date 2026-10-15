@@ -377,6 +377,7 @@ pub async fn create_value(
     // Verify set exists and mutation is allowed by governance policy.
     let set = sets::get_reference_set(db, payload.set_id).await?;
     let domain = domains::get_reference_domain(db, set.domain_id).await?;
+    crate::reference::audience::assert_domain_editable(&domain)?;
     crate::reference::governance::assert_allows_value_mutation(&domain, &set)?;
     crate::reference::governance::assert_not_claiming_system_origin(payload.metadata_json.as_deref())?;
 
@@ -468,6 +469,7 @@ pub async fn create_operational_value(
 
     let domain_id: i64 = domain_row.try_get("", "id").map_err(|e| decode_err("domain.id", e))?;
     let domain = domains::get_reference_domain(db, domain_id).await?;
+    crate::reference::audience::assert_domain_editable(&domain)?;
     crate::reference::governance::assert_allows_operational_create(&domain)?;
 
     let published = db
@@ -568,6 +570,7 @@ pub async fn update_value(
     let existing = get_value_by_id(db, value_id).await?;
     let set = sets::get_reference_set(db, existing.set_id).await?;
     let domain = domains::get_reference_domain(db, set.domain_id).await?;
+    crate::reference::audience::assert_domain_editable(&domain)?;
     crate::reference::governance::assert_allows_value_mutation(&domain, &set)?;
     crate::reference::governance::assert_system_value_mutable(&domain, existing.metadata_json.as_deref())?;
     if let Some(Some(ref mj)) = payload.metadata_json {
@@ -638,6 +641,7 @@ pub async fn deactivate_value(db: &DatabaseConnection, value_id: i64, _actor_id:
     let existing = get_value_by_id(db, value_id).await?;
     let set = sets::get_reference_set(db, existing.set_id).await?;
     let domain = domains::get_reference_domain(db, set.domain_id).await?;
+    crate::reference::audience::assert_domain_editable(&domain)?;
     crate::reference::governance::assert_allows_value_mutation(&domain, &set)?;
     crate::reference::governance::assert_system_value_mutable(&domain, existing.metadata_json.as_deref())?;
 
@@ -664,6 +668,7 @@ pub async fn reactivate_value(db: &DatabaseConnection, value_id: i64, _actor_id:
     let existing = get_value_by_id(db, value_id).await?;
     let set = sets::get_reference_set(db, existing.set_id).await?;
     let domain = domains::get_reference_domain(db, set.domain_id).await?;
+    crate::reference::audience::assert_domain_editable(&domain)?;
     crate::reference::governance::assert_allows_value_mutation(&domain, &set)?;
     crate::reference::governance::assert_system_value_mutable(&domain, existing.metadata_json.as_deref())?;
 
@@ -693,6 +698,7 @@ pub async fn move_value_parent(
     let existing = get_value_by_id(db, value_id).await?;
     let set = sets::get_reference_set(db, existing.set_id).await?;
     let domain = domains::get_reference_domain(db, set.domain_id).await?;
+    crate::reference::audience::assert_domain_editable(&domain)?;
     crate::reference::governance::assert_allows_value_mutation(&domain, &set)?;
     crate::reference::governance::assert_system_value_mutable(&domain, existing.metadata_json.as_deref())?;
 

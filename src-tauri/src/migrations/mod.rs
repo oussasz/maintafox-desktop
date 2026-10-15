@@ -176,6 +176,9 @@ mod m20261015_000187_wo_settlement_labor_snapshot;
 mod m20261101_000036_activity_audit_log;
 mod m20261201_000037_observability_permissions;
 mod m_test;
+mod m20261015_000194_inspection_schedules;
+mod m20261015_000195_inspection_round_scheduling;
+mod m20261015_000196_reference_domain_audience;
 
 pub struct Migrator;
 
@@ -359,6 +362,9 @@ impl MigratorTrait for Migrator {
             Box::new(m20261015_000186_wo_cost_settlement::Migration),
             Box::new(m20261015_000187_wo_settlement_labor_snapshot::Migration),
             Box::new(m_test::Migration),
+            Box::new(m20261015_000194_inspection_schedules::Migration),
+            Box::new(m20261015_000195_inspection_round_scheduling::Migration),
+            Box::new(m20261015_000196_reference_domain_audience::Migration),
         ]
     }
 }

@@ -637,6 +637,7 @@ pub fn run() {
             commands::inventory::set_inventory_purchase_order_line_price,
             // Ã¢â€â‚¬Ã¢â€â‚¬ Reference Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
             commands::reference::list_reference_domains,
+            commands::reference::list_reference_module_catalogs,
             commands::reference::get_reference_domain,
             commands::reference::get_reference_governance_capabilities,
             commands::reference::get_reference_governance_capabilities_by_code,
@@ -1065,6 +1066,13 @@ pub fn run() {
             commands::finance::list_asset_cost_history,
             commands::finance::list_finance_catalogs,
             commands::finance::post_late_wo_costs,
+            commands::inspection::list_inspection_round_page,
+            commands::inspection::get_inspection_kpis,
+            commands::inspection::list_inspection_anomaly_rows,
+            commands::inspection::get_inspection_anomaly_row,
+            commands::inspection::list_inspection_schedules,
+            commands::inspection::save_inspection_schedule,
+            commands::inspection::generate_inspection_rounds,
         ])
         .run(tauri::generate_context!())
         // EXPECT: If the Tauri context cannot be loaded, the application binary is corrupt or
