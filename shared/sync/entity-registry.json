@@ -2272,6 +2272,41 @@
         "org_nodes"
       ],
       "sync_status": "synced"
+    },
+    {
+      "entity_type": "wo_cost_estimates",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 12,
+      "parents": [
+        "user_accounts",
+        "cost_centers",
+        "work_orders"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "wo_cost_settlements",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 12,
+      "parents": [
+        "user_accounts",
+        "budget_versions",
+        "cost_centers",
+        "work_orders"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "budget_periods",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 1,
+      "parents": [
+        "user_accounts"
+      ],
+      "sync_status": "synced"
     }
   ],
   "local_only_tables": {

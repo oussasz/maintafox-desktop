@@ -1177,6 +1177,10 @@ pub const ROW_SPECS: &[RowSpec] = &[
     spec("goods_receipts", &[r("received_by_id", USER)]),
     spec("goods_receipt_lines", &[]),
     spec("repairable_orders", &[r("created_by_id", USER)]),
+    // ── Finance: OT cost flow and budget periods ────────────────────────────────────────────
+    spec("wo_cost_estimates", &[]),
+    spec("wo_cost_settlements", &[]),
+    spec("budget_periods", &[]),
 ];
 
 /// Rules of an entity type synchronised by the generic engine.

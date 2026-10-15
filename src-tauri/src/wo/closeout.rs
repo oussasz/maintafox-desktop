@@ -1518,6 +1518,9 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
     // aborts the close instead of silently losing the reliability record.
     reliability_queries::ingest_failure_event_from_closed_wo(&txn, input.wo_id, input.actor_id).await?;
 
+    // Cost settlement into the budget, once per close (pending with its reason when it cannot post).
+    crate::finance::settlement::settle_closed_work_order(&txn, input.wo_id, input.actor_id).await?;
+
     txn.commit().await?;
 
     crate::pm::generation_control::on_work_order_closed_for_pm(db, input.wo_id, Some(input.actor_id)).await;
@@ -1647,6 +1650,9 @@ pub async fn reopen_wo(db: &DatabaseConnection, input: WoReopenInput) -> AppResu
         &now,
     )
     .await?;
+
+    // Reverse the cost settlement of the closed cycle (nothing to do when reopened from completed).
+    crate::finance::settlement::reverse_work_order_settlement(&txn, input.wo_id, input.actor_id, &input.reason).await?;
 
     crate::wo::workflow::events::emit_action_event(
         &txn,
