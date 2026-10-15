@@ -5,6 +5,7 @@ pub mod cockpit;
 pub mod domain;
 pub mod periods;
 pub mod queries;
+pub mod reference_catalog;
 pub mod settlement;
 pub mod wo_costing;
 

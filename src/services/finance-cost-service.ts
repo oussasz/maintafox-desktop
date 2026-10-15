@@ -399,3 +399,26 @@ export interface AssetCostFilter {
 export function listAssetCostHistory(filter: AssetCostFilter = {}): Promise<AssetCostHistory> {
   return invokeParsed("list_asset_cost_history", { filter }, AssetCostHistorySchema);
 }
+
+// ── Finance catalogs (reference data) ──────────────────────────────────────────────────
+
+const CatalogValueSchema = z.object({
+  code: z.string(),
+  label: z.string(),
+  description: z.string().nullable(),
+  is_active: z.boolean(),
+  is_system: z.boolean(),
+  sort_order: z.number(),
+});
+export type FinanceCatalogValue = z.infer<typeof CatalogValueSchema>;
+
+const FinanceCatalogsSchema = z.object({
+  cost_categories: z.array(CatalogValueSchema),
+  variance_reasons: z.array(CatalogValueSchema),
+});
+export type FinanceCatalogs = z.infer<typeof FinanceCatalogsSchema>;
+
+/** Cost categories and variance reasons from the governed reference data (Données de référence). */
+export function listFinanceCatalogs(): Promise<FinanceCatalogs> {
+  return invokeParsed("list_finance_catalogs", undefined, FinanceCatalogsSchema);
+}

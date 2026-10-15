@@ -21,16 +21,6 @@
     "saving": "Saving…",
     "create": "Create"
   },
-  "bucket": {
-    "labor": "Labour",
-    "parts": "Parts",
-    "services": "Contractors and services",
-    "other": "Other costs",
-    "contracts": "Contracts",
-    "shutdown": "Shutdowns",
-    "capex": "Capital",
-    "total": "Total"
-  },
   "month": {
     "1": "January",
     "2": "February",
@@ -96,18 +86,6 @@
     "accepted": "Accept variance",
     "closed": "Close",
     "open": "Reopen"
-  },
-  "driver": {
-    "emergency_break_in": "Emergency break-ins",
-    "vendor_delay": "Vendor delay",
-    "labor_overrun": "Labour overrun",
-    "estimate_error": "Estimate error",
-    "scope_change": "Scope change",
-    "price_increase": "Price increase",
-    "permit_delay": "Permit delay",
-    "availability_loss": "Availability loss",
-    "repeat_failure": "Repeat failure",
-    "shutdown_scope_growth": "Shutdown scope growth"
   },
   "settlement": {
     "status": {
@@ -205,7 +183,8 @@
         "WORK_ORDER": "service",
         "WORK_ORDER_PART": "part"
       }
-    }
+    },
+    "total": "Total"
   },
   "estimate": {
     "title": "Estimate for work order {{code}}",
@@ -343,7 +322,6 @@
     "retryPosted": "Work order {{code}} settled: {{amount}}.",
     "retryStillPending": "Work order {{code}} is still pending.",
     "retryError": "The settlement failed.",
-    "split": "Labour {{labor}} · parts {{parts}} · services {{services}} · other {{other}}",
     "col": {
       "workOrder": "Work order",
       "asset": "Asset",
@@ -443,7 +421,6 @@
     "replaceReview": "Repair or replace?",
     "noRav": "replacement value not set",
     "ofRav": "{{pct}} of replacement value",
-    "split": "Labour {{labor}} · parts {{parts}} · services {{services}}",
     "correctiveCount_one": "{{count}} corrective work order · mean {{avg}}",
     "correctiveCount_other": "{{count}} corrective work orders · mean {{avg}}",
     "col": {

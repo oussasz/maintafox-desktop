@@ -7,7 +7,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { REVIEW_STATUS_TONE, VARIANCE_DRIVERS } from "@/components/finance/finance-tone";
+import { REVIEW_STATUS_TONE } from "@/components/finance/finance-tone";
+import { useFinanceCatalogs } from "@/components/finance/use-finance-catalogs";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
@@ -71,6 +72,7 @@ export function VarianceReviewsPanel({
   reloadToken = 0,
 }: VarianceReviewsPanelProps) {
   const { t } = useTranslation("budget");
+  const { categoryLabel, reasonLabel } = useFinanceCatalogs();
   const { formatCurrency, formatPercent, formatDate } = useFormatters();
   const { can } = usePermissions();
   const { withStepUp, StepUpDialogElement } = useStepUp();
@@ -145,13 +147,12 @@ export function VarianceReviewsPanel({
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="min-w-0">
                     <div className="font-medium text-text-primary">
-                      {r.cost_center_code} ·{" "}
-                      {t(`bucket.${r.budget_bucket}`, { defaultValue: r.budget_bucket })}
+                      {r.cost_center_code} · {categoryLabel(r.budget_bucket)}
                       {r.period_month ? ` · ${t(`month.${r.period_month}`)}` : ""}
                     </div>
                     <div className="text-xs text-text-muted">
                       {t("reviews.opened", { date: formatDate(r.opened_at) })} ·{" "}
-                      {t(`driver.${r.driver_code}`, { defaultValue: r.driver_code })}
+                      {reasonLabel(r.driver_code)}
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -247,16 +248,21 @@ export function VarianceReviewDialog({
   onCreated,
 }: VarianceReviewDialogProps) {
   const { t } = useTranslation("budget");
+  const { reasons, categoryLabel, reasonLabel } = useFinanceCatalogs();
   const { formatCurrency } = useFormatters();
   const { info } = useSession();
-  const [driver, setDriver] = useState<string>(VARIANCE_DRIVERS[0]);
+  const [driver, setDriver] = useState<string>("");
   const [commentary, setCommentary] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<unknown>(null);
 
   useEffect(() => {
+    if (!driver && reasons[0]) setDriver(reasons[0].code);
+  }, [driver, reasons]);
+
+  useEffect(() => {
     if (row) {
-      setDriver(VARIANCE_DRIVERS[0]);
+      setDriver("");
       setCommentary("");
       setError(null);
     }
@@ -264,7 +270,8 @@ export function VarianceReviewDialog({
 
   const versionId = cockpit?.version?.id ?? null;
   const ownerId = info?.user_id ?? null;
-  const valid = commentary.trim().length > 0 && versionId != null && ownerId != null;
+  const valid =
+    commentary.trim().length > 0 && driver !== "" && versionId != null && ownerId != null;
 
   const submit = async () => {
     if (!row || !cockpit || !valid || versionId == null || ownerId == null) return;
@@ -311,7 +318,7 @@ export function VarianceReviewDialog({
               <DialogTitle>
                 {t("reviews.newTitle", {
                   cc: row.cost_center_code,
-                  bucket: t(`bucket.${row.bucket}`, { defaultValue: row.bucket }),
+                  bucket: categoryLabel(row.bucket),
                 })}
               </DialogTitle>
               <DialogDescription>
@@ -330,9 +337,9 @@ export function VarianceReviewDialog({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {VARIANCE_DRIVERS.map((d) => (
-                      <SelectItem key={d} value={d}>
-                        {t(`driver.${d}`)}
+                    {reasons.map((d) => (
+                      <SelectItem key={d.code} value={d.code}>
+                        {reasonLabel(d.code)}
                       </SelectItem>
                     ))}
                   </SelectContent>

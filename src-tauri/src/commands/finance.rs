@@ -678,7 +678,11 @@ pub async fn retry_wo_settlement(
 ) -> AppResult<crate::finance::settlement::WoCostSettlement> {
     let user = require_session!(state);
     require_fin_post(&state, user.user_id).await?;
-    crate::finance::settlement::retry_pending_settlement(&state.db, settlement_id, i64::from(user.user_id)).await
+    let txn = sea_orm::TransactionTrait::begin(&state.db).await?;
+    let settlement =
+        crate::finance::settlement::retry_pending_settlement(&txn, settlement_id, i64::from(user.user_id)).await?;
+    txn.commit().await?;
+    Ok(settlement)
 }
 
 #[tauri::command]
@@ -761,4 +765,26 @@ pub async fn list_asset_cost_history(
         PermissionScope::Global
     );
     crate::finance::asset_costs::list_asset_cost_history(&state.db, filter).await
+}
+
+/// Finance catalogs from the reference data (cost categories, variance reasons), readable by
+/// anyone who sees budget or OT costs — maintaining them stays in Données de référence.
+#[tauri::command]
+pub async fn list_finance_catalogs(
+    state: State<'_, AppState>,
+) -> AppResult<crate::finance::reference_catalog::FinanceCatalogs> {
+    let user = require_session!(state);
+    let mut allowed = false;
+    for permission in [crate::rbac::permissions::FIN_VIEW, crate::rbac::permissions::OT_VIEW] {
+        if check_permission(&state.db, user.user_id, permission, &PermissionScope::Global).await? {
+            allowed = true;
+            break;
+        }
+    }
+    if !allowed {
+        return Err(AppError::PermissionDenied(
+            "Required permission: fin.view or ot.view.".to_string(),
+        ));
+    }
+    crate::finance::reference_catalog::list_finance_catalogs(&state.db).await
 }

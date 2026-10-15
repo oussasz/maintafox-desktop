@@ -9,7 +9,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { parseAmount } from "@/components/finance/WoCostEstimateDialog";
-import { BUDGET_BUCKETS, VERSION_STATUS_TONE } from "@/components/finance/finance-tone";
+import { VERSION_STATUS_TONE } from "@/components/finance/finance-tone";
+import { useFinanceCatalogs } from "@/components/finance/use-finance-catalogs";
 import { Button } from "@/components/ui/button";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import {
@@ -628,6 +629,7 @@ function LinesSection({
   onChanged: () => Promise<void>;
 }) {
   const { t } = useTranslation("budget");
+  const { categoryLabel } = useFinanceCatalogs();
   const { formatCurrency } = useFormatters();
   const [lines, setLines] = useState<BudgetLine[]>([]);
   const [error, setError] = useState<unknown>(null);
@@ -706,9 +708,7 @@ function LinesSection({
               {lines.map((l) => (
                 <tr key={l.id} className="border-t border-surface-border">
                   <td className="px-3 py-2">{l.cost_center_code}</td>
-                  <td className="px-3 py-2">
-                    {t(`bucket.${l.budget_bucket}`, { defaultValue: l.budget_bucket })}
-                  </td>
+                  <td className="px-3 py-2">{categoryLabel(l.budget_bucket)}</td>
                   <td className="px-3 py-2">
                     {l.period_month ? t(`month.${l.period_month}`) : t("planning.annual")}
                   </td>
@@ -779,15 +779,25 @@ function LineDialog({
   onSaved: () => Promise<void>;
 }) {
   const { t } = useTranslation("budget");
+  const { categories, categoryLabel } = useFinanceCatalogs();
   const [cc, setCc] = useState(line ? String(line.cost_center_id) : String(centers[0]?.id ?? ""));
-  const [bucket, setBucket] = useState(line?.budget_bucket ?? "labor");
+  const [bucket, setBucket] = useState(line?.budget_bucket ?? "");
+  // A new line starts on the first category of the reference catalog once it is loaded.
+  useEffect(() => {
+    if (!bucket && categories[0]) setBucket(categories[0].code);
+  }, [bucket, categories]);
+  // A line kept on a category since retired in the reference data still shows it.
+  const options =
+    bucket && !categories.some((c) => c.code === bucket)
+      ? [...categories.map((c) => c.code), bucket]
+      : categories.map((c) => c.code);
   const [month, setMonth] = useState(line?.period_month ? String(line.period_month) : ANNUAL);
   const [amount, setAmount] = useState(line ? String(line.planned_amount) : "");
   const [note, setNote] = useState(line?.justification_note ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const parsed = parseAmount(amount);
-  const valid = parsed != null && parsed > 0 && cc !== "";
+  const valid = parsed != null && parsed > 0 && cc !== "" && bucket !== "";
 
   const submit = async () => {
     if (!valid || saving || parsed == null) return;
@@ -860,9 +870,9 @@ function LineDialog({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {BUDGET_BUCKETS.map((b) => (
-                    <SelectItem key={b} value={b}>
-                      {t(`bucket.${b}`)}
+                  {options.map((code) => (
+                    <SelectItem key={code} value={code}>
+                      {categoryLabel(code)}
                     </SelectItem>
                   ))}
                 </SelectContent>

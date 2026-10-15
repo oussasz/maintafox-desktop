@@ -24,6 +24,8 @@ pub async fn ensure_system_reference_catalog_integrity(db: &DatabaseConnection) 
     ensure_org_schedule_class_reference_catalog(db).await?;
     // WO close-out coding (symptoms, causes, effects, mechanisms, detection methods).
     crate::wo::closeout_reference_catalog::ensure_closeout_reference_catalogs(db).await?;
+    // Finance cost categories and variance reasons.
+    crate::finance::reference_catalog::ensure_finance_reference_catalogs(db).await?;
     Ok(())
 }
 

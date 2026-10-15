@@ -8,6 +8,7 @@ import { initReactI18next } from "react-i18next";
 import { MemoryRouter } from "react-router-dom";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { resetFinanceCatalogCache } from "@/components/finance/use-finance-catalogs";
 import enCommon from "@/i18n/en/common.json";
 import enBudget from "@/i18n/locale-data/en/budget.json";
 import { BudgetPage, defaultVersion } from "@/pages/BudgetPage";
@@ -32,6 +33,7 @@ const budget = vi.hoisted(() => ({
 vi.mock("@/services/budget-service", () => budget);
 
 const finance = vi.hoisted(() => ({
+  listFinanceCatalogs: vi.fn(),
   getBudgetCockpit: vi.fn(),
   getBudgetCockpitDrilldown: vi.fn(),
   listWoSettlements: vi.fn(),
@@ -99,6 +101,53 @@ function renderPage(path = "/budget") {
   );
 }
 
+const catalogs = {
+  cost_categories: [
+    {
+      code: "labor",
+      label: "Main-d'œuvre",
+      description: "Labour",
+      is_active: true,
+      is_system: true,
+      sort_order: 1,
+    },
+    {
+      code: "parts",
+      label: "Pièces",
+      description: "Parts",
+      is_active: true,
+      is_system: true,
+      sort_order: 2,
+    },
+    {
+      code: "services",
+      label: "Sous-traitance et services",
+      description: "Contractors and services",
+      is_active: true,
+      is_system: true,
+      sort_order: 3,
+    },
+    {
+      code: "other",
+      label: "Autres coûts",
+      description: "Other costs",
+      is_active: true,
+      is_system: true,
+      sort_order: 4,
+    },
+  ],
+  variance_reasons: [
+    {
+      code: "labor_overrun",
+      label: "Dépassement d'heures",
+      description: "Labour overrun",
+      is_active: true,
+      is_system: true,
+      sort_order: 1,
+    },
+  ],
+};
+
 beforeAll(async () => {
   Element.prototype.scrollIntoView = vi.fn();
   if (!i18next.isInitialized) {
@@ -117,6 +166,8 @@ beforeAll(async () => {
 
 beforeEach(() => {
   for (const fn of [...Object.values(budget), ...Object.values(finance)]) fn.mockReset();
+  resetFinanceCatalogCache();
+  finance.listFinanceCatalogs.mockResolvedValue(catalogs);
   perms.granted = new Set([P.FIN_VIEW]);
   budget.listCostCenters.mockResolvedValue([]);
   budget.listBudgetLines.mockResolvedValue([]);

@@ -1,23 +1,16 @@
 /**
- * Finance status → tone maps (design-system/tone.ts vocabulary) and the budget categories the
- * cost flow posts to. Kept with the finance components; the shared tone file stays generic.
+ * Finance status → tone maps (design-system/tone.ts vocabulary) and the codes of the cost
+ * categories the cost flow posts to. Kept with the finance components; the shared tone file stays generic.
  */
 import type { Tone } from "@/design-system/tone";
 
-/** Cost categories posted by OT settlement (`finance::wo_costing::BUCKET_*`). */
+/**
+ * Codes of the cost categories OT settlement posts to. They are protected product values of the
+ * reference domain `FINANCE.COST_CATEGORIES` (labels and the full list come from the reference
+ * data, see `use-finance-catalogs`).
+ */
 export const COST_BUCKETS = ["labor", "parts", "services", "other"] as const;
 export type CostBucket = (typeof COST_BUCKETS)[number];
-
-/** Every bucket a budget line may use (cost flow + planning-only categories). */
-export const BUDGET_BUCKETS = [
-  "labor",
-  "parts",
-  "services",
-  "contracts",
-  "shutdown",
-  "capex",
-  "other",
-] as const;
 
 export const SETTLEMENT_STATUS_TONE: Record<string, Tone> = {
   posted: "success",
@@ -46,20 +39,6 @@ export const REVIEW_STATUS_TONE: Record<string, Tone> = {
   accepted: "success",
   closed: "neutral",
 };
-
-/** Variance drivers accepted by the backend (`valid_variance_driver`). */
-export const VARIANCE_DRIVERS = [
-  "emergency_break_in",
-  "vendor_delay",
-  "labor_overrun",
-  "estimate_error",
-  "scope_change",
-  "price_increase",
-  "permit_delay",
-  "availability_loss",
-  "repeat_failure",
-  "shutdown_scope_growth",
-] as const;
 
 /**
  * Tone of a forecast against its budget: overrun = danger, ≥ 90 % consumed = warning.

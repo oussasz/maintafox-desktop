@@ -895,3 +895,45 @@ fn forecast_at_completion_follows_the_year() {
         1500.0
     ));
 }
+
+#[tokio::test]
+async fn s6_cost_categories_and_variance_reasons_come_from_the_reference_data() {
+    use crate::finance::reference_catalog::{
+        is_active_code, list_finance_catalogs, DOMAIN_COST_CATEGORIES, DOMAIN_VARIANCE_REASONS,
+    };
+    let db = setup().await;
+
+    let catalogs = list_finance_catalogs(&db).await.expect("catalogs");
+    let codes: Vec<&str> = catalogs.cost_categories.iter().map(|v| v.code.as_str()).collect();
+    for settled in ["labor", "parts", "services", "other"] {
+        assert!(codes.contains(&settled), "{settled} seeded: {codes:?}");
+    }
+    assert!(catalogs.cost_categories.iter().all(|v| v.is_system && v.is_active));
+    assert!(catalogs
+        .variance_reasons
+        .iter()
+        .any(|v| v.code == "labor_overrun" && v.description.as_deref() == Some("Labour overrun")));
+
+    // The categories settlement posts to are locked for tenants.
+    let domain = crate::reference::domains::list_reference_domains(&db)
+        .await
+        .expect("domains")
+        .into_iter()
+        .find(|d| d.code == DOMAIN_COST_CATEGORIES)
+        .expect("cost category domain");
+    assert!(crate::reference::governance::system_values_locked(&domain));
+
+    // A category the plant has not defined is refused until it exists in the reference data.
+    assert!(!is_active_code(&db, DOMAIN_COST_CATEGORIES, "energy").await.expect("lookup"));
+    exec(
+        &db,
+        "INSERT INTO reference_values (entity_sync_id, set_id, code, label, sort_order, is_active)
+         SELECT 'energy-cat', rs.id, 'energy', 'Énergie', 99, 1
+           FROM reference_sets rs JOIN reference_domains d ON d.id = rs.domain_id
+          WHERE d.code = ? AND rs.status = 'published'",
+        vec![DOMAIN_COST_CATEGORIES.into()],
+    )
+    .await;
+    assert!(is_active_code(&db, DOMAIN_COST_CATEGORIES, "energy").await.expect("lookup"));
+    assert!(!is_active_code(&db, DOMAIN_VARIANCE_REASONS, "made_up").await.expect("lookup"));
+}

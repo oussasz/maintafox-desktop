@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
+import { useFinanceCatalogs } from "@/components/finance/use-finance-catalogs";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import {
   Sheet,
@@ -41,6 +42,7 @@ export function CockpitDrilldownSheet({
 }: CockpitDrilldownSheetProps) {
   const { t } = useTranslation("budget");
   const { formatCurrency, formatDate } = useFormatters();
+  const { categoryLabel } = useFinanceCatalogs();
   const [data, setData] = useState<BudgetCockpitDrilldown | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(false);
@@ -82,7 +84,7 @@ export function CockpitDrilldownSheet({
               <SheetTitle>
                 {t("drill.title", {
                   cc: row.cost_center_code,
-                  bucket: t(`bucket.${row.bucket}`, { defaultValue: row.bucket }),
+                  bucket: categoryLabel(row.bucket),
                 })}
               </SheetTitle>
               <SheetDescription>

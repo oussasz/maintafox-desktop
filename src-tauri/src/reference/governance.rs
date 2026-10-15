@@ -245,7 +245,14 @@ pub fn allows_publish(category: GovernanceCategory) -> bool {
 fn has_integrity_owned_system_values(code: &str) -> bool {
     matches!(
         normalize_domain_code(code).as_str(),
-        "EQUIPMENT.CLASS" | "EQUIPMENT.FAMILY" | "EQUIPMENT.SUBFAMILY" | "EQUIPMENT.STATUS" | "EQUIPMENT.CRITICALITY"
+        "EQUIPMENT.CLASS"
+            | "EQUIPMENT.FAMILY"
+            | "EQUIPMENT.SUBFAMILY"
+            | "EQUIPMENT.STATUS"
+            | "EQUIPMENT.CRITICALITY"
+            // OT settlement posts to the seeded cost categories: tenants add categories, never
+            // retire or recode the seeded ones.
+            | "FINANCE.COST_CATEGORIES"
     )
 }
 

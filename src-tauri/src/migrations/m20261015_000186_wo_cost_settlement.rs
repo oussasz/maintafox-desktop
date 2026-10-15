@@ -104,6 +104,10 @@ impl MigrationTrait for Migration {
         for sql in STATEMENTS {
             db.execute_unprepared(sql).await?;
         }
+        // Cost categories and variance reasons live in the governed reference data.
+        crate::finance::reference_catalog::ensure_finance_reference_catalogs(db)
+            .await
+            .map_err(|e| DbErr::Custom(e.to_string()))?;
         Ok(())
     }
 

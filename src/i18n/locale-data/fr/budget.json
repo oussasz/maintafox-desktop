@@ -21,16 +21,6 @@
     "saving": "Enregistrement…",
     "create": "Créer"
   },
-  "bucket": {
-    "labor": "Main-d'œuvre",
-    "parts": "Pièces",
-    "services": "Sous-traitance et services",
-    "other": "Autres coûts",
-    "contracts": "Contrats",
-    "shutdown": "Arrêts programmés",
-    "capex": "Investissement",
-    "total": "Total"
-  },
   "month": {
     "1": "Janvier",
     "2": "Février",
@@ -96,18 +86,6 @@
     "accepted": "Accepter l'écart",
     "closed": "Clôturer",
     "open": "Rouvrir"
-  },
-  "driver": {
-    "emergency_break_in": "Dépannages urgents",
-    "vendor_delay": "Retard fournisseur",
-    "labor_overrun": "Dépassement d'heures",
-    "estimate_error": "Erreur d'estimation",
-    "scope_change": "Changement de périmètre",
-    "price_increase": "Hausse de prix",
-    "permit_delay": "Attente de permis",
-    "availability_loss": "Perte de disponibilité",
-    "repeat_failure": "Panne répétitive",
-    "shutdown_scope_growth": "Extension d'arrêt"
   },
   "settlement": {
     "status": {
@@ -205,7 +183,8 @@
         "WORK_ORDER": "prestation",
         "WORK_ORDER_PART": "pièce"
       }
-    }
+    },
+    "total": "Total"
   },
   "estimate": {
     "title": "Estimation de l'OT {{code}}",
@@ -343,7 +322,6 @@
     "retryPosted": "OT {{code}} imputé : {{amount}}.",
     "retryStillPending": "OT {{code}} toujours en attente.",
     "retryError": "L'imputation a échoué.",
-    "split": "MO {{labor}} · pièces {{parts}} · services {{services}} · autres {{other}}",
     "col": {
       "workOrder": "OT",
       "asset": "Équipement",
@@ -443,7 +421,6 @@
     "replaceReview": "Réparer ou remplacer ?",
     "noRav": "valeur de remplacement non renseignée",
     "ofRav": "{{pct}} de la valeur de remplacement",
-    "split": "MO {{labor}} · pièces {{parts}} · services {{services}}",
     "correctiveCount_one": "{{count}} OT correctif · moyenne {{avg}}",
     "correctiveCount_other": "{{count}} OT correctifs · moyenne {{avg}}",
     "col": {

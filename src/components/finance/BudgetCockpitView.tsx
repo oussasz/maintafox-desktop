@@ -12,6 +12,7 @@ import { useTranslation } from "react-i18next";
 import { DataTable } from "@/components/data/DataTable";
 import { CockpitDrilldownSheet } from "@/components/finance/CockpitDrilldownSheet";
 import { forecastTone } from "@/components/finance/finance-tone";
+import { useFinanceCatalogs } from "@/components/finance/use-finance-catalogs";
 import { KpiTile } from "@/components/metrics/KpiTile";
 import { Button } from "@/components/ui/button";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
@@ -105,7 +106,7 @@ export function BudgetCockpitView({
 
   const currency = cockpit?.currency_code ?? undefined;
   const money = useCallback((v: number) => formatCurrency(v, currency), [formatCurrency, currency]);
-  const bucketLabel = useCallback((b: string) => t(`bucket.${b}`, { defaultValue: b }), [t]);
+  const { categoryLabel: bucketLabel, reasonLabel } = useFinanceCatalogs();
 
   const columns = useMemo<ColumnDef<BudgetCockpitRow>[]>(
     () => [
@@ -189,9 +190,7 @@ export function BudgetCockpitView({
                   {t("cockpit.openReviews", { count: r.open_reviews })}
                 </span>
               ) : r.latest_driver_code ? (
-                <span className="text-xs text-text-muted">
-                  {t(`driver.${r.latest_driver_code}`)}
-                </span>
+                <span className="text-xs text-text-muted">{reasonLabel(r.latest_driver_code)}</span>
               ) : null}
               {canReview && r.variance < -0.005 && r.open_reviews === 0 && cockpit ? (
                 <Button
@@ -211,7 +210,7 @@ export function BudgetCockpitView({
         },
       },
     ],
-    [t, money, bucketLabel, formatPercent, can, cockpit, onAnalyseVariance],
+    [t, money, bucketLabel, reasonLabel, formatPercent, can, cockpit, onAnalyseVariance],
   );
 
   const exportCsv = async () => {

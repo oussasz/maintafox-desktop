@@ -1063,6 +1063,7 @@ pub fn run() {
             commands::finance::close_budget_period,
             commands::finance::reopen_budget_period,
             commands::finance::list_asset_cost_history,
+            commands::finance::list_finance_catalogs,
         ])
         .run(tauri::generate_context!())
         // EXPECT: If the Tauri context cannot be loaded, the application binary is corrupt or

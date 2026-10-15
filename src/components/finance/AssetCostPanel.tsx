@@ -12,6 +12,7 @@ import { useTranslation } from "react-i18next";
 
 import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
 import { DataTable } from "@/components/data/DataTable";
+import { useFinanceCatalogs } from "@/components/finance/use-finance-catalogs";
 import { KpiTile } from "@/components/metrics/KpiTile";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -34,6 +35,7 @@ export interface AssetCostPanelProps {
 export function AssetCostPanel({ reloadToken = 0 }: AssetCostPanelProps) {
   const { t } = useTranslation("budget");
   const { formatCurrency, formatPercent, formatDate } = useFormatters();
+  const { categoryLabel } = useFinanceCatalogs();
   const [search, setSearch] = useState("");
   const debounced = useDebouncedValue(search, 300);
   const [data, setData] = useState<AssetCostHistory | null>(null);
@@ -101,11 +103,15 @@ export function AssetCostPanel({ reloadToken = 0 }: AssetCostPanelProps) {
             <div className="text-end">
               <div className="font-mono tabular-nums">{money(r.lifetime_cost)}</div>
               <div className="text-[11px] text-text-muted">
-                {t("assets.split", {
-                  labor: money(r.lifetime_labor),
-                  parts: money(r.lifetime_parts),
-                  services: money(r.lifetime_services),
-                })}
+                {(
+                  [
+                    ["labor", r.lifetime_labor],
+                    ["parts", r.lifetime_parts],
+                    ["services", r.lifetime_services],
+                  ] as const
+                )
+                  .map(([code, amount]) => `${categoryLabel(code)} ${money(amount)}`)
+                  .join(" · ")}
               </div>
             </div>
           );
@@ -175,7 +181,7 @@ export function AssetCostPanel({ reloadToken = 0 }: AssetCostPanelProps) {
         cell: ({ row }) => formatDate(row.original.last_closed_at),
       },
     ],
-    [t, money, formatPercent, formatDate],
+    [t, money, formatPercent, formatDate, categoryLabel],
   );
 
   return (

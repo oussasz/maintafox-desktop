@@ -13,6 +13,7 @@ import { useTranslation } from "react-i18next";
 
 import { WoCostEstimateDialog } from "@/components/finance/WoCostEstimateDialog";
 import { COST_BUCKETS, SETTLEMENT_STATUS_TONE } from "@/components/finance/finance-tone";
+import { useFinanceCatalogs } from "@/components/finance/use-finance-catalogs";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
@@ -52,6 +53,7 @@ export function WoCostPanel({ woId, status }: WoCostPanelProps) {
   const { t } = useTranslation("budget");
   const { formatCurrency, formatNumber, formatDate } = useFormatters();
   const { can } = usePermissions();
+  const { categoryLabel } = useFinanceCatalogs();
   const [view, setView] = useState<WoCostView | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
@@ -204,7 +206,7 @@ export function WoCostPanel({ woId, status }: WoCostPanelProps) {
                     )}
                   >
                     <th scope="row" className="py-1 pr-2 text-start font-normal">
-                      {t(`bucket.${row}`)}
+                      {row === "total" ? t("woCost.total") : categoryLabel(row)}
                     </th>
                     <td className="px-2 py-1 text-end font-mono tabular-nums">
                       {money(f.estimated)}

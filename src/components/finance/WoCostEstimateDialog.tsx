@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { COST_BUCKETS, type CostBucket } from "@/components/finance/finance-tone";
+import { useFinanceCatalogs } from "@/components/finance/use-finance-catalogs";
 import { Button } from "@/components/ui/button";
 import { ErrorState } from "@/components/ui/data-state";
 import {
@@ -64,6 +65,7 @@ export function WoCostEstimateDialog({
 }: WoCostEstimateDialogProps) {
   const { t } = useTranslation("budget");
   const { formatCurrency, currencyCode } = useFormatters();
+  const { categoryLabel } = useFinanceCatalogs();
   const [amounts, setAmounts] = useState<Record<CostBucket, string>>(() => ({
     labor: estimate ? String(estimate.estimated_labor) : "",
     parts: estimate ? String(estimate.estimated_parts) : "",
@@ -140,7 +142,7 @@ export function WoCostEstimateDialog({
           <div className="grid grid-cols-2 gap-3">
             {COST_BUCKETS.map((bucket) => (
               <div key={bucket} className="space-y-1">
-                <Label htmlFor={`est-${bucket}`}>{t(`bucket.${bucket}`)}</Label>
+                <Label htmlFor={`est-${bucket}`}>{categoryLabel(bucket)}</Label>
                 <Input
                   id={`est-${bucket}`}
                   inputMode="decimal"

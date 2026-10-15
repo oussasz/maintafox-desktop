@@ -11,6 +11,7 @@ import { useTranslation } from "react-i18next";
 import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
 import { DataTable } from "@/components/data/DataTable";
 import { SETTLEMENT_STATUS_TONE } from "@/components/finance/finance-tone";
+import { useFinanceCatalogs } from "@/components/finance/use-finance-catalogs";
 import { Button } from "@/components/ui/button";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -51,6 +52,7 @@ export function SettlementWorklist({
   const { t } = useTranslation("budget");
   const { formatCurrency, formatDate } = useFormatters();
   const { can } = usePermissions();
+  const { categoryLabel } = useFinanceCatalogs();
   const [filter, setFilter] = useState<Filter>("pending");
   const [rows, setRows] = useState<WoCostSettlement[]>([]);
   const [error, setError] = useState<unknown>(null);
@@ -217,12 +219,16 @@ export function SettlementWorklist({
             <div className="text-end">
               <div className="font-mono tabular-nums">{formatCurrency(s.total_amount, cur)}</div>
               <div className="text-[11px] text-text-muted">
-                {t("settlements.split", {
-                  labor: formatCurrency(s.labor_amount, cur),
-                  parts: formatCurrency(s.parts_amount, cur),
-                  services: formatCurrency(s.services_amount, cur),
-                  other: formatCurrency(s.other_amount, cur),
-                })}
+                {(
+                  [
+                    ["labor", s.labor_amount],
+                    ["parts", s.parts_amount],
+                    ["services", s.services_amount],
+                    ["other", s.other_amount],
+                  ] as const
+                )
+                  .map(([code, amount]) => `${categoryLabel(code)} ${formatCurrency(amount, cur)}`)
+                  .join(" · ")}
               </div>
             </div>
           );
@@ -250,7 +256,7 @@ export function SettlementWorklist({
           ) : null,
       },
     ],
-    [t, formatDate, formatCurrency, canPost, busyId, retry],
+    [t, formatDate, formatCurrency, canPost, busyId, retry, categoryLabel],
   );
 
   return (
