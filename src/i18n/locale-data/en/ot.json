@@ -238,6 +238,16 @@
     "cancelledStubHint": "This work order was cancelled. Planning fields are no longer editable. See the Audit tab for history.",
     "readinessChecklist": "Readiness checklist",
     "readinessRecommended": "recommended",
+    "readinessRule": {
+      "approval_required": "Planning approval",
+      "assignment_completed": "Responsible or team assigned",
+      "equipment_assigned": "Equipment identified",
+      "material_readiness": "Parts available / reserved",
+      "permit_approved": "Permit approved",
+      "planning_completed": "Job planned",
+      "crew_qualified": "Crew holds the required qualifications",
+      "schedule_defined": "Dates scheduled"
+    },
     "readinessBlocking": "Cannot mark ready — blocking conditions:",
     "readinessBlockingHint": "Resolve the items below, then try Mark as Ready again.",
     "readinessBlockingEmpty": "Readiness checks failed. Review the plan checklist and try again.",
@@ -390,7 +400,8 @@
       "invalidTimes": "Date, start, and end time are required.",
       "endAfterStart": "End time must be after start time.",
       "breakTooLong": "Break cannot exceed worked time.",
-      "breakNote": "Break: {{minutes}} min"
+      "breakNote": "Break: {{minutes}} min",
+      "overtime": "Overtime (paid at the overtime rate)"
     },
     "rateMissing": "Rate missing",
     "pauseTitle": "Pause work order",

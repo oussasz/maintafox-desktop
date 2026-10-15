@@ -5142,14 +5142,19 @@ export interface WoExecTask {
   result_code: TaskResultCode | null;
   notes: string | null;
   /** "planned" | "execution_added" | "generated" — enriched by backend JOIN */
-  origin?: string | null;
+  origin?: string | null | undefined;
 }
 
 /** Labor/intervener row as returned by execution commands (raw FK columns). */
 export interface WoIntervener {
   id: number;
   work_order_id: number;
-  intervener_id: number;
+  /** Login of the person, when they have one. */
+  intervener_id: number | null;
+  /** The person (personnel register); people without a login are booked by this. */
+  personnel_id?: number | null;
+  /** Paid at the overtime rate. */
+  is_overtime?: boolean;
   skill_id: number | null;
   started_at: string | null;
   ended_at: string | null;
@@ -5178,7 +5183,7 @@ export interface WoExecPart {
   notes: string | null;
   article_label?: string | null;
   /** "planned" | "execution_added" — origin of this part line */
-  origin?: string | null;
+  origin?: string | null | undefined;
   /** "pending" | "used" | "not_used" | "partial" */
   consumption_status?: string | null;
   not_used_reason_id?: number | null;
@@ -6110,7 +6115,8 @@ export interface ScheduleClass {
   name: string;
   shift_pattern_code: string;
   is_continuous: number;
-  nominal_hours_per_day: number;
+  /** As typed on the class; null when not set (never assumed). */
+  nominal_hours_per_day: number | null;
   is_active: number;
   created_at: string;
 }
@@ -6144,7 +6150,8 @@ export interface SchedulePattern {
   is_active: boolean;
   shift_pattern_code: string;
   is_continuous: boolean;
-  nominal_hours_per_day: number;
+  /** As typed on the class; null when not set (never assumed). */
+  nominal_hours_per_day: number | null;
   details: ScheduleDayPattern[];
 }
 
@@ -6535,6 +6542,10 @@ export interface CertificationType {
   default_validity_months: number | null;
   renewal_lead_days: number | null;
   row_version: number;
+  /** electrical | loto | confined_space | work_at_height | welding | lifting | first_aid | hot_work | other */
+  category: string;
+  description: string | null;
+  is_active: boolean;
 }
 
 export interface QualificationRequirementProfile {
@@ -6573,6 +6584,10 @@ export interface CertificationTypeUpsertInput {
   name: string;
   default_validity_months?: number | null;
   renewal_lead_days?: number | null;
+  category?: string | null;
+  description?: string | null;
+  is_active?: boolean | null;
+  expected_row_version?: number | null;
 }
 
 export interface QualificationRequirementProfileUpsertInput {
@@ -8329,7 +8344,9 @@ export interface CreateCapacityRuleInput {
   team_id: number;
   effective_start: string;
   effective_end?: string | null;
-  available_hours_per_day: number;
+  /** History only: capacity comes from the members' Classes horaires. */
+  available_hours_per_day?: number | null;
+  /** Overtime ceiling per day. */
   max_overtime_hours_per_day: number;
 }
 
@@ -8497,7 +8514,6 @@ export interface CreateScheduleBreakInInput {
   new_assigned_team_id?: number | null;
   new_assigned_personnel_id?: number | null;
   bypass_availability?: boolean | null;
-  bypass_qualification?: boolean | null;
   override_reason?: string | null;
   dangerous_override_reason?: string | null;
 }
@@ -8509,6 +8525,8 @@ export interface TeamCapacityLoad {
   overtime_hours: number;
   committed_hours: number;
   utilization_ratio: number;
+  /** `rule` (planner's capacity rule) | `roster` (shift calendars) | `holiday` | `no_schedule` | `no_members`. */
+  basis?: string;
 }
 
 export interface PlanningAssigneeLane {

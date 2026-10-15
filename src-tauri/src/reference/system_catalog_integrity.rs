@@ -30,6 +30,8 @@ pub async fn ensure_system_reference_catalog_integrity(db: &DatabaseConnection) 
     crate::wo::types::ensure_work_order_type_catalog(db).await?;
     // Finance cost categories and variance reasons.
     crate::finance::reference_catalog::ensure_finance_reference_catalogs(db).await?;
+    // Certification / authorisation types and skills in the tenant's language.
+    crate::qualification::catalog::ensure_qualification_catalog(db).await?;
     Ok(())
 }
 
@@ -466,7 +468,7 @@ async fn ensure_work_part_unused_reason_reference_catalog(db: &DatabaseConnectio
 }
 
 const ORG_SCHEDULE_CLASSES: &[SeedValue] = &[SeedValue {
-    metadata_json: Some(r#"{"shift_pattern_code":"DAY_SHIFT","is_continuous":false,"nominal_hours_per_day":8.0}"#),
+    metadata_json: Some(r#"{"shift_pattern_code":"DAY_SHIFT","is_continuous":false}"#),
     ..seed("DAY_SHIFT", "Journée normale", 1, "schedule_class")
 }];
 

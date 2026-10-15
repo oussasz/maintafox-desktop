@@ -6,6 +6,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { GanttChart, LayoutGrid, List, Plus, RefreshCw, Users } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useSearchParams } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { DataTable } from "@/components/data/DataTable";
@@ -15,6 +16,7 @@ import {
   AvailabilityCalendar,
   type AvailabilityCalendarHandle,
 } from "@/components/personnel/AvailabilityCalendar";
+import { ExternalCompaniesPanel } from "@/components/personnel/ExternalCompaniesPanel";
 import { PersonnelArchivePanel } from "@/components/personnel/PersonnelArchivePanel";
 import { PersonnelCard } from "@/components/personnel/PersonnelCard";
 import { PersonnelCreateDialog } from "@/components/personnel/PersonnelCreateDialog";
@@ -25,12 +27,15 @@ import {
   TeamCapacityBoard,
   type TeamCapacityBoardHandle,
 } from "@/components/personnel/TeamCapacityBoard";
+import { WorkCalendarPanel } from "@/components/personnel/WorkCalendarPanel";
 import { WorkforceReportPanel } from "@/components/personnel/WorkforceReportPanel";
 import type { AvailabilityViewMode } from "@/components/personnel/availability-model";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { StatusChip } from "@/components/ui/status-chip";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { mfLayout } from "@/design-system/tokens";
+import { type Tone, toneOf } from "@/design-system/tone";
 import { cn } from "@/lib/utils";
 import { getOrgDesignerSnapshot } from "@/services/org-designer-service";
 import { listPositions } from "@/services/personnel-service";
@@ -40,7 +45,7 @@ import type { Personnel } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
 type PersonnelViewMode = "list" | "cards";
-type PersonnelTab = "directory" | "availability" | "teams" | "analytics";
+type PersonnelTab = "directory" | "availability" | "teams" | "companies" | "calendar" | "analytics";
 
 const AVAILABILITY_CODES = [
   "available",
@@ -58,13 +63,13 @@ const EMPLOYMENT_STATUS_CODES = ["active", "inactive", "suspended", "terminated"
 const VIEW_STORAGE_KEY = "personnel-view-mode";
 
 /** List/table badge styling — same pattern as DI / OT status chips */
-const AVAILABILITY_TABLE_STYLE: Record<string, string> = {
-  available: "bg-emerald-100 text-emerald-800",
-  assigned: "bg-blue-100 text-blue-800",
-  in_training: "bg-amber-100 text-amber-900",
-  on_leave: "bg-gray-100 text-gray-700",
-  blocked: "bg-red-100 text-red-800",
-  inactive: "bg-slate-100 text-slate-700",
+const AVAILABILITY_TONE: Record<string, Tone> = {
+  available: "success",
+  assigned: "progress",
+  in_training: "info",
+  on_leave: "neutral",
+  blocked: "danger",
+  inactive: "neutral",
 };
 
 export function PersonnelPage() {
@@ -85,7 +90,15 @@ export function PersonnelPage() {
     () => (localStorage.getItem(VIEW_STORAGE_KEY) as PersonnelViewMode) || "list",
   );
   const [availabilityView, setAvailabilityView] = useState<AvailabilityViewMode>("chronology");
-  const [activeTab, setActiveTab] = useState<PersonnelTab>("directory");
+  const [searchParams] = useSearchParams();
+  const requestedTab = searchParams.get("tab");
+  const requestedTeam = Number(searchParams.get("team"));
+  const openTeamId = Number.isInteger(requestedTeam) && requestedTeam > 0 ? requestedTeam : null;
+  const [activeTab, setActiveTab] = useState<PersonnelTab>(
+    requestedTab === "teams" || requestedTab === "calendar" || requestedTab === "companies"
+      ? requestedTab
+      : "directory",
+  );
   const [searchInput, setSearchInput] = useState("");
   const isDirectoryTab = activeTab === "directory";
   const isAvailabilityTab = activeTab === "availability";
@@ -338,17 +351,7 @@ export function PersonnelPage() {
         header: t("list.columns.status"),
         cell: ({ row }) => {
           const s = row.original.availability_status;
-          return (
-            <Badge
-              variant="outline"
-              className={cn(
-                "text-[10px] border-0",
-                AVAILABILITY_TABLE_STYLE[s] ?? "bg-gray-100 text-gray-600",
-              )}
-            >
-              {t(`status.${s}`)}
-            </Badge>
-          );
+          return <StatusChip label={t(`status.${s}`)} tone={toneOf(AVAILABILITY_TONE, s)} dot />;
         },
       },
       {
@@ -521,6 +524,8 @@ export function PersonnelPage() {
                 <TabsTrigger value="directory">{t("tabs.directory")}</TabsTrigger>
                 <TabsTrigger value="availability">{t("tabs.availability")}</TabsTrigger>
                 <TabsTrigger value="teams">{t("tabs.teams")}</TabsTrigger>
+                <TabsTrigger value="companies">{t("tabs.companies")}</TabsTrigger>
+                <TabsTrigger value="calendar">{t("tabs.calendar")}</TabsTrigger>
                 <TabsTrigger value="analytics">{t("tabs.analytics")}</TabsTrigger>
               </TabsList>
 
@@ -601,9 +606,20 @@ export function PersonnelPage() {
                 <TeamCapacityBoard
                   ref={teamsRef}
                   entityId={filter.entity_id ?? null}
+                  openTeamId={openTeamId}
                   onOpenPersonnel={(personnelId) => {
                     void openPersonnel(personnelId);
                   }}
+                />
+              </TabsContent>
+
+              <TabsContent value="companies" className="mt-4">
+                <ExternalCompaniesPanel />
+              </TabsContent>
+
+              <TabsContent value="calendar" className="mt-4">
+                <WorkCalendarPanel
+                  entities={entityNodes.map((n) => ({ id: n.node_id, name: n.name }))}
                 />
               </TabsContent>
 

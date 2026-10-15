@@ -14,7 +14,11 @@ export type OrgIssueLike = Pick<OrgValidationIssue, "code" | "message"> & {
 
 const ISSUE_KEY_PREFIXES = ["governance.issues", "errors", "preview.issues"] as const;
 /** Asset and reference-data commands return the same coded issues, translated in their own namespaces. */
-const OTHER_NAMESPACE_KEY_PREFIXES = ["equipment:errors", "reference:errors"] as const;
+const OTHER_NAMESPACE_KEY_PREFIXES = [
+  "equipment:errors",
+  "reference:errors",
+  "training:errors",
+] as const;
 
 function issueKeys(code: string, orgNs: string): string[] {
   return [

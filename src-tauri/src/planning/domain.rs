@@ -111,7 +111,9 @@ pub struct CapacityRule {
     pub team_id: i64,
     pub effective_start: String,
     pub effective_end: Option<String>,
+    /// History only: capacity comes from the members' Classes horaires.
     pub available_hours_per_day: f64,
+    /// Overtime ceiling per day — what planning adds on top of the team's capacity.
     pub max_overtime_hours_per_day: f64,
     pub row_version: i64,
     pub created_at: String,
@@ -210,6 +212,11 @@ pub struct TeamCapacityLoad {
     pub overtime_hours: f64,
     pub committed_hours: f64,
     pub utilization_ratio: f64,
+    /// Where `available_hours` comes from: `roster` (the members' Classes horaires minus
+    /// absences, × utilisation), or why there are none: `rest_day`, `holiday`, `no_schedule`
+    /// (no Classe horaire) or `no_members`.
+    #[serde(default)]
+    pub basis: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -253,7 +260,11 @@ pub struct CreateCapacityRuleInput {
     pub team_id: i64,
     pub effective_start: String,
     pub effective_end: Option<String>,
-    pub available_hours_per_day: f64,
+    /// No longer counts toward capacity (it comes from the members' Classes horaires); kept on
+    /// older rules as history. Stored as 0 when not given.
+    #[serde(default)]
+    pub available_hours_per_day: Option<f64>,
+    /// The planner's overtime ceiling per day: the part of the rule planning uses.
     pub max_overtime_hours_per_day: f64,
 }
 
@@ -351,7 +362,6 @@ pub struct CreateScheduleBreakInInput {
     pub new_assigned_team_id: Option<i64>,
     pub new_assigned_personnel_id: Option<i64>,
     pub bypass_availability: Option<bool>,
-    pub bypass_qualification: Option<bool>,
     pub override_reason: Option<String>,
     pub dangerous_override_reason: Option<String>,
 }

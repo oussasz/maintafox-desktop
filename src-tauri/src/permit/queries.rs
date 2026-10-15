@@ -1399,6 +1399,7 @@ async fn apply_permit_isolation_in(
 ) -> AppResult<PermitIsolation> {
     let (iso, permit) = load_isolation_for_action(db, &input).await?;
     ensure_permit_status_in(&permit, ISOLATION_SETUP_STATUSES, "apply isolations")?;
+    enforce_loto_role(db, actor_id, permit.id, "isolation_apply").await?;
     if iso.applied_at.is_some() {
         return Err(AppError::ValidationFailed(vec!["Isolation is already applied.".into()]));
     }
@@ -1414,6 +1415,31 @@ async fn apply_permit_isolation_in(
         vec![actor_id.into(), now_ts().into(), opt_string(lock_number)],
     )
     .await
+}
+
+/// The person acting in a LOTO role must hold what the role requires
+/// (`qualification_requirements`, target `loto_role`), or have a supervisor override recorded
+/// for this permit and role. When the role has requirements, a login not linked to a personnel
+/// record cannot be checked and is refused (fail closed).
+async fn enforce_loto_role(db: &impl ConnectionTrait, actor_id: i64, permit_id: i64, role: &str) -> AppResult<()> {
+    match crate::qualification::gate::personnel_for_user(db, actor_id).await? {
+        Some(personnel_id) => {
+            crate::qualification::gate::enforce_permit_role(db, personnel_id, permit_id, role, None).await?;
+        }
+        None => {
+            if !crate::qualification::gate::loto_role_requirements(db, role)
+                .await?
+                .is_empty()
+            {
+                return Err(crate::qualification::issue(
+                    "LOTO_ROLE_PERSON_UNKNOWN",
+                    "This LOTO role requires qualifications: link your account to your personnel record first.",
+                    &[("role", role.to_string())],
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Two-person rule (P0-8): the verifier (session user) must differ from the applier.
@@ -1435,6 +1461,7 @@ async fn verify_permit_isolation_in(
 ) -> AppResult<PermitIsolation> {
     let (iso, permit) = load_isolation_for_action(db, &input).await?;
     ensure_permit_status_in(&permit, ISOLATION_SETUP_STATUSES, "verify isolations")?;
+    enforce_loto_role(db, actor_id, permit.id, "isolation_verify").await?;
     let Some(applied_by) = iso.applied_by_id.filter(|_| iso.applied_at.is_some()) else {
         return Err(AppError::ValidationFailed(vec![
             "Isolation must be applied before it can be verified.".into(),
@@ -1479,6 +1506,7 @@ async fn verify_permit_isolation_removal_in(
 ) -> AppResult<PermitIsolation> {
     let (iso, permit) = load_isolation_for_action(db, &input).await?;
     ensure_permit_status_in(&permit, ISOLATION_REMOVAL_STATUSES, "verify isolation removal")?;
+    enforce_loto_role(db, actor_id, permit.id, "removal_verify").await?;
     if iso.verified_at.is_none() {
         return Err(AppError::ValidationFailed(vec![
             "Only a verified isolation can have its removal verified.".into(),
@@ -1600,6 +1628,8 @@ async fn record_loto_card_print_in(
     input: LotoCardPrintInput,
     actor_id: i64,
 ) -> AppResult<LotoCardPrintJob> {
+    // The lock card is issued by someone authorised to apply the isolation.
+    enforce_loto_role(db, actor_id, input.permit_id, "isolation_apply").await?;
     let iso = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,

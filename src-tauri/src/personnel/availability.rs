@@ -1,11 +1,15 @@
 //! Personnel availability computations and block mutations.
 
+use std::collections::HashMap;
+
 use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use serde::{Deserialize, Serialize};
 
 use super::domain::PersonnelAvailabilityState;
+
 use crate::errors::{AppError, AppResult};
+use crate::personnel::capacity::PersonDayCapacity;
 
 pub use super::domain::PersonnelAvailabilityBlock;
 
@@ -142,19 +146,27 @@ async fn fetch_block_by_id(db: &DatabaseConnection, id: i64) -> AppResult<Person
     Ok(map_block_row(row))
 }
 
+/// Day-by-day availability of people: who, which team, and — from `personnel::capacity`, the
+/// same calculation as planning — the shift of their Classe horaire, scheduled / absent /
+/// available minutes and the absence types of the day.
 pub async fn list_availability_calendar(
     db: &DatabaseConnection,
     filter: AvailabilityCalendarFilter,
 ) -> AppResult<Vec<AvailabilityCalendarEntry>> {
-    if filter.date_from > filter.date_to {
+    let parse = |raw: &str, field: &str| {
+        chrono::NaiveDate::parse_from_str(raw.get(..10).unwrap_or(raw), "%Y-%m-%d")
+            .map_err(|_| AppError::ValidationFailed(vec![format!("{field} must be YYYY-MM-DD.")]))
+    };
+    let from = parse(&filter.date_from, "date_from")?;
+    let to = parse(&filter.date_to, "date_to")?;
+    if from > to {
         return Err(AppError::ValidationFailed(vec![
             "date_from must be <= date_to.".to_string()
         ]));
     }
 
     let mut personnel_where = vec!["1 = 1".to_string()];
-    let mut values: Vec<sea_orm::Value> = vec![filter.date_from.into(), filter.date_to.into()];
-
+    let mut values: Vec<sea_orm::Value> = vec![from.to_string().into(), to.to_string().into()];
     if let Some(entity_id) = filter.entity_id {
         personnel_where.push("p.primary_entity_id = ?".to_string());
         values.push(entity_id.into());
@@ -164,9 +176,8 @@ pub async fn list_availability_calendar(
         values.push(personnel_id.into());
     }
     if !filter.include_inactive.unwrap_or(false) {
-        personnel_where.push("p.availability_status <> 'inactive'".to_string());
+        personnel_where.push("p.employment_status = 'active'".to_string());
     }
-
     let team_filter_sql = if filter.team_id.is_some() {
         "AND COALESCE(t.id, home.id, pd.primary_team_id) = ?"
     } else {
@@ -182,67 +193,17 @@ pub async fn list_availability_calendar(
             UNION ALL
             SELECT date(work_date, '+1 day') FROM dates WHERE work_date < date(?)
          ),
-         base_personnel AS (
-            SELECT
-                p.id,
-                p.employee_code,
-                p.full_name,
-                p.primary_entity_id,
-                p.primary_team_id,
-                p.home_schedule_reference_value_id
-            FROM personnel p
-            WHERE {}
-         ),
          person_days AS (
-            SELECT
-                bp.*,
-                d.work_date,
-                ((CAST(strftime('%w', d.work_date) AS INTEGER) + 6) % 7) + 1 AS day_of_week
-            FROM base_personnel bp
-            CROSS JOIN dates d
+            SELECT p.id, p.employee_code, p.full_name, p.primary_entity_id, p.primary_team_id, d.work_date
+            FROM personnel p CROSS JOIN dates d
+            WHERE {}
          )
          SELECT
-            pd.id AS personnel_id,
-            pd.employee_code,
-            pd.full_name,
-            pd.primary_entity_id AS entity_id,
-            e.name AS entity_name,
+            pd.id AS personnel_id, pd.employee_code, pd.full_name,
+            pd.primary_entity_id AS entity_id, e.name AS entity_name,
             COALESCE(t.id, home.id, pd.primary_team_id) AS team_id,
             COALESCE(t.name, home.name) AS team_name,
-            pd.work_date,
-            sd.shift_start,
-            sd.shift_end,
-            CASE
-                WHEN sd.id IS NULL OR sd.is_rest_day = 1 THEN 0
-                ELSE MAX(CAST((julianday(pd.work_date || 'T' || sd.shift_end || ':00Z') - julianday(pd.work_date || 'T' || sd.shift_start || ':00Z')) * 1440 AS INTEGER), 0)
-            END AS scheduled_minutes,
-            COALESCE((
-                SELECT SUM(MAX(CAST((julianday(MIN(ab.end_at, pd.work_date || 'T' || sd.shift_end || ':00Z')) - julianday(MAX(ab.start_at, pd.work_date || 'T' || sd.shift_start || ':00Z'))) * 1440 AS INTEGER), 0))
-                FROM personnel_availability_blocks ab
-                WHERE ab.personnel_id = pd.id
-                  AND sd.id IS NOT NULL
-                  AND sd.is_rest_day = 0
-                  AND ab.start_at < pd.work_date || 'T' || sd.shift_end || ':00Z'
-                  AND ab.end_at > pd.work_date || 'T' || sd.shift_start || ':00Z'
-            ), 0) AS blocked_minutes,
-            CASE WHEN EXISTS (
-                SELECT 1 FROM personnel_availability_blocks ab2
-                WHERE ab2.personnel_id = pd.id
-                  AND ab2.is_critical = 1
-                  AND sd.id IS NOT NULL
-                  AND sd.is_rest_day = 0
-                  AND ab2.start_at < pd.work_date || 'T' || sd.shift_end || ':00Z'
-                  AND ab2.end_at > pd.work_date || 'T' || sd.shift_start || ':00Z'
-            ) THEN 1 ELSE 0 END AS has_critical_block,
-            COALESCE((
-                SELECT group_concat(DISTINCT ab3.block_type)
-                FROM personnel_availability_blocks ab3
-                WHERE ab3.personnel_id = pd.id
-                  AND sd.id IS NOT NULL
-                  AND sd.is_rest_day = 0
-                  AND ab3.start_at < pd.work_date || 'T' || sd.shift_end || ':00Z'
-                  AND ab3.end_at > pd.work_date || 'T' || sd.shift_start || ':00Z'
-            ), '') AS block_types
+            pd.work_date
          FROM person_days pd
          LEFT JOIN org_nodes e ON e.id = pd.primary_entity_id
          LEFT JOIN teams home ON home.id = pd.primary_team_id
@@ -255,54 +216,93 @@ pub async fn list_availability_calendar(
             ORDER BY pta.is_lead DESC, pta.id DESC
             LIMIT 1
          )
-         LEFT JOIN schedule_details sd
-            ON sd.reference_value_id = pd.home_schedule_reference_value_id
-           AND sd.day_of_week = pd.day_of_week
          WHERE 1 = 1
          {}
          ORDER BY pd.full_name ASC, pd.work_date ASC",
         personnel_where.join(" AND "),
         team_filter_sql
     );
-
     let rows = db
         .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, sql, values))
         .await?;
 
-    let mapped = rows
-        .into_iter()
-        .map(|row| {
-            let scheduled_minutes: i64 = row.try_get("", "scheduled_minutes").unwrap_or_default();
-            let blocked_minutes: i64 = row.try_get("", "blocked_minutes").unwrap_or_default();
-            let available_minutes = (scheduled_minutes - blocked_minutes).max(0);
-            let raw_types: String = row.try_get("", "block_types").unwrap_or_default();
-            let block_types = if raw_types.is_empty() {
-                Vec::new()
-            } else {
-                raw_types.split(',').map(std::string::ToString::to_string).collect()
-            };
+    // Each person's days, computed once.
+    let mut days_of: HashMap<i64, HashMap<String, PersonDayCapacity>> = HashMap::new();
+    let mut critical_of: HashMap<i64, Vec<(chrono::NaiveDateTime, chrono::NaiveDateTime)>> = HashMap::new();
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        let personnel_id: i64 = row.try_get("", "personnel_id").unwrap_or_default();
+        if let std::collections::hash_map::Entry::Vacant(slot) = days_of.entry(personnel_id) {
+            let days = crate::personnel::capacity::person_capacity_span(db, personnel_id, from, to).await?;
+            slot.insert(days.into_iter().map(|d| (d.day.clone(), d)).collect());
+            critical_of.insert(personnel_id, critical_blocks(db, personnel_id, from, to).await?);
+        }
+        let work_date: String = row.try_get("", "work_date").unwrap_or_default();
+        let day = days_of.get(&personnel_id).and_then(|d| d.get(&work_date));
+        let window = day.and_then(|d| {
+            let date = chrono::NaiveDate::parse_from_str(&d.day, "%Y-%m-%d").ok()?;
+            crate::personnel::capacity::shift_window(date, d.shift_start.as_deref()?, d.shift_end.as_deref()?)
+        });
+        let has_critical_block = window.is_some_and(|(s, e)| {
+            critical_of
+                .get(&personnel_id)
+                .is_some_and(|blocks| blocks.iter().any(|(bs, be)| *bs < e && *be > s))
+        });
+        out.push(AvailabilityCalendarEntry {
+            personnel_id,
+            employee_code: row.try_get("", "employee_code").unwrap_or_default(),
+            full_name: row.try_get("", "full_name").unwrap_or_default(),
+            entity_id: row.try_get("", "entity_id").unwrap_or(None),
+            entity_name: row.try_get("", "entity_name").unwrap_or(None),
+            team_id: row.try_get("", "team_id").unwrap_or(None),
+            team_name: row.try_get("", "team_name").unwrap_or(None),
+            work_date,
+            shift_start: day.and_then(|d| d.shift_start.clone()),
+            shift_end: day.and_then(|d| d.shift_end.clone()),
+            scheduled_minutes: day.map_or(0, |d| d.scheduled_minutes),
+            blocked_minutes: day.map_or(0, |d| d.absent_minutes),
+            available_minutes: day.map_or(0, |d| d.available_minutes),
+            has_critical_block,
+            block_types: day.map(|d| d.absence_types.clone()).unwrap_or_default(),
+        });
+    }
+    Ok(out)
+}
 
-            AvailabilityCalendarEntry {
-                personnel_id: row.try_get("", "personnel_id").unwrap_or_default(),
-                employee_code: row.try_get("", "employee_code").unwrap_or_default(),
-                full_name: row.try_get("", "full_name").unwrap_or_default(),
-                entity_id: row.try_get("", "entity_id").unwrap_or(None),
-                entity_name: row.try_get("", "entity_name").unwrap_or(None),
-                team_id: row.try_get("", "team_id").unwrap_or(None),
-                team_name: row.try_get("", "team_name").unwrap_or(None),
-                work_date: row.try_get("", "work_date").unwrap_or_default(),
-                shift_start: row.try_get("", "shift_start").unwrap_or(None),
-                shift_end: row.try_get("", "shift_end").unwrap_or(None),
-                scheduled_minutes,
-                blocked_minutes,
-                available_minutes,
-                has_critical_block: row.try_get::<i64>("", "has_critical_block").unwrap_or(0) == 1,
-                block_types,
-            }
+/// Critical absence blocks of a person that can touch a shift of `[from, to]`.
+async fn critical_blocks(
+    db: &DatabaseConnection,
+    personnel_id: i64,
+    from: chrono::NaiveDate,
+    to: chrono::NaiveDate,
+) -> AppResult<Vec<(chrono::NaiveDateTime, chrono::NaiveDateTime)>> {
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT start_at, end_at FROM personnel_availability_blocks WHERE personnel_id = ? AND is_critical = 1 \
+             AND julianday(start_at) < julianday(?) AND julianday(end_at) > julianday(?)",
+            [
+                personnel_id.into(),
+                (to + chrono::Duration::days(2)).to_string().into(),
+                from.to_string().into(),
+            ],
+        ))
+        .await?;
+    let parse = |raw: &str| {
+        chrono::DateTime::parse_from_rfc3339(raw)
+            .map(|d| d.naive_utc())
+            .ok()
+            .or_else(|| chrono::NaiveDateTime::parse_from_str(raw, "%Y-%m-%dT%H:%M:%S").ok())
+            .or_else(|| chrono::NaiveDateTime::parse_from_str(raw, "%Y-%m-%d %H:%M:%S").ok())
+    };
+    Ok(rows
+        .iter()
+        .filter_map(|r| {
+            let s: String = r.try_get("", "start_at").ok()?;
+            let e: String = r.try_get("", "end_at").ok()?;
+            Some((parse(&s)?, parse(&e)?))
         })
-        .collect();
-
-    Ok(mapped)
+        .collect())
 }
 
 pub async fn create_availability_block(

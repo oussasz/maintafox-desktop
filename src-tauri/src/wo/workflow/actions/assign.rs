@@ -193,6 +193,13 @@ pub async fn emergency_reassign(db: &DatabaseConnection, input: WoEmergencyReass
         .await?;
     check_concurrency(result.rows_affected())?;
 
+    // The new responsible must hold what the work order requires (or have a supervisor
+    // override recorded for it — `record_qualification_override`).
+    // A login without a personnel card cannot be checked: refused when anything is required.
+    if let Some(uid) = input.primary_responsible_id {
+        crate::qualification::gate::enforce_user_on_work_order(&txn, uid, input.wo_id).await?;
+    }
+
     if let Some(cmt) = commitment {
         let next_team = input.assigned_team_id.unwrap_or(cmt.assigned_team_id);
         let next_personnel = if input.primary_responsible_id.is_some() {

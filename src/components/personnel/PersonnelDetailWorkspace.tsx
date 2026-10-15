@@ -15,7 +15,10 @@ import {
   EntityDetailHeader,
   EntityDetailViewSwitcher,
 } from "@/components/detail";
+import { PersonScheduleExceptions } from "@/components/personnel/PersonScheduleExceptions";
 import { PersonnelPortrait } from "@/components/personnel/PersonnelPortrait";
+import { PersonCapacityDays } from "@/components/personnel/TeamCapacityDays";
+import { PersonQualificationSheet } from "@/components/personnel/qualification/PersonQualificationSheet";
 import { Timeline, type TimelineEntry } from "@/components/timeline";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -33,16 +36,13 @@ import { usePermissions } from "@/hooks/use-permissions";
 import {
   createRateCard,
   getPersonnelWorkloadSummary,
-  listAvailabilityCalendar,
   listPersonnelAssignmentHistory,
   listPersonnelAvailabilityBlocks,
   listPersonnelTeamAssignments,
   listPersonnelWorkHistory,
-  listSkillsMatrix,
 } from "@/services/personnel-service";
 import { usePersonnelStore } from "@/stores/personnel-store";
 import type {
-  AvailabilityCalendarEntry,
   PersonnelAssignmentHistoryEntry,
   PersonnelAvailabilityBlock,
   PersonnelDetailPayload,
@@ -50,7 +50,6 @@ import type {
   PersonnelTeamAssignment,
   PersonnelWorkHistoryEntry,
   PersonnelWorkloadSummary,
-  SkillMatrixRow,
 } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -67,13 +66,6 @@ type PersonnelDetailView =
 
 export interface PersonnelDetailWorkspaceProps {
   detail: PersonnelDetailPayload;
-}
-
-function dateRange(days = 14) {
-  const from = new Date();
-  const to = new Date();
-  to.setDate(to.getDate() + days);
-  return { from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) };
 }
 
 function fmt(iso: string | null | undefined): string {
@@ -139,8 +131,6 @@ export function PersonnelDetailWorkspace({ detail }: PersonnelDetailWorkspacePro
   const sensitive = (value: string | null | undefined): string | null =>
     restricted ? t("detail.restricted") : (value ?? null);
   const [activeView, setActiveView] = useState<PersonnelDetailView>("identity");
-  const [skills, setSkills] = useState<SkillMatrixRow[]>([]);
-  const [calendarRows, setCalendarRows] = useState<AvailabilityCalendarEntry[]>([]);
   const [teamAssignments, setTeamAssignments] = useState<PersonnelTeamAssignment[]>([]);
   const [blocks, setBlocks] = useState<PersonnelAvailabilityBlock[]>([]);
   const [workHistory, setWorkHistory] = useState<PersonnelWorkHistoryEntry[]>([]);
@@ -191,20 +181,15 @@ export function PersonnelDetailWorkspace({ detail }: PersonnelDetailWorkspacePro
 
   useEffect(() => {
     setActiveView("identity");
-    const range = dateRange();
     setTabsLoading(true);
     void Promise.all([
-      listSkillsMatrix({ personnel_id: p.id, include_inactive: true }),
-      listAvailabilityCalendar({ date_from: range.from, date_to: range.to, personnel_id: p.id }),
       listPersonnelTeamAssignments(p.id),
       listPersonnelAvailabilityBlocks(p.id, 20),
       listPersonnelWorkHistory(p.id, 40),
       listPersonnelAssignmentHistory(p.id, 60),
       getPersonnelWorkloadSummary(p.id),
     ])
-      .then(([s, cal, teams, bl, wh, ah, wl]) => {
-        setSkills(s);
-        setCalendarRows(cal);
+      .then(([teams, bl, wh, ah, wl]) => {
         setTeamAssignments(teams);
         setBlocks(bl);
         setWorkHistory(wh);
@@ -220,7 +205,7 @@ export function PersonnelDetailWorkspace({ detail }: PersonnelDetailWorkspacePro
   const viewTabs = useMemo(
     () => [
       { id: "identity", label: t("detail.tabs.identity") },
-      { id: "skills", label: t("detail.tabs.skills") },
+      { id: "skills", label: t("detail.tabs.qualifications") },
       { id: "availability", label: t("detail.tabs.availability") },
       { id: "teams", label: t("detail.tabs.teams") },
       { id: "rates", label: t("detail.tabs.rates") },
@@ -241,12 +226,6 @@ export function PersonnelDetailWorkspace({ detail }: PersonnelDetailWorkspacePro
     () => workHistory.map(toWorkHistoryEntry),
     [workHistory],
   );
-
-  const calendarByDate = useMemo(() => {
-    const map = new Map<string, AvailabilityCalendarEntry>();
-    for (const row of calendarRows) map.set(row.work_date, row);
-    return [...map.values()];
-  }, [calendarRows]);
 
   const isExternal = p.employment_origin === "external";
   const isContractor = p.employment_type === "contractor" || p.employment_type === "vendor";
@@ -392,44 +371,29 @@ export function PersonnelDetailWorkspace({ detail }: PersonnelDetailWorkspacePro
       ) : null}
 
       {activeView === "skills" ? (
-        <DetailSectionCard title={t("detail.tabs.skills")}>
-          {tabsLoading ? <EmptyMsg msg={t("common.loading")} /> : null}
-          {!tabsLoading && skills.length === 0 ? <EmptyMsg msg={t("common.noData")} /> : null}
-          {skills.map((row) => (
-            <div
-              key={`${row.personnel_id}-${row.skill_code ?? "x"}`}
-              className="rounded border border-surface-border p-2"
-            >
-              <div className="font-medium">{row.skill_label ?? "—"}</div>
-              <div className="text-text-muted">
-                {t("skills.columns.level")}: {row.proficiency_level ?? "—"} ·{" "}
-                {t(`skills.coverage.${row.coverage_status}`, row.coverage_status)}
-              </div>
-            </div>
-          ))}
+        <DetailSectionCard title={t("detail.tabs.qualifications")}>
+          <PersonQualificationSheet personnelId={p.id} />
         </DetailSectionCard>
       ) : null}
 
       {activeView === "availability" ? (
         <DetailSectionCard title={t("detail.tabs.availability")}>
-          {calendarByDate.length === 0 && !tabsLoading ? (
-            <EmptyMsg msg={t("common.noData")} />
+          <p className="text-sm text-text-muted">{t("capacityDays.personIntro")}</p>
+          <PersonCapacityDays personnelId={p.id} />
+          <PersonScheduleExceptions personnelId={p.id} />
+          {blocks.length > 0 ? (
+            <h4 className="pt-2 text-sm font-semibold text-text-primary">
+              {t("availability.detail.blocks")}
+            </h4>
           ) : null}
-          <div className="grid gap-2 md:grid-cols-2">
-            {calendarByDate.map((row) => (
-              <div key={row.work_date} className="rounded border border-surface-border p-2">
-                <div className="font-medium">{row.work_date}</div>
-                <div className="text-text-muted">
-                  {row.available_minutes}m {t("detail.available")} / {row.blocked_minutes}m{" "}
-                  {t("detail.blocked")}
-                </div>
-              </div>
-            ))}
-          </div>
           {blocks.map((b) => (
             <div key={b.id} className="rounded border border-surface-border p-2 text-sm">
-              <span className="font-medium">{b.block_type}</span> · {fmt(b.start_at)} →{" "}
-              {fmt(b.end_at)}
+              <span className="font-medium">
+                {restricted
+                  ? t("capacityDays.absence")
+                  : t(`availability.form.types.${b.block_type}`, { defaultValue: b.block_type })}
+              </span>{" "}
+              · {fmt(b.start_at)} → {fmt(b.end_at)}
             </div>
           ))}
         </DetailSectionCard>

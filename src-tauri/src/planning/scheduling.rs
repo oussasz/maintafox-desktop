@@ -482,27 +482,16 @@ async fn compute_capacity_gate(
     let start_dt = parse_rfc3339(start, "committed_start")?;
     let work_date = start_dt.date_naive().to_string();
 
-    let rule_row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT available_hours_per_day, max_overtime_hours_per_day
-             FROM capacity_rules
-             WHERE team_id = ?
-               AND effective_start <= ?
-               AND (effective_end IS NULL OR effective_end >= ?)
-             ORDER BY effective_start DESC
-             LIMIT 1",
-            [team_id.into(), work_date.clone().into(), work_date.clone().into()],
-        ))
-        .await?;
-    let available_hours = rule_row
-        .as_ref()
-        .and_then(|r| r.try_get::<f64>("", "available_hours_per_day").ok())
-        .unwrap_or(8.0);
-    let max_overtime = rule_row
-        .as_ref()
-        .and_then(|r| r.try_get::<f64>("", "max_overtime_hours_per_day").ok())
-        .unwrap_or(0.0);
+    let hours = team_day_hours(db, team_id, start_dt.date_naive()).await?;
+    if hours.basis == "no_schedule" || hours.basis == "no_members" {
+        return Err(crate::errors::org_validation_failed(
+            "TEAM_NO_SCHEDULE",
+            "The team has no working hours that day: link it to a Classe horaire (or give its members one).",
+            std::collections::HashMap::from([("day".to_string(), work_date.clone())]),
+        ));
+    }
+    let available_hours = hours.available;
+    let max_overtime = hours.overtime;
 
     let committed_hours: f64 = db
         .query_one(Statement::from_sql_and_values(
@@ -672,51 +661,49 @@ async fn user_has_plan_approval_scope(db: &impl ConnectionTrait, user_id: i64) -
     Ok(has > 0)
 }
 
-async fn assignee_matches_candidate_skills(
+/// The assignee of a work-order commitment must hold what the work order requires
+/// (`qualification::gate`); an authorised supervisor's override, recorded beforehand with
+/// `record_qualification_override`, lets them through. Other sources have no requirements.
+pub(crate) async fn enforce_assignee_qualifications(
     db: &impl ConnectionTrait,
-    candidate_id: i64,
+    source_type: &str,
+    source_id: i64,
     personnel_id: i64,
-) -> AppResult<bool> {
-    let skill_json = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT required_skill_set_json
-             FROM schedule_candidates
-             WHERE id = ?",
-            [candidate_id.into()],
-        ))
-        .await?
-        .and_then(|r| r.try_get::<String>("", "required_skill_set_json").ok());
-    let Some(skill_json) = skill_json else {
-        return Ok(true);
-    };
-    let required: Vec<String> = serde_json::from_str::<Vec<String>>(&skill_json)
-        .unwrap_or_default()
-        .into_iter()
-        .map(|v| v.trim().to_ascii_lowercase())
-        .filter(|v| !v.is_empty())
-        .collect();
-    if required.is_empty() {
-        return Ok(true);
+) -> AppResult<()> {
+    if source_type != "work_order" {
+        return Ok(());
     }
-    let rows = db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT lower(sd.code) AS code
-             FROM personnel_skills ps
-             JOIN skill_domains sd ON sd.id = ps.skill_domain_id
-             WHERE ps.personnel_id = ?
-               AND ps.status = 'active'",
-            [personnel_id.into()],
-        ))
-        .await?;
-    let mut have = BTreeSet::new();
-    for row in rows {
-        if let Ok(code) = row.try_get::<String>("", "code") {
-            have.insert(code);
-        }
+    crate::qualification::gate::enforce_work_order_assignment(db, personnel_id, source_id, None).await?;
+    Ok(())
+}
+
+/// Hours a team can work on `day` and why (`personnel::capacity`): its members' Classes horaires
+/// on the site's working days minus absences, × utilisation (`roster`), or none (`rest_day`,
+/// `holiday`, `no_schedule`, `no_members`). The planner's capacity rule only adds its overtime
+/// ceiling. No default hours.
+pub(crate) struct TeamDayHours {
+    pub available: f64,
+    pub overtime: f64,
+    pub basis: String,
+}
+
+pub(crate) async fn team_day_hours(
+    db: &impl ConnectionTrait,
+    team_id: i64,
+    day: chrono::NaiveDate,
+) -> AppResult<TeamDayHours> {
+    Ok(team_hours_from(
+        crate::personnel::capacity::team_capacity_hours(db, team_id, day).await?,
+    ))
+}
+
+/// Timetable hours, the rule's overtime ceiling, and why.
+fn team_hours_from(roster: crate::personnel::capacity::TeamDayCapacity) -> TeamDayHours {
+    TeamDayHours {
+        available: roster.available_hours,
+        overtime: roster.rule_overtime_hours.unwrap_or(0.0),
+        basis: roster.basis,
     }
-    Ok(required.into_iter().all(|code| have.contains(&code)))
 }
 
 async fn emit_planning_notification(
@@ -811,6 +798,7 @@ async fn run_commitment_gates(
 
     if let Some(personnel_id) = assigned_personnel_id {
         enforce_assignee_availability(tx, personnel_id, committed_start, committed_end).await?;
+        enforce_assignee_qualifications(tx, &source_type, source_id, personnel_id).await?;
 
         let overlaps =
             check_double_booking(tx, personnel_id, committed_start, committed_end, exclude_commitment_id).await?;
@@ -897,7 +885,7 @@ pub async fn list_capacity_rules(db: &DatabaseConnection, filter: CapacityRuleFi
 }
 
 pub async fn create_capacity_rule(db: &DatabaseConnection, input: CreateCapacityRuleInput) -> AppResult<CapacityRule> {
-    if input.available_hours_per_day < 0.0 || input.max_overtime_hours_per_day < 0.0 {
+    if input.available_hours_per_day.is_some_and(|h| h < 0.0) || input.max_overtime_hours_per_day < 0.0 {
         return Err(AppError::ValidationFailed(vec![
             "Capacity rule hours must be non-negative.".to_string(),
         ]));
@@ -931,7 +919,8 @@ pub async fn create_capacity_rule(db: &DatabaseConnection, input: CreateCapacity
                 input.team_id.into(),
                 input.effective_start.into(),
                 input.effective_end.into(),
-                input.available_hours_per_day.into(),
+                // Explicit: capacity no longer reads this column, never its old 8 h default.
+                input.available_hours_per_day.unwrap_or(0.0).into(),
                 input.max_overtime_hours_per_day.into(),
             ],
         ))
@@ -1325,7 +1314,6 @@ pub async fn create_schedule_break_in(
     let next_team_id = input.new_assigned_team_id.unwrap_or(current.assigned_team_id);
     let next_personnel_id = input.new_assigned_personnel_id.or(current.assigned_personnel_id);
     let bypass_availability = input.bypass_availability.unwrap_or(false);
-    let bypass_qualification = input.bypass_qualification.unwrap_or(false);
     let override_reason = input
         .override_reason
         .as_ref()
@@ -1340,12 +1328,9 @@ pub async fn create_schedule_break_in(
                 return Err(err);
             }
         }
-        let qualified = assignee_matches_candidate_skills(&tx, current.schedule_candidate_id, personnel_id).await?;
-        if !qualified && (!bypass_qualification || override_reason.is_none()) {
-            return Err(AppError::ValidationFailed(vec![
-                "Break-in assignee does not match required qualifications; override reason is required.".to_string(),
-            ]));
-        }
+        // Qualifications are not bypassed here: a supervisor override (trn.certify, step-up,
+        // audited) is recorded first with `record_qualification_override`.
+        enforce_assignee_qualifications(&tx, &current.source_type, current.source_id, personnel_id).await?;
         let overlaps = check_double_booking(
             &tx,
             personnel_id,
@@ -1473,7 +1458,6 @@ pub async fn create_schedule_break_in(
                 "approved_by_personnel_id": approved_by_personnel_id,
                 "dangerous_override": dangerous_override_reason.is_some(),
                 "bypass_availability": bypass_availability,
-                "bypass_qualification": bypass_qualification,
                 "cost_impact_delta": cost_delta
             })
             .to_string(),
@@ -1896,31 +1880,76 @@ pub async fn get_planning_gantt_snapshot(
             .or_insert(TeamCapacityLoad {
                 team_id: commitment.assigned_team_id,
                 work_date: day.clone(),
-                available_hours: 8.0,
+                available_hours: 0.0,
                 overtime_hours: 0.0,
                 committed_hours: 0.0,
                 utilization_ratio: 0.0,
+                basis: String::new(),
             });
         row.committed_hours += hours;
     }
-    for ((team_id, day), row) in &mut capacity_by_team_day {
-        let cap_row = db
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT available_hours_per_day, max_overtime_hours_per_day
-                 FROM capacity_rules
-                 WHERE team_id = ?
-                   AND effective_start <= ?
-                   AND (effective_end IS NULL OR effective_end >= ?)
-                 ORDER BY effective_start DESC
-                 LIMIT 1",
-                [(*team_id).into(), day.clone().into(), day.clone().into()],
-            ))
-            .await?;
-        if let Some(cap_row) = cap_row {
-            row.available_hours = cap_row.try_get("", "available_hours_per_day").unwrap_or(8.0);
-            row.overtime_hours = cap_row.try_get("", "max_overtime_hours_per_day").unwrap_or(0.0);
+    // Every team-day of the period gets its capacity, not only the days that already hold
+    // commitments: the board must never assume hours a team does not have.
+    let parse_day =
+        |raw: &str| chrono::NaiveDate::parse_from_str(&raw.chars().take(10).collect::<String>(), "%Y-%m-%d");
+    if let (Ok(first), Ok(last)) = (parse_day(&filter.period_start), parse_day(&filter.period_end)) {
+        if last >= first && (last - first).num_days() < crate::personnel::capacity::MAX_RANGE_DAYS {
+            let team_ids: Vec<i64> = match filter.team_id {
+                Some(team_id) => vec![team_id],
+                None => db
+                    .query_all(Statement::from_string(
+                        DbBackend::Sqlite,
+                        "SELECT id FROM teams WHERE status = 'active' AND deleted_at IS NULL ORDER BY id".to_string(),
+                    ))
+                    .await?
+                    .iter()
+                    .filter_map(|r| r.try_get::<i64>("", "id").ok())
+                    .collect(),
+            };
+            for team_id in team_ids {
+                for day in first.iter_days().take_while(|d| *d <= last) {
+                    capacity_by_team_day
+                        .entry((team_id, day.to_string()))
+                        .or_insert(TeamCapacityLoad {
+                            team_id,
+                            work_date: day.to_string(),
+                            available_hours: 0.0,
+                            overtime_hours: 0.0,
+                            committed_hours: 0.0,
+                            utilization_ratio: 0.0,
+                            basis: String::new(),
+                        });
+                }
+            }
         }
+    }
+    // One roster computation per team over the days it needs.
+    let mut days_by_team: BTreeMap<i64, (chrono::NaiveDate, chrono::NaiveDate)> = BTreeMap::new();
+    for (team_id, day) in capacity_by_team_day.keys() {
+        let day = parse_day(day).map_err(|e| AppError::Internal(anyhow::anyhow!("capacity day '{day}': {e}")))?;
+        let span = days_by_team.entry(*team_id).or_insert((day, day));
+        span.0 = span.0.min(day);
+        span.1 = span.1.max(day);
+    }
+    let mut roster: BTreeMap<(i64, String), TeamDayHours> = BTreeMap::new();
+    for (team_id, (from, to)) in days_by_team {
+        let mut cursor = from;
+        while cursor <= to {
+            let chunk_end = (cursor + chrono::Duration::days(crate::personnel::capacity::MAX_RANGE_DAYS - 1)).min(to);
+            for day in crate::personnel::capacity::team_capacity_range(db, team_id, cursor, chunk_end).await? {
+                roster.insert((team_id, day.day.clone()), team_hours_from(day));
+            }
+            cursor = chunk_end + chrono::Duration::days(1);
+        }
+    }
+    for ((team_id, day), row) in &mut capacity_by_team_day {
+        let key = (*team_id, day.chars().take(10).collect::<String>());
+        let hours = roster
+            .remove(&key)
+            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("capacity missing for team {team_id} on {day}")))?;
+        row.available_hours = hours.available;
+        row.overtime_hours = hours.overtime;
+        row.basis = hours.basis;
         let denom = row.available_hours + row.overtime_hours;
         row.utilization_ratio = if denom <= 0.0 { 1.0 } else { row.committed_hours / denom };
     }

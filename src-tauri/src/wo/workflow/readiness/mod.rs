@@ -53,6 +53,9 @@ pub struct WoReadinessContext {
     pub materials_reserved_pct: f64,
     pub materials_missing_parts: i64,
     pub materials_expected_arrival: Option<String>,
+    /// Blocker text when the crew does not hold what the work order requires
+    /// (`qualification::gate`); `None` when it does or nothing is required.
+    pub qualification_blocker: Option<String>,
 }
 
 impl WoReadinessContext {
@@ -85,6 +88,11 @@ impl WoReadinessContext {
 
         let approval_policy_required = load_approval_policy(db).await?;
         let materials = load_material_readiness_snapshot(db, wo_id).await?;
+        let qualification = crate::qualification::gate::assess_work_order(db, wo_id).await?;
+        let qualification_blocker = crate::qualification::gate::readiness_message(
+            &qualification,
+            crate::qualification::gate::tenant_writes_english(db).await?,
+        );
 
         Ok(Self {
             wo_id,
@@ -108,6 +116,7 @@ impl WoReadinessContext {
             materials_reserved_pct: materials.3,
             materials_missing_parts: materials.4,
             materials_expected_arrival: materials.5,
+            qualification_blocker,
         })
     }
 }

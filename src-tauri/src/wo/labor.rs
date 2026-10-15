@@ -26,14 +26,21 @@ use super::domain::WoStatus;
 pub struct WoIntervener {
     pub id: i64,
     pub work_order_id: i64,
-    pub intervener_id: i64,
+    /// Login of the person, when they have one.
+    pub intervener_id: Option<i64>,
+    /// The person (personnel register) — set for everyone booked since migration 190.
+    #[serde(default)]
+    pub personnel_id: Option<i64>,
+    /// Paid at the overtime rate.
+    #[serde(default)]
+    pub is_overtime: bool,
     pub skill_id: Option<i64>,
     pub started_at: Option<String>,
     pub ended_at: Option<String>,
     pub hours_worked: Option<f64>,
     pub hourly_rate: Option<f64>,
     pub notes: Option<String>,
-    /// COALESCE(display_name, username) from user_accounts.
+    /// The person's name (personnel register), else the login's display name.
     #[serde(default)]
     pub intervener_display_name: Option<String>,
     /// Skill label from reference_values when skill_id is set.
@@ -78,8 +85,15 @@ fn map_intervener(row: &sea_orm::QueryResult) -> AppResult<WoIntervener> {
             .try_get::<i64>("", "work_order_id")
             .map_err(|e| decode_err("work_order_id", e))?,
         intervener_id: row
-            .try_get::<i64>("", "intervener_id")
+            .try_get::<Option<i64>>("", "intervener_id")
             .map_err(|e| decode_err("intervener_id", e))?,
+        personnel_id: row
+            .try_get::<Option<i64>>("", "personnel_id")
+            .map_err(|e| decode_err("personnel_id", e))?,
+        is_overtime: row
+            .try_get::<i64>("", "is_overtime")
+            .map_err(|e| decode_err("is_overtime", e))?
+            != 0,
         skill_id: row
             .try_get::<Option<i64>>("", "skill_id")
             .map_err(|e| decode_err("skill_id", e))?,
@@ -110,12 +124,13 @@ fn map_intervener(row: &sea_orm::QueryResult) -> AppResult<WoIntervener> {
 }
 
 const LABOR_SELECT: &str = "\
-    SELECT woi.id, woi.work_order_id, woi.intervener_id, woi.skill_id, woi.started_at, woi.ended_at, \
-    woi.hours_worked, woi.hourly_rate, woi.notes, \
-    COALESCE(ua.display_name, ua.username) AS intervener_display_name, \
+    SELECT woi.id, woi.work_order_id, woi.intervener_id, woi.personnel_id, woi.is_overtime, woi.skill_id, \
+    woi.started_at, woi.ended_at, woi.hours_worked, woi.hourly_rate, woi.notes, \
+    COALESCE(p.full_name, ua.display_name, ua.username) AS intervener_display_name, \
     rv.label AS skill_label \
  FROM work_order_interveners woi \
  LEFT JOIN user_accounts ua ON ua.id = woi.intervener_id \
+ LEFT JOIN personnel p ON p.id = COALESCE(woi.personnel_id, ua.personnel_id) \
  LEFT JOIN reference_values rv ON rv.id = woi.skill_id";
 
 /// Load the WO status code for a guard check.
@@ -162,6 +177,109 @@ fn elapsed_hours(start: &str, end: &str) -> Option<f64> {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 pub async fn add_labor_entry(db: &DatabaseConnection, input: AddLaborInput) -> AppResult<WoIntervener> {
+    let personnel_id = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT ua.personnel_id FROM user_accounts ua JOIN personnel p ON p.id = ua.personnel_id \
+             WHERE ua.id = ? AND ua.deleted_at IS NULL",
+            [input.intervener_id.into()],
+        ))
+        .await?
+        .and_then(|row| row.try_get::<Option<i64>>("", "personnel_id").ok())
+        .flatten();
+    book_labor(
+        db,
+        LaborBooking {
+            wo_id: input.wo_id,
+            intervener_id: Some(input.intervener_id),
+            personnel_id,
+            is_overtime: false,
+            skill_id: input.skill_id,
+            started_at: input.started_at,
+            ended_at: input.ended_at,
+            hours_worked: input.hours_worked,
+            hourly_rate: input.hourly_rate,
+            notes: input.notes,
+        },
+    )
+    .await
+}
+
+/// Labour for a person of the register, with or without a login (contractor technicians,
+/// shop-floor staff). Their login, when they have one, is recorded too.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AddPersonnelLaborInput {
+    pub wo_id: i64,
+    pub personnel_id: i64,
+    #[serde(default)]
+    pub is_overtime: bool,
+    pub skill_id: Option<i64>,
+    pub started_at: Option<String>,
+    pub ended_at: Option<String>,
+    pub hours_worked: Option<f64>,
+    pub hourly_rate: Option<f64>,
+    pub notes: Option<String>,
+}
+
+pub async fn add_personnel_labor_entry(
+    db: &DatabaseConnection,
+    input: AddPersonnelLaborInput,
+) -> AppResult<WoIntervener> {
+    let person = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT p.employment_status, \
+                    (SELECT ua.id FROM user_accounts ua \
+                      WHERE ua.personnel_id = p.id AND ua.deleted_at IS NULL AND ua.is_active = 1 \
+                      ORDER BY ua.id LIMIT 1) AS user_id \
+             FROM personnel p WHERE p.id = ?",
+            [input.personnel_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "Personnel".into(),
+            id: input.personnel_id.to_string(),
+        })?;
+    let status: String = person.try_get("", "employment_status").unwrap_or_default();
+    if status != "active" {
+        return Err(crate::errors::org_validation_failed(
+            "LABOR_PERSON_INACTIVE",
+            "This person is no longer active: labour cannot be booked to them.",
+            std::collections::HashMap::new(),
+        ));
+    }
+    book_labor(
+        db,
+        LaborBooking {
+            wo_id: input.wo_id,
+            intervener_id: person.try_get::<Option<i64>>("", "user_id").ok().flatten(),
+            personnel_id: Some(input.personnel_id),
+            is_overtime: input.is_overtime,
+            skill_id: input.skill_id,
+            started_at: input.started_at,
+            ended_at: input.ended_at,
+            hours_worked: input.hours_worked,
+            hourly_rate: input.hourly_rate,
+            notes: input.notes,
+        },
+    )
+    .await
+}
+
+struct LaborBooking {
+    wo_id: i64,
+    intervener_id: Option<i64>,
+    personnel_id: Option<i64>,
+    is_overtime: bool,
+    skill_id: Option<i64>,
+    started_at: Option<String>,
+    ended_at: Option<String>,
+    hours_worked: Option<f64>,
+    hourly_rate: Option<f64>,
+    notes: Option<String>,
+}
+
+async fn book_labor(db: &DatabaseConnection, input: LaborBooking) -> AppResult<WoIntervener> {
     let txn = db.begin().await?;
     let status_code = load_wo_status_code(&txn, input.wo_id).await?;
     let status = WoStatus::try_from_str(&status_code).map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
@@ -185,6 +303,17 @@ pub async fn add_labor_entry(db: &DatabaseConnection, input: AddLaborInput) -> A
         }
     }
 
+    // The person must hold what the work order requires (or a supervisor override must have
+    // been recorded beforehand — `record_qualification_override`).
+    match (input.personnel_id, input.intervener_id) {
+        (Some(pid), _) => {
+            crate::qualification::gate::enforce_work_order_assignment(&txn, pid, input.wo_id, None).await?;
+        }
+        // A login without a personnel card cannot be checked: refused when anything is required.
+        (None, Some(uid)) => crate::qualification::gate::enforce_user_on_work_order(&txn, uid, input.wo_id).await?,
+        (None, None) => {}
+    }
+
     // Auto-compute hours_worked when both timestamps are provided
     let computed_hours = match (&input.started_at, &input.ended_at) {
         (Some(s), Some(e)) => elapsed_hours(s, e).or(input.hours_worked),
@@ -194,18 +323,21 @@ pub async fn add_labor_entry(db: &DatabaseConnection, input: AddLaborInput) -> A
     let (resolved_rate, rate_source) = if let Some(rate) = input.hourly_rate {
         (Some(rate), "provided".to_string())
     } else {
-        let personnel_id = txn
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT personnel_id FROM user_accounts WHERE id = ? AND deleted_at IS NULL",
-                [input.intervener_id.into()],
-            ))
-            .await?
-            .and_then(|row| row.try_get::<Option<i64>>("", "personnel_id").ok())
-            .flatten();
-        match personnel_id {
-            Some(pid) => match crate::personnel::queries::resolve_active_labor_rate(&txn, pid).await? {
-                Some(rate) => (Some(rate), "rate_card".to_string()),
+        // Frozen at booking: the rate card valid on the day the work was done (its start, else
+        // its end, else today) — a later card change never re-prices it.
+        let work_day = input
+            .started_at
+            .as_deref()
+            .or(input.ended_at.as_deref())
+            .and_then(|t| t.get(..10))
+            .map(str::to_string)
+            .unwrap_or_else(|| chrono::Utc::now().format("%Y-%m-%d").to_string());
+        match input.personnel_id {
+            Some(pid) => match crate::personnel::queries::resolve_rate_pair_on(&txn, pid, &work_day).await? {
+                Some((normal, overtime)) => (
+                    Some(if input.is_overtime { overtime } else { normal }),
+                    "rate_card".to_string(),
+                ),
                 None => (None, "missing".to_string()),
             },
             None => (None, "missing".to_string()),
@@ -215,36 +347,20 @@ pub async fn add_labor_entry(db: &DatabaseConnection, input: AddLaborInput) -> A
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO work_order_interveners \
-         (work_order_id, intervener_id, skill_id, started_at, ended_at, hours_worked, hourly_rate, notes, entity_sync_id) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         (work_order_id, intervener_id, personnel_id, is_overtime, skill_id, started_at, ended_at, hours_worked, \
+          hourly_rate, notes, entity_sync_id) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             input.wo_id.into(),
             input.intervener_id.into(),
-            input
-                .skill_id
-                .map(sea_orm::Value::from)
-                .unwrap_or(sea_orm::Value::from(None::<i64>)),
-            input
-                .started_at
-                .clone()
-                .map(sea_orm::Value::from)
-                .unwrap_or(sea_orm::Value::from(None::<String>)),
-            input
-                .ended_at
-                .clone()
-                .map(sea_orm::Value::from)
-                .unwrap_or(sea_orm::Value::from(None::<String>)),
-            computed_hours
-                .map(sea_orm::Value::from)
-                .unwrap_or(sea_orm::Value::from(None::<f64>)),
-            resolved_rate
-                .map(sea_orm::Value::from)
-                .unwrap_or(sea_orm::Value::from(None::<f64>)),
-            input
-                .notes
-                .clone()
-                .map(sea_orm::Value::from)
-                .unwrap_or(sea_orm::Value::from(None::<String>)),
+            input.personnel_id.into(),
+            i64::from(input.is_overtime).into(),
+            input.skill_id.into(),
+            input.started_at.clone().into(),
+            input.ended_at.clone().into(),
+            computed_hours.into(),
+            resolved_rate.into(),
+            input.notes.clone().into(),
             crate::sync::identity::new_entity_sync_id().into(),
         ],
     ))
@@ -387,6 +503,60 @@ pub async fn list_labor_candidates(db: &DatabaseConnection) -> AppResult<Vec<WoL
                 employee_code: row.try_get::<String>("", "employee_code").unwrap_or_default(),
                 full_name: row.try_get::<String>("", "full_name").unwrap_or_default(),
                 position_name: row.try_get::<Option<String>>("", "position_name").unwrap_or(None),
+                availability_status: row
+                    .try_get::<String>("", "availability_status")
+                    .unwrap_or_else(|_| "available".to_string()),
+            })
+        })
+        .collect()
+}
+
+/// A person who can be booked for labour: every active person of the register, with or
+/// without a login (contractor technicians included).
+#[derive(Debug, Clone, Serialize)]
+pub struct WoLaborPerson {
+    pub personnel_id: i64,
+    pub user_id: Option<i64>,
+    pub employee_code: String,
+    pub full_name: String,
+    pub position_name: Option<String>,
+    pub employment_type: String,
+    pub company_name: Option<String>,
+    pub availability_status: String,
+}
+
+pub async fn list_labor_people(db: &DatabaseConnection) -> AppResult<Vec<WoLaborPerson>> {
+    let rows = db
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT p.id AS personnel_id, \
+                    (SELECT ua.id FROM user_accounts ua \
+                      WHERE ua.personnel_id = p.id AND ua.deleted_at IS NULL AND ua.is_active = 1 \
+                      ORDER BY ua.id LIMIT 1) AS user_id, \
+                    p.employee_code, p.full_name, pos.name AS position_name, p.employment_type, \
+                    ec.name AS company_name, p.availability_status \
+             FROM personnel p \
+             LEFT JOIN positions pos ON pos.id = p.position_id \
+             LEFT JOIN external_companies ec ON ec.id = p.external_company_id \
+             WHERE p.employment_status = 'active' \
+             ORDER BY p.full_name COLLATE NOCASE ASC, p.id ASC"
+                .to_string(),
+        ))
+        .await?;
+    rows.iter()
+        .map(|row| {
+            Ok(WoLaborPerson {
+                personnel_id: row
+                    .try_get::<i64>("", "personnel_id")
+                    .map_err(|e| AppError::Internal(anyhow::anyhow!("personnel_id decode: {e}")))?,
+                user_id: row.try_get::<Option<i64>>("", "user_id").unwrap_or(None),
+                employee_code: row.try_get::<String>("", "employee_code").unwrap_or_default(),
+                full_name: row.try_get::<String>("", "full_name").unwrap_or_default(),
+                position_name: row.try_get::<Option<String>>("", "position_name").unwrap_or(None),
+                employment_type: row
+                    .try_get::<String>("", "employment_type")
+                    .unwrap_or_else(|_| "employee".to_string()),
+                company_name: row.try_get::<Option<String>>("", "company_name").unwrap_or(None),
                 availability_status: row
                     .try_get::<String>("", "availability_status")
                     .unwrap_or_else(|_| "available".to_string()),

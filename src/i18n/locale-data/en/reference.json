@@ -323,8 +323,8 @@
     "save": "Save"
   },
   "schedulePattern": {
-    "title": "Weekly work calendar",
-    "column": "Schedule",
+    "title": "Classe horaire timetable",
+    "column": "Timetable",
     "cancel": "Cancel",
     "close": "Close schedule pattern",
     "loading": "Loading schedule pattern…",
@@ -388,7 +388,7 @@
       "saturday": "Sat",
       "sunday": "Sun"
     },
-    "open": "View schedule",
+    "open": "Open the timetable",
     "afterCreate": "After creation"
   },
   "export": {

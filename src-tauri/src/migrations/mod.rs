@@ -171,11 +171,16 @@ mod m20261014_000182_pm_windows_fanout_timing;
 mod m20261014_000183_meter_lifetime;
 mod m20261014_000184_inventory_lots_fx_periods_approvals;
 mod m20261014_000185_asset_spares_criticality;
+mod m20261014_000190_wo_labor_personnel;
+mod m20261014_000191_qualification_requirements;
+mod m20261014_000192_work_calendar_holidays;
+mod m20261014_000193_cert_expiry_routing;
 mod m20261015_000186_wo_cost_settlement;
 mod m20261015_000187_wo_settlement_labor_snapshot;
 mod m20261015_000194_inspection_schedules;
 mod m20261015_000195_inspection_round_scheduling;
 mod m20261015_000196_reference_domain_audience;
+mod m20261015_000197_schedule_class_timetables;
 mod m20261015_000198_shared_urgency_and_wo_natures;
 mod m20261015_000199_shared_failure_symptoms;
 mod m20261101_000036_activity_audit_log;
@@ -363,10 +368,15 @@ impl MigratorTrait for Migrator {
             Box::new(m20261014_000185_asset_spares_criticality::Migration),
             Box::new(m20261015_000186_wo_cost_settlement::Migration),
             Box::new(m20261015_000187_wo_settlement_labor_snapshot::Migration),
+            Box::new(m20261014_000190_wo_labor_personnel::Migration),
+            Box::new(m20261014_000191_qualification_requirements::Migration),
+            Box::new(m20261014_000192_work_calendar_holidays::Migration),
+            Box::new(m20261014_000193_cert_expiry_routing::Migration),
             Box::new(m_test::Migration),
             Box::new(m20261015_000194_inspection_schedules::Migration),
             Box::new(m20261015_000195_inspection_round_scheduling::Migration),
             Box::new(m20261015_000196_reference_domain_audience::Migration),
+            Box::new(m20261015_000197_schedule_class_timetables::Migration),
             Box::new(m20261015_000198_shared_urgency_and_wo_natures::Migration),
             Box::new(m20261015_000199_shared_failure_symptoms::Migration),
         ]

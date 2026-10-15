@@ -42,6 +42,8 @@ export type TeamCapacityBoardHandle = {
 interface TeamCapacityBoardProps {
   entityId?: number | null;
   onOpenPersonnel?: ((personnelId: number) => void) | undefined;
+  /** Team opened on its capacity tab (planning's "set up the team's Classe horaire" link). */
+  openTeamId?: number | null;
 }
 
 type CrewTableRow = TeamSummary & {
@@ -59,7 +61,7 @@ function toIsoDate(value: Date): string {
 }
 
 export const TeamCapacityBoard = forwardRef<TeamCapacityBoardHandle, TeamCapacityBoardProps>(
-  function TeamCapacityBoard({ entityId, onOpenPersonnel }, ref) {
+  function TeamCapacityBoard({ entityId, onOpenPersonnel, openTeamId }, ref) {
     const { t } = useTranslation("personnel");
     const { can } = usePermissions();
     const canManage = can(P.PER_MANAGE);
@@ -93,7 +95,7 @@ export const TeamCapacityBoard = forwardRef<TeamCapacityBoardHandle, TeamCapacit
     const [formError, setFormError] = useState<string | null>(null);
     const [formSaving, setFormSaving] = useState(false);
 
-    const [detailTeamId, setDetailTeamId] = useState<number | null>(null);
+    const [detailTeamId, setDetailTeamId] = useState<number | null>(openTeamId ?? null);
 
     useEffect(() => {
       if (entityId != null) setFilterEntityId(entityId);
@@ -469,6 +471,7 @@ export const TeamCapacityBoard = forwardRef<TeamCapacityBoardHandle, TeamCapacit
                   }}
                   onOpenPersonnel={onOpenPersonnel}
                   onRosterChanged={refresh}
+                  {...(detailTeamId === openTeamId ? { initialTab: "capacity" } : {})}
                 />
               </div>
             ) : null}

@@ -91,7 +91,6 @@ export function BreakInDialog({
       new_assigned_team_id: teamId,
       new_assigned_personnel_id: newPersonnelId,
       bypass_availability: false,
-      bypass_qualification: false,
       override_reason: overrideReason.trim() || null,
       dangerous_override_reason: dangerousOverrideReason.trim() || null,
     });
