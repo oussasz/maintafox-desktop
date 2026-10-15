@@ -6,7 +6,7 @@
 
 use chrono::{Duration, NaiveDate, Utc};
 use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
-use sea_orm_migration::{MigrationName, MigratorTrait};
+use sea_orm_migration::MigratorTrait;
 
 use crate::errors::AppError;
 use crate::personnel::calendar::{

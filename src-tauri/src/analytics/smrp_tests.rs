@@ -487,22 +487,35 @@ async fn backlog_weeks_from_crew_schedules() {
         )
         .await;
     }
-    for (rv, days, start, end) in [(9001, 1..=5, "08:00", "16:00"), (9002, 1..=3, "22:00", "06:00")] {
-        for d in days {
-            exec(
-                &db,
-                &format!(
-                    "INSERT INTO schedule_details (reference_value_id, day_of_week, shift_start, shift_end, is_rest_day) \
-                     VALUES ({rv}, {d}, '{start}', '{end}', 0)"
-                ),
-            )
-            .await;
-        }
+    // Two Classes horaires (weekly, continuous so the site's rest days do not apply, 100 %).
+    for (rv, last_day, start, end) in [(9001, 5, "08:00", "16:00"), (9002, 3, "22:00", "06:00")] {
         exec(
             &db,
             &format!(
-                "INSERT INTO schedule_details (reference_value_id, day_of_week, shift_start, shift_end, is_rest_day) \
-                 VALUES ({rv}, 7, '00:00', '00:00', 1)"
+                "INSERT INTO reference_values (id, entity_sync_id, set_id, code, label, sort_order, is_active) \
+                 SELECT {rv}, 'smrp-class-{rv}', rs.id, 'SMRP_{rv}', 'Classe {rv}', 99, 1 \
+                 FROM reference_sets rs JOIN reference_domains rd ON rd.id = rs.domain_id \
+                 WHERE UPPER(rd.code) = 'ORG.SCHEDULE_CLASS' AND rs.status = 'published' \
+                 ORDER BY rs.version_no DESC LIMIT 1"
+            ),
+        )
+        .await;
+        let days: Vec<serde_json::Value> = (1..=7)
+            .map(|d| {
+                serde_json::json!({
+                    "cycle_day": d, "shift_start": start, "shift_end": end,
+                    "break_minutes": 0, "is_rest_day": d > last_day,
+                })
+            })
+            .collect();
+        exec(
+            &db,
+            &format!(
+                "INSERT INTO schedule_class_versions (entity_sync_id, reference_value_id, effective_from, \
+                 cycle_length_days, rotation_start_date, days_json, is_continuous, utilisation_percent, \
+                 created_at, updated_at) \
+                 VALUES ('smrp-ver-{rv}', {rv}, '2000-01-01', 7, NULL, '{}', 1, 100.0, datetime('now'), datetime('now'))",
+                serde_json::Value::Array(days)
             ),
         )
         .await;
