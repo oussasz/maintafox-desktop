@@ -5,7 +5,7 @@
 //! cost-of-failure all agree. Corrective = OT types `corrective` / `emergency` (failure cost, used
 //! by RAMS cost-based intervals); preventive = every other type.
 
-use chrono::{Datelike, Duration, Utc};
+use chrono::{Duration, Utc};
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use serde::{Deserialize, Serialize};
 
@@ -69,9 +69,13 @@ pub async fn list_asset_cost_history<C: ConnectionTrait>(
     db: &C,
     filter: AssetCostFilter,
 ) -> AppResult<AssetCostHistory> {
-    let now = Utc::now();
-    let since_12m = (now - Duration::days(365)).format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let this_year = i64::from(now.year());
+    let since_12m = (Utc::now() - Duration::days(365))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    // Cost by fiscal year, in the local calendar, like the budget.
+    let fiscal_start = crate::finance::fiscal::fiscal_start_month(db).await?;
+    let (this_year, _) = crate::finance::fiscal::current_period(fiscal_start);
+    let year_expr = crate::finance::fiscal::sql_fiscal_year("closed_at", "?3");
     let search = filter
         .search
         .as_deref()
@@ -135,11 +139,12 @@ pub async fn list_asset_cost_history<C: ConnectionTrait>(
         let years = db
             .query_all(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT CAST(strftime('%Y', closed_at) AS INTEGER) AS y, COALESCE(SUM(total_cost), 0.0) AS amount
-                 FROM work_orders WHERE equipment_id = ? AND closed_at IS NOT NULL
-                   AND CAST(strftime('%Y', closed_at) AS INTEGER) > ?
-                 GROUP BY y",
-                [equipment_id.into(), (this_year - 5).into()],
+                format!(
+                    "SELECT {year_expr} AS y, COALESCE(SUM(total_cost), 0.0) AS amount
+                     FROM work_orders WHERE equipment_id = ?1 AND closed_at IS NOT NULL AND {year_expr} > ?2
+                     GROUP BY y"
+                ),
+                [equipment_id.into(), (this_year - 5).into(), fiscal_start.into()],
             ))
             .await?;
         let mut by_year: Vec<AssetCostYear> = ((this_year - 4)..=this_year)

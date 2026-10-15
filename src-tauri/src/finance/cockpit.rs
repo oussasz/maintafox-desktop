@@ -392,10 +392,12 @@ pub async fn get_budget_cockpit<C: ConnectionTrait>(db: &C, filter: BudgetCockpi
     let (pending_settlements, pending_settlement_amount) = match db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT COUNT(*) AS n, COALESCE(SUM(total_amount), 0.0) AS amount FROM wo_cost_settlements
-             WHERE status = 'pending'
-               AND COALESCE(fiscal_year, CAST(strftime('%Y', closed_at) AS INTEGER)) = ?",
-            [fy.into()],
+            format!(
+                "SELECT COUNT(*) AS n, COALESCE(SUM(total_amount), 0.0) AS amount FROM wo_cost_settlements
+                 WHERE status = 'pending' AND COALESCE(fiscal_year, {}) = ?1",
+                fiscal::sql_fiscal_year("closed_at", "?2")
+            ),
+            [fy.into(), fiscal_start_month.into()],
         ))
         .await?
     {

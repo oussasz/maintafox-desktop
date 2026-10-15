@@ -17,7 +17,7 @@
 //! - cancel: an OT cancelled after consuming labour, parts or services is settled like a closed one.
 //! - late costs: when a settled OT's cost changes (receipt, issue, return or labour recorded after
 //!   the close, or synced after it), the difference with what is booked is posted (`wo_late_cost`)
-//!   by the inventory hooks, the sync apply hook and Finance's catch-up.
+//!   by the inventory hooks, the post-sync sweep and Finance's catch-up.
 //! - reopen: the posted actuals (settlement and late costs) are reversed (negated rows, status
 //!   `reversed`) and the settlement becomes `reversed`; the next close settles the new cycle.
 
@@ -184,10 +184,15 @@ pub async fn list_wo_settlements<C: ConnectionTrait>(
         values.push(cc.into());
     }
     if let Some(fy) = filter.fiscal_year {
-        sql.push_str(
-            " AND (s.fiscal_year = ? OR (s.fiscal_year IS NULL AND CAST(strftime('%Y', s.closed_at) AS INTEGER) = ?))",
-        );
+        // A pending row without a fiscal year (no fiscal calendar when it closed) is dated by its
+        // close in the local calendar; without a calendar at all its fiscal year is the calendar year.
+        let start = fiscal::fiscal_start_month(db).await.unwrap_or(1);
+        sql.push_str(&format!(
+            " AND (s.fiscal_year = ? OR (s.fiscal_year IS NULL AND {} = ?))",
+            fiscal::sql_fiscal_year("s.closed_at", "?")
+        ));
         values.push(fy.into());
+        values.push(start.into());
         values.push(fy.into());
     }
     sql.push_str(" ORDER BY COALESCE(s.closed_at, s.created_at) DESC, s.id DESC LIMIT ?");
@@ -501,8 +506,14 @@ async fn settle_work_order<C: ConnectionTrait>(
     let (currency, fiscal_start) = match (currency, fiscal_start) {
         (Some(currency), Some(fiscal_start)) => (currency, fiscal_start),
         (_, missing_calendar) => {
+            // A cancelled OT is settled only when it consumed something. Without a currency the
+            // purchase lines cannot be valued; an OT whose cost cannot be read is shown pending.
             if only_with_cost {
-                return Ok(None);
+                if let Ok(b) = compute_wo_cost_breakdown(db, wo_id).await {
+                    if b.total.actual.abs() < 0.005 {
+                        return Ok(None);
+                    }
+                }
             }
             let reason = if missing_calendar.is_none() {
                 PENDING_NO_FISCAL_CALENDAR
@@ -520,7 +531,8 @@ async fn settle_work_order<C: ConnectionTrait>(
                     wo_id.into(),
                     cycle.into(),
                     reason.into(),
-                    i64::from(chrono::Local::now().year()).into(),
+                    // Fiscal year of the close; the calendar year when no fiscal calendar is set.
+                    posting_period(Some(&closed_at), missing_calendar.unwrap_or(1)).0.into(),
                     closed_at.into(),
                     now.clone().into(),
                     now.into(),
@@ -692,6 +704,11 @@ pub async fn post_late_costs<C: ConnectionTrait>(db: &C, wo_id: i64, actor_id: O
     let Some(cost_center_id) = active.cost_center_id.filter(|_| active.status == "posted") else {
         return Ok(0.0);
     };
+    // A settlement synced from another device can arrive before its actuals: until every original
+    // row is here, "booked" would read too low and the delta would double-count. Wait for them.
+    if !settlement_actuals_complete(db, &active).await? {
+        return Ok(0.0);
+    }
     let currency = crate::inventory::fx::tenant_currency(db).await?;
     let fiscal_start = fiscal::fiscal_start_month(db).await?;
     let breakdown = compute_wo_cost_breakdown(db, wo_id).await?;
@@ -778,44 +795,125 @@ pub async fn post_late_costs<C: ConnectionTrait>(db: &C, wo_id: i64, actor_id: O
     Ok(round_money(total))
 }
 
-/// Sync hook (in the apply transaction): an inbound movement, receipt line or labour entry that
-/// belongs to a settled OT books the OT's late costs. Best effort, like the inventory hooks: a
-/// failure is logged and Finance's catch-up books what is left.
-pub async fn post_late_costs_for_synced_row<C: ConnectionTrait>(conn: &C, entity_type: &str, row_id: i64) {
+/// True when every original actual of a posted settlement is present locally (one row per
+/// non-zero bucket / lane of the settlement).
+async fn settlement_actuals_complete<C: ConnectionTrait>(db: &C, settlement: &WoCostSettlement) -> AppResult<bool> {
+    let expected = [
+        round_money(settlement.labor_amount - settlement.labor_overtime_amount),
+        settlement.labor_overtime_amount,
+        settlement.parts_amount,
+        settlement.services_amount,
+        settlement.other_amount,
+    ]
+    .iter()
+    .filter(|a| a.abs() >= 0.005)
+    .count() as i64;
+    let prefix = format!("{}:", settlement.entity_sync_id);
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS n FROM budget_actuals
+             WHERE source_type = ? AND work_order_id = ? AND substr(source_id, 1, ?) = ?",
+            [
+                SETTLEMENT_SOURCE_TYPE.into(),
+                settlement.work_order_id.into(),
+                (prefix.chars().count() as i64).into(),
+                prefix.into(),
+            ],
+        ))
+        .await?;
+    let present: i64 = match row {
+        Some(r) => decode(&r, "n")?,
+        None => 0,
+    };
+    Ok(present >= expected)
+}
+
+/// Entity types whose arrival by sync can change a settled OT's cost or complete its settlement.
+pub const LATE_COST_SYNC_TYPES: &[&str] = &[
+    "inventory_transactions",
+    "goods_receipt_lines",
+    "work_order_interveners",
+    "wo_cost_settlements",
+    "budget_actuals",
+];
+
+/// OT a synced row belongs to (by its sync identity), for the late-cost sweep.
+async fn work_order_of_synced_row<C: ConnectionTrait>(
+    db: &C,
+    entity_type: &str,
+    entity_sync_id: &str,
+) -> AppResult<Option<i64>> {
     let sql = match entity_type {
         "inventory_transactions" => format!(
             "SELECT CASE WHEN t.source_type IN ({types}) THEN t.source_id
                          ELSE (SELECT r.source_id FROM stock_reservations r
                                 WHERE r.id = t.reservation_id AND r.source_type IN ({types})) END AS wo_id
-             FROM inventory_transactions t WHERE t.id = ? AND t.movement_type IN ('ISSUE', 'RETURN')",
+             FROM inventory_transactions t
+             WHERE t.entity_sync_id = ? AND t.movement_type IN ('ISSUE', 'RETURN')",
             types = crate::finance::wo_costing::WO_SOURCE_TYPES_SQL
         ),
         "goods_receipt_lines" => "SELECT pol.demand_source_id AS wo_id
              FROM goods_receipt_lines grl JOIN purchase_order_lines pol ON pol.id = grl.po_line_id
-             WHERE grl.id = ? AND pol.demand_source_type = 'WORK_ORDER'"
+             WHERE grl.entity_sync_id = ? AND pol.demand_source_type = 'WORK_ORDER'"
             .to_string(),
         "work_order_interveners" => {
-            "SELECT work_order_id AS wo_id FROM work_order_interveners WHERE id = ?".to_string()
+            "SELECT work_order_id AS wo_id FROM work_order_interveners WHERE entity_sync_id = ?".to_string()
         }
-        _ => return,
+        "wo_cost_settlements" => {
+            "SELECT work_order_id AS wo_id FROM wo_cost_settlements WHERE entity_sync_id = ?".to_string()
+        }
+        "budget_actuals" => "SELECT work_order_id AS wo_id FROM budget_actuals
+             WHERE entity_sync_id = ? AND source_type IN ('wo_settlement', 'wo_late_cost')"
+            .to_string(),
+        _ => return Ok(None),
     };
-    let result = async {
-        let row = conn
-            .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, sql, [row_id.into()]))
-            .await?;
-        let wo_id: Option<i64> = match row {
-            Some(r) => decode(&r, "wo_id")?,
-            None => None,
-        };
-        if let Some(wo_id) = wo_id {
-            post_late_costs(conn, wo_id, None).await?;
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            sql,
+            [entity_sync_id.into()],
+        ))
+        .await?;
+    Ok(match row {
+        Some(r) => decode(&r, "wo_id")?,
+        None => None,
+    })
+}
+
+/// Sync sweep, after a materialize pass has committed (capture active again, so the deltas it
+/// writes are captured and pushed like any local write): books the late costs of the settled OTs
+/// the pass touched. Best effort: a failure is logged and the next pass or Finance's catch-up
+/// books what is left. Returns the number of OTs updated.
+pub async fn post_late_costs_after_sync(db: &sea_orm::DatabaseConnection, applied: &[(String, String)]) -> i64 {
+    let mut wo_ids = std::collections::BTreeSet::new();
+    for (entity_type, entity_sync_id) in applied {
+        match work_order_of_synced_row(db, entity_type, entity_sync_id).await {
+            Ok(Some(wo_id)) => {
+                wo_ids.insert(wo_id);
+            }
+            Ok(None) => {}
+            Err(e) => {
+                tracing::warn!(target: "maintafox", "late cost lookup for synced {entity_type} {entity_sync_id}: {e}");
+            }
         }
-        Ok::<(), AppError>(())
     }
-    .await;
-    if let Err(e) = result {
-        tracing::warn!(target: "maintafox", "late cost posting after sync of {entity_type} {row_id}: {e}");
+    let mut touched = 0;
+    for wo_id in wo_ids {
+        let result = async {
+            let txn = sea_orm::TransactionTrait::begin(db).await?;
+            let booked = post_late_costs(&txn, wo_id, None).await?;
+            txn.commit().await?;
+            Ok::<f64, AppError>(booked)
+        }
+        .await;
+        match result {
+            Ok(booked) if booked.abs() >= 0.005 => touched += 1,
+            Ok(_) => {}
+            Err(e) => tracing::warn!(target: "maintafox", "late cost posting after sync for work order {wo_id}: {e}"),
+        }
     }
+    touched
 }
 
 /// Inventory hook, after a receipt, issue or return is committed: books the late costs of the OTs

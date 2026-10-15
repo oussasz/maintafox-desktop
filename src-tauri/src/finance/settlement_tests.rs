@@ -12,7 +12,10 @@
 //!   are counted once; S11 a foreign-currency contract is valued in the tenant currency; S12 a
 //!   cancelled OT is settled only when it consumed something; S13 an issue made offline before the
 //!   close and synced after the settlement is booked once as a late cost; S14 a rate-card change
-//!   after the close never reprices work already done, only new labour is a difference.
+//!   after the close never reprices work already done, only new labour is a difference; S15 a
+//!   settlement synced before its actuals books no delta until they arrive; S16 a cancelled OT that
+//!   consumed something without a currency is a visible pending settlement; S17 the fiscal-year
+//!   start month is validated and locked once postings exist.
 
 use chrono::{Datelike, Local};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
@@ -1328,6 +1331,10 @@ async fn s12_a_cancelled_ot_is_settled_only_when_it_consumed_something() {
     assert_eq!(actual_rows(&db, idle).await, 0);
 }
 
+fn synced(entity_type: &str, entity_sync_id: &str) -> (String, String) {
+    (entity_type.to_string(), entity_sync_id.to_string())
+}
+
 async fn late_parts(db: &DatabaseConnection, wo_id: i64) -> f64 {
     scalar_f64(
         db,
@@ -1365,7 +1372,7 @@ async fn s13_an_issue_made_offline_before_the_close_and_synced_after_it_is_booke
         vec![],
     )
     .await;
-    settlement::post_late_costs_for_synced_row(&db, "inventory_transactions", movement).await;
+    settlement::post_late_costs_after_sync(&db, &[synced("inventory_transactions", "offline-issue-1")]).await;
     assert!(
         close_to(late_parts(&db, wo_id).await, 25.0),
         "difference booked on parts"
@@ -1374,7 +1381,7 @@ async fn s13_an_issue_made_offline_before_the_close_and_synced_after_it_is_booke
 
     // The same row applied again, the catch-up, the inventory hook: still booked once.
     let rows = actual_rows(&db, wo_id).await;
-    settlement::post_late_costs_for_synced_row(&db, "inventory_transactions", movement).await;
+    settlement::post_late_costs_after_sync(&db, &[synced("inventory_transactions", "offline-issue-1")]).await;
     assert_eq!(
         settlement::post_all_late_costs(&db, admin_id(&db).await)
             .await
@@ -1464,6 +1471,137 @@ async fn s14_a_rate_card_change_after_the_close_never_reprices_work_already_done
         vec![],
     )
     .await;
-    settlement::post_late_costs_for_synced_row(&db, "work_order_interveners", entry).await;
+    settlement::post_late_costs_after_sync(&db, &[synced("work_order_interveners", "late-labour-1")]).await;
     assert!(close_to(net_actuals(&db, wo_id).await, 190.0), "120 frozen + 70 new");
+}
+
+/// Inserts an issue of 5 bearings (25.00) to the OT dated before its close, as an offline device
+/// would have recorded it; returns nothing (identity `offline-issue-1`).
+async fn offline_issue(db: &DatabaseConnection, wo_id: i64) {
+    exec(
+        db,
+        "INSERT INTO inventory_transactions (entity_sync_id, article_id, warehouse_id, location_id, movement_type,
+             quantity, source_type, source_id, unit_cost, extended_cost, performed_at, created_at)
+         SELECT 'offline-issue-1', article_id, warehouse_id, location_id, 'ISSUE', 5, 'WORK_ORDER', ?, 5.0, 25.0,
+                '2026-04-10T09:30:00Z', '2026-04-10T09:30:00Z'
+           FROM inventory_transactions WHERE movement_type = 'ISSUE' LIMIT 1",
+        vec![wo_id.into()],
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn s15_a_settlement_synced_before_its_actuals_books_no_delta_until_they_arrive() {
+    let db = setup().await;
+    seed_plant(&db, Some(CC_CODE)).await;
+    let wo_id = wo_in_progress(&db).await;
+    add_costs(&db, wo_id).await;
+    complete_and_close(&db, wo_id).await;
+
+    // As received from another device: the settlement row is here, its actuals are not yet.
+    exec(
+        &db,
+        "CREATE TEMP TABLE held_actuals AS SELECT * FROM budget_actuals WHERE work_order_id = ?",
+        vec![wo_id.into()],
+    )
+    .await;
+    exec(
+        &db,
+        "DELETE FROM budget_actuals WHERE work_order_id = ?",
+        vec![wo_id.into()],
+    )
+    .await;
+    let settlement_sync = settlement::active_settlement(&db, wo_id)
+        .await
+        .expect("query")
+        .expect("settlement")
+        .entity_sync_id;
+
+    // Then an offline issue for the OT arrives: nothing is booked while the actuals are missing.
+    offline_issue(&db, wo_id).await;
+    let touched = settlement::post_late_costs_after_sync(
+        &db,
+        &[
+            synced("wo_cost_settlements", &settlement_sync),
+            synced("inventory_transactions", "offline-issue-1"),
+        ],
+    )
+    .await;
+    assert_eq!(touched, 0);
+    assert_eq!(actual_rows(&db, wo_id).await, 0, "no delta against missing actuals");
+
+    // The actuals arrive: only the issue is a difference, once.
+    exec(&db, "INSERT INTO budget_actuals SELECT * FROM held_actuals", vec![]).await;
+    let ids: Vec<String> = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT entity_sync_id FROM budget_actuals WHERE work_order_id = ?",
+            [wo_id.into()],
+        ))
+        .await
+        .expect("ids")
+        .iter()
+        .map(|r| r.try_get::<String>("", "entity_sync_id").expect("id"))
+        .collect();
+    let applied: Vec<(String, String)> = ids.iter().map(|id| synced("budget_actuals", id)).collect();
+    assert_eq!(settlement::post_late_costs_after_sync(&db, &applied).await, 1);
+    assert_eq!(settlement::post_late_costs_after_sync(&db, &applied).await, 0);
+    assert!(close_to(late_parts(&db, wo_id).await, 25.0));
+    assert!(
+        close_to(net_actuals(&db, wo_id).await, 485.0),
+        "460 settled + 25 late, never twice"
+    );
+}
+
+#[tokio::test]
+async fn s16_a_cancelled_ot_that_consumed_something_without_currency_is_pending() {
+    let db = setup().await;
+    seed_plant(&db, Some(CC_CODE)).await;
+    let actor = admin_id(&db).await;
+    let wo_id = wo_in_progress(&db).await;
+    exec(
+        &db,
+        "DELETE FROM app_settings WHERE setting_key = 'locale.currency_code'",
+        vec![],
+    )
+    .await;
+    crate::wo::queries::cancel_work_order(
+        &db,
+        WoCancelInput {
+            id: wo_id,
+            expected_row_version: wo_row_version(&db, wo_id).await,
+            actor_id: actor,
+            cancel_reason: "Équipement remplacé".into(),
+        },
+    )
+    .await
+    .expect("cancel");
+    let s = settlement::active_settlement(&db, wo_id)
+        .await
+        .expect("query")
+        .expect("visible pending settlement");
+    assert_eq!(s.status, "pending");
+    assert_eq!(s.pending_reason.as_deref(), Some(settlement::PENDING_NO_CURRENCY));
+    assert_eq!(actual_rows(&db, wo_id).await, 0);
+}
+
+#[tokio::test]
+async fn s17_the_fiscal_year_start_month_is_validated_and_locked_once_postings_exist() {
+    use crate::finance::fiscal::FISCAL_START_SETTING;
+    let db = setup().await;
+    let write = |value: &'static str| {
+        let db = db.clone();
+        async move { crate::settings::set_setting(&db, FISCAL_START_SETTING, "tenant", value, None, "test").await }
+    };
+    let refused = write("13").await.expect_err("month 13");
+    assert!(refused.to_string().contains("GATE_FIN_MONTH_INVALID"), "{refused}");
+    write("7").await.expect("free to change before any posting");
+    write("1").await.expect("back to January");
+
+    seed_plant(&db, Some(CC_CODE)).await;
+    let wo_id = wo_in_progress(&db).await;
+    complete_and_close(&db, wo_id).await;
+    let locked = write("4").await.expect_err("postings exist");
+    assert!(locked.to_string().contains("GATE_FIN_FISCAL_START_LOCKED"), "{locked}");
+    write("1").await.expect("saving the same month is not a change");
 }

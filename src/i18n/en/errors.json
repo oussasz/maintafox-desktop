@@ -98,6 +98,7 @@
     "GATE_FIN_ESTIMATE_LOCKED": "The estimate of a closed or cancelled work order can no longer be changed.",
     "GATE_FIN_COST_CENTER_INACTIVE": "Unknown or inactive cost centre.",
     "GATE_FIN_ESTIMATE_CHANGED": "The estimate was changed meanwhile: reload it.",
+    "GATE_FIN_FISCAL_START_LOCKED": "Change refused: budget actuals or closed periods already exist. Changing the fiscal-year start month would move every past posting to other months.",
     "GATE_INSP_TEMPLATE_NO_CHECK": "Checklist refused: add at least one checkpoint.",
     "GATE_INSP_CHECK_SEQUENCE_DUPLICATE": "Checklist refused: two checkpoints have the same position.",
     "GATE_INSP_CHECK_CODE_REQUIRED": "Checklist refused: a checkpoint has no code.",

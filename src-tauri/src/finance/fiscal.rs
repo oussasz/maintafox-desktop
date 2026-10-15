@@ -60,17 +60,56 @@ pub fn current_period(start: i64) -> (i64, i64) {
     fiscal_period(i64::from(now.year()), i64::from(now.month()), start)
 }
 
-/// SQL expression: fiscal year of an ISO timestamp column, start month bound at `start_param`.
+/// SQL expression: fiscal year of an ISO timestamp column (UTC stored), read in the plant's local
+/// calendar like [`current_period`]; start month bound at `start_param`.
 pub fn sql_fiscal_year(column: &str, start_param: &str) -> String {
     format!(
-        "(CAST(strftime('%Y', {column}) AS INTEGER) - \
-          CASE WHEN CAST(strftime('%m', {column}) AS INTEGER) < {start_param} THEN 1 ELSE 0 END)"
+        "(CAST(strftime('%Y', {column}, 'localtime') AS INTEGER) - \
+          CASE WHEN CAST(strftime('%m', {column}, 'localtime') AS INTEGER) < {start_param} THEN 1 ELSE 0 END)"
     )
 }
 
-/// SQL expression: fiscal period (1..12) of an ISO timestamp column.
+/// SQL expression: fiscal period (1..12) of an ISO timestamp column, in the local calendar.
 pub fn sql_fiscal_period(column: &str, start_param: &str) -> String {
-    format!("(((CAST(strftime('%m', {column}) AS INTEGER) - {start_param} + 12) % 12) + 1)")
+    format!("(((CAST(strftime('%m', {column}, 'localtime') AS INTEGER) - {start_param} + 12) % 12) + 1)")
+}
+
+/// Settings guard for `locale.fiscal_year_start_month` (called by `settings::set_setting`): the
+/// value must be a month 1..12, and it cannot change once budget actuals, closed periods or posted
+/// settlements exist — their periods are stored as fiscal periods, so a new start month would
+/// silently move every past posting to another calendar month.
+pub async fn guard_fiscal_start_write<C: ConnectionTrait>(db: &C, key: &str, value_json: &str) -> AppResult<()> {
+    if key != FISCAL_START_SETTING {
+        return Ok(());
+    }
+    let Some(month) = parse_start_month(value_json) else {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_FIN_MONTH_INVALID: the fiscal-year start month must be between 1 and 12".to_string(),
+        ]));
+    };
+    if fiscal_start_month(db).await.ok() == Some(month) {
+        return Ok(());
+    }
+    let in_use = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT EXISTS (SELECT 1 FROM budget_actuals)
+                 OR EXISTS (SELECT 1 FROM budget_periods WHERE status = 'closed')
+                 OR EXISTS (SELECT 1 FROM wo_cost_settlements WHERE status = 'posted') AS in_use"
+                .to_string(),
+        ))
+        .await?
+        .and_then(|r| r.try_get::<i64>("", "in_use").ok())
+        .unwrap_or(0)
+        != 0;
+    if in_use {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_FIN_FISCAL_START_LOCKED: budget actuals or closed periods already exist; changing the start \
+             month would move every past posting to another month"
+                .to_string(),
+        ]));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
