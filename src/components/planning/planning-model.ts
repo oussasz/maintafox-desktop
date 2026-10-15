@@ -18,9 +18,6 @@ import type {
 export const PLANNING_HORIZON_PRESETS = RESOURCE_TIMELINE_HORIZON_PRESETS;
 export const PLANNING_DEFAULT_HORIZON_DAYS = RESOURCE_TIMELINE_HORIZON_PRESETS[1]; // 14
 
-/** Default daily available hours when no capacity_rules row exists (matches Rust gate). */
-export const PLANNING_DEFAULT_DAILY_CAPACITY_HOURS = 8;
-
 /** Utilization ratio thresholds for capacity strip tone. */
 export const PLANNING_UTILIZATION_PARTIAL = 0.8;
 export const PLANNING_UTILIZATION_CRITICAL = 1;
@@ -659,9 +656,9 @@ export function buildPlanningWindowHighlights(
 }
 
 /**
- * Prefill commit slot from candidate window / duration.
- * Capacity gate is daily (≈8h + overtime) — never prefill a multi-day span that
- * would always fail the gate. Prefer estimated duration when the window is wider.
+ * Prefill commit slot from the candidate's window and estimated duration — never an assumed
+ * length: without an estimate only the known ends are filled. The dialog then keeps the end
+ * inside the team's remaining capacity of the day (its Classes horaires + overtime ceiling).
  */
 export function deriveCommitSlotLocals(candidate: ScheduleCandidate | null): {
   startLocal: string;
@@ -671,15 +668,13 @@ export function deriveCommitSlotLocals(candidate: ScheduleCandidate | null): {
 
   const windowStart = candidate.window_start?.trim() ? candidate.window_start : null;
   const windowEnd = candidate.window_end?.trim() ? candidate.window_end : null;
-  const hasStart = windowStart != null;
-  const hasEnd = windowEnd != null;
   const durationH = candidate.estimated_duration_hours;
-  const maxSlotH = PLANNING_DEFAULT_DAILY_CAPACITY_HOURS;
+  const hasDuration = durationH != null && Number.isFinite(durationH) && durationH > 0;
 
-  const clampEndFromStart = (startIso: string, preferredHours: number, hardEndIso?: string) => {
+  const endFromStart = (startIso: string, hours: number, hardEndIso?: string | null) => {
     const startMs = parseMs(startIso);
     if (!startMs) return "";
-    let endMs = startMs + preferredHours * 3_600_000;
+    let endMs = startMs + hours * 3_600_000;
     if (hardEndIso) {
       const hardEnd = parseMs(hardEndIso);
       if (hardEnd && hardEnd > startMs) endMs = Math.min(endMs, hardEnd);
@@ -687,57 +682,30 @@ export function deriveCommitSlotLocals(candidate: ScheduleCandidate | null): {
     return toDateTimeLocal(new Date(endMs).toISOString());
   };
 
-  if (hasStart && hasEnd) {
-    const startMs = parseMs(windowStart);
-    const endMs = parseMs(windowEnd);
-    const spanH = startMs && endMs && endMs > startMs ? (endMs - startMs) / 3_600_000 : 0;
-    const preferred =
-      durationH != null && Number.isFinite(durationH) && durationH > 0
-        ? Math.min(durationH, maxSlotH)
-        : Math.min(spanH > 0 ? spanH : maxSlotH, maxSlotH);
-
-    if (spanH > preferred + 0.01) {
-      return {
-        startLocal: toDateTimeLocal(windowStart),
-        endLocal: clampEndFromStart(windowStart, preferred, windowEnd),
-      };
-    }
-
+  if (windowStart && windowEnd) {
     return {
       startLocal: toDateTimeLocal(windowStart),
+      endLocal: hasDuration
+        ? endFromStart(windowStart, durationH, windowEnd)
+        : toDateTimeLocal(windowEnd),
+    };
+  }
+  if (windowStart) {
+    return {
+      startLocal: toDateTimeLocal(windowStart),
+      endLocal: hasDuration ? endFromStart(windowStart, durationH) : "",
+    };
+  }
+  if (windowEnd) {
+    const endMs = parseMs(windowEnd);
+    return {
+      startLocal:
+        hasDuration && endMs
+          ? toDateTimeLocal(new Date(endMs - durationH * 3_600_000).toISOString())
+          : "",
       endLocal: toDateTimeLocal(windowEnd),
     };
   }
-
-  if (hasStart && !hasEnd && durationH != null && Number.isFinite(durationH) && durationH > 0) {
-    const preferred = Math.min(durationH, maxSlotH);
-    return {
-      startLocal: toDateTimeLocal(windowStart),
-      endLocal: clampEndFromStart(windowStart, preferred),
-    };
-  }
-
-  if (hasEnd && !hasStart && durationH != null && Number.isFinite(durationH) && durationH > 0) {
-    const endMs = parseMs(windowEnd);
-    if (endMs) {
-      const preferred = Math.min(durationH, maxSlotH);
-      return {
-        startLocal: toDateTimeLocal(new Date(endMs - preferred * 3_600_000).toISOString()),
-        endLocal: toDateTimeLocal(windowEnd),
-      };
-    }
-  }
-
-  if (hasStart) {
-    return {
-      startLocal: toDateTimeLocal(windowStart),
-      endLocal: clampEndFromStart(windowStart, maxSlotH),
-    };
-  }
-  if (hasEnd) {
-    return { startLocal: "", endLocal: toDateTimeLocal(windowEnd) };
-  }
-
   return { startLocal: "", endLocal: "" };
 }
 
@@ -753,11 +721,14 @@ export type TeamDayCapacity = {
   overtimeHours: number;
   committedHours: number;
   remainingHours: number;
+  /** `roster` | `rest_day` | `holiday` | `no_schedule` | `no_members`; null when not loaded. */
+  basis: string | null;
 };
 
 /**
- * Remaining team capacity for a work date (mirrors compute_capacity_gate defaults).
- * Missing gantt rows ⇒ 8h available / 0 overtime / 0 committed.
+ * Remaining team capacity for a work date (mirrors compute_capacity_gate): the members' Classes
+ * horaires on the site's working days − absences, × utilisation, plus the planner's overtime
+ * ceiling. No row ⇒ 0 h, never a default.
  */
 export function resolveTeamDayCapacity(
   capacity: TeamCapacityLoad[] | null | undefined,
@@ -765,11 +736,17 @@ export function resolveTeamDayCapacity(
   workDate: string,
 ): TeamDayCapacity {
   const row = (capacity ?? []).find((c) => c.team_id === teamId && c.work_date === workDate);
-  const availableHours = row?.available_hours ?? PLANNING_DEFAULT_DAILY_CAPACITY_HOURS;
+  const availableHours = row?.available_hours ?? 0;
   const overtimeHours = row?.overtime_hours ?? 0;
   const committedHours = row?.committed_hours ?? 0;
   const remainingHours = Math.max(0, availableHours + overtimeHours - committedHours);
-  return { availableHours, overtimeHours, committedHours, remainingHours };
+  return {
+    availableHours,
+    overtimeHours,
+    committedHours,
+    remainingHours,
+    basis: row?.basis ? row.basis : null,
+  };
 }
 
 /** True when requested hours would fail the daily capacity gate. */

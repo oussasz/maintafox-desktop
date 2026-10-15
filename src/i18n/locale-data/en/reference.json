@@ -328,8 +328,8 @@
     "fallbackHint": "Without a nature, converting the request creates a corrective work order: immediate when the urgency is at the top level of the scale, deferred otherwise."
   },
   "schedulePattern": {
-    "title": "Weekly work calendar",
-    "column": "Schedule",
+    "title": "Classe horaire timetable",
+    "column": "Timetable",
     "cancel": "Cancel",
     "close": "Close schedule pattern",
     "loading": "Loading schedule pattern…",
@@ -393,7 +393,7 @@
       "saturday": "Sat",
       "sunday": "Sun"
     },
-    "open": "View schedule",
+    "open": "Open the timetable",
     "afterCreate": "After creation"
   },
   "export": {

@@ -298,6 +298,36 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
         "category_code",
         "(SELECT code FROM notification_categories ORDER BY id LIMIT 1)",
     ),
+    // Labour booked to a person without a login (migration 190): personnel only.
+    ("work_order_interveners", "intervener_id", "NULL"),
+    // A requirement asks for one certification or one skill, never both.
+    ("qualification_requirements", "skill_reference_value_id", "NULL"),
+    ("qualification_requirements", "min_proficiency_level", "NULL"),
+    // An override states its reason (at least 10 characters).
+    (
+        "qualification_overrides",
+        "reason",
+        "'Supervised on site by the shift lead'",
+    ),
+    ("qualification_overrides", "role_code", "NULL"),
+    // A personnel record or a login without one, never both.
+    ("qualification_overrides", "user_id", "NULL"),
+    ("qualification_overrides", "permit_id", "NULL"),
+    // A calendar day, not a timestamp.
+    ("work_calendar_holidays", "holiday_date", "'2026-12-25'"),
+    // Timetables (migrations 192, 197): calendar days, a weekly cycle, percentages in range.
+    ("site_work_weeks", "effective_from", "'2026-12-01'"),
+    ("site_work_weeks", "weekend_days", "'5,6'"),
+    ("schedule_class_versions", "effective_from", "'2026-12-01'"),
+    ("schedule_class_versions", "cycle_length_days", "7"),
+    ("schedule_class_versions", "rotation_start_date", "NULL"),
+    ("schedule_class_versions", "utilisation_percent", "85.0"),
+    ("schedule_class_versions", "review_status", "NULL"),
+    ("team_schedule_assignments", "effective_from", "'2026-12-01'"),
+    ("team_schedule_assignments", "review_status", "NULL"),
+    ("personnel_schedule_exceptions", "valid_from", "'2026-12-01'"),
+    ("personnel_schedule_exceptions", "valid_to", "NULL"),
+    ("personnel_schedule_exceptions", "work_percent", "50.0"),
 ];
 
 #[derive(Debug, Clone)]

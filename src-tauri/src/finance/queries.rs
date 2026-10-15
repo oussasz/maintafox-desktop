@@ -3548,23 +3548,19 @@ pub async fn evaluate_budget_alerts(
         let committed_hours: f64 = row.try_get("", "committed_hours")?;
         team_commit_map.insert((team_id, month), committed_hours);
     }
-    let team_capacity_rows = db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT team_id,
-                    CAST(strftime('%m', effective_start) AS INTEGER) AS period_month,
-                    AVG(available_hours_per_day + max_overtime_hours_per_day) * 30.0 AS capacity_hours
-             FROM capacity_rules
-             GROUP BY team_id, CAST(strftime('%m', effective_start) AS INTEGER)",
-            [],
-        ))
-        .await?;
+    // Team capacity of each month with commitments: the same figure planning books against
+    // (members' Classes horaires on working days, minus absences, x utilisation, plus the
+    // planner's overtime ceiling), over the budget's fiscal year.
     let mut team_capacity_map = std::collections::HashMap::<(i64, i64), f64>::new();
-    for row in team_capacity_rows {
-        let team_id: i64 = row.try_get("", "team_id")?;
-        let month: i64 = row.try_get("", "period_month")?;
-        let capacity_hours: f64 = row.try_get("", "capacity_hours")?;
-        team_capacity_map.insert((team_id, month), capacity_hours);
+    for &(team_id, month) in team_commit_map.keys() {
+        let (Ok(year), Ok(month_no)) = (i32::try_from(version.fiscal_year), u32::try_from(month)) else {
+            continue;
+        };
+        if !(1..=12).contains(&month_no) {
+            continue;
+        }
+        let hours = crate::personnel::capacity::team_month_hours(db, team_id, year, month_no).await?;
+        team_capacity_map.insert((team_id, month), hours);
     }
     let txn = db.begin().await?;
 

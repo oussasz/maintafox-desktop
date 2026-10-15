@@ -15,6 +15,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useSt
 import { useTranslation } from "react-i18next";
 
 import { WoPermitGateCard } from "@/components/permits/WoPermitGateCard";
+import { QualificationCheckNotice } from "@/components/personnel/qualification/QualificationCheckNotice";
 import { ReferenceCombobox } from "@/components/reference/ReferenceCombobox";
 import { Timeline } from "@/components/timeline";
 import { Badge } from "@/components/ui/badge";
@@ -52,6 +53,10 @@ import {
   listInventoryReservations,
   releaseInventoryReservation,
 } from "@/services/inventory-service";
+import {
+  type PersonQualificationCheck,
+  checkPersonForWorkOrder,
+} from "@/services/qualification-gate-service";
 import { listPublishedReferenceValuesByDomainCode } from "@/services/reference-service";
 import {
   type TaskResultCode,
@@ -60,7 +65,7 @@ import {
   type WoIntervener,
   type WoPlanAdherence,
   type WoTool,
-  addLabor,
+  addPersonnelLabor,
   addWoTool,
   closeDowntime,
   completeTask,
@@ -91,7 +96,7 @@ import type {
 } from "@shared/ipc-types";
 
 import { WoAddExecutionPartDialog } from "./WoAddExecutionPartDialog";
-import { mergeWoPersonOptions, useWoPeopleOptions } from "./use-wo-people";
+import { mergeLaborPeople, useWoLaborPeople } from "./use-wo-labor-people";
 import { woActionFailureText } from "./wo-action-error";
 
 export interface WoExecutionControlsHandle {
@@ -302,17 +307,42 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
 
     // ── Intervener options ──────────────────────────────────────────────────
 
-    // Personnel register (active staff with a login); people already booked stay selectable.
-    const people = useWoPeopleOptions();
+    // Personnel register: everyone active, with or without a login (contractor technicians);
+    // people already booked stay selectable.
+    const people = useWoLaborPeople();
     const intervenerOptions = useMemo(() => {
       const booked = laborEntries
-        .filter((entry) => formatPersonLabel(entry.intervener_display_name) !== "—")
+        .filter(
+          (entry) =>
+            entry.personnel_id != null && formatPersonLabel(entry.intervener_display_name) !== "—",
+        )
         .map((entry) => ({
-          value: String(entry.intervener_id),
+          value: String(entry.personnel_id),
           label: formatPersonLabel(entry.intervener_display_name),
         }));
-      return mergeWoPersonOptions(people.options, booked);
+      return mergeLaborPeople(people.options, booked);
     }, [people.options, laborEntries]);
+
+    // Does the chosen person hold what this OT requires? (refused at booking otherwise)
+    const [laborOvertime, setLaborOvertime] = useState(false);
+    const [laborCheck, setLaborCheck] = useState<PersonQualificationCheck | null>(null);
+    useEffect(() => {
+      if (!showLaborDialog || !laborTechId) {
+        setLaborCheck(null);
+        return;
+      }
+      let cancelled = false;
+      checkPersonForWorkOrder(Number(laborTechId), wo.id)
+        .then((check) => {
+          if (!cancelled) setLaborCheck(check);
+        })
+        .catch(() => {
+          if (!cancelled) setLaborCheck(null);
+        });
+      return () => {
+        cancelled = true;
+      };
+    }, [showLaborDialog, laborTechId, wo.id]);
 
     // ── Load data ──────────────────────────────────────────────────────────
 
@@ -486,6 +516,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
       setLaborEnd("10:00");
       setLaborBreakMin("");
       setLaborNotes("");
+      setLaborOvertime(false);
       setLaborFormError(null);
       setShowLaborDialog(true);
     }, [intervenerOptions]);
@@ -525,9 +556,10 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
       setLaborFormError(null);
       setError(null);
       try {
-        await addLabor({
+        await addPersonnelLabor({
           wo_id: wo.id,
-          intervener_id: intervenerId,
+          personnel_id: intervenerId,
+          is_overtime: laborOvertime,
           started_at: started,
           ended_at: ended,
           hours_worked: hoursWorked,
@@ -548,6 +580,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
       laborEnd,
       laborBreakMin,
       laborNotes,
+      laborOvertime,
       wo.id,
       loadData,
       t,
@@ -1659,6 +1692,25 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                   <p className="text-xs text-text-muted">{t("woPeople.none")}</p>
                 ) : null}
               </div>
+              {laborCheck &&
+              (laborCheck.gaps.length > 0 ||
+                laborCheck.warnings.length > 0 ||
+                laborCheck.override_info != null) ? (
+                <QualificationCheckNotice
+                  check={laborCheck}
+                  overrideContext={{ context_kind: "work_order", work_order_id: wo.id }}
+                  onOverridden={setLaborCheck}
+                />
+              ) : null}
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4"
+                  checked={laborOvertime}
+                  onChange={(e) => setLaborOvertime(e.target.checked)}
+                />
+                {t("execution.laborDialog.overtime")}
+              </label>
               <div className="space-y-1">
                 <Label>{t("execution.laborDialog.date")}</Label>
                 <Input
@@ -1718,7 +1770,10 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
               <Button variant="outline" onClick={() => setShowLaborDialog(false)}>
                 {t("execution.cancel")}
               </Button>
-              <Button onClick={() => void submitLaborDialog()} disabled={busy || !actorId}>
+              <Button
+                onClick={() => void submitLaborDialog()}
+                disabled={busy || !actorId || (laborCheck != null && !laborCheck.qualified)}
+              >
                 {t("execution.laborDialog.save")}
               </Button>
             </DialogFooter>

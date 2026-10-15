@@ -870,8 +870,9 @@ mod tests {
         // Snapshot of the registered WO command surface; update deliberately when adding commands.
         // Migration 198: the OT type CRUD (3) and the OT priority commands (2) gave way to the shared
         // urgency scale commands (`list_urgency_levels`, `update_urgency_level`) and the plant's
-        // OT sub-types (`list_work_order_subtypes`).
-        assert_eq!(wo_lines.len(), 65, "invoke_handler must contain exactly 65 WO commands");
+        // OT sub-types (`list_work_order_subtypes`). Personnel added labour for a person without a
+        // login (`add_personnel_labor`) and the people list (`list_wo_labor_people`).
+        assert_eq!(wo_lines.len(), 67, "invoke_handler must contain exactly 67 WO commands");
 
         let mut seen = std::collections::HashSet::new();
         for line in &wo_lines {
@@ -1075,7 +1076,6 @@ mod tests {
         let actor = admin_id(&db).await;
 
         let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
         let sched: i64 = db
             .query_one(Statement::from_string(
                 DbBackend::Sqlite,
@@ -1115,7 +1115,8 @@ mod tests {
             "INSERT INTO personnel_rate_cards \
              (personnel_id, effective_from, labor_rate, overtime_rate, source_type, created_at) \
              VALUES (?, ?, 37.0, 50.0, 'manual', ?)",
-            [personnel_id.into(), today.into(), now.clone().into()],
+            // Valid on the work date of the entries below (the rate of the day the work was done).
+            [personnel_id.into(), "2026-04-01".into(), now.clone().into()],
         ))
         .await
         .expect("rate card");

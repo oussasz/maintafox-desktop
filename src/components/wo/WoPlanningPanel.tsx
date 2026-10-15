@@ -1636,7 +1636,8 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                     {check.outcome === "pass" ? "✓" : check.outcome === "na" ? "—" : "✗"}
                   </span>
                   <span>
-                    {check.message?.trim() || check.code}
+                    {check.message?.trim() ||
+                      t(`planning.readinessRule.${check.code}`, { defaultValue: check.code })}
                     {!check.blocking && check.outcome === "fail" ? (
                       <span className="text-muted-foreground">
                         {" "}

@@ -110,6 +110,8 @@ fn category_for_known_code(code: &str) -> Option<GovernanceCategory> {
         | "WORK.FAILURE_CAUSES"
         | "WORK.FAILURE_EFFECTS"
         | "PM.MAINTENANCE_TASK_LIST"
+        // Electrical habilitations (NF C 18-510): starter symbols, the company adds or retires its own.
+        | "PERSONNEL.HABILITATIONS"
         // Request types differ per plant and are extended through draft → publish (owner, 2026-10-15).
         | "DI.REQUEST_TYPE"
         // A plant's own OT sub-types, each under one protected maintenance nature, governed through

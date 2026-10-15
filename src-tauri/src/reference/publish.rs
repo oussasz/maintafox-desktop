@@ -344,6 +344,16 @@ pub async fn publish_reference_set(
     // Records saved against an earlier version now point at the same code in this version.
     remap_usage_to_published_set(&txn, set.domain_id, set_id).await?;
 
+    // A newly published electrical habilitation can be required and recorded at once (same
+    // transaction: the list and its certification types are published together).
+    if domain_probe
+        .code
+        .eq_ignore_ascii_case(crate::qualification::catalog::HABILITATIONS_DOMAIN)
+    {
+        let french = !crate::qualification::gate::tenant_writes_english(&txn).await?;
+        crate::qualification::catalog::ensure_habilitation_certification_types(&txn, french).await?;
+    }
+
     txn.commit().await?;
 
     let published_set = sets::get_reference_set(db, set_id).await?;

@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 
 import { EntityFormImageUploader } from "@/components/entity-form/EntityFormImageUploader";
 import type { EntityFormImageItem } from "@/components/entity-form/EntityFormImageUploader";
+import { ExternalCompanyDialog } from "@/components/personnel/ExternalCompaniesPanel";
 import { PersonnelPickerCombobox } from "@/components/personnel/PersonnelCard";
 import { PositionCombobox } from "@/components/personnel/PositionCombobox";
 import { ReferenceCombobox } from "@/components/reference/ReferenceCombobox";
@@ -137,6 +138,7 @@ export function PersonnelCreateDialog() {
   const [crewOptions, setCrewOptions] = useState<TeamSummary[]>([]);
   const [crewsLoading, setCrewsLoading] = useState(false);
   const [companies, setCompanies] = useState<{ id: number; name: string }[]>([]);
+  const [companyDialogOpen, setCompanyDialogOpen] = useState(false);
   const [personnelList, setPersonnelList] = useState<Personnel[]>([]);
   const [certTypes, setCertTypes] = useState<CertificationType[]>([]);
   const [localError, setLocalError] = useState<string | null>(null);
@@ -635,10 +637,25 @@ export function PersonnelCreateDialog() {
             </div>
 
             {isExternal ? (
-              <div className="space-y-3 rounded-md border border-amber-400/40 bg-amber-50/40 p-3">
+              <div className="space-y-3 rounded-md border border-tone-attention-border bg-tone-attention-bg p-3">
                 <div className="space-y-1.5">
-                  <Label>{t("field.company")} *</Label>
+                  <div className="flex items-center justify-between gap-2">
+                    <Label htmlFor="per-company">{t("field.company")} *</Label>
+                    {can(P.PER_MANAGE) ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 gap-1 px-2"
+                        onClick={() => setCompanyDialogOpen(true)}
+                      >
+                        <Plus className="h-3.5 w-3.5" aria-hidden />
+                        {t("companies.add")}
+                      </Button>
+                    ) : null}
+                  </div>
                   <select
+                    id="per-company"
                     className="h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm"
                     value={externalCompanyId ?? ""}
                     onChange={(e) =>
@@ -1018,6 +1035,20 @@ export function PersonnelCreateDialog() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ExternalCompanyDialog
+        open={companyDialogOpen}
+        company={null}
+        onOpenChange={setCompanyDialogOpen}
+        onSaved={(company) => {
+          setCompanies((prev) =>
+            [...prev, { id: company.id, name: company.name }].sort((a, b) =>
+              a.name.localeCompare(b.name),
+            ),
+          );
+          setExternalCompanyId(company.id);
+        }}
+      />
 
       {/* CreateUserDialog — opened after personnel is created if checkbox was checked */}
       {CreateUserDialog && showCreateUser ? (

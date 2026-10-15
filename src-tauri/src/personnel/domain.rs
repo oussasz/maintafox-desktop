@@ -692,7 +692,8 @@ pub struct ScheduleClass {
     pub name: String,
     pub shift_pattern_code: String,
     pub is_continuous: i64,
-    pub nominal_hours_per_day: f64,
+    /// As typed on the class; `None` when not set (never assumed).
+    pub nominal_hours_per_day: Option<f64>,
     pub is_active: i64,
     pub created_at: String,
 }

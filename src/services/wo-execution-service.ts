@@ -118,6 +118,40 @@ export async function addLabor(input: AddLaborInput): Promise<WoIntervener> {
   return invoke<WoIntervener>("add_labor", { input });
 }
 
+/** Labour for a person of the register, login or not (contractor technicians included). */
+export interface AddPersonnelLaborInput {
+  wo_id: number;
+  personnel_id: number;
+  is_overtime?: boolean;
+  skill_id?: number | null;
+  started_at?: string | null;
+  ended_at?: string | null;
+  hours_worked?: number | null;
+  hourly_rate?: number | null;
+  notes?: string | null;
+}
+
+/** Refused with the qualification reason when the person lacks what the OT requires. */
+export async function addPersonnelLabor(input: AddPersonnelLaborInput): Promise<WoIntervener> {
+  return invoke<WoIntervener>("add_personnel_labor", { input });
+}
+
+/** Everyone who can be booked for labour: active personnel, with or without a login. */
+export interface WoLaborPerson {
+  personnel_id: number;
+  user_id: number | null;
+  employee_code: string;
+  full_name: string;
+  position_name: string | null;
+  employment_type: string;
+  company_name: string | null;
+  availability_status: string;
+}
+
+export async function listWoLaborPeople(): Promise<WoLaborPerson[]> {
+  return invoke<WoLaborPerson[]>("list_wo_labor_people");
+}
+
 export async function closeLabor(
   intervenerId: number,
   endedAt: string,

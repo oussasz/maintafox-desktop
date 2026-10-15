@@ -121,7 +121,55 @@ async fn insert_approved_di(db: &DatabaseConnection, code: &str) {
     .expect("insert approved di");
 }
 
+/// Capacity comes from the roster (no default hours): the test crew gets one member on a
+/// 7-day 08:00–16:00 shift, i.e. 8 h available every day.
+async fn give_team_roster_capacity(db: &DatabaseConnection, team_id: i64) {
+    for sql in [
+        // A continuous Classe horaire (works through site rest days and holidays), 8 h every day,
+        // all of it available for work orders.
+        "INSERT OR IGNORE INTO reference_values (entity_sync_id, set_id, code, label, sort_order, is_active) \
+         SELECT 'planning-test-7d-shift', rs.id, 'PLN-7D', 'Planning test 7-day shift', 99, 1 \
+         FROM reference_sets rs JOIN reference_domains rd ON rd.id = rs.domain_id \
+         WHERE UPPER(rd.code) = 'ORG.SCHEDULE_CLASS' AND rs.status = 'published' \
+         ORDER BY rs.version_no DESC LIMIT 1",
+        "INSERT OR IGNORE INTO schedule_class_versions (entity_sync_id, reference_value_id, effective_from, \
+         cycle_length_days, rotation_start_date, days_json, is_continuous, utilisation_percent, created_at, updated_at) \
+         SELECT 'planning-test-7d-version', rv.id, '2000-01-01', 7, NULL, \
+         (SELECT json_group_array(json_object('cycle_day', n, 'shift_start', '08:00', 'shift_end', '16:00', \
+                 'break_minutes', 0, 'is_rest_day', json('false'))) \
+            FROM (SELECT 1 AS n UNION SELECT 2 UNION SELECT 3 UNION SELECT 4 UNION SELECT 5 UNION SELECT 6 \
+                  UNION SELECT 7)), \
+         1, 100.0, datetime('now'), datetime('now') \
+         FROM reference_values rv WHERE rv.entity_sync_id = 'planning-test-7d-shift'",
+        "INSERT OR IGNORE INTO schedule_details (reference_value_id, day_of_week, shift_start, shift_end, is_rest_day) \
+         SELECT rv.id, d.n, '08:00', '16:00', 0 FROM reference_values rv \
+         CROSS JOIN (SELECT 1 AS n UNION SELECT 2 UNION SELECT 3 UNION SELECT 4 UNION SELECT 5 UNION SELECT 6 \
+                     UNION SELECT 7) d \
+         WHERE rv.entity_sync_id = 'planning-test-7d-shift'",
+    ] {
+        db.execute(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
+            .await
+            .expect("test shift schedule");
+    }
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT OR IGNORE INTO personnel (employee_code, full_name, availability_status, primary_team_id, \
+         home_schedule_reference_value_id) \
+         SELECT ?, 'Planning roster technician', 'available', ?, rv.id FROM reference_values rv \
+         WHERE rv.entity_sync_id = 'planning-test-7d-shift'",
+        [format!("PLN-ROSTER-{team_id}").into(), team_id.into()],
+    ))
+    .await
+    .expect("roster member");
+}
+
 async fn get_any_team_id(db: &DatabaseConnection) -> i64 {
+    let team_id = get_any_team_id_inner(db).await;
+    give_team_roster_capacity(db, team_id).await;
+    team_id
+}
+
+async fn get_any_team_id_inner(db: &DatabaseConnection) -> i64 {
     let existing = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -484,7 +532,7 @@ async fn commitment_requires_all_three_gates() {
             team_id,
             effective_start: "2026-05-01".to_string(),
             effective_end: Some("2026-05-01".to_string()),
-            available_hours_per_day: 1.0,
+            available_hours_per_day: None,
             max_overtime_hours_per_day: 0.0,
         },
     )
@@ -731,7 +779,6 @@ async fn break_in_requires_approval_or_dangerous_override() {
             new_assigned_team_id: Some(team_id),
             new_assigned_personnel_id: Some(assignee_id),
             bypass_availability: Some(false),
-            bypass_qualification: Some(false),
             override_reason: None,
             dangerous_override_reason: None,
         },
@@ -753,7 +800,6 @@ async fn break_in_requires_approval_or_dangerous_override() {
             new_assigned_team_id: Some(team_id),
             new_assigned_personnel_id: Some(assignee_id),
             bypass_availability: Some(false),
-            bypass_qualification: Some(false),
             override_reason: Some("line stop".to_string()),
             dangerous_override_reason: None,
         },
@@ -1240,7 +1286,6 @@ async fn break_in_write_back_updates_work_order_slot() {
             override_reason: Some("Emergency move".to_string()),
             dangerous_override_reason: None,
             bypass_availability: Some(true),
-            bypass_qualification: Some(true),
         },
     )
     .await

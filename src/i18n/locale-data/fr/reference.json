@@ -328,7 +328,7 @@
     "fallbackHint": "Sans nature, la conversion de la demande en OT crée un OT correctif : immédiat si l'urgence est au niveau le plus haut de l'échelle, différé sinon."
   },
   "schedulePattern": {
-    "title": "Calendrier hebdomadaire",
+    "title": "Horaire de la classe horaire",
     "column": "Horaire",
     "cancel": "Annuler",
     "close": "Fermer le modèle horaire",
@@ -393,7 +393,7 @@
       "saturday": "Sam",
       "sunday": "Dim"
     },
-    "open": "Voir l'horaire",
+    "open": "Ouvrir l’horaire",
     "afterCreate": "Après création"
   },
   "export": {

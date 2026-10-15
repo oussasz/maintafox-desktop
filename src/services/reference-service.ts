@@ -582,7 +582,7 @@ const SchedulePatternSchema = z.object({
   is_active: z.boolean(),
   shift_pattern_code: z.string(),
   is_continuous: z.boolean(),
-  nominal_hours_per_day: z.number(),
+  nominal_hours_per_day: z.number().nullable(),
   details: z.array(ScheduleDayPatternSchema),
 });
 
