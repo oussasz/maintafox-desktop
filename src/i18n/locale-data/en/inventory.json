@@ -756,7 +756,8 @@
         "receivedQty": "Received",
         "rejectedQty": "Rejected",
         "accepted": "Accepted",
-        "rejectionReason": "Rejection reason"
+        "rejectionReason": "Rejection reason",
+        "unit": "Receipt unit"
       },
       "selectLocation": "Select location",
       "cancel": "Cancel",
@@ -769,7 +770,8 @@
         "postingDate": "Enter the receipt date.",
         "futureDate": "The receipt date cannot be in the future.",
         "rate": "Enter an exchange rate greater than 0.",
-        "rateMissing": "Enter the {{currency}} exchange rate: none is stored for this date."
+        "rateMissing": "Enter the {{currency}} exchange rate: none is stored for this date.",
+        "unitFactor": "{{article}}: the receipt unit does not convert to the stock unit (no conversion, other dimension or unit to review)."
       },
       "fulfillmentAction": "Fulfillment action",
       "fulfillmentValues": {
@@ -804,7 +806,10 @@
           "serialQty": "{{article}}: one serial number stands for exactly one unit.",
           "sum": "{{article}}: the lots must add up to the accepted quantity."
         }
-      }
+      },
+      "unitRefused": "This unit does not convert to the article's stock unit.",
+      "inStockUnit": "In the stock unit: {{received}} {{unit}} received, {{rejected}} {{unit}} of them rejected.",
+      "converting": "Converting to the stock unit…"
     },
     "poWorkspace": {
       "title": "Purchase order",
@@ -1504,7 +1509,9 @@
       "hint": "Automatic issues from the lot that expires first and skips expired lots."
     },
     "quantity": {
-      "label": "Quantity"
+      "label": "Quantity",
+      "unit": "Issue unit",
+      "inStock": "= {{qty}} {{unit}} in the stock unit"
     },
     "submit": "Issue to work order",
     "submitting": "Issuing…",
@@ -1514,7 +1521,9 @@
       "workOrder": "Choose the work order the parts go to.",
       "location": "Choose the location the parts leave from.",
       "quantity": "Enter a quantity greater than 0.",
-      "tooMuch": "Only {{qty}} {{unit}} can be issued from here."
+      "tooMuch": "Only {{qty}} {{unit}} can be issued from here.",
+      "unitRefused": "This unit does not convert to the article's stock unit (no conversion, other dimension or unit to review).",
+      "converting": "Converting to the stock unit…"
     },
     "outcome": {
       "title": "{{code}} issued to {{wo}}",

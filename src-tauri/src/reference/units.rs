@@ -75,6 +75,11 @@ pub const LEGACY_UNIT_LOOKUP_DOMAIN: &str = "inventory.unit_of_measure";
 pub const GATE_UNIT_NOT_ACTIVE: &str = "GATE_UNIT_NOT_ACTIVE";
 /// A conversion between units that measure different things (mass and length, …).
 pub const GATE_UNIT_DIMENSION_MISMATCH: &str = "GATE_UNIT_DIMENSION_MISMATCH";
+/// A merge of two units that do not stand for the same quantity.
+pub const GATE_UNIT_MERGE_CHANGES_QUANTITIES: &str = "GATE_UNIT_MERGE_CHANGES_QUANTITIES";
+/// A quantity entered in a unit that does not give a whole number of the article's stock unit
+/// when the article moves by whole units (serial-tracked).
+pub const GATE_UNIT_WHOLE_UNITS: &str = "GATE_UNIT_WHOLE_UNITS";
 /// A conversion with a unit whose dimension is not set yet.
 pub const GATE_UNIT_DIMENSION_MISSING: &str = "GATE_UNIT_DIMENSION_MISSING";
 /// A unit whose dimension is not one of `MEASURE.DIMENSIONS`.
@@ -820,6 +825,32 @@ pub(crate) fn reviewed_metadata(metadata_json: Option<&str>) -> Option<String> {
     }
 }
 
+/// Problems of an imported unit row (CSV): a plant unit names its base standard unit
+/// (`parent_code`) and its factor (`metadata_json.base_factor` > 0); the "to review" flag is set
+/// by migration 201 only, never imported. The base and dimension are checked again on apply,
+/// against the target version.
+pub(crate) fn import_row_problems(parent_code: Option<&str>, metadata_json: Option<&str>) -> Vec<String> {
+    let mut problems = Vec::new();
+    let meta = meta_of(metadata_json);
+    if metadata_json.is_some_and(|m| !m.trim().is_empty()) && !meta.is_object() {
+        problems.push("metadata_json n'est pas un objet JSON.".to_string());
+    }
+    if meta.get("review_required").and_then(serde_json::Value::as_bool) == Some(true) {
+        problems.push("le statut « à revoir » ne s'importe pas.".to_string());
+    }
+    if parent_code.map(str::trim).filter(|c| !c.is_empty()).is_none() {
+        problems.push(format!(
+            "{GATE_UNIT_BASE_REQUIRED}: unité standard de base manquante (colonne parent_code)."
+        ));
+    }
+    if base_factor_of(&meta).is_none() {
+        problems.push(format!(
+            "{GATE_UNIT_BASE_REQUIRED}: facteur vers l'unité de base manquant ou invalide (metadata_json.base_factor > 0)."
+        ));
+    }
+    problems
+}
+
 pub(crate) fn is_units_domain(domain_code: &str) -> bool {
     domain_code.trim().eq_ignore_ascii_case(UNITS_DOMAIN)
 }
@@ -1086,6 +1117,9 @@ pub(crate) struct ReviewUnit<'a> {
     pub is_active: bool,
     /// Where the unit came from (`lookup:inventory.unit_of_measure`, `equipment_meters.unit`…).
     pub source: &'a str,
+    /// Code of the retired lookup value the unit replaces (its sync identity derives from it,
+    /// so a row of an older device naming that value is linked to this unit).
+    pub legacy_code: Option<&'a str>,
 }
 
 pub(crate) async fn create_review_unit(conn: &impl ConnectionTrait, unit: &ReviewUnit<'_>) -> AppResult<i64> {
@@ -1109,13 +1143,16 @@ pub(crate) async fn create_review_unit(conn: &impl ConnectionTrait, unit: &Revie
         .transpose()
         .map_err(decode)?
         .unwrap_or(1);
-    let metadata = serde_json::json!({
+    let mut metadata = serde_json::json!({
         "origin": "migrated",
         "label_en": unit.label_en.unwrap_or(unit.label),
         "symbol": unit.symbol.trim(),
         "review_required": true,
         "source": unit.source,
     });
+    if let Some(legacy) = unit.legacy_code {
+        metadata["legacy_code"] = legacy.into();
+    }
     insert_value(
         conn,
         UNITS_DOMAIN,
@@ -1207,6 +1244,7 @@ pub(crate) async fn map_unit_texts(
                         symbol: trimmed,
                         is_active: true,
                         source,
+                        legacy_code: None,
                     },
                 )
                 .await?;
@@ -1218,6 +1256,416 @@ pub(crate) async fn map_unit_texts(
         out.insert(text.clone(), id);
     }
     Ok(out)
+}
+
+/// Moves the links of `columns` from the `old` to the `new` unit of each pair. One `UPDATE` per
+/// table sets all its unit columns together, so a row is moved once even when old and new ids
+/// overlap, and a table rule over two of its columns (`unit_conversions`: from ≠ to) is checked on
+/// the moved row, never on a half-moved one. `skip_current_units`: a value that already is a unit
+/// of the list is left alone (the startup pass, where the old ids come from a replayed lookup).
+async fn remap_unit_columns(
+    conn: &impl ConnectionTrait,
+    columns: &[(&str, &str)],
+    pairs: &[(i64, i64)],
+    skip_current_units: bool,
+) -> AppResult<()> {
+    if pairs.is_empty() || columns.is_empty() {
+        return Ok(());
+    }
+    conn.execute_unprepared(
+        "CREATE TEMP TABLE IF NOT EXISTS unit_remap (old_id INTEGER PRIMARY KEY, new_id INTEGER NOT NULL)",
+    )
+    .await?;
+    conn.execute_unprepared("DELETE FROM unit_remap").await?;
+    for (old_id, new_id) in pairs {
+        conn.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT OR REPLACE INTO unit_remap (old_id, new_id) VALUES (?, ?)",
+            [(*old_id).into(), (*new_id).into()],
+        ))
+        .await?;
+    }
+    let current_units = "SELECT u.id FROM reference_values u JOIN reference_sets rs ON rs.id = u.set_id \
+         JOIN reference_domains d ON d.id = rs.domain_id WHERE UPPER(TRIM(d.code)) = 'MEASURE.UNITS'";
+    let mut tables: Vec<&str> = columns.iter().map(|(t, _)| *t).collect();
+    tables.sort_unstable();
+    tables.dedup();
+    for table in tables {
+        let t = quote(table);
+        let cols: Vec<String> = columns
+            .iter()
+            .filter(|(tb, _)| *tb == table)
+            .map(|(_, c)| quote(c))
+            .collect();
+        let movable = |c: &str| {
+            if skip_current_units {
+                format!("({c} IN (SELECT old_id FROM unit_remap) AND {c} NOT IN ({current_units}))")
+            } else {
+                format!("{c} IN (SELECT old_id FROM unit_remap)")
+            }
+        };
+        let sets: Vec<String> = cols
+            .iter()
+            .map(|c| {
+                format!(
+                    "{c} = CASE WHEN {m} THEN (SELECT r.new_id FROM unit_remap r WHERE r.old_id = {t}.{c}) ELSE {c} END",
+                    m = movable(c)
+                )
+            })
+            .collect();
+        let any: Vec<String> = cols.iter().map(|c| movable(c)).collect();
+        conn.execute_unprepared(&format!(
+            "UPDATE {t} SET {} WHERE {}",
+            sets.join(", "),
+            any.join(" OR ")
+        ))
+        .await?;
+    }
+    conn.execute_unprepared("DROP TABLE IF EXISTS unit_remap").await?;
+    Ok(())
+}
+
+/// Moves the unit ids inside the checkpoint packages of the checklist versions
+/// (`[*].measurement_unit_id`) from the `old` to the `new` unit of each pair.
+pub(crate) async fn remap_package_unit_ids(conn: &impl ConnectionTrait, pairs: &[(i64, i64)]) -> AppResult<u64> {
+    if pairs.is_empty() || !table_has_column(conn, "inspection_template_versions", "checkpoint_package_json").await? {
+        return Ok(0);
+    }
+    let map: HashMap<i64, i64> = pairs.iter().copied().collect();
+    let rows = conn
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT id, checkpoint_package_json FROM inspection_template_versions \
+              WHERE checkpoint_package_json LIKE '%measurement_unit_id%' ORDER BY id"
+                .to_string(),
+        ))
+        .await?;
+    let mut changed = 0;
+    for r in rows {
+        let id: i64 = r.try_get("", "id").map_err(decode)?;
+        let raw: String = r.try_get("", "checkpoint_package_json").map_err(decode)?;
+        let Ok(mut package) = serde_json::from_str::<serde_json::Value>(&raw) else {
+            continue;
+        };
+        let mut touched = false;
+        if let Some(entries) = package.as_array_mut() {
+            for entry in entries.iter_mut() {
+                let Some(old) = entry.get("measurement_unit_id").and_then(serde_json::Value::as_i64) else {
+                    continue;
+                };
+                if let Some(new) = map.get(&old) {
+                    entry["measurement_unit_id"] = (*new).into();
+                    touched = true;
+                }
+            }
+        }
+        if touched {
+            conn.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "UPDATE inspection_template_versions SET checkpoint_package_json = ? WHERE id = ?",
+                [package.to_string().into(), id.into()],
+            ))
+            .await?;
+            changed += 1;
+        }
+    }
+    Ok(changed)
+}
+
+/// Columns of current records that link a unit of `MEASURE.UNITS`. History (stock movements,
+/// receipt lines) keeps the unit it was entered in and is not listed: a merged unit stays as an
+/// inactive value, so those links still resolve.
+pub const UNIT_RECORD_COLUMNS: &[(&str, &str)] = &[
+    ("articles", "unit_value_id"),
+    ("inventory_supplier_prices", "price_unit_value_id"),
+    ("unit_conversions", "from_unit_value_id"),
+    ("unit_conversions", "to_unit_value_id"),
+    ("equipment_meters", "unit_value_id"),
+    ("inspection_checkpoints", "measurement_unit_id"),
+];
+
+/// A unit merged into another (`reference::migrations`, merge / usage migration) must mean the same
+/// quantity: a unit to review (no factor yet) may be merged into any unit — that is how its meaning
+/// is stated; a unit with a factor only into a unit with the same base and factor. Otherwise
+/// stock and readings would silently change their meaning.
+pub(crate) async fn assert_merge_keeps_quantities(
+    conn: &impl ConnectionTrait,
+    from_id: i64,
+    to_id: i64,
+) -> AppResult<()> {
+    let (Some(from), Some(to)) = (unit_by_id(conn, from_id).await?, unit_by_id(conn, to_id).await?) else {
+        return Ok(());
+    };
+    // `(base unit, factor)`: a standard unit is its own base.
+    let reduce = |u: &UnitOfMeasure| {
+        if u.is_standard {
+            Some((u.id, 1.0))
+        } else {
+            u.base_unit_id.zip(u.base_factor)
+        }
+    };
+    let Some((from_base, f_from)) = reduce(&from) else {
+        // A unit to review: the merge states what it means.
+        return Ok(());
+    };
+    let same = reduce(&to)
+        .is_some_and(|(to_base, f_to)| to_base == from_base && (f_to - f_from).abs() <= 1e-9 * f_from.abs().max(1.0));
+    if same {
+        Ok(())
+    } else {
+        Err(AppError::ValidationFailed(vec![format!(
+            "{GATE_UNIT_MERGE_CHANGES_QUANTITIES}: '{}' et '{}' ne représentent pas la même quantité ;              la fusion changerait les stocks et les relevés qui les utilisent.",
+            from.code, to.code
+        )]))
+    }
+}
+
+/// Moves every current record from unit `from_id` to unit `to_id` (merge of a unit, usage
+/// migration). A conversion that would convert the unit into itself is deactivated first.
+/// Returns the number of rows moved.
+pub(crate) async fn remap_unit_value(conn: &impl ConnectionTrait, from_id: i64, to_id: i64) -> AppResult<i64> {
+    let mut columns: Vec<(&str, &str)> = Vec::new();
+    for (table, column) in UNIT_RECORD_COLUMNS {
+        if table_has_column(conn, table, column).await? {
+            columns.push((*table, *column));
+        }
+    }
+    let mut moved: i64 = 0;
+    for (table, column) in &columns {
+        moved += conn
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                format!("SELECT COUNT(*) AS n FROM {} WHERE {} = ?", quote(table), quote(column)),
+                [from_id.into()],
+            ))
+            .await?
+            .map(|r| r.try_get::<i64>("", "n"))
+            .transpose()
+            .map_err(decode)?
+            .unwrap_or(0);
+    }
+    if table_has_column(conn, "unit_conversions", "from_unit_value_id").await? {
+        conn.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE unit_conversions SET is_active = 0, row_version = row_version + 1, updated_at = ? \
+              WHERE is_active = 1 AND ((from_unit_value_id = ? AND to_unit_value_id = ?) \
+                 OR (from_unit_value_id = ? AND to_unit_value_id = ?))",
+            [
+                chrono::Utc::now().to_rfc3339().into(),
+                from_id.into(),
+                to_id.into(),
+                to_id.into(),
+                from_id.into(),
+            ],
+        ))
+        .await?;
+        // A conversion between the two units cannot be moved onto one unit (from ≠ to): it stays
+        // on the retired unit, deactivated above.
+        conn.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE OR IGNORE unit_conversions \
+                SET from_unit_value_id = CASE WHEN from_unit_value_id = ? THEN ? ELSE from_unit_value_id END, \
+                    to_unit_value_id = CASE WHEN to_unit_value_id = ? THEN ? ELSE to_unit_value_id END \
+              WHERE (from_unit_value_id = ? OR to_unit_value_id = ?) \
+                AND NOT ((from_unit_value_id = ? AND to_unit_value_id = ?) OR (from_unit_value_id = ? AND to_unit_value_id = ?))",
+            [
+                from_id.into(),
+                to_id.into(),
+                from_id.into(),
+                to_id.into(),
+                from_id.into(),
+                from_id.into(),
+                from_id.into(),
+                to_id.into(),
+                to_id.into(),
+                from_id.into(),
+            ],
+        ))
+        .await?;
+    }
+    let others: Vec<(&str, &str)> = columns.into_iter().filter(|(t, _)| *t != "unit_conversions").collect();
+    remap_unit_columns(conn, &others, &[(from_id, to_id)], false).await?;
+    remap_package_unit_ids(conn, &[(from_id, to_id)]).await?;
+    Ok(moved)
+}
+
+// ─── Rows of older devices (sync) ──────────────────────────────────────────────────────────
+
+/// Columns an inbound row may fill with a unit: the record columns, plus the units entered on
+/// receipts and stock movements.
+pub fn is_unit_ref_column(table: &str, column: &str) -> bool {
+    UNIT_RECORD_COLUMNS
+        .iter()
+        .chain(
+            [
+                ("goods_receipt_lines", "entered_unit_value_id"),
+                ("inventory_transactions", "entered_unit_value_id"),
+            ]
+            .iter(),
+        )
+        .any(|(t, c)| *t == table && *c == column)
+}
+
+/// Sync identity a value of the retired lookup had (seeded on every device from its code,
+/// `db::seeder::seed_value`).
+pub fn legacy_lookup_sync_id(code: &str) -> String {
+    crate::sync::identity::seeded_entity_sync_id("lookup_values", &format!("{LEGACY_UNIT_LOOKUP_DOMAIN}:{code}"))
+}
+
+/// The unit a reference of an older device names when it is the sync id of a value of the retired
+/// lookup: the unit with that code (or that `legacy_code`), else, when the lookup row itself came
+/// back with the history, the unit its code maps to (created to review when unknown).
+pub async fn unit_for_legacy_sync_id(conn: &impl ConnectionTrait, sync_id: &str) -> AppResult<Option<i64>> {
+    let rows = conn
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            format!("{UNIT_SELECT} WHERE rs.status = 'published' ORDER BY rs.version_no DESC, u.id"),
+        ))
+        .await?;
+    for r in &rows {
+        let id: i64 = r.try_get("", "id").map_err(decode)?;
+        let code: String = r.try_get("", "code").map_err(decode)?;
+        let meta = meta_of(
+            r.try_get::<Option<String>>("", "metadata_json")
+                .map_err(decode)?
+                .as_deref(),
+        );
+        let legacy = meta_text(&meta, "legacy_code");
+        if legacy_lookup_sync_id(&code) == sync_id || legacy.is_some_and(|l| legacy_lookup_sync_id(&l) == sync_id) {
+            return Ok(Some(id));
+        }
+    }
+    let replayed = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT lv.code, lv.label, lv.fr_label, lv.en_label FROM lookup_values lv \
+               JOIN lookup_domains ld ON ld.id = lv.domain_id \
+              WHERE ld.domain_key = ? AND lv.entity_sync_id = ?",
+            [LEGACY_UNIT_LOOKUP_DOMAIN.into(), sync_id.into()],
+        ))
+        .await?;
+    let Some(row) = replayed else {
+        return Ok(None);
+    };
+    let code: String = row.try_get("", "code").map_err(decode)?;
+    if let Ok(id) = unit_id_by_code(conn, &code).await {
+        return Ok(Some(id));
+    }
+    let label: String = row.try_get("", "label").map_err(decode)?;
+    let fr: Option<String> = row.try_get("", "fr_label").map_err(decode)?;
+    let en: Option<String> = row.try_get("", "en_label").map_err(decode)?;
+    let fr = fr.filter(|s| !s.trim().is_empty()).unwrap_or(label.clone());
+    let id = create_review_unit(
+        conn,
+        &ReviewUnit {
+            code_hint: &code,
+            label: &fr,
+            label_en: en.as_deref().filter(|s| !s.trim().is_empty()),
+            symbol: &label,
+            is_active: true,
+            source: "sync:lookup:inventory.unit_of_measure",
+            legacy_code: Some(&code),
+        },
+    )
+    .await?;
+    Ok(Some(id))
+}
+
+/// Unit text columns of rows sent by a device older than migration 201, with the link that
+/// replaces them.
+pub const LEGACY_UNIT_TEXT_COLUMNS: &[(&str, &str, &str)] = &[
+    ("equipment_meters", "unit", "unit_value_id"),
+    ("inspection_checkpoints", "measurement_unit", "measurement_unit_id"),
+];
+
+async fn unit_sync_id(conn: &impl ConnectionTrait, id: i64) -> AppResult<Option<String>> {
+    conn.query_one(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "SELECT entity_sync_id FROM reference_values WHERE id = ?",
+        [id.into()],
+    ))
+    .await?
+    .map(|r| r.try_get::<Option<String>>("", "entity_sync_id"))
+    .transpose()
+    .map_err(decode)
+    .map(Option::flatten)
+}
+
+/// Rewrites an inbound payload of a device older than migration 201: a unit text (meter unit,
+/// checkpoint unit, unit inside a checkpoint package) is mapped onto the list with the same rule
+/// as the migration (synonym table; an unmatched text becomes a unit to review) and sent on as
+/// the link. A text never overrides a link the payload already carries.
+pub async fn upgrade_legacy_unit_payload(
+    conn: &impl ConnectionTrait,
+    table: &str,
+    payload: &mut serde_json::Map<String, serde_json::Value>,
+) -> AppResult<()> {
+    for (t, text_col, link_col) in LEGACY_UNIT_TEXT_COLUMNS {
+        if *t != table {
+            continue;
+        }
+        let Some(text) = payload.remove(*text_col) else {
+            continue;
+        };
+        let has_link = payload.get(*link_col).is_some_and(|v| !v.is_null());
+        let Some(text) = text.as_str().map(str::trim).filter(|s| !s.is_empty()) else {
+            continue;
+        };
+        if has_link {
+            continue;
+        }
+        let map = map_unit_texts(conn, &[text.to_string()], &format!("sync:{table}.{text_col}")).await?;
+        if let Some(id) = map.get(text) {
+            if let Some(sid) = unit_sync_id(conn, *id).await? {
+                payload.insert((*link_col).to_string(), sid.into());
+            }
+        }
+    }
+    if table == "inspection_template_versions" {
+        let Some(raw) = payload
+            .get("checkpoint_package_json")
+            .and_then(serde_json::Value::as_str)
+        else {
+            return Ok(());
+        };
+        if !raw.contains("\"measurement_unit\"") {
+            return Ok(());
+        }
+        let Ok(mut package) = serde_json::from_str::<serde_json::Value>(raw) else {
+            return Ok(());
+        };
+        if let Some(entries) = package.as_array_mut() {
+            for entry in entries.iter_mut() {
+                let Some(obj) = entry.as_object_mut() else {
+                    continue;
+                };
+                let Some(old) = obj.remove("measurement_unit") else {
+                    continue;
+                };
+                if obj.get("measurement_unit_id").is_some_and(|v| !v.is_null()) {
+                    continue;
+                }
+                let mut link = serde_json::Value::Null;
+                if let Some(text) = old.as_str().map(str::trim).filter(|s| !s.is_empty()) {
+                    let map = map_unit_texts(
+                        conn,
+                        &[text.to_string()],
+                        "sync:inspection_template_versions.checkpoint_package_json",
+                    )
+                    .await?;
+                    if let Some(id) = map.get(text) {
+                        // Inbound packages carry sync ids (`sync::row_spec` json ref).
+                        if let Some(sid) = unit_sync_id(conn, *id).await? {
+                            link = sid.into();
+                        }
+                    }
+                }
+                obj.insert("measurement_unit_id".into(), link);
+            }
+        }
+        payload.insert("checkpoint_package_json".into(), package.to_string().into());
+    }
+    Ok(())
 }
 
 // ─── Retiring the fixed lookup `inventory.unit_of_measure` ──────────────────────────────────
@@ -1338,6 +1786,7 @@ pub async fn retire_legacy_unit_lookup(conn: &impl ConnectionTrait, mode: Legacy
                         symbol: &label,
                         is_active: is_active != 0 && deleted.is_none(),
                         source: "lookup:inventory.unit_of_measure",
+                        legacy_code: Some(&code),
                     },
                 )
                 .await?
@@ -1347,40 +1796,7 @@ pub async fn retire_legacy_unit_lookup(conn: &impl ConnectionTrait, mode: Legacy
         pairs.push((old_id, new_id));
     }
 
-    // Links, one statement per column: a value is moved once even when old and new ids overlap.
-    if !pairs.is_empty() {
-        conn.execute_unprepared(
-            "CREATE TEMP TABLE IF NOT EXISTS unit_lookup_map (old_id INTEGER PRIMARY KEY, new_id INTEGER NOT NULL)",
-        )
-        .await?;
-        conn.execute_unprepared("DELETE FROM unit_lookup_map").await?;
-        for (old_id, new_id) in &pairs {
-            conn.execute(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "INSERT OR REPLACE INTO unit_lookup_map (old_id, new_id) VALUES (?, ?)",
-                [(*old_id).into(), (*new_id).into()],
-            ))
-            .await?;
-        }
-        let guard = match mode {
-            LegacyLinkMode::Migration => String::new(),
-            LegacyLinkMode::Replay => format!(
-                " AND {{c}} NOT IN (SELECT u.id FROM reference_values u JOIN reference_sets rs ON rs.id = u.set_id \
-                   JOIN reference_domains d ON d.id = rs.domain_id WHERE UPPER(TRIM(d.code)) = '{UNITS_DOMAIN}')"
-            ),
-        };
-        for (table, column) in &columns {
-            let c = quote(column);
-            let guard = guard.replace("{c}", &c);
-            conn.execute_unprepared(&format!(
-                "UPDATE {t} SET {c} = (SELECT m.new_id FROM unit_lookup_map m WHERE m.old_id = {t}.{c}) \
-                  WHERE {c} IN (SELECT old_id FROM unit_lookup_map){guard}",
-                t = quote(table),
-            ))
-            .await?;
-        }
-        conn.execute_unprepared("DROP TABLE IF EXISTS unit_lookup_map").await?;
-    }
+    remap_unit_columns(conn, &columns, &pairs, mode == LegacyLinkMode::Replay).await?;
 
     // Aliases of the lookup values become legacy aliases of their unit.
     for (old_id, new_id) in &pairs {

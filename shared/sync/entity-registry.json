@@ -595,7 +595,8 @@
         "stock_locations",
         "articles",
         "purchase_order_lines",
-        "goods_receipts"
+        "goods_receipts",
+        "reference_values"
       ],
       "sync_status": "synced"
     },
@@ -890,6 +891,7 @@
       "parents": [
         "inventory_lots",
         "lookup_values",
+        "reference_values",
         "stock_reservations",
         "stock_locations",
         "warehouses",

@@ -73,6 +73,8 @@
     "GATE_UNIT_FACTOR_MISSING": "Conversion refusée : une des unités n'a pas encore d'unité de base ni de facteur (unité « à revoir » dans les Données de référence). Aucun facteur n'est supposé.",
     "GATE_UNIT_NO_CONVERSION": "Conversion refusée : aucune conversion n'est définie entre ces deux unités.",
     "GATE_UNIT_GENERAL_FACTOR_ON_UNIT": "Conversion refusée : le facteur général d'une unité de l'usine se règle sur l'unité, dans les Données de référence. Ici, ajoutez une conversion propre à un article.",
+    "GATE_UNIT_MERGE_CHANGES_QUANTITIES": "Fusion refusée : les deux unités ne représentent pas la même quantité (par exemple un sac de 25 kg et le kilogramme). Les stocks et les relevés qui les utilisent changeraient de sens.",
+    "GATE_UNIT_WHOLE_UNITS": "Quantité refusée : convertie dans l'unité de stock, elle ne donne pas un nombre entier, alors que l'article est suivi par numéro de série.",
     "GATE_WO_SHIFT_INVALID": "Planification refusée : le poste doit être matin, après-midi, nuit ou journée complète.",
     "GATE_INV_PERIOD_CLOSED": "Mouvement refusé : cette date tombe dans une période de stock clôturée. Utilisez une date postérieure à la période clôturée.",
     "GATE_PROC_SELF_APPROVAL": "Approbation refusée : vous ne pouvez pas approuver un document que vous avez vous-même demandé. Un autre approbateur doit l'approuver.",

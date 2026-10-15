@@ -692,7 +692,7 @@ async fn planned_parts_are_reserved_where_stock_covers_them() {
     exec(
         &db,
         "INSERT INTO articles (article_code, article_name, unit_value_id, is_active)
-         SELECT 'FLT-10', 'Filtre à huile', (SELECT id FROM lookup_values ORDER BY id LIMIT 1), 1",
+         SELECT 'FLT-10', 'Filtre à huile', (SELECT v.id FROM reference_values v JOIN reference_sets s ON s.id = v.set_id JOIN reference_domains d ON d.id = s.domain_id WHERE d.code = 'MEASURE.UNITS' AND s.status = 'published' AND v.code = 'U'), 1",
     )
     .await;
     exec(

@@ -766,7 +766,16 @@ async fn inbound_ref(
             )
         }
     };
-    match (cached_ref_id(conn, &sql, &key).await?, target_entity) {
+    let mut found = cached_ref_id(conn, &sql, &key).await?;
+    if found.is_none()
+        && target_table == "reference_values"
+        && crate::reference::units::is_unit_ref_column(table, &column.name)
+    {
+        // A device older than migration 201 names a unit by the sync id of the retired lookup
+        // `inventory.unit_of_measure`: the unit with that code (`reference::units`).
+        found = crate::reference::units::unit_for_legacy_sync_id(conn, &key).await?;
+    }
+    match (found, target_entity) {
         (Some(id), _) if column.is_text => Ok(Resolved::Local(id.to_string().into())),
         (Some(id), _) => Ok(Resolved::Local(id.into())),
         (None, Some(target_entity)) => Ok(Resolved::Missing {
@@ -879,7 +888,9 @@ pub(crate) async fn apply_row(
     payload_json: &str,
 ) -> AppResult<ApplyOutcome> {
     let table = layout.table();
-    let payload = parse_payload(table, payload_json)?;
+    let mut payload = parse_payload(table, payload_json)?;
+    // Unit texts of a device older than migration 201 become links to MEASURE.UNITS.
+    crate::reference::units::upgrade_legacy_unit_payload(conn, table, &mut payload).await?;
 
     let locator = if layout.natural_pk.is_some() {
         if natural_entity_sync_id(layout, &payload)? != entity_sync_id {

@@ -522,6 +522,7 @@ pub fn run() {
             commands::inventory::update_unit_conversion,
             commands::inventory::deactivate_unit_conversion,
             commands::inventory::convert_unit_quantity,
+            commands::inventory::preview_inventory_stock_quantity,
             commands::inventory::create_inventory_article_family,
             commands::inventory::update_inventory_article_family,
             commands::inventory::deactivate_inventory_article_family,

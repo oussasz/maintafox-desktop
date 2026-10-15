@@ -397,6 +397,7 @@ async fn add_costs(db: &DatabaseConnection, wo_id: i64) {
             lot_id: None,
             notes: None,
             actor_id: Some(actor),
+            entered_unit_value_id: None,
         },
     )
     .await

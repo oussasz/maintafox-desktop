@@ -791,3 +791,384 @@ async fn editing_a_unit_to_review_requires_its_base_and_factor_and_clears_the_fl
         "the review flag is cleared: {meta}"
     );
 }
+
+// ── Review follow-ups: sync of older devices, merge, publish, import, outbox ───────────────
+
+/// A unit straight in the published list (as a seeder, the migration or a published draft leave
+/// it), returning its id.
+async fn published_unit(
+    db: &DatabaseConnection,
+    code: &str,
+    meta: serde_json::Value,
+    base: Option<i64>,
+    tag: Option<&str>,
+) -> i64 {
+    let base = base.map(|b| b.to_string()).unwrap_or_else(|| "NULL".into());
+    let tag = tag.map(|t| format!("'{t}'")).unwrap_or_else(|| "NULL".into());
+    exec(
+        db,
+        &format!(
+            "INSERT INTO reference_values (entity_sync_id, set_id, parent_id, code, label, sort_order, semantic_tag, \
+             is_active, metadata_json) \
+             SELECT 'sync-unit-{code}', s.id, {base}, '{code}', '{code}', 500, {tag}, 1, '{meta}' \
+               FROM reference_sets s JOIN reference_domains d ON d.id = s.domain_id \
+              WHERE d.code = 'MEASURE.UNITS' AND s.status = 'published'"
+        ),
+    )
+    .await;
+    unit(db, code).await
+}
+
+async fn plain_article(db: &DatabaseConnection, code: &str, unit_id: i64) -> i64 {
+    exec(
+        db,
+        &format!(
+            "INSERT INTO articles (entity_sync_id, article_code, article_name, unit_value_id) \
+             VALUES ('sync-art-{code}', '{code}', 'Article {code}', {unit_id})"
+        ),
+    )
+    .await;
+    i64_of(db, &format!("SELECT id FROM articles WHERE article_code = '{code}'")).await
+}
+
+#[tokio::test]
+async fn rows_of_an_older_device_link_their_lookup_unit_and_unit_texts() {
+    use crate::sync::row_codec::{self, RowLocator};
+    let db = crate::db::test_db::seeded().await;
+    let kg = unit(&db, "KG").await;
+    plain_article(&db, "ART-LOCAL", kg).await;
+    let layout = crate::sync::row_layout::layout(&db, "articles").await.expect("layout");
+    let mut payload = row_codec::load_row_payload(&db, &layout, &RowLocator::Identity("sync-art-ART-LOCAL".into()))
+        .await
+        .expect("payload")
+        .expect("row")
+        .payload;
+    // The older device sends the unit as the sync id of the retired lookup value "KG".
+    payload.insert("unit_value_id".into(), units::legacy_lookup_sync_id("KG").into());
+    payload.insert("article_code".into(), "ART-OLD".into());
+    let applied = row_codec::apply_row(
+        &db,
+        &layout,
+        "sync-art-old-device",
+        "upsert",
+        &serde_json::Value::Object(payload).to_string(),
+    )
+    .await
+    .expect("apply");
+    assert!(
+        matches!(applied, crate::sync::materialize::ApplyOutcome::Applied),
+        "{applied:?}"
+    );
+    assert_eq!(article_unit(&db, "ART-OLD").await, kg);
+
+    // A meter of an older device names its unit by text: mapped with the synonym table, sent on
+    // as the unit's sync id; a link the payload already carries wins over a text.
+    let h_sync = opt_str(
+        &db,
+        &format!(
+            "SELECT entity_sync_id FROM reference_values WHERE id = {}",
+            unit(&db, "H").await
+        ),
+    )
+    .await
+    .expect("sync id");
+    let mut meter = serde_json::Map::new();
+    meter.insert("unit".into(), " Heures ".into());
+    units::upgrade_legacy_unit_payload(&db, "equipment_meters", &mut meter)
+        .await
+        .expect("upgrade meter");
+    assert!(meter.get("unit").is_none());
+    assert_eq!(meter["unit_value_id"], serde_json::json!(h_sync));
+    let mut linked = serde_json::Map::new();
+    linked.insert("unit".into(), "km".into());
+    linked.insert("unit_value_id".into(), h_sync.clone().into());
+    units::upgrade_legacy_unit_payload(&db, "equipment_meters", &mut linked)
+        .await
+        .expect("upgrade linked meter");
+    assert_eq!(linked["unit_value_id"], serde_json::json!(h_sync));
+
+    // A checkpoint package of an older device: the text becomes the unit's sync id.
+    let mut package = serde_json::Map::new();
+    package.insert(
+        "checkpoint_package_json".into(),
+        r#"[{"checkpoint_code":"T","measurement_unit":"°C"},{"checkpoint_code":"X","measurement_unit":"tr"}]"#.into(),
+    );
+    units::upgrade_legacy_unit_payload(&db, "inspection_template_versions", &mut package)
+        .await
+        .expect("upgrade");
+    let upgraded: serde_json::Value =
+        serde_json::from_str(package["checkpoint_package_json"].as_str().expect("text")).expect("json");
+    let degc_sync = opt_str(
+        &db,
+        &format!(
+            "SELECT entity_sync_id FROM reference_values WHERE id = {}",
+            unit(&db, "DEGC").await
+        ),
+    )
+    .await
+    .expect("sync id");
+    assert_eq!(upgraded[0]["measurement_unit_id"], serde_json::json!(degc_sync));
+    assert!(upgraded[0].get("measurement_unit").is_none());
+    // "tr" is ambiguous: a unit to review was created, never an assumed one.
+    assert!(units::list_units_to_review(&db)
+        .await
+        .expect("list")
+        .iter()
+        .any(|u| u.code == "TR"));
+}
+
+#[tokio::test]
+async fn merging_units_moves_every_record_and_keeps_quantities() {
+    let db = crate::db::test_db::seeded().await;
+    let actor = admin(&db).await;
+    let domain = crate::reference::domains::get_reference_domain_by_code(&db, UNITS_DOMAIN)
+        .await
+        .expect("domain");
+    let h = unit(&db, "H").await;
+    let kg = unit(&db, "KG").await;
+    let heures = published_unit(
+        &db,
+        "HEURES",
+        serde_json::json!({ "origin": "migrated", "symbol": "heures", "review_required": true }),
+        None,
+        None,
+    )
+    .await;
+    let sac = published_unit(
+        &db,
+        "SAC",
+        serde_json::json!({ "symbol": "sac", "base_factor": 25.0 }),
+        Some(kg),
+        Some("mass"),
+    )
+    .await;
+    exec(&db, "PRAGMA foreign_keys = OFF").await;
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO equipment_meters (entity_sync_id, equipment_id, name, meter_type, unit_value_id, current_reading, \
+             is_primary, is_active, created_at, updated_at) VALUES ('sync-meter-m', 1, 'MTR-M', 'HOURS', {heures}, 0, 0, 1, {NOW}, {NOW})"
+        ),
+    )
+    .await;
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO inspection_template_versions (entity_sync_id, template_id, version_no, effective_from, \
+             checkpoint_package_json, requires_review, row_version) VALUES ('sync-itv-m', 1, 1, {NOW}, \
+             '[{{\"checkpoint_code\":\"RUN\",\"measurement_unit_id\":{heures}}}]', 0, 1)"
+        ),
+    )
+    .await;
+    exec(&db, "PRAGMA foreign_keys = ON").await;
+
+    // A protected standard unit is never merged away.
+    assert!(
+        crate::reference::migrations::merge_reference_values(&db, domain.id, kg, h, actor)
+            .await
+            .is_err()
+    );
+    // A bag of 25 kg is not a kilogram.
+    assert!(
+        gate_of(crate::reference::migrations::merge_reference_values(&db, domain.id, sac, kg, actor).await)
+            .contains(units::GATE_UNIT_MERGE_CHANGES_QUANTITIES)
+    );
+    // A unit to review merged into h: meter and package follow, the unit is retired.
+    let merged = crate::reference::migrations::merge_reference_values(&db, domain.id, heures, h, actor)
+        .await
+        .expect("merge");
+    assert!(merged.source_deactivated);
+    assert_eq!(meter_unit(&db, "MTR-M").await, Some(h));
+    let package = opt_str(
+        &db,
+        "SELECT checkpoint_package_json FROM inspection_template_versions WHERE entity_sync_id = 'sync-itv-m'",
+    )
+    .await
+    .expect("package");
+    assert!(package.contains(&format!("\"measurement_unit_id\":{h}")), "{package}");
+}
+
+#[tokio::test]
+async fn publishing_a_new_version_moves_the_units_inside_checkpoint_packages() {
+    let db = crate::db::test_db::seeded().await;
+    let actor = admin(&db).await;
+    let bar_v1 = unit(&db, "BAR").await;
+    exec(&db, "PRAGMA foreign_keys = OFF").await;
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO inspection_template_versions (entity_sync_id, template_id, version_no, effective_from, \
+             checkpoint_package_json, requires_review, row_version) VALUES ('sync-itv-p', 1, 1, {NOW}, \
+             '[{{\"checkpoint_code\":\"PRESS\",\"measurement_unit_id\":{bar_v1}}}]', 0, 1)"
+        ),
+    )
+    .await;
+    exec(&db, "PRAGMA foreign_keys = ON").await;
+    let draft = units_draft(&db, actor).await;
+    publish_draft(&db, draft.id, actor).await;
+    let bar_v2 = unit(&db, "BAR").await;
+    assert_ne!(bar_v1, bar_v2, "the new version has its own ids");
+    let package = opt_str(
+        &db,
+        "SELECT checkpoint_package_json FROM inspection_template_versions WHERE entity_sync_id = 'sync-itv-p'",
+    )
+    .await
+    .expect("package");
+    assert!(
+        package.contains(&format!("\"measurement_unit_id\":{bar_v2}")),
+        "{package}"
+    );
+}
+
+#[tokio::test]
+async fn csv_import_applies_the_plant_unit_rules_and_never_imports_a_review_flag() {
+    use crate::reference::imports;
+    let db = crate::db::test_db::seeded().await;
+    let actor = admin(&db).await;
+    let draft = units_draft(&db, actor).await;
+    let domain = crate::reference::domains::get_reference_domain_by_code(&db, UNITS_DOMAIN)
+        .await
+        .expect("domain");
+    let row = |code: &str, parent: Option<&str>, meta: serde_json::Value| imports::ImportRowInput {
+        code: Some(code.into()),
+        label: Some(code.into()),
+        description: None,
+        parent_code: parent.map(str::to_string),
+        sort_order: None,
+        color_hex: None,
+        icon_name: None,
+        semantic_tag: None,
+        external_code: None,
+        metadata_json: Some(meta.to_string()),
+    };
+    let batch = imports::create_import_batch(&db, domain.id, "units.csv", "sha-units", Some(actor))
+        .await
+        .expect("batch");
+    imports::stage_import_rows(
+        &db,
+        batch.id,
+        vec![
+            row(
+                "BIDON",
+                Some("L"),
+                serde_json::json!({ "symbol": "bidon", "base_factor": 20 }),
+            ),
+            row(
+                "SANSBASE",
+                None,
+                serde_json::json!({ "symbol": "sb", "base_factor": 2 }),
+            ),
+            row(
+                "REVUE",
+                Some("KG"),
+                serde_json::json!({ "symbol": "rv", "base_factor": 2, "review_required": true }),
+            ),
+            row(
+                "ZERO",
+                Some("KG"),
+                serde_json::json!({ "symbol": "z", "base_factor": 0 }),
+            ),
+        ],
+    )
+    .await
+    .expect("stage");
+    let validated = imports::validate_import_batch(&db, batch.id, Some(actor))
+        .await
+        .expect("validate");
+    assert_eq!(validated.error_rows, 3, "{validated:?}");
+    imports::apply_import_batch(
+        &db,
+        batch.id,
+        imports::RefImportApplyPolicy {
+            include_warnings: true,
+            target_set_id: draft.id,
+        },
+        actor,
+    )
+    .await
+    .expect("apply");
+    let bidon = in_set(&db, draft.id, "BIDON").await;
+    assert_eq!(
+        opt_str(
+            &db,
+            &format!("SELECT semantic_tag FROM reference_values WHERE id = {bidon}")
+        )
+        .await
+        .as_deref(),
+        Some("volume"),
+        "the dimension of the base unit"
+    );
+    assert_eq!(
+        opt_i64(
+            &db,
+            &format!("SELECT parent_id FROM reference_values WHERE id = {bidon}")
+        )
+        .await,
+        Some(in_set(&db, draft.id, "L").await)
+    );
+    for refused in ["SANSBASE", "REVUE", "ZERO"] {
+        assert!(
+            opt_i64(
+                &db,
+                &format!(
+                    "SELECT id FROM reference_values WHERE set_id = {} AND code = '{refused}'",
+                    draft.id
+                )
+            )
+            .await
+            .is_none(),
+            "{refused} imported"
+        );
+    }
+}
+
+#[tokio::test]
+async fn migration_201_restages_pending_sync_rows_and_links_broken_unit_links() {
+    let db = migrated_before(M201).await;
+    legacy_plant(&db).await;
+    exec(&db, "PRAGMA foreign_keys = OFF").await;
+    // An article whose unit pointed at nothing, and pending outbox rows built before the migration.
+    exec(
+        &db,
+        "INSERT INTO articles (entity_sync_id, article_code, article_name, unit_value_id) \
+         VALUES ('sync-art-broken', 'ART-BROKEN', 'Broken', 987654)",
+    )
+    .await;
+    exec(
+        &db,
+        "INSERT INTO sync_outbox (idempotency_key, entity_type, entity_sync_id, operation, row_version, payload_json, \
+         payload_hash, status) VALUES ('k-old', 'articles', 'sync-art-ART-KG', 'upsert', 1, '{\"unit_value_id\":\"old\"}', 'h', 'pending'), \
+         ('k-del', 'articles', 'sync-art-gone', 'delete', 1, '{}', 'h2', 'pending')",
+    )
+    .await;
+    exec(&db, "PRAGMA foreign_keys = ON").await;
+    Migrator::up(&db, Some(1)).await.expect("migration 201");
+
+    let broken = units::unit_by_id(&db, article_unit(&db, "ART-BROKEN").await)
+        .await
+        .expect("read")
+        .expect("unknown unit");
+    assert_eq!(broken.code, "INCONNUE");
+    assert!(broken.review_required);
+    assert_eq!(
+        opt_i64(&db, "SELECT COUNT(*) FROM sync_outbox WHERE idempotency_key = 'k-old'").await,
+        Some(0),
+        "the stale payload is dropped"
+    );
+    assert_eq!(
+        opt_i64(&db, "SELECT COUNT(*) FROM sync_outbox WHERE idempotency_key = 'k-del'").await,
+        Some(1),
+        "a delete carries no unit and stays"
+    );
+    assert_eq!(
+        opt_i64(
+            &db,
+            "SELECT COUNT(*) FROM sync_capture_journal WHERE entity_type = 'articles' \
+             AND entity_sync_id = 'sync-art-ART-KG' AND operation = 'upsert'"
+        )
+        .await,
+        Some(1),
+        "the row is journaled again from its current state"
+    );
+    assert_reference_links_hold(&db).await;
+}

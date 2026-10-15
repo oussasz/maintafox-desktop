@@ -33,6 +33,14 @@
 //!   changed but gets a note asking to review it; the conversion engine refuses to use it.
 //! - The lookup values, their aliases and the domain are deleted.
 //!
+//! - A unit link that pointed at no unit at all (a lookup id that did not exist: possible with
+//!   rows applied while foreign keys were off) is linked to one unit "Unité inconnue" flagged to
+//!   review, so no record is left with a broken link; a final `foreign_key_check` of the unit
+//!   tables stops the migration if any link to `reference_values` is still broken.
+//! - Sync: pending outbox rows of the rewritten entity types were built before the migration
+//!   (lookup ids, unit texts): they are dropped and their rows journaled again, so the capture
+//!   drain after start-up stages their current state.
+//!
 //! **Safety.** One transaction (sea-orm-migration does not open one for SQLite); each part is
 //! guarded (lookup gone, text column gone, foreign key already retargeted), so a repeated run
 //! changes nothing. The foreign keys are retargeted in the stored table definitions (procedure of
@@ -429,6 +437,181 @@ async fn flag_cross_dimension_conversions<C: ConnectionTrait>(db: &C) -> Result<
     Ok(())
 }
 
+// ── Broken links, final check, sync outbox ───────────────────────────────────────────────
+
+/// Links to no unit at all are linked to one unit "Unité inconnue", flagged to review.
+async fn link_dangling_units<C: ConnectionTrait>(db: &C) -> Result<(), DbErr> {
+    let mut unknown: Option<i64> = None;
+    for (table, column) in units::UNIT_RECORD_COLUMNS {
+        if !table_exists(db, table).await? || !column_exists(db, table, column).await? {
+            continue;
+        }
+        let dangling = db
+            .query_one(Statement::from_string(
+                DatabaseBackend::Sqlite,
+                format!(
+                    "SELECT COUNT(*) AS n FROM {table} WHERE {column} IS NOT NULL \
+                      AND {column} NOT IN (SELECT id FROM reference_values)"
+                ),
+            ))
+            .await?
+            .map(|r| r.try_get::<i64>("", "n"))
+            .transpose()?
+            .unwrap_or(0);
+        if dangling == 0 {
+            continue;
+        }
+        let id = match unknown {
+            Some(id) => id,
+            None => {
+                let id = units::create_review_unit(
+                    db,
+                    &units::ReviewUnit {
+                        code_hint: "INCONNUE",
+                        label: "Unité inconnue",
+                        label_en: Some("Unknown unit"),
+                        symbol: "?",
+                        is_active: true,
+                        source: "migration201:broken_link",
+                        legacy_code: None,
+                    },
+                )
+                .await
+                .map_err(db_err)?;
+                unknown = Some(id);
+                id
+            }
+        };
+        // OR IGNORE: a conversion whose two units were both broken cannot point twice at one
+        // unit (from ≠ to); it stays broken and the final check names it.
+        db.execute(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            format!(
+                "UPDATE OR IGNORE {table} SET {column} = ? WHERE {column} IS NOT NULL \
+                  AND {column} NOT IN (SELECT id FROM reference_values)"
+            ),
+            [id.into()],
+        ))
+        .await?;
+        tracing::warn!(
+            table = *table,
+            column = *column,
+            dangling,
+            "migration 201: links to no unit linked to the unit to review « Unité inconnue »"
+        );
+    }
+    Ok(())
+}
+
+/// No unit link may point at a missing reference value after the migration.
+async fn assert_unit_links_hold<C: ConnectionTrait>(db: &C) -> Result<(), DbErr> {
+    let mut tables: Vec<&str> = units::UNIT_RECORD_COLUMNS.iter().map(|(t, _)| *t).collect();
+    tables.sort_unstable();
+    tables.dedup();
+    let mut broken = Vec::new();
+    for table in tables {
+        if !table_exists(db, table).await? {
+            continue;
+        }
+        let rows = db
+            .query_all(Statement::from_string(
+                DatabaseBackend::Sqlite,
+                format!("PRAGMA foreign_key_check('{table}')"),
+            ))
+            .await?;
+        let n = rows
+            .iter()
+            .filter(|r| r.try_get::<String>("", "parent").is_ok_and(|p| p == "reference_values"))
+            .count();
+        if n > 0 {
+            broken.push(format!("{table}: {n}"));
+        }
+    }
+    if broken.is_empty() {
+        Ok(())
+    } else {
+        Err(DbErr::Custom(format!(
+            "migration 201: rows still point at no unit of measure: {}",
+            broken.join(", ")
+        )))
+    }
+}
+
+/// Entity types whose rows this migration rewrites (their pending outbox rows predate it).
+const RESTAGED_TYPES: &[&str] = &[
+    "articles",
+    "inventory_supplier_prices",
+    "unit_conversions",
+    "equipment_meters",
+    "inspection_checkpoints",
+    "inspection_template_versions",
+];
+
+/// Pending outbox rows built before the migration carry lookup ids and unit texts the other
+/// devices could no longer apply: they are dropped, and the rows journaled again so the capture
+/// drain after start-up (`sync::capture::drain_capture_journal`) stages their current state.
+/// Deletes carry no unit and stay as they are.
+async fn restage_pending_rows<C: ConnectionTrait>(db: &C) -> Result<(), DbErr> {
+    if !table_exists(db, "sync_outbox").await? {
+        return Ok(());
+    }
+    let journal = table_exists(db, "sync_capture_journal").await?;
+    for entity in RESTAGED_TYPES {
+        let ids: Vec<String> = db
+            .query_all(Statement::from_sql_and_values(
+                DatabaseBackend::Sqlite,
+                "SELECT DISTINCT entity_sync_id FROM sync_outbox \
+                  WHERE entity_type = ? AND status = 'pending' AND operation NOT IN ('delete', 'archive') \
+                  ORDER BY entity_sync_id",
+                [(*entity).into()],
+            ))
+            .await?
+            .iter()
+            .map(|r| r.try_get::<String>("", "entity_sync_id"))
+            .collect::<Result<_, _>>()?;
+        if ids.is_empty() {
+            continue;
+        }
+        db.execute(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "DELETE FROM sync_outbox WHERE entity_type = ? AND status = 'pending' \
+               AND operation NOT IN ('delete', 'archive')",
+            [(*entity).into()],
+        ))
+        .await?;
+        if !journal || !table_exists(db, entity).await? {
+            continue;
+        }
+        for id in &ids {
+            db.execute(Statement::from_sql_and_values(
+                DatabaseBackend::Sqlite,
+                format!(
+                    "INSERT INTO sync_capture_journal (entity_type, entity_sync_id, natural_key_json, operation, \
+                       owner_user_sync_id) \
+                     SELECT ?, ?, NULL, 'upsert', NULL \
+                      WHERE EXISTS (SELECT 1 FROM {entity} WHERE entity_sync_id = ?) \
+                        AND NOT EXISTS (SELECT 1 FROM sync_capture_journal \
+                                         WHERE entity_type = ? AND entity_sync_id = ? AND operation = 'upsert')"
+                ),
+                [
+                    (*entity).into(),
+                    id.clone().into(),
+                    id.clone().into(),
+                    (*entity).into(),
+                    id.clone().into(),
+                ],
+            ))
+            .await?;
+        }
+        tracing::info!(
+            entity = *entity,
+            rows = ids.len(),
+            "migration 201: pending sync rows restaged from their current state"
+        );
+    }
+    Ok(())
+}
+
 pub(crate) async fn run<C: ConnectionTrait>(db: &C) -> Result<(), DbErr> {
     units::ensure_unit_catalog(db).await.map_err(db_err)?;
     retarget_unit_link_fks(db).await?;
@@ -439,6 +622,9 @@ pub(crate) async fn run<C: ConnectionTrait>(db: &C) -> Result<(), DbErr> {
     link_free_text_units(db, "inspection_checkpoints", "measurement_unit", "measurement_unit_id").await?;
     link_package_units(db).await?;
     flag_cross_dimension_conversions(db).await?;
+    link_dangling_units(db).await?;
+    assert_unit_links_hold(db).await?;
+    restage_pending_rows(db).await?;
     report_units_to_review(db).await
 }
 

@@ -480,6 +480,142 @@ async fn row_factor(
     Ok(Some((Some(id), m, path)))
 }
 
+// ─── Quantities entered in another unit (receipts, issues) ──────────────────────────────────
+
+/// Decimals kept on a stock quantity converted from another unit. The ledger and the balances
+/// hold stock quantities; a converted quantity is rounded half away from zero to this precision
+/// (one millionth of the stock unit), so the same entry gives the same stock quantity on every
+/// device. Whole-unit articles (serial-tracked) refuse a converted quantity that is not whole.
+pub const STOCK_QUANTITY_DECIMALS: i32 = 6;
+
+/// Rounds a converted stock quantity ([`STOCK_QUANTITY_DECIMALS`]).
+pub fn round_stock_quantity(quantity: f64) -> f64 {
+    let scale = 10f64.powi(STOCK_QUANTITY_DECIMALS);
+    (quantity * scale).round() / scale
+}
+
+/// A quantity entered by the storekeeper and the stock quantity it stands for.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct StockQuantity {
+    /// Quantity in the article's stock unit (what the ledger posts).
+    pub stock_quantity: f64,
+    pub stock_unit_value_id: i64,
+    /// Unit and quantity as entered; `None` when entered in the stock unit.
+    pub entered_unit_value_id: Option<i64>,
+    pub entered_quantity: f64,
+    /// Stock units per entered unit (1 in the stock unit).
+    pub factor: f64,
+    /// Rule that gave the factor: `identity`, `direct`, `inverse` (a conversion row) or
+    /// `unit_factor` (the general factor of a plant unit).
+    pub path: String,
+}
+
+impl StockQuantity {
+    /// The entered quantity of a part of the stock quantity (one lot of a receipt or an issue).
+    pub fn entered_part(&self, stock_part: f64) -> f64 {
+        if self.factor == 0.0 {
+            stock_part
+        } else {
+            round_stock_quantity(stock_part / self.factor)
+        }
+    }
+}
+
+/// Converts a quantity entered in `entered_unit_value_id` into the stock unit of the article, with
+/// the conversion order of [`convert_quantity`] (the article's own conversion, the plant unit's
+/// factor, a general row). `None` or the stock unit itself: no conversion. The entered unit must
+/// be an active unit of `MEASURE.UNITS`.
+pub async fn to_stock_quantity(
+    conn: &impl ConnectionTrait,
+    article_id: i64,
+    entered_unit_value_id: Option<i64>,
+    quantity: f64,
+) -> AppResult<StockQuantity> {
+    if !quantity.is_finite() {
+        return Err(AppError::ValidationFailed(vec!["quantity must be a number.".into()]));
+    }
+    let stock_unit: i64 = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT unit_value_id FROM articles WHERE id = ?",
+            [article_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "article".into(),
+            id: article_id.to_string(),
+        })?
+        .try_get("", "unit_value_id")
+        .map_err(|e| decode_err("unit_value_id", e))?;
+    let entered = entered_unit_value_id.filter(|u| *u != stock_unit);
+    let Some(unit) = entered else {
+        return Ok(StockQuantity {
+            stock_quantity: quantity,
+            stock_unit_value_id: stock_unit,
+            entered_unit_value_id: None,
+            entered_quantity: quantity,
+            factor: 1.0,
+            path: "identity".into(),
+        });
+    };
+    crate::reference::units::ensure_unit(conn, unit, "entered_unit_value_id", true).await?;
+    let one = convert_quantity(conn, 1.0, unit, stock_unit, Some(article_id)).await?;
+    Ok(StockQuantity {
+        stock_quantity: round_stock_quantity(quantity * one.factor),
+        stock_unit_value_id: stock_unit,
+        entered_unit_value_id: Some(unit),
+        entered_quantity: quantity,
+        factor: one.factor,
+        path: one.path,
+    })
+}
+
+/// Refuses a converted quantity that is not a whole number of stock units for an article that
+/// moves by whole units (serial-tracked): the entered unit does not fit the article.
+pub fn ensure_whole_stock_units(
+    tracking: &crate::inventory::domain::ArticleTracking,
+    converted: &StockQuantity,
+) -> AppResult<()> {
+    if converted.entered_unit_value_id.is_some()
+        && tracking.serial
+        && (converted.stock_quantity - converted.stock_quantity.round()).abs() > 1e-6
+    {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "{}: {} × {} = {} unités de stock ; un article suivi par numéro de série se mouvemente par unités entières.",
+            crate::reference::units::GATE_UNIT_WHOLE_UNITS,
+            converted.entered_quantity,
+            converted.factor,
+            converted.stock_quantity
+        )]));
+    }
+    Ok(())
+}
+
+/// Writes on a stock movement the unit and quantity the storekeeper entered (nothing for a
+/// quantity entered in the stock unit).
+pub async fn stamp_entered_unit(
+    conn: &impl ConnectionTrait,
+    movement_id: i64,
+    converted: &StockQuantity,
+    stock_part: f64,
+) -> AppResult<()> {
+    let Some(unit) = converted.entered_unit_value_id else {
+        return Ok(());
+    };
+    conn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE inventory_transactions SET entered_unit_value_id = ?, entered_quantity = ?,          unit_conversion_factor = ? WHERE id = ?",
+        [
+            unit.into(),
+            converted.entered_part(stock_part).into(),
+            converted.factor.into(),
+            movement_id.into(),
+        ],
+    ))
+    .await?;
+    Ok(())
+}
+
 #[cfg(test)]
 #[path = "unit_conversions_tests.rs"]
 mod tests;

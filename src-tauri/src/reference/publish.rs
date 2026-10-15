@@ -442,6 +442,32 @@ pub(crate) async fn remap_usage_to_published_set(
         .await?;
     changed += result.rows_affected() as i64;
 
+    // Units of measure inside the checkpoint packages of published checklists (JSON, not a
+    // foreign key): moved to the units of the new version too (`reference::units`).
+    let domain_code: Option<String> = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT code FROM reference_domains WHERE id = ?",
+            [domain_id.into()],
+        ))
+        .await?
+        .map(|r| r.try_get::<String>("", "code"))
+        .transpose()?;
+    if domain_code.is_some_and(|c| crate::reference::units::is_units_domain(&c)) {
+        let rows = conn
+            .query_all(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT ov.id AS old_id, nv.id AS new_id FROM reference_values ov                    JOIN reference_sets os ON os.id = ov.set_id                    JOIN reference_values nv ON nv.set_id = ? AND nv.code = ov.code                   WHERE os.domain_id = ? AND os.id <> ? AND os.status IN ('published', 'superseded')",
+                [published_set_id.into(), domain_id.into(), published_set_id.into()],
+            ))
+            .await?;
+        let pairs = rows
+            .iter()
+            .map(|r| Ok((r.try_get::<i64>("", "old_id")?, r.try_get::<i64>("", "new_id")?)))
+            .collect::<Result<Vec<(i64, i64)>, sea_orm::DbErr>>()?;
+        changed += crate::reference::units::remap_package_unit_ids(conn, &pairs).await? as i64;
+    }
+
     Ok(changed)
 }
 

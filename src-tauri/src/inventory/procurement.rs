@@ -950,6 +950,8 @@ pub async fn receive_purchase_order_goods(
         .ok_or_else(|| AppError::ValidationFailed(vec!["Unable to create goods receipt.".to_string()]))?
         .try_get("", "id")?;
 
+    // Accepted quantity of each line in the stock unit (for the fulfillment step after commit).
+    let mut accepted_stock: Vec<f64> = Vec::with_capacity(input.lines.len());
     for line in &input.lines {
         if line.received_qty <= 0.0 || line.accepted_qty < 0.0 || line.rejected_qty < 0.0 {
             return Err(AppError::ValidationFailed(vec![
@@ -964,6 +966,19 @@ pub async fn receive_purchase_order_goods(
         }
         ensure_article_active(&tx, line.article_id).await?;
         let warehouse_id = ensure_location_active(&tx, line.location_id).await?;
+        // Quantities entered in a supplier / purchase unit are converted to the stock unit; the PO,
+        // the ledger, the balances and the valuation all count in the stock unit.
+        let received = crate::inventory::unit_conversions::to_stock_quantity(
+            &tx,
+            line.article_id,
+            line.entered_unit_value_id,
+            line.received_qty,
+        )
+        .await?;
+        let rejected_qty =
+            crate::inventory::unit_conversions::round_stock_quantity(line.rejected_qty * received.factor);
+        let received_qty = received.stock_quantity;
+        let accepted_qty = crate::inventory::unit_conversions::round_stock_quantity(received_qty - rejected_qty);
 
         let po_line_row = tx
             .query_one(Statement::from_sql_and_values(
@@ -984,7 +999,7 @@ pub async fn receive_purchase_order_goods(
         // Agreed PO price: values the accepted quantity and feeds the weighted-average cost.
         let po_unit_price: Option<f64> = po_line_row.try_get("", "unit_price").ok().flatten();
         let current_received_qty: f64 = po_line_row.try_get("", "received_qty")?;
-        if current_received_qty + line.received_qty > ordered_qty + f64::EPSILON {
+        if current_received_qty + received_qty > ordered_qty + 1e-6 {
             return Err(AppError::ValidationFailed(vec![
                 "Receiving quantity exceeds ordered quantity.".to_string(),
             ]));
@@ -995,16 +1010,17 @@ pub async fn receive_purchase_order_goods(
             "INSERT INTO goods_receipt_lines
              (goods_receipt_id, po_line_id, article_id, location_id, received_qty, accepted_qty, rejected_qty,
               rejection_reason, ordered_qty, actual_lead_time_days, status, created_at,
-             unit_price, unit_cost_tenant)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'RECEIVED', ?, ?, ?)",
+             unit_price, unit_cost_tenant, entered_unit_value_id, entered_received_qty, entered_rejected_qty,
+             unit_conversion_factor)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'RECEIVED', ?, ?, ?, ?, ?, ?, ?)",
             [
                 gr_id.into(),
                 line.po_line_id.into(),
                 line.article_id.into(),
                 line.location_id.into(),
-                line.received_qty.into(),
-                line.accepted_qty.into(),
-                line.rejected_qty.into(),
+                received_qty.into(),
+                accepted_qty.into(),
+                rejected_qty.into(),
                 line.rejection_reason.clone().map_or(Value::String(None), Value::from),
                 ordered_qty.into(),
                 {
@@ -1027,6 +1043,19 @@ pub async fn receive_purchase_order_goods(
                 now_iso().into(),
                 po_unit_price.map_or(Value::Double(None), Value::from),
                 po_unit_price.map(|p| p * rate).map_or(Value::Double(None), Value::from),
+                received.entered_unit_value_id.map_or(Value::BigInt(None), Value::from),
+                received
+                    .entered_unit_value_id
+                    .map(|_| line.received_qty)
+                    .map_or(Value::Double(None), Value::from),
+                received
+                    .entered_unit_value_id
+                    .map(|_| line.rejected_qty)
+                    .map_or(Value::Double(None), Value::from),
+                received
+                    .entered_unit_value_id
+                    .map(|_| received.factor)
+                    .map_or(Value::Double(None), Value::from),
             ],
         ))
         .await?;
@@ -1045,18 +1074,20 @@ pub async fn receive_purchase_order_goods(
                  updated_at = ?
              WHERE id = ?",
             [
-                line.received_qty.into(),
-                line.received_qty.into(),
+                received_qty.into(),
+                received_qty.into(),
                 now_iso().into(),
                 line.po_line_id.into(),
             ],
         ))
         .await?;
 
-        if line.accepted_qty > 0.0 {
+        accepted_stock.push(accepted_qty);
+        if accepted_qty > 0.0 {
             // Tracked articles: the accepted quantity is received into its lots / serials.
             let tracking = crate::inventory::lots::article_tracking(&tx, line.article_id).await?;
-            crate::inventory::lots::ensure_whole_units(&tracking, line.accepted_qty)?;
+            crate::inventory::unit_conversions::ensure_whole_stock_units(&tracking, &received)?;
+            crate::inventory::lots::ensure_whole_units(&tracking, accepted_qty)?;
             let mut portions: Vec<(Option<i64>, f64)> = Vec::new();
             if tracking.is_tracked() {
                 let lots = line.lots.clone().unwrap_or_default();
@@ -1067,10 +1098,9 @@ pub async fn receive_purchase_order_goods(
                     )]));
                 }
                 let total: f64 = lots.iter().map(|l| l.quantity).sum();
-                if (total - line.accepted_qty).abs() > 1e-6 {
+                if (total - accepted_qty).abs() > 1e-6 {
                     return Err(AppError::ValidationFailed(vec![format!(
-                        "The lots add up to {total}, but {} were accepted.",
-                        line.accepted_qty
+                        "The lots add up to {total}, but {accepted_qty} were accepted (in the stock unit)."
                     )]));
                 }
                 for lot in &lots {
@@ -1104,7 +1134,7 @@ pub async fn receive_purchase_order_goods(
                         "This article is not lot-tracked; receive it without lots.".to_string(),
                     ]));
                 }
-                portions.push((None, line.accepted_qty));
+                portions.push((None, accepted_qty));
             }
 
             let before = get_balance_snapshot(&tx, line.article_id, warehouse_id, line.location_id).await?;
@@ -1113,7 +1143,7 @@ pub async fn receive_purchase_order_goods(
                 line.article_id,
                 warehouse_id,
                 line.location_id,
-                before.on_hand + line.accepted_qty,
+                before.on_hand + accepted_qty,
                 before.reserved,
             )
             .await?;
@@ -1137,6 +1167,7 @@ pub async fn receive_purchase_order_goods(
                 if let Some(lot) = lot_id {
                     crate::inventory::lots::set_movement_lot(&tx, movement_id, lot).await?;
                 }
+                crate::inventory::unit_conversions::stamp_entered_unit(&tx, movement_id, &received, quantity).await?;
                 crate::inventory::periods::set_movement_posting_date(&tx, movement_id, &posting_date).await?;
                 match unit_cost_tenant {
                     Some(cost) => {
@@ -1209,8 +1240,8 @@ pub async fn receive_purchase_order_goods(
     if let Some(ref action) = input.fulfillment_action {
         if matches!(action.as_str(), "RESERVE_FOR_DEMAND" | "ISSUE_TO_DEMAND") {
             // For each accepted line, check if there's an open reservation linked to the PO demand
-            for line in &input.lines {
-                if line.accepted_qty <= 0.0 {
+            for (line, accepted_qty) in input.lines.iter().zip(accepted_stock.iter().copied()) {
+                if accepted_qty <= 0.0 {
                     continue;
                 }
                 // Find open reservation for this article/demand combo
@@ -1235,7 +1266,7 @@ pub async fn receive_purchase_order_goods(
                             db,
                             crate::inventory::domain::InventoryIssueInput {
                                 reservation_id,
-                                quantity: line.accepted_qty,
+                                quantity: accepted_qty,
                                 source_type: Some("PO_GR".to_string()),
                                 // A PO_GR movement points to its goods receipt, like the GR_ACCEPT
                                 // movement of the same receipt.

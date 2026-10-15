@@ -5,6 +5,11 @@
  *
  * The scan field works with a keyboard-wedge scanner: the scanner types the code and presses
  * Enter, which looks the code up; Enter in the quantity field issues.
+ *
+ * The quantity may be typed in another unit than the article's stock unit (grams of a part kept
+ * in kilograms, a bag of a part kept in kilograms…): the stock quantity it stands for is shown
+ * live and checked against the stock; the ledger and the cost count in the stock unit, the
+ * movement keeps the unit and quantity typed.
  */
 import type { ColumnDef } from "@tanstack/react-table";
 import { PackageCheck, ScanLine } from "lucide-react";
@@ -14,6 +19,12 @@ import { useTranslation } from "react-i18next";
 import { PermissionGate } from "@/components/PermissionGate";
 import { DataTable } from "@/components/data/DataTable";
 import { WorkOrderReferencePicker } from "@/components/inventory/WorkOrderReferencePicker";
+import { toStockQuantity, useEntryFactor } from "@/components/inventory/entered-unit";
+import {
+  MeasureUnitSelect,
+  unitSymbol,
+  useMeasureUnits,
+} from "@/components/lookups/MeasureUnitPicker";
 import { Button } from "@/components/ui/button";
 import { ErrorState } from "@/components/ui/data-state";
 import { Input } from "@/components/ui/input";
@@ -106,6 +117,9 @@ export function InventoryIssueDesk({ reloadToken = 0 }: InventoryIssueDeskProps)
   const [reservationChoice, setReservationChoice] = useState<string>(DIRECT_ISSUE);
   const [lotChoice, setLotChoice] = useState<string>(AUTO_LOT);
   const [quantity, setQuantity] = useState("");
+  /** Unit the quantity is typed in; null = the article's stock unit. */
+  const [entryUnitId, setEntryUnitId] = useState<number | null>(null);
+  const { units } = useMeasureUnits();
   const [issuing, setIssuing] = useState(false);
   const [issueError, setIssueError] = useState<unknown>(null);
   const [outcome, setOutcome] = useState<{
@@ -121,7 +135,12 @@ export function InventoryIssueDesk({ reloadToken = 0 }: InventoryIssueDeskProps)
   const [expiringVersion, setExpiringVersion] = useState(0);
 
   const tracked = articleRow ? isLotTracked(articleRow) : false;
-  const unit = scan?.unit_code ?? "";
+  // Stock unit of the article: what balances, reservations and lots count in.
+  const unit = articleRow?.unit_symbol ?? scan?.unit_code ?? "";
+  const stockUnitId = articleRow?.unit_value_id ?? null;
+  const entry = useEntryFactor(scan?.article_id ?? null, entryUnitId, stockUnitId);
+  const entryUnit = entryUnitId != null ? units.find((u) => u.id === entryUnitId) : undefined;
+  const entryUnitLabel = entryUnit ? unitSymbol(entryUnit) : unit;
 
   // ── Expiry warning list ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -244,6 +263,11 @@ export function InventoryIssueDesk({ reloadToken = 0 }: InventoryIssueDeskProps)
   const chosenLot = lots.find((l) => String(l.lot_id) === lotChoice) ?? null;
   const fefo = fefoSuggestion(lots);
   const parsedQty = Number(quantity.replace(",", "."));
+  // Quantity in the stock unit (null while the factor of the typed unit is unknown or refused).
+  const stockQty =
+    entry.factor != null && Number.isFinite(parsedQty)
+      ? toStockQuantity(parsedQty, entry.factor)
+      : null;
   const reservedLeft = selectedReservation
     ? selectedReservation.quantity_reserved - selectedReservation.quantity_issued
     : null;
@@ -261,9 +285,13 @@ export function InventoryIssueDesk({ reloadToken = 0 }: InventoryIssueDeskProps)
         ? t("issueDesk.blockers.location")
         : !(parsedQty > 0)
           ? t("issueDesk.blockers.quantity")
-          : parsedQty > maxQty + 1e-9
-            ? t("issueDesk.blockers.tooMuch", { qty: qty(maxQty), unit })
-            : null;
+          : entry.error
+            ? t("issueDesk.blockers.unitRefused")
+            : stockQty == null
+              ? t("issueDesk.blockers.converting")
+              : stockQty > maxQty + 1e-9
+                ? t("issueDesk.blockers.tooMuch", { qty: qty(maxQty), unit })
+                : null;
 
   const resetArticle = useCallback(() => {
     setScan(null);
@@ -272,6 +300,7 @@ export function InventoryIssueDesk({ reloadToken = 0 }: InventoryIssueDeskProps)
     setLotChoice(AUTO_LOT);
     setReservationChoice(DIRECT_ISSUE);
     setQuantity("");
+    setEntryUnitId(null);
     setIssueError(null);
     window.setTimeout(() => scanRef.current?.focus(), 0);
   }, []);
@@ -324,12 +353,13 @@ export function InventoryIssueDesk({ reloadToken = 0 }: InventoryIssueDeskProps)
         reservation_id: selectedReservation?.id ?? null,
         lot_id: tracked && chosenLot ? chosenLot.lot_id : null,
         notes: null,
+        entered_unit_value_id: entryUnitId,
       });
       setOutcome({ result, articleCode: scan.article_code, unit });
       pushAppToast({
         title: t("issueDesk.outcome.toast", {
           qty: qty(parsedQty),
-          unit,
+          unit: entryUnitLabel,
           code: scan.article_code,
           wo: result.work_order_code ?? workOrder?.code ?? "",
         }),
@@ -578,21 +608,46 @@ export function InventoryIssueDesk({ reloadToken = 0 }: InventoryIssueDeskProps)
               </div>
             ) : null}
 
-            <div className="space-y-1">
-              <Label htmlFor="inv-issue-qty">
-                {t("issueDesk.quantity.label")}
-                {unit ? ` (${unit})` : ""}
-              </Label>
-              <Input
-                id="inv-issue-qty"
-                inputMode="decimal"
-                className="h-11 tabular-nums"
-                value={quantity}
-                disabled={!scan}
-                onChange={(e) => setQuantity(e.target.value)}
-                aria-describedby={blocker ? "inv-issue-blocker" : undefined}
-              />
+            <div className="grid gap-2 sm:grid-cols-[1fr_1fr]">
+              <div className="space-y-1">
+                <Label htmlFor="inv-issue-qty">
+                  {t("issueDesk.quantity.label")}
+                  {entryUnitLabel ? ` (${entryUnitLabel})` : ""}
+                </Label>
+                <Input
+                  id="inv-issue-qty"
+                  inputMode="decimal"
+                  className="h-11 tabular-nums"
+                  value={quantity}
+                  disabled={!scan}
+                  onChange={(e) => setQuantity(e.target.value)}
+                  aria-describedby={
+                    [
+                      entryUnitId != null ? "inv-issue-stock-qty" : null,
+                      blocker ? "inv-issue-blocker" : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" ") || undefined
+                  }
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="inv-issue-unit">{t("issueDesk.quantity.unit")}</Label>
+                <MeasureUnitSelect
+                  id="inv-issue-unit"
+                  value={entryUnitId ?? stockUnitId}
+                  units={units}
+                  disabled={!scan || stockUnitId == null}
+                  onChange={(next) => setEntryUnitId(next === stockUnitId ? null : next)}
+                  className="h-11 w-full rounded-md border border-surface-border bg-surface-0 px-2 text-sm"
+                />
+              </div>
             </div>
+            {entryUnitId != null && stockQty != null && !entry.error ? (
+              <p id="inv-issue-stock-qty" role="status" className="text-xs text-text-secondary">
+                {t("issueDesk.quantity.inStock", { qty: qty(stockQty), unit })}
+              </p>
+            ) : null}
 
             {blocker ? (
               <p id="inv-issue-blocker" role="status" className="text-xs text-text-muted">

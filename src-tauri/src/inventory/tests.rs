@@ -515,6 +515,7 @@ async fn procurement_requisition_po_gr_flow_keeps_traceability() {
                 rejected_qty: 0.0,
                 rejection_reason: None,
                 lots: None,
+                entered_unit_value_id: None,
             }],
             fulfillment_action: None,
             actor_id: None,

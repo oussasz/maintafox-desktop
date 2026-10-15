@@ -559,6 +559,21 @@ pub async fn validate_import_batch(
             status = "error";
         }
 
+        // ── Check: units of measure (a plant unit names its base standard unit and factor) ──
+        if crate::reference::units::is_units_domain(&domain.code) {
+            for problem in crate::reference::units::import_row_problems(
+                input.parent_code.as_deref(),
+                input.metadata_json.as_deref(),
+            ) {
+                messages.push(ImportRowMessage {
+                    category: "InvalidUnit".into(),
+                    severity: "error".into(),
+                    message: format!("Ligne {row_no}: {problem}"),
+                });
+                status = "error";
+            }
+        }
+
         let messages_json = serde_json::to_string(&messages)?;
 
         txn.execute(Statement::from_sql_and_values(
@@ -702,7 +717,7 @@ pub async fn apply_import_batch(
             }
         };
 
-        let input: ImportRowInput = serde_json::from_str(&raw_json).unwrap_or(ImportRowInput {
+        let mut input: ImportRowInput = serde_json::from_str(&raw_json).unwrap_or(ImportRowInput {
             code: None,
             label: None,
             description: None,
@@ -754,7 +769,8 @@ pub async fn apply_import_batch(
             }
             None => None,
         };
-        let semantic_tag =
+        let mut parent_id = parent_id;
+        let mut semantic_tag =
             match values::checked_semantic_tag(&txn, &target_domain.code, input.semantic_tag.as_deref()).await {
                 Ok(tag) => tag,
                 Err(_) => {
@@ -762,6 +778,41 @@ pub async fn apply_import_batch(
                     continue;
                 }
             };
+        if crate::reference::units::is_units_domain(&target_domain.code) {
+            // Same rules as the editor: base standard unit of this version (`parent_code`), factor
+            // > 0, dimension of the base; a "to review" flag is never imported.
+            input.metadata_json = crate::reference::units::reviewed_metadata(input.metadata_json.as_deref());
+            let base = match input.parent_code.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
+                Some(base_code) => txn
+                    .query_one(Statement::from_sql_and_values(
+                        DbBackend::Sqlite,
+                        "SELECT id FROM reference_values WHERE set_id = ? AND UPPER(TRIM(code)) = UPPER(TRIM(?))",
+                        [policy.target_set_id.into(), base_code.into()],
+                    ))
+                    .await?
+                    .and_then(|r| r.try_get::<i64>("", "id").ok()),
+                None => None,
+            };
+            match crate::reference::units::checked_plant_unit(
+                &txn,
+                policy.target_set_id,
+                &code,
+                base,
+                semantic_tag.as_deref(),
+                input.metadata_json.as_deref(),
+            )
+            .await
+            {
+                Ok(dimension) => {
+                    parent_id = base;
+                    semantic_tag = Some(dimension);
+                }
+                Err(_) => {
+                    errored += 1;
+                    continue;
+                }
+            }
+        }
 
         // Check if this code already exists in the draft set.
         if let Some(existing_id) = existing_in_set.get(&code) {

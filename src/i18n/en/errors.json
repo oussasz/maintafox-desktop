@@ -73,6 +73,8 @@
     "GATE_UNIT_FACTOR_MISSING": "Conversion refused: one of the units has no base unit or factor yet (unit \"to review\" in Reference data). No factor is assumed.",
     "GATE_UNIT_NO_CONVERSION": "Conversion refused: no conversion is defined between these two units.",
     "GATE_UNIT_GENERAL_FACTOR_ON_UNIT": "Conversion refused: the general factor of a plant unit is set on the unit, in Reference data. Here, add a conversion for one article.",
+    "GATE_UNIT_MERGE_CHANGES_QUANTITIES": "Merge refused: the two units do not stand for the same quantity (for example a 25 kg bag and the kilogram). Stock and readings using them would change meaning.",
+    "GATE_UNIT_WHOLE_UNITS": "Quantity refused: converted to the stock unit it is not a whole number, and the article is serial-tracked.",
     "GATE_WO_SHIFT_INVALID": "Planning refused: the shift must be morning, afternoon, night or full day.",
     "GATE_INV_PERIOD_CLOSED": "Posting refused: this date falls in a closed inventory period. Use a date after the closed period.",
     "GATE_PROC_SELF_APPROVAL": "Approval refused: you cannot approve a document you requested yourself. Another approver must approve it.",

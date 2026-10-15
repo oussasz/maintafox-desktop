@@ -2410,6 +2410,8 @@ pub async fn issue_reserved_stock(db: &DatabaseConnection, input: InventoryIssue
             lot_id: None,
             notes: input.notes.clone(),
             actor_id: None,
+            // A planned part is issued in the stock unit of its reservation.
+            entered_unit_value_id: None,
         },
         crate::inventory::issue::IssueSourceOverride {
             source_type: input.source_type.clone(),
