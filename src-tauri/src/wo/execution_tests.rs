@@ -982,7 +982,7 @@ mod tests {
         .await
         .expect("submit_wo");
 
-        // plan_wo with shift = "nuit"
+        // plan_wo with shift = "night" (one of the WO_SHIFTS codes)
         let planned = execution::plan_wo(
             &db,
             WoPlanInput {
@@ -992,7 +992,7 @@ mod tests {
                 planner_id: actor,
                 planned_start: Some("2026-04-10T08:00:00Z".to_string()),
                 planned_end: Some("2026-04-10T16:00:00Z".to_string()),
-                shift: Some("nuit".into()),
+                shift: Some("night".into()),
                 expected_duration_hours: None,
                 planned_downtime_hours: None,
                 urgency_id: None,
@@ -1003,8 +1003,8 @@ mod tests {
 
         assert_eq!(
             planned.shift.as_deref(),
-            Some("nuit"),
-            "plan_wo response must carry shift = 'nuit'"
+            Some("night"),
+            "plan_wo response must carry shift = 'night'"
         );
 
         let reloaded = queries::get_work_order(&db, wo.id)
@@ -1014,7 +1014,7 @@ mod tests {
 
         assert_eq!(
             reloaded.shift.as_deref(),
-            Some("nuit"),
+            Some("night"),
             "shift must survive a round-trip through the database"
         );
     }

@@ -124,8 +124,9 @@ async fn dangling_failure_detail(db: &DatabaseConnection, wo: i64) -> (i64, i64)
     (fd, dangling)
 }
 
-/// Failure detail coded with a governed value (the declared foreign key to `failure_codes`
-/// does not describe these ids, see migration 114).
+/// Failure detail written without foreign-key checks. Since migration 178 the mode points to
+/// `reference_values`; a legacy `failure_codes` id can only exist from older data or an old
+/// device's sync, which is exactly what the detector must flag.
 async fn insert_failure_detail_unchecked(db: &DatabaseConnection, wo: i64, mode: i64) -> i64 {
     exec(db, "PRAGMA foreign_keys = OFF", vec![]).await;
     let fd = insert_failure_detail(db, wo, Some(mode)).await;
@@ -252,7 +253,7 @@ async fn failure_mode_outside_the_governed_list_is_flagged() {
     exec(&db, "DELETE FROM reference_values WHERE id = ?", vec![legacy.into()]).await;
     exec(&db, "PRAGMA foreign_keys = ON", vec![]).await;
     insert_failure_detail_unchecked(&db, wo, governed).await;
-    let fd_legacy = insert_failure_detail(&db, wo, Some(legacy)).await;
+    let fd_legacy = insert_failure_detail_unchecked(&db, wo, legacy).await;
     let (fd_dangling, dangling) = dangling_failure_detail(&db, wo).await;
 
     assert_eq!(run_data_integrity_detectors(&db).await.expect("run"), 2);
@@ -570,7 +571,7 @@ async fn repair_refuses_to_clear_a_legacy_failure_code() {
     let legacy = insert_failure_code(&db, "DI_LEGACY_ONLY", "mode", true).await;
     exec(&db, "DELETE FROM reference_values WHERE id = ?", vec![legacy.into()]).await;
     exec(&db, "PRAGMA foreign_keys = ON", vec![]).await;
-    let fd = insert_failure_detail(&db, wo, Some(legacy)).await;
+    let fd = insert_failure_detail_unchecked(&db, wo, legacy).await;
     run_data_integrity_detectors(&db).await.expect("run");
     let f = only_open_finding(&db, "FK_ORPHAN_FAILURE_MODE").await;
 
