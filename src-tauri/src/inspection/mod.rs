@@ -4,6 +4,7 @@ pub mod queries;
 pub mod results;
 pub mod routing;
 pub mod runner;
+pub mod scheduler;
 pub mod scheduling;
 pub mod signals;
 

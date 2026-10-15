@@ -114,11 +114,7 @@ pub async fn route_inspection_anomaly_to_di(
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| a.description.clone());
 
-    let reported_urgency = match a.severity {
-        1 | 2 => "low",
-        3 => "normal",
-        _ => "high",
-    };
+    let reported_urgency = severity_urgency_code(a.severity);
 
     let symptom_code_id = crate::di::reference_catalog::resolve_system_di_symptom_id(db, &a.anomaly_type).await?;
 
@@ -130,7 +126,8 @@ pub async fn route_inspection_anomaly_to_di(
         origin_type: "inspection".into(),
         request_type: "repair".to_string(),
         symptom_code_id: Some(symptom_code_id),
-        impact_level: "medium".into(),
+        // A reading tells nothing about production impact: the reviewer assesses it.
+        impact_level: "unknown".into(),
         production_impact: false,
         safety_flag: a.severity >= 4,
         environmental_flag: false,
@@ -243,7 +240,7 @@ pub async fn route_inspection_anomaly_to_wo(
         source_rca_cause_text: None,
         entity_id: None,
         planner_id: None,
-        urgency_id: None,
+        urgency_id: crate::di::conversion::resolve_wo_urgency_id(db, severity_urgency_code(a.severity)).await?,
         title,
         description: Some(description),
         notes: None,
@@ -302,4 +299,15 @@ pub async fn defer_inspection_anomaly(
     let updated = load_anomaly(&txn, anomaly_id).await?;
     txn.commit().await?;
     Ok(updated)
+}
+
+/// Urgency of a request or work order raised from a finding, as a code of the governed DI.PRIORITY
+/// list (low / medium / high / critical), which the work-order urgency levels share.
+pub(crate) fn severity_urgency_code(severity: i64) -> &'static str {
+    match severity {
+        i64::MIN..=2 => "low",
+        3 => "medium",
+        4 => "high",
+        _ => "critical",
+    }
 }

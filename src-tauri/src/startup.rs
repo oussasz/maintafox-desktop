@@ -356,6 +356,14 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
     }
 
     {
+        let inspection_db = app_state.db.clone();
+        tauri::async_runtime::spawn(async move {
+            crate::inspection::scheduler::start_inspection_round_scheduler(inspection_db).await;
+        });
+        info!("startup: inspection round scheduler started");
+    }
+
+    {
         let backup_db = app_state.db.clone();
         let backup_dir = crate::commands::backup::app_backup_dir(&app)?;
         tauri::async_runtime::spawn(async move {

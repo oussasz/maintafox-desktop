@@ -963,6 +963,10 @@ async fn an_out_of_tolerance_anomaly_becomes_a_linked_request_with_a_written_tit
     assert_eq!(di.title, title);
     assert_eq!(di.equipment_id, row.asset_id.expect("asset"));
     assert_eq!(di.source_inspection_anomaly_id, Some(anomaly_id), "the request points back");
+    // Urgency and impact are real codes of the governed DI lists, so conversion to an OT keeps them.
+    assert_eq!(di.reported_urgency, routing::severity_urgency_code(anomaly.severity));
+    assert!(["low", "medium", "high", "critical"].contains(&di.reported_urgency.as_str()));
+    assert_eq!(di.impact_level, "unknown");
     assert!(di.description.contains("Reading 90"));
     assert_eq!(anomaly.linked_di_id, Some(di.id));
     assert_eq!(anomaly.resolution_status, "triaged");
@@ -1078,6 +1082,7 @@ async fn a_follow_up_needs_equipment_and_a_work_order_links_back() {
     .await
     .expect("route to WO");
     assert_eq!(wo.title, "Replace drive-end bearing on PMP-101");
+    assert!(wo.urgency_id.is_some(), "the OT gets the urgency matching the finding's severity");
     assert_eq!(anomaly.linked_work_order_id, Some(wo.id));
     let source: Option<i64> = db
         .query_one(Statement::from_sql_and_values(
@@ -1723,4 +1728,10 @@ async fn the_round_page_searches_and_counts_beyond_the_page() {
         .await,
         "due_from must be an RFC 3339 timestamp",
     );
+}
+
+#[test]
+fn finding_severity_maps_to_governed_urgency_codes() {
+    use routing::severity_urgency_code as code;
+    assert_eq!([code(1), code(2), code(3), code(4), code(5)], ["low", "low", "medium", "high", "critical"]);
 }
