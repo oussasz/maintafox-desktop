@@ -10,18 +10,19 @@ use serde::{Deserialize, Serialize};
 
 pub use crate::wo::workflow::{assert_action_allowed, guard_wo_transition, WoAction, WoStatus};
 
-/// Shift codes a work order can be planned on (`WoShift` in the UI; labels are translated there).
-pub const WO_SHIFTS: [&str; 4] = ["morning", "afternoon", "night", "full_day"];
+/// Fixed shift codes of work orders planned before migration 202 (`WoShift` in the UI). They stay
+/// readable on those work orders; a plan now takes a shift of the team's Classe horaire
+/// (`wo::shifts`).
+pub const LEGACY_WO_SHIFTS: [&str; 4] = ["morning", "afternoon", "night", "full_day"];
 
-/// Refuses a shift outside `WO_SHIFTS` (empty = no shift). Without this, any text was stored and
-/// every list containing that work order failed to load in the UI.
+/// Refuses any text shift on a new plan (empty = no shift): the old fixed codes matched no
+/// timetable, and free text broke every list containing the work order. The shift is chosen among
+/// the team's Classe horaire windows instead (`shift_class_version_id`).
 pub fn validate_wo_shift(shift: Option<&str>) -> AppResult<()> {
     match shift.map(str::trim) {
         None | Some("") => Ok(()),
-        Some(s) if WO_SHIFTS.contains(&s) => Ok(()),
         Some(s) => Err(AppError::ValidationFailed(vec![format!(
-            "GATE_WO_SHIFT_INVALID: shift '{s}' is not one of {}",
-            WO_SHIFTS.join(", ")
+            "GATE_WO_SHIFT_INVALID: shift '{s}' is no longer accepted; choose a shift of the team's Classe horaire"
         )])),
     }
 }
@@ -107,7 +108,15 @@ pub struct WorkOrder {
     // Timing
     pub planned_start: Option<String>,
     pub planned_end: Option<String>,
+    /// Old fixed shift code (`morning` … `full_day`), kept readable on work orders planned before
+    /// migration 202; new plans use the team's Classe horaire below.
     pub shift: Option<String>,
+    /// Classe horaire version the work order is planned on, and the shift window it was planned
+    /// with (`HH:MM`, kept even if the timetable changes later).
+    pub shift_class_version_id: Option<i64>,
+    pub shift_class_label: Option<String>,
+    pub shift_start: Option<String>,
+    pub shift_end: Option<String>,
     pub scheduled_at: Option<String>,
     pub actual_start: Option<String>,
     pub actual_end: Option<String>,
@@ -409,6 +418,18 @@ pub fn map_work_order(row: &QueryResult) -> AppResult<WorkOrder> {
         shift: row
             .try_get::<Option<String>>("", "shift")
             .map_err(|e| decode_err("shift", e))?,
+        shift_class_version_id: row
+            .try_get::<Option<i64>>("", "shift_class_version_id")
+            .map_err(|e| decode_err("shift_class_version_id", e))?,
+        shift_class_label: row
+            .try_get::<Option<String>>("", "shift_class_label")
+            .map_err(|e| decode_err("shift_class_label", e))?,
+        shift_start: row
+            .try_get::<Option<String>>("", "shift_start")
+            .map_err(|e| decode_err("shift_start", e))?,
+        shift_end: row
+            .try_get::<Option<String>>("", "shift_end")
+            .map_err(|e| decode_err("shift_end", e))?,
         scheduled_at: row
             .try_get::<Option<String>>("", "scheduled_at")
             .map_err(|e| decode_err("scheduled_at", e))?,
@@ -641,20 +662,15 @@ pub async fn generate_wo_code(db: &impl ConnectionTrait) -> AppResult<String> {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn shift_must_be_a_known_code() {
-        use super::validate_wo_shift;
-        for ok in [
-            None,
-            Some(""),
-            Some("morning"),
-            Some("afternoon"),
-            Some("night"),
-            Some("full_day"),
-        ] {
-            assert!(validate_wo_shift(ok).is_ok(), "{ok:?} should be accepted");
+    fn text_shifts_are_refused_on_new_plans() {
+        use super::{validate_wo_shift, LEGACY_WO_SHIFTS};
+        for ok in [None, Some(""), Some("  ")] {
+            assert!(validate_wo_shift(ok).is_ok(), "{ok:?} means no shift");
         }
-        let err = validate_wo_shift(Some("jour")).expect_err("free text is refused");
-        assert!(format!("{err:?}").contains("GATE_WO_SHIFT_INVALID"));
+        for legacy in LEGACY_WO_SHIFTS.iter().copied().chain(["jour"]) {
+            let err = validate_wo_shift(Some(legacy)).expect_err("old codes and free text are refused");
+            assert!(format!("{err:?}").contains("GATE_WO_SHIFT_INVALID"), "{legacy}");
+        }
     }
 
     use super::*;

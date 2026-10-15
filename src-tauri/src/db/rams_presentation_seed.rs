@@ -437,6 +437,8 @@ async fn create_and_close_corrective_wo(db: &DatabaseConnection, ctx: CreateWoSe
             planned_start: Some(ctx.fail_start.clone()),
             planned_end: Some(ctx.fail_end.clone()),
             shift: None,
+            shift_class_version_id: None,
+            clear_shift: false,
             expected_duration_hours: Some(ctx.repair_hours),
             urgency_code: None,
             planned_downtime_hours: None,

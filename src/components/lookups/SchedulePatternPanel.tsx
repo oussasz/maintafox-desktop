@@ -27,6 +27,7 @@ import {
 } from "@/components/lookups/timetable-editor";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -38,7 +39,9 @@ import { cn } from "@/lib/utils";
 import {
   type ScheduleClassVersion,
   type ScheduleCycleDay,
+  type VersionWorkOrderImpact,
   confirmScheduleClassReview,
+  getScheduleClassVersionImpact,
   listScheduleClassVersions,
   listSiteWorkWeeks,
   upsertScheduleClassVersion,
@@ -206,14 +209,33 @@ export function ClasseHoraireEditor({
     value.id,
   ]);
 
+  /** Work orders planned on the version being edited: confirmed before the save. */
+  const [impact, setImpact] = useState<VersionWorkOrderImpact | null>(null);
+  const requestSave = useCallback(async () => {
+    if (!canMutate || issue || !dateOk || utilisationValue == null) return;
+    if (editing?.id != null) {
+      try {
+        const found = await getScheduleClassVersionImpact(editing.id);
+        if (found.work_orders > 0) {
+          setImpact(found);
+          return;
+        }
+      } catch (e) {
+        setError(formatOrgIpcError(e));
+        return;
+      }
+    }
+    await save();
+  }, [canMutate, dateOk, editing, issue, save, utilisationValue]);
+
   useEffect(() => {
     onChromeChange?.({
       saving,
       loading,
       canSave: canMutate && !saving && !loading && issue == null && dateOk,
-      save: () => void save(),
+      save: () => void requestSave(),
     });
-  }, [canMutate, dateOk, issue, loading, onChromeChange, save, saving]);
+  }, [canMutate, dateOk, issue, loading, onChromeChange, requestSave, saving]);
 
   const confirmReview = async () => {
     setSaving(true);
@@ -264,6 +286,22 @@ export function ClasseHoraireEditor({
 
   return (
     <div className="space-y-4">
+      <ConfirmDialog
+        open={impact != null}
+        onOpenChange={(open) => {
+          if (!open) setImpact(null);
+        }}
+        title={t("timetable.impact.title")}
+        description={t("timetable.impact.description", {
+          count: impact?.work_orders ?? 0,
+          codes: impact?.codes.join(", ") ?? "",
+        })}
+        confirmLabel={t("timetable.impact.confirm")}
+        onConfirm={async () => {
+          setImpact(null);
+          await save();
+        }}
+      />
       {toReview ? (
         <div role="status" className={cn("rounded-md border p-3 text-sm", mfTone.attention.panel)}>
           <p className="font-medium text-text-primary">{t("timetable.review.classTitle")}</p>

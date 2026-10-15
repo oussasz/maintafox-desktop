@@ -265,6 +265,8 @@ async fn responsible_without_the_qualification_is_refused_until_overridden() {
         assigned_team_id: None,
         primary_responsible_id: Some(TECH_USER),
         override_reason: "Équipe de nuit indisponible".into(),
+        shift_class_version_id: None,
+        clear_shift: false,
     };
 
     let refused = crate::wo::workflow::actions::assign::emergency_reassign(&db, reassign(wo.row_version))
@@ -485,6 +487,8 @@ async fn a_login_without_a_personnel_card_is_refused_where_qualifications_are_re
             assigned_team_id: None,
             primary_responsible_id: Some(actor),
             override_reason: "Responsable de garde".into(),
+            shift_class_version_id: None,
+            clear_shift: false,
         },
     )
     .await

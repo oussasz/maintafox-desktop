@@ -765,6 +765,7 @@ pub fn run() {
             // Ã¢â€â‚¬Ã¢â€â‚¬ WO (Work Orders) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
             commands::wo::list_work_order_types,
             commands::wo::list_work_order_subtypes,
+            commands::wo::list_wo_shift_options,
             commands::wo::list_urgency_levels,
             commands::wo::update_urgency_level,
             commands::wo::list_work_order_statuses,
@@ -1093,6 +1094,7 @@ pub fn run() {
             commands::wo::list_wo_labor_people,
             commands::personnel::list_schedule_class_versions,
             commands::personnel::upsert_schedule_class_version,
+            commands::personnel::get_schedule_class_version_impact,
             commands::personnel::confirm_schedule_class_review,
             commands::personnel::list_team_schedule,
             commands::personnel::set_team_schedule,

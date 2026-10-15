@@ -751,6 +751,11 @@
     "restDays": "Jours de repos"
   },
   "timetable": {
+    "impact": {
+      "title": "Des OT planifiés utilisent cette version",
+      "description": "{{count}} OT ouvert(s) sont planifiés sur cette version ({{codes}}). Ils gardent les heures avec lesquelles ils ont été planifiés et indiqueront que l'horaire a été modifié depuis la planification.",
+      "confirm": "Enregistrer la modification"
+    },
     "editor": {
       "title": "Classe horaire — {{name}}",
       "description": "Rythme de travail des équipes et des personnes liées à cette classe horaire. Une modification s'applique à partir d'une date et ne réécrit jamais la capacité passée.",
