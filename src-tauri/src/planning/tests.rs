@@ -532,7 +532,7 @@ async fn commitment_requires_all_three_gates() {
             team_id,
             effective_start: "2026-05-01".to_string(),
             effective_end: Some("2026-05-01".to_string()),
-            available_hours_per_day: 1.0,
+            available_hours_per_day: None,
             max_overtime_hours_per_day: 0.0,
         },
     )
@@ -779,7 +779,6 @@ async fn break_in_requires_approval_or_dangerous_override() {
             new_assigned_team_id: Some(team_id),
             new_assigned_personnel_id: Some(assignee_id),
             bypass_availability: Some(false),
-            bypass_qualification: Some(false),
             override_reason: None,
             dangerous_override_reason: None,
         },
@@ -801,7 +800,6 @@ async fn break_in_requires_approval_or_dangerous_override() {
             new_assigned_team_id: Some(team_id),
             new_assigned_personnel_id: Some(assignee_id),
             bypass_availability: Some(false),
-            bypass_qualification: Some(false),
             override_reason: Some("line stop".to_string()),
             dangerous_override_reason: None,
         },
@@ -1287,7 +1285,6 @@ async fn break_in_write_back_updates_work_order_slot() {
             override_reason: Some("Emergency move".to_string()),
             dangerous_override_reason: None,
             bypass_availability: Some(true),
-            bypass_qualification: Some(true),
         },
     )
     .await

@@ -823,7 +823,7 @@
     "review": {
       "chip": "À vérifier",
       "classTitle": "Créée par la mise à jour — à revoir",
-      "classBody": "Cette classe horaire a été définie par la mise à jour : une classe existante a reçu un taux d'utilisation de 85 % ; une classe créée à partir de l'ancienne règle de capacité d'une équipe garde les heures de cette règle chaque jour, à 100 %. Confirmez-la telle quelle, ou enregistrez une nouvelle version à partir d'aujourd'hui.",
+      "classBody": "Cette classe horaire a été définie par la mise à jour avec un taux d'utilisation de 100 % : fixez maintenant son taux d'utilisation (part du temps de poste disponible pour les OT). Une classe créée à partir de l'ancienne règle de capacité d'une équipe répartit les heures de cette règle entre les membres de l'époque (voir sa remarque). Confirmez-la telle quelle, ou enregistrez une nouvelle version à partir d'aujourd'hui.",
       "teamTitle": "Classe par défaut issue de l'ancienne règle de capacité — à revoir",
       "teamBody": "La mise à jour a conservé la règle de capacité de cette équipe sous la forme de la classe horaire « {{name}} ». Elle s'applique désormais à chaque membre sans classe horaire propre. Confirmez-la, ou choisissez la bonne classe par défaut à partir d'une date (ou aucune).",
       "confirm": "Confirmer telle quelle"

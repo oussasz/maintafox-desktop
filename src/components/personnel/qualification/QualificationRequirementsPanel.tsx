@@ -34,6 +34,7 @@ import { StatusChip } from "@/components/ui/status-chip";
 import { Textarea } from "@/components/ui/textarea";
 import { mfLayout } from "@/design-system/tokens";
 import { usePermissions } from "@/hooks/use-permissions";
+import { useStepUp } from "@/hooks/use-step-up";
 import { type PermitTypeRecord, listPermitTypes } from "@/services/permit-service";
 import {
   LOTO_ROLES,
@@ -88,7 +89,9 @@ export function QualificationRequirementsPanel({
 }: QualificationRequirementsPanelProps) {
   const { t } = useTranslation("training");
   const { can } = usePermissions();
-  const canManage = can(P.TRN_MANAGE);
+  /** Retiring a requirement is a safety change: certification right and a fresh step-up. */
+  const canRetire = can(P.TRN_CERTIFY);
+  const { withStepUp, StepUpDialogElement } = useStepUp();
   const [rows, setRows] = useState<QualificationRequirement[]>([]);
   const [woTypes, setWoTypes] = useState<WorkOrderTypeOption[]>([]);
   const [permitTypes, setPermitTypes] = useState<PermitTypeRecord[]>([]);
@@ -181,14 +184,14 @@ export function QualificationRequirementsPanel({
         id: "actions",
         header: () => <span className="sr-only">{t("col.actions")}</span>,
         cell: ({ row }) =>
-          canManage ? (
+          canRetire ? (
             <Button size="sm" variant="ghost" onClick={() => setRetire(row.original)}>
               {t("requirements.retire")}
             </Button>
           ) : null,
       },
     ],
-    [t, targetLabel, canManage],
+    [t, targetLabel, canRetire],
   );
 
   const targetOptions = (kind: EditableKind): { value: string; label: string }[] => {
@@ -230,19 +233,21 @@ export function QualificationRequirementsPanel({
 
   const confirmRetire = async () => {
     if (!retire) return;
-    await upsertQualificationRequirement({
-      id: retire.id,
-      expected_row_version: retire.row_version,
-      target_kind: retire.target_kind,
-      work_order_id: retire.work_order_id,
-      target_code: retire.target_code,
-      certification_type_id: retire.certification_type_id,
-      skill_reference_value_id: retire.skill_reference_value_id,
-      min_proficiency_level: retire.min_proficiency_level,
-      coverage: retire.coverage,
-      notes: retire.notes,
-      is_active: false,
-    });
+    await withStepUp(() =>
+      upsertQualificationRequirement({
+        id: retire.id,
+        expected_row_version: retire.row_version,
+        target_kind: retire.target_kind,
+        work_order_id: retire.work_order_id,
+        target_code: retire.target_code,
+        certification_type_id: retire.certification_type_id,
+        skill_reference_value_id: retire.skill_reference_value_id,
+        min_proficiency_level: retire.min_proficiency_level,
+        coverage: retire.coverage,
+        notes: retire.notes,
+        is_active: false,
+      }),
+    );
     setRetire(null);
     await load();
   };
@@ -470,6 +475,7 @@ export function QualificationRequirementsPanel({
         destructive
         onConfirm={confirmRetire}
       />
+      {StepUpDialogElement}
     </div>
   );
 }

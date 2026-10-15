@@ -277,15 +277,6 @@ const VERSION_SELECT: &str = "SELECT v.id, v.entity_sync_id, v.reference_value_i
         v.days_json, v.utilisation_percent, v.review_status, v.note, v.row_version \
      FROM schedule_class_versions v JOIN reference_values rv ON rv.id = v.reference_value_id";
 
-/// `is_continuous` flag of a Classe horaire's reference value metadata (its weekly editor's
-/// setting), carried into its first version by the upgrade.
-pub fn metadata_is_continuous(metadata_json: Option<&str>) -> bool {
-    metadata_json
-        .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
-        .and_then(|v| v.get("is_continuous").and_then(serde_json::Value::as_bool))
-        .unwrap_or(false)
-}
-
 fn parse_days(raw: &str) -> AppResult<Vec<ScheduleCycleDay>> {
     let mut days: Vec<ScheduleCycleDay> = serde_json::from_str(raw).map_err(|e| decode_err("days_json", e))?;
     days.sort_by_key(|d| d.cycle_day);

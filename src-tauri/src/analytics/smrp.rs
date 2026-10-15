@@ -355,39 +355,42 @@ pub fn shift_hours(start: &str, end: &str) -> Option<f64> {
     Some(d as f64 / 60.0)
 }
 
-/// Weekly crew hours: Σ over active personnel of the working-day shifts of their home schedule.
-/// Returns (hours, people counted, people without schedule).
+/// Weekly crew hours: Σ over active personnel of their net shift hours over the next 7 days, from
+/// `personnel::capacity` (their Classe horaire on the site working days, part time included,
+/// before absences) — the calendar planning uses. Returns (hours, people counted, people without
+/// any shift in the week).
 pub async fn weekly_capacity(db: &DatabaseConnection, org: Option<i64>) -> AppResult<(f64, i64, i64)> {
-    let rows = db
+    let people: Vec<i64> = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT p.id AS pid, sd.shift_start AS s, sd.shift_end AS e \
-             FROM personnel p \
-             LEFT JOIN schedule_details sd ON sd.reference_value_id = p.home_schedule_reference_value_id \
-                  AND sd.is_rest_day = 0 \
+            "SELECT p.id AS pid FROM personnel p \
              WHERE COALESCE(p.employment_status, 'active') = 'active' \
                AND (p.termination_date IS NULL OR date(p.termination_date) >= date('now')) \
                AND (? IS NULL OR p.primary_entity_id = ?) \
              ORDER BY p.id",
             vec![org.into(), org.into()],
         ))
-        .await?;
-    use std::collections::BTreeMap;
-    let mut per_person: BTreeMap<i64, f64> = BTreeMap::new();
-    for r in rows {
-        let pid = i64::try_get(&r, "", "pid").unwrap_or(0);
-        let entry = per_person.entry(pid).or_insert(0.0);
-        let (s, e) = (
-            Option::<String>::try_get(&r, "", "s").ok().flatten(),
-            Option::<String>::try_get(&r, "", "e").ok().flatten(),
-        );
-        if let (Some(s), Some(e)) = (s, e) {
-            *entry += shift_hours(&s, &e).unwrap_or(0.0);
+        .await?
+        .iter()
+        .map(|r| i64::try_get(r, "", "pid").unwrap_or(0))
+        .collect();
+    let today = chrono::Utc::now().date_naive();
+    let week_end = today + chrono::Duration::days(6);
+    let mut total = 0.0;
+    let mut counted = 0_i64;
+    for pid in &people {
+        let minutes: i64 = crate::personnel::capacity::person_capacity_range(db, *pid, today, week_end)
+            .await?
+            .iter()
+            .map(|d| d.scheduled_minutes)
+            .sum();
+        if minutes > 0 {
+            counted += 1;
+            total += minutes as f64 / 60.0;
         }
     }
-    let counted = per_person.values().filter(|h| **h > 0.0).count() as i64;
-    let without = per_person.len() as i64 - counted;
-    Ok((per_person.values().sum(), counted, without))
+    let without = people.len() as i64 - counted;
+    Ok((total, counted, without))
 }
 
 pub async fn backlog(

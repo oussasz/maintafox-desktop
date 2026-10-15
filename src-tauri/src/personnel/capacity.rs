@@ -653,6 +653,64 @@ pub async fn team_capacity_range(
     Ok(out)
 }
 
+/// Splits `[from, to]` into ranges of at most [`MAX_RANGE_DAYS`] days.
+fn chunks(from: NaiveDate, to: NaiveDate) -> Vec<(NaiveDate, NaiveDate)> {
+    let mut out = Vec::new();
+    let mut cursor = from;
+    while cursor <= to {
+        let end = (cursor + Duration::days(MAX_RANGE_DAYS - 1)).min(to);
+        out.push((cursor, end));
+        cursor = end + Duration::days(1);
+    }
+    out
+}
+
+/// [`team_capacity_range`] over any span (computed a quarter at a time).
+pub async fn team_capacity_span(
+    db: &impl ConnectionTrait,
+    team_id: i64,
+    from: NaiveDate,
+    to: NaiveDate,
+) -> AppResult<Vec<TeamDayCapacity>> {
+    let mut out = Vec::new();
+    for (a, b) in chunks(from, to) {
+        out.extend(team_capacity_range(db, team_id, a, b).await?);
+    }
+    Ok(out)
+}
+
+/// [`person_capacity_range`] over any span (computed a quarter at a time).
+pub async fn person_capacity_span(
+    db: &impl ConnectionTrait,
+    personnel_id: i64,
+    from: NaiveDate,
+    to: NaiveDate,
+) -> AppResult<Vec<PersonDayCapacity>> {
+    let mut out = Vec::new();
+    for (a, b) in chunks(from, to) {
+        out.extend(person_capacity_range(db, personnel_id, a, b).await?);
+    }
+    Ok(out)
+}
+
+/// Hours a team can be planned on over a calendar month: each day's hours available for work
+/// orders plus the planner's overtime ceiling of that day.
+pub async fn team_month_hours(db: &impl ConnectionTrait, team_id: i64, year: i32, month: u32) -> AppResult<f64> {
+    let first = NaiveDate::from_ymd_opt(year, month, 1).ok_or_else(range_error)?;
+    let next = if month == 12 {
+        NaiveDate::from_ymd_opt(year + 1, 1, 1)
+    } else {
+        NaiveDate::from_ymd_opt(year, month + 1, 1)
+    }
+    .ok_or_else(range_error)?;
+    let days = team_capacity_range(db, team_id, first, next - Duration::days(1)).await?;
+    Ok(round2(
+        days.iter()
+            .map(|d| d.available_hours + d.rule_overtime_hours.unwrap_or(0.0))
+            .sum(),
+    ))
+}
+
 /// Team capacity of one day — the planning interface replacing a fixed hours-per-day figure.
 pub async fn team_capacity_hours(
     db: &impl ConnectionTrait,

@@ -138,8 +138,20 @@ pub struct WoQualificationAssessment {
     /// team is assigned).
     pub uncovered: Vec<JobRequirement>,
     pub assessed_team_id: Option<i64>,
-    /// Nobody blocked and nothing uncovered.
+    /// Logins on the job (labour, responsible) with no personnel card: their qualifications
+    /// cannot be checked, so a work order with requirements is not ready while they are on it.
+    #[serde(default)]
+    pub unidentified: Vec<UnidentifiedUser>,
+    /// Nobody blocked, nobody unidentified and nothing uncovered.
     pub ok: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct UnidentifiedUser {
+    pub user_id: i64,
+    pub name: String,
+    /// `labor` | `responsible`.
+    pub role: String,
 }
 
 impl WoQualificationAssessment {
@@ -184,6 +196,64 @@ pub async fn personnel_for_user(db: &impl ConnectionTrait, user_id: i64) -> AppR
         ))
         .await?;
     Ok(row.and_then(|r| r.try_get::<Option<i64>>("", "personnel_id").ok().flatten()))
+}
+
+/// Name shown for a login.
+async fn user_name(db: &impl ConnectionTrait, user_id: i64) -> AppResult<String> {
+    Ok(db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COALESCE(NULLIF(TRIM(display_name), ''), username) AS name FROM user_accounts WHERE id = ?",
+            [user_id.into()],
+        ))
+        .await?
+        .and_then(|r| r.try_get::<String>("", "name").ok())
+        .unwrap_or_else(|| user_id.to_string()))
+}
+
+/// Booking or assigning a login on a work order: the person behind it must hold what the work
+/// order requires. A login with no personnel card cannot be checked, so it is refused whenever
+/// the work order has any requirement (fails closed, like the LOTO roles).
+pub async fn enforce_user_on_work_order(db: &impl ConnectionTrait, user_id: i64, wo_id: i64) -> AppResult<()> {
+    match personnel_for_user(db, user_id).await? {
+        Some(pid) => enforce_work_order_assignment(db, pid, wo_id, None).await.map(|_| ()),
+        None if work_order_requirements(db, wo_id).await?.is_empty() => Ok(()),
+        None => Err(crate::qualification::issue(
+            "QUALIFICATION_PERSON_UNKNOWN",
+            "This work order requires qualifications: link this account to a personnel record first.",
+            &[("name", user_name(db, user_id).await?)],
+        )),
+    }
+}
+
+/// Logins on a work order (labour, responsible) with no personnel card.
+async fn work_order_unidentified(db: &impl ConnectionTrait, wo_id: i64) -> AppResult<Vec<UnidentifiedUser>> {
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT DISTINCT ua.id AS user_id, COALESCE(NULLIF(TRIM(ua.display_name), ''), ua.username) AS name, \
+                    x.role \
+             FROM ( \
+                SELECT woi.intervener_id AS uid, 'labor' AS role FROM work_order_interveners woi \
+                 WHERE woi.work_order_id = ? AND woi.personnel_id IS NULL AND woi.intervener_id IS NOT NULL \
+                UNION ALL \
+                SELECT wo.primary_responsible_id AS uid, 'responsible' AS role FROM work_orders wo \
+                 WHERE wo.id = ? AND wo.primary_responsible_id IS NOT NULL \
+             ) x JOIN user_accounts ua ON ua.id = x.uid \
+             WHERE NOT EXISTS (SELECT 1 FROM personnel p WHERE p.id = ua.personnel_id) \
+             ORDER BY name",
+            [wo_id.into(), wo_id.into()],
+        ))
+        .await?;
+    rows.iter()
+        .map(|r| {
+            Ok(UnidentifiedUser {
+                user_id: r.try_get("", "user_id").map_err(|e| decode_err("user_id", e))?,
+                name: r.try_get("", "name").map_err(|e| decode_err("name", e))?,
+                role: r.try_get("", "role").map_err(|e| decode_err("role", e))?,
+            })
+        })
+        .collect()
 }
 
 async fn person_identity(db: &impl ConnectionTrait, personnel_id: i64) -> AppResult<(String, String)> {
@@ -233,10 +303,14 @@ fn merge_requirements(rows: Vec<JobRequirement>) -> Vec<JobRequirement> {
 // Requirements of a job
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const REQUIREMENT_SELECT: &str = "SELECT qr.id, qr.target_kind, qr.target_code, qr.certification_type_id, \
+const REQUIREMENT_SELECT: &str = "SELECT qr.id, qr.target_kind, \
+     CASE qr.target_kind WHEN 'work_order_type' THEN wot.code WHEN 'permit_type' THEN pt.code \
+         ELSE qr.target_code END AS target_code, qr.certification_type_id, \
      qr.skill_reference_value_id, qr.min_proficiency_level, qr.coverage, \
      ct.code AS cert_code, ct.name AS cert_name, rv.code AS skill_code, rv.label AS skill_label \
      FROM qualification_requirements qr \
+     LEFT JOIN work_order_types wot ON wot.id = qr.work_order_type_id \
+     LEFT JOIN permit_types pt ON pt.id = qr.permit_type_id \
      LEFT JOIN certification_types ct ON ct.id = qr.certification_type_id \
      LEFT JOIN reference_values rv ON rv.id = qr.skill_reference_value_id \
      WHERE qr.is_active = 1";
@@ -383,22 +457,18 @@ pub async fn work_order_requirements(db: &impl ConnectionTrait, wo_id: i64) -> A
         .map(|r| r.try_get::<String>("", "code").map_err(|e| decode_err("code", e)))
         .collect::<AppResult<_>>()?;
 
-    let mut sql = format!(
+    // Types are matched by id: renaming a type keeps its requirements.
+    let sql = format!(
         "{REQUIREMENT_SELECT} AND ( \
             (qr.target_kind = 'work_order' AND qr.work_order_id = ?) \
-         OR (qr.target_kind = 'work_order_type' AND UPPER(qr.target_code) = \
-                (SELECT UPPER(wot.code) FROM work_orders wo JOIN work_order_types wot ON wot.id = wo.type_id \
-                  WHERE wo.id = ?))"
+         OR (qr.target_kind = 'work_order_type' AND qr.work_order_type_id = \
+                (SELECT wo.type_id FROM work_orders wo WHERE wo.id = ?)) \
+         OR (qr.target_kind = 'permit_type' AND qr.permit_type_id IN \
+                (SELECT wp.permit_type_id FROM work_permits wp \
+                  WHERE wp.linked_work_order_id = ? AND wp.status <> 'cancelled')) \
+         ) ORDER BY qr.id"
     );
-    let mut values: Vec<sea_orm::Value> = vec![wo_id.into(), wo_id.into()];
-    if !permit_codes.is_empty() {
-        let marks = vec!["?"; permit_codes.len()].join(", ");
-        sql.push_str(&format!(
-            " OR (qr.target_kind = 'permit_type' AND UPPER(qr.target_code) IN ({marks}))"
-        ));
-        values.extend(permit_codes.iter().map(|c| sea_orm::Value::from(c.to_uppercase())));
-    }
-    sql.push_str(") ORDER BY qr.id");
+    let values: Vec<sea_orm::Value> = vec![wo_id.into(), wo_id.into(), wo_id.into()];
 
     let mut rows: Vec<JobRequirement> = db
         .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
@@ -447,7 +517,8 @@ pub(crate) struct HeldSkill {
     pub reference_value_id: i64,
     pub level: i64,
     pub valid_to: Option<String>,
-    pub self_declared_unvalidated: bool,
+    /// Not validated by a manager: does not satisfy a requirement, whatever its source.
+    pub unvalidated: bool,
 }
 
 pub(crate) struct Holdings {
@@ -488,14 +559,13 @@ pub(crate) async fn load_holdings(db: &impl ConnectionTrait, personnel_id: i64) 
     let skills = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT reference_value_id, proficiency_level, valid_to, source_type, is_validated \
+            "SELECT reference_value_id, proficiency_level, valid_to, is_validated \
              FROM personnel_skills WHERE personnel_id = ?",
             [personnel_id.into()],
         ))
         .await?
         .iter()
         .map(|r| {
-            let source: String = r.try_get("", "source_type").map_err(|e| decode_err("source_type", e))?;
             let validated: i64 = r
                 .try_get("", "is_validated")
                 .map_err(|e| decode_err("is_validated", e))?;
@@ -510,7 +580,7 @@ pub(crate) async fn load_holdings(db: &impl ConnectionTrait, personnel_id: i64) 
                     .try_get::<Option<String>>("", "valid_to")
                     .map_err(|e| decode_err("valid_to", e))?
                     .filter(|s| !s.trim().is_empty()),
-                self_declared_unvalidated: source == "self_declared" && validated == 0,
+                unvalidated: validated == 0,
             })
         })
         .collect::<AppResult<Vec<_>>>()?;
@@ -600,7 +670,7 @@ pub(crate) fn evaluate(
             }
         }
     }
-    if skill.self_declared_unvalidated {
+    if skill.unvalidated {
         return (Some(gap(req, "unvalidated", None, Some(skill.level))), None);
     }
     if let Some(min) = req.min_proficiency_level {
@@ -840,7 +910,12 @@ pub async fn assess_work_order(db: &impl ConnectionTrait, wo_id: i64) -> AppResu
         .cloned()
         .collect();
 
-    let ok = checks.iter().all(|c| c.qualified) && uncovered.is_empty();
+    let unidentified = if requirements.is_empty() {
+        Vec::new()
+    } else {
+        work_order_unidentified(db, wo_id).await?
+    };
+    let ok = checks.iter().all(|c| c.qualified) && uncovered.is_empty() && unidentified.is_empty();
     Ok(WoQualificationAssessment {
         work_order_id: wo_id,
         work_day: facts.work_day.to_string(),
@@ -848,6 +923,7 @@ pub async fn assess_work_order(db: &impl ConnectionTrait, wo_id: i64) -> AppResu
         people: checks,
         uncovered,
         assessed_team_id,
+        unidentified,
         ok,
     })
 }
@@ -908,6 +984,19 @@ pub fn readiness_message(assessment: &WoQualificationAssessment, english: bool) 
             format!("nobody on the job holds {labels}")
         } else {
             format!("personne dans l'équipe ne détient {labels}")
+        });
+    }
+    if !assessment.unidentified.is_empty() {
+        let names = assessment
+            .unidentified
+            .iter()
+            .map(|u| u.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        parts.push(if english {
+            format!("{names}: account not linked to a personnel record, qualifications cannot be checked")
+        } else {
+            format!("{names} : compte non relié à une fiche du personnel, habilitations invérifiables")
         });
     }
     let head = if english {
@@ -1008,7 +1097,7 @@ fn gap_message(person: &str, gap: &QualificationGap) -> String {
             gap.required_level.unwrap_or_default(),
             gap.held_level.unwrap_or_default()
         ),
-        "SKILL_UNVALIDATED" => format!("{person}: skill {} is self-declared and not validated.", gap.label),
+        "SKILL_UNVALIDATED" => format!("{person}: skill {} is not validated by a manager.", gap.label),
         _ => format!("{person} does not have the skill {}.", gap.label),
     }
 }
@@ -1064,6 +1153,14 @@ async fn record_override(
             "QUALIFICATION_OVERRIDE_REASON_SHORT",
             "Explain the override (at least 10 characters).",
             &[("min", MIN_OVERRIDE_REASON_CHARS.to_string())],
+        ));
+    }
+    // Separation of duties: nobody waives their own qualification gap.
+    if personnel_for_user(db, input.approved_by_id).await? == Some(check.personnel_id) {
+        return Err(super::issue(
+            "QUALIFICATION_OVERRIDE_SELF",
+            "You cannot override your own qualification gap: another authorised supervisor must do it.",
+            &[],
         ));
     }
     let (kind, wo_id, permit_id, role): (&str, Option<i64>, Option<i64>, Option<&str>) = match context {

@@ -1,5 +1,8 @@
 //! Team capacity summary computations.
 
+use std::collections::BTreeSet;
+
+use chrono::NaiveDate;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use serde::{Deserialize, Serialize};
 
@@ -26,127 +29,73 @@ pub struct TeamCapacitySummaryRow {
     pub avg_availability_ratio: f64,
 }
 
+/// Per team over a range: members, leads, and the scheduled / at-work / absent minutes from
+/// `personnel::capacity` (members' Classes horaires on the site's working days, minus absences) —
+/// the same figures as planning and the team's capacity page.
 pub async fn list_team_capacity_summary(
     db: &DatabaseConnection,
     filter: TeamCapacityFilter,
 ) -> AppResult<Vec<TeamCapacitySummaryRow>> {
-    if filter.date_from > filter.date_to {
+    let parse = |raw: &str, field: &str| {
+        NaiveDate::parse_from_str(raw.get(..10).unwrap_or(raw), "%Y-%m-%d")
+            .map_err(|_| AppError::ValidationFailed(vec![format!("{field} must be YYYY-MM-DD.")]))
+    };
+    let from = parse(&filter.date_from, "date_from")?;
+    let to = parse(&filter.date_to, "date_to")?;
+    if from > to {
         return Err(AppError::ValidationFailed(vec![
             "date_from must be <= date_to.".to_string()
         ]));
     }
 
-    let mut personnel_where = vec!["1 = 1".to_string()];
-    let mut values: Vec<sea_orm::Value> = vec![filter.date_from.into(), filter.date_to.into()];
-
+    let mut sql = String::from(
+        "SELECT t.id, t.code, t.name, (SELECT COUNT(*) FROM personnel_team_assignments pta2 WHERE pta2.team_id = t.id AND pta2.is_lead = 1 AND (pta2.valid_from IS NULL OR date(pta2.valid_from) <= date('now')) AND (pta2.valid_to IS NULL OR date(pta2.valid_to) >= date('now'))) AS lead_count FROM teams t WHERE t.deleted_at IS NULL",
+    );
+    let mut values: Vec<sea_orm::Value> = Vec::new();
+    if !filter.include_inactive.unwrap_or(false) {
+        sql.push_str(" AND t.status = 'active'");
+    }
     if let Some(entity_id) = filter.entity_id {
-        personnel_where.push("p.primary_entity_id = ?".to_string());
+        sql.push_str(" AND (t.primary_node_id = ? OR EXISTS (SELECT 1 FROM personnel p WHERE p.primary_entity_id = ? AND (p.primary_team_id = t.id OR EXISTS (SELECT 1 FROM personnel_team_assignments x WHERE x.personnel_id = p.id AND x.team_id = t.id))))");
+        values.push(entity_id.into());
         values.push(entity_id.into());
     }
-    if !filter.include_inactive.unwrap_or(false) {
-        personnel_where.push("p.employment_status = 'active'".to_string());
-    }
-
-    let sql = format!(
-        "WITH RECURSIVE dates(work_date) AS (
-            SELECT date(?)
-            UNION ALL
-            SELECT date(work_date, '+1 day') FROM dates WHERE work_date < date(?)
-         ),
-         base_personnel AS (
-            SELECT p.id, p.primary_team_id, p.home_schedule_reference_value_id
-            FROM personnel p
-            WHERE {}
-         ),
-         person_days AS (
-            SELECT
-                bp.id AS personnel_id,
-                bp.primary_team_id,
-                bp.home_schedule_reference_value_id,
-                d.work_date,
-                ((CAST(strftime('%w', d.work_date) AS INTEGER) + 6) % 7) + 1 AS day_of_week
-            FROM base_personnel bp
-            CROSS JOIN dates d
-         ),
-         availability_by_person_day AS (
-            SELECT
-                pd.personnel_id,
-                pd.work_date,
-                COALESCE(
-                    (
-                        SELECT pta.team_id
-                        FROM personnel_team_assignments pta
-                        WHERE pta.personnel_id = pd.personnel_id
-                          AND (pta.valid_from IS NULL OR date(pta.valid_from) <= pd.work_date)
-                          AND (pta.valid_to IS NULL OR date(pta.valid_to) >= pd.work_date)
-                        ORDER BY pta.is_lead DESC, pta.id DESC
-                        LIMIT 1
-                    ),
-                    pd.primary_team_id
-                ) AS team_id,
-                CASE
-                    WHEN sd.id IS NULL OR sd.is_rest_day = 1 THEN 0
-                    ELSE MAX(CAST((julianday((CASE WHEN sd.shift_end <= sd.shift_start THEN date(pd.work_date, '+1 day') ELSE pd.work_date END) || 'T' || sd.shift_end || ':00Z') - julianday(pd.work_date || 'T' || sd.shift_start || ':00Z')) * 1440 AS INTEGER), 0)
-                END AS scheduled_minutes,
-                COALESCE((
-                    SELECT SUM(MAX(CAST((julianday(MIN(ab.end_at, (CASE WHEN sd.shift_end <= sd.shift_start THEN date(pd.work_date, '+1 day') ELSE pd.work_date END) || 'T' || sd.shift_end || ':00Z')) - julianday(MAX(ab.start_at, pd.work_date || 'T' || sd.shift_start || ':00Z'))) * 1440 AS INTEGER), 0))
-                    FROM personnel_availability_blocks ab
-                    WHERE ab.personnel_id = pd.personnel_id
-                      AND sd.id IS NOT NULL
-                      AND sd.is_rest_day = 0
-                      AND ab.start_at < (CASE WHEN sd.shift_end <= sd.shift_start THEN date(pd.work_date, '+1 day') ELSE pd.work_date END) || 'T' || sd.shift_end || ':00Z'
-                      AND ab.end_at > pd.work_date || 'T' || sd.shift_start || ':00Z'
-                ), 0) AS blocked_minutes
-            FROM person_days pd
-            LEFT JOIN schedule_details sd
-              ON sd.reference_value_id = pd.home_schedule_reference_value_id
-             AND sd.day_of_week = pd.day_of_week
-         )
-         SELECT
-            t.id AS team_id,
-            t.code AS team_code,
-            t.name AS team_name,
-            COUNT(DISTINCT apd.personnel_id) AS member_count,
-            (
-                SELECT COUNT(*)
-                FROM personnel_team_assignments pta2
-                WHERE pta2.team_id = t.id
-                  AND pta2.is_lead = 1
-                  AND (pta2.valid_from IS NULL OR date(pta2.valid_from) <= date('now'))
-                  AND (pta2.valid_to IS NULL OR date(pta2.valid_to) >= date('now'))
-            ) AS lead_count,
-            SUM(apd.scheduled_minutes) AS total_scheduled_minutes,
-            SUM(MAX(apd.scheduled_minutes - apd.blocked_minutes, 0)) AS total_available_minutes,
-            SUM(apd.blocked_minutes) AS total_blocked_minutes,
-            CASE
-                WHEN SUM(apd.scheduled_minutes) = 0 THEN 0.0
-                ELSE CAST(SUM(MAX(apd.scheduled_minutes - apd.blocked_minutes, 0)) AS REAL) / CAST(SUM(apd.scheduled_minutes) AS REAL)
-            END AS avg_availability_ratio
-         FROM availability_by_person_day apd
-         JOIN teams t ON t.id = apd.team_id
-         GROUP BY t.id, t.code, t.name
-         ORDER BY t.name ASC",
-        personnel_where.join(" AND ")
-    );
-
-    let rows = db
+    sql.push_str(" ORDER BY t.name ASC");
+    let teams = db
         .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, sql, values))
         .await?;
 
-    let mapped = rows
-        .into_iter()
-        .map(|row| TeamCapacitySummaryRow {
-            team_id: row.try_get("", "team_id").unwrap_or_default(),
-            team_code: row.try_get("", "team_code").unwrap_or_default(),
-            team_name: row.try_get("", "team_name").unwrap_or_default(),
-            member_count: row.try_get("", "member_count").unwrap_or_default(),
-            lead_count: row.try_get("", "lead_count").unwrap_or_default(),
-            total_scheduled_minutes: row.try_get("", "total_scheduled_minutes").unwrap_or_default(),
-            total_available_minutes: row.try_get("", "total_available_minutes").unwrap_or_default(),
-            total_blocked_minutes: row.try_get("", "total_blocked_minutes").unwrap_or_default(),
-            avg_availability_ratio: row.try_get("", "avg_availability_ratio").unwrap_or(0.0),
-        })
-        .collect();
+    let mut out = Vec::with_capacity(teams.len());
+    for t in teams {
+        let team_id: i64 = t.try_get("", "id").map_err(|e| decode_err("id", e))?;
+        let days = crate::personnel::capacity::team_capacity_span(db, team_id, from, to).await?;
+        let members: BTreeSet<i64> = days
+            .iter()
+            .flat_map(|d| d.members.iter().map(|m| m.personnel_id))
+            .collect();
+        let minutes = |h: f64| (h * 60.0).round() as i64;
+        let scheduled: i64 = days.iter().map(|d| minutes(d.scheduled_hours)).sum();
+        let available: i64 = days.iter().map(|d| minutes(d.attendance_hours)).sum();
+        let absent: i64 = days.iter().map(|d| minutes(d.absent_hours)).sum();
+        out.push(TeamCapacitySummaryRow {
+            team_id,
+            team_code: t.try_get("", "code").map_err(|e| decode_err("code", e))?,
+            team_name: t.try_get("", "name").map_err(|e| decode_err("name", e))?,
+            member_count: i64::try_from(members.len()).unwrap_or(i64::MAX),
+            lead_count: t.try_get("", "lead_count").map_err(|e| decode_err("lead_count", e))?,
+            total_scheduled_minutes: scheduled,
+            total_available_minutes: available,
+            total_blocked_minutes: absent,
+            avg_availability_ratio: if scheduled == 0 {
+                0.0
+            } else {
+                available as f64 / scheduled as f64
+            },
+        });
+    }
+    Ok(out)
+}
 
-    Ok(mapped)
+fn decode_err(field: &str, err: impl std::fmt::Display) -> AppError {
+    AppError::Internal(anyhow::anyhow!("team capacity decode '{field}': {err}"))
 }

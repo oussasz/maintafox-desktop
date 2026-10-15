@@ -6045,7 +6045,8 @@ export interface ScheduleClass {
   name: string;
   shift_pattern_code: string;
   is_continuous: number;
-  nominal_hours_per_day: number;
+  /** As typed on the class; null when not set (never assumed). */
+  nominal_hours_per_day: number | null;
   is_active: number;
   created_at: string;
 }
@@ -6079,7 +6080,8 @@ export interface SchedulePattern {
   is_active: boolean;
   shift_pattern_code: string;
   is_continuous: boolean;
-  nominal_hours_per_day: number;
+  /** As typed on the class; null when not set (never assumed). */
+  nominal_hours_per_day: number | null;
   details: ScheduleDayPattern[];
 }
 
@@ -8272,7 +8274,9 @@ export interface CreateCapacityRuleInput {
   team_id: number;
   effective_start: string;
   effective_end?: string | null;
-  available_hours_per_day: number;
+  /** History only: capacity comes from the members' Classes horaires. */
+  available_hours_per_day?: number | null;
+  /** Overtime ceiling per day. */
   max_overtime_hours_per_day: number;
 }
 
@@ -8440,7 +8444,6 @@ export interface CreateScheduleBreakInInput {
   new_assigned_team_id?: number | null;
   new_assigned_personnel_id?: number | null;
   bypass_availability?: boolean | null;
-  bypass_qualification?: boolean | null;
   override_reason?: string | null;
   dangerous_override_reason?: string | null;
 }

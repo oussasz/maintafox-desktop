@@ -30,6 +30,38 @@ use crate::qualification::training;
 use crate::state::AppState;
 use crate::{require_permission, require_session, require_step_up};
 
+/// At least one of `perms` (global scope), with the same entitlement and licence checks as
+/// `require_permission!`. Reads that show people's names or qualification gaps need a training
+/// or personnel view right on top of the module's own.
+pub(crate) async fn require_any_permission(
+    state: &AppState,
+    user: &crate::auth::session_manager::AuthenticatedUser,
+    perms: &[&str],
+) -> AppResult<()> {
+    for perm in perms {
+        if crate::auth::rbac::check_permission_cached(
+            &state.db,
+            &state.permission_cache,
+            user.user_id,
+            perm,
+            &PermissionScope::Global,
+        )
+        .await?
+        {
+            crate::entitlements::queries::enforce_capability_for_permission(&state.db, perm).await?;
+            crate::license::queries::enforce_permission_matrix(&state.db, user.user_id, perm).await?;
+            return Ok(());
+        }
+    }
+    Err(crate::errors::AppError::PermissionDenied(format!(
+        "Permission requise : {}",
+        perms.join(" / ")
+    )))
+}
+
+/// Training or personnel view: who holds what.
+pub(crate) const PEOPLE_VIEW: &[&str] = &[crate::rbac::permissions::TRN_VIEW, crate::rbac::permissions::PER_VIEW];
+
 async fn linked_personnel_id(state: &State<'_, AppState>, user_id: i32) -> AppResult<Option<i64>> {
     let row = state
         .db
@@ -416,6 +448,16 @@ pub async fn upsert_qualification_requirement(
         crate::rbac::permissions::TRN_MANAGE,
         PermissionScope::Global
     );
+    // Deactivating, retargeting or loosening a requirement is a safety change.
+    if requirements::is_weakening_change(&state.db, &input).await? {
+        require_permission!(
+            state,
+            &user,
+            crate::rbac::permissions::TRN_CERTIFY,
+            PermissionScope::Global
+        );
+        require_step_up!(state);
+    }
     requirements::upsert_requirement(&state.db, input, i64::from(user.user_id)).await
 }
 
@@ -427,6 +469,7 @@ pub async fn get_wo_qualification_assessment(
 ) -> AppResult<WoQualificationAssessment> {
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
+    require_any_permission(&state, &user, PEOPLE_VIEW).await?;
     gate::assess_work_order(&state.db, wo_id).await
 }
 
@@ -439,6 +482,7 @@ pub async fn check_person_for_work_order(
 ) -> AppResult<PersonQualificationCheck> {
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
+    require_any_permission(&state, &user, PEOPLE_VIEW).await?;
     gate::check_person_for_work_order(&state.db, personnel_id, wo_id).await
 }
 

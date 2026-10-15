@@ -85,7 +85,8 @@
     "validated": "Validated",
     "validatedBy": "Validated by {{name}} on {{date}}",
     "selfDeclared": "Self-declared",
-    "recorded": "Recorded"
+    "recorded": "Recorded",
+    "unvalidated": "Not validated"
   },
   "gapStatus": {
     "missing": "Missing",
@@ -313,7 +314,7 @@
     "SKILL_MISSING": "{{person}} does not have the skill {{qualification}}.",
     "SKILL_EXPIRED": "{{person}}: the skill {{qualification}} is no longer valid.",
     "SKILL_LEVEL_TOO_LOW": "{{person}}: {{qualification}} level {{requiredLevel}} required, level {{heldLevel}} held.",
-    "SKILL_UNVALIDATED": "{{person}}: the skill {{qualification}} is self-declared and not validated.",
+    "SKILL_UNVALIDATED": "{{person}}: the skill {{qualification}} is not validated by a manager.",
     "QUALIFICATION_GATE_BLOCKED": "{{person}} cannot be assigned: record the missing qualifications, or have an authorised supervisor override with a reason.",
     "QUALIFICATION_OVERRIDE_REASON_SHORT": "Explain the override (at least {{min}} characters).",
     "QUALIFICATION_OVERRIDE_NOT_NEEDED": "{{person}} already meets the requirements; no override is needed.",
@@ -355,6 +356,9 @@
     "TIMETABLE_EXCEPTION_STARTED": "This exception has started: you can only set its end date; add a new one for other changes.",
     "TIMETABLE_EXCEPTION_OVERLAP": "Another exception of this person (from {{from}}) covers part of these dates.",
     "SITE_WEEK_DAY_INVALID": "Weekdays run from Monday (1) to Sunday (7).",
-    "SITE_WEEK_NO_WORKING_DAY": "Leave at least one working day in the week."
+    "SITE_WEEK_NO_WORKING_DAY": "Leave at least one working day in the week.",
+    "QUALIFICATION_PERSON_UNKNOWN": "This work order requires qualifications: link the account of {{name}} to a personnel record first.",
+    "QUALIFICATION_OVERRIDE_SELF": "You cannot override your own qualification gap: another authorised supervisor must do it.",
+    "LABOR_PERSON_INACTIVE": "This person is no longer active: labour cannot be booked to them."
   }
 }

@@ -434,3 +434,99 @@ async fn loto_roles_require_the_authorisation_until_overridden() {
     assert!(applied.applied_at.is_some());
     assert_eq!(audit_overrides(&db).await, 1);
 }
+
+/// A login with no personnel card cannot be checked: on a work order with requirements, booking
+/// its labour or making it responsible is refused (fails closed) and readiness names it; on a
+/// work order without requirements it is accepted.
+#[tokio::test]
+async fn a_login_without_a_personnel_card_is_refused_where_qualifications_are_required() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    let labour = |wo_id: i64| crate::wo::labor::AddLaborInput {
+        wo_id,
+        intervener_id: actor,
+        skill_id: None,
+        started_at: Some(yesterday(8)),
+        ended_at: Some(yesterday(10)),
+        hours_worked: None,
+        hourly_rate: None,
+        notes: None,
+    };
+
+    let free = work_order(&db).await;
+    crate::wo::labor::add_labor_entry(&db, labour(free.id))
+        .await
+        .expect("no requirement: accepted");
+
+    let wo = work_order(&db).await;
+    require_on_wo(&db, wo.id, cert(&db, "HAB-T").await).await;
+    let refused = crate::wo::labor::add_labor_entry(&db, labour(wo.id))
+        .await
+        .expect_err("unlinked login on a job with requirements");
+    assert_eq!(codes(refused), vec!["QUALIFICATION_PERSON_UNKNOWN".to_string()]);
+
+    let wo = crate::wo::workflow::actions::submit::submit_wo(
+        &db,
+        crate::wo::workflow::actions::submit::WoSubmitInput {
+            wo_id: wo.id,
+            actor_id: actor,
+            expected_row_version: wo.row_version,
+        },
+    )
+    .await
+    .expect("submit");
+    let refused = crate::wo::workflow::actions::assign::emergency_reassign(
+        &db,
+        crate::wo::workflow::actions::assign::WoEmergencyReassignInput {
+            wo_id: wo.id,
+            actor_id: actor,
+            expected_row_version: wo.row_version,
+            assigned_team_id: None,
+            primary_responsible_id: Some(actor),
+            override_reason: "Responsable de garde".into(),
+        },
+    )
+    .await
+    .expect_err("unlinked responsible");
+    assert_eq!(codes(refused), vec!["QUALIFICATION_PERSON_UNKNOWN".to_string()]);
+
+    // Labour recorded before the requirement existed: readiness names the unlinked login.
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO work_order_interveners (work_order_id, intervener_id, hours_worked) VALUES ({}, {actor}, 1.0)",
+            wo.id
+        ),
+    )
+    .await;
+    let assessment = crate::qualification::gate::assess_work_order(&db, wo.id).await.expect("assessment");
+    assert!(!assessment.ok);
+    assert_eq!(assessment.unidentified.len(), 1);
+    assert_eq!(assessment.unidentified[0].role, "labor");
+    let report = crate::wo::workflow::readiness::evaluate_wo_readiness(&db, wo.id)
+        .await
+        .expect("readiness");
+    let crew = report.checks.iter().find(|c| c.code == "crew_qualified").expect("rule");
+    assert_eq!(crew.outcome, "fail");
+    assert!(crew.message.as_deref().unwrap_or_default().contains("fiche du personnel"));
+}
+
+/// Separation of duties: a supervisor cannot waive their own qualification gap.
+#[tokio::test]
+async fn nobody_overrides_their_own_qualification_gap() {
+    let db = setup().await;
+    let tech = person(&db, "H-1").await;
+    let wo = work_order(&db).await;
+    require_on_wo(&db, wo.id, cert(&db, "HAB-T").await).await;
+    let own = QualificationOverrideInput {
+        reason: "Je connais l'installation, pas de risque".into(),
+        approved_by_id: TECH_USER,
+    };
+    let refused = enforce_work_order_assignment(&db, tech, wo.id, Some(&own))
+        .await
+        .expect_err("self override");
+    assert_eq!(codes(refused), vec!["QUALIFICATION_OVERRIDE_SELF".to_string()]);
+    assert_eq!(audit_overrides(&db).await, 0);
+    override_on_wo(&db, tech, wo.id).await;
+    assert_eq!(audit_overrides(&db).await, 1);
+}

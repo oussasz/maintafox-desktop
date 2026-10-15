@@ -85,7 +85,8 @@
     "validated": "Validée",
     "validatedBy": "Validée par {{name}} le {{date}}",
     "selfDeclared": "Auto-déclarée",
-    "recorded": "Enregistrée"
+    "recorded": "Enregistrée",
+    "unvalidated": "Non validée"
   },
   "gapStatus": {
     "missing": "Manquante",
@@ -313,7 +314,7 @@
     "SKILL_MISSING": "{{person}} n'a pas la compétence {{qualification}}.",
     "SKILL_EXPIRED": "{{person}} : la compétence {{qualification}} n'est plus valable.",
     "SKILL_LEVEL_TOO_LOW": "{{person}} : {{qualification}} niveau {{requiredLevel}} exigé, niveau {{heldLevel}} détenu.",
-    "SKILL_UNVALIDATED": "{{person}} : la compétence {{qualification}} est auto-déclarée et non validée.",
+    "SKILL_UNVALIDATED": "{{person}} : la compétence {{qualification}} n'est pas validée par un responsable.",
     "QUALIFICATION_GATE_BLOCKED": "{{person}} ne peut pas être affecté(e) : enregistrez les habilitations manquantes ou faites accorder une dérogation motivée par un responsable habilité.",
     "QUALIFICATION_OVERRIDE_REASON_SHORT": "Motivez la dérogation (au moins {{min}} caractères).",
     "QUALIFICATION_OVERRIDE_NOT_NEEDED": "{{person}} remplit déjà les exigences ; aucune dérogation n'est nécessaire.",
@@ -355,6 +356,9 @@
     "TIMETABLE_EXCEPTION_STARTED": "Cette exception a commencé : vous pouvez seulement fixer sa date de fin ; ajoutez-en une nouvelle pour d'autres changements.",
     "TIMETABLE_EXCEPTION_OVERLAP": "Une autre exception de cette personne (à partir du {{from}}) couvre une partie de ces dates.",
     "SITE_WEEK_DAY_INVALID": "Les jours vont du lundi (1) au dimanche (7).",
-    "SITE_WEEK_NO_WORKING_DAY": "Laissez au moins un jour travaillé dans la semaine."
+    "SITE_WEEK_NO_WORKING_DAY": "Laissez au moins un jour travaillé dans la semaine.",
+    "QUALIFICATION_PERSON_UNKNOWN": "Cet OT exige des habilitations : reliez d'abord le compte de {{name}} à une fiche du personnel.",
+    "QUALIFICATION_OVERRIDE_SELF": "Vous ne pouvez pas lever votre propre écart d'habilitation : un autre responsable autorisé doit le faire.",
+    "LABOR_PERSON_INACTIVE": "Cette personne n’est plus active : la main-d’œuvre ne peut pas lui être imputée."
   }
 }

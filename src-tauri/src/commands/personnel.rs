@@ -1096,7 +1096,13 @@ pub async fn list_work_calendar_holidays(
     filter: calendar::WorkCalendarHolidayFilter,
     state: State<'_, AppState>,
 ) -> AppResult<Vec<calendar::WorkCalendarHoliday>> {
-    let _user = require_session!(state);
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PER_VIEW,
+        PermissionScope::Global
+    );
     calendar::list_holidays(&state.db, filter).await
 }
 
@@ -1177,7 +1183,14 @@ pub async fn list_schedule_class_versions(
     reference_value_id: Option<i64>,
     state: State<'_, AppState>,
 ) -> AppResult<Vec<timetable::ScheduleClassVersion>> {
-    let _user = require_session!(state);
+    let user = require_session!(state);
+    // Reference data readers and people managers (team and person timetables).
+    crate::commands::qualification::require_any_permission(
+        &state,
+        &user,
+        &[crate::rbac::permissions::REF_VIEW, crate::rbac::permissions::PER_VIEW],
+    )
+    .await?;
     timetable::list_class_versions(&state.db, reference_value_id).await
 }
 
@@ -1219,7 +1232,13 @@ pub async fn list_team_schedule(
     team_id: i64,
     state: State<'_, AppState>,
 ) -> AppResult<Vec<timetable::TeamScheduleAssignment>> {
-    let _user = require_session!(state);
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PER_VIEW,
+        PermissionScope::Global
+    );
     timetable::list_team_schedule(&state.db, team_id).await
 }
 
@@ -1307,7 +1326,13 @@ pub async fn delete_personnel_schedule_exception(id: i64, state: State<'_, AppSt
 /// Weekly rest days of every site and of the sites that set their own.
 #[tauri::command]
 pub async fn list_site_work_weeks(state: State<'_, AppState>) -> AppResult<Vec<calendar::SiteWorkWeek>> {
-    let _user = require_session!(state);
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PER_VIEW,
+        PermissionScope::Global
+    );
     calendar::list_site_work_weeks(&state.db).await
 }
 

@@ -242,9 +242,11 @@ pub async fn add_personnel_labor_entry(
         })?;
     let status: String = person.try_get("", "employment_status").unwrap_or_default();
     if status != "active" {
-        return Err(AppError::ValidationFailed(vec![
-            "Cette personne n'est plus active : la main-d'œuvre ne peut pas lui être imputée.".to_string(),
-        ]));
+        return Err(crate::errors::org_validation_failed(
+            "LABOR_PERSON_INACTIVE",
+            "This person is no longer active: labour cannot be booked to them.",
+            std::collections::HashMap::new(),
+        ));
     }
     book_labor(
         db,
@@ -303,8 +305,13 @@ async fn book_labor(db: &DatabaseConnection, input: LaborBooking) -> AppResult<W
 
     // The person must hold what the work order requires (or a supervisor override must have
     // been recorded beforehand — `record_qualification_override`).
-    if let Some(pid) = input.personnel_id {
-        crate::qualification::gate::enforce_work_order_assignment(&txn, pid, input.wo_id, None).await?;
+    match (input.personnel_id, input.intervener_id) {
+        (Some(pid), _) => {
+            crate::qualification::gate::enforce_work_order_assignment(&txn, pid, input.wo_id, None).await?;
+        }
+        // A login without a personnel card cannot be checked: refused when anything is required.
+        (None, Some(uid)) => crate::qualification::gate::enforce_user_on_work_order(&txn, uid, input.wo_id).await?,
+        (None, None) => {}
     }
 
     // Auto-compute hours_worked when both timestamps are provided
@@ -316,8 +323,17 @@ async fn book_labor(db: &DatabaseConnection, input: LaborBooking) -> AppResult<W
     let (resolved_rate, rate_source) = if let Some(rate) = input.hourly_rate {
         (Some(rate), "provided".to_string())
     } else {
+        // Frozen at booking: the rate card valid on the day the work was done (its start, else
+        // its end, else today) — a later card change never re-prices it.
+        let work_day = input
+            .started_at
+            .as_deref()
+            .or(input.ended_at.as_deref())
+            .and_then(|t| t.get(..10))
+            .map(str::to_string)
+            .unwrap_or_else(|| chrono::Utc::now().format("%Y-%m-%d").to_string());
         match input.personnel_id {
-            Some(pid) => match crate::personnel::queries::resolve_active_rate_pair(&txn, pid).await? {
+            Some(pid) => match crate::personnel::queries::resolve_rate_pair_on(&txn, pid, &work_day).await? {
                 Some((normal, overtime)) => (
                     Some(if input.is_overtime { overtime } else { normal }),
                     "rate_card".to_string(),

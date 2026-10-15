@@ -318,6 +318,9 @@ export function ClasseHoraireEditor({
                         ? t("timetable.editor.rotationOf", { days: v.cycle_length_days })
                         : t("timetable.editor.weekly")}
                       {v.is_continuous ? ` · ${t("timetable.editor.continuousShort")}` : ""}
+                      {v.note ? (
+                        <p className="mt-0.5 max-w-md text-xs text-text-muted">{v.note}</p>
+                      ) : null}
                     </td>
                     <td className="py-1.5 pr-2 text-right tabular-nums">
                       {t("timetable.editor.hoursPerCycle", {

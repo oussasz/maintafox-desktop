@@ -685,3 +685,61 @@ async fn habilitations_are_a_company_list_each_with_a_certification_type() {
         .expect("name");
     assert_eq!(bf, "Habilitation électrique BF — chargé de chantier, basse tension");
 }
+
+/// A requirement points at its work-order type by id: renaming the type keeps it. Every change is
+/// audited; deactivating it, retargeting it or loosening it is a safety change (certify + step-up).
+#[tokio::test]
+async fn requirements_survive_a_type_rename_are_audited_and_weakening_is_detected() {
+    let db = setup().await;
+    let lina = person(&db, "G-2").await;
+    let ct = cert_type(&db, "WORK-HEIGHT-T").await;
+    let actor = admin(&db).await;
+    let input = || QualificationRequirementUpsertInput {
+        target_code: Some("corrective".into()),
+        certification_type_id: Some(ct),
+        ..requirement("work_order_type")
+    };
+    let saved = upsert_requirement(&db, input(), actor).await.expect("type requirement");
+    let wo = work_order(&db, "Changement luminaire", None).await;
+    let audits = "SELECT COUNT(*) FROM audit_events WHERE action_code LIKE 'qualification.requirement.%'";
+    assert_eq!(scalar_i64(&db, audits).await, 1);
+
+    // The plant renames the type's code: the requirement still applies.
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "UPDATE work_order_types SET code = 'CORR-2027' WHERE code = 'corrective'".to_string(),
+    ))
+    .await
+    .expect("rename type");
+    let check = check_person_for_work_order(&db, lina, wo).await.expect("check");
+    assert_eq!(check.gaps.len(), 1, "still required after the rename");
+    let listed = crate::qualification::requirements::list_requirements(
+        &db,
+        crate::qualification::requirements::QualificationRequirementFilter::default(),
+    )
+    .await
+    .expect("list");
+    assert!(listed.iter().any(|r| r.id == saved.id && r.target_code.as_deref() == Some("CORR-2027")));
+
+    let edit = |is_active: bool, coverage: &str| QualificationRequirementUpsertInput {
+        id: Some(saved.id),
+        target_code: Some("CORR-2027".into()),
+        certification_type_id: Some(ct),
+        is_active: Some(is_active),
+        coverage: Some(coverage.into()),
+        ..requirement("work_order_type")
+    };
+    let weakening = |i: QualificationRequirementUpsertInput| {
+        let db = &db;
+        async move { crate::qualification::requirements::is_weakening_change(db, &i).await.expect("check") }
+    };
+    assert!(!weakening(edit(true, "each")).await, "same requirement, notes only");
+    assert!(weakening(edit(false, "each")).await, "deactivation");
+    assert!(weakening(edit(true, "any")).await, "every person → at least one");
+    let mut other = edit(true, "each");
+    other.target_code = Some("preventive".into());
+    assert!(weakening(other).await, "another target");
+
+    upsert_requirement(&db, edit(false, "each"), actor).await.expect("retire");
+    assert_eq!(scalar_i64(&db, audits).await, 2, "the retirement is audited too");
+}

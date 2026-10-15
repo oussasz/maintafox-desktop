@@ -5,9 +5,9 @@
 //!   `description` and `is_active`, so the catalogue reads like the plant's safety training plan.
 //! - `qualification_requirements`: what a job needs from the people doing it (SAP PM task-list
 //!   qualifications / Maximo craft-skill and qualification requirements). A requirement targets
-//!   one work order (`work_order_id`), every work order of a type (`target_code` = work-order type
-//!   code), every permit of a type (`target_code` = permit type code) or a LOTO role
-//!   (`target_code` = `isolation_apply` / `isolation_verify` / `removal_verify`), and asks for a
+//!   one work order (`work_order_id`), every work order of a type (`work_order_type_id`), every
+//!   permit of a type (`permit_type_id`) — by id, so renaming a type cannot disable it — or a LOTO
+//!   role (`target_code` = `isolation_apply` / `isolation_verify` / `removal_verify`), and asks for a
 //!   certification type or a skill at a minimum level. `coverage` says whether every person
 //!   assigned needs it (`each`) or at least one member of the crew (`any`).
 //! - `qualification_overrides`: append-only record of an authorised supervisor letting a person
@@ -66,6 +66,8 @@ impl MigrationTrait for Migration {
                 target_kind              TEXT NOT NULL CHECK (target_kind IN
                                             ('work_order', 'work_order_type', 'permit_type', 'loto_role')),
                 work_order_id            INTEGER NULL REFERENCES work_orders(id),
+                work_order_type_id       INTEGER NULL REFERENCES work_order_types(id),
+                permit_type_id           INTEGER NULL REFERENCES permit_types(id),
                 target_code              TEXT NULL,
                 certification_type_id    INTEGER NULL REFERENCES certification_types(id),
                 skill_reference_value_id INTEGER NULL REFERENCES reference_values(id),
@@ -79,13 +81,15 @@ impl MigrationTrait for Migration {
                 updated_at               TEXT NOT NULL,
                 CHECK ((certification_type_id IS NOT NULL) + (skill_reference_value_id IS NOT NULL) = 1),
                 CHECK ((target_kind = 'work_order' AND work_order_id IS NOT NULL)
-                    OR (target_kind <> 'work_order' AND target_code IS NOT NULL AND trim(target_code) <> ''))
+                    OR (target_kind = 'work_order_type' AND work_order_type_id IS NOT NULL)
+                    OR (target_kind = 'permit_type' AND permit_type_id IS NOT NULL)
+                    OR (target_kind = 'loto_role' AND target_code IS NOT NULL AND trim(target_code) <> ''))
             )",
         )
         .await?;
         db.execute_unprepared(
             "CREATE INDEX IF NOT EXISTS idx_qualification_requirements_target \
-             ON qualification_requirements(target_kind, target_code, is_active)",
+             ON qualification_requirements(target_kind, work_order_type_id, permit_type_id, target_code, is_active)",
         )
         .await?;
         db.execute_unprepared(

@@ -277,7 +277,7 @@ pub async fn get_qualification_matrix(
     for r in db
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT personnel_id, reference_value_id, proficiency_level, valid_to, source_type, is_validated \
+            "SELECT personnel_id, reference_value_id, proficiency_level, valid_to, is_validated \
              FROM personnel_skills"
                 .to_string(),
         ))
@@ -296,7 +296,6 @@ pub async fn get_qualification_matrix(
             .try_get::<Option<String>>("", "valid_to")
             .map_err(|e| decode_err("valid_to", e))?
             .filter(|s| !s.trim().is_empty());
-        let source: String = r.try_get("", "source_type").map_err(|e| decode_err("source_type", e))?;
         let validated: i64 = r
             .try_get("", "is_validated")
             .map_err(|e| decode_err("is_validated", e))?;
@@ -305,7 +304,7 @@ pub async fn get_qualification_matrix(
             .is_some_and(|v| parse_iso_date(v).is_none_or(|d| d < today));
         let status = if expired {
             "expired"
-        } else if source == "self_declared" && validated == 0 {
+        } else if validated == 0 {
             "unvalidated"
         } else {
             "valid"

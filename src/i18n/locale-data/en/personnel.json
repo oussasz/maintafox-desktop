@@ -823,7 +823,7 @@
     "review": {
       "chip": "To review",
       "classTitle": "Created by the update — please review",
-      "classBody": "This Classe horaire was set up by the update: an existing one got an 85 % utilisation factor; one built from a team's former capacity rule keeps that rule's hours every day at 100 %. Confirm it as is, or save a new version from today.",
+      "classBody": "This Classe horaire was set up by the update at 100 % utilisation: set its utilisation factor (share of shift time available for work orders) now. One built from a team's former capacity rule shares that rule's hours among the team's members of the time (see its note). Confirm it as is, or save a new version from today.",
       "teamTitle": "Default built from the team's former capacity rule — please review",
       "teamBody": "The update kept this team's capacity rule as the Classe horaire “{{name}}”. It now applies to each member who has no Classe horaire of their own. Confirm it, or choose the right default from a date (or none).",
       "confirm": "Confirm as is"

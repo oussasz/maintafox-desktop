@@ -1614,7 +1614,7 @@ fn map_schedule_class_row(row: &sea_orm::QueryResult) -> AppResult<ScheduleClass
     })
 }
 
-fn parse_schedule_class_metadata(raw: Option<&str>, fallback_code: &str) -> (String, i64, f64) {
+fn parse_schedule_class_metadata(raw: Option<&str>, fallback_code: &str) -> (String, i64, Option<f64>) {
     #[derive(serde::Deserialize)]
     struct Meta {
         #[serde(default)]
@@ -1635,7 +1635,7 @@ fn parse_schedule_class_metadata(raw: Option<&str>, fallback_code: &str) -> (Str
             .filter(|c| !c.trim().is_empty())
             .unwrap_or_else(|| fallback_code.to_string()),
         i64::from(parsed.is_continuous.unwrap_or(false)),
-        parsed.nominal_hours_per_day.unwrap_or(8.0),
+        parsed.nominal_hours_per_day,
     )
 }
 
@@ -1729,6 +1729,29 @@ pub async fn get_active_rate_card(
 /// Regular labor rate from the active rate card (effective_from ≤ today), if any.
 pub async fn resolve_active_labor_rate(db: &impl ConnectionTrait, personnel_id: i64) -> AppResult<Option<f64>> {
     Ok(get_active_rate_card(db, personnel_id).await?.map(|c| c.labor_rate))
+}
+
+/// Labour and overtime rates of the rate card valid on `day` (`YYYY-MM-DD`): the latest card
+/// effective on or before that day. Labour booked for a past day is priced at that day's card.
+pub async fn resolve_rate_pair_on(
+    db: &impl ConnectionTrait,
+    personnel_id: i64,
+    day: &str,
+) -> AppResult<Option<(f64, f64)>> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT labor_rate, overtime_rate FROM personnel_rate_cards WHERE personnel_id = ? AND date(effective_from) <= date(?) ORDER BY effective_from DESC, id DESC LIMIT 1",
+            [personnel_id.into(), day.into()],
+        ))
+        .await?;
+    row.map(|r| -> AppResult<(f64, f64)> {
+        Ok((
+            r.try_get("", "labor_rate").map_err(|e| map_err("labor_rate", e))?,
+            r.try_get("", "overtime_rate").map_err(|e| map_err("overtime_rate", e))?,
+        ))
+    })
+    .transpose()
 }
 
 /// Active labor + overtime rates for cost range estimates.

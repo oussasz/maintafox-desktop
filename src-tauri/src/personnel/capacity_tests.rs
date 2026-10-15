@@ -638,7 +638,7 @@ async fn upgrade_keeps_capacity_rules_as_classes_to_review_and_assumes_no_hours(
         scalar_i64(
             &db,
             "SELECT COUNT(*) FROM schedule_class_versions v JOIN reference_values rv ON rv.id = v.reference_value_id \
-             WHERE rv.code = 'DAY_SHIFT' AND v.review_status = 'to_review' AND v.utilisation_percent = 85.0"
+             WHERE rv.code = 'DAY_SHIFT' AND v.review_status = 'to_review' AND v.utilisation_percent = 100.0"
         )
         .await,
         1,
@@ -658,11 +658,16 @@ async fn upgrade_keeps_capacity_rules_as_classes_to_review_and_assumes_no_hours(
     let versions = list_class_versions(&db, Some(rule_class)).await.expect("versions");
     assert_eq!(versions.len(), 1);
     let v = &versions[0];
-    assert_eq!(v.class_label, "Mécanique — 7.5 h/jour (ancienne règle de capacité)");
+    assert_eq!(v.class_label, "Mécanique — ancienne règle de capacité (7.5 h/jour)");
     assert_eq!(v.utilisation_percent, 100.0);
-    assert!(v.is_continuous);
+    assert!(!v.is_continuous, "a day shift on the site's working days");
+    assert_eq!(v.working_days_per_cycle, 5);
     assert_eq!(v.review_status.as_deref(), Some("to_review"));
-    assert!(v.note.as_deref().is_some_and(|n| n.contains("7.5 h")));
+    assert!(
+        v.note.as_deref().is_some_and(|n| n.contains("7.5 h ÷ 2 membres = 3.75 h")),
+        "{:?}",
+        v.note
+    );
     // The disbanded team and the teams without a rule get no Classe horaire.
     for t in [team_b, team_c, team_d] {
         assert!(list_team_schedule(&db, t).await.expect("links").is_empty());
@@ -672,9 +677,9 @@ async fn upgrade_keeps_capacity_rules_as_classes_to_review_and_assumes_no_hours(
     let monday = d(12);
     let a = team_capacity_hours(&db, team_a, monday).await.expect("team a");
     assert_eq!(a.basis, "roster");
-    assert!((a.available_hours - 15.0).abs() < 1e-9, "two members × 7.5 h: {a:?}");
+    assert!((a.available_hours - 7.5).abs() < 1e-9, "the former team total, shared: {a:?}");
     let b = team_capacity_hours(&db, team_b, monday).await.expect("team b");
-    assert!((b.available_hours - 6.8).abs() < 1e-9, "only the member with a Classe horaire: {b:?}");
+    assert!((b.available_hours - 8.0).abs() < 1e-9, "only the member with a Classe horaire: {b:?}");
     let without: Vec<&str> = b
         .members
         .iter()

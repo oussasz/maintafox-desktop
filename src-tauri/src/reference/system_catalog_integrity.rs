@@ -479,7 +479,7 @@ async fn ensure_work_part_unused_reason_reference_catalog(db: &DatabaseConnectio
 }
 
 const ORG_SCHEDULE_CLASSES: &[SeedValue] = &[SeedValue {
-    metadata_json: Some(r#"{"shift_pattern_code":"DAY_SHIFT","is_continuous":false,"nominal_hours_per_day":8.0}"#),
+    metadata_json: Some(r#"{"shift_pattern_code":"DAY_SHIFT","is_continuous":false}"#),
     ..seed("DAY_SHIFT", "Journée normale", 1, "schedule_class")
 }];
 

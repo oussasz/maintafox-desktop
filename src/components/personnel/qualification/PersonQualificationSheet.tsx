@@ -524,7 +524,7 @@ export function PersonQualificationSheet({
             </thead>
             <tbody>
               {skills.map((s) => {
-                const selfDeclared = s.source_type === "self_declared" && !s.is_validated;
+                const unvalidated = !s.is_validated;
                 return (
                   <tr key={s.id} className="border-b border-surface-border/60">
                     <td className="py-1.5 pr-2">{s.skill_label}</td>
@@ -549,8 +549,8 @@ export function PersonQualificationSheet({
                               }
                             : {})}
                         />
-                      ) : selfDeclared ? (
-                        <StatusChip label={t("skillStatus.selfDeclared")} tone="neutral" dot />
+                      ) : unvalidated ? (
+                        <StatusChip label={t("skillStatus.unvalidated")} tone="neutral" dot />
                       ) : (
                         <StatusChip label={t("skillStatus.recorded")} tone="info" dot />
                       )}

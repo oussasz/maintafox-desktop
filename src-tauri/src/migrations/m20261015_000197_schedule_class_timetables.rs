@@ -15,11 +15,15 @@
 //!
 //! Upgrade:
 //! - every existing Classe horaire gets a first version from its weekly rows (`schedule_details`),
-//!   with an 85 % utilisation flagged for review;
-//! - a team that had its own capacity rule keeps that rule's hours as a Classe horaire built from
-//!   it (that many hours every day, continuous, 100 %), set as the team's default and flagged for
-//!   review. No other team gets hours: a member without a Classe horaire counts 0 h and is listed
-//!   on the team page.
+//!   at 100 % utilisation, flagged for review (the planner sets the factor then);
+//! - a team that had its own capacity rule keeps that rule's hours: the rule was a team total, so
+//!   it becomes a day shift of (rule hours ÷ the team's active members at the update) on the
+//!   site's working days, 100 %, set as the team's default and flagged for review, with the
+//!   derivation in the version's note. No other team gets hours: a member without a Classe
+//!   horaire counts 0 h and is listed on the team page.
+//!
+//! Self-contained: it reads the tenant language and the site's week itself, so later changes to
+//! application code cannot change what this migration did.
 //!
 //! Every device of a tenant performs the same upgrade on the same rows, so these rows carry seeded
 //! identities (`seeded_entity_sync_id`) like other rows created by migrations.
@@ -36,10 +40,9 @@ pub struct Migration;
 
 /// Start date of the versions and links the upgrade creates.
 pub const UPGRADE_FROM: &str = "2000-01-01";
-/// Utilisation factor given to the first version of existing Classes horaires (flagged for review).
-pub const UPGRADE_UTILISATION_PERCENT: f64 = 85.0;
-/// A Classe horaire built from a capacity rule keeps the rule's hours whole.
-pub const RULE_UTILISATION_PERCENT: f64 = 100.0;
+/// Upgraded and rule-built Classes horaires keep their hours whole: the planner sets the
+/// utilisation factor while reviewing them.
+pub const UPGRADE_UTILISATION_PERCENT: f64 = 100.0;
 /// Prefix of the codes of Classes horaires built from a team's capacity rule.
 pub const RULE_CLASS_PREFIX: &str = "CAP_RULE_";
 /// Shifts built from a capacity rule start at this time.
@@ -64,8 +67,9 @@ fn hhmm(minutes: i64) -> String {
     format!("{:02}:{:02}", m / 60, m % 60)
 }
 
-/// `hours` every day (08:00 onwards, a full day at most), as cycle days 1 (Monday) … 7 (Sunday).
-fn rule_week_json(hours: f64) -> String {
+/// A day shift of `hours` (08:00 onwards, a full day at most) on every day except `rest_days`
+/// (ISO weekdays), as cycle days 1 (Monday) … 7 (Sunday).
+fn rule_week_json(hours: f64, rest_days: &[i64]) -> String {
     let minutes = ((hours * 60.0).round() as i64).clamp(1, 24 * 60);
     let start = hhmm(RULE_SHIFT_START_MINUTES);
     let end = hhmm(RULE_SHIFT_START_MINUTES + minutes);
@@ -76,11 +80,66 @@ fn rule_week_json(hours: f64) -> String {
                 "shift_start": start,
                 "shift_end": end,
                 "break_minutes": 0,
-                "is_rest_day": false,
+                "is_rest_day": rest_days.contains(&d),
             })
         })
         .collect();
     serde_json::Value::Array(days).to_string()
+}
+
+/// `is_continuous` of a Classe horaire's reference value metadata, as written by its weekly editor.
+fn metadata_continuous(raw: Option<&str>) -> bool {
+    raw.and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
+        .and_then(|v| v.get("is_continuous").and_then(serde_json::Value::as_bool))
+        .unwrap_or(false)
+}
+
+/// Whether the tenant writes in English (`locale.default_language`, else the tenant setting).
+async fn tenant_english(db: &SchemaManagerConnection<'_>) -> Result<bool, DbErr> {
+    let from_config = db
+        .query_one(Statement::from_string(
+            DatabaseBackend::Sqlite,
+            "SELECT value FROM system_config WHERE key = 'locale.default_language'".to_string(),
+        ))
+        .await
+        .ok()
+        .flatten()
+        .and_then(|r| r.try_get::<String>("", "value").ok());
+    let raw = match from_config {
+        Some(v) => Some(v),
+        None => db
+            .query_one(Statement::from_string(
+                DatabaseBackend::Sqlite,
+                "SELECT setting_value_json FROM app_settings \
+                 WHERE setting_key = 'locale.primary_language' AND setting_scope = 'tenant' LIMIT 1"
+                    .to_string(),
+            ))
+            .await
+            .ok()
+            .flatten()
+            .and_then(|r| r.try_get::<String>("", "setting_value_json").ok())
+            .map(|json| serde_json::from_str::<String>(&json).unwrap_or(json)),
+    };
+    Ok(raw.is_some_and(|v| v.trim().to_ascii_lowercase().starts_with("en")))
+}
+
+/// Weekly rest days every site follows (migration 192's all-sites row).
+async fn all_sites_rest_days(db: &SchemaManagerConnection<'_>) -> Result<Vec<i64>, DbErr> {
+    let raw = db
+        .query_one(Statement::from_string(
+            DatabaseBackend::Sqlite,
+            "SELECT weekend_days FROM site_work_weeks WHERE entity_id IS NULL \
+             ORDER BY effective_from DESC, id DESC LIMIT 1"
+                .to_string(),
+        ))
+        .await?
+        .and_then(|r| r.try_get::<String>("", "weekend_days").ok())
+        .unwrap_or_default();
+    Ok(raw
+        .split(',')
+        .filter_map(|d| d.trim().parse::<i64>().ok())
+        .filter(|d| (1..=7).contains(d))
+        .collect())
 }
 
 /// Team code as a reference value code (letters, digits, underscores).
@@ -176,7 +235,7 @@ impl MigrationTrait for Migration {
         for class in classes {
             let id: i64 = class.try_get("", "id").map_err(|e| err("class id", e))?;
             let code: String = class.try_get("", "code").map_err(|e| err("class code", e))?;
-            let continuous = crate::personnel::timetable::metadata_is_continuous(
+            let continuous = metadata_continuous(
                 class
                     .try_get::<Option<String>>("", "metadata_json")
                     .ok()
@@ -221,7 +280,13 @@ impl MigrationTrait for Migration {
             .query_all(Statement::from_string(
                 DatabaseBackend::Sqlite,
                 "SELECT t.id, t.code, t.name, cr.available_hours_per_day AS hours, \
-                        cr.max_overtime_hours_per_day AS overtime, cr.effective_start \
+                        cr.max_overtime_hours_per_day AS overtime, cr.effective_start, \
+                        (SELECT COUNT(DISTINCT p.id) FROM personnel p \
+                          WHERE p.employment_status = 'active' AND (p.primary_team_id = t.id \
+                             OR EXISTS (SELECT 1 FROM personnel_team_assignments pta \
+                                         WHERE pta.personnel_id = p.id AND pta.team_id = t.id \
+                                           AND (pta.valid_to IS NULL OR date(pta.valid_to) >= date('now'))))) \
+                        AS members \
                  FROM teams t \
                  JOIN capacity_rules cr ON cr.id = ( \
                      SELECT r.id FROM capacity_rules r WHERE r.team_id = t.id \
@@ -236,9 +301,8 @@ impl MigrationTrait for Migration {
         if teams.is_empty() {
             return Ok(());
         }
-        let english = crate::qualification::gate::tenant_writes_english(db)
-            .await
-            .map_err(|e| err("tenant language", e))?;
+        let english = tenant_english(db).await?;
+        let rest_days = all_sites_rest_days(db).await?;
         for team in teams {
             let team_id: i64 = team.try_get("", "id").map_err(|e| err("team id", e))?;
             let team_code: String = team.try_get("", "code").map_err(|e| err("team code", e))?;
@@ -246,26 +310,48 @@ impl MigrationTrait for Migration {
             let hours: f64 = team.try_get("", "hours").map_err(|e| err("rule hours", e))?;
             let overtime: f64 = team.try_get("", "overtime").unwrap_or(0.0);
             let since: String = team.try_get("", "effective_start").unwrap_or_default();
+            let members: i64 = team.try_get("", "members").unwrap_or(0);
             let code = format!("{RULE_CLASS_PREFIX}{}", code_part(&team_code));
             let h = format_hours(hours);
+            let ot = format_hours(overtime);
+            // The rule was a team total: share it among the members of the time.
+            let per_member = if members > 0 { hours / members as f64 } else { hours };
+            let pm = format_hours(per_member.min(24.0));
             let (label, note) = if english {
                 (
-                    format!("{team_name} — {h} h/day (former capacity rule)"),
-                    format!(
-                        "Built by the update from the team's capacity rule ({h} h per day, {} h overtime, since {since}). \
-                         It applies to each member of the team who has no Classe horaire of their own: review it.",
-                        format_hours(overtime)
-                    ),
+                    format!("{team_name} — former capacity rule ({h} h/day)"),
+                    if members > 0 {
+                        format!(
+                            "Built by the update from the team's capacity rule ({h} h per day, {ot} h overtime, since \
+                             {since}): {h} h ÷ {members} members = {pm} h per member per working day. It applies to \
+                             each member of the team who has no Classe horaire of their own: review it."
+                        )
+                    } else {
+                        format!(
+                            "Built by the update from the team's capacity rule ({h} h per day, {ot} h overtime, since \
+                             {since}). The team had no active member at the update, so the hours could not be shared: \
+                             {pm} h per member per working day until reviewed."
+                        )
+                    },
                 )
             } else {
                 (
-                    format!("{team_name} — {h} h/jour (ancienne règle de capacité)"),
-                    format!(
-                        "Créée par la mise à jour à partir de la règle de capacité de l'équipe ({h} h par jour, \
-                         {} h sup., depuis le {since}). Elle s'applique à chaque membre de l'équipe sans classe \
-                         horaire propre : à revoir.",
-                        format_hours(overtime)
-                    ),
+                    format!("{team_name} — ancienne règle de capacité ({h} h/jour)"),
+                    if members > 0 {
+                        format!(
+                            "Créée par la mise à jour à partir de la règle de capacité de l'équipe ({h} h par jour, \
+                             {ot} h sup., depuis le {since}) : {h} h ÷ {members} membres = {pm} h par membre et par \
+                             jour travaillé. Elle s'applique à chaque membre de l'équipe sans classe horaire propre : \
+                             à revoir."
+                        )
+                    } else {
+                        format!(
+                            "Créée par la mise à jour à partir de la règle de capacité de l'équipe ({h} h par jour, \
+                             {ot} h sup., depuis le {since}). L'équipe n'avait aucun membre actif lors de la mise à \
+                             jour, les heures n'ont pas pu être réparties : {pm} h par membre et par jour travaillé, \
+                             à revoir."
+                        )
+                    },
                 )
             };
             let class_id = ensure_class(db, &code, &label).await?;
@@ -273,9 +359,9 @@ impl MigrationTrait for Migration {
                 db,
                 class_id,
                 &code,
-                &rule_week_json(hours),
-                true,
-                RULE_UTILISATION_PERCENT,
+                &rule_week_json(per_member, &rest_days),
+                false,
+                UPGRADE_UTILISATION_PERCENT,
                 Some(&note),
             )
             .await?;
@@ -367,7 +453,7 @@ async fn ensure_class(db: &SchemaManagerConnection<'_>, code: &str, label: &str)
         .await?
         .iter()
         .any(|r| r.try_get::<String>("", "name").is_ok_and(|n| n == "entity_sync_id"));
-    let metadata = serde_json::json!({ "shift_pattern_code": code, "is_continuous": true }).to_string();
+    let metadata = serde_json::json!({ "shift_pattern_code": code, "is_continuous": false }).to_string();
     let (columns, placeholders) = if has_sync_id {
         (", entity_sync_id", ", ?")
     } else {
@@ -411,14 +497,21 @@ mod tests {
 
     #[test]
     fn a_capacity_rule_becomes_that_many_hours_every_day() {
-        let days: serde_json::Value = serde_json::from_str(&rule_week_json(7.5)).expect("json");
+        let days: serde_json::Value = serde_json::from_str(&rule_week_json(7.5, &[5, 6])).expect("json");
         let days = days.as_array().expect("array");
         assert_eq!(days.len(), 7);
         assert!(days.iter().all(|d| d["shift_start"] == "08:00" && d["shift_end"] == "15:30"));
-        assert!(days.iter().all(|d| d["is_rest_day"] == false));
-        // A team total above a day (30 h for four people) is kept as a full-day shift to review.
-        let full: serde_json::Value = serde_json::from_str(&rule_week_json(30.0)).expect("json");
+        let rest: Vec<i64> = days
+            .iter()
+            .filter(|d| d["is_rest_day"] == true)
+            .map(|d| d["cycle_day"].as_i64().expect("day"))
+            .collect();
+        assert_eq!(rest, vec![5, 6], "the site's week-end");
+        // More than a day is kept as a full-day shift to review.
+        let full: serde_json::Value = serde_json::from_str(&rule_week_json(30.0, &[])).expect("json");
         assert_eq!(full[0]["shift_end"], "08:00");
+        assert!(!super::metadata_continuous(Some(r#"{"is_continuous":false}"#)));
+        assert!(super::metadata_continuous(Some(r#"{"is_continuous":true}"#)));
         assert_eq!(code_part("eq-méca 1"), "EQ_M_CA_1");
         assert_eq!(format_hours(8.0), "8");
         assert_eq!(format_hours(7.5), "7.5");

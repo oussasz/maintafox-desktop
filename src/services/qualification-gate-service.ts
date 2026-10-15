@@ -152,6 +152,10 @@ const WoQualificationAssessmentSchema = z.object({
   people: z.array(PersonQualificationCheckSchema),
   uncovered: z.array(JobRequirementSchema),
   assessed_team_id: z.number().nullable(),
+  /** Logins on the job without a personnel card: their qualifications cannot be checked. */
+  unidentified: z
+    .array(z.object({ user_id: z.number(), name: z.string(), role: z.string() }))
+    .default([]),
   ok: z.boolean(),
 });
 export type WoQualificationAssessment = z.infer<typeof WoQualificationAssessmentSchema>;

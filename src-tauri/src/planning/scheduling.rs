@@ -885,7 +885,7 @@ pub async fn list_capacity_rules(db: &DatabaseConnection, filter: CapacityRuleFi
 }
 
 pub async fn create_capacity_rule(db: &DatabaseConnection, input: CreateCapacityRuleInput) -> AppResult<CapacityRule> {
-    if input.available_hours_per_day < 0.0 || input.max_overtime_hours_per_day < 0.0 {
+    if input.available_hours_per_day.is_some_and(|h| h < 0.0) || input.max_overtime_hours_per_day < 0.0 {
         return Err(AppError::ValidationFailed(vec![
             "Capacity rule hours must be non-negative.".to_string(),
         ]));
@@ -919,7 +919,8 @@ pub async fn create_capacity_rule(db: &DatabaseConnection, input: CreateCapacity
                 input.team_id.into(),
                 input.effective_start.into(),
                 input.effective_end.into(),
-                input.available_hours_per_day.into(),
+                // Explicit: capacity no longer reads this column, never its old 8 h default.
+                input.available_hours_per_day.unwrap_or(0.0).into(),
                 input.max_overtime_hours_per_day.into(),
             ],
         ))
@@ -1313,7 +1314,6 @@ pub async fn create_schedule_break_in(
     let next_team_id = input.new_assigned_team_id.unwrap_or(current.assigned_team_id);
     let next_personnel_id = input.new_assigned_personnel_id.or(current.assigned_personnel_id);
     let bypass_availability = input.bypass_availability.unwrap_or(false);
-    let bypass_qualification = input.bypass_qualification.unwrap_or(false);
     let override_reason = input
         .override_reason
         .as_ref()
@@ -1458,7 +1458,6 @@ pub async fn create_schedule_break_in(
                 "approved_by_personnel_id": approved_by_personnel_id,
                 "dangerous_override": dangerous_override_reason.is_some(),
                 "bypass_availability": bypass_availability,
-                "bypass_qualification": bypass_qualification,
                 "cost_impact_delta": cost_delta
             })
             .to_string(),

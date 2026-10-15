@@ -65,11 +65,15 @@ fn decode_err(field: &str, err: impl std::fmt::Display) -> AppError {
     AppError::Internal(anyhow::anyhow!("qualification requirement decode '{field}': {err}"))
 }
 
+/// The target's code and label are read from the type itself (linked by id): renaming a
+/// work-order or permit type keeps its requirements.
 const SELECT: &str = "SELECT qr.id, qr.entity_sync_id, qr.target_kind, qr.work_order_id, wo.code AS wo_code, \
-        qr.target_code, \
+        qr.work_order_type_id, qr.permit_type_id, \
         CASE qr.target_kind \
-            WHEN 'work_order_type' THEN (SELECT wot.label FROM work_order_types wot WHERE UPPER(wot.code) = UPPER(qr.target_code)) \
-            WHEN 'permit_type' THEN (SELECT pt.name FROM permit_types pt WHERE UPPER(pt.code) = UPPER(qr.target_code)) \
+            WHEN 'work_order_type' THEN wot.code WHEN 'permit_type' THEN pt.code ELSE qr.target_code END AS target_code, \
+        CASE qr.target_kind \
+            WHEN 'work_order_type' THEN wot.label \
+            WHEN 'permit_type' THEN pt.name \
             WHEN 'work_order' THEN wo.title \
             ELSE NULL END AS target_label, \
         qr.certification_type_id, ct.code AS cert_code, ct.name AS cert_name, \
@@ -77,6 +81,8 @@ const SELECT: &str = "SELECT qr.id, qr.entity_sync_id, qr.target_kind, qr.work_o
         qr.min_proficiency_level, qr.coverage, qr.notes, qr.is_active, qr.row_version, qr.created_at, qr.updated_at \
      FROM qualification_requirements qr \
      LEFT JOIN work_orders wo ON wo.id = qr.work_order_id \
+     LEFT JOIN work_order_types wot ON wot.id = qr.work_order_type_id \
+     LEFT JOIN permit_types pt ON pt.id = qr.permit_type_id \
      LEFT JOIN certification_types ct ON ct.id = qr.certification_type_id \
      LEFT JOIN reference_values rv ON rv.id = qr.skill_reference_value_id";
 
@@ -91,7 +97,7 @@ fn map_row(r: &sea_orm::QueryResult) -> AppResult<QualificationRequirement> {
             .try_get("", "work_order_id")
             .map_err(|e| decode_err("work_order_id", e))?,
         work_order_code: r.try_get("", "wo_code").ok().flatten(),
-        target_code: r.try_get("", "target_code").map_err(|e| decode_err("target_code", e))?,
+        target_code: r.try_get("", "target_code").ok().flatten(),
         target_label: r.try_get("", "target_label").ok().flatten(),
         certification_type_id: r
             .try_get("", "certification_type_id")
@@ -136,10 +142,13 @@ pub async fn list_requirements(
         values.push(wo.into());
     }
     if let Some(code) = filter.target_code {
-        sql.push_str(" AND UPPER(qr.target_code) = UPPER(?)");
+        sql.push_str(
+            " AND UPPER(CASE qr.target_kind WHEN 'work_order_type' THEN wot.code WHEN 'permit_type' THEN pt.code \
+             ELSE qr.target_code END) = UPPER(?)",
+        );
         values.push(code.into());
     }
-    sql.push_str(" ORDER BY qr.target_kind, qr.target_code, qr.work_order_id, qr.id");
+    sql.push_str(" ORDER BY qr.target_kind, target_code, qr.work_order_id, qr.id");
     db.query_all(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
         .await?
         .iter()
@@ -185,8 +194,29 @@ fn target_unknown(code: &str) -> AppError {
     )
 }
 
-/// Validates the target and the qualification asked for; returns the normalised target code.
-async fn validate(db: &impl ConnectionTrait, input: &QualificationRequirementUpsertInput) -> AppResult<Option<String>> {
+/// What a requirement points at, resolved and normalised.
+#[derive(Debug, Clone, PartialEq, Default)]
+struct Target {
+    work_order_id: Option<i64>,
+    work_order_type_id: Option<i64>,
+    permit_type_id: Option<i64>,
+    /// LOTO role code (other kinds point by id).
+    role_code: Option<String>,
+}
+
+async fn type_id(db: &impl ConnectionTrait, table: &str, code: &str) -> AppResult<Option<i64>> {
+    Ok(db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!("SELECT id FROM {table} WHERE UPPER(code) = UPPER(?)"),
+            [code.into()],
+        ))
+        .await?
+        .and_then(|r| r.try_get::<i64>("", "id").ok()))
+}
+
+/// Validates the target and the qualification asked for; returns the resolved target.
+async fn validate(db: &impl ConnectionTrait, input: &QualificationRequirementUpsertInput) -> AppResult<Target> {
     if !TARGET_KINDS.contains(&input.target_kind.as_str()) {
         return Err(target_unknown(&input.target_kind));
     }
@@ -196,7 +226,7 @@ async fn validate(db: &impl ConnectionTrait, input: &QualificationRequirementUps
         .map(str::trim)
         .filter(|c| !c.is_empty())
         .map(str::to_string);
-    let target_code = match input.target_kind.as_str() {
+    let target = match input.target_kind.as_str() {
         "work_order" => {
             let wo = input.work_order_id.ok_or_else(|| target_required("work_order"))?;
             if !exists(db, "SELECT 1 AS x FROM work_orders WHERE id = ?", wo.into()).await? {
@@ -205,33 +235,28 @@ async fn validate(db: &impl ConnectionTrait, input: &QualificationRequirementUps
                     id: wo.to_string(),
                 });
             }
-            None
+            Target {
+                work_order_id: Some(wo),
+                ..Target::default()
+            }
         }
         "work_order_type" => {
             let c = code.ok_or_else(|| target_required("work_order_type"))?;
-            if !exists(
-                db,
-                "SELECT 1 AS x FROM work_order_types WHERE UPPER(code) = UPPER(?)",
-                c.clone().into(),
-            )
-            .await?
-            {
-                return Err(target_unknown(&c));
+            let id = type_id(db, "work_order_types", &c)
+                .await?
+                .ok_or_else(|| target_unknown(&c))?;
+            Target {
+                work_order_type_id: Some(id),
+                ..Target::default()
             }
-            Some(c.to_uppercase())
         }
         "permit_type" => {
             let c = code.ok_or_else(|| target_required("permit_type"))?;
-            if !exists(
-                db,
-                "SELECT 1 AS x FROM permit_types WHERE UPPER(code) = UPPER(?)",
-                c.clone().into(),
-            )
-            .await?
-            {
-                return Err(target_unknown(&c));
+            let id = type_id(db, "permit_types", &c).await?.ok_or_else(|| target_unknown(&c))?;
+            Target {
+                permit_type_id: Some(id),
+                ..Target::default()
             }
-            Some(c.to_uppercase())
         }
         _ => {
             let c = code.ok_or_else(|| target_required("loto_role"))?;
@@ -243,7 +268,10 @@ async fn validate(db: &impl ConnectionTrait, input: &QualificationRequirementUps
                     &[],
                 ));
             }
-            Some(c)
+            Target {
+                role_code: Some(c),
+                ..Target::default()
+            }
         }
     };
 
@@ -298,7 +326,7 @@ async fn validate(db: &impl ConnectionTrait, input: &QualificationRequirementUps
             ));
         }
     }
-    Ok(target_code)
+    Ok(target)
 }
 
 /// Refuses a second active requirement for the same target and qualification (offline devices
@@ -306,8 +334,7 @@ async fn validate(db: &impl ConnectionTrait, input: &QualificationRequirementUps
 async fn refuse_duplicate(
     db: &impl ConnectionTrait,
     input: &QualificationRequirementUpsertInput,
-    work_order_id: Option<i64>,
-    target_code: &Option<String>,
+    target: &Target,
 ) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_sql_and_values(
@@ -315,14 +342,18 @@ async fn refuse_duplicate(
             "SELECT id FROM qualification_requirements \
              WHERE is_active = 1 AND target_kind = ? AND id <> ? \
                AND COALESCE(work_order_id, 0) = COALESCE(?, 0) \
+               AND COALESCE(work_order_type_id, 0) = COALESCE(?, 0) \
+               AND COALESCE(permit_type_id, 0) = COALESCE(?, 0) \
                AND UPPER(COALESCE(target_code, '')) = UPPER(COALESCE(?, '')) \
                AND COALESCE(certification_type_id, 0) = COALESCE(?, 0) \
                AND COALESCE(skill_reference_value_id, 0) = COALESCE(?, 0)",
             [
                 input.target_kind.clone().into(),
                 input.id.unwrap_or(0).into(),
-                work_order_id.into(),
-                target_code.clone().into(),
+                target.work_order_id.into(),
+                target.work_order_type_id.into(),
+                target.permit_type_id.into(),
+                target.role_code.clone().into(),
                 input.certification_type_id.into(),
                 input.skill_reference_value_id.into(),
             ],
@@ -344,16 +375,15 @@ pub async fn upsert_requirement(
     actor_id: i64,
 ) -> AppResult<QualificationRequirement> {
     let txn = db.begin().await?;
-    let target_code = validate(&txn, &input).await?;
-    let work_order_id = if input.target_kind == "work_order" {
-        input.work_order_id
-    } else {
-        None
-    };
+    let target = validate(&txn, &input).await?;
     let is_active = input.is_active.unwrap_or(true);
     if is_active {
-        refuse_duplicate(&txn, &input, work_order_id, &target_code).await?;
+        refuse_duplicate(&txn, &input, &target).await?;
     }
+    let before = match input.id {
+        Some(id) => Some(get_requirement(&txn, id).await?),
+        None => None,
+    };
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     // A level only means something for a skill.
     let level = input.skill_reference_value_id.and(input.min_proficiency_level);
@@ -371,14 +401,17 @@ pub async fn upsert_requirement(
         let res = txn
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "UPDATE qualification_requirements SET target_kind = ?, work_order_id = ?, target_code = ?, \
+                "UPDATE qualification_requirements SET target_kind = ?, work_order_id = ?, work_order_type_id = ?, \
+                 permit_type_id = ?, target_code = ?, \
                  certification_type_id = ?, skill_reference_value_id = ?, min_proficiency_level = ?, coverage = ?, \
                  notes = ?, is_active = ?, row_version = row_version + 1, updated_at = ? \
                  WHERE id = ? AND row_version = ?",
                 [
                     input.target_kind.clone().into(),
-                    work_order_id.into(),
-                    target_code.into(),
+                    target.work_order_id.into(),
+                    target.work_order_type_id.into(),
+                    target.permit_type_id.into(),
+                    target.role_code.clone().into(),
                     input.certification_type_id.into(),
                     input.skill_reference_value_id.into(),
                     level.into(),
@@ -403,14 +436,17 @@ pub async fn upsert_requirement(
         txn.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO qualification_requirements \
-             (entity_sync_id, target_kind, work_order_id, target_code, certification_type_id, skill_reference_value_id, \
+             (entity_sync_id, target_kind, work_order_id, work_order_type_id, permit_type_id, target_code, \
+              certification_type_id, skill_reference_value_id, \
               min_proficiency_level, coverage, notes, is_active, row_version, created_by_id, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)",
             [
                 crate::sync::identity::new_entity_sync_id().into(),
                 input.target_kind.clone().into(),
-                work_order_id.into(),
-                target_code.into(),
+                target.work_order_id.into(),
+                target.work_order_type_id.into(),
+                target.permit_type_id.into(),
+                target.role_code.clone().into(),
                 input.certification_type_id.into(),
                 input.skill_reference_value_id.into(),
                 level.into(),
@@ -433,6 +469,77 @@ pub async fn upsert_requirement(
         .map_err(|e| decode_err("id", e))?
     };
     let saved = get_requirement(&txn, id).await?;
+    // A requirement protects people: every change is audited, before and after.
+    crate::audit::writer::write_audit_event_in(
+        &txn,
+        crate::audit::writer::AuditEventInput {
+            action_code: if before.is_some() {
+                "qualification.requirement.update"
+            } else {
+                "qualification.requirement.create"
+            }
+            .to_string(),
+            target_type: Some("qualification_requirement".to_string()),
+            target_id: Some(id.to_string()),
+            actor_id: Some(actor_id),
+            auth_context: "session".to_string(),
+            result: "success".to_string(),
+            before_hash: None,
+            after_hash: None,
+            retention_class: "standard".to_string(),
+            details_json: Some(serde_json::json!({
+                "before": before.as_ref().map(audit_view),
+                "after": audit_view(&saved),
+            })),
+        },
+    )
+    .await?;
     txn.commit().await?;
     Ok(saved)
+}
+
+fn audit_view(r: &QualificationRequirement) -> serde_json::Value {
+    serde_json::json!({
+        "target_kind": r.target_kind,
+        "work_order_id": r.work_order_id,
+        "target": r.target_code,
+        "certification": r.certification_code,
+        "skill": r.skill_code,
+        "min_level": r.min_proficiency_level,
+        "coverage": r.coverage,
+        "active": r.is_active,
+    })
+}
+
+/// Whether an edit weakens a requirement in force — deactivating it, moving it to another target
+/// or another qualification, lowering its level or narrowing its coverage: such a change needs
+/// `trn.certify` and a fresh step-up, like an override.
+pub async fn is_weakening_change(db: &impl ConnectionTrait, input: &QualificationRequirementUpsertInput) -> AppResult<bool> {
+    let Some(id) = input.id else {
+        return Ok(false);
+    };
+    let current = get_requirement(db, id).await?;
+    if !current.is_active {
+        return Ok(false);
+    }
+    if !input.is_active.unwrap_or(true) {
+        return Ok(true);
+    }
+    let same_target = current.target_kind == input.target_kind
+        && match input.target_kind.as_str() {
+            "work_order" => current.work_order_id == input.work_order_id,
+            _ => current
+                .target_code
+                .as_deref()
+                .zip(input.target_code.as_deref())
+                .is_some_and(|(a, b)| a.trim().eq_ignore_ascii_case(b.trim())),
+        };
+    let same_qualification = current.certification_type_id == input.certification_type_id
+        && current.skill_reference_value_id == input.skill_reference_value_id;
+    let not_lower = match (current.min_proficiency_level, input.min_proficiency_level) {
+        (Some(was), Some(now)) => now >= was,
+        _ => true,
+    };
+    let not_narrower = !(current.coverage == "each" && input.coverage.as_deref() == Some("any"));
+    Ok(!(same_target && same_qualification && not_lower && not_narrower))
 }
