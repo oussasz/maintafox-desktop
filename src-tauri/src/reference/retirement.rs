@@ -1,4 +1,5 @@
-//! Retiring a reference list that another list replaces (data migrations only).
+//! Retiring a reference list that another list replaces (data migrations and the startup
+//! retirement pass).
 //!
 //! When two lists are merged (for example the request symptoms `DI.SYMPTOM` into the shared
 //! ISO 14224 symptom list `WORK.SYMPTOMS`), every stored link to a retired value is moved to its
@@ -218,4 +219,119 @@ pub async fn delete_domain(conn: &impl ConnectionTrait, domain_code: &str) -> Ap
     ))
     .await?;
     Ok(())
+}
+
+async fn domain_exists(conn: &impl ConnectionTrait, code: &str) -> AppResult<bool> {
+    Ok(conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS ok FROM reference_domains WHERE UPPER(TRIM(code)) = ?",
+            [code.trim().to_ascii_uppercase().into()],
+        ))
+        .await?
+        .is_some())
+}
+
+/// Merges the list `retired` into `target`: a retired value whose code exists in `target` has
+/// its links moved to that value; a value only the retired list has (a plant's own value) is
+/// moved, with its id, identity and links, into the latest published set of `target`. The
+/// retired domain is then deleted. Returns `false` when `retired` no longer exists (nothing to do),
+/// so the merge can run again safely.
+pub async fn merge_domain_into(conn: &impl ConnectionTrait, retired: &str, target: &str) -> AppResult<bool> {
+    if !domain_exists(conn, retired).await? {
+        return Ok(false);
+    }
+    let target_set: i64 = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT rs.id FROM reference_sets rs JOIN reference_domains d ON d.id = rs.domain_id               WHERE UPPER(TRIM(d.code)) = ? AND rs.status = 'published' ORDER BY rs.version_no DESC LIMIT 1",
+            [target.to_ascii_uppercase().into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("{target} has no published set")))?
+        .try_get("", "id")
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("target set id: {e}")))?;
+
+    // Published set first, so a plant value present in several versions keeps its published row.
+    let values = conn
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT rv.id, rv.code FROM reference_values rv                JOIN reference_sets rs ON rs.id = rv.set_id                JOIN reference_domains d ON d.id = rs.domain_id               WHERE UPPER(TRIM(d.code)) = ?               ORDER BY CASE rs.status WHEN 'published' THEN 0 ELSE 1 END, rs.version_no DESC, rv.id",
+            [retired.to_ascii_uppercase().into()],
+        ))
+        .await?;
+    let mut pairs: Vec<(i64, i64)> = Vec::new();
+    for v in values {
+        let id: i64 = v
+            .try_get("", "id")
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("value id: {e}")))?;
+        let code: String = v
+            .try_get("", "code")
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("value code: {e}")))?;
+        let same_code: Option<i64> = conn
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT rv.id FROM reference_values rv                    JOIN reference_sets rs ON rs.id = rv.set_id                    JOIN reference_domains d ON d.id = rs.domain_id                   WHERE UPPER(TRIM(d.code)) = ? AND LOWER(TRIM(rv.code)) = LOWER(TRIM(?))                   ORDER BY CASE rs.status WHEN 'published' THEN 0 ELSE 1 END, rs.version_no DESC LIMIT 1",
+                [target.to_ascii_uppercase().into(), code.into()],
+            ))
+            .await?
+            .map(|r| r.try_get::<i64>("", "id"))
+            .transpose()
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("target value id: {e}")))?;
+        match same_code {
+            Some(target_id) => pairs.push((id, target_id)),
+            None => {
+                conn.execute(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "UPDATE reference_values SET set_id = ?, parent_id = NULL WHERE id = ?",
+                    [target_set.into(), id.into()],
+                ))
+                .await?;
+            }
+        }
+    }
+    remap_value_links(conn, &pairs).await?;
+    delete_domain(conn, retired).await?;
+    Ok(true)
+}
+
+/// Lists replaced by a shared list: `(retired domain, list that replaces it)`. `None` = the
+/// retired list is not linked by id (its codes were rewritten in place), it is only deleted.
+/// - `DI.PRIORITY` → shared urgency scale `WORK.URGENCY` (codes rewritten by migration 198);
+/// - `DI.SYMPTOM` → shared failure-symptom list `WORK.SYMPTOMS` (migration 199).
+pub const RETIRED_DOMAINS: &[(&str, Option<&str>)] = &[("DI.PRIORITY", None), ("DI.SYMPTOM", Some("WORK.SYMPTOMS"))];
+
+/// Startup retirement pass, run once change capture is installed. Migrations run with capture
+/// suspended, so their deletes and remaps are not sent; a device that replays the server history
+/// could bring a retired list (and rows pointing at it) back. This pass merges or deletes any
+/// retired list found again, with capture on, so the change reaches the other devices. Does
+/// nothing when no retired list exists. Returns the domains it retired. Runs in one transaction:
+/// a link that cannot be moved leaves everything as it was.
+pub async fn retire_superseded_domains(db: &sea_orm::DatabaseConnection) -> AppResult<Vec<String>> {
+    use sea_orm::TransactionTrait;
+    let txn = db.begin().await?;
+    let retired = retire_superseded_domains_in(&txn).await?;
+    txn.commit().await?;
+    Ok(retired)
+}
+
+async fn retire_superseded_domains_in(conn: &impl ConnectionTrait) -> AppResult<Vec<String>> {
+    let mut retired = Vec::new();
+    for (domain, target) in RETIRED_DOMAINS {
+        let done = match target {
+            Some(target) => merge_domain_into(conn, domain, target).await?,
+            None => {
+                if domain_exists(conn, domain).await? {
+                    delete_domain(conn, domain).await?;
+                    true
+                } else {
+                    false
+                }
+            }
+        };
+        if done {
+            retired.push((*domain).to_string());
+        }
+    }
+    Ok(retired)
 }

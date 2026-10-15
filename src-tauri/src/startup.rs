@@ -284,6 +284,16 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
         }
     }
 
+    // Phase 4a': lists replaced by shared lists (DI.PRIORITY, DI.SYMPTOM). Migrations retire them
+    // with capture suspended; if a replayed sync history brings one back, it is merged / deleted
+    // here with capture on, so the change reaches the other devices. A link that cannot be moved
+    // keeps the list in place (nothing is lost) and is logged.
+    match crate::reference::retirement::retire_superseded_domains(&app_state.db).await {
+        Ok(retired) if !retired.is_empty() => info!(?retired, "startup: retired superseded reference lists"),
+        Ok(_) => {}
+        Err(e) => warn!("startup: retiring superseded reference lists failed (non-fatal): {e}"),
+    }
+
     // Phase 4b: sync worker (protocol v2), background task `sync`. Closing the main window only
     // hides it in the tray (window.rs), so the process and the worker keep running.
     start_sync_worker(&app, &app_state).await;

@@ -12,11 +12,14 @@
 //! - A `DI.SYMPTOM` value a plant added (code absent from `WORK.SYMPTOMS`) is moved, with its id,
 //!   identity and links, into the published `WORK.SYMPTOMS` set.
 //! - `DI.SYMPTOM` is then deleted. A link that could not be moved stops the migration.
+//!   (`reference::retirement::merge_domain_into`; the startup retirement pass runs the same merge
+//!   again, with sync capture on, if a replayed history brings the list back.)
+//! - The whole step runs in one transaction and every part is guarded, so it can run again.
 //! - `failure_events.symptom_id` (new, references `reference_values(id)`) records the observed
 //!   symptom on each RAMS failure event; existing events created from a work order take it from
 //!   the work order's close-out coding.
 
-use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
+use sea_orm::{ConnectionTrait, DatabaseBackend, Statement, TransactionTrait};
 use sea_orm_migration::prelude::*;
 
 use crate::wo::closeout_reference_catalog::{ensure_closeout_reference_catalogs, DOMAIN_SYMPTOMS};
@@ -35,67 +38,8 @@ fn db_err(e: impl std::fmt::Display) -> DbErr {
     DbErr::Custom(e.to_string())
 }
 
-async fn work_symptom_id<C: ConnectionTrait>(db: &C, code: &str) -> Result<Option<i64>, DbErr> {
-    db.query_one(Statement::from_sql_and_values(
-        DatabaseBackend::Sqlite,
-        "SELECT rv.id FROM reference_values rv \
-               JOIN reference_sets rs ON rs.id = rv.set_id \
-               JOIN reference_domains d ON d.id = rs.domain_id \
-              WHERE UPPER(TRIM(d.code)) = ? AND LOWER(TRIM(rv.code)) = LOWER(TRIM(?)) \
-              ORDER BY CASE rs.status WHEN 'published' THEN 0 ELSE 1 END, rs.version_no DESC LIMIT 1",
-        [DOMAIN_SYMPTOMS.into(), code.into()],
-    ))
-    .await?
-    .map(|r| r.try_get::<i64>("", "id"))
-    .transpose()
-}
-
 async fn merge_request_symptoms<C: ConnectionTrait>(db: &C) -> Result<(), DbErr> {
-    let target_set: i64 = db
-        .query_one(Statement::from_sql_and_values(
-            DatabaseBackend::Sqlite,
-            "SELECT rs.id FROM reference_sets rs JOIN reference_domains d ON d.id = rs.domain_id \
-              WHERE UPPER(TRIM(d.code)) = ? AND rs.status = 'published' ORDER BY rs.version_no DESC LIMIT 1",
-            [DOMAIN_SYMPTOMS.into()],
-        ))
-        .await?
-        .ok_or_else(|| DbErr::Custom(format!("{DOMAIN_SYMPTOMS} has no published set")))?
-        .try_get("", "id")?;
-
-    // Published set first, so a plant value present in several versions keeps its published row.
-    let values = db
-        .query_all(Statement::from_sql_and_values(
-            DatabaseBackend::Sqlite,
-            "SELECT rv.id, rv.code FROM reference_values rv \
-               JOIN reference_sets rs ON rs.id = rv.set_id \
-               JOIN reference_domains d ON d.id = rs.domain_id \
-              WHERE UPPER(TRIM(d.code)) = ? \
-              ORDER BY CASE rs.status WHEN 'published' THEN 0 ELSE 1 END, rs.version_no DESC, rv.id",
-            [RETIRED_SYMPTOM_DOMAIN.into()],
-        ))
-        .await?;
-
-    let mut pairs: Vec<(i64, i64)> = Vec::new();
-    for v in values {
-        let id: i64 = v.try_get("", "id")?;
-        let code: String = v.try_get("", "code")?;
-        match work_symptom_id(db, &code).await? {
-            Some(target) => pairs.push((id, target)),
-            None => {
-                db.execute(Statement::from_sql_and_values(
-                    DatabaseBackend::Sqlite,
-                    "UPDATE reference_values SET set_id = ?, parent_id = NULL WHERE id = ?",
-                    [target_set.into(), id.into()],
-                ))
-                .await?;
-            }
-        }
-    }
-
-    crate::reference::retirement::remap_value_links(db, &pairs)
-        .await
-        .map_err(db_err)?;
-    crate::reference::retirement::delete_domain(db, RETIRED_SYMPTOM_DOMAIN)
+    crate::reference::retirement::merge_domain_into(db, RETIRED_SYMPTOM_DOMAIN, DOMAIN_SYMPTOMS)
         .await
         .map_err(db_err)?;
     Ok(())
@@ -130,11 +74,14 @@ async fn add_failure_event_symptom<C: ConnectionTrait>(db: &C) -> Result<(), DbE
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        let db = manager.get_connection();
-        ensure_closeout_reference_catalogs(db).await.map_err(db_err)?;
-        merge_request_symptoms(db).await?;
-        add_failure_event_symptom(db).await?;
-        Ok(())
+        // sea-orm-migration runs SQLite migrations outside a transaction: one transaction here, so
+        // a failure leaves the database as it was and the next start runs the whole step again.
+        // Every step is also guarded (no retired list / column already there: nothing to do).
+        let txn = manager.get_connection().begin().await?;
+        ensure_closeout_reference_catalogs(&txn).await.map_err(db_err)?;
+        merge_request_symptoms(&txn).await?;
+        add_failure_event_symptom(&txn).await?;
+        txn.commit().await
     }
 
     async fn down(&self, _manager: &SchemaManager) -> Result<(), DbErr> {

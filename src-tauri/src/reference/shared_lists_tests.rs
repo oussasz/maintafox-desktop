@@ -150,7 +150,7 @@ async fn legacy_di(
 
 #[tokio::test]
 async fn migration_198_maps_urgencies_types_and_sla_rules_by_code() {
-    let db = migrated_before("m20261015_000198_shared_urgency_and_wo_natures").await;
+    let db = migrated_before(M198).await;
     // Legacy rows reference equipment / users this test does not need.
     exec(&db, "PRAGMA foreign_keys = OFF").await;
     exec(
@@ -351,27 +351,292 @@ async fn migration_198_maps_urgencies_types_and_sla_rules_by_code() {
 }
 
 #[tokio::test]
-async fn migration_198_stops_on_a_work_order_whose_type_is_unknown() {
-    let db = migrated_before("m20261015_000198_shared_urgency_and_wo_natures").await;
+async fn migration_198_classifies_a_work_order_of_unknown_type_as_deferred_corrective() {
+    let db = migrated_before(M198).await;
     exec(&db, "PRAGMA foreign_keys = OFF").await;
     exec(
         &db,
         &format!(
-            "INSERT INTO work_orders (entity_sync_id, code, type_id, status_id, title, row_version, created_at, updated_at) \
-             VALUES ('sync-orphan', 'OT-ORPHAN', 987654, 1, 'orphan', 1, {NOW}, {NOW})"
+            "INSERT INTO work_orders (entity_sync_id, code, type_id, status_id, title, notes, row_version, created_at, \
+             updated_at) VALUES ('sync-orphan', 'OT-ORPHAN', 987654, 1, 'orphan', 'Avant', 1, {NOW}, {NOW})"
         ),
     )
     .await;
     exec(&db, "PRAGMA foreign_keys = ON").await;
-    let err = Migrator::up(&db, None).await.expect_err("no type can be guessed");
-    assert!(err.to_string().contains("OT-ORPHAN"), "{err}");
+    Migrator::up(&db, None)
+        .await
+        .expect("an unknown type does not stop the start");
+
+    let id = i64_of(&db, "SELECT id FROM work_orders WHERE code = 'OT-ORPHAN'").await;
+    assert_eq!(
+        wo_types::work_order_nature(&db, id).await.unwrap(),
+        Some(MaintenanceNature::CorrectiveDeferred)
+    );
+    let notes = opt_str(&db, &format!("SELECT notes FROM work_orders WHERE id = {id}"))
+        .await
+        .unwrap();
+    assert!(notes.starts_with("Avant\n[Migration 198]"), "{notes}");
+    assert!(notes.contains("type_id=987654"), "{notes}");
+}
+
+const M198: &str = "m20261015_000198_shared_urgency_and_wo_natures";
+const M199: &str = "m20261015_000199_shared_failure_symptoms";
+
+/// Forget that `name` ran, as if a crash had happened before sea-orm recorded it.
+async fn unrecord(db: &DatabaseConnection, name: &str) {
+    exec(db, &format!("DELETE FROM seaql_migrations WHERE version = '{name}'")).await;
+}
+
+async fn wo_links(db: &DatabaseConnection, code: &str) -> (Option<i64>, Option<i64>) {
+    let urgency = opt_i64(db, &format!("SELECT urgency_id FROM work_orders WHERE code = '{code}'")).await;
+    let ty = opt_i64(db, &format!("SELECT type_id FROM work_orders WHERE code = '{code}'")).await;
+    (urgency, ty)
+}
+
+#[tokio::test]
+async fn migration_198_can_run_again_without_nulling_or_remapping_twice() {
+    let db = migrated_before(M198).await;
+    exec(&db, "PRAGMA foreign_keys = OFF").await;
+    legacy_wo(&db, "OT-R", "emergency", Some("critical")).await;
+    exec(
+        &db,
+        "INSERT INTO schedule_candidates (entity_sync_id, source_type, source_id, priority_id) \
+         VALUES ('sync-sc-r', 'work_order', 1, (SELECT id FROM urgency_levels WHERE code = 'medium'))",
+    )
+    .await;
+    legacy_di(&db, "DI-R", "critical", Some("medium"), None).await;
+    exec(&db, "PRAGMA foreign_keys = ON").await;
+    Migrator::up(&db, Some(1)).await.expect("migration 198");
+    let after_first = wo_links(&db, "OT-R").await;
+    let candidate = opt_i64(
+        &db,
+        "SELECT priority_id FROM schedule_candidates WHERE entity_sync_id = 'sync-sc-r'",
+    )
+    .await;
+
+    // The same step again (not recorded): nothing moves.
+    unrecord(&db, M198).await;
+    Migrator::up(&db, Some(1)).await.expect("migration 198 again");
+    assert_eq!(wo_links(&db, "OT-R").await, after_first);
+    assert_eq!(after_first.0, Some(value_id(&db, "WORK.URGENCY", "emergency").await));
+    assert_eq!(
+        opt_i64(
+            &db,
+            "SELECT priority_id FROM schedule_candidates WHERE entity_sync_id = 'sync-sc-r'"
+        )
+        .await,
+        candidate
+    );
+    assert_eq!(candidate, Some(value_id(&db, "WORK.URGENCY", "normal").await));
+    assert_eq!(
+        opt_str(
+            &db,
+            "SELECT reported_urgency FROM intervention_requests WHERE code = 'DI-R'"
+        )
+        .await
+        .as_deref(),
+        Some("emergency")
+    );
+    assert_foreign_keys_hold(&db).await;
+}
+
+#[tokio::test]
+async fn migration_198_resumes_a_partial_state_left_by_an_interrupted_run() {
+    // A run interrupted after the work orders were remapped but before `urgency_levels` was
+    // dropped (possible before the step ran in one transaction): resuming must not null or remap
+    // the already remapped work order.
+    let db = migrated_before(M198).await;
+    exec(&db, "PRAGMA foreign_keys = OFF").await;
+    legacy_wo(&db, "OT-DONE", "corrective", Some("high")).await;
+    legacy_wo(&db, "OT-TODO", "corrective", Some("low")).await;
+    urgency_scale::ensure_urgency_scale(&db).await.expect("scale");
+    let emergency = value_id(&db, "WORK.URGENCY", "emergency").await;
+    exec(
+        &db,
+        &format!("UPDATE work_orders SET urgency_id = {emergency} WHERE code = 'OT-DONE'"),
+    )
+    .await;
+    exec(&db, "PRAGMA foreign_keys = ON").await;
+
+    Migrator::up(&db, None).await.expect("resume");
+    assert_eq!(wo_links(&db, "OT-DONE").await.0, Some(emergency), "kept, not nulled");
+    assert_eq!(
+        wo_links(&db, "OT-TODO").await.0,
+        Some(value_id(&db, "WORK.URGENCY", "low").await)
+    );
+}
+
+#[tokio::test]
+async fn migration_198_drops_pending_sync_entries_of_the_removed_entity_types() {
+    let db = migrated_before(M198).await;
+    exec(
+        &db,
+        "INSERT INTO sync_capture_journal (entity_type, entity_sync_id, operation) VALUES \
+           ('urgency_levels', 'u-1', 'upsert'), ('work_order_types', 't-1', 'upsert'), ('work_orders', 'w-1', 'upsert')",
+    )
+    .await;
+    exec(
+        &db,
+        "INSERT INTO sync_outbox (idempotency_key, entity_type, entity_sync_id, operation, row_version, payload_json, \
+           payload_hash, status) VALUES \
+           ('k1', 'urgency_levels', 'u-1', 'upsert', 1, '{}', 'h', 'pending'), \
+           ('k2', 'work_order_types', 't-1', 'upsert', 1, '{}', 'h', 'acknowledged'), \
+           ('k3', 'work_orders', 'w-1', 'upsert', 1, '{}', 'h', 'pending')",
+    )
+    .await;
+    Migrator::up(&db, None).await.expect("migrations");
+    assert_eq!(
+        opt_i64(
+            &db,
+            "SELECT COUNT(*) FROM sync_capture_journal WHERE entity_type IN ('urgency_levels', 'work_order_types')"
+        )
+        .await,
+        Some(0)
+    );
+    assert_eq!(
+        opt_i64(
+            &db,
+            "SELECT COUNT(*) FROM sync_capture_journal WHERE entity_type = 'work_orders'"
+        )
+        .await,
+        Some(1),
+        "other entries stay"
+    );
+    assert_eq!(
+        opt_i64(
+            &db,
+            "SELECT COUNT(*) FROM sync_outbox WHERE status = 'pending' AND entity_type = 'urgency_levels'"
+        )
+        .await,
+        Some(0)
+    );
+    assert_eq!(
+        opt_i64(
+            &db,
+            "SELECT COUNT(*) FROM sync_outbox WHERE entity_sync_id IN ('t-1', 'w-1')"
+        )
+        .await,
+        Some(2),
+        "history (acknowledged) and other types stay"
+    );
+}
+
+#[tokio::test]
+async fn migration_199_can_run_again_without_touching_the_links() {
+    let db = migrated_before(M199).await;
+    exec(&db, "PRAGMA foreign_keys = OFF").await;
+    let di_vibration = value_id(&db, "DI.SYMPTOM", "vibration").await;
+    legacy_di(&db, "DI-S", "high", None, Some(di_vibration)).await;
+    exec(&db, "PRAGMA foreign_keys = ON").await;
+    Migrator::up(&db, None).await.expect("migration 199");
+    let linked = opt_i64(
+        &db,
+        "SELECT symptom_code_id FROM intervention_requests WHERE code = 'DI-S'",
+    )
+    .await;
+    unrecord(&db, M199).await;
+    Migrator::up(&db, None).await.expect("migration 199 again");
+    assert_eq!(
+        opt_i64(
+            &db,
+            "SELECT symptom_code_id FROM intervention_requests WHERE code = 'DI-S'"
+        )
+        .await,
+        linked
+    );
+    assert_eq!(linked, Some(value_id(&db, "WORK.SYMPTOMS", "vibration").await));
+}
+
+// ── Startup retirement pass ──────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn startup_retirement_pass_recreates_nothing_on_a_migrated_database() {
+    let db = crate::db::test_db::seeded().await;
+    crate::reference::system_catalog_integrity::ensure_system_reference_catalog_integrity(&db)
+        .await
+        .expect("integrity pass");
+    let retired = crate::reference::retirement::retire_superseded_domains(&db)
+        .await
+        .expect("pass");
+    assert!(retired.is_empty(), "{retired:?}");
+    assert!(!domain_exists(&db, "DI.SYMPTOM").await);
+    assert!(!domain_exists(&db, "DI.PRIORITY").await);
+}
+
+#[tokio::test]
+async fn startup_retirement_pass_merges_a_list_brought_back_by_sync_and_sends_the_change() {
+    let db = crate::db::test_db::seeded().await;
+    crate::sync::capture::install_capture(&db).await.expect("capture on");
+    // A replayed history recreates DI.SYMPTOM with one value and a request pointing at it.
+    exec(
+        &db,
+        "INSERT INTO reference_domains (code, name, structure_type, governance_level, is_extendable, created_at, updated_at) \
+         VALUES ('DI.SYMPTOM', 'Symptômes DI', 'flat', 'tenant_managed', 1, datetime('now'), datetime('now'))",
+    )
+    .await;
+    exec(
+        &db,
+        "INSERT INTO reference_sets (domain_id, version_no, status, created_at) \
+         SELECT id, 1, 'published', datetime('now') FROM reference_domains WHERE code = 'DI.SYMPTOM'",
+    )
+    .await;
+    exec(
+        &db,
+        "INSERT INTO reference_values (set_id, code, label, is_active) \
+         SELECT s.id, 'vibration', 'Vibration anormale', 1 FROM reference_sets s \
+           JOIN reference_domains d ON d.id = s.domain_id WHERE d.code = 'DI.SYMPTOM'",
+    )
+    .await;
+    let ghost = value_id(&db, "DI.SYMPTOM", "vibration").await;
+    exec(&db, "PRAGMA foreign_keys = OFF").await;
+    legacy_di(&db, "DI-GHOST", "normal", None, Some(ghost)).await;
+    exec(&db, "PRAGMA foreign_keys = ON").await;
+    exec(&db, "DELETE FROM sync_capture_journal").await;
+
+    let retired = crate::reference::retirement::retire_superseded_domains(&db)
+        .await
+        .expect("pass");
+    assert_eq!(retired, vec!["DI.SYMPTOM".to_string()]);
+    assert!(!domain_exists(&db, "DI.SYMPTOM").await);
+    assert_eq!(
+        opt_i64(
+            &db,
+            "SELECT symptom_code_id FROM intervention_requests WHERE code = 'DI-GHOST'"
+        )
+        .await,
+        Some(value_id(&db, "WORK.SYMPTOMS", "vibration").await)
+    );
+    // Capture was on: the remap and the deletes are queued for the other devices.
+    for (entity, op) in [
+        ("intervention_requests", "upsert"),
+        ("reference_values", "delete"),
+        ("reference_domains", "delete"),
+    ] {
+        assert!(
+            opt_i64(
+                &db,
+                &format!(
+                    "SELECT COUNT(*) FROM sync_capture_journal WHERE entity_type = '{entity}' AND operation = '{op}'"
+                )
+            )
+            .await
+            .unwrap_or(0)
+                > 0,
+            "{entity} {op} captured"
+        );
+    }
+    // And a second start finds nothing to do.
+    assert!(crate::reference::retirement::retire_superseded_domains(&db)
+        .await
+        .expect("pass")
+        .is_empty());
 }
 
 // ── Migration 199: failure symptoms ─────────────────────────────────────────────────────────
 
 #[tokio::test]
 async fn migration_199_merges_request_symptoms_and_keeps_every_link() {
-    let db = migrated_before("m20261015_000199_shared_failure_symptoms").await;
+    let db = migrated_before(M199).await;
     exec(&db, "PRAGMA foreign_keys = OFF").await;
     let di_vibration = value_id(&db, "DI.SYMPTOM", "vibration").await;
     let work_vibration = value_id(&db, "WORK.SYMPTOMS", "vibration").await;
