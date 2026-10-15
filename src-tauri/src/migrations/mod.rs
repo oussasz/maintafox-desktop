@@ -171,12 +171,12 @@ mod m20261014_000182_pm_windows_fanout_timing;
 mod m20261014_000183_meter_lifetime;
 mod m20261014_000184_inventory_lots_fx_periods_approvals;
 mod m20261014_000185_asset_spares_criticality;
-mod m20261101_000036_activity_audit_log;
-mod m20261201_000037_observability_permissions;
-mod m_test;
 mod m20261015_000194_inspection_schedules;
 mod m20261015_000195_inspection_round_scheduling;
 mod m20261015_000196_reference_domain_audience;
+mod m20261101_000036_activity_audit_log;
+mod m20261201_000037_observability_permissions;
+mod m_test;
 
 pub struct Migrator;
 
