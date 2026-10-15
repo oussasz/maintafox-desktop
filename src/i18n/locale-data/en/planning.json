@@ -123,8 +123,8 @@
     "matchingSkills": "{{count}} matching skills",
     "costRange": "Estimated labor cost: {{min}} – {{max}}",
     "capacityRemaining": "Crew capacity this day: {{remaining}} h remaining of {{available}} h.",
-    "noTeamCapacity": "This team has no working hours that day: it is not linked to a Classe horaire (timetable) or has no members.",
-    "setUpTeamCapacity": "Set up the team's Classe horaire",
+    "noTeamCapacity": "This team has no working hours that day: none of its members has a Classe horaire (timetable), or it has no members.",
+    "setUpTeamCapacity": "Set up its members' Classes horaires",
     "capacityBasis": {
       "roster": "from the Classes horaires",
       "rest_day": "rest day",

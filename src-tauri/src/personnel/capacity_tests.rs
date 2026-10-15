@@ -554,11 +554,13 @@ async fn timetable_changes_apply_from_a_date_and_never_rewrite_the_past() {
     assert_eq!(codes(past_week.expect_err("past week")), vec!["TIMETABLE_DATE_IN_PAST"]);
 }
 
-/// Upgrade path on a database from before timetables: one "Standard 8 h (migrated)" Classe
-/// horaire (Sunday–Thursday 08:00–16:00, 85 %) is created and every active team is linked to
-/// it, all flagged for review; existing Classes horaires get a first version flagged too.
+/// Upgrade path on a database from before timetables: no blanket default. A team that had its own
+/// capacity rule keeps that rule's hours as a Classe horaire built from it (its default, flagged
+/// for review); other teams get nothing — each member counts their own Classe horaire, and a
+/// member without one counts 0 h and is listed as such. Existing Classes horaires get a first
+/// version flagged for review.
 #[tokio::test]
-async fn upgrade_links_existing_teams_to_a_migrated_classe_horaire_to_review() {
+async fn upgrade_keeps_capacity_rules_as_classes_to_review_and_assumes_no_hours() {
     let db = Database::connect("sqlite::memory:").await.expect("in-memory SQLite");
     exec(&db, "PRAGMA foreign_keys = ON;").await;
     let migrations = crate::migrations::Migrator::migrations();
@@ -569,86 +571,125 @@ async fn upgrade_links_existing_teams_to_a_migrated_classe_horaire_to_review() {
     crate::migrations::Migrator::up(&db, Some(u32::try_from(before).expect("count")))
         .await
         .expect("migrate to the pre-update schema");
-    for sql in [
-        "INSERT INTO teams (entity_sync_id, code, name, team_type, status, created_at, updated_at) \
-         VALUES ('upg-a', 'EQ-A', 'Mécanique', 'maintenance', 'active', datetime('now'), datetime('now'))",
-        "INSERT INTO teams (entity_sync_id, code, name, team_type, status, created_at, updated_at) \
-         VALUES ('upg-b', 'EQ-B', 'Électricité', 'maintenance', 'active', datetime('now'), datetime('now'))",
-        "INSERT INTO teams (entity_sync_id, code, name, team_type, status, created_at, updated_at) \
-         VALUES ('upg-c', 'EQ-C', 'Dissoute', 'maintenance', 'disbanded', datetime('now'), datetime('now'))",
+    for (code, name, status) in [
+        ("EQ-A", "Mécanique", "active"),
+        ("EQ-B", "Électricité", "active"),
+        ("EQ-C", "Dissoute", "disbanded"),
+        ("EQ-D", "Sans horaires", "active"),
     ] {
-        exec(&db, sql).await;
+        exec(
+            &db,
+            &format!(
+                "INSERT INTO teams (entity_sync_id, code, name, team_type, status, created_at, updated_at) \
+                 VALUES ('upg-{code}', '{code}', '{name}', 'maintenance', '{status}', datetime('now'), datetime('now'))"
+            ),
+        )
+        .await;
     }
+    let team_a = scalar_i64(&db, "SELECT id FROM teams WHERE code = 'EQ-A'").await;
     let team_b = scalar_i64(&db, "SELECT id FROM teams WHERE code = 'EQ-B'").await;
-    exec(
+    let team_c = scalar_i64(&db, "SELECT id FROM teams WHERE code = 'EQ-C'").await;
+    let team_d = scalar_i64(&db, "SELECT id FROM teams WHERE code = 'EQ-D'").await;
+    // EQ-A and EQ-C had their own capacity rule; EQ-B and EQ-D did not.
+    for t in [team_a, team_c] {
+        exec(
+            &db,
+            &format!(
+                "INSERT INTO capacity_rules (team_id, effective_start, available_hours_per_day, max_overtime_hours_per_day, \
+                 row_version, created_at, updated_at) VALUES ({t}, '2026-01-01', 7.5, 2, 1, datetime('now'), datetime('now'))"
+            ),
+        )
+        .await;
+    }
+    let day_shift = scalar_i64(
         &db,
-        &format!(
-            "INSERT INTO personnel (employee_code, full_name, availability_status, primary_team_id) \
-             VALUES ('UPG-1', 'Électricien', 'available', {team_b})"
-        ),
+        "SELECT rv.id FROM reference_values rv JOIN reference_sets rs ON rs.id = rv.set_id \
+         JOIN reference_domains d ON d.id = rs.domain_id \
+         WHERE d.code = 'ORG.SCHEDULE_CLASS' AND rv.code = 'DAY_SHIFT'",
     )
     .await;
+    for (code, t, class) in [
+        ("UPG-A1", team_a, "NULL".to_string()),
+        ("UPG-A2", team_a, "NULL".to_string()),
+        ("UPG-B1", team_b, day_shift.to_string()),
+        ("UPG-B2", team_b, "NULL".to_string()),
+        ("UPG-D1", team_d, "NULL".to_string()),
+    ] {
+        exec(
+            &db,
+            &format!(
+                "INSERT INTO personnel (employee_code, full_name, availability_status, primary_team_id, \
+                 home_schedule_reference_value_id) VALUES ('{code}', 'Tech {code}', 'available', {t}, {class})"
+            ),
+        )
+        .await;
+    }
 
     crate::migrations::Migrator::up(&db, None)
         .await
         .expect("apply the update");
 
-    let migrated = scalar_i64(
-        &db,
-        "SELECT rv.id FROM reference_values rv JOIN reference_sets rs ON rs.id = rv.set_id \
-         JOIN reference_domains d ON d.id = rs.domain_id \
-         WHERE d.code = 'ORG.SCHEDULE_CLASS' AND rv.code = 'STD_8H_MIGRATED' AND rv.is_active = 1",
-    )
-    .await;
-    let versions = list_class_versions(&db, Some(migrated)).await.expect("versions");
-    assert_eq!(versions.len(), 1);
-    let v = &versions[0];
-    assert_eq!(v.class_label, "Standard 8 h (migrée)", "named in the tenant's language");
-    assert_eq!(v.utilisation_percent, 85.0);
-    assert_eq!(v.review_status.as_deref(), Some("to_review"));
-    assert_eq!(v.working_days_per_cycle, 5);
-    assert!(v
-        .days
-        .iter()
-        .filter(|x| x.is_rest_day)
-        .all(|x| x.cycle_day == 5 || x.cycle_day == 6));
-    assert!(
-        scalar_i64(
-            &db,
-            "SELECT COUNT(*) FROM schedule_class_versions v JOIN reference_values rv ON rv.id = v.reference_value_id \
-             WHERE rv.code <> 'STD_8H_MIGRATED' AND v.review_status = 'to_review' AND v.utilisation_percent = 85.0"
-        )
-        .await
-            > 0,
-        "existing Classes horaires get a first version to review"
+    assert_eq!(
+        scalar_i64(&db, "SELECT COUNT(*) FROM reference_values WHERE code LIKE 'STD_8H%'").await,
+        0,
+        "no blanket 8-hour Classe horaire"
     );
     assert_eq!(
         scalar_i64(
             &db,
-            "SELECT COUNT(*) FROM site_work_weeks WHERE entity_id IS NULL AND weekend_days = '5,6'"
+            "SELECT COUNT(*) FROM schedule_class_versions v JOIN reference_values rv ON rv.id = v.reference_value_id \
+             WHERE rv.code = 'DAY_SHIFT' AND v.review_status = 'to_review' AND v.utilisation_percent = 85.0"
         )
         .await,
+        1,
+        "existing Classes horaires get a first version to review"
+    );
+    assert_eq!(
+        scalar_i64(&db, "SELECT COUNT(*) FROM site_work_weeks WHERE entity_id IS NULL AND weekend_days = '5,6'").await,
         1
     );
 
-    let team_a = scalar_i64(&db, "SELECT id FROM teams WHERE code = 'EQ-A'").await;
-    let team_c = scalar_i64(&db, "SELECT id FROM teams WHERE code = 'EQ-C'").await;
-    for team in [team_a, team_b] {
-        let links = list_team_schedule(&db, team).await.expect("links");
-        assert_eq!(links.len(), 1);
-        assert_eq!(links[0].schedule_reference_value_id, Some(migrated));
-        assert_eq!(links[0].review_status.as_deref(), Some("to_review"));
+    // EQ-A: its rule became a Classe horaire, its default, to review.
+    let links = list_team_schedule(&db, team_a).await.expect("links");
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].schedule_code.as_deref(), Some("CAP_RULE_EQ_A"));
+    assert_eq!(links[0].review_status.as_deref(), Some("to_review"));
+    let rule_class = links[0].schedule_reference_value_id.expect("class");
+    let versions = list_class_versions(&db, Some(rule_class)).await.expect("versions");
+    assert_eq!(versions.len(), 1);
+    let v = &versions[0];
+    assert_eq!(v.class_label, "Mécanique — 7.5 h/jour (ancienne règle de capacité)");
+    assert_eq!(v.utilisation_percent, 100.0);
+    assert!(v.is_continuous);
+    assert_eq!(v.review_status.as_deref(), Some("to_review"));
+    assert!(v.note.as_deref().is_some_and(|n| n.contains("7.5 h")));
+    // The disbanded team and the teams without a rule get no Classe horaire.
+    for t in [team_b, team_c, team_d] {
+        assert!(list_team_schedule(&db, t).await.expect("links").is_empty());
     }
-    assert!(list_team_schedule(&db, team_c).await.expect("links").is_empty());
 
-    // Sunday 18 October 2026: a working day of the Algerian week.
-    let sunday = d(18);
-    let b = team_capacity_hours(&db, team_b, sunday).await.expect("team b");
-    assert_eq!(b.basis, "roster");
-    assert!((b.available_hours - 6.8).abs() < 1e-9, "8 h × 85 %: {b:?}");
-    let a = team_capacity_hours(&db, team_a, sunday).await.expect("team a");
-    assert_eq!(a.basis, "no_members", "a team without members shows its set-up gap");
+    // Monday 12 October 2026.
+    let monday = d(12);
+    let a = team_capacity_hours(&db, team_a, monday).await.expect("team a");
+    assert_eq!(a.basis, "roster");
+    assert!((a.available_hours - 15.0).abs() < 1e-9, "two members × 7.5 h: {a:?}");
+    let b = team_capacity_hours(&db, team_b, monday).await.expect("team b");
+    assert!((b.available_hours - 6.8).abs() < 1e-9, "only the member with a Classe horaire: {b:?}");
+    let without: Vec<&str> = b
+        .members
+        .iter()
+        .filter(|m| m.reason == "no_schedule")
+        .map(|m| m.full_name.as_str())
+        .collect();
+    assert_eq!(without, vec!["Tech UPG-B2"], "a member without a Classe horaire counts 0 h and is listed");
+    let d_team = team_capacity_hours(&db, team_d, monday).await.expect("team d");
+    assert_eq!(d_team.basis, "no_schedule");
+    assert_eq!(d_team.available_hours, 0.0, "never an assumed 8-hour day");
+    let hours = crate::planning::scheduling::team_day_hours(&db, team_d, monday)
+        .await
+        .expect("planning");
+    assert_eq!(hours.basis, "no_schedule");
 
-    let reviewed = confirm_team_schedule_review(&db, team_b).await.expect("review");
+    let reviewed = confirm_team_schedule_review(&db, team_a).await.expect("review");
     assert!(reviewed.iter().all(|l| l.review_status.is_none()));
 }

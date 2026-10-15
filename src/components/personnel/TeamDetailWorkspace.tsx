@@ -429,6 +429,7 @@ export function TeamDetailWorkspace({
               <DetailSectionCard title={t("timetable.team.title")}>
                 <TeamTimetablePanel
                   teamId={teamId}
+                  onOpenPersonnel={onOpenPersonnel}
                   onChanged={() => setTimetableRevision((n) => n + 1)}
                 />
               </DetailSectionCard>

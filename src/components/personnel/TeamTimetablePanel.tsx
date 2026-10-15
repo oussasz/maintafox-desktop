@@ -1,8 +1,10 @@
 /**
- * A team's Classe horaire: the one in force today (with its utilisation factor), the history of
- * changes, and a change from a date (today or later — past capacity and plans are never
- * rewritten). Members inherit it unless they have their own Classe horaire or a dated exception.
- * A link created by the upgrade is flagged for review until a planner confirms or replaces it.
+ * Classes horaires of a team. The team's capacity is the sum of its members' own Classes horaires;
+ * the team may name a default Classe horaire for members who have none of their own (history of
+ * changes, change from a date — today or later, past capacity and plans are never rewritten).
+ * Members with no Classe horaire at all count 0 h and are listed here with a link to their sheet.
+ * A default created by the upgrade (from the team's former capacity rule) is flagged for review
+ * until a planner confirms or replaces it.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -24,8 +26,10 @@ import { usePermissions } from "@/hooks/use-permissions";
 import { cn } from "@/lib/utils";
 import {
   type ScheduleClassVersion,
+  type TeamDayCapacity,
   type TeamScheduleAssignment,
   confirmTeamScheduleReview,
+  getTeamCapacity,
   listScheduleClassVersions,
   listTeamSchedule,
   setTeamSchedule,
@@ -48,10 +52,13 @@ function inForceOn<T extends { effective_from: string }>(rows: T[], day: string)
 export function TeamTimetablePanel({
   teamId,
   onChanged,
+  onOpenPersonnel,
 }: {
   teamId: number;
   /** Capacity shown elsewhere on the page depends on the link. */
   onChanged?: () => void;
+  /** Opens a member's sheet, where their own Classe horaire is set. */
+  onOpenPersonnel?: ((personnelId: number) => void) | undefined;
 }) {
   const { t, i18n } = useTranslation("personnel");
   const { can } = usePermissions();
@@ -59,6 +66,7 @@ export function TeamTimetablePanel({
   const today = todayIso();
   const [links, setLinks] = useState<TeamScheduleAssignment[]>([]);
   const [versions, setVersions] = useState<ScheduleClassVersion[]>([]);
+  const [todayCapacity, setTodayCapacity] = useState<TeamDayCapacity | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
   const [choice, setChoice] = useState<string>(NONE);
@@ -79,9 +87,14 @@ export function TeamTimetablePanel({
     setLoading(true);
     setError(null);
     try {
-      const [l, v] = await Promise.all([listTeamSchedule(teamId), listScheduleClassVersions(null)]);
+      const [l, v, cap] = await Promise.all([
+        listTeamSchedule(teamId),
+        listScheduleClassVersions(null),
+        getTeamCapacity(teamId, today, today),
+      ]);
       setLinks(l);
       setVersions(v);
+      setTodayCapacity(cap[0] ?? null);
       const current = inForceOn(l, today);
       setChoice(
         current?.schedule_reference_value_id != null
@@ -116,18 +129,21 @@ export function TeamTimetablePanel({
   const current = inForceOn(links, today);
   const currentClass = classes.find((c) => c.id === current?.schedule_reference_value_id);
   const toReview = links.some((l) => l.review_status === "to_review");
+  /** Members counting 0 h today because they have no usable Classe horaire. */
+  const unscheduled = (todayCapacity?.members ?? []).filter(
+    (m) => m.reason === "no_schedule" || m.reason === "timetable_not_set_up",
+  );
 
   const apply = async () => {
     setSaving(true);
     setSaveError(null);
     try {
-      setLinks(
-        await setTeamSchedule({
-          team_id: teamId,
-          schedule_reference_value_id: choice === NONE ? null : Number(choice),
-          effective_from: from,
-        }),
-      );
+      await setTeamSchedule({
+        team_id: teamId,
+        schedule_reference_value_id: choice === NONE ? null : Number(choice),
+        effective_from: from,
+      });
+      await load();
       onChanged?.();
     } catch (e) {
       setSaveError(formatOrgIpcError(e));
@@ -172,11 +188,37 @@ export function TeamTimetablePanel({
           ) : null}
         </div>
       ) : null}
-      {!current?.schedule_reference_value_id ? (
+      {unscheduled.length > 0 ? (
         <div role="alert" className={cn("rounded-md border p-3 text-sm", mfTone.warning.panel)}>
-          <p className="font-medium text-text-primary">{t("timetable.team.noneTitle")}</p>
-          <p className="mt-1 text-text-secondary">{t("timetable.team.noneBody")}</p>
+          <p className="font-medium text-text-primary">
+            {t("timetable.team.withoutTitle", { count: unscheduled.length })}
+          </p>
+          <p className="mt-1 text-text-secondary">
+            {todayCapacity?.basis === "no_schedule"
+              ? t("timetable.team.withoutAllBody")
+              : t("timetable.team.withoutBody")}
+          </p>
+          <ul className="mt-2 flex flex-wrap gap-2">
+            {unscheduled.map((m) => (
+              <li key={m.personnel_id}>
+                {onOpenPersonnel ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => onOpenPersonnel(m.personnel_id)}
+                  >
+                    {t("timetable.team.setForPerson", { name: m.full_name })}
+                  </Button>
+                ) : (
+                  <span>{m.full_name}</span>
+                )}
+              </li>
+            ))}
+          </ul>
         </div>
+      ) : null}
+      {!current?.schedule_reference_value_id ? (
+        <p className="text-sm text-text-secondary">{t("timetable.team.noDefault")}</p>
       ) : (
         <dl className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
           <div>
