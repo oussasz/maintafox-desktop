@@ -362,16 +362,19 @@ export function BudgetCockpitView({
 
       <div className="flex items-center justify-between gap-2">
         <h3 className="text-sm font-semibold text-text-primary">{t("cockpit.tableTitle")}</h3>
-        <Button
-          size="sm"
-          variant="outline"
-          className="gap-1.5"
-          onClick={() => void exportCsv()}
-          disabled={cockpit.rows.length === 0}
-        >
-          <Download className="h-3.5 w-3.5" aria-hidden />
-          {t("cockpit.export")}
-        </Button>
+        {/* Exporting budget figures is a reporting right (fin.report). */}
+        {can(P.FIN_REPORT) ? (
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-1.5"
+            onClick={() => void exportCsv()}
+            disabled={cockpit.rows.length === 0}
+          >
+            <Download className="h-3.5 w-3.5" aria-hidden />
+            {t("cockpit.export")}
+          </Button>
+        ) : null}
       </div>
       {cockpit.rows.length === 0 ? (
         <EmptyState
