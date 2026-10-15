@@ -804,12 +804,8 @@ pub async fn add_personnel_labor(
 pub async fn list_wo_labor_people(state: State<'_, AppState>) -> AppResult<Vec<labor::WoLaborPerson>> {
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
-    crate::commands::qualification::require_any_permission(
-        &state,
-        &user,
-        crate::commands::qualification::PEOPLE_VIEW,
-    )
-    .await?;
+    crate::commands::qualification::require_any_permission(&state, &user, crate::commands::qualification::PEOPLE_VIEW)
+        .await?;
     labor::list_labor_people(&state.db).await
 }
 

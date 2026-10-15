@@ -645,7 +645,11 @@ async fn upgrade_keeps_capacity_rules_as_classes_to_review_and_assumes_no_hours(
         "existing Classes horaires get a first version to review"
     );
     assert_eq!(
-        scalar_i64(&db, "SELECT COUNT(*) FROM site_work_weeks WHERE entity_id IS NULL AND weekend_days = '5,6'").await,
+        scalar_i64(
+            &db,
+            "SELECT COUNT(*) FROM site_work_weeks WHERE entity_id IS NULL AND weekend_days = '5,6'"
+        )
+        .await,
         1
     );
 
@@ -664,7 +668,9 @@ async fn upgrade_keeps_capacity_rules_as_classes_to_review_and_assumes_no_hours(
     assert_eq!(v.working_days_per_cycle, 5);
     assert_eq!(v.review_status.as_deref(), Some("to_review"));
     assert!(
-        v.note.as_deref().is_some_and(|n| n.contains("7.5 h ÷ 2 membres = 3.75 h")),
+        v.note
+            .as_deref()
+            .is_some_and(|n| n.contains("7.5 h ÷ 2 membres = 3.75 h")),
         "{:?}",
         v.note
     );
@@ -677,16 +683,26 @@ async fn upgrade_keeps_capacity_rules_as_classes_to_review_and_assumes_no_hours(
     let monday = d(12);
     let a = team_capacity_hours(&db, team_a, monday).await.expect("team a");
     assert_eq!(a.basis, "roster");
-    assert!((a.available_hours - 7.5).abs() < 1e-9, "the former team total, shared: {a:?}");
+    assert!(
+        (a.available_hours - 7.5).abs() < 1e-9,
+        "the former team total, shared: {a:?}"
+    );
     let b = team_capacity_hours(&db, team_b, monday).await.expect("team b");
-    assert!((b.available_hours - 8.0).abs() < 1e-9, "only the member with a Classe horaire: {b:?}");
+    assert!(
+        (b.available_hours - 8.0).abs() < 1e-9,
+        "only the member with a Classe horaire: {b:?}"
+    );
     let without: Vec<&str> = b
         .members
         .iter()
         .filter(|m| m.reason == "no_schedule")
         .map(|m| m.full_name.as_str())
         .collect();
-    assert_eq!(without, vec!["Tech UPG-B2"], "a member without a Classe horaire counts 0 h and is listed");
+    assert_eq!(
+        without,
+        vec!["Tech UPG-B2"],
+        "a member without a Classe horaire counts 0 h and is listed"
+    );
     let d_team = team_capacity_hours(&db, team_d, monday).await.expect("team d");
     assert_eq!(d_team.basis, "no_schedule");
     assert_eq!(d_team.available_hours, 0.0, "never an assumed 8-hour day");

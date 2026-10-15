@@ -147,7 +147,13 @@ fn code_part(team_code: &str) -> String {
     team_code
         .trim()
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_uppercase() } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_uppercase()
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -500,7 +506,9 @@ mod tests {
         let days: serde_json::Value = serde_json::from_str(&rule_week_json(7.5, &[5, 6])).expect("json");
         let days = days.as_array().expect("array");
         assert_eq!(days.len(), 7);
-        assert!(days.iter().all(|d| d["shift_start"] == "08:00" && d["shift_end"] == "15:30"));
+        assert!(days
+            .iter()
+            .all(|d| d["shift_start"] == "08:00" && d["shift_end"] == "15:30"));
         let rest: Vec<i64> = days
             .iter()
             .filter(|d| d["is_rest_day"] == true)

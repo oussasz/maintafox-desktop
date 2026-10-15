@@ -1067,7 +1067,6 @@ mod tests {
         let actor = admin_id(&db).await;
 
         let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
         let sched: i64 = db
             .query_one(Statement::from_string(
                 DbBackend::Sqlite,
@@ -1107,7 +1106,8 @@ mod tests {
             "INSERT INTO personnel_rate_cards \
              (personnel_id, effective_from, labor_rate, overtime_rate, source_type, created_at) \
              VALUES (?, ?, 37.0, 50.0, 'manual', ?)",
-            [personnel_id.into(), today.into(), now.clone().into()],
+            // Valid on the work date of the entries below (the rate of the day the work was done).
+            [personnel_id.into(), "2026-04-01".into(), now.clone().into()],
         ))
         .await
         .expect("rate card");

@@ -294,11 +294,23 @@ async fn skill_level_and_self_declared_skills() {
     .await
     .expect("skill requirement");
 
-    give_skill(&db, karim, hydraulics, 4, "manual", false).await;
-    give_skill(&db, lina, hydraulics, 2, "manual", false).await;
+    give_skill(&db, karim, hydraulics, 4, "manual", true).await;
+    give_skill(&db, lina, hydraulics, 2, "manual", true).await;
     give_skill(&db, samir, hydraulics, 5, "self_declared", false).await;
 
     assert!(check_person_for_work_order(&db, karim, wo).await.expect("k").qualified);
+    // A skill entered by hand but not validated by a manager does not count either.
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE personnel_skills SET is_validated = 0 WHERE personnel_id = ? AND reference_value_id = ?",
+        [karim.into(), hydraulics.into()],
+    ))
+    .await
+    .expect("unvalidate");
+    let unvalidated = check_person_for_work_order(&db, karim, wo)
+        .await
+        .expect("k unvalidated");
+    assert_eq!(unvalidated.gaps[0].status, "unvalidated");
     let lina_check = check_person_for_work_order(&db, lina, wo).await.expect("l");
     assert_eq!(lina_check.gaps[0].status, "level_too_low");
     assert_eq!(lina_check.gaps[0].held_level, Some(2));
@@ -630,6 +642,15 @@ async fn habilitations_are_a_company_list_each_with_a_certification_type() {
         .try_get("", "governance_category")
         .expect("category");
     assert_eq!(category, "controlled_catalog");
+    assert_eq!(
+        scalar_i64(
+            &db,
+            &format!("SELECT COUNT(*) FROM reference_domains WHERE code = '{domain}' AND audience = 'company'")
+        )
+        .await,
+        1,
+        "a company list, managed in Données de référence"
+    );
     let values = format!(
         "SELECT COUNT(*) FROM reference_values rv JOIN reference_sets rs ON rs.id = rv.set_id \
          JOIN reference_domains d ON d.id = rs.domain_id WHERE d.code = '{domain}' AND rs.status = 'published'"
@@ -719,7 +740,9 @@ async fn requirements_survive_a_type_rename_are_audited_and_weakening_is_detecte
     )
     .await
     .expect("list");
-    assert!(listed.iter().any(|r| r.id == saved.id && r.target_code.as_deref() == Some("CORR-2027")));
+    assert!(listed
+        .iter()
+        .any(|r| r.id == saved.id && r.target_code.as_deref() == Some("CORR-2027")));
 
     let edit = |is_active: bool, coverage: &str| QualificationRequirementUpsertInput {
         id: Some(saved.id),
@@ -731,7 +754,11 @@ async fn requirements_survive_a_type_rename_are_audited_and_weakening_is_detecte
     };
     let weakening = |i: QualificationRequirementUpsertInput| {
         let db = &db;
-        async move { crate::qualification::requirements::is_weakening_change(db, &i).await.expect("check") }
+        async move {
+            crate::qualification::requirements::is_weakening_change(db, &i)
+                .await
+                .expect("check")
+        }
     };
     assert!(!weakening(edit(true, "each")).await, "same requirement, notes only");
     assert!(weakening(edit(false, "each")).await, "deactivation");
@@ -740,6 +767,8 @@ async fn requirements_survive_a_type_rename_are_audited_and_weakening_is_detecte
     other.target_code = Some("preventive".into());
     assert!(weakening(other).await, "another target");
 
-    upsert_requirement(&db, edit(false, "each"), actor).await.expect("retire");
+    upsert_requirement(&db, edit(false, "each"), actor)
+        .await
+        .expect("retire");
     assert_eq!(scalar_i64(&db, audits).await, 2, "the retirement is audited too");
 }

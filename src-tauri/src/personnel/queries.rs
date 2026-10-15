@@ -1748,7 +1748,8 @@ pub async fn resolve_rate_pair_on(
     row.map(|r| -> AppResult<(f64, f64)> {
         Ok((
             r.try_get("", "labor_rate").map_err(|e| map_err("labor_rate", e))?,
-            r.try_get("", "overtime_rate").map_err(|e| map_err("overtime_rate", e))?,
+            r.try_get("", "overtime_rate")
+                .map_err(|e| map_err("overtime_rate", e))?,
         ))
     })
     .transpose()

@@ -2294,6 +2294,8 @@
       "apply_priority": 12,
       "parents": [
         "work_orders",
+        "work_order_types",
+        "permit_types",
         "certification_types",
         "reference_values",
         "user_accounts"

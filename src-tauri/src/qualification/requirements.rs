@@ -252,7 +252,9 @@ async fn validate(db: &impl ConnectionTrait, input: &QualificationRequirementUps
         }
         "permit_type" => {
             let c = code.ok_or_else(|| target_required("permit_type"))?;
-            let id = type_id(db, "permit_types", &c).await?.ok_or_else(|| target_unknown(&c))?;
+            let id = type_id(db, "permit_types", &c)
+                .await?
+                .ok_or_else(|| target_unknown(&c))?;
             Target {
                 permit_type_id: Some(id),
                 ..Target::default()
@@ -514,7 +516,10 @@ fn audit_view(r: &QualificationRequirement) -> serde_json::Value {
 /// Whether an edit weakens a requirement in force — deactivating it, moving it to another target
 /// or another qualification, lowering its level or narrowing its coverage: such a change needs
 /// `trn.certify` and a fresh step-up, like an override.
-pub async fn is_weakening_change(db: &impl ConnectionTrait, input: &QualificationRequirementUpsertInput) -> AppResult<bool> {
+pub async fn is_weakening_change(
+    db: &impl ConnectionTrait,
+    input: &QualificationRequirementUpsertInput,
+) -> AppResult<bool> {
     let Some(id) = input.id else {
         return Ok(false);
     };

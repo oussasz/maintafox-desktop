@@ -499,7 +499,9 @@ async fn a_login_without_a_personnel_card_is_refused_where_qualifications_are_re
         ),
     )
     .await;
-    let assessment = crate::qualification::gate::assess_work_order(&db, wo.id).await.expect("assessment");
+    let assessment = crate::qualification::gate::assess_work_order(&db, wo.id)
+        .await
+        .expect("assessment");
     assert!(!assessment.ok);
     assert_eq!(assessment.unidentified.len(), 1);
     assert_eq!(assessment.unidentified[0].role, "labor");
@@ -508,7 +510,11 @@ async fn a_login_without_a_personnel_card_is_refused_where_qualifications_are_re
         .expect("readiness");
     let crew = report.checks.iter().find(|c| c.code == "crew_qualified").expect("rule");
     assert_eq!(crew.outcome, "fail");
-    assert!(crew.message.as_deref().unwrap_or_default().contains("fiche du personnel"));
+    assert!(crew
+        .message
+        .as_deref()
+        .unwrap_or_default()
+        .contains("fiche du personnel"));
 }
 
 /// Separation of duties: a supervisor cannot waive their own qualification gap.
