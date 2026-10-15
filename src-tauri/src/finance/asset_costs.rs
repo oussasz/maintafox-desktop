@@ -87,7 +87,7 @@ pub async fn list_asset_cost_history<C: ConnectionTrait>(db: &C, filter: AssetCo
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT e.id, COALESCE(e.asset_id_code, e.code) AS code, e.name, e.cost_center_code, e.replacement_value,
+            "SELECT e.id, e.asset_id_code AS code, e.name, e.cost_center_code, e.replacement_value,
                     COUNT(wo.id) AS closed_wos,
                     COALESCE(SUM(wo.total_cost), 0.0) AS lifetime_cost,
                     COALESCE(SUM(wo.labor_cost), 0.0) AS lifetime_labor,
@@ -103,7 +103,7 @@ pub async fn list_asset_cost_history<C: ConnectionTrait>(db: &C, filter: AssetCo
              LEFT JOIN work_orders wo ON wo.equipment_id = e.id AND wo.closed_at IS NOT NULL
              LEFT JOIN work_order_types wot ON wot.id = wo.type_id
              WHERE e.deleted_at IS NULL
-               AND (?2 IS NULL OR lower(COALESCE(e.asset_id_code, '') || ' ' || e.code || ' ' || e.name) LIKE ?2)
+               AND (?2 IS NULL OR lower(e.asset_id_code || ' ' || e.name) LIKE ?2)
                AND (?3 IS NULL OR e.cost_center_code = ?3)
              GROUP BY e.id
              HAVING (?4 = 0 OR COALESCE(SUM(wo.total_cost), 0.0) > 0)

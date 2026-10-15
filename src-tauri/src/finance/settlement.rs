@@ -80,7 +80,7 @@ pub struct WoSettlementFilter {
 }
 
 const SETTLEMENT_SELECT: &str = "SELECT s.id, s.entity_sync_id, s.work_order_id, wo.code AS work_order_code,
-        wo.title AS work_order_title, wo.equipment_id, COALESCE(e.asset_id_code, e.code) AS equipment_code,
+        wo.title AS work_order_title, wo.equipment_id, e.asset_id_code AS equipment_code,
         s.settlement_cycle, s.status, s.pending_reason, s.cost_center_id, cc.code AS cost_center_code,
         cc.name AS cost_center_name, s.budget_version_id, bv.title AS budget_version_title,
         s.fiscal_year, s.period_month, s.currency_code, s.labor_amount, s.labor_overtime_amount,

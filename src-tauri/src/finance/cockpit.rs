@@ -610,7 +610,7 @@ pub async fn get_budget_cockpit_drilldown<C: ConnectionTrait>(
             DbBackend::Sqlite,
             "SELECT ba.id, ba.period_month, ba.budget_bucket, ba.amount_base, ba.posting_status, ba.source_type,
                     ba.source_id, ba.rate_card_lane, ba.work_order_id, wo.code AS wo_code, wo.title AS wo_title,
-                    COALESCE(e.asset_id_code, e.code) AS equipment_code, ba.event_at, ba.reversal_of_actual_id
+                    e.asset_id_code AS equipment_code, ba.event_at, ba.reversal_of_actual_id
              FROM budget_actuals ba
              LEFT JOIN work_orders wo ON wo.id = ba.work_order_id
              LEFT JOIN equipment e ON e.id = COALESCE(ba.equipment_id, wo.equipment_id)
