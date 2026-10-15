@@ -1,7 +1,9 @@
 /**
- * The shift a work order is planned on: one of the windows its assigned team works on the planned
- * day, from the members' Classes horaires (`list_wo_shift_options`). Nothing is offered without a
- * team, a date, or anybody working that day — the shift then stays empty, never assumed.
+ * The shift a work order is planned on: one of the windows its team works at the planned start,
+ * from the members' Classes horaires (`list_wo_shift_options`); an early-morning start also offers
+ * the previous night's shift still running. Nothing is offered without a team, a date, or anybody
+ * working then — the shift then stays empty, never assumed. The stored shift is shown as planned;
+ * the parent sends it only when the planner changes it (`wo-shift-plan`).
  */
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -18,12 +20,17 @@ import {
 import { type WoShiftOptionsResult, listWoShiftOptions } from "@/services/wo-service";
 import type { WorkOrder } from "@shared/ipc-types";
 
+import { plannedOutsideWindow } from "./wo-shift-plan";
+
 const NONE = "__none";
 
 export interface WoShiftSelectProps {
   wo: WorkOrder;
-  /** Day the work order will be planned on (`YYYY-MM-DD`), as the save sends it. */
-  plannedDay: string | null;
+  /** Planned start / end as the form holds them (local `YYYY-MM-DDTHH:mm`, or the stored instant). */
+  plannedStart: string | null;
+  plannedEnd?: string | null;
+  /** The team chosen in the assignment section (may not be saved yet); default: assigned team. */
+  teamId?: number | null;
   /** Chosen `class_version_id` ("" = no shift). */
   value: string;
   onChange: (value: string) => void;
@@ -34,37 +41,53 @@ function formatWindow(start: string | null, end: string | null): string {
   return start && end ? `${start}–${end}` : "";
 }
 
-export function WoShiftSelect({ wo, plannedDay, value, onChange, disabled }: WoShiftSelectProps) {
+export function WoShiftSelect({
+  wo,
+  plannedStart,
+  plannedEnd = null,
+  teamId = null,
+  value,
+  onChange,
+  disabled,
+}: WoShiftSelectProps) {
   const { t } = useTranslation("ot");
   const [result, setResult] = useState<WoShiftOptionsResult | null>(null);
   const [failed, setFailed] = useState(false);
+  // A team being assigned: its shifts are offered, saved with the assignment.
+  const newTeam = teamId != null && teamId !== wo.assigned_team_id;
 
   useEffect(() => {
     let cancelled = false;
+    // Never show the options of another team or day while the new ones load.
+    setResult(null);
     setFailed(false);
-    listWoShiftOptions(wo.id, plannedDay)
+    listWoShiftOptions(wo.id, plannedStart, teamId)
       .then((r) => {
         if (!cancelled) setResult(r);
       })
       .catch(() => {
-        if (!cancelled) {
-          setResult(null);
-          setFailed(true);
-        }
+        if (!cancelled) setFailed(true);
       });
     return () => {
       cancelled = true;
     };
-  }, [wo.id, wo.assigned_team_id, plannedDay]);
+  }, [wo.id, wo.assigned_team_id, plannedStart, teamId]);
 
   const options = result?.options ?? [];
-  const offered = options.some((o) => String(o.class_version_id) === value);
-  // The work order's current window, when the team no longer works it that day.
+  const selected = options.find((o) => String(o.class_version_id) === value) ?? null;
+  // The shift stored on the work order, when the team does not work it then: kept as planned.
   const currentNotOffered =
     value !== "" &&
-    !offered &&
+    selected == null &&
     wo.shift_class_version_id != null &&
     String(wo.shift_class_version_id) === value;
+  const chosenWindow =
+    selected ??
+    (currentNotOffered && wo.shift_start && wo.shift_end
+      ? { shift_start: wo.shift_start, shift_end: wo.shift_end }
+      : null);
+  const outside =
+    chosenWindow != null && plannedOutsideWindow(plannedStart, plannedEnd, chosenWindow);
 
   return (
     <div className="space-y-1">
@@ -87,6 +110,7 @@ export function WoShiftSelect({ wo, plannedDay, value, onChange, disabled }: WoS
                 hours: o.net_hours.toLocaleString(undefined, { maximumFractionDigits: 2 }),
                 members: o.members,
               })}
+              {o.starts_previous_day ? ` · ${t("planning.shiftPreviousNight")}` : ""}
             </SelectItem>
           ))}
           {currentNotOffered ? (
@@ -99,6 +123,12 @@ export function WoShiftSelect({ wo, plannedDay, value, onChange, disabled }: WoS
           ) : null}
         </SelectContent>
       </Select>
+      {outside ? (
+        <p className="text-xs text-text-muted" role="status">
+          {t("planning.shiftOutsideWindow")}
+        </p>
+      ) : null}
+      {newTeam ? <p className="text-xs text-text-muted">{t("planning.shiftForNewTeam")}</p> : null}
       {wo.shift && !wo.shift_class_version_id ? (
         <p className="text-xs text-text-muted">
           {t("planning.shiftLegacy", { label: t(`shift.${wo.shift}`) })}

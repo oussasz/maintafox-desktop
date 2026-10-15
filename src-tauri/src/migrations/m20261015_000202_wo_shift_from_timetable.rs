@@ -10,7 +10,7 @@
 //! use those codes (`wo::shifts`). Nothing is rewritten: no rule can tell which Classe horaire an
 //! old code meant.
 
-use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
+use sea_orm::{ConnectionTrait, DatabaseBackend, Statement, TransactionTrait};
 use sea_orm_migration::prelude::*;
 
 pub struct Migration;
@@ -39,7 +39,9 @@ async fn has_column<C: ConnectionTrait>(conn: &C, table: &str, column: &str) -> 
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        let db = manager.get_connection();
+        // sea-orm-migration does not open a transaction for SQLite: one here, every part guarded.
+        let txn = manager.get_connection().begin().await?;
+        let db = &txn;
         for (column, definition) in [
             (
                 "shift_class_version_id",
@@ -58,7 +60,7 @@ impl MigrationTrait for Migration {
              ON work_orders(shift_class_version_id)",
         )
         .await?;
-        Ok(())
+        txn.commit().await
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {

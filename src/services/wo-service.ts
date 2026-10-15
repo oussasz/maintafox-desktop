@@ -377,6 +377,8 @@ const WoShiftOptionsSchema = z.object({
       net_hours: z.number(),
       members: z.number(),
       members_available: z.number(),
+      /** A night shift that began the day before and still runs at the planned start. */
+      starts_previous_day: z.boolean().default(false),
     }),
   ),
   reason: z.enum(["no_team", "no_day", "no_shift"]).nullable(),
@@ -384,15 +386,18 @@ const WoShiftOptionsSchema = z.object({
 export type WoShiftOptionsResult = z.infer<typeof WoShiftOptionsSchema>;
 
 /**
- * The shift windows the work order's assigned team works on `day` (default: the day of its
- * planned start), from the members' Classes horaires. Empty with a reason when there is no team,
- * no date, or nobody works that day.
+ * The shift windows the work order's assigned team — or `teamId`, the team being assigned —
+ * works at `plannedStart` (local `YYYY-MM-DDTHH:mm` as typed, or the stored instant; default: its
+ * planned start), from the members' Classes horaires. An early-morning start also lists the
+ * previous night's shift still running. Empty with a reason when there is no team, no date, or
+ * nobody works then.
  */
 export async function listWoShiftOptions(
   woId: number,
-  day: string | null = null,
+  plannedStart: string | null = null,
+  teamId: number | null = null,
 ): Promise<WoShiftOptionsResult> {
-  const raw = await invoke<unknown>("list_wo_shift_options", { woId, day });
+  const raw = await invoke<unknown>("list_wo_shift_options", { woId, plannedStart, teamId });
   return WoShiftOptionsSchema.parse(raw);
 }
 

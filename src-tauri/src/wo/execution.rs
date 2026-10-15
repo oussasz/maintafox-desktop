@@ -59,6 +59,12 @@ pub struct WoEmergencyReassignInput {
     pub assigned_team_id: Option<i64>,
     pub primary_responsible_id: Option<i64>,
     pub override_reason: String,
+    /// The new team's shift window; `None` keeps the current one (the new team must work it).
+    #[serde(default)]
+    pub shift_class_version_id: Option<i64>,
+    /// Removes the shift.
+    #[serde(default)]
+    pub clear_shift: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -248,6 +254,8 @@ pub async fn emergency_reassign_wo(db: &DatabaseConnection, input: WoEmergencyRe
             assigned_team_id: input.assigned_team_id,
             primary_responsible_id: input.primary_responsible_id,
             override_reason: input.override_reason,
+            shift_class_version_id: input.shift_class_version_id,
+            clear_shift: input.clear_shift,
         },
     )
     .await

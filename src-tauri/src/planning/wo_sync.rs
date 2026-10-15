@@ -46,6 +46,10 @@ pub async fn sync_work_order_from_commitment(
     assert_action_allowed(&status, assign_action).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
     let primary_responsible_id = resolve_personnel_user_id(tx, assigned_personnel_id).await?;
+    // The work order's shift must stay one the committed team works on the committed day
+    // (`wo::shifts`); otherwise the commitment is refused rather than the shift cleared.
+    let shift_change =
+        crate::wo::shifts::decide_shift(tx, wo_id, Some(assigned_team_id), Some(committed_start), None, false).await?;
     let now = now_utc_z();
 
     let result = tx
@@ -75,6 +79,7 @@ pub async fn sync_work_order_from_commitment(
         ))
         .await?;
     check_concurrency(result.rows_affected())?;
+    crate::wo::shifts::apply_shift_change(tx, wo_id, &shift_change).await?;
 
     let payload = json!({
         "origin": "planning_commitment",

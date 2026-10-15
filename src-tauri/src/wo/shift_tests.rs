@@ -73,6 +73,9 @@ async fn class(db: &DatabaseConnection, code: &str, start: &str, end: &str, rest
 struct Fixture {
     db: DatabaseConnection,
     team: i64,
+    /// A team on nights only, and a team working the same day shift as `team`.
+    night_team: i64,
+    day_team: i64,
     day_version: i64,
     night_version: i64,
     other_version: i64,
@@ -121,13 +124,62 @@ async fn setup() -> Fixture {
         )
         .await;
     }
+    // Two more teams: one on nights only, one working the same day shift.
+    let mut other_teams = Vec::new();
+    for (team_code, member, class) in [("EQ-NUIT", "N-1", night_class), ("EQ-JOUR", "J-1", day_class)] {
+        exec(
+            &db,
+            &format!(
+                "INSERT INTO teams (entity_sync_id, code, name, team_type, status, created_at, updated_at) \
+                 VALUES ('shift-{team_code}', '{team_code}', 'Équipe {team_code}', 'maintenance', 'active', \
+                 datetime('now'), datetime('now'))"
+            ),
+        )
+        .await;
+        let id = scalar_i64(&db, &format!("SELECT id FROM teams WHERE code = '{team_code}'")).await;
+        exec(
+            &db,
+            &format!(
+                "INSERT INTO personnel (employee_code, full_name, availability_status, primary_team_id, \
+                 home_schedule_reference_value_id) VALUES ('{member}', 'Tech {member}', 'available', {id}, {class})"
+            ),
+        )
+        .await;
+        other_teams.push(id);
+    }
     Fixture {
         db,
         team,
+        night_team: other_teams[0],
+        day_team: other_teams[1],
         day_version,
         night_version,
         other_version,
     }
+}
+
+/// Emergency reassignment of `wo` to `team`, with an optional new shift choice.
+async fn reassign(
+    db: &DatabaseConnection,
+    wo: &WorkOrder,
+    team: i64,
+    version: Option<i64>,
+    clear: bool,
+) -> crate::errors::AppResult<WorkOrder> {
+    crate::wo::workflow::actions::assign::emergency_reassign(
+        db,
+        crate::wo::workflow::actions::assign::WoEmergencyReassignInput {
+            wo_id: wo.id,
+            actor_id: admin(db).await,
+            expected_row_version: wo.row_version,
+            assigned_team_id: Some(team),
+            primary_responsible_id: None,
+            override_reason: "Équipe initiale indisponible".into(),
+            shift_class_version_id: version,
+            clear_shift: clear,
+        },
+    )
+    .await
 }
 
 /// A work order in planning, assigned to `team` when given.
@@ -220,7 +272,7 @@ const SUNDAY: &str = "2026-04-19";
 async fn shift_options_are_the_team_windows_of_the_day() {
     let f = setup().await;
     let wo = work_order(&f.db, Some(f.team)).await;
-    let options = list_wo_shift_options(&f.db, wo.id, Some(MONDAY))
+    let options = list_wo_shift_options(&f.db, wo.id, Some(MONDAY), None)
         .await
         .expect("options");
     assert_eq!(options.reason, None);
@@ -242,7 +294,7 @@ async fn shift_options_are_the_team_windows_of_the_day() {
     assert!((day.net_hours - 7.5).abs() < 1e-9, "8 h minus the 30-minute break");
 
     // The night shift rests on Sundays: only the day shift is offered.
-    let sunday = list_wo_shift_options(&f.db, wo.id, Some(SUNDAY))
+    let sunday = list_wo_shift_options(&f.db, wo.id, Some(SUNDAY), None)
         .await
         .expect("options");
     assert_eq!(sunday.options.len(), 1);
@@ -250,12 +302,12 @@ async fn shift_options_are_the_team_windows_of_the_day() {
 
     // Nothing is offered without a team or a day — never an assumed shift.
     let unassigned = work_order(&f.db, None).await;
-    let none = list_wo_shift_options(&f.db, unassigned.id, Some(MONDAY))
+    let none = list_wo_shift_options(&f.db, unassigned.id, Some(MONDAY), None)
         .await
         .expect("options");
     assert!(none.options.is_empty());
     assert_eq!(none.reason.as_deref(), Some("no_team"));
-    let no_day = list_wo_shift_options(&f.db, wo.id, None).await.expect("options");
+    let no_day = list_wo_shift_options(&f.db, wo.id, None, None).await.expect("options");
     assert_eq!(no_day.reason.as_deref(), Some("no_day"));
 }
 
@@ -353,4 +405,247 @@ async fn an_old_shift_code_must_be_replaced_when_re_planning() {
         .expect("a window of the team");
     assert!(replanned.shift.is_none(), "the old code is dropped");
     assert_eq!(replanned.shift_class_version_id, Some(f.day_version));
+}
+
+/// Normal assignment (`assign_wo`) of `wo` to `team`.
+async fn assign(db: &DatabaseConnection, wo: &WorkOrder, team: i64) -> crate::errors::AppResult<WorkOrder> {
+    crate::wo::workflow::actions::assign::save_assignment(
+        db,
+        crate::wo::workflow::actions::assign::WoAssignSaveInput {
+            wo_id: wo.id,
+            actor_id: admin(db).await,
+            expected_row_version: wo.row_version,
+            assigned_team_id: Some(team),
+            primary_responsible_id: None,
+            scheduled_at: None,
+            override_reason: "Changement d'équipe planifié".into(),
+        },
+    )
+    .await
+}
+
+async fn reload(db: &DatabaseConnection, wo_id: i64) -> WorkOrder {
+    crate::wo::queries::get_work_order(db, wo_id)
+        .await
+        .expect("get")
+        .expect("wo")
+}
+
+/// HIGH 2 — normal assignment: a new team that does not work the chosen shift is refused; the
+/// planner chooses one of its shifts (the planning tab lists them) or none.
+#[tokio::test]
+async fn a_normal_assignment_to_a_team_that_does_not_work_the_shift_is_refused() {
+    let f = setup().await;
+    let wo = work_order(&f.db, Some(f.team)).await;
+    let planned = plan(&f.db, &wo, MONDAY, Some(f.day_version), false)
+        .await
+        .expect("planned on the day shift");
+
+    let refused = assign(&f.db, &planned, f.night_team)
+        .await
+        .expect_err("the night team does not work the day shift");
+    assert!(
+        format!("{refused:?}").contains("GATE_WO_SHIFT_TEAM_CHANGED"),
+        "{refused:?}"
+    );
+    let unchanged = reload(&f.db, wo.id).await;
+    assert_eq!(unchanged.assigned_team_id, Some(f.team));
+    assert_eq!(unchanged.shift_class_version_id, Some(f.day_version));
+
+    // The planning tab offers the new team's shifts…
+    let offered = list_wo_shift_options(&f.db, wo.id, Some(MONDAY), Some(f.night_team))
+        .await
+        .expect("options");
+    assert_eq!(
+        offered.options.iter().map(|o| o.class_version_id).collect::<Vec<_>>(),
+        vec![f.night_version]
+    );
+    // …and the reassignment goes through with one of them, or with no shift.
+    let moved = reassign(&f.db, &unchanged, f.night_team, Some(f.night_version), false)
+        .await
+        .expect("new team with its shift");
+    assert_eq!(moved.assigned_team_id, Some(f.night_team));
+    assert_eq!(moved.shift_class_version_id, Some(f.night_version));
+    assert_eq!(moved.shift_start.as_deref(), Some("22:00"));
+    let back = reassign(&f.db, &moved, f.team, None, true).await.expect("cleared");
+    assert!(back.shift_class_version_id.is_none() && back.shift_start.is_none());
+}
+
+/// HIGH 2 — an emergency reassignment is never blocked: the shift is cleared and the work order
+/// records that it must be chosen again.
+#[tokio::test]
+async fn an_emergency_reassignment_clears_a_shift_the_new_team_does_not_work_and_says_so() {
+    let f = setup().await;
+    let wo = work_order(&f.db, Some(f.team)).await;
+    let planned = plan(&f.db, &wo, MONDAY, Some(f.day_version), false)
+        .await
+        .expect("planned on the day shift");
+    let moved = reassign(&f.db, &planned, f.night_team, None, false)
+        .await
+        .expect("an emergency is not blocked");
+    assert_eq!(moved.assigned_team_id, Some(f.night_team));
+    assert!(moved.shift_class_version_id.is_none() && moved.shift_start.is_none());
+    let note: String =
+        f.db.query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT payload_json FROM wo_action_events WHERE wo_id = {} AND action_code = 'shift_cleared'",
+                wo.id
+            ),
+        ))
+        .await
+        .expect("query")
+        .expect("the work order says the shift must be chosen again")
+        .try_get("", "payload_json")
+        .expect("payload");
+    assert!(note.contains("\"shift_to_rechoose\":true"), "{note}");
+    assert!(note.contains("\"shift_start\":\"06:00\""), "{note}");
+}
+
+#[tokio::test]
+async fn a_new_team_working_the_same_shift_keeps_it() {
+    let f = setup().await;
+    let wo = work_order(&f.db, Some(f.team)).await;
+    let planned = plan(&f.db, &wo, MONDAY, Some(f.day_version), false)
+        .await
+        .expect("planned on the day shift");
+    let moved = assign(&f.db, &planned, f.day_team)
+        .await
+        .expect("the new team works the same day shift");
+    assert_eq!(moved.assigned_team_id, Some(f.day_team));
+    assert_eq!(moved.shift_class_version_id, Some(f.day_version));
+    assert_eq!(moved.shift_start.as_deref(), Some("06:00"));
+    assert_eq!(moved.shift_end.as_deref(), Some("14:00"));
+}
+
+/// HIGH 1 / MEDIUM 6 — a save that does not touch the shift keeps it as planned, even when the
+/// team no longer works it or the timetable changed: editing the hours is never blocked.
+#[tokio::test]
+async fn a_save_that_does_not_touch_the_shift_keeps_it() {
+    let f = setup().await;
+    let wo = work_order(&f.db, Some(f.team)).await;
+    let planned = plan(&f.db, &wo, MONDAY, Some(f.night_version), false)
+        .await
+        .expect("planned on the night shift");
+    // The night worker leaves the team, and the night timetable is edited.
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE personnel SET primary_team_id = {} WHERE employee_code = 'S-3'",
+            f.night_team
+        ),
+    )
+    .await;
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE schedule_class_versions SET days_json = replace(days_json, '22:00', '21:00') WHERE id = {}",
+            f.night_version
+        ),
+    )
+    .await;
+    let saved = plan(&f.db, &planned, MONDAY, None, false)
+        .await
+        .expect("an hours edit on the same day goes through");
+    assert_eq!(saved.shift_class_version_id, Some(f.night_version));
+    assert_eq!(
+        saved.shift_start.as_deref(),
+        Some("22:00"),
+        "the window it was planned with"
+    );
+}
+
+/// MEDIUM 3 — an old shift code survives a save that does not move the work order; moving it asks
+/// for a window (or none).
+#[tokio::test]
+async fn an_old_shift_code_is_kept_until_the_work_order_moves() {
+    let f = setup().await;
+    let wo = work_order(&f.db, Some(f.team)).await;
+    plan(&f.db, &wo, MONDAY, None, false).await.expect("planned");
+    exec(
+        &f.db,
+        &format!("UPDATE work_orders SET shift = 'night' WHERE id = {}", wo.id),
+    )
+    .await;
+    let planned = reload(&f.db, wo.id).await;
+    let saved = plan(&f.db, &planned, MONDAY, None, false)
+        .await
+        .expect("same day: the old code is kept");
+    assert_eq!(saved.shift.as_deref(), Some("night"));
+    let refused = plan(&f.db, &saved, "2026-04-14", None, false)
+        .await
+        .expect_err("moved: choose a window");
+    assert!(
+        format!("{refused:?}").contains("GATE_WO_SHIFT_LEGACY_REPLAN"),
+        "{refused:?}"
+    );
+}
+
+/// MEDIUM 4 — an early-morning start also offers the previous night's shift still running.
+#[tokio::test]
+async fn an_early_morning_start_offers_the_previous_night_shift() {
+    let f = setup().await;
+    let wo = work_order(&f.db, Some(f.team)).await;
+    // Tuesday 02:00 (local, as typed): Monday's night shift is still running.
+    let early = list_wo_shift_options(&f.db, wo.id, Some("2026-04-14T02:00"), None)
+        .await
+        .expect("options");
+    let night = early
+        .options
+        .iter()
+        .find(|o| o.class_version_id == f.night_version)
+        .expect("the night shift");
+    assert!(night.starts_previous_day, "{early:?}");
+    assert_eq!(early.day.as_deref(), Some("2026-04-14"));
+    // At 08:00 the same night shift is the one starting that evening.
+    let morning = list_wo_shift_options(&f.db, wo.id, Some("2026-04-14T08:00"), None)
+        .await
+        .expect("options");
+    let night = morning
+        .options
+        .iter()
+        .find(|o| o.class_version_id == f.night_version)
+        .expect("the night shift");
+    assert!(!night.starts_previous_day);
+}
+
+/// MEDIUM 5 — moving across a new version of the same Classe horaire keeps the class and takes the
+/// version in force on the new day.
+#[tokio::test]
+async fn a_move_across_a_new_version_keeps_the_classe_horaire() {
+    let f = setup().await;
+    let night_class = scalar_i64(&f.db, "SELECT id FROM reference_values WHERE code = 'NUIT'").await;
+    let days: Vec<serde_json::Value> = (1..=7u32)
+        .map(|d| {
+            serde_json::json!({
+                "cycle_day": d, "shift_start": "21:00", "shift_end": "05:00",
+                "break_minutes": 30, "is_rest_day": d == 7,
+            })
+        })
+        .collect();
+    exec(
+        &f.db,
+        &format!(
+            "INSERT INTO schedule_class_versions (entity_sync_id, reference_value_id, effective_from, \
+             cycle_length_days, rotation_start_date, days_json, is_continuous, utilisation_percent, \
+             created_at, updated_at) \
+             VALUES ('shift-ver-NUIT-2', {night_class}, '2026-04-15', 7, NULL, '{}', 1, 100.0, datetime('now'), datetime('now'))",
+            serde_json::Value::Array(days)
+        ),
+    )
+    .await;
+    let new_version = scalar_i64(
+        &f.db,
+        "SELECT id FROM schedule_class_versions WHERE entity_sync_id = 'shift-ver-NUIT-2'",
+    )
+    .await;
+    let wo = work_order(&f.db, Some(f.team)).await;
+    let planned = plan(&f.db, &wo, MONDAY, Some(f.night_version), false)
+        .await
+        .expect("planned on the night shift");
+    let moved = plan(&f.db, &planned, "2026-04-16", None, false)
+        .await
+        .expect("Thursday: the same Classe horaire, its new version");
+    assert_eq!(moved.shift_class_version_id, Some(new_version));
+    assert_eq!(moved.shift_start.as_deref(), Some("21:00"));
 }

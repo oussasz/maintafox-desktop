@@ -120,9 +120,10 @@ pub async fn save_schedule(db: &DatabaseConnection, input: WoScheduleSaveInput) 
 
     // The shift: a window of the team's Classe horaire on the planned day, or none. Decided on
     // the work order as it stands (before the new dates are written).
-    let shift_change = crate::wo::shifts::decide_shift_change(
+    let shift_change = crate::wo::shifts::decide_shift(
         &txn,
         input.wo_id,
+        None,
         if update_dates { start_raw } else { None },
         input.shift_class_version_id,
         input.clear_shift,

@@ -4985,6 +4985,10 @@ export interface WoEmergencyReassignInput {
   assigned_team_id?: number | null;
   primary_responsible_id?: number | null;
   override_reason: string;
+  /** The new team's shift window; omitted keeps the current one, which the new team must work. */
+  shift_class_version_id?: number | null;
+  /** Removes the shift. */
+  clear_shift?: boolean;
 }
 
 export interface WoStartInput {
