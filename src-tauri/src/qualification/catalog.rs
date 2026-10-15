@@ -464,13 +464,6 @@ async fn ensure_habilitation_list(db: &impl ConnectionTrait, french: bool) -> Ap
     )
     .await?;
     db.execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "UPDATE reference_domains SET audience = 'company' WHERE UPPER(TRIM(code)) = ?",
-            [HABILITATIONS_DOMAIN.into()],
-        ))
-        .await?;
-    }
-    db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO reference_sets (domain_id, version_no, status, effective_from, created_by_id, created_at, \
           published_at, entity_sync_id) \
