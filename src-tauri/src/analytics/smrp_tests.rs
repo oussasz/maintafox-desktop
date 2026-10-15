@@ -4,16 +4,13 @@
 //! from the fixture comments.
 
 use chrono::{DateTime, Duration, SecondsFormat, Timelike, Utc};
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
-use sea_orm_migration::MigratorTrait;
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 use crate::analytics::as_of::{self, PmDueWindow};
 use crate::analytics::smrp::{self, SmrpWindow};
 
 async fn setup() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:").await.expect("in-memory SQLite");
-    crate::migrations::Migrator::up(&db, None).await.expect("migrations");
-    crate::db::seeder::seed_system_data(&db).await.expect("seeder");
+    let db = crate::db::test_db::seeded().await;
     // Fixture rows reference teams / candidates / reference values that the scenarios do not need.
     db.execute_unprepared("PRAGMA foreign_keys = OFF")
         .await

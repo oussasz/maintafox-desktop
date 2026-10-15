@@ -1,8 +1,7 @@
 //! Unit conversions: validation, article scope over general scope, inverse, optimistic updates,
 //! disagreeing duplicates from two devices.
 
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
-use sea_orm_migration::MigratorTrait;
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 use super::*;
 
@@ -29,9 +28,7 @@ struct Units {
 }
 
 async fn setup() -> (DatabaseConnection, Units) {
-    let db = Database::connect("sqlite::memory:").await.expect("in-memory SQLite");
-    crate::migrations::Migrator::up(&db, None).await.expect("migrations");
-    crate::db::seeder::seed_system_data(&db).await.expect("seeder");
+    let db = crate::db::test_db::seeded().await;
     let unit = |code: &str| {
         format!(
             "SELECT lv.id FROM lookup_values lv JOIN lookup_domains ld ON ld.id = lv.domain_id \

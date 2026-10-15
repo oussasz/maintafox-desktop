@@ -6,8 +6,8 @@ use sea_orm::DatabaseConnection;
 use super::registry::{self, ConflictPolicy, SyncScope};
 use super::row_layout;
 use super::test_support::{
-    created_row, current_payload, editable_text_column, exec, scalar_i64, started_db, CreatedRow, ExchangeReport,
-    RowFactory, TestServer,
+    created_row, current_payload, editable_text_column, exec, scalar_i64, started_device_db, CreatedRow,
+    ExchangeReport, RowFactory, TestServer,
 };
 
 /// Identity, access, organisation, assets and reference catalogs.
@@ -358,8 +358,8 @@ async fn stage_errors(db: &DatabaseConnection) -> Vec<String> {
 pub(crate) const SINGLETON_TYPES: &[&str] = &["ram_advanced_guardrails"];
 
 pub(crate) async fn round_trip(entity_types: &[&str]) {
-    let a = started_db().await;
-    let b = started_db().await;
+    let a = started_device_db().await;
+    let b = started_device_db().await;
     let mut server = TestServer::new();
     let mut factory = RowFactory::new();
     let mut problems = Vec::new();
@@ -566,8 +566,8 @@ async fn received_stock_movements_update_stock_balances() {
     use crate::inventory::queries::{adjust_stock, issue_reserved_stock, reserve_stock};
     use sea_orm::ConnectionTrait;
 
-    let a = started_db().await;
-    let b = started_db().await;
+    let a = started_device_db().await;
+    let b = started_device_db().await;
     let mut server = TestServer::new();
     let mut factory = RowFactory::new();
     let article = factory.create(&a, "articles").await.expect("article");

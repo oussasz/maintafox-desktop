@@ -2,15 +2,12 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use sea_orm::{ConnectionTrait, Database, DatabaseBackend, DatabaseConnection, Statement};
-use sea_orm_migration::MigratorTrait;
+use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement};
 
 use super::registry::{self, SyncScope, LOCAL_ONLY_TABLES, SYNC_ENTITIES};
 
 async fn migrated_db() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:").await.expect("in-memory sqlite");
-    crate::migrations::Migrator::up(&db, None).await.expect("migrations");
-    db
+    crate::db::test_db::migrated().await
 }
 
 async fn table_names(db: &DatabaseConnection) -> BTreeSet<String> {
@@ -323,8 +320,8 @@ fn inserts_into_synchronised_tables_set_entity_sync_id() {
 /// is queued for sync.
 #[tokio::test]
 async fn seeded_rows_have_the_same_identity_on_every_database() {
-    let a = super::test_support::started_db().await;
-    let b = super::test_support::started_db().await;
+    let a = super::test_support::started_device_db().await;
+    let b = super::test_support::started_device_db().await;
     let mut mismatches = Vec::new();
     for e in SYNC_ENTITIES {
         if !columns(&a, e.table).await.iter().any(|c| c == "entity_sync_id") {

@@ -39,7 +39,7 @@ use super::domain::{ResolveSyncConflictInput, SyncConflictFilter, SyncConflictRe
 use super::queries::{list_sync_conflicts, resolve_sync_conflict};
 use super::registry;
 use super::test_support::{
-    current_payload, editable_text_column, exec, scalar_i64, scalar_opt_text, started_db, CreatedRow, RowFactory,
+    current_payload, editable_text_column, exec, scalar_i64, scalar_opt_text, started_device_db, CreatedRow, RowFactory,
 };
 use super::transport::worker::{CycleOutcome, SyncAccess, SyncAccessProvider};
 use super::transport::{store, SyncTiming, SyncWorker, SyncWorkerConfig, SyncWorkerHandle};
@@ -358,7 +358,7 @@ async fn multi_device_harness() {
     let api = config.api_base_url.as_str();
     let mut devices = Vec::new();
     for (index, d) in (1_i64..).zip(config.devices) {
-        let db = started_db().await;
+        let db = started_device_db().await;
         // Activated for the harness tenant, as after a real activation (tenant-scoped media keys).
         crate::commands::product_license::record_activation_claim_for_tests(
             &db,
@@ -735,7 +735,7 @@ async fn large_tenant() {
         let db = if d.name == "C" {
             super::test_support::started_file_db(&media_root.join("maintafox.db")).await
         } else {
-            started_db().await
+            started_device_db().await
         };
         crate::commands::product_license::record_activation_claim_for_tests(
             &db,

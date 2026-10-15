@@ -4,8 +4,7 @@
 //! isolation verification and removal verification, the close (removal) gate,
 //! and the work-order start gate integration.
 
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
-use sea_orm_migration::MigratorTrait;
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 use crate::errors::AppError;
 use crate::permit::domain::{
@@ -24,15 +23,7 @@ const APPLIER: i64 = 1;
 const VERIFIER: i64 = 2;
 
 async fn setup() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:").await.expect("in-memory SQLite");
-    db.execute(Statement::from_string(
-        DbBackend::Sqlite,
-        "PRAGMA foreign_keys = ON;".to_string(),
-    ))
-    .await
-    .expect("PRAGMA foreign_keys");
-    crate::migrations::Migrator::up(&db, None).await.expect("migrations");
-    crate::db::seeder::seed_system_data(&db).await.expect("seeder");
+    let db = crate::db::test_db::seeded().await;
     // APPLIER is the seeded admin; VERIFIER is a second real account (the isolation
     // actor columns reference `user_accounts`).
     assert_eq!(admin_id(&db).await, APPLIER, "seeded admin is the applier");

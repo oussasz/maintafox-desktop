@@ -8,8 +8,6 @@
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
-    use sea_orm_migration::MigratorTrait;
 
     use crate::org::node_types::{self, CreateNodeTypePayload};
     use crate::org::nodes::{self, CreateOrgNodePayload, MoveOrgNodePayload, UpdateOrgNodeMetadataPayload};
@@ -17,26 +15,7 @@ mod tests {
     use crate::org::structure_model::{self, CreateStructureModelPayload};
 
     async fn setup() -> sea_orm::DatabaseConnection {
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("in-memory SQLite should connect");
-
-        db.execute(Statement::from_string(
-            DbBackend::Sqlite,
-            "PRAGMA foreign_keys = ON;".to_string(),
-        ))
-        .await
-        .expect("PRAGMA foreign_keys");
-
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("migrations should apply cleanly");
-
-        crate::db::seeder::seed_system_data(&db)
-            .await
-            .expect("seeder should run cleanly");
-
-        db
+        crate::db::test_db::seeded().await
     }
 
     /// Helper: create a draft model, add a root type + child type + rule, publish.

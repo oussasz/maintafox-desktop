@@ -1,12 +1,10 @@
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
-use sea_orm_migration::MigratorTrait;
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 use crate::activation::domain::{ActivationPolicySnapshot, ApplyMachineActivationInput};
 use crate::activation::queries;
 
 async fn setup_db() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:").await.expect("sqlite");
-    crate::migrations::Migrator::up(&db, None).await.expect("migrations");
+    let db = crate::db::test_db::migrated().await;
     seed_user_and_permissions(&db).await;
     db
 }

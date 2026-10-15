@@ -137,17 +137,11 @@ pub async fn emit_rbac_event(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sea_orm::{Database, DbBackend, Statement};
-    use sea_orm_migration::MigratorTrait;
+    use sea_orm::{DbBackend, Statement};
 
     #[tokio::test]
     async fn emit_activity_event_returns_ok_even_when_insert_fails() {
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("connect in-memory db");
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("apply migrations");
+        let db = crate::db::test_db::migrated().await;
 
         db.execute(Statement::from_string(
             DbBackend::Sqlite,

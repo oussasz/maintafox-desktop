@@ -1,5 +1,4 @@
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
-use sea_orm_migration::MigratorTrait;
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 use crate::errors::AppError;
 use crate::inventory::domain::{
@@ -14,12 +13,7 @@ use crate::inventory::domain::{
 use crate::inventory::{controls, procurement, queries};
 
 async fn setup_db() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:").await.expect("in-memory sqlite");
-    crate::migrations::Migrator::up(&db, None).await.expect("migrations");
-    crate::db::seeder::seed_system_data(&db)
-        .await
-        .expect("seed system data");
-    db
+    crate::db::test_db::seeded().await
 }
 
 async fn first_active_lookup_value_id(db: &DatabaseConnection, domain_key: &str) -> i64 {

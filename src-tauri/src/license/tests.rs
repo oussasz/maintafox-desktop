@@ -1,5 +1,4 @@
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
-use sea_orm_migration::MigratorTrait;
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 use crate::activation::domain::{ActivationPolicySnapshot, ApplyMachineActivationInput};
 use crate::entitlements::domain::{EntitlementEnvelopeInput, ENTITLEMENT_SIGNATURE_ALG};
@@ -9,8 +8,7 @@ use crate::license::domain::ApplyAdminLicenseActionInput;
 use crate::license::queries;
 
 async fn setup_db() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:").await.expect("sqlite");
-    crate::migrations::Migrator::up(&db, None).await.expect("migrations");
+    let db = crate::db::test_db::migrated().await;
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT OR IGNORE INTO user_accounts

@@ -3,8 +3,7 @@
 //! separation of duties, multi-line requisitions and partial receipts.
 
 use chrono::{Datelike, Duration, Utc};
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
-use sea_orm_migration::MigratorTrait;
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 use crate::errors::{AppError, AppResult};
 use crate::inventory::domain::{
@@ -21,12 +20,7 @@ use crate::inventory::{approvals, fx, issue, lots, periods, procurement, queries
 // ── Fixtures ───────────────────────────────────────────────────────────────────────────────
 
 async fn setup_db() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:").await.expect("in-memory sqlite");
-    crate::migrations::Migrator::up(&db, None).await.expect("migrations");
-    crate::db::seeder::seed_system_data(&db)
-        .await
-        .expect("seed system data");
-    db
+    crate::db::test_db::seeded().await
 }
 
 async fn scalar_i64(db: &DatabaseConnection, sql: &str, values: Vec<sea_orm::Value>) -> i64 {

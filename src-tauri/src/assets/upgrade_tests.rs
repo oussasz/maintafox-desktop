@@ -1,8 +1,7 @@
 //! Asset registry upgrade: commercial data, paged search, maintenance profile, spare-parts list
 //! and criticality assessment, against a migrated in-memory database.
 
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
-use sea_orm_migration::MigratorTrait;
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 use crate::assets::criticality::{self, AssessCriticalityPayload, CriticalityScores};
 use crate::assets::hierarchy::{self, LinkAssetPayload};
@@ -16,10 +15,7 @@ use crate::org::nodes::{self, CreateOrgNodePayload};
 use crate::org::structure_model::{self, CreateStructureModelPayload};
 
 async fn setup() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:").await.expect("in-memory SQLite");
-    exec(&db, "PRAGMA foreign_keys = ON;").await;
-    crate::migrations::Migrator::up(&db, None).await.expect("migrations");
-    crate::db::seeder::seed_system_data(&db).await.expect("seeder");
+    let db = crate::db::test_db::seeded().await;
     let now = chrono::Utc::now().to_rfc3339();
     exec(
         &db,

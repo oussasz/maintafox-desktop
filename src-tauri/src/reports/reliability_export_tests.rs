@@ -1,7 +1,6 @@
 //! Failure-mode Pareto on real failure events, and the reliability report export (PDF + Excel).
 
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
-use sea_orm_migration::MigratorTrait;
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 use crate::errors::AppError;
 use crate::reliability::pareto::{get_failure_mode_pareto, FailureModeParetoInput};
@@ -25,9 +24,7 @@ async fn scalar(db: &DatabaseConnection, sql: &str) -> i64 {
 /// Equipment FAN-07 with failures: 3 x "Bearing seizure" (2 h downtime each), 1 x "Belt slip"
 /// (10 h), 1 unclassified, 1 planned replacement (excluded); one FMECA item with criticality.
 async fn setup() -> (DatabaseConnection, i64) {
-    let db = Database::connect("sqlite::memory:").await.expect("in-memory SQLite");
-    crate::migrations::Migrator::up(&db, None).await.expect("migrations");
-    crate::db::seeder::seed_system_data(&db).await.expect("seeder");
+    let db = crate::db::test_db::seeded().await;
     for sql in [
         "INSERT OR IGNORE INTO org_structure_models (id, entity_sync_id, version_number, status, created_at, updated_at) \
          VALUES (1, 're-model', 1, 'active', datetime('now'), datetime('now'))",

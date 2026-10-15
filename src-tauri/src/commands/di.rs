@@ -999,24 +999,12 @@ pub async fn get_di_stats(
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
-    use sea_orm_migration::MigratorTrait;
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
     use crate::auth::rbac::{self, PermissionScope};
 
     async fn setup() -> sea_orm::DatabaseConnection {
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("in-memory SQLite should connect");
-        db.execute(Statement::from_string(
-            DbBackend::Sqlite,
-            "PRAGMA foreign_keys = ON;".to_string(),
-        ))
-        .await
-        .expect("PRAGMA");
-        crate::migrations::Migrator::up(&db, None).await.expect("migrations");
-        crate::db::seeder::seed_system_data(&db).await.expect("seeder");
-        db
+        crate::db::test_db::seeded().await
     }
 
     async fn assign_role(db: &sea_orm::DatabaseConnection, user_id: i32, role_name: &str) {
