@@ -165,15 +165,13 @@ pub async fn ensure_active_code(
     conn: &impl ConnectionTrait,
     domain_code: &str,
     code: &str,
-    what_fr: &str,
     what_en: &str,
 ) -> AppResult<()> {
     if is_active_code(conn, domain_code, code).await? {
         Ok(())
     } else {
         Err(AppError::ValidationFailed(vec![format!(
-            "{what_fr} « {code} » n'existe pas ou n'est plus active dans les données de référence ({domain_code}). \
-             ({what_en} '{code}' is not an active value of reference domain {domain_code}.)"
+            "GATE_FIN_REFERENCE_VALUE_INACTIVE: {what_en} '{code}' is not an active value of reference domain {domain_code}"
         )]))
     }
 }

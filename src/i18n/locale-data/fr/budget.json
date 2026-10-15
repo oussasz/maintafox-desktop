@@ -100,7 +100,8 @@
       "period_closed": "Toutes les périodes restantes de l'exercice sont clôturées.",
       "no_currency": "La devise de l'entreprise n'est pas configurée.",
       "unknown": "Cause inconnue.",
-      "no_fiscal_calendar": "Le mois de début de l'exercice n'est pas configuré."
+      "no_fiscal_calendar": "Le mois de début de l'exercice n'est pas configuré.",
+      "unpriced_labor": "Des heures saisies n'ont pas de taux horaire."
     },
     "fix": {
       "no_cost_center": "Renseignez le centre de coût de l'équipement (ou de son emplacement), ou choisissez-en un dans l'estimation de l'OT, puis relancez l'imputation.",
@@ -109,7 +110,8 @@
       "period_closed": "Rouvrez une période de l'exercice (onglet Clôtures), puis relancez l'imputation.",
       "no_currency": "Configurez la devise dans Paramètres › Localisation, puis relancez l'imputation.",
       "unknown": "Relancez l'imputation ; si elle reste en attente, contactez l'administrateur.",
-      "no_fiscal_calendar": "Choisissez le mois de début de l'exercice dans Paramètres › Localisation, puis relancez l'imputation."
+      "no_fiscal_calendar": "Choisissez le mois de début de l'exercice dans Paramètres › Localisation, puis relancez l'imputation.",
+      "unpriced_labor": "Saisissez le taux horaire sur les temps concernés, ou créez pour l'intervenant une fiche de taux en vigueur à la date des travaux (Personnel), puis relancez l'imputation."
     }
   },
   "woCost": {
@@ -147,15 +149,17 @@
     },
     "notice": {
       "noCostCenter": "Sans centre de coût, l'imputation restera en attente à la clôture : renseignez-le sur l'équipement ou dans l'estimation.",
-      "unpricedHours": "{{hours}} h saisies sans taux horaire ne sont pas valorisées : créez une fiche de taux pour l'intervenant.",
+      "unpricedHours": "{{hours}} h saisies sans taux horaire ne sont pas valorisées : saisissez le taux sur ces temps, ou créez une fiche de taux en vigueur à la date des travaux.",
       "unvaluedParts": "{{qty}} pièce(s) sorties sans coût (article jamais valorisé dans ce magasin).",
-      "overtimeNotCaptured": "Les heures supplémentaires ne sont pas encore distinguées dans les temps saisis : toute la main-d'œuvre est valorisée au taux normal."
+      "overtimeNotCaptured": "Les heures supplémentaires ne sont pas encore distinguées dans les temps saisis : toute la main-d'œuvre est valorisée au taux normal.",
+      "duplicateSettlement": "Cet OT a plus d'une imputation active (clôtures hors ligne sur deux postes) : la Finance doit vérifier le budget de cet OT."
     },
     "settlement": {
       "posted": "{{amount}} imputés sur {{cc}}, période {{period}}, le {{date}}.",
       "pending": "Imputation en attente : {{reason}}",
       "reversed": "Imputation annulée le {{date}} (réouverture : {{reason}}).",
-      "onClose": "Les coûts seront imputés au budget à la clôture de l'OT."
+      "onClose": "Les coûts seront imputés au budget à la clôture de l'OT.",
+      "lateCosts": "Coûts arrivés après la clôture, imputés en plus : {{amount}}."
     },
     "details": "Détail ({{labor}} temps, {{parts}} pièces, {{purchases}} achats)",
     "lines": {
@@ -184,7 +188,9 @@
       "demand": {
         "WORK_ORDER": "prestation",
         "WORK_ORDER_PART": "pièce"
-      }
+      },
+      "laborHidden": "Le détail par intervenant (noms, taux horaires) est réservé à la Finance ; le total de main-d'œuvre reste affiché.",
+      "rateCard": "fiche de taux"
     },
     "total": "Total"
   },
@@ -199,7 +205,8 @@
     "ccHint": "Par défaut, le centre de coût de l'équipement ou de son emplacement.",
     "notes": "Hypothèses",
     "saved": "Estimation de l'OT {{code}} enregistrée.",
-    "saveError": "L'estimation n'a pas été enregistrée."
+    "saveError": "L'estimation n'a pas été enregistrée.",
+    "ccReadOnly": "Le choix du centre de coût d'imputation est réservé aux personnes habilitées à imputer (Finance)."
   },
   "kpi": {
     "budget": "Budget",
@@ -304,7 +311,7 @@
     }
   },
   "settlements": {
-    "intro": "Chaque OT clôturé est imputé une seule fois au centre de coût et à la période de sa clôture. Une imputation en attente indique ce qu'il faut corriger ; une réouverture d'OT annule l'imputation.",
+    "intro": "Chaque OT clôturé — ou annulé après avoir consommé de la main-d'œuvre, des pièces ou des prestations — est imputé une seule fois au centre de coût et à la période de sa clôture. Si le coût d'un OT imputé change ensuite (réception, sortie, retour ou temps arrivés après la clôture, même saisis hors ligne avant elle), seule la différence avec ce qui est déjà imputé est ajoutée. Une imputation en attente indique ce qu'il faut corriger ; une réouverture d'OT annule l'imputation.",
     "filter": "Afficher",
     "filters": {
       "pending": "En attente",
@@ -323,7 +330,6 @@
     "retry": "Imputer",
     "retryPosted": "OT {{code}} imputé : {{amount}}.",
     "retryStillPending": "OT {{code}} toujours en attente.",
-    "retryError": "L'imputation a échoué.",
     "col": {
       "workOrder": "OT",
       "asset": "Équipement",
@@ -332,7 +338,13 @@
       "costCenter": "Centre de coût",
       "period": "Période",
       "total": "Montant"
-    }
+    },
+    "duplicate": "Plus d'une imputation active pour cet OT : à vérifier.",
+    "lateCatchUp": "Imputer les coûts tardifs",
+    "lateHint": "Impute la différence de coût des OT déjà imputés (par exemple après une synchronisation).",
+    "lateBooked_one": "Coûts tardifs imputés sur {{count}} OT.",
+    "lateBooked_other": "Coûts tardifs imputés sur {{count}} OT.",
+    "lateNone": "Aucun coût tardif à imputer."
   },
   "planning": {
     "loadError": "Le budget n'a pas pu être chargé.",

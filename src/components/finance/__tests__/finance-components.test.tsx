@@ -16,11 +16,7 @@ import { variancePct } from "@/components/finance/VarianceReviewsPanel";
 import { parseAmount } from "@/components/finance/WoCostEstimateDialog";
 import { WoCostPanel, costVariance } from "@/components/finance/WoCostPanel";
 import { forecastTone } from "@/components/finance/finance-tone";
-import {
-  catalogLabel,
-  periodCalendarMonth,
-  resetFinanceCatalogCache,
-} from "@/components/finance/use-finance-catalogs";
+import { catalogLabel, periodCalendarMonth } from "@/components/finance/use-finance-catalogs";
 import { useFormatters } from "@/hooks/use-formatters";
 import enCommon from "@/i18n/en/common.json";
 import enBudget from "@/i18n/locale-data/en/budget.json";
@@ -38,6 +34,7 @@ const svc = vi.hoisted(() => ({
   upsertWoCostEstimate: vi.fn(),
   listWoSettlements: vi.fn(),
   retryWoSettlement: vi.fn(),
+  postLateWoCosts: vi.fn(),
   getBudgetCockpit: vi.fn(),
   getBudgetCockpitDrilldown: vi.fn(),
   listBudgetPeriods: vi.fn(),
@@ -108,6 +105,7 @@ const settlement = (over: Partial<WoCostSettlement> = {}): WoCostSettlement => (
   reversed_at: null,
   reversal_reason: null,
   row_version: 1,
+  duplicate_active: false,
   ...over,
 });
 
@@ -121,6 +119,7 @@ const figures = (
 const costView = (
   over: Partial<WoCostView["breakdown"]> = {},
   settlements: WoCostSettlement[] = [],
+  view: Partial<Omit<WoCostView, "breakdown" | "settlements">> = {},
 ): WoCostView => ({
   breakdown: {
     work_order_id: 42,
@@ -147,6 +146,7 @@ const costView = (
         skill_label: "Mécanicien",
         hours: 2,
         hourly_rate: 50,
+        rate_source: "entry",
         is_overtime: false,
         amount: 100,
       },
@@ -158,6 +158,9 @@ const costView = (
     ...over,
   },
   settlements,
+  late_cost_total: 0,
+  labor_lines_hidden: false,
+  ...view,
 });
 
 const catalogs = {
@@ -226,7 +229,6 @@ beforeAll(async () => {
 
 beforeEach(() => {
   for (const fn of Object.values(svc)) fn.mockReset();
-  resetFinanceCatalogCache();
   svc.listFinanceCatalogs.mockResolvedValue(catalogs);
   perms.granted = new Set();
 });
@@ -330,6 +332,38 @@ describe("WoCostPanel", () => {
     expect(document.body.textContent).toContain("Set the cost centre on the asset");
     expect(screen.queryByRole("button", { name: /Estimate/ })).not.toBeInTheDocument();
   });
+
+  it("adds late costs to a posted settlement and withholds per-person lines", async () => {
+    svc.getWoCostView.mockResolvedValue(
+      costView(
+        { status_code: "closed", unpriced_labor_hours: 0, labor_lines: [] },
+        [
+          settlement({
+            status: "posted",
+            pending_reason: null,
+            cost_center_code: "CC-1",
+            period_month: 10,
+            posted_at: "2026-10-10T10:00:00Z",
+            duplicate_active: true,
+          }),
+        ],
+        { late_cost_total: 75, labor_lines_hidden: true },
+      ),
+    );
+    render(
+      <MemoryRouter>
+        <WoCostPanel woId={42} status="closed" />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("Settled")).toBeInTheDocument();
+    const text = document.body.textContent ?? "";
+    expect(text).toContain(
+      `Costs that arrived after the close, settled on top: ${money(75, "DZD")}`,
+    );
+    expect(text).toContain("more than one active settlement");
+    fireEvent.click(screen.getByRole("button", { name: /Details/ }));
+    expect(document.body.textContent).toContain("reserved for Finance");
+  });
 });
 
 describe("SettlementWorklist", () => {
@@ -350,7 +384,8 @@ describe("SettlementWorklist", () => {
         <SettlementWorklist fiscalYear={2026} onChanged={onChanged} />
       </MemoryRouter>,
     );
-    expect(await screen.findByText("No cost centre for this work order.")).toBeInTheDocument();
+    // The table redraws once the reference catalogs arrive: wait for the row, then re-query.
+    await screen.findByText("No cost centre for this work order.");
     expect(svc.listWoSettlements).toHaveBeenCalledWith({
       fiscal_year: 2026,
       status: "pending",
@@ -370,12 +405,53 @@ describe("SettlementWorklist", () => {
     );
     await screen.findByText("No cost centre for this work order.");
     expect(screen.queryByRole("button", { name: "Settle" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Settle late costs" })).not.toBeInTheDocument();
+  });
+
+  it("flags a duplicate settlement and books late costs on demand", async () => {
+    perms.granted = new Set([P.FIN_POST]);
+    svc.listWoSettlements.mockResolvedValue([settlement({ duplicate_active: true })]);
+    svc.postLateWoCosts.mockResolvedValue(2);
+    const onChanged = vi.fn();
+    render(
+      <MemoryRouter>
+        <SettlementWorklist fiscalYear={2026} onChanged={onChanged} />
+      </MemoryRouter>,
+    );
+    await screen.findByText("More than one active settlement for this work order: to be checked.");
+    fireEvent.click(screen.getByRole("button", { name: "Settle late costs" }));
+    await waitFor(() => expect(svc.postLateWoCosts).toHaveBeenCalled());
+    await waitFor(() => expect(onChanged).toHaveBeenCalled());
   });
 });
 
 describe("BudgetPeriodsPanel", () => {
+  it("offers no close with the posting right alone", async () => {
+    perms.granted = new Set([P.FIN_POST, P.FIN_VIEW]);
+    svc.listBudgetPeriods.mockResolvedValue([
+      {
+        fiscal_year: 2025,
+        period_month: 1,
+        status: "open",
+        closed_at: null,
+        closed_by_name: null,
+        reopened_at: null,
+        notes: null,
+        actual_amount: 0,
+        pending_settlements: 0,
+        is_future: false,
+        calendar_year: 2025,
+        calendar_month: 1,
+        row_version: null,
+      },
+    ]);
+    render(<BudgetPeriodsPanel fiscalYear={2025} currency="DZD" />);
+    await screen.findByText("January 2025");
+    expect(screen.queryByRole("button", { name: "Close" })).not.toBeInTheDocument();
+  });
+
   it("closes an ended month and keeps a month with pending OTs locked", async () => {
-    perms.granted = new Set([P.FIN_POST]);
+    perms.granted = new Set([P.FIN_APPROVE]);
     const months: BudgetPeriod[] = Array.from({ length: 12 }, (_, i) => ({
       fiscal_year: 2025,
       period_month: i + 1,
@@ -495,7 +571,7 @@ describe("BudgetCockpitView", () => {
         />
       </MemoryRouter>,
     );
-    expect(await screen.findByText("CC-MNT-PMP")).toBeInTheDocument();
+    await screen.findByText("CC-MNT-PMP");
     expect(document.body.textContent).toContain(money(4200, "DZD"));
     expect(document.body.textContent).toContain("1 closed work order is waiting for settlement");
     fireEvent.click(screen.getByRole("button", { name: "Show pending settlements" }));

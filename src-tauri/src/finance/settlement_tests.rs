@@ -6,9 +6,15 @@
 //! - S3 reopen reverses the posted actuals; the second close posts the new cycle once;
 //! - S4 budget periods: a closed month refuses postings, an unfinished month cannot be closed, a
 //!   month with a pending settlement cannot be closed;
-//! - S5 cockpit shows budget / committed / actual / forecast and drills down to the OT and PO.
+//! - S5 cockpit shows budget / committed / actual / forecast and drills down to the OT and PO;
+//! - S8 hours without a rate keep the settlement pending; S9 a receipt after the close is booked
+//!   once as a late cost and reversed with the settlement; S10 two devices settling the same close
+//!   are counted once; S11 a foreign-currency contract is valued in the tenant currency; S12 a
+//!   cancelled OT is settled only when it consumed something; S13 an issue made offline before the
+//!   close and synced after the settlement is booked once as a late cost; S14 a rate-card change
+//!   after the close never reprices work already done, only new labour is a difference.
 
-use chrono::{Datelike, Utc};
+use chrono::{Datelike, Local};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 use crate::finance::cockpit::{self, BudgetCockpitDrilldownFilter, BudgetCockpitFilter};
@@ -21,7 +27,7 @@ use crate::inventory::domain::{
 use crate::wo::closeout::{
     self, SaveFailureDetailInput, SaveVerificationInput, UpdateWoRcaInput, WoCloseInput, WoReopenInput,
 };
-use crate::wo::domain::WoCreateInput;
+use crate::wo::domain::{WoCancelInput, WoCreateInput};
 use crate::wo::execution::{self, WoAssignInput, WoMechCompleteInput, WoPlanInput, WoStartInput};
 use crate::wo::labor::{self, AddLaborInput};
 use crate::wo::workflow::actions::mark_ready::{mark_wo_ready, WoMarkReadyInput};
@@ -64,8 +70,9 @@ fn close_to(a: f64, b: f64) -> bool {
     (a - b).abs() < 0.01
 }
 
+/// Calendar year of today in local time (budget periods follow the plant's calendar).
 fn this_year() -> i64 {
-    i64::from(Utc::now().year())
+    i64::from(Local::now().year())
 }
 
 async fn admin_id(db: &DatabaseConnection) -> i64 {
@@ -349,6 +356,10 @@ async fn wo_in_progress(db: &DatabaseConnection) -> i64 {
 }
 
 async fn add_labour(db: &DatabaseConnection, wo_id: i64, hours: f64, from: &str, to: &str) {
+    add_labour_at(db, wo_id, hours, from, to, Some(50.0)).await;
+}
+
+async fn add_labour_at(db: &DatabaseConnection, wo_id: i64, hours: f64, from: &str, to: &str, rate: Option<f64>) {
     labor::add_labor_entry(
         db,
         AddLaborInput {
@@ -358,7 +369,7 @@ async fn add_labour(db: &DatabaseConnection, wo_id: i64, hours: f64, from: &str,
             started_at: Some(from.into()),
             ended_at: Some(to.into()),
             hours_worked: Some(hours),
-            hourly_rate: Some(50.0),
+            hourly_rate: rate,
             notes: None,
         },
     )
@@ -759,7 +770,7 @@ async fn s4_closed_periods_refuse_postings_and_wait_for_pending_settlements() {
     assert!(periods::ensure_period_open(&db, last_year, 3).await.is_err());
 
     // The current month has not ended: it cannot be closed.
-    let month = i64::from(Utc::now().month());
+    let month = i64::from(Local::now().month());
     assert!(periods::close_budget_period(
         &db,
         actor,
@@ -951,7 +962,7 @@ async fn s7_fiscal_year_start_month_dates_settlements_in_fiscal_periods() {
         vec![],
     )
     .await;
-    let now = Utc::now();
+    let now = Local::now();
     let (fy, period) = crate::finance::fiscal::fiscal_period(i64::from(now.year()), i64::from(now.month()), 7);
     // The approved budget must belong to the fiscal year the close falls in.
     exec(
@@ -972,4 +983,487 @@ async fn s7_fiscal_year_start_month_dates_settlements_in_fiscal_periods() {
     let months = periods::list_budget_periods(&db, fy).await.expect("periods");
     assert_eq!(months[0].calendar_month, 7, "period 1 is July");
     assert_eq!(months[11].calendar_month, 6, "period 12 is June");
+}
+
+#[tokio::test]
+async fn s8_unpriced_labour_keeps_the_settlement_pending_until_it_has_a_rate() {
+    let db = setup().await;
+    seed_plant(&db, Some(CC_CODE)).await;
+    let wo_id = wo_in_progress(&db).await;
+    // One hour by a technician with no rate on the entry and no rate card.
+    add_labour_at(&db, wo_id, 1.0, "2026-04-10T10:00:00Z", "2026-04-10T11:00:00Z", None).await;
+    complete_and_close(&db, wo_id).await;
+
+    let s = settlement::active_settlement(&db, wo_id)
+        .await
+        .expect("query")
+        .expect("settlement");
+    assert_eq!(s.status, "pending", "{s:?}");
+    assert_eq!(s.pending_reason.as_deref(), Some(settlement::PENDING_UNPRICED_LABOR));
+    assert!(close_to(s.unpriced_labor_hours, 1.0));
+    assert_eq!(actual_rows(&db, wo_id).await, 0, "no partial labour is booked");
+
+    // The rate is entered: Finance's retry posts the whole labour.
+    exec(
+        &db,
+        "UPDATE work_order_interveners SET hourly_rate = 40.0 WHERE work_order_id = ? AND hourly_rate IS NULL",
+        vec![wo_id.into()],
+    )
+    .await;
+    let posted = settlement::retry_pending_settlement(&db, s.id, admin_id(&db).await)
+        .await
+        .expect("retry");
+    assert_eq!(posted.status, "posted", "{posted:?}");
+    assert!(close_to(settled(&db, wo_id, "labor").await, 140.0));
+}
+
+#[tokio::test]
+async fn s9_a_receipt_after_the_close_is_booked_once_as_a_late_cost() {
+    let db = setup().await;
+    seed_plant(&db, Some(CC_CODE)).await;
+    let wo_id = wo_in_progress(&db).await;
+    add_costs(&db, wo_id).await;
+    complete_and_close(&db, wo_id).await;
+    let actor = admin_id(&db).await;
+    let s = settlement::active_settlement(&db, wo_id)
+        .await
+        .expect("query")
+        .expect("settlement");
+    assert!(close_to(net_actuals(&db, wo_id).await, 460.0));
+
+    // The contractor's last unit is received after the OT was closed.
+    let line = scalar_i64(
+        &db,
+        "SELECT id FROM purchase_order_lines WHERE demand_source_type = 'WORK_ORDER' AND demand_source_id = ?",
+        vec![wo_id.into()],
+    )
+    .await;
+    let gr = scalar_i64(
+        &db,
+        "SELECT id FROM goods_receipts WHERE gr_number = 'GR-FIN-1'",
+        vec![],
+    )
+    .await;
+    exec(
+        &db,
+        "INSERT INTO goods_receipt_lines (goods_receipt_id, po_line_id, article_id, location_id, received_qty,
+             accepted_qty, unit_price, unit_cost_tenant)
+         SELECT ?, ?, article_id, location_id, 1, 1, 120.0, 120.0
+           FROM goods_receipt_lines WHERE goods_receipt_id = ? LIMIT 1",
+        vec![gr.into(), line.into(), gr.into()],
+    )
+    .await;
+    assert_eq!(
+        settlement::work_orders_of_receipt(&db, gr).await.expect("receipt OTs"),
+        vec![wo_id]
+    );
+
+    let booked = settlement::post_late_costs(&db, wo_id, Some(actor))
+        .await
+        .expect("late");
+    assert!(close_to(booked, 120.0), "late receipt booked, got {booked}");
+    let rows = actual_rows(&db, wo_id).await;
+    // The hook and the catch-up run again: nothing is booked twice.
+    settlement::post_late_costs_best_effort(&db, &[wo_id], actor).await;
+    assert_eq!(settlement::post_all_late_costs(&db, actor).await.expect("catch-up"), 0);
+    assert_eq!(actual_rows(&db, wo_id).await, rows);
+    assert!(close_to(net_actuals(&db, wo_id).await, 580.0));
+    assert!(close_to(
+        settlement::late_cost_total(&db, &s.entity_sync_id)
+            .await
+            .expect("late total"),
+        120.0
+    ));
+    let view = settlement::get_wo_cost_view(&db, wo_id, true).await.expect("view");
+    assert!(close_to(view.late_cost_total, 120.0));
+    let total_cost = scalar_f64(
+        &db,
+        "SELECT total_cost FROM work_orders WHERE id = ?",
+        vec![wo_id.into()],
+    )
+    .await;
+    assert!(
+        close_to(total_cost, 580.0),
+        "the OT carries the late cost, got {total_cost}"
+    );
+
+    // Reopening reverses the settlement and its late cost together.
+    reopen(&db, wo_id).await;
+    let net = net_actuals(&db, wo_id).await;
+    assert!(close_to(net, 0.0), "settlement and late cost reversed, got {net}");
+}
+
+/// Copies an OT's settlement and actuals from one device's database into another's, the way the
+/// sync applies rows (insert keyed on `entity_sync_id`, an existing identity is kept).
+async fn exchange_settlement_rows(from: &DatabaseConnection, to: &DatabaseConnection, wo_id: i64) {
+    let settlements = from
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT entity_sync_id, work_order_id, settlement_cycle, status, currency_code, total_amount, closed_at
+             FROM wo_cost_settlements WHERE work_order_id = ?",
+            [wo_id.into()],
+        ))
+        .await
+        .expect("settlements");
+    for r in settlements {
+        exec(
+            to,
+            "INSERT OR IGNORE INTO wo_cost_settlements (entity_sync_id, work_order_id, settlement_cycle, status,
+                 currency_code, total_amount, closed_at, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
+            vec![
+                r.try_get::<String>("", "entity_sync_id").expect("sync").into(),
+                r.try_get::<i64>("", "work_order_id").expect("wo").into(),
+                r.try_get::<i64>("", "settlement_cycle").expect("cycle").into(),
+                r.try_get::<String>("", "status").expect("status").into(),
+                r.try_get::<String>("", "currency_code").expect("currency").into(),
+                r.try_get::<f64>("", "total_amount").expect("total").into(),
+                r.try_get::<Option<String>>("", "closed_at").expect("closed").into(),
+            ],
+        )
+        .await;
+    }
+    let actuals = from
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT entity_sync_id, budget_version_id, cost_center_id, period_month, budget_bucket, amount_source,
+                    source_currency, amount_base, base_currency, source_type, source_id, posting_status
+             FROM budget_actuals WHERE work_order_id = ?",
+            [wo_id.into()],
+        ))
+        .await
+        .expect("actuals");
+    for r in actuals {
+        exec(
+            to,
+            "INSERT OR IGNORE INTO budget_actuals (entity_sync_id, budget_version_id, cost_center_id, period_month,
+                 budget_bucket, amount_source, source_currency, amount_base, base_currency, source_type, source_id,
+                 work_order_id, posting_status, row_version, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, datetime('now'), datetime('now'))",
+            vec![
+                r.try_get::<String>("", "entity_sync_id").expect("sync").into(),
+                r.try_get::<i64>("", "budget_version_id").expect("version").into(),
+                r.try_get::<i64>("", "cost_center_id").expect("cc").into(),
+                r.try_get::<i64>("", "period_month").expect("month").into(),
+                r.try_get::<String>("", "budget_bucket").expect("bucket").into(),
+                r.try_get::<f64>("", "amount_source").expect("amount").into(),
+                r.try_get::<String>("", "source_currency").expect("currency").into(),
+                r.try_get::<f64>("", "amount_base").expect("base").into(),
+                r.try_get::<String>("", "base_currency").expect("base currency").into(),
+                r.try_get::<String>("", "source_type").expect("type").into(),
+                r.try_get::<String>("", "source_id").expect("source").into(),
+                wo_id.into(),
+                r.try_get::<String>("", "posting_status").expect("status").into(),
+            ],
+        )
+        .await;
+    }
+}
+
+#[tokio::test]
+async fn s10_two_devices_settling_the_same_close_are_counted_once() {
+    // Two devices hold the same OT (same sync identity) and each closes it offline.
+    let device_a = setup().await;
+    let device_b = setup().await;
+    let mut wo_ids = Vec::new();
+    for db in [&device_a, &device_b] {
+        seed_plant(db, Some(CC_CODE)).await;
+        let wo_id = wo_in_progress(db).await;
+        exec(
+            db,
+            "UPDATE work_orders SET entity_sync_id = 'wo-shared-0042' WHERE id = ?",
+            vec![wo_id.into()],
+        )
+        .await;
+        complete_and_close(db, wo_id).await;
+        wo_ids.push(wo_id);
+    }
+    assert_eq!(wo_ids[0], wo_ids[1], "same seeding, same local id");
+    let wo_id = wo_ids[0];
+    let sync_a = settlement::active_settlement(&device_a, wo_id)
+        .await
+        .expect("query")
+        .expect("a")
+        .entity_sync_id;
+    let sync_b = settlement::active_settlement(&device_b, wo_id)
+        .await
+        .expect("query")
+        .expect("b")
+        .entity_sync_id;
+    assert_eq!(
+        sync_a, sync_b,
+        "the settlement identity comes from the OT and its close cycle"
+    );
+
+    // The sync brings B's rows to A: they collapse onto A's, the budget counts the OT once.
+    let rows_before = actual_rows(&device_a, wo_id).await;
+    exchange_settlement_rows(&device_b, &device_a, wo_id).await;
+    assert_eq!(actual_rows(&device_a, wo_id).await, rows_before);
+    assert!(close_to(net_actuals(&device_a, wo_id).await, 100.0));
+    let s = settlement::active_settlement(&device_a, wo_id)
+        .await
+        .expect("query")
+        .expect("settlement");
+    assert!(!s.duplicate_active, "{s:?}");
+}
+
+#[tokio::test]
+async fn s11_a_foreign_currency_contract_is_valued_in_the_tenant_currency() {
+    let db = setup().await;
+    seed_plant(&db, Some(CC_CODE)).await;
+    let wo_id = wo_in_progress(&db).await;
+    let (article_id, location_id) = bearing_article(&db).await;
+    // Rewinding ordered from a European workshop: 2 × 100 EUR, one received at 145 DZD / EUR.
+    exec(
+        &db,
+        "INSERT INTO purchase_orders (po_number, status, currency_code, approved_at)
+         VALUES ('PO-FIN-EUR', 'PARTIALLY_RECEIVED', 'EUR', datetime('now'))",
+        vec![],
+    )
+    .await;
+    let po = scalar_i64(
+        &db,
+        "SELECT id FROM purchase_orders WHERE po_number = 'PO-FIN-EUR'",
+        vec![],
+    )
+    .await;
+    exec(
+        &db,
+        "INSERT INTO purchase_order_lines (purchase_order_id, article_id, ordered_qty, received_qty, unit_price,
+             demand_source_type, demand_source_id, status)
+         VALUES (?, ?, 2, 1, 100.0, 'WORK_ORDER', ?, 'OPEN')",
+        vec![po.into(), article_id.into(), wo_id.into()],
+    )
+    .await;
+    let line = scalar_i64(
+        &db,
+        "SELECT id FROM purchase_order_lines WHERE purchase_order_id = ?",
+        vec![po.into()],
+    )
+    .await;
+    exec(
+        &db,
+        "INSERT INTO goods_receipts (gr_number, purchase_order_id, status) VALUES ('GR-FIN-EUR', ?, 'posted')",
+        vec![po.into()],
+    )
+    .await;
+    let gr = scalar_i64(
+        &db,
+        "SELECT id FROM goods_receipts WHERE gr_number = 'GR-FIN-EUR'",
+        vec![],
+    )
+    .await;
+    exec(
+        &db,
+        "INSERT INTO goods_receipt_lines (goods_receipt_id, po_line_id, article_id, location_id, received_qty,
+             accepted_qty, unit_price, unit_cost_tenant)
+         VALUES (?, ?, ?, ?, 1, 1, 100.0, 14500.0)",
+        vec![gr.into(), line.into(), article_id.into(), location_id.into()],
+    )
+    .await;
+
+    let b = wo_costing::compute_wo_cost_breakdown(&db, wo_id)
+        .await
+        .expect("breakdown");
+    assert!(
+        close_to(b.services.actual, 14500.0),
+        "received in DZD: {:?}",
+        b.services
+    );
+    assert!(
+        close_to(b.services.committed, 14500.0),
+        "open unit at the receipt rate: {:?}",
+        b.services
+    );
+    complete_and_close(&db, wo_id).await;
+    assert!(close_to(settled(&db, wo_id, "services").await, 14500.0));
+}
+
+#[tokio::test]
+async fn s12_a_cancelled_ot_is_settled_only_when_it_consumed_something() {
+    let db = setup().await;
+    seed_plant(&db, Some(CC_CODE)).await;
+    let actor = admin_id(&db).await;
+
+    // Cancelled after 2 h of work: the labour is charged.
+    let worked = wo_in_progress(&db).await;
+    crate::wo::queries::cancel_work_order(
+        &db,
+        WoCancelInput {
+            id: worked,
+            expected_row_version: wo_row_version(&db, worked).await,
+            actor_id: actor,
+            cancel_reason: "Équipement remplacé".into(),
+        },
+    )
+    .await
+    .expect("cancel");
+    let s = settlement::active_settlement(&db, worked)
+        .await
+        .expect("query")
+        .expect("settlement");
+    assert_eq!(s.status, "posted", "{s:?}");
+    assert!(close_to(settled(&db, worked, "labor").await, 100.0));
+
+    // Cancelled before any work: nothing to settle.
+    let idle = wo_in_progress(&db).await;
+    exec(
+        &db,
+        "DELETE FROM work_order_interveners WHERE work_order_id = ?",
+        vec![idle.into()],
+    )
+    .await;
+    crate::wo::queries::cancel_work_order(
+        &db,
+        WoCancelInput {
+            id: idle,
+            expected_row_version: wo_row_version(&db, idle).await,
+            actor_id: actor,
+            cancel_reason: "Doublon".into(),
+        },
+    )
+    .await
+    .expect("cancel");
+    assert!(settlement::active_settlement(&db, idle).await.expect("query").is_none());
+    assert_eq!(actual_rows(&db, idle).await, 0);
+}
+
+async fn late_parts(db: &DatabaseConnection, wo_id: i64) -> f64 {
+    scalar_f64(
+        db,
+        "SELECT COALESCE(SUM(amount_base), 0.0) FROM budget_actuals
+         WHERE source_type = 'wo_late_cost' AND work_order_id = ? AND budget_bucket = 'parts'",
+        vec![wo_id.into()],
+    )
+    .await
+}
+
+#[tokio::test]
+async fn s13_an_issue_made_offline_before_the_close_and_synced_after_it_is_booked_once() {
+    let db = setup().await;
+    seed_plant(&db, Some(CC_CODE)).await;
+    let wo_id = wo_in_progress(&db).await;
+    add_costs(&db, wo_id).await;
+    complete_and_close(&db, wo_id).await;
+    assert!(close_to(net_actuals(&db, wo_id).await, 460.0));
+
+    // The storekeeper's tablet issued 5 bearings to the OT before the close, offline: the movement
+    // reaches this device after the settlement, dated before it.
+    exec(
+        &db,
+        "INSERT INTO inventory_transactions (entity_sync_id, article_id, warehouse_id, location_id, movement_type,
+             quantity, source_type, source_id, unit_cost, extended_cost, performed_at, created_at)
+         SELECT 'offline-issue-1', article_id, warehouse_id, location_id, 'ISSUE', 5, 'WORK_ORDER', ?, 5.0, 25.0,
+                '2026-04-10T09:30:00Z', '2026-04-10T09:30:00Z'
+           FROM inventory_transactions WHERE movement_type = 'ISSUE' LIMIT 1",
+        vec![wo_id.into()],
+    )
+    .await;
+    let movement = scalar_i64(
+        &db,
+        "SELECT id FROM inventory_transactions WHERE entity_sync_id = 'offline-issue-1'",
+        vec![],
+    )
+    .await;
+    settlement::post_late_costs_for_synced_row(&db, "inventory_transactions", movement).await;
+    assert!(
+        close_to(late_parts(&db, wo_id).await, 25.0),
+        "difference booked on parts"
+    );
+    assert!(close_to(net_actuals(&db, wo_id).await, 485.0));
+
+    // The same row applied again, the catch-up, the inventory hook: still booked once.
+    let rows = actual_rows(&db, wo_id).await;
+    settlement::post_late_costs_for_synced_row(&db, "inventory_transactions", movement).await;
+    assert_eq!(
+        settlement::post_all_late_costs(&db, admin_id(&db).await)
+            .await
+            .expect("catch-up"),
+        0
+    );
+    settlement::post_late_costs_best_effort(&db, &[wo_id], admin_id(&db).await).await;
+    assert_eq!(actual_rows(&db, wo_id).await, rows);
+    assert!(close_to(late_parts(&db, wo_id).await, 25.0));
+}
+
+#[tokio::test]
+async fn s14_a_rate_card_change_after_the_close_never_reprices_work_already_done() {
+    let db = setup().await;
+    seed_plant(&db, Some(CC_CODE)).await;
+    let actor = admin_id(&db).await;
+    // The technician is on the register with a rate card of 60.00 since January.
+    exec(
+        &db,
+        "INSERT INTO personnel (employee_code, full_name, availability_status) VALUES ('T-FIN', 'Karim Benali', 'available')",
+        vec![],
+    )
+    .await;
+    let person = scalar_i64(&db, "SELECT id FROM personnel WHERE employee_code = 'T-FIN'", vec![]).await;
+    exec(
+        &db,
+        "UPDATE user_accounts SET personnel_id = ? WHERE id = ?",
+        vec![person.into(), actor.into()],
+    )
+    .await;
+    exec(
+        &db,
+        "INSERT INTO personnel_rate_cards (personnel_id, effective_from, labor_rate, overtime_rate, source_type)
+         VALUES (?, '2026-01-01', 60.0, 90.0, 'manual')",
+        vec![person.into()],
+    )
+    .await;
+    let wo_id = wo_in_progress(&db).await;
+    // The 2 h entry carries no rate of its own (booked on a device that had no card): priced at the
+    // card in force on its work date.
+    exec(
+        &db,
+        "UPDATE work_order_interveners SET hourly_rate = NULL WHERE work_order_id = ?",
+        vec![wo_id.into()],
+    )
+    .await;
+    complete_and_close(&db, wo_id).await;
+    let s = settlement::active_settlement(&db, wo_id)
+        .await
+        .expect("query")
+        .expect("settlement");
+    assert_eq!(s.status, "posted", "{s:?}");
+    assert!(close_to(settled(&db, wo_id, "labor").await, 120.0), "2 h × 60.00");
+
+    // Finance raises the card afterwards, even by editing it in place: no labour difference.
+    exec(
+        &db,
+        "UPDATE personnel_rate_cards SET labor_rate = 95.0 WHERE personnel_id = ?",
+        vec![person.into()],
+    )
+    .await;
+    let booked = settlement::post_late_costs(&db, wo_id, Some(actor))
+        .await
+        .expect("late");
+    assert!(close_to(booked, 0.0), "work already done is not repriced, got {booked}");
+    let b = wo_costing::compute_wo_cost_breakdown(&db, wo_id)
+        .await
+        .expect("breakdown");
+    assert!(
+        close_to(b.labor.actual, 120.0),
+        "the OT still shows the frozen rate: {:?}",
+        b.labor_lines
+    );
+
+    // A labour entry synced after the close is a difference, at the rate on its entry.
+    exec(
+        &db,
+        "INSERT INTO work_order_interveners (entity_sync_id, work_order_id, intervener_id, started_at, ended_at,
+             hours_worked, hourly_rate)
+         VALUES ('late-labour-1', ?, ?, '2026-04-10T13:00:00Z', '2026-04-10T14:00:00Z', 1.0, 70.0)",
+        vec![wo_id.into(), actor.into()],
+    )
+    .await;
+    let entry = scalar_i64(
+        &db,
+        "SELECT id FROM work_order_interveners WHERE entity_sync_id = 'late-labour-1'",
+        vec![],
+    )
+    .await;
+    settlement::post_late_costs_for_synced_row(&db, "work_order_interveners", entry).await;
+    assert!(close_to(net_actuals(&db, wo_id).await, 190.0), "120 frozen + 70 new");
 }

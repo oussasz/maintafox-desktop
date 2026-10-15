@@ -80,6 +80,22 @@
     "GATE_CLOSEOUT_FMECA_PARTS_OVERRIDE_SIGNER_MUST_DIFFER": "Closeout blocked: override signer must be different from the user performing closeout.",
     "GATE_CLOSEOUT_FMECA_PARTS_OVERRIDE_SIGNER_ROLE_INVALID": "Closeout blocked: override signer must hold Supervisor/Admin privileges.",
     "GATE_CLOSEOUT_FMECA_PARTS_OVERRIDE_SIGNER_AUTH_FAILED": "Closeout blocked: override signer re-authentication failed.",
-    "GATE_RUNTIME_EXPOSURE_SOURCE_NOT_ALLOWED_IN_PRODUCTION": "Runtime exposure write blocked: injected RAMS source is forbidden in activated production mode."
+    "GATE_RUNTIME_EXPOSURE_SOURCE_NOT_ALLOWED_IN_PRODUCTION": "Runtime exposure write blocked: injected RAMS source is forbidden in activated production mode.",
+    "GATE_FIN_FISCAL_START_MISSING": "The fiscal-year start month is not configured: set it in Settings › Localization.",
+    "GATE_FIN_MONTH_INVALID": "The month must be between 1 and 12.",
+    "GATE_FIN_PERIOD_CLOSED": "This budget period is closed: no actual can be posted to it. Choose an open period or ask for it to be reopened.",
+    "GATE_FIN_PERIOD_ALREADY_CLOSED": "This period is already closed.",
+    "GATE_FIN_PERIOD_NOT_ENDED": "A period can only be closed after it has ended.",
+    "GATE_FIN_PERIOD_PENDING_SETTLEMENTS": "Cannot close: work orders closed in this period are waiting for settlement. Settle them from the \"WO settlements\" tab, then close.",
+    "GATE_FIN_REOPEN_REASON_REQUIRED": "Give the reason for reopening.",
+    "GATE_FIN_PERIOD_NOT_CLOSED": "This period is not closed.",
+    "GATE_FIN_REFERENCE_VALUE_INACTIVE": "This value does not exist or is no longer active in the reference data. Choose an active value.",
+    "GATE_FIN_SETTLEMENT_NOT_PENDING": "Only a pending settlement can be retried.",
+    "GATE_FIN_SETTLEMENT_CHANGED": "The settlement was changed meanwhile: reload the list.",
+    "GATE_FIN_REVERSAL_NO_OPEN_PERIOD": "Cannot reopen: every budget period of the settlement's fiscal year and of the current one is closed. Reopen a period to reverse this work order's settlement.",
+    "GATE_FIN_ESTIMATE_NEGATIVE": "Estimated amounts must be zero or positive.",
+    "GATE_FIN_ESTIMATE_LOCKED": "The estimate of a closed or cancelled work order can no longer be changed.",
+    "GATE_FIN_COST_CENTER_INACTIVE": "Unknown or inactive cost centre.",
+    "GATE_FIN_ESTIMATE_CHANGED": "The estimate was changed meanwhile: reload it."
   }
 }

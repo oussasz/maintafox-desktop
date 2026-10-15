@@ -38,6 +38,8 @@ const LaborLineSchema = z.object({
   skill_label: z.string().nullable(),
   hours: z.number(),
   hourly_rate: z.number().nullable(),
+  /** `entry` (rate on the time entry) | `rate_card` (person's active rate card); null = unpriced. */
+  rate_source: z.string().nullable(),
   is_overtime: z.boolean(),
   amount: z.number(),
 });
@@ -152,12 +154,18 @@ const SettlementSchema = z.object({
   reversed_at: z.string().nullable(),
   reversal_reason: z.string().nullable(),
   row_version: z.number(),
+  /** More than one active settlement for the OT (offline closes on two devices): review it. */
+  duplicate_active: z.boolean(),
 });
 export type WoCostSettlement = z.infer<typeof SettlementSchema>;
 
 const WoCostViewSchema = z.object({
   breakdown: BreakdownSchema,
   settlements: z.array(SettlementSchema),
+  /** Late costs booked after the settlement (receipts, issues, returns). */
+  late_cost_total: z.number(),
+  /** Per-person labour lines withheld (needs fin.view); totals stay visible. */
+  labor_lines_hidden: z.boolean(),
 });
 export type WoCostView = z.infer<typeof WoCostViewSchema>;
 
@@ -194,6 +202,11 @@ export function listWoSettlements(filter: WoSettlementFilter = {}): Promise<WoCo
 
 export function retryWoSettlement(settlementId: number): Promise<WoCostSettlement> {
   return invokeParsed("retry_wo_settlement", { settlementId }, SettlementSchema);
+}
+
+/** Books late costs on settled OTs (catch-up after a sync); returns the number of OTs updated. */
+export function postLateWoCosts(): Promise<number> {
+  return invokeParsed("post_late_wo_costs", {}, z.number());
 }
 
 // ── Budget cockpit ──────────────────────────────────────────────────────────────────────

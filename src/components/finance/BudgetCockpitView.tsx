@@ -22,6 +22,7 @@ import { saveBlobWithDialog } from "@/export/download";
 import { ExportCancelledError } from "@/export/types";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
+import { describeAppError } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import {
   type BudgetCockpit,
@@ -240,7 +241,7 @@ export function BudgetCockpitView({
       if (err instanceof ExportCancelledError) return;
       pushAppToast({
         title: t("cockpit.exportError"),
-        description: String(err),
+        description: describeAppError(err).title,
         variant: "destructive",
       });
     }

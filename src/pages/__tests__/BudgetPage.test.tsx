@@ -8,7 +8,6 @@ import { initReactI18next } from "react-i18next";
 import { MemoryRouter } from "react-router-dom";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { resetFinanceCatalogCache } from "@/components/finance/use-finance-catalogs";
 import enCommon from "@/i18n/en/common.json";
 import enBudget from "@/i18n/locale-data/en/budget.json";
 import { BudgetPage, defaultVersion } from "@/pages/BudgetPage";
@@ -167,7 +166,6 @@ beforeAll(async () => {
 
 beforeEach(() => {
   for (const fn of [...Object.values(budget), ...Object.values(finance)]) fn.mockReset();
-  resetFinanceCatalogCache();
   finance.listFinanceCatalogs.mockResolvedValue(catalogs);
   perms.granted = new Set([P.FIN_VIEW]);
   budget.listCostCenters.mockResolvedValue([]);

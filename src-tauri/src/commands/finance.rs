@@ -632,13 +632,16 @@ pub async fn get_wo_cost_view(
     state: State<'_, AppState>,
 ) -> AppResult<crate::finance::settlement::WoCostView> {
     let user = require_session!(state);
-    require_permission!(
-        state,
-        &user,
-        crate::rbac::permissions::OT_VIEW,
-        PermissionScope::Global
-    );
-    crate::finance::settlement::get_wo_cost_view(&state.db, work_order_id).await
+    require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
+    // Per-person lines carry names and pay rates: Finance only.
+    let show_labor_lines = check_permission(
+        &state.db,
+        user.user_id,
+        crate::rbac::permissions::FIN_VIEW,
+        &PermissionScope::Global,
+    )
+    .await?;
+    crate::finance::settlement::get_wo_cost_view(&state.db, work_order_id, show_labor_lines).await
 }
 
 #[tauri::command]
@@ -647,12 +650,15 @@ pub async fn upsert_wo_cost_estimate(
     state: State<'_, AppState>,
 ) -> AppResult<crate::finance::wo_costing::WoCostEstimate> {
     let user = require_session!(state);
-    require_permission!(
-        state,
-        &user,
-        crate::rbac::permissions::OT_EDIT,
-        PermissionScope::Global
-    );
+    require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
+    // Choosing where the OT is charged is a posting decision: changing the cost-centre override
+    // needs `fin.post`; planners keep editing the estimated amounts.
+    let current_override = crate::finance::wo_costing::get_wo_cost_estimate(&state.db, input.work_order_id)
+        .await?
+        .and_then(|e| e.cost_center_id);
+    if input.cost_center_id != current_override {
+        require_fin_post(&state, user.user_id).await?;
+    }
     crate::finance::wo_costing::upsert_wo_cost_estimate(&state.db, i64::from(user.user_id), input).await
 }
 
@@ -683,6 +689,18 @@ pub async fn retry_wo_settlement(
         crate::finance::settlement::retry_pending_settlement(&txn, settlement_id, i64::from(user.user_id)).await?;
     txn.commit().await?;
     Ok(settlement)
+}
+
+/// Finance catch-up: books the cost documents that reached settled OTs after their settlement
+/// (for instance receipts or movements brought by a sync). Returns the number of OTs updated.
+#[tauri::command]
+pub async fn post_late_wo_costs(state: State<'_, AppState>) -> AppResult<i64> {
+    let user = require_session!(state);
+    require_fin_post(&state, user.user_id).await?;
+    let txn = sea_orm::TransactionTrait::begin(&state.db).await?;
+    let touched = crate::finance::settlement::post_all_late_costs(&txn, i64::from(user.user_id)).await?;
+    txn.commit().await?;
+    Ok(touched)
 }
 
 #[tauri::command]
@@ -730,14 +748,14 @@ pub async fn list_budget_periods(
     crate::finance::periods::list_budget_periods(&state.db, fiscal_year).await
 }
 
-/// Closing a month freezes its actuals: posting right (`fin.post`).
+/// Closing a month freezes its reported figures: approval right (`fin.approve` + step-up).
 #[tauri::command]
 pub async fn close_budget_period(
     input: crate::finance::periods::CloseBudgetPeriodInput,
     state: State<'_, AppState>,
 ) -> AppResult<Vec<crate::finance::periods::BudgetPeriod>> {
     let user = require_session!(state);
-    require_fin_post(&state, user.user_id).await?;
+    require_fin_approve(&state, user.user_id).await?;
     crate::finance::periods::close_budget_period(&state.db, i64::from(user.user_id), input).await
 }
 

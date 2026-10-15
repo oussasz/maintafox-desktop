@@ -1,10 +1,12 @@
 /**
  * Settlement worklist: every closed OT and what happened to its cost — posted to a cost centre
  * and month, pending with the reason and what to fix, or reversed by a reopen. Finance retries a
- * pending settlement once the cause is fixed; nothing is posted silently or guessed.
+ * pending settlement once the cause is fixed; nothing is posted silently or guessed. Late costs
+ * (a settled OT whose cost changes later) are booked automatically; "Settle late costs"
+ * catches up those brought by a sync.
  */
 import type { ColumnDef } from "@tanstack/react-table";
-import { RefreshCcw } from "lucide-react";
+import { RefreshCcw, Receipt } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -29,6 +31,7 @@ import { usePermissions } from "@/hooks/use-permissions";
 import {
   type WoCostSettlement,
   listWoSettlements,
+  postLateWoCosts,
   retryWoSettlement,
 } from "@/services/finance-cost-service";
 import { pushAppToast } from "@/store/app-toast-store";
@@ -58,6 +61,7 @@ export function SettlementWorklist({
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<number | null>(null);
+  const [catchingUp, setCatchingUp] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -103,18 +107,32 @@ export function SettlementWorklist({
           });
         }
         await load();
-      } catch (err) {
-        pushAppToast({
-          title: t("settlements.retryError"),
-          description: err instanceof Error ? err.message : String(err),
-          variant: "destructive",
-        });
+      } catch {
+        // The IPC layer already toasts the translated failure (describeAppError).
       } finally {
         setBusyId(null);
       }
     },
     [t, formatCurrency, load, onChanged],
   );
+
+  const catchUpLateCosts = useCallback(async () => {
+    setCatchingUp(true);
+    try {
+      const touched = await postLateWoCosts();
+      pushAppToast({
+        title:
+          touched > 0 ? t("settlements.lateBooked", { count: touched }) : t("settlements.lateNone"),
+        variant: touched > 0 ? "success" : "default",
+      });
+      if (touched > 0) onChanged?.();
+      await load();
+    } catch {
+      // The IPC layer already toasts the translated failure (describeAppError).
+    } finally {
+      setCatchingUp(false);
+    }
+  }, [t, load, onChanged]);
 
   const canPost = can(P.FIN_POST);
   const columns = useMemo<ColumnDef<WoCostSettlement>[]>(
@@ -172,6 +190,11 @@ export function SettlementWorklist({
                 tone={toneOf(SETTLEMENT_STATUS_TONE, s.status)}
                 label={t(`settlement.status.${s.status}`)}
               />
+              {s.duplicate_active ? (
+                <div className="max-w-xs text-xs text-tone-danger-fg">
+                  {t("settlements.duplicate")}
+                </div>
+              ) : null}
               {s.status === "pending" ? (
                 <div className="max-w-xs text-xs text-text-secondary">
                   {t(`settlement.reason.${s.pending_reason ?? "unknown"}`)}
@@ -264,6 +287,19 @@ export function SettlementWorklist({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="max-w-3xl text-sm text-text-secondary">{t("settlements.intro")}</p>
         <div className="flex items-center gap-2">
+          {canPost ? (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 gap-1 text-xs"
+              disabled={catchingUp}
+              title={t("settlements.lateHint")}
+              onClick={() => void catchUpLateCosts()}
+            >
+              <Receipt className="h-3.5 w-3.5" aria-hidden />
+              {t("settlements.lateCatchUp")}
+            </Button>
+          ) : null}
           <label htmlFor="settlement-filter" className="text-xs text-text-muted">
             {t("settlements.filter")}
           </label>

@@ -1,7 +1,8 @@
 /**
  * Budget period close (month by month, calendar fiscal year). A closed month refuses new actuals;
  * OT settlements then land in the next open month. A month can only be closed once it has ended
- * and once every OT closed in it is settled. Reopening needs `fin.approve` and a step-up.
+ * and once every OT closed in it is settled. Closing and reopening both change reported figures:
+ * they need `fin.approve` and a step-up.
  */
 import { Lock, LockOpen } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
@@ -80,14 +81,17 @@ export function BudgetPeriodsPanel({
 
   const confirmClose = async () => {
     if (!closing) return;
-    const updated = await closeBudgetPeriod({
-      fiscal_year: fiscalYear,
-      period_month: closing.period_month,
-      notes: text.trim() || null,
-    });
+    const target = closing;
+    const updated = await withStepUp(() =>
+      closeBudgetPeriod({
+        fiscal_year: fiscalYear,
+        period_month: target.period_month,
+        notes: text.trim() || null,
+      }),
+    );
     setPeriods(updated);
     pushAppToast({
-      title: t("periods.closedToast", { month: monthLabel(closing) }),
+      title: t("periods.closedToast", { month: monthLabel(target) }),
       variant: "success",
     });
     onChanged?.();
@@ -176,7 +180,7 @@ export function BudgetPeriodsPanel({
                     {p.notes ? <div className="whitespace-pre-line">{p.notes}</div> : null}
                   </td>
                   <td className="px-3 py-2 text-end">
-                    {p.status === "open" && can(P.FIN_POST) ? (
+                    {p.status === "open" && can(P.FIN_APPROVE) ? (
                       <Button
                         size="sm"
                         variant="outline"

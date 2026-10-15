@@ -4,6 +4,10 @@
  * reference manager. Labels: the catalog label (French), or the English term of a product value
  * when the interface is in English. A code missing from the catalog is shown as its code, never
  * as an invented label.
+ *
+ * Read on every mount (never cached across screens), so a value published in the reference
+ * manager or a fiscal-year change in Settings shows on the next screen. Components mounting
+ * together share the request in flight.
  */
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -14,11 +18,13 @@ import {
   listFinanceCatalogs,
 } from "@/services/finance-cost-service";
 
-let cache: Promise<FinanceCatalogs> | null = null;
+let inFlight: Promise<FinanceCatalogs> | null = null;
 
-/** Clears the cached catalogs (after a reference publish, and between tests). */
-export function resetFinanceCatalogCache(): void {
-  cache = null;
+function fetchFinanceCatalogs(): Promise<FinanceCatalogs> {
+  inFlight ??= listFinanceCatalogs().finally(() => {
+    inFlight = null;
+  });
+  return inFlight;
 }
 
 /** Calendar month (1..12) of a fiscal period (1..12) for a fiscal year starting in `start`. */
@@ -55,13 +61,11 @@ export function useFinanceCatalogs(): FinanceCatalogsState {
 
   useEffect(() => {
     let cancelled = false;
-    cache ??= listFinanceCatalogs();
-    cache
+    fetchFinanceCatalogs()
       .then((c) => {
         if (!cancelled) setCatalogs(c);
       })
       .catch((err: unknown) => {
-        cache = null;
         if (!cancelled) setError(err);
       });
     return () => {

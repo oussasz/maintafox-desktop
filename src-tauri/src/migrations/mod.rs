@@ -172,6 +172,7 @@ mod m20261014_000183_meter_lifetime;
 mod m20261014_000184_inventory_lots_fx_periods_approvals;
 mod m20261014_000185_asset_spares_criticality;
 mod m20261015_000186_wo_cost_settlement;
+mod m20261015_000187_wo_settlement_labor_snapshot;
 mod m20261101_000036_activity_audit_log;
 mod m20261201_000037_observability_permissions;
 mod m_test;
@@ -356,6 +357,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261014_000184_inventory_lots_fx_periods_approvals::Migration),
             Box::new(m20261014_000185_asset_spares_criticality::Migration),
             Box::new(m20261015_000186_wo_cost_settlement::Migration),
+            Box::new(m20261015_000187_wo_settlement_labor_snapshot::Migration),
             Box::new(m_test::Migration),
         ]
     }

@@ -51,6 +51,10 @@ export interface WoCostEstimateDialogProps {
   estimate: WoCostEstimate | null;
   /** Cost centre resolved from the asset / organisation, shown for the "automatic" choice. */
   resolvedCostCenterLabel: string | null;
+  /** Cost centre the OT settles to today (override or resolved), shown when it cannot be changed. */
+  currentCostCenterLabel: string | null;
+  /** Choosing the cost centre is a posting decision (`fin.post`); others see it read-only. */
+  canChangeCostCenter: boolean;
   onSaved: () => void;
 }
 
@@ -61,6 +65,8 @@ export function WoCostEstimateDialog({
   workOrderCode,
   estimate,
   resolvedCostCenterLabel,
+  currentCostCenterLabel,
+  canChangeCostCenter,
   onSaved,
 }: WoCostEstimateDialogProps) {
   const { t } = useTranslation("budget");
@@ -81,11 +87,11 @@ export function WoCostEstimateDialog({
   const [error, setError] = useState<unknown>(null);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || !canChangeCostCenter) return;
     listCostCenters({ include_inactive: false })
       .then(setCenters)
       .catch((err: unknown) => setError(err));
-  }, [open]);
+  }, [open, canChangeCostCenter]);
 
   const parsed = useMemo(
     () =>
@@ -162,24 +168,32 @@ export function WoCostEstimateDialog({
           </p>
           <div className="space-y-1">
             <Label htmlFor="est-cc">{t("estimate.costCenter")}</Label>
-            <Select value={costCenter} onValueChange={setCostCenter}>
-              <SelectTrigger id="est-cc">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={AUTO}>
-                  {resolvedCostCenterLabel
-                    ? t("estimate.ccAutoResolved", { cc: resolvedCostCenterLabel })
-                    : t("estimate.ccAutoNone")}
-                </SelectItem>
-                {centers.map((c) => (
-                  <SelectItem key={c.id} value={String(c.id)}>
-                    {c.code} — {c.name}
+            {canChangeCostCenter ? (
+              <Select value={costCenter} onValueChange={setCostCenter}>
+                <SelectTrigger id="est-cc">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={AUTO}>
+                    {resolvedCostCenterLabel
+                      ? t("estimate.ccAutoResolved", { cc: resolvedCostCenterLabel })
+                      : t("estimate.ccAutoNone")}
                   </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-text-muted">{t("estimate.ccHint")}</p>
+                  {centers.map((c) => (
+                    <SelectItem key={c.id} value={String(c.id)}>
+                      {c.code} — {c.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <p id="est-cc" className="text-sm text-text-primary">
+                {currentCostCenterLabel ?? t("estimate.ccAutoNone")}
+              </p>
+            )}
+            <p className="text-xs text-text-muted">
+              {canChangeCostCenter ? t("estimate.ccHint") : t("estimate.ccReadOnly")}
+            </p>
           </div>
           <div className="space-y-1">
             <Label htmlFor="est-notes">{t("estimate.notes")}</Label>

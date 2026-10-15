@@ -54,7 +54,7 @@ fn validate_month(month: i64) -> AppResult<()> {
         Ok(())
     } else {
         Err(AppError::ValidationFailed(vec![
-            "Le mois doit être compris entre 1 et 12. (Month must be between 1 and 12.)".to_string(),
+            "GATE_FIN_MONTH_INVALID: month must be between 1 and 12".to_string(),
         ]))
     }
 }
@@ -95,8 +95,7 @@ pub async fn ensure_period_open<C: ConnectionTrait>(db: &C, fiscal_year: i64, mo
         Ok(())
     } else {
         Err(AppError::ValidationFailed(vec![format!(
-            "La période budgétaire {month:02}/{fiscal_year} est clôturée. \
-             (Budget period {month:02}/{fiscal_year} is closed.)"
+            "GATE_FIN_PERIOD_CLOSED: budget period {month} of fiscal year {fiscal_year} is closed"
         )]))
     }
 }
@@ -200,19 +199,17 @@ pub async fn close_budget_period<C: ConnectionTrait>(
     let period = &periods[(input.period_month - 1) as usize];
     if period.status == "closed" {
         return Err(AppError::ValidationFailed(vec![
-            "Cette période est déjà clôturée. (This period is already closed.)".to_string(),
+            "GATE_FIN_PERIOD_ALREADY_CLOSED: this period is already closed".to_string(),
         ]));
     }
     if period.is_future {
         return Err(AppError::ValidationFailed(vec![
-            "Une période ne peut être clôturée qu'une fois terminée. (A period can only be closed after it has ended.)"
-                .to_string(),
+            "GATE_FIN_PERIOD_NOT_ENDED: a period can only be closed after it has ended".to_string(),
         ]));
     }
     if period.pending_settlements > 0 {
         return Err(AppError::ValidationFailed(vec![format!(
-            "{n} OT clôturé(s) dans cette période attendent leur imputation : imputez-les avant la clôture. \
-             ({n} work order(s) closed in this period are waiting for settlement: settle them before closing.)",
+            "GATE_FIN_PERIOD_PENDING_SETTLEMENTS: {n} work order(s) closed in this period are waiting for settlement",
             n = period.pending_settlements
         )]));
     }
@@ -262,14 +259,14 @@ pub async fn reopen_budget_period<C: ConnectionTrait>(
     let reason = input.reason.trim().to_string();
     if reason.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Une raison de réouverture est obligatoire. (A reopen reason is required.)".to_string(),
+            "GATE_FIN_REOPEN_REASON_REQUIRED: a reopen reason is required".to_string(),
         ]));
     }
     let id = match period_row_id(db, input.fiscal_year, input.period_month).await? {
         Some(id) if !is_period_open(db, input.fiscal_year, input.period_month).await? => id,
         _ => {
             return Err(AppError::ValidationFailed(vec![
-                "Cette période n'est pas clôturée. (This period is not closed.)".to_string(),
+                "GATE_FIN_PERIOD_NOT_CLOSED: this period is not closed".to_string(),
             ]))
         }
     };

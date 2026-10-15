@@ -4,8 +4,9 @@
 //!
 //! - Budget: planned amounts of the version's budget lines.
 //! - Actual: net posted actuals of the version (`posted` + `reversed` rows, so a reversal nets to 0).
-//! - Committed: open manual commitments of the version, plus — for the current and later years —
-//!   the live open value of approved purchase orders raised for OTs and of approved requisitions
+//! - Committed: open manual commitments of the version, plus — for the current fiscal year, in its
+//!   posting version only (so a what-if or a later year never counts them twice) — the live open
+//!   value of approved purchase orders raised for OTs and of approved requisitions
 //!   for OTs not yet on a PO, at today's exchange rate, on the OT's cost centre. Purchase documents
 //!   are read directly (never copied), so every device computes the same figure.
 //! - Forecast (estimate at completion): past year = actual; current year = actual + committed +
@@ -283,6 +284,20 @@ async fn live_commitments_by_cost_center<C: ConnectionTrait>(db: &C) -> AppResul
     Ok(out)
 }
 
+/// Live purchase commitments belong to one place only: the current fiscal year, in the version its
+/// actuals post to.
+async fn shows_live_commitments<C: ConnectionTrait>(
+    db: &C,
+    fiscal_year: i64,
+    current_fiscal_year: i64,
+    version_id: i64,
+) -> AppResult<bool> {
+    if fiscal_year != current_fiscal_year {
+        return Ok(false);
+    }
+    Ok(posting_budget_version(db, fiscal_year).await?.map(|(id, _)| id) == Some(version_id))
+}
+
 async fn load_version<C: ConnectionTrait>(
     db: &C,
     fiscal_year: i64,
@@ -474,7 +489,7 @@ pub async fn get_budget_cockpit<C: ConnectionTrait>(db: &C, filter: BudgetCockpi
                 .committed += decode::<f64>(&r, "amount")?;
         }
 
-        if fy >= this_year {
+        if shows_live_commitments(db, fy, this_year, v.id).await? {
             for (cc, c) in live_commitments_by_cost_center(db).await? {
                 match cc {
                     Some(cc) if cc_filter.is_none_or(|f| f == cc) => {
@@ -693,7 +708,7 @@ pub async fn get_budget_cockpit_drilldown<C: ConnectionTrait>(
             });
         }
         let (current_fy, _) = fiscal::current_period(fiscal::fiscal_start_month(db).await?);
-        if filter.fiscal_year >= current_fy {
+        if shows_live_commitments(db, filter.fiscal_year, current_fy, version.id).await? {
             for (cc, c) in live_commitments_by_cost_center(db).await? {
                 if cc != Some(filter.cost_center_id) || bucket.as_deref().is_some_and(|b| b != c.bucket) {
                     continue;

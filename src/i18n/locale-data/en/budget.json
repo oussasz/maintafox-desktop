@@ -100,7 +100,8 @@
       "period_closed": "Every remaining period of the year is closed.",
       "no_currency": "The company currency is not configured.",
       "unknown": "Unknown cause.",
-      "no_fiscal_calendar": "The fiscal-year start month is not configured."
+      "no_fiscal_calendar": "The fiscal-year start month is not configured.",
+      "unpriced_labor": "Some recorded hours have no hourly rate."
     },
     "fix": {
       "no_cost_center": "Set the cost centre on the asset (or its location), or choose one in the work order estimate, then retry the settlement.",
@@ -109,7 +110,8 @@
       "period_closed": "Reopen a period of the year (Period close tab), then retry the settlement.",
       "no_currency": "Set the currency in Settings › Localization, then retry the settlement.",
       "unknown": "Retry the settlement; if it stays pending, contact the administrator.",
-      "no_fiscal_calendar": "Choose the fiscal-year start month in Settings › Localization, then retry the settlement."
+      "no_fiscal_calendar": "Choose the fiscal-year start month in Settings › Localization, then retry the settlement.",
+      "unpriced_labor": "Enter the hourly rate on the time entries concerned, or create a rate card for the technician in force on the work date (Personnel), then retry the settlement."
     }
   },
   "woCost": {
@@ -147,15 +149,17 @@
     },
     "notice": {
       "noCostCenter": "Without a cost centre the settlement will stay pending at close: set it on the asset or in the estimate.",
-      "unpricedHours": "{{hours}} h recorded without an hourly rate are not costed: create a rate card for the technician.",
+      "unpricedHours": "{{hours}} h recorded without an hourly rate are not costed: enter the rate on those entries, or create a rate card in force on the work date.",
       "unvaluedParts": "{{qty}} part(s) issued without a cost (article never costed in that store).",
-      "overtimeNotCaptured": "Overtime is not yet distinguished in the recorded hours: all labour is costed at the regular rate."
+      "overtimeNotCaptured": "Overtime is not yet distinguished in the recorded hours: all labour is costed at the regular rate.",
+      "duplicateSettlement": "This work order has more than one active settlement (offline closes on two devices): Finance must check this work order's budget."
     },
     "settlement": {
       "posted": "{{amount}} settled to {{cc}}, period {{period}}, on {{date}}.",
       "pending": "Settlement pending: {{reason}}",
       "reversed": "Settlement reversed on {{date}} (reopened: {{reason}}).",
-      "onClose": "The costs are settled to the budget when the work order is closed."
+      "onClose": "The costs are settled to the budget when the work order is closed.",
+      "lateCosts": "Costs that arrived after the close, settled on top: {{amount}}."
     },
     "details": "Details ({{labor}} time entries, {{parts}} parts, {{purchases}} purchases)",
     "lines": {
@@ -184,7 +188,9 @@
       "demand": {
         "WORK_ORDER": "service",
         "WORK_ORDER_PART": "part"
-      }
+      },
+      "laborHidden": "The per-technician detail (names, hourly rates) is reserved for Finance; the labour total stays visible.",
+      "rateCard": "rate card"
     },
     "total": "Total"
   },
@@ -199,7 +205,8 @@
     "ccHint": "By default, the cost centre of the asset or its location.",
     "notes": "Assumptions",
     "saved": "Estimate for work order {{code}} saved.",
-    "saveError": "The estimate was not saved."
+    "saveError": "The estimate was not saved.",
+    "ccReadOnly": "Choosing the settlement cost centre is reserved for people allowed to post (Finance)."
   },
   "kpi": {
     "budget": "Budget",
@@ -304,7 +311,7 @@
     }
   },
   "settlements": {
-    "intro": "Each closed work order is settled once to the cost centre and period of its close. A pending settlement says what to fix; reopening a work order reverses its settlement.",
+    "intro": "Each closed work order — or one cancelled after consuming labour, parts or services — is settled once to the cost centre and period of its close. If a settled work order's cost changes later (a receipt, issue, return or time entry arriving after the close, even one recorded offline before it), only the difference with what is already settled is added. A pending settlement says what to fix; reopening a work order reverses its settlement.",
     "filter": "Show",
     "filters": {
       "pending": "Pending",
@@ -323,7 +330,6 @@
     "retry": "Settle",
     "retryPosted": "Work order {{code}} settled: {{amount}}.",
     "retryStillPending": "Work order {{code}} is still pending.",
-    "retryError": "The settlement failed.",
     "col": {
       "workOrder": "Work order",
       "asset": "Asset",
@@ -332,7 +338,13 @@
       "costCenter": "Cost centre",
       "period": "Period",
       "total": "Amount"
-    }
+    },
+    "duplicate": "More than one active settlement for this work order: to be checked.",
+    "lateCatchUp": "Settle late costs",
+    "lateHint": "Settles the cost difference of already settled work orders (for instance after a sync).",
+    "lateBooked_one": "Late costs settled on {{count}} work order.",
+    "lateBooked_other": "Late costs settled on {{count}} work orders.",
+    "lateNone": "No late cost to settle."
   },
   "planning": {
     "loadError": "The budget could not be loaded.",

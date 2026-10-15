@@ -51,8 +51,96 @@ pub struct WoLaborCostLine {
     pub skill_label: Option<String>,
     pub hours: f64,
     pub hourly_rate: Option<f64>,
+    /// `entry`: the rate stored when the time was booked; `rate_card`: no rate on the entry, the
+    /// person's rate card in force on the work date (regular or overtime rate); None: no rate.
+    /// On a settled OT an unchanged entry keeps the rate frozen by the settlement.
+    pub rate_source: Option<String>,
     pub is_overtime: bool,
     pub amount: f64,
+    /// Sync identity of the labour entry (settlement snapshot key).
+    #[serde(skip)]
+    pub entry_sync_id: String,
+    /// Rate typed on the entry itself, if any.
+    #[serde(skip)]
+    pub entry_rate: Option<f64>,
+}
+
+/// Labour rate frozen by a posted settlement for one entry (`wo_cost_settlements.labor_snapshot_json`).
+/// While the settlement stands, the entry is priced at `rate` as long as its hours, its own rate
+/// and its overtime flag are unchanged: a later rate-card edit never reprices work already done.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LaborRateSnapshot {
+    pub entry: String,
+    pub hours: f64,
+    pub entry_rate: Option<f64>,
+    pub is_overtime: bool,
+    pub rate: f64,
+    pub source: String,
+}
+
+/// Snapshot of the priced labour lines, for the settlement.
+pub fn labor_rate_snapshot(lines: &[WoLaborCostLine]) -> Vec<LaborRateSnapshot> {
+    lines
+        .iter()
+        .filter_map(|l| {
+            Some(LaborRateSnapshot {
+                entry: l.entry_sync_id.clone(),
+                hours: l.hours,
+                entry_rate: l.entry_rate,
+                is_overtime: l.is_overtime,
+                rate: l.hourly_rate?,
+                source: l.rate_source.clone()?,
+            })
+        })
+        .collect()
+}
+
+fn same_amount(a: Option<f64>, b: Option<f64>) -> bool {
+    match (a, b) {
+        (Some(a), Some(b)) => (a - b).abs() < 1e-9,
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+/// Snapshot of the OT's posted settlement, by entry.
+async fn frozen_labor_rates<C: ConnectionTrait>(db: &C, wo_id: i64) -> AppResult<BTreeMap<String, LaborRateSnapshot>> {
+    if !table_has_column(db, "wo_cost_settlements", "labor_snapshot_json").await? {
+        return Ok(BTreeMap::new());
+    }
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT labor_snapshot_json FROM wo_cost_settlements
+             WHERE work_order_id = ? AND status = 'posted' ORDER BY id DESC LIMIT 1",
+            [wo_id.into()],
+        ))
+        .await?;
+    let json: Option<String> = match row {
+        Some(r) => decode(&r, "labor_snapshot_json")?,
+        None => None,
+    };
+    let snapshot: Vec<LaborRateSnapshot> = match json {
+        Some(j) => serde_json::from_str(&j)
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("labour snapshot of work order {wo_id}: {e}")))?,
+        None => Vec::new(),
+    };
+    Ok(snapshot.into_iter().map(|s| (s.entry.clone(), s)).collect())
+}
+
+/// Regular and overtime rates of the person's rate card in force on `date` (YYYY-MM-DD).
+async fn rate_card_on<C: ConnectionTrait>(db: &C, personnel_id: i64, date: &str) -> AppResult<Option<(f64, f64)>> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT labor_rate, overtime_rate FROM personnel_rate_cards
+             WHERE personnel_id = ? AND date(effective_from) <= date(?)
+             ORDER BY effective_from DESC, id DESC LIMIT 1",
+            [personnel_id.into(), date.into()],
+        ))
+        .await?;
+    row.map(|r| Ok((decode(&r, "labor_rate")?, decode(&r, "overtime_rate")?)))
+        .transpose()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -303,7 +391,9 @@ async fn labor_lines<C: ConnectionTrait>(db: &C, wo_id: i64) -> AppResult<(Vec<W
         "ua.personnel_id"
     };
     let sql = format!(
-        "SELECT woi.id, COALESCE(woi.hours_worked, 0.0) AS hours, woi.hourly_rate,
+        "SELECT woi.id, COALESCE(woi.entity_sync_id, 'woi-' || woi.id) AS entry_sync_id,
+                COALESCE(woi.hours_worked, 0.0) AS hours, woi.hourly_rate,
+                substr(COALESCE(woi.started_at, woi.ended_at), 1, 10) AS work_date,
                 {overtime_expr} AS is_overtime, {personnel_expr} AS personnel_id,
                 p.full_name AS person_name, rv.label AS skill_label
          FROM work_order_interveners woi
@@ -316,19 +406,52 @@ async fn labor_lines<C: ConnectionTrait>(db: &C, wo_id: i64) -> AppResult<(Vec<W
     let rows = db
         .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, sql, [wo_id.into()]))
         .await?;
+    let frozen = frozen_labor_rates(db, wo_id).await?;
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
     let mut lines = Vec::with_capacity(rows.len());
     for r in rows {
+        let entry_sync_id: String = decode(&r, "entry_sync_id")?;
         let hours: f64 = decode(&r, "hours")?;
-        let rate: Option<f64> = decode::<Option<f64>>(&r, "hourly_rate")?.filter(|v| *v > 0.0);
+        let is_overtime = decode::<i64>(&r, "is_overtime")? != 0;
+        let personnel_id: Option<i64> = decode(&r, "personnel_id")?;
+        let entry_rate: Option<f64> = decode::<Option<f64>>(&r, "hourly_rate")?.filter(|v| *v > 0.0);
+        let work_date: Option<String> = decode(&r, "work_date")?;
+        // Standard costing: an entry of a settled OT keeps the rate frozen by the settlement while
+        // it is unchanged. Otherwise the rate typed on the entry, else the person's rate card in
+        // force on the work date (never a card created or edited later); else unpriced.
+        let snapshot = frozen.get(&entry_sync_id).filter(|s| {
+            (s.hours - hours).abs() < 1e-9 && same_amount(s.entry_rate, entry_rate) && s.is_overtime == is_overtime
+        });
+        let (rate, rate_source) = match (snapshot, entry_rate) {
+            (Some(s), _) => (Some(s.rate), Some(s.source.clone())),
+            (None, Some(rate)) => (Some(rate), Some("entry".to_string())),
+            (None, None) => match personnel_id {
+                Some(pid) => match rate_card_on(db, pid, work_date.as_deref().unwrap_or(&today)).await? {
+                    Some((regular, overtime)) => {
+                        let rate = if is_overtime { overtime } else { regular };
+                        if rate > 0.0 {
+                            (Some(rate), Some("rate_card".to_string()))
+                        } else {
+                            (None, None)
+                        }
+                    }
+                    None => (None, None),
+                },
+                None => (None, None),
+            },
+        };
         lines.push(WoLaborCostLine {
             intervener_entry_id: decode(&r, "id")?,
-            personnel_id: decode(&r, "personnel_id")?,
+            personnel_id,
             person_name: decode(&r, "person_name")?,
             skill_label: decode(&r, "skill_label")?,
             hours,
             hourly_rate: rate,
-            is_overtime: decode::<i64>(&r, "is_overtime")? != 0,
+            rate_source,
+            is_overtime,
             amount: round_money(hours * rate.unwrap_or(0.0)),
+            entry_sync_id,
+            entry_rate,
         });
     }
     Ok((lines, has_overtime))
@@ -733,8 +856,7 @@ pub async fn upsert_wo_cost_estimate<C: ConnectionTrait>(
     ];
     if amounts.iter().any(|a| !a.is_finite() || *a < 0.0) {
         return Err(AppError::ValidationFailed(vec![
-            "Les montants estimés doivent être positifs ou nuls. (Estimated amounts must be zero or positive.)"
-                .to_string(),
+            "GATE_FIN_ESTIMATE_NEGATIVE: estimated amounts must be zero or positive".to_string(),
         ]));
     }
     let status: Option<String> = db
@@ -752,8 +874,7 @@ pub async fn upsert_wo_cost_estimate<C: ConnectionTrait>(
         .ok();
     if matches!(status.as_deref(), Some("closed" | "cancelled")) {
         return Err(AppError::ValidationFailed(vec![
-            "L'estimation d'un OT clôturé ou annulé ne peut plus être modifiée. \
-             (The estimate of a closed or cancelled work order can no longer be changed.)"
+            "GATE_FIN_ESTIMATE_LOCKED: the estimate of a closed or cancelled work order can no longer be changed"
                 .to_string(),
         ]));
     }
@@ -767,7 +888,7 @@ pub async fn upsert_wo_cost_estimate<C: ConnectionTrait>(
             .await?;
         if active.is_none() {
             return Err(AppError::ValidationFailed(vec![
-                "Centre de coût inconnu ou inactif. (Unknown or inactive cost centre.)".to_string(),
+                "GATE_FIN_COST_CENTER_INACTIVE: unknown or inactive cost centre".to_string(),
             ]));
         }
     }
@@ -801,9 +922,7 @@ pub async fn upsert_wo_cost_estimate<C: ConnectionTrait>(
                 .await?;
             if result.rows_affected() == 0 {
                 return Err(AppError::ValidationFailed(vec![
-                    "L'estimation a été modifiée entre-temps : rechargez-la. \
-                     (The estimate was changed meanwhile: reload it.)"
-                        .to_string(),
+                    "GATE_FIN_ESTIMATE_CHANGED: the estimate was changed meanwhile, reload it".to_string(),
                 ]));
             }
         }

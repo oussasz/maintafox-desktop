@@ -1070,7 +1070,6 @@ pub async fn create_budget_line(db: &DatabaseConnection, input: CreateBudgetLine
         &txn,
         crate::finance::reference_catalog::DOMAIN_COST_CATEGORIES,
         &budget_bucket,
-        "La catégorie de coût",
         "Cost category",
     )
     .await?;
@@ -1185,7 +1184,6 @@ pub async fn update_budget_line(
             &txn,
             crate::finance::reference_catalog::DOMAIN_COST_CATEGORIES,
             bucket,
-            "La catégorie de coût",
             "Cost category",
         )
         .await?;
@@ -1304,7 +1302,6 @@ pub async fn create_budget_actual(
         db,
         crate::finance::reference_catalog::DOMAIN_COST_CATEGORIES,
         &budget_bucket,
-        "La catégorie de coût",
         "Cost category",
     )
     .await?;
@@ -1713,7 +1710,6 @@ pub async fn create_budget_commitment(
         db,
         crate::finance::reference_catalog::DOMAIN_COST_CATEGORIES,
         &budget_bucket,
-        "La catégorie de coût",
         "Cost category",
     )
     .await?;
@@ -2124,7 +2120,6 @@ pub async fn create_budget_variance_review(
         db,
         crate::finance::reference_catalog::DOMAIN_COST_CATEGORIES,
         &budget_bucket,
-        "La catégorie de coût",
         "Cost category",
     )
     .await?;
@@ -2140,7 +2135,6 @@ pub async fn create_budget_variance_review(
         db,
         crate::finance::reference_catalog::DOMAIN_VARIANCE_REASONS,
         &driver_code,
-        "La cause d'écart",
         "Variance reason",
     )
     .await?;

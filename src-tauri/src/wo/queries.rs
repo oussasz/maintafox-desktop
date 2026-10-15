@@ -906,6 +906,9 @@ pub async fn cancel_work_order(db: &DatabaseConnection, input: super::domain::Wo
     )
     .await?;
 
+    // A cancelled OT that consumed labour or parts is still charged to its cost centre.
+    crate::finance::settlement::settle_cancelled_work_order(&txn, input.id, input.actor_id).await?;
+
     // 6. Re-fetch and return
     let wo = get_work_order(&txn, input.id)
         .await?

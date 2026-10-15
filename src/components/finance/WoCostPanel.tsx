@@ -131,6 +131,9 @@ export function WoCostPanel({ woId, status }: WoCostPanelProps) {
   if (!b.overtime_captured && b.labor_hours > 0) {
     notices.push({ key: "ot", tone: "info", text: t("woCost.notice.overtimeNotCaptured") });
   }
+  if (settlement?.duplicate_active) {
+    notices.push({ key: "dup", tone: "danger", text: t("woCost.notice.duplicateSettlement") });
+  }
 
   return (
     <Card>
@@ -274,6 +277,9 @@ export function WoCostPanel({ woId, status }: WoCostPanelProps) {
                     : "—",
                   date: formatDate(settlement.posted_at),
                 })}
+                {Math.abs(view.late_cost_total) >= 0.005
+                  ? ` ${t("woCost.settlement.lateCosts", { amount: money(view.late_cost_total) })}`
+                  : null}
               </span>
             ) : settlement.status === "pending" ? (
               <span>
@@ -316,7 +322,9 @@ export function WoCostPanel({ woId, status }: WoCostPanelProps) {
           <div className="space-y-3 text-xs">
             <CostLines
               title={t("woCost.lines.labor")}
-              empty={t("woCost.lines.noLabor")}
+              empty={
+                view.labor_lines_hidden ? t("woCost.lines.laborHidden") : t("woCost.lines.noLabor")
+              }
               head={[
                 t("woCost.lines.who"),
                 t("woCost.lines.craft"),
@@ -328,7 +336,11 @@ export function WoCostPanel({ woId, status }: WoCostPanelProps) {
                 `${l.person_name ?? "—"}${l.is_overtime ? ` · ${t("woCost.lines.overtime")}` : ""}`,
                 l.skill_label ?? "—",
                 formatNumber(l.hours),
-                l.hourly_rate == null ? t("woCost.lines.noRate") : money(l.hourly_rate),
+                l.hourly_rate == null
+                  ? t("woCost.lines.noRate")
+                  : l.rate_source === "rate_card"
+                    ? `${money(l.hourly_rate)} · ${t("woCost.lines.rateCard")}`
+                    : money(l.hourly_rate),
                 money(l.amount),
               ])}
             />
@@ -376,6 +388,10 @@ export function WoCostPanel({ woId, status }: WoCostPanelProps) {
           workOrderId={woId}
           workOrderCode={b.work_order_code}
           estimate={b.estimate}
+          currentCostCenterLabel={
+            b.cost_center ? `${b.cost_center.code} — ${b.cost_center.name}` : null
+          }
+          canChangeCostCenter={can(P.FIN_POST)}
           resolvedCostCenterLabel={
             b.cost_center && b.cost_center.source !== "estimate_override"
               ? `${b.cost_center.code} — ${b.cost_center.name}`

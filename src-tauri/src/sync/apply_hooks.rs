@@ -12,7 +12,10 @@
 //!   (anything else is refused as a conflict) and present (a row from an older app version without
 //!   it is deferred, never written with a guessed kind: it decides the PRD lifecycle state);
 //! - `media_attachments`: the file is queued for download from object storage
-//!   (`sync_media_downloads`, worked by the sync worker); a deleted row drops a pending download.
+//!   (`sync_media_downloads`, worked by the sync worker); a deleted row drops a pending download;
+//! - `inventory_transactions`, `goods_receipt_lines`, `work_order_interveners`: a movement, receipt
+//!   or labour entry reaching an OT whose cost is already settled books the OT's late cost
+//!   (`finance::settlement::post_late_costs`, best effort).
 
 use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
 
@@ -58,7 +61,15 @@ pub(crate) async fn after_upsert(
             let id = located_row_id(conn, layout, row)
                 .await?
                 .ok_or_else(|| hook_err(layout.table(), "movement not found after insert"))?;
-            apply_movement_to_balance(conn, id).await
+            apply_movement_to_balance(conn, id).await?;
+            crate::finance::settlement::post_late_costs_for_synced_row(conn, "inventory_transactions", id).await;
+            Ok(())
+        }
+        "goods_receipt_lines" | "work_order_interveners" => {
+            if let Some(id) = located_row_id(conn, layout, row).await? {
+                crate::finance::settlement::post_late_costs_for_synced_row(conn, layout.def.entity_type, id).await;
+            }
+            Ok(())
         }
         "org_nodes" => {
             let id = located_row_id(conn, layout, row)
