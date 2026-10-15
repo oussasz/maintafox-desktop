@@ -11,7 +11,7 @@
 //!   and/or a part-time percentage. A person's own home Classe horaire (set on their record) also
 //!   takes precedence over the team's.
 //!
-//! Rows flagged `to_review` were created by the upgrade (migration 194) and stay flagged until a
+//! Rows flagged `to_review` were created by the upgrade (migration 197) and stay flagged until a
 //! planner confirms them or replaces them.
 
 use std::collections::{HashMap, HashSet};

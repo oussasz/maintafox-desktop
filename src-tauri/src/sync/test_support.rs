@@ -313,7 +313,7 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
     ("qualification_overrides", "permit_id", "NULL"),
     // A calendar day, not a timestamp.
     ("work_calendar_holidays", "holiday_date", "'2026-12-25'"),
-    // Timetables (migrations 192, 194): calendar days, a weekly cycle, percentages in range.
+    // Timetables (migrations 192, 197): calendar days, a weekly cycle, percentages in range.
     ("site_work_weeks", "effective_from", "'2026-12-01'"),
     ("site_work_weeks", "weekend_days", "'5,6'"),
     ("schedule_class_versions", "effective_from", "'2026-12-01'"),

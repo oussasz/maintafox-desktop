@@ -1,4 +1,4 @@
-//! Migration 194 — capacity comes from Classes horaires (ORG.SCHEDULE_CLASS reference values).
+//! Migration 197 — capacity comes from Classes horaires (ORG.SCHEDULE_CLASS reference values).
 //!
 //! SAP PM work-centre capacity and Maximo shift calendars: capacity comes from timetables
 //! defined once in reference data, never from hours typed on a team or an assumed 8-hour day.
@@ -47,7 +47,7 @@ const RULE_SHIFT_START_MINUTES: i64 = 8 * 60;
 
 impl MigrationName for Migration {
     fn name(&self) -> &str {
-        "m20261015_000194_schedule_class_timetables"
+        "m20261015_000197_schedule_class_timetables"
     }
 }
 
@@ -56,7 +56,7 @@ fn now_sql() -> &'static str {
 }
 
 fn err(ctx: &str, e: impl std::fmt::Display) -> DbErr {
-    DbErr::Custom(format!("migration 194 {ctx}: {e}"))
+    DbErr::Custom(format!("migration 197 {ctx}: {e}"))
 }
 
 fn hhmm(minutes: i64) -> String {

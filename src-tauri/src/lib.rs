@@ -1052,7 +1052,14 @@ pub fn run() {
             commands::dashboard::get_overview_kpis,
             commands::dashboard::get_overview_kpi_layout,
             commands::dashboard::save_overview_kpi_layout,
-            // Personnel, qualifications and training (migrations 190-193)
+            commands::inspection::list_inspection_round_page,
+            commands::inspection::get_inspection_kpis,
+            commands::inspection::list_inspection_anomaly_rows,
+            commands::inspection::get_inspection_anomaly_row,
+            commands::inspection::list_inspection_schedules,
+            commands::inspection::save_inspection_schedule,
+            commands::inspection::generate_inspection_rounds,
+            // Personnel, qualifications and training (migrations 190-193, 197)
             commands::qualification::list_qualification_requirements,
             commands::qualification::upsert_qualification_requirement,
             commands::qualification::get_wo_qualification_assessment,

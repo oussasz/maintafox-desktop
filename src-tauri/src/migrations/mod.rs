@@ -175,10 +175,12 @@ mod m20261014_000190_wo_labor_personnel;
 mod m20261014_000191_qualification_requirements;
 mod m20261014_000192_work_calendar_holidays;
 mod m20261014_000193_cert_expiry_routing;
-mod m20261015_000194_schedule_class_timetables;
+mod m20261015_000197_schedule_class_timetables;
 mod m20261101_000036_activity_audit_log;
 mod m20261201_000037_observability_permissions;
 mod m_test;
+mod m20261015_000194_inspection_schedules;
+mod m20261015_000195_inspection_round_scheduling;
 
 pub struct Migrator;
 
@@ -363,8 +365,10 @@ impl MigratorTrait for Migrator {
             Box::new(m20261014_000191_qualification_requirements::Migration),
             Box::new(m20261014_000192_work_calendar_holidays::Migration),
             Box::new(m20261014_000193_cert_expiry_routing::Migration),
-            Box::new(m20261015_000194_schedule_class_timetables::Migration),
             Box::new(m_test::Migration),
+            Box::new(m20261015_000194_inspection_schedules::Migration),
+            Box::new(m20261015_000195_inspection_round_scheduling::Migration),
+            Box::new(m20261015_000197_schedule_class_timetables::Migration),
         ]
     }
 }

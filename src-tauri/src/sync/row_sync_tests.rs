@@ -188,6 +188,7 @@ pub(crate) const INSPECTION_PERMIT_TYPES: &[&str] = &[
     "inspection_templates",
     "inspection_template_versions",
     "inspection_checkpoints",
+    "inspection_schedules",
     "inspection_rounds",
     "inspection_results",
     "inspection_evidence",

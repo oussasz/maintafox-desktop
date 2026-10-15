@@ -870,6 +870,10 @@
     {
       "entity_type": "personnel_schedule_exceptions",
       "scope": "tenant"
+    },
+    {
+      "entity_type": "inspection_schedules",
+      "scope": "tenant"
     }
   ]
 }

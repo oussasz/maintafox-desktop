@@ -21,13 +21,15 @@ use crate::errors::{AppError, AppResult};
 use crate::sync::row_state::{row_sync_states, ROW_SYNC_SYNCED};
 
 use super::domain::{
-    AddInspectionPhotoInput, InspectionAnomaliesFilter, InspectionCheckpoint, InspectionCheckpointsFilter,
-    InspectionEvidence, InspectionEvidenceFilter, InspectionResult, InspectionResultsFilter, InspectionRound,
-    InspectionRoundActionInput, InspectionRoundRunner, InspectionRoundSummary, InspectionRoundSummaryFilter,
-    InspectionRunnerCheckpoint,
+    AddInspectionPhotoInput, InspectionAnomaliesFilter, InspectionCheckpoint, InspectionCheckpointHistoryPoint,
+    InspectionCheckpointsFilter, InspectionEvidence, InspectionEvidenceFilter, InspectionResult,
+    InspectionResultsFilter, InspectionRound, InspectionRoundActionInput, InspectionRoundPage, InspectionRoundRunner,
+    InspectionRoundSummary, InspectionRoundSummaryFilter, InspectionRunnerCheckpoint,
 };
 use super::queries::{get_inspection_round_by_id, ROUND_COLUMNS};
-use super::results::{sync_auto_anomaly, ANOMALY_MISSING_PHOTO, EXCEPTION_STATUSES, ROUND_OPEN_STATUSES};
+use super::results::{
+    reading_needs_comment, sync_auto_anomaly, ANOMALY_MISSING_PHOTO, EXCEPTION_STATUSES, ROUND_OPEN_STATUSES,
+};
 
 /// Missing-item codes shown next to a checkpoint (translated in the UI).
 pub const MISSING_RESULT: &str = "result";
@@ -74,6 +76,10 @@ fn summary_sql(where_clause: &str) -> String {
         "SELECT {round_cols}, \
          t.code AS template_code, t.name AS template_name, v.version_no, v.requires_review, \
          p.full_name AS assigned_to_name, \
+         tm.name AS assigned_team_name, \
+         sch.code AS schedule_code, sch.name AS schedule_name, \
+         (CASE WHEN ir.status IN ('scheduled', 'released', 'in_progress') AND ir.scheduled_at IS NOT NULL \
+               AND julianday(ir.scheduled_at) < julianday('now') THEN 1 ELSE 0 END) AS is_overdue, \
          COALESCE(ua.display_name, ua.username) AS reviewed_by_name, \
          (SELECT COUNT(*) FROM inspection_checkpoints c WHERE c.template_version_id = ir.template_version_id) \
              AS checkpoint_count, \
@@ -92,6 +98,8 @@ fn summary_sql(where_clause: &str) -> String {
          JOIN inspection_templates t ON t.id = ir.template_id \
          JOIN inspection_template_versions v ON v.id = ir.template_version_id \
          LEFT JOIN personnel p ON p.id = ir.assigned_to_id \
+         LEFT JOIN teams tm ON tm.id = ir.assigned_team_id \
+         LEFT JOIN inspection_schedules sch ON sch.id = ir.schedule_id \
          LEFT JOIN user_accounts ua ON ua.id = ir.reviewed_by_id \
          {where_clause}",
         round_pending = pending_rows_sql("inspection_rounds", "ir"),
@@ -119,6 +127,19 @@ fn map_summary(row: &sea_orm::QueryResult) -> AppResult<InspectionRoundSummary> 
         assigned_to_name: row
             .try_get("", "assigned_to_name")
             .map_err(|e| decode_err("assigned_to_name", e))?,
+        assigned_team_name: row
+            .try_get("", "assigned_team_name")
+            .map_err(|e| decode_err("assigned_team_name", e))?,
+        schedule_code: row
+            .try_get("", "schedule_code")
+            .map_err(|e| decode_err("schedule_code", e))?,
+        schedule_name: row
+            .try_get("", "schedule_name")
+            .map_err(|e| decode_err("schedule_name", e))?,
+        is_overdue: row
+            .try_get::<i64>("", "is_overdue")
+            .map_err(|e| decode_err("is_overdue", e))?
+            != 0,
         reviewed_by_name: row
             .try_get("", "reviewed_by_name")
             .map_err(|e| decode_err("reviewed_by_name", e))?,
@@ -140,32 +161,113 @@ fn map_summary(row: &sea_orm::QueryResult) -> AppResult<InspectionRoundSummary> 
     })
 }
 
-/// Rounds for the round list, newest scheduled first, optionally restricted to some statuses.
-pub async fn list_inspection_round_summaries(
-    db: &impl ConnectionTrait,
-    filter: InspectionRoundSummaryFilter,
-) -> AppResult<Vec<InspectionRoundSummary>> {
-    let limit = filter.limit.unwrap_or(200).clamp(1, 1000);
+/// Largest page of rounds returned at once.
+pub const MAX_ROUND_PAGE: i64 = 1000;
+/// Page size when the caller does not give one.
+const DEFAULT_ROUND_PAGE: i64 = 200;
+
+fn parse_instant(raw: &str, field: &str) -> AppResult<String> {
+    chrono::DateTime::parse_from_rfc3339(raw.trim())
+        .map(|d| d.with_timezone(&Utc).format("%Y-%m-%dT%H:%M:%SZ").to_string())
+        .map_err(|_| AppError::ValidationFailed(vec![format!("{field} must be an RFC 3339 timestamp.")]))
+}
+
+/// `WHERE` clause and binds of a round filter (shared by the page and its count).
+fn round_filter_sql(filter: &InspectionRoundSummaryFilter) -> AppResult<(String, Vec<sea_orm::Value>)> {
+    let mut clauses: Vec<String> = Vec::new();
     let mut values: Vec<sea_orm::Value> = Vec::new();
-    let mut where_clause = String::new();
-    if let Some(statuses) = filter.statuses.filter(|s| !s.is_empty()) {
+    if let Some(statuses) = filter.statuses.as_ref().filter(|s| !s.is_empty()) {
         if let Some(bad) = statuses.iter().find(|s| !ROUND_STATUSES.contains(&s.as_str())) {
             return Err(AppError::ValidationFailed(vec![format!(
                 "Unknown round status '{bad}'."
             )]));
         }
-        where_clause = format!("WHERE ir.status IN ({})", vec!["?"; statuses.len()].join(", "));
-        values.extend(statuses.into_iter().map(sea_orm::Value::from));
+        clauses.push(format!("ir.status IN ({})", vec!["?"; statuses.len()].join(", ")));
+        values.extend(statuses.iter().cloned().map(sea_orm::Value::from));
     }
+    if filter.overdue_only == Some(true) {
+        clauses.push(
+            "ir.status IN ('scheduled', 'released', 'in_progress') AND ir.scheduled_at IS NOT NULL \
+             AND julianday(ir.scheduled_at) < julianday('now')"
+                .to_string(),
+        );
+    }
+    if let Some(from) = filter.due_from.as_deref().filter(|s| !s.trim().is_empty()) {
+        clauses.push("julianday(ir.scheduled_at) >= julianday(?)".to_string());
+        values.push(parse_instant(from, "due_from")?.into());
+    }
+    if let Some(to) = filter.due_to.as_deref().filter(|s| !s.trim().is_empty()) {
+        clauses.push("julianday(ir.scheduled_at) <= julianday(?)".to_string());
+        values.push(parse_instant(to, "due_to")?.into());
+    }
+    if let Some(schedule_id) = filter.schedule_id {
+        clauses.push("ir.schedule_id = ?".to_string());
+        values.push(schedule_id.into());
+    }
+    if let Some(search) = filter.search.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        let pattern = format!("%{search}%");
+        clauses.push(
+            "(t.name LIKE ? OR t.code LIKE ? OR p.full_name LIKE ? OR tm.name LIKE ? OR sch.code LIKE ? \
+             OR sch.name LIKE ?)"
+                .to_string(),
+        );
+        values.extend(std::iter::repeat_n(sea_orm::Value::from(pattern), 6));
+    }
+    let where_clause = if clauses.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", clauses.join(" AND "))
+    };
+    Ok((where_clause, values))
+}
+
+/// Rounds for the round list, newest scheduled first, filtered by status, planned period,
+/// schedule or overdue state.
+pub async fn list_inspection_round_summaries(
+    db: &impl ConnectionTrait,
+    filter: InspectionRoundSummaryFilter,
+) -> AppResult<Vec<InspectionRoundSummary>> {
+    let limit = filter.limit.unwrap_or(DEFAULT_ROUND_PAGE).clamp(1, MAX_ROUND_PAGE);
+    let offset = filter.offset.unwrap_or(0).max(0);
+    let (where_clause, mut values) = round_filter_sql(&filter)?;
     values.push(limit.into());
+    values.push(offset.into());
     let sql = format!(
-        "{} ORDER BY COALESCE(ir.scheduled_at, '') DESC, ir.id DESC LIMIT ?",
+        "{} ORDER BY COALESCE(ir.scheduled_at, '') DESC, ir.id DESC LIMIT ? OFFSET ?",
         summary_sql(&where_clause)
     );
     let rows = db
         .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, sql, values))
         .await?;
     rows.iter().map(map_summary).collect()
+}
+
+/// A page of rounds with the number of rounds matching the filter (the list says when it shows
+/// only part of them).
+pub async fn list_inspection_round_page(
+    db: &impl ConnectionTrait,
+    filter: InspectionRoundSummaryFilter,
+) -> AppResult<InspectionRoundPage> {
+    let (where_clause, values) = round_filter_sql(&filter)?;
+    let total: i64 = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT COUNT(*) AS c FROM inspection_rounds ir \
+                 JOIN inspection_templates t ON t.id = ir.template_id \
+                 LEFT JOIN personnel p ON p.id = ir.assigned_to_id \
+                 LEFT JOIN teams tm ON tm.id = ir.assigned_team_id \
+                 LEFT JOIN inspection_schedules sch ON sch.id = ir.schedule_id \
+                 {where_clause}"
+            ),
+            values,
+        ))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("round count")))?
+        .try_get("", "c")
+        .map_err(|e| decode_err("c", e))?;
+    let items = list_inspection_round_summaries(db, filter).await?;
+    Ok(InspectionRoundPage { items, total })
 }
 
 async fn get_round_summary(db: &impl ConnectionTrait, round_id: i64) -> AppResult<InspectionRoundSummary> {
@@ -197,10 +299,67 @@ fn missing_items(
         missing.push(MISSING_PHOTO.to_string());
     }
     let has_comment = result.comment.as_deref().is_some_and(|c| !c.trim().is_empty());
-    if cp.requires_comment_on_exception && result.result_status != "pass" && !has_comment && evidence.is_empty() {
+    let exception_unexplained =
+        cp.requires_comment_on_exception && result.result_status != "pass" && evidence.is_empty();
+    if !has_comment && (exception_unexplained || reading_needs_comment(cp, &result.result_status)) {
         missing.push(MISSING_COMMENT.to_string());
     }
     missing
+}
+
+/// Number of earlier results shown with each checkpoint in the runner (history and trend).
+pub const HISTORY_POINTS: i64 = 10;
+
+/// Latest results of the checkpoint `code` of `template_id` in rounds other than `round_id`
+/// (any version of the template: a checkpoint is followed by its code), newest first.
+pub async fn checkpoint_history(
+    db: &impl ConnectionTrait,
+    template_id: i64,
+    checkpoint_code: &str,
+    round_id: i64,
+    limit: i64,
+) -> AppResult<Vec<InspectionCheckpointHistoryPoint>> {
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT r.round_id, ir.scheduled_at AS round_scheduled_at, r.recorded_at, r.result_status, \
+                    r.numeric_value, r.text_value, r.boolean_value, r.comment \
+             FROM inspection_results r \
+             JOIN inspection_checkpoints c ON c.id = r.checkpoint_id \
+             JOIN inspection_rounds ir ON ir.id = r.round_id \
+             WHERE ir.template_id = ? AND c.checkpoint_code = ? AND r.round_id <> ? \
+             ORDER BY julianday(r.recorded_at) DESC, r.id DESC LIMIT ?",
+            [
+                template_id.into(),
+                checkpoint_code.into(),
+                round_id.into(),
+                limit.clamp(1, 100).into(),
+            ],
+        ))
+        .await?;
+    rows.iter()
+        .map(|r| {
+            let b: Option<i64> = r
+                .try_get("", "boolean_value")
+                .map_err(|e| decode_err("boolean_value", e))?;
+            Ok(InspectionCheckpointHistoryPoint {
+                round_id: r.try_get("", "round_id").map_err(|e| decode_err("round_id", e))?,
+                round_scheduled_at: r
+                    .try_get("", "round_scheduled_at")
+                    .map_err(|e| decode_err("round_scheduled_at", e))?,
+                recorded_at: r.try_get("", "recorded_at").map_err(|e| decode_err("recorded_at", e))?,
+                result_status: r
+                    .try_get("", "result_status")
+                    .map_err(|e| decode_err("result_status", e))?,
+                numeric_value: r
+                    .try_get("", "numeric_value")
+                    .map_err(|e| decode_err("numeric_value", e))?,
+                text_value: r.try_get("", "text_value").map_err(|e| decode_err("text_value", e))?,
+                boolean_value: b.map(|x| x != 0),
+                comment: r.try_get("", "comment").map_err(|e| decode_err("comment", e))?,
+            })
+        })
+        .collect()
 }
 
 /// Everything the runner screen shows for one round.
@@ -260,6 +419,14 @@ pub async fn get_inspection_round_runner(db: &DatabaseConnection, round_id: i64)
                 .to_string(),
         };
         let missing = missing_items(&cp, result.as_ref(), &evidence);
+        let history = checkpoint_history(
+            db,
+            summary.round.template_id,
+            &cp.checkpoint_code,
+            round_id,
+            HISTORY_POINTS,
+        )
+        .await?;
         let (asset_code, asset_name) = cp
             .asset_id
             .and_then(|id| assets.get(&id).cloned())
@@ -273,6 +440,7 @@ pub async fn get_inspection_round_runner(db: &DatabaseConnection, round_id: i64)
             open_anomalies,
             sync_state,
             missing,
+            history,
         });
     }
     Ok(InspectionRoundRunner {
