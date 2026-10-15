@@ -120,6 +120,10 @@ const WO_COLS: &str = "\
     wo.planner_id, wo.approver_id, wo.assigned_team_id, wo.primary_responsible_id, \
     wo.urgency_id, wo.subtype_id, wo.title, wo.description, \
     wo.planned_start, wo.planned_end, wo.shift, wo.scheduled_at, \
+    wo.shift_class_version_id, wo.shift_start, wo.shift_end, \
+    (SELECT scv_rv.label FROM schedule_class_versions scv \
+       JOIN reference_values scv_rv ON scv_rv.id = scv.reference_value_id \
+      WHERE scv.id = wo.shift_class_version_id) AS shift_class_label, \
     wo.actual_start, wo.actual_end, \
     wo.mechanically_completed_at, wo.technically_verified_at, \
     wo.closed_at, wo.cancelled_at, \

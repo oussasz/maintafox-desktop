@@ -11,6 +11,7 @@ import QRCode from "qrcode";
 
 import { urgencyLabelFor } from "@/components/common/urgency/use-urgency-scale";
 import { woTypeLabel } from "@/components/wo/use-wo-type-labels";
+import { formatWoShift } from "@/components/wo/wo-shift-label";
 import {
   DOCUMENT_HEADER_PRINT_CSS,
   loadDocumentHeaderHtml,
@@ -18,9 +19,9 @@ import {
 } from "@/export/templates/document-header";
 import { formatEntityCode, formatOrDash, formatPersonLabel } from "@/lib/display";
 import {
-  getWoAnalyticsSnapshot,
   type WoFailureDetail,
   type WoVerification,
+  getWoAnalyticsSnapshot,
 } from "@/services/wo-closeout-service";
 import { listLabor, listParts, listTasks } from "@/services/wo-execution-service";
 import { useWorkOrderTypesCatalog } from "@/stores/work-order-types-catalog-store";
@@ -104,7 +105,8 @@ function buildHtml(
     )
     .join("");
 
-  const shiftDisplay = wo.shift ? esc(t(`shift.${wo.shift}`)) : "—";
+  const shiftLabel = formatWoShift(wo, t);
+  const shiftDisplay = shiftLabel ? esc(shiftLabel) : "—";
 
   return `<!DOCTYPE html>
 <html lang="${locale}">

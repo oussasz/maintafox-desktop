@@ -57,6 +57,7 @@ import {
 import { WoPlanningPanel } from "@/components/wo/WoPlanningPanel";
 import { printWoFiche } from "@/components/wo/WoPrintFiche";
 import { useWoTypeLabels } from "@/components/wo/use-wo-type-labels";
+import { formatWoShift } from "@/components/wo/wo-shift-label";
 import { usePermissions } from "@/hooks/use-permissions";
 import { needsPlanningApproval, useWoLifecycleActions } from "@/hooks/use-wo-lifecycle-actions";
 import { formatAssetLabel } from "@/lib/display";
@@ -66,7 +67,7 @@ import { useWoStore } from "@/stores/wo-store";
 import { toErrorMessage } from "@/utils/errors";
 import { formatDate } from "@/utils/format-date";
 import { isWoLifecycleState } from "@/utils/wo-lifecycle";
-import { statusToI18nKey, STATUS_STYLE } from "@/utils/wo-status";
+import { STATUS_STYLE, statusToI18nKey } from "@/utils/wo-status";
 import type { WoCompletionGate, WoStatus, WorkOrder } from "@shared/ipc-types";
 import { P, type PermissionName } from "@shared/rbac/permissions.generated";
 
@@ -326,10 +327,7 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
                   label={t("detail.fields.plannedEnd")}
                   value={wo.planned_end ? formatDate(wo.planned_end, i18n.language) : "—"}
                 />
-                <InfoRow
-                  label={t("detail.fields.shift")}
-                  value={wo.shift ? t(`shift.${wo.shift}`) : "—"}
-                />
+                <InfoRow label={t("detail.fields.shift")} value={formatWoShift(wo, t) ?? "—"} />
                 <InfoRow
                   label={t("detail.fields.estimatedHours")}
                   value={

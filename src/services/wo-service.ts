@@ -83,6 +83,10 @@ export const WorkOrderSchema = z.object({
   planned_start: z.string().nullable(),
   planned_end: z.string().nullable(),
   shift: z.enum(["morning", "afternoon", "night", "full_day"]).nullable(),
+  shift_class_version_id: z.number().nullable().default(null),
+  shift_class_label: z.string().nullable().default(null),
+  shift_start: z.string().nullable().default(null),
+  shift_end: z.string().nullable().default(null),
   scheduled_at: z.string().nullable(),
   actual_start: z.string().nullable(),
   actual_end: z.string().nullable(),
@@ -358,6 +362,39 @@ export async function updateWoDraft(input: WoDraftUpdateInput): Promise<WorkOrde
 }
 
 // â”€â”€ Planning & scheduling â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+const WoShiftOptionsSchema = z.object({
+  team_id: z.number().nullable(),
+  day: z.string().nullable(),
+  options: z.array(
+    z.object({
+      class_version_id: z.number(),
+      schedule_class_id: z.number(),
+      class_label: z.string(),
+      shift_start: z.string(),
+      shift_end: z.string(),
+      break_minutes: z.number(),
+      net_hours: z.number(),
+      members: z.number(),
+      members_available: z.number(),
+    }),
+  ),
+  reason: z.enum(["no_team", "no_day", "no_shift"]).nullable(),
+});
+export type WoShiftOptionsResult = z.infer<typeof WoShiftOptionsSchema>;
+
+/**
+ * The shift windows the work order's assigned team works on `day` (default: the day of its
+ * planned start), from the members' Classes horaires. Empty with a reason when there is no team,
+ * no date, or nobody works that day.
+ */
+export async function listWoShiftOptions(
+  woId: number,
+  day: string | null = null,
+): Promise<WoShiftOptionsResult> {
+  const raw = await invoke<unknown>("list_wo_shift_options", { woId, day });
+  return WoShiftOptionsSchema.parse(raw);
+}
 
 export async function planWo(input: WoPlanInput): Promise<WorkOrder> {
   try {

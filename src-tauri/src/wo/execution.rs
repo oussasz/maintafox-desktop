@@ -25,7 +25,14 @@ pub struct WoPlanInput {
     pub planner_id: i64,
     pub planned_start: Option<String>,
     pub planned_end: Option<String>,
+    /// Old fixed shift code: refused; use `shift_class_version_id` (`wo::shifts`).
     pub shift: Option<String>,
+    /// A shift window of the team's Classe horaire on the planned day; `None` keeps the current.
+    #[serde(default)]
+    pub shift_class_version_id: Option<i64>,
+    /// Removes the shift.
+    #[serde(default)]
+    pub clear_shift: bool,
     pub expected_duration_hours: Option<f64>,
     /// Level of the shared DI / OT urgency scale (`emergency` … `low`).
     #[serde(default)]
@@ -201,6 +208,8 @@ pub async fn plan_wo(db: &DatabaseConnection, input: WoPlanInput) -> AppResult<W
             planned_start: input.planned_start,
             planned_end: input.planned_end,
             shift: input.shift,
+            shift_class_version_id: input.shift_class_version_id,
+            clear_shift: input.clear_shift,
             expected_duration_hours: input.expected_duration_hours,
             urgency_code: input.urgency_code,
             planned_downtime_hours: input.planned_downtime_hours,

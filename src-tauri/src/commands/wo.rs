@@ -155,6 +155,20 @@ pub async fn list_work_order_types(state: State<'_, AppState>) -> AppResult<Vec<
     types::list_work_order_types(&state.db).await
 }
 
+/// The shift windows a work order can be planned on: its assigned team's Classes horaires on
+/// `day` (default: the day of its planned start). Empty, with the reason, when the work order has
+/// no team or no date, or nobody of the team works that day.
+#[tauri::command]
+pub async fn list_wo_shift_options(
+    wo_id: i64,
+    day: Option<String>,
+    state: State<'_, AppState>,
+) -> AppResult<crate::wo::shifts::WoShiftOptions> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
+    crate::wo::shifts::list_wo_shift_options(&state.db, wo_id, day.as_deref()).await
+}
+
 /// The plant's OT sub-types (`WORK.ORDER_SUBTYPES`), each with the maintenance nature it belongs to.
 #[tauri::command]
 pub async fn list_work_order_subtypes(state: State<'_, AppState>) -> AppResult<Vec<types::WorkOrderSubtypeOption>> {

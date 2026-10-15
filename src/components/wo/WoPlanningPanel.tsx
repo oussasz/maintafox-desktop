@@ -54,18 +54,18 @@ import type {
   InventoryArticle,
   StockLocation,
   TeamMemberRow,
+  UrgencyCode,
   WoExecPart,
   WoExecTask,
   WoMaterialReadiness,
   WoReadinessResult,
   WoTool,
-  UrgencyCode,
   WorkOrder,
-  WoShift,
 } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
 import { WoPermitRequirementField } from "./WoPermitRequirementField";
+import { WoShiftSelect } from "./WoShiftSelect";
 import { useWoPeopleOptions } from "./use-wo-people";
 import { useWoTypeLabels } from "./use-wo-type-labels";
 
@@ -111,13 +111,6 @@ interface SelectOption {
 const PLANNING_EDITABLE = new Set(["planning"]);
 /** Ready allows reschedule / reassign only */
 const READY_SCHEDULE_EDITABLE = new Set(["ready"]);
-
-const SHIFT_OPTIONS: Array<{ value: WoShift; label: string }> = [
-  { value: "morning", label: "morning" },
-  { value: "afternoon", label: "afternoon" },
-  { value: "night", label: "night" },
-  { value: "full_day", label: "full_day" },
-];
 
 function toDatetimeLocal(value: string | null | undefined): string {
   if (!value) return "";
@@ -187,7 +180,10 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
     const [plannerId, setPlannerId] = useState(wo.planner_id != null ? String(wo.planner_id) : "");
     const [plannedStart, setPlannedStart] = useState(toDatetimeLocal(wo.planned_start));
     const [plannedEnd, setPlannedEnd] = useState(toDatetimeLocal(wo.planned_end));
-    const [shift, setShift] = useState<WoShift | "">((wo.shift as WoShift | null) ?? "");
+    /** Chosen Classe horaire window (`class_version_id`; "" = no shift). */
+    const [shiftVersionId, setShiftVersionId] = useState(
+      wo.shift_class_version_id != null ? String(wo.shift_class_version_id) : "",
+    );
     const [expectedHours, setExpectedHours] = useState(
       wo.expected_duration_hours != null ? String(wo.expected_duration_hours) : "",
     );
@@ -240,7 +236,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
       setPlannerId(wo.planner_id != null ? String(wo.planner_id) : "");
       setPlannedStart(toDatetimeLocal(wo.planned_start));
       setPlannedEnd(toDatetimeLocal(wo.planned_end));
-      setShift((wo.shift as WoShift | null) ?? "");
+      setShiftVersionId(wo.shift_class_version_id != null ? String(wo.shift_class_version_id) : "");
       setExpectedHours(
         wo.expected_duration_hours != null ? String(wo.expected_duration_hours) : "",
       );
@@ -520,6 +516,11 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
 
     const assignReady = assignedTeamId.trim().length > 0 || primaryResponsibleId.trim().length > 0;
     const hasCommitment = wo.schedule_commitment_id != null;
+    /** Day of the planned start as the save sends it (UTC), which picks the team's shifts. */
+    const plannedDay = useMemo(() => {
+      const start = hasCommitment ? (wo.planned_start ?? "") : fromDatetimeLocal(plannedStart);
+      return /^\d{4}-\d{2}-\d{2}/.test(start) ? start.slice(0, 10) : null;
+    }, [hasCommitment, wo.planned_start, plannedStart]);
     const scheduleFrozen = Boolean(wo.schedule_frozen);
 
     const plannedCost = useMemo(() => {
@@ -582,7 +583,9 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
             : plannedEnd.trim()
               ? fromDatetimeLocal(plannedEnd)
               : null,
-          shift: shift || null,
+          // A window of the team's Classe horaire; "" removes the shift (and an old fixed code).
+          shift_class_version_id: shiftVersionId ? Number(shiftVersionId) : null,
+          clear_shift: !shiftVersionId && (wo.shift_class_version_id != null || wo.shift != null),
           expected_duration_hours: parseNumber(expectedHours),
           planned_downtime_hours: parseNumber(plannedDowntimeHours),
           urgency_code: urgencyId ? (urgencyId as UrgencyCode) : null,
@@ -608,7 +611,9 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
       plannedStart,
       plannedEnd,
       hasCommitment,
-      shift,
+      shiftVersionId,
+      wo.shift_class_version_id,
+      wo.shift,
       expectedHours,
       plannedDowntimeHours,
       urgencyId,
@@ -965,25 +970,13 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                 </div>
               </>
             ) : null}
-            <div className="space-y-1">
-              <Label>{t("planning.shift")}</Label>
-              <Select
-                value={shift}
-                onValueChange={(value) => setShift(value as WoShift)}
-                disabled={allFieldsDisabled}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder={t("planning.selectShift")} />
-                </SelectTrigger>
-                <SelectContent>
-                  {SHIFT_OPTIONS.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {t(`shift.${option.label}`)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            <WoShiftSelect
+              wo={wo}
+              plannedDay={plannedDay}
+              value={shiftVersionId}
+              onChange={setShiftVersionId}
+              disabled={allFieldsDisabled}
+            />
             <div className="space-y-1">
               <Label>{t("planning.expectedDuration")}</Label>
               <Input

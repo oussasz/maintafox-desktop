@@ -15,6 +15,7 @@ pub mod parts;
 pub mod permissions;
 pub mod plan_adherence;
 pub mod queries;
+pub mod shifts;
 pub mod stats;
 pub mod statuses;
 pub mod tasks;
@@ -37,5 +38,7 @@ mod execution_tests;
 mod gap06_regression_tests;
 #[cfg(test)]
 mod migration_tests;
+#[cfg(test)]
+mod shift_tests;
 #[cfg(test)]
 mod tests;

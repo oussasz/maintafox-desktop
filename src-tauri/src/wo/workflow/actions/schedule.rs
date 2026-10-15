@@ -23,7 +23,15 @@ pub struct WoScheduleSaveInput {
     /// Optional; rejected when they would overwrite a committed slot.
     pub planned_start: Option<String>,
     pub planned_end: Option<String>,
+    /// Old fixed shift code: refused (`domain::validate_wo_shift`); use `shift_class_version_id`.
     pub shift: Option<String>,
+    /// A shift window of the team's Classe horaire on the planned day (`wo::shifts`); `None`
+    /// keeps the current one.
+    #[serde(default)]
+    pub shift_class_version_id: Option<i64>,
+    /// Removes the shift (no window).
+    #[serde(default)]
+    pub clear_shift: bool,
     pub expected_duration_hours: Option<f64>,
     /// Level of the shared DI / OT urgency scale (`emergency` … `low`); `None` keeps the current one.
     pub urgency_code: Option<String>,
@@ -110,6 +118,17 @@ pub async fn save_schedule(db: &DatabaseConnection, input: WoScheduleSaveInput) 
     // When committed (or no dates sent), preserve existing planned_start/end.
     let update_dates = !committed && start_raw.is_some() && end_raw.is_some();
 
+    // The shift: a window of the team's Classe horaire on the planned day, or none. Decided on
+    // the work order as it stands (before the new dates are written).
+    let shift_change = crate::wo::shifts::decide_shift_change(
+        &txn,
+        input.wo_id,
+        if update_dates { start_raw } else { None },
+        input.shift_class_version_id,
+        input.clear_shift,
+    )
+    .await?;
+
     let result = if update_dates {
         txn.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -194,6 +213,7 @@ pub async fn save_schedule(db: &DatabaseConnection, input: WoScheduleSaveInput) 
         .await?
     };
     check_concurrency(result.rows_affected())?;
+    crate::wo::shifts::apply_shift_change(&txn, input.wo_id, &shift_change).await?;
 
     emit_action_event(
         &txn,
