@@ -220,6 +220,7 @@ export type BudgetCockpitRow = z.infer<typeof CockpitRowSchema>;
 
 const CockpitMonthSchema = z.object({
   period_month: z.number(),
+  calendar_month: z.number(),
   budget: z.number(),
   actual: z.number(),
   cumulative_budget: z.number(),
@@ -241,6 +242,7 @@ const CockpitSchema = z.object({
     .nullable(),
   currency_code: z.string().nullable(),
   as_of_month: z.number().nullable(),
+  fiscal_start_month: z.number(),
   totals: CockpitFiguresSchema,
   rows: z.array(CockpitRowSchema),
   months: z.array(CockpitMonthSchema),
@@ -329,6 +331,8 @@ const PeriodSchema = z.object({
   actual_amount: z.number(),
   pending_settlements: z.number(),
   is_future: z.boolean(),
+  calendar_year: z.number(),
+  calendar_month: z.number(),
   row_version: z.number().nullable(),
 });
 export type BudgetPeriod = z.infer<typeof PeriodSchema>;
@@ -415,6 +419,7 @@ export type FinanceCatalogValue = z.infer<typeof CatalogValueSchema>;
 const FinanceCatalogsSchema = z.object({
   cost_categories: z.array(CatalogValueSchema),
   variance_reasons: z.array(CatalogValueSchema),
+  fiscal_year_start_month: z.number(),
 });
 export type FinanceCatalogs = z.infer<typeof FinanceCatalogsSchema>;
 

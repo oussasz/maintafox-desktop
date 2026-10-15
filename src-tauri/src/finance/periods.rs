@@ -5,11 +5,12 @@
 //! the same year. A month cannot be closed while OTs closed in it still wait for settlement, so a
 //! closed month always holds the complete maintenance cost of its OTs.
 
-use chrono::{Datelike, Utc};
+use chrono::Utc;
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use serde::{Deserialize, Serialize};
 
 use crate::errors::{AppError, AppResult};
+use crate::finance::fiscal;
 use crate::finance::wo_costing::decode;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,6 +29,9 @@ pub struct BudgetPeriod {
     pub pending_settlements: i64,
     /// The month has not ended yet (cannot be closed).
     pub is_future: bool,
+    /// Calendar year and month of this fiscal period (fiscal year start month setting).
+    pub calendar_year: i64,
+    pub calendar_month: i64,
     pub row_version: Option<i64>,
 }
 
@@ -98,8 +102,19 @@ pub async fn ensure_period_open<C: ConnectionTrait>(db: &C, fiscal_year: i64, mo
 }
 
 pub async fn list_budget_periods<C: ConnectionTrait>(db: &C, fiscal_year: i64) -> AppResult<Vec<BudgetPeriod>> {
-    let now = Utc::now();
-    let (this_year, this_month) = (i64::from(now.year()), i64::from(now.month()));
+    let start = fiscal::fiscal_start_month(db).await?;
+    let (this_year, this_month) = fiscal::current_period(start);
+    let pending_sql = format!(
+        "SELECT
+            (SELECT COALESCE(SUM(ba.amount_base), 0.0)
+               FROM budget_actuals ba JOIN budget_versions bv ON bv.id = ba.budget_version_id
+              WHERE bv.fiscal_year = ?1 AND ba.period_month = ?2
+                AND ba.posting_status IN ('posted', 'reversed')) AS actual_amount,
+            (SELECT COUNT(*) FROM wo_cost_settlements s
+              WHERE s.status = 'pending' AND {} = ?1 AND {} = ?2) AS pending",
+        fiscal::sql_fiscal_year("s.closed_at", "?3"),
+        fiscal::sql_fiscal_period("s.closed_at", "?3"),
+    );
     let mut out = Vec::with_capacity(12);
     for month in 1..=12_i64 {
         let row = db
@@ -118,16 +133,8 @@ pub async fn list_budget_periods<C: ConnectionTrait>(db: &C, fiscal_year: i64) -
         let figures = db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT
-                    (SELECT COALESCE(SUM(ba.amount_base), 0.0)
-                       FROM budget_actuals ba JOIN budget_versions bv ON bv.id = ba.budget_version_id
-                      WHERE bv.fiscal_year = ?1 AND ba.period_month = ?2
-                        AND ba.posting_status IN ('posted', 'reversed')) AS actual_amount,
-                    (SELECT COUNT(*) FROM wo_cost_settlements s
-                      WHERE s.status = 'pending'
-                        AND CAST(strftime('%Y', s.closed_at) AS INTEGER) = ?1
-                        AND CAST(strftime('%m', s.closed_at) AS INTEGER) = ?2) AS pending",
-                [fiscal_year.into(), month.into()],
+                pending_sql.clone(),
+                [fiscal_year.into(), month.into(), start.into()],
             ))
             .await?;
         let (actual_amount, pending) = match figures {
@@ -135,6 +142,7 @@ pub async fn list_budget_periods<C: ConnectionTrait>(db: &C, fiscal_year: i64) -
             None => (0.0, 0),
         };
         let is_future = fiscal_year > this_year || (fiscal_year == this_year && month >= this_month);
+        let (calendar_year, calendar_month) = fiscal::calendar_month(fiscal_year, month, start);
         out.push(match row {
             Some(r) => BudgetPeriod {
                 fiscal_year,
@@ -147,6 +155,8 @@ pub async fn list_budget_periods<C: ConnectionTrait>(db: &C, fiscal_year: i64) -
                 actual_amount,
                 pending_settlements: pending,
                 is_future,
+                calendar_year,
+                calendar_month,
                 row_version: decode(&r, "row_version")?,
             },
             None => BudgetPeriod {
@@ -160,6 +170,8 @@ pub async fn list_budget_periods<C: ConnectionTrait>(db: &C, fiscal_year: i64) -
                 actual_amount,
                 pending_settlements: pending,
                 is_future,
+                calendar_year,
+                calendar_month,
                 row_version: None,
             },
         });
@@ -213,13 +225,7 @@ pub async fn close_budget_period<C: ConnectionTrait>(
                 "UPDATE budget_periods SET status = 'closed', closed_at = ?, closed_by_id = ?, notes = ?,
                         row_version = row_version + 1, updated_at = ?
                  WHERE id = ?",
-                [
-                    now.clone().into(),
-                    actor_id.into(),
-                    notes.into(),
-                    now.into(),
-                    id.into(),
-                ],
+                [now.clone().into(), actor_id.into(), notes.into(), now.into(), id.into()],
             ))
             .await?;
         }

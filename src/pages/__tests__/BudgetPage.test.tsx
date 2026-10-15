@@ -146,6 +146,7 @@ const catalogs = {
       sort_order: 1,
     },
   ],
+  fiscal_year_start_month: 1,
 };
 
 beforeAll(async () => {
@@ -177,6 +178,7 @@ beforeEach(() => {
     version: null,
     currency_code: "DZD",
     as_of_month: 1,
+    fiscal_start_month: 1,
     totals: { budget: 0, committed: 0, actual: 0, forecast: 0, variance: 0 },
     rows: [],
     months: [],

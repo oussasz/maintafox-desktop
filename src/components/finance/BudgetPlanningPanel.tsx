@@ -629,7 +629,7 @@ function LinesSection({
   onChanged: () => Promise<void>;
 }) {
   const { t } = useTranslation("budget");
-  const { categoryLabel } = useFinanceCatalogs();
+  const { categoryLabel, periodLabel } = useFinanceCatalogs();
   const { formatCurrency } = useFormatters();
   const [lines, setLines] = useState<BudgetLine[]>([]);
   const [error, setError] = useState<unknown>(null);
@@ -710,7 +710,7 @@ function LinesSection({
                   <td className="px-3 py-2">{l.cost_center_code}</td>
                   <td className="px-3 py-2">{categoryLabel(l.budget_bucket)}</td>
                   <td className="px-3 py-2">
-                    {l.period_month ? t(`month.${l.period_month}`) : t("planning.annual")}
+                    {l.period_month ? periodLabel(l.period_month) : t("planning.annual")}
                   </td>
                   <td className="px-3 py-2 text-end font-mono tabular-nums">
                     {formatCurrency(l.planned_amount, version.currency_code)}
@@ -779,7 +779,7 @@ function LineDialog({
   onSaved: () => Promise<void>;
 }) {
   const { t } = useTranslation("budget");
-  const { categories, categoryLabel } = useFinanceCatalogs();
+  const { categories, categoryLabel, periodLabel } = useFinanceCatalogs();
   const [cc, setCc] = useState(line ? String(line.cost_center_id) : String(centers[0]?.id ?? ""));
   const [bucket, setBucket] = useState(line?.budget_bucket ?? "");
   // A new line starts on the first category of the reference catalog once it is loaded.
@@ -888,7 +888,7 @@ function LineDialog({
                   <SelectItem value={ANNUAL}>{t("planning.annual")}</SelectItem>
                   {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
                     <SelectItem key={m} value={String(m)}>
-                      {t(`month.${m}`)}
+                      {periodLabel(m)}
                     </SelectItem>
                   ))}
                 </SelectContent>

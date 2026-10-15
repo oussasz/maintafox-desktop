@@ -15,7 +15,9 @@ use crate::finance::cockpit::{self, BudgetCockpitDrilldownFilter, BudgetCockpitF
 use crate::finance::periods::{self, CloseBudgetPeriodInput, ReopenBudgetPeriodInput};
 use crate::finance::settlement;
 use crate::finance::wo_costing;
-use crate::inventory::domain::{InventoryArticleInput, InventoryReturnInput, InventoryStockAdjustInput, IssueStockRequest};
+use crate::inventory::domain::{
+    InventoryArticleInput, InventoryReturnInput, InventoryStockAdjustInput, IssueStockRequest,
+};
 use crate::wo::closeout::{
     self, SaveFailureDetailInput, SaveVerificationInput, UpdateWoRcaInput, WoCloseInput, WoReopenInput,
 };
@@ -134,7 +136,9 @@ async fn seed_plant(db: &DatabaseConnection, asset_cost_center: Option<&str>) {
         vec![CC_CODE.into()],
     )
     .await;
-    let currency = crate::inventory::fx::tenant_currency(db).await.expect("tenant currency");
+    let currency = crate::inventory::fx::tenant_currency(db)
+        .await
+        .expect("tenant currency");
     exec(
         db,
         "INSERT INTO budget_versions (entity_sync_id, fiscal_year, scenario_type, version_no, status, currency_code, title)
@@ -162,12 +166,7 @@ async fn seed_plant(db: &DatabaseConnection, asset_cost_center: Option<&str>) {
 }
 
 async fn cost_center_id(db: &DatabaseConnection) -> i64 {
-    scalar_i64(
-        db,
-        "SELECT id FROM cost_centers WHERE code = ?",
-        vec![CC_CODE.into()],
-    )
-    .await
+    scalar_i64(db, "SELECT id FROM cost_centers WHERE code = ?", vec![CC_CODE.into()]).await
 }
 
 async fn lookup_id(db: &DatabaseConnection, domain_key: &str) -> i64 {
@@ -438,23 +437,13 @@ async fn add_costs(db: &DatabaseConnection, wo_id: i64) {
         vec![po.into()],
     )
     .await;
-    let gr = scalar_i64(
-        db,
-        "SELECT id FROM goods_receipts WHERE gr_number = 'GR-FIN-1'",
-        vec![],
-    )
-    .await;
+    let gr = scalar_i64(db, "SELECT id FROM goods_receipts WHERE gr_number = 'GR-FIN-1'", vec![]).await;
     exec(
         db,
         "INSERT INTO goods_receipt_lines (goods_receipt_id, po_line_id, article_id, location_id, received_qty,
              accepted_qty, unit_price, unit_cost_tenant)
          VALUES (?, ?, ?, ?, 1, 1, 300.0, 300.0)",
-        vec![
-            gr.into(),
-            service_line.into(),
-            article_id.into(),
-            location_id.into(),
-        ],
+        vec![gr.into(), service_line.into(), article_id.into(), location_id.into()],
     )
     .await;
 
@@ -609,13 +598,18 @@ async fn s1_close_posts_each_cost_once_and_writes_it_on_the_ot() {
         "parts = issue − return at average cost: {:?}",
         before.parts_lines
     );
-    assert!(close_to(before.services.actual, 300.0), "contractor receipt {:?}", before.services);
-    assert!(close_to(before.other.actual, 50.0));
-    assert!(close_to(before.parts.committed, 80.0), "open material order {:?}", before.parts);
-    assert_eq!(
-        before.cost_center.as_ref().map(|c| c.source.as_str()),
-        Some("asset")
+    assert!(
+        close_to(before.services.actual, 300.0),
+        "contractor receipt {:?}",
+        before.services
     );
+    assert!(close_to(before.other.actual, 50.0));
+    assert!(
+        close_to(before.parts.committed, 80.0),
+        "open material order {:?}",
+        before.parts
+    );
+    assert_eq!(before.cost_center.as_ref().map(|c| c.source.as_str()), Some("asset"));
 
     complete_and_close(&db, wo_id).await;
 
@@ -636,7 +630,10 @@ async fn s1_close_posts_each_cost_once_and_writes_it_on_the_ot() {
         vec![wo_id.into()],
     )
     .await;
-    assert!(close_to(total_cost, 460.0), "OT carries the settled total, got {total_cost}");
+    assert!(
+        close_to(total_cost, 460.0),
+        "OT carries the settled total, got {total_cost}"
+    );
 
     // Idempotent: settling the same close again books nothing new.
     let rows = actual_rows(&db, wo_id).await;
@@ -659,10 +656,7 @@ async fn s2_without_cost_centre_settlement_is_pending_then_posted_by_finance() {
         .expect("query")
         .expect("settlement");
     assert_eq!(s.status, "pending");
-    assert_eq!(
-        s.pending_reason.as_deref(),
-        Some(settlement::PENDING_NO_COST_CENTER)
-    );
+    assert_eq!(s.pending_reason.as_deref(), Some(settlement::PENDING_NO_COST_CENTER));
     assert!(close_to(s.total_amount, 100.0), "figures kept on the pending row");
     assert_eq!(actual_rows(&db, wo_id).await, 0, "nothing booked while pending");
     let view = cockpit::get_budget_cockpit(
@@ -846,7 +840,10 @@ async fn s5_cockpit_compares_budget_commitment_actual_and_drills_to_documents() 
     assert!(close_to(services.budget, 2400.0));
     assert!(close_to(services.actual, 300.0));
     let parts = row("parts");
-    assert!(close_to(parts.committed, 80.0), "open PO for the OT is committed: {parts:?}");
+    assert!(
+        close_to(parts.committed, 80.0),
+        "open PO for the OT is committed: {parts:?}"
+    );
     assert!(parts.forecast >= parts.actual + parts.committed - 0.01);
     assert!(close_to(view.totals.actual, 460.0), "{:?}", view.totals);
 
@@ -924,7 +921,9 @@ async fn s6_cost_categories_and_variance_reasons_come_from_the_reference_data() 
     assert!(crate::reference::governance::system_values_locked(&domain));
 
     // A category the plant has not defined is refused until it exists in the reference data.
-    assert!(!is_active_code(&db, DOMAIN_COST_CATEGORIES, "energy").await.expect("lookup"));
+    assert!(!is_active_code(&db, DOMAIN_COST_CATEGORIES, "energy")
+        .await
+        .expect("lookup"));
     exec(
         &db,
         "INSERT INTO reference_values (entity_sync_id, set_id, code, label, sort_order, is_active)
@@ -934,6 +933,43 @@ async fn s6_cost_categories_and_variance_reasons_come_from_the_reference_data() 
         vec![DOMAIN_COST_CATEGORIES.into()],
     )
     .await;
-    assert!(is_active_code(&db, DOMAIN_COST_CATEGORIES, "energy").await.expect("lookup"));
-    assert!(!is_active_code(&db, DOMAIN_VARIANCE_REASONS, "made_up").await.expect("lookup"));
+    assert!(is_active_code(&db, DOMAIN_COST_CATEGORIES, "energy")
+        .await
+        .expect("lookup"));
+    assert!(!is_active_code(&db, DOMAIN_VARIANCE_REASONS, "made_up")
+        .await
+        .expect("lookup"));
+}
+
+#[tokio::test]
+async fn s7_fiscal_year_start_month_dates_settlements_in_fiscal_periods() {
+    let db = setup().await;
+    seed_plant(&db, Some(CC_CODE)).await;
+    exec(
+        &db,
+        "UPDATE app_settings SET setting_value_json = '7' WHERE setting_key = 'locale.fiscal_year_start_month'",
+        vec![],
+    )
+    .await;
+    let now = Utc::now();
+    let (fy, period) = crate::finance::fiscal::fiscal_period(i64::from(now.year()), i64::from(now.month()), 7);
+    // The approved budget must belong to the fiscal year the close falls in.
+    exec(
+        &db,
+        "UPDATE budget_versions SET fiscal_year = ? WHERE entity_sync_id = 'fin-bv'",
+        vec![fy.into()],
+    )
+    .await;
+    let wo_id = wo_in_progress(&db).await;
+    complete_and_close(&db, wo_id).await;
+    let s = settlement::active_settlement(&db, wo_id)
+        .await
+        .expect("query")
+        .expect("settlement");
+    assert_eq!(s.status, "posted", "{s:?}");
+    assert_eq!((s.fiscal_year, s.period_month), (Some(fy), Some(period)));
+
+    let months = periods::list_budget_periods(&db, fy).await.expect("periods");
+    assert_eq!(months[0].calendar_month, 7, "period 1 is July");
+    assert_eq!(months[11].calendar_month, 6, "period 12 is June");
 }

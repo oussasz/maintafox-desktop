@@ -71,7 +71,8 @@
     "diagnostics.log_retention_days": "Log Retention (days)",
     "ram.fmeca_rpn_critical_threshold": "FMECA RPN critical threshold",
     "documents.default_header": "Default document header",
-    "wo.reopen_window_days": "Reopen window after closure (days)"
+    "wo.reopen_window_days": "Reopen window after closure (days)",
+    "locale.fiscal_year_start_month": "Fiscal year starts in"
   },
   "documentHeader": {
     "title": "Documents & Branding",
@@ -220,6 +221,20 @@
     "channel": {
       "stable": "Stable",
       "beta": "Beta"
+    },
+    "month": {
+      "1": "January",
+      "2": "February",
+      "3": "March",
+      "4": "April",
+      "5": "May",
+      "6": "June",
+      "7": "July",
+      "8": "August",
+      "9": "September",
+      "10": "October",
+      "11": "November",
+      "12": "December"
     }
   },
   "tabs": {

@@ -99,7 +99,8 @@
       "currency_mismatch": "La devise du budget diffère de la devise de l'entreprise.",
       "period_closed": "Toutes les périodes restantes de l'exercice sont clôturées.",
       "no_currency": "La devise de l'entreprise n'est pas configurée.",
-      "unknown": "Cause inconnue."
+      "unknown": "Cause inconnue.",
+      "no_fiscal_calendar": "Le mois de début de l'exercice n'est pas configuré."
     },
     "fix": {
       "no_cost_center": "Renseignez le centre de coût de l'équipement (ou de son emplacement), ou choisissez-en un dans l'estimation de l'OT, puis relancez l'imputation.",
@@ -107,7 +108,8 @@
       "currency_mismatch": "Créez une version budgétaire dans la devise de l'entreprise, puis relancez l'imputation.",
       "period_closed": "Rouvrez une période de l'exercice (onglet Clôtures), puis relancez l'imputation.",
       "no_currency": "Configurez la devise dans Paramètres › Localisation, puis relancez l'imputation.",
-      "unknown": "Relancez l'imputation ; si elle reste en attente, contactez l'administrateur."
+      "unknown": "Relancez l'imputation ; si elle reste en attente, contactez l'administrateur.",
+      "no_fiscal_calendar": "Choisissez le mois de début de l'exercice dans Paramètres › Localisation, puis relancez l'imputation."
     }
   },
   "woCost": {

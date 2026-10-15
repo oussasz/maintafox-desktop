@@ -196,6 +196,8 @@ pub struct FinanceCatalogValue {
 pub struct FinanceCatalogs {
     pub cost_categories: Vec<FinanceCatalogValue>,
     pub variance_reasons: Vec<FinanceCatalogValue>,
+    /// Fiscal-year start month (Settings › Localization), so screens name periods by month.
+    pub fiscal_year_start_month: i64,
 }
 
 async fn catalog_values(conn: &impl ConnectionTrait, domain_code: &str) -> AppResult<Vec<FinanceCatalogValue>> {
@@ -218,7 +220,9 @@ async fn catalog_values(conn: &impl ConnectionTrait, domain_code: &str) -> AppRe
             Ok(FinanceCatalogValue {
                 code: r.try_get("", "code")?,
                 label: r.try_get("", "label")?,
-                description: r.try_get::<Option<String>>("", "description")?.filter(|d| !d.trim().is_empty()),
+                description: r
+                    .try_get::<Option<String>>("", "description")?
+                    .filter(|d| !d.trim().is_empty()),
                 is_active: r.try_get::<i64>("", "is_active")? != 0,
                 is_system: crate::reference::governance::metadata_marks_system_origin(metadata.as_deref()),
                 sort_order: r.try_get("", "sort_order")?,
@@ -232,5 +236,6 @@ pub async fn list_finance_catalogs(conn: &impl ConnectionTrait) -> AppResult<Fin
     Ok(FinanceCatalogs {
         cost_categories: catalog_values(conn, DOMAIN_COST_CATEGORIES).await?,
         variance_reasons: catalog_values(conn, DOMAIN_VARIANCE_REASONS).await?,
+        fiscal_year_start_month: crate::finance::fiscal::fiscal_start_month(conn).await?,
     })
 }

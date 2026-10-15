@@ -53,7 +53,7 @@ export function WoCostPanel({ woId, status }: WoCostPanelProps) {
   const { t } = useTranslation("budget");
   const { formatCurrency, formatNumber, formatDate } = useFormatters();
   const { can } = usePermissions();
-  const { categoryLabel } = useFinanceCatalogs();
+  const { categoryLabel, periodLabel } = useFinanceCatalogs();
   const [view, setView] = useState<WoCostView | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
@@ -269,7 +269,9 @@ export function WoCostPanel({ woId, status }: WoCostPanelProps) {
                 {t("woCost.settlement.posted", {
                   amount: money(settlement.total_amount),
                   cc: settlement.cost_center_code ?? "—",
-                  period: `${String(settlement.period_month ?? "").padStart(2, "0")}/${settlement.fiscal_year ?? ""}`,
+                  period: settlement.period_month
+                    ? `${periodLabel(settlement.period_month)} · ${settlement.fiscal_year ?? ""}`
+                    : "—",
                   date: formatDate(settlement.posted_at),
                 })}
               </span>

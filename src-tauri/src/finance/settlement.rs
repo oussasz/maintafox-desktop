@@ -18,11 +18,11 @@ use sea_orm::{ConnectionTrait, DbBackend, QueryResult, Statement};
 use serde::{Deserialize, Serialize};
 
 use crate::errors::{AppError, AppResult};
-use crate::finance::periods;
 use crate::finance::wo_costing::{
     compute_wo_cost_breakdown, decode, resolve_wo_cost_center, round_money, WoCostBreakdown, BUCKET_LABOR,
     BUCKET_OTHER, BUCKET_PARTS, BUCKET_SERVICES,
 };
+use crate::finance::{fiscal, periods};
 
 pub const SETTLEMENT_SOURCE_TYPE: &str = "wo_settlement";
 
@@ -31,6 +31,7 @@ pub const PENDING_NO_COST_CENTER: &str = "no_cost_center";
 pub const PENDING_NO_BUDGET_VERSION: &str = "no_budget_version";
 pub const PENDING_CURRENCY_MISMATCH: &str = "currency_mismatch";
 pub const PENDING_PERIOD_CLOSED: &str = "period_closed";
+pub const PENDING_NO_FISCAL_CALENDAR: &str = "no_fiscal_calendar";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WoCostSettlement {
@@ -266,7 +267,11 @@ fn now_text() -> String {
 }
 
 /// Cost columns on `work_orders` follow the settlement figures.
-async fn write_back_wo_costs<C: ConnectionTrait>(db: &C, breakdown: &WoCostBreakdown, bump_version: bool) -> AppResult<()> {
+async fn write_back_wo_costs<C: ConnectionTrait>(
+    db: &C,
+    breakdown: &WoCostBreakdown,
+    bump_version: bool,
+) -> AppResult<()> {
     let sql = if bump_version {
         "UPDATE work_orders SET labor_cost = ?, parts_cost = ?, service_cost = ?, total_cost = ?,
                 row_version = row_version + 1, updated_at = ?
@@ -367,51 +372,67 @@ async fn reopen_count_and_close<C: ConnectionTrait>(db: &C, wo_id: i64) -> AppRe
     Ok((decode(&row, "reopen_count")?, decode(&row, "closed_at")?))
 }
 
-/// Year and month a settlement is dated in: the OT's close date, else today.
-fn posting_date(closed_at: Option<&str>) -> (i64, i64) {
+/// Fiscal year and period a settlement is dated in: the OT's close date, else today.
+fn posting_period(closed_at: Option<&str>, fiscal_start: i64) -> (i64, i64) {
     let date = closed_at
         .and_then(|c| chrono::DateTime::parse_from_rfc3339(c).ok())
         .map(|d| d.with_timezone(&Utc))
         .unwrap_or_else(Utc::now);
-    (i64::from(date.year()), i64::from(date.month()))
+    fiscal::fiscal_period(i64::from(date.year()), i64::from(date.month()), fiscal_start)
 }
 
 /// Settles a just-closed OT (close-out hook). Never fails for a business reason: anything that
 /// prevents posting yields a `pending` settlement. Returns the OT's active settlement.
-pub async fn settle_closed_work_order<C: ConnectionTrait>(db: &C, wo_id: i64, actor_id: i64) -> AppResult<WoCostSettlement> {
+pub async fn settle_closed_work_order<C: ConnectionTrait>(
+    db: &C,
+    wo_id: i64,
+    actor_id: i64,
+) -> AppResult<WoCostSettlement> {
     if let Some(existing) = active_settlement(db, wo_id).await? {
         return Ok(existing);
     }
     let (cycle, closed_at) = reopen_count_and_close(db, wo_id).await?;
     let closed_at = closed_at.unwrap_or_else(now_text);
-    let (year, month) = posting_date(Some(&closed_at));
     let now = now_text();
     let sync_id = uuid::Uuid::new_v4().to_string();
 
-    let Ok(currency) = crate::inventory::fx::tenant_currency(db).await else {
-        db.execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "INSERT INTO wo_cost_settlements
+    // Without the tenant currency or fiscal calendar nothing can be dated or valued: pending.
+    let currency = crate::inventory::fx::tenant_currency(db).await.ok();
+    let fiscal_start = fiscal::fiscal_start_month(db).await.ok();
+    let (currency, fiscal_start) = match (currency, fiscal_start) {
+        (Some(currency), Some(fiscal_start)) => (currency, fiscal_start),
+        (_, fiscal_start) => {
+            let reason = if fiscal_start.is_none() {
+                PENDING_NO_FISCAL_CALENDAR
+            } else {
+                PENDING_NO_CURRENCY
+            };
+            let year = i64::from(Utc::now().year());
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO wo_cost_settlements
                 (entity_sync_id, work_order_id, settlement_cycle, status, pending_reason, fiscal_year,
                  currency_code, closed_at, row_version, created_at, updated_at)
              VALUES (?, ?, ?, 'pending', ?, ?, '', ?, 1, ?, ?)",
-            [
-                sync_id.into(),
-                wo_id.into(),
-                cycle.into(),
-                PENDING_NO_CURRENCY.into(),
-                year.into(),
-                closed_at.into(),
-                now.clone().into(),
-                now.into(),
-            ],
-        ))
-        .await?;
-        return active_settlement(db, wo_id)
-            .await?
-            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("settlement row missing")));
+                [
+                    sync_id.into(),
+                    wo_id.into(),
+                    cycle.into(),
+                    reason.into(),
+                    year.into(),
+                    closed_at.into(),
+                    now.clone().into(),
+                    now.into(),
+                ],
+            ))
+            .await?;
+            return active_settlement(db, wo_id)
+                .await?
+                .ok_or_else(|| AppError::Internal(anyhow::anyhow!("settlement row missing")));
+        }
     };
 
+    let (year, month) = posting_period(Some(&closed_at), fiscal_start);
     let breakdown = compute_wo_cost_breakdown(db, wo_id).await?;
     write_back_wo_costs(db, &breakdown, false).await?;
     let placement = place(db, wo_id, &currency, year, month).await?;
@@ -476,7 +497,8 @@ pub async fn retry_pending_settlement<C: ConnectionTrait>(
         ]));
     }
     let currency = crate::inventory::fx::tenant_currency(db).await?;
-    let (year, month) = posting_date(current.closed_at.as_deref());
+    let fiscal_start = fiscal::fiscal_start_month(db).await?;
+    let (year, month) = posting_period(current.closed_at.as_deref(), fiscal_start);
     let breakdown = compute_wo_cost_breakdown(db, current.work_order_id).await?;
     write_back_wo_costs(db, &breakdown, true).await?;
     let placement = place(db, current.work_order_id, &currency, year, month).await?;
@@ -534,7 +556,7 @@ pub async fn reverse_work_order_settlement<C: ConnectionTrait>(
     };
     let now = now_text();
     if active.status == "posted" {
-        let (this_year, this_month) = posting_date(None);
+        let (this_year, this_month) = fiscal::current_period(fiscal::fiscal_start_month(db).await?);
         let fiscal_year = active.fiscal_year.unwrap_or(this_year);
         let from_month = match this_year.cmp(&fiscal_year) {
             std::cmp::Ordering::Equal => this_month,

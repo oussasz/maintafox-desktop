@@ -57,6 +57,11 @@ const SELECT_OPTIONS: Record<string, SelectOption[]> = {
     { value: "0", labelKey: "options.weekStart.sunday" },
   ],
   "locale.currency_code": CURRENCY_SELECT_OPTIONS,
+  // Month the company's fiscal year starts in (budget periods); stored as a number 1..12.
+  "locale.fiscal_year_start_month": Array.from({ length: 12 }, (_, i) => ({
+    value: String(i + 1),
+    labelKey: `options.month.${i + 1}`,
+  })),
   "appearance.color_mode": [
     { value: "light", labelKey: "options.colorMode.light" },
     { value: "dark", labelKey: "options.colorMode.dark" },
@@ -260,6 +265,7 @@ export function SettingsValueEditor({
       if (
         type === "select" &&
         (setting.setting_key === "locale.week_start_day" ||
+          setting.setting_key === "locale.fiscal_year_start_month" ||
           setting.setting_key === "appearance.text_scale")
       ) {
         valueJson = newVal;

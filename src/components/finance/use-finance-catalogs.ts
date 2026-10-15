@@ -21,6 +21,11 @@ export function resetFinanceCatalogCache(): void {
   cache = null;
 }
 
+/** Calendar month (1..12) of a fiscal period (1..12) for a fiscal year starting in `start`. */
+export function periodCalendarMonth(period: number, start: number): number {
+  return ((start - 1 + period - 1) % 12) + 1;
+}
+
 /** Display label of a catalog value in the interface language. */
 export function catalogLabel(value: FinanceCatalogValue, language: string): string {
   return language.toLowerCase().startsWith("en") && value.description
@@ -35,12 +40,16 @@ export interface FinanceCatalogsState {
   reasons: FinanceCatalogValue[];
   categoryLabel: (code: string) => string;
   reasonLabel: (code: string) => string;
+  /** Fiscal-year start month (Settings › Localization); null until loaded. */
+  fiscalStartMonth: number | null;
+  /** Name of the calendar month of a fiscal period (1..12), e.g. period 1 = "Juillet". */
+  periodLabel: (period: number) => string;
   loaded: boolean;
   error: unknown;
 }
 
 export function useFinanceCatalogs(): FinanceCatalogsState {
-  const { i18n } = useTranslation();
+  const { i18n, t } = useTranslation("budget");
   const [catalogs, setCatalogs] = useState<FinanceCatalogs | null>(null);
   const [error, setError] = useState<unknown>(null);
 
@@ -71,8 +80,13 @@ export function useFinanceCatalogs(): FinanceCatalogsState {
       reasons: (catalogs?.variance_reasons ?? []).filter((v) => v.is_active),
       categoryLabel: (code: string) => find(catalogs?.cost_categories, code),
       reasonLabel: (code: string) => find(catalogs?.variance_reasons, code),
+      fiscalStartMonth: catalogs?.fiscal_year_start_month ?? null,
+      periodLabel: (period: number) =>
+        catalogs
+          ? t(`month.${periodCalendarMonth(period, catalogs.fiscal_year_start_month)}`)
+          : String(period),
       loaded: catalogs != null,
       error,
     };
-  }, [catalogs, error, language]);
+  }, [catalogs, error, language, t]);
 }

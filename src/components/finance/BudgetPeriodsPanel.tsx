@@ -76,7 +76,7 @@ export function BudgetPeriodsPanel({
     void load();
   }, [load, reloadToken]);
 
-  const monthLabel = (m: number) => `${t(`month.${m}`)} ${fiscalYear}`;
+  const monthLabel = (p: BudgetPeriod) => `${t(`month.${p.calendar_month}`)} ${p.calendar_year}`;
 
   const confirmClose = async () => {
     if (!closing) return;
@@ -87,7 +87,7 @@ export function BudgetPeriodsPanel({
     });
     setPeriods(updated);
     pushAppToast({
-      title: t("periods.closedToast", { month: monthLabel(closing.period_month) }),
+      title: t("periods.closedToast", { month: monthLabel(closing) }),
       variant: "success",
     });
     onChanged?.();
@@ -105,7 +105,7 @@ export function BudgetPeriodsPanel({
     );
     setPeriods(updated);
     pushAppToast({
-      title: t("periods.reopenedToast", { month: monthLabel(target.period_month) }),
+      title: t("periods.reopenedToast", { month: monthLabel(target) }),
       variant: "success",
     });
     onChanged?.();
@@ -150,7 +150,7 @@ export function BudgetPeriodsPanel({
               return (
                 <tr key={p.period_month} className="border-t border-surface-border">
                   <th scope="row" className="px-3 py-2 text-start font-medium">
-                    {t(`month.${p.period_month}`)}
+                    {monthLabel(p)}
                   </th>
                   <td className="px-3 py-2">
                     <StatusChip
@@ -221,7 +221,7 @@ export function BudgetPeriodsPanel({
       <ConfirmDialog
         open={closing != null}
         onOpenChange={(open) => (open ? undefined : setClosing(null))}
-        title={closing ? t("periods.closeTitle", { month: monthLabel(closing.period_month) }) : ""}
+        title={closing ? t("periods.closeTitle", { month: monthLabel(closing) }) : ""}
         description={t("periods.closeDescription")}
         confirmLabel={t("periods.close")}
         onConfirm={confirmClose}
@@ -239,9 +239,7 @@ export function BudgetPeriodsPanel({
       <ConfirmDialog
         open={reopening != null}
         onOpenChange={(open) => (open ? undefined : setReopening(null))}
-        title={
-          reopening ? t("periods.reopenTitle", { month: monthLabel(reopening.period_month) }) : ""
-        }
+        title={reopening ? t("periods.reopenTitle", { month: monthLabel(reopening) }) : ""}
         description={t("periods.reopenDescription")}
         confirmLabel={t("periods.reopen")}
         destructive

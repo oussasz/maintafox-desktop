@@ -99,7 +99,8 @@
       "currency_mismatch": "The budget currency differs from the company currency.",
       "period_closed": "Every remaining period of the year is closed.",
       "no_currency": "The company currency is not configured.",
-      "unknown": "Unknown cause."
+      "unknown": "Unknown cause.",
+      "no_fiscal_calendar": "The fiscal-year start month is not configured."
     },
     "fix": {
       "no_cost_center": "Set the cost centre on the asset (or its location), or choose one in the work order estimate, then retry the settlement.",
@@ -107,7 +108,8 @@
       "currency_mismatch": "Create a budget version in the company currency, then retry the settlement.",
       "period_closed": "Reopen a period of the year (Period close tab), then retry the settlement.",
       "no_currency": "Set the currency in Settings › Localization, then retry the settlement.",
-      "unknown": "Retry the settlement; if it stays pending, contact the administrator."
+      "unknown": "Retry the settlement; if it stays pending, contact the administrator.",
+      "no_fiscal_calendar": "Choose the fiscal-year start month in Settings › Localization, then retry the settlement."
     }
   },
   "woCost": {

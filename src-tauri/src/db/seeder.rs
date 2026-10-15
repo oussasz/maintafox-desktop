@@ -25,6 +25,8 @@ const DEFAULT_SETTINGS: &[(&str, &str, &str, &str)] = &[
     ("locale.number_format", "localization", "tenant", r#""fr-FR""#),
     ("locale.week_start_day", "localization", "tenant", r"1"),
     ("locale.currency_code", "localization", "tenant", r#""DZD""#),
+    // Month the company's fiscal year starts in (budget periods, settlement, period close).
+    ("locale.fiscal_year_start_month", "localization", "tenant", r"1"),
     ("appearance.color_mode", "appearance", "tenant", r#""light""#),
     ("appearance.density", "appearance", "tenant", r#""standard""#),
     ("appearance.text_scale", "appearance", "tenant", r"1.0"),
@@ -2943,8 +2945,8 @@ mod tests {
         assert_eq!(
             DEFAULT_SETTINGS.len(),
             // +locale.currency_code, +ram.fmeca_rpn_critical_threshold, +wo.reopen_window_days,
-            // +ram.fmeca_rating_scales
-            19,
+            // +ram.fmeca_rating_scales, +locale.fiscal_year_start_month
+            20,
             "Default settings count changed; update migration and verification checks"
         );
     }

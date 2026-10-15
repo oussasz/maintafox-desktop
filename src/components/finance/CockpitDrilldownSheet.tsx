@@ -42,7 +42,7 @@ export function CockpitDrilldownSheet({
 }: CockpitDrilldownSheetProps) {
   const { t } = useTranslation("budget");
   const { formatCurrency, formatDate } = useFormatters();
-  const { categoryLabel } = useFinanceCatalogs();
+  const { categoryLabel, periodLabel } = useFinanceCatalogs();
   const [data, setData] = useState<BudgetCockpitDrilldown | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(false);
@@ -128,7 +128,7 @@ export function CockpitDrilldownSheet({
                           {data.actuals.map((a) => (
                             <tr key={a.actual_id} className="border-b border-surface-border/60">
                               <td className="py-1 align-top">
-                                {a.period_month ? String(a.period_month).padStart(2, "0") : "—"}
+                                {a.period_month ? periodLabel(a.period_month) : "—"}
                                 <div className="text-text-muted">{formatDate(a.event_at)}</div>
                               </td>
                               <td className="py-1 align-top">

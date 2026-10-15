@@ -347,7 +347,11 @@ export function BudgetCockpitView({
           value={consumed == null ? "—" : formatPercent(consumed)}
           hint={
             cockpit.as_of_month
-              ? t("kpi.consumedHintMonth", { month: t(`month.${cockpit.as_of_month}`) })
+              ? t("kpi.consumedHintMonth", {
+                  month: t(
+                    `month.${cockpit.months[cockpit.as_of_month - 1]?.calendar_month ?? cockpit.as_of_month}`,
+                  ),
+                })
               : t("kpi.consumedHint")
           }
         />
@@ -486,7 +490,7 @@ function MonthlyBurn({ cockpit, money }: { cockpit: BudgetCockpit; money: (v: nu
               key={m.period_month}
               className="flex h-full flex-col justify-end"
               aria-label={t("burn.monthAria", {
-                month: t(`month.${m.period_month}`),
+                month: t(`month.${m.calendar_month}`),
                 budget: money(m.budget),
                 actual: money(m.actual),
               })}
@@ -507,7 +511,7 @@ function MonthlyBurn({ cockpit, money }: { cockpit: BudgetCockpit; money: (v: nu
                   cockpit.as_of_month === m.period_month && "font-semibold text-text-primary",
                 )}
               >
-                {t(`monthShort.${m.period_month}`)}
+                {t(`monthShort.${m.calendar_month}`)}
               </span>
             </li>
           );

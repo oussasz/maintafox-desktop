@@ -72,7 +72,7 @@ export function VarianceReviewsPanel({
   reloadToken = 0,
 }: VarianceReviewsPanelProps) {
   const { t } = useTranslation("budget");
-  const { categoryLabel, reasonLabel } = useFinanceCatalogs();
+  const { categoryLabel, reasonLabel, periodLabel } = useFinanceCatalogs();
   const { formatCurrency, formatPercent, formatDate } = useFormatters();
   const { can } = usePermissions();
   const { withStepUp, StepUpDialogElement } = useStepUp();
@@ -148,7 +148,7 @@ export function VarianceReviewsPanel({
                   <div className="min-w-0">
                     <div className="font-medium text-text-primary">
                       {r.cost_center_code} · {categoryLabel(r.budget_bucket)}
-                      {r.period_month ? ` · ${t(`month.${r.period_month}`)}` : ""}
+                      {r.period_month ? ` · ${periodLabel(r.period_month)}` : ""}
                     </div>
                     <div className="text-xs text-text-muted">
                       {t("reviews.opened", { date: formatDate(r.opened_at) })} ·{" "}

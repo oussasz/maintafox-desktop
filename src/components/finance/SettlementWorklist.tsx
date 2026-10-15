@@ -52,7 +52,7 @@ export function SettlementWorklist({
   const { t } = useTranslation("budget");
   const { formatCurrency, formatDate } = useFormatters();
   const { can } = usePermissions();
-  const { categoryLabel } = useFinanceCatalogs();
+  const { categoryLabel, periodLabel } = useFinanceCatalogs();
   const [filter, setFilter] = useState<Filter>("pending");
   const [rows, setRows] = useState<WoCostSettlement[]>([]);
   const [error, setError] = useState<unknown>(null);
@@ -205,7 +205,7 @@ export function SettlementWorklist({
         accessorFn: (s) => (s.period_month ?? 0) + (s.fiscal_year ?? 0) * 100,
         cell: ({ row }) =>
           row.original.period_month
-            ? `${String(row.original.period_month).padStart(2, "0")}/${row.original.fiscal_year}`
+            ? `${periodLabel(row.original.period_month)} · ${row.original.fiscal_year}`
             : "—",
       },
       {
@@ -256,7 +256,7 @@ export function SettlementWorklist({
           ) : null,
       },
     ],
-    [t, formatDate, formatCurrency, canPost, busyId, retry, categoryLabel],
+    [t, formatDate, formatCurrency, canPost, busyId, retry, categoryLabel, periodLabel],
   );
 
   return (

@@ -65,7 +65,10 @@ pub struct AssetCostHistory {
     pub assets_without_rav: i64,
 }
 
-pub async fn list_asset_cost_history<C: ConnectionTrait>(db: &C, filter: AssetCostFilter) -> AppResult<AssetCostHistory> {
+pub async fn list_asset_cost_history<C: ConnectionTrait>(
+    db: &C,
+    filter: AssetCostFilter,
+) -> AppResult<AssetCostHistory> {
     let now = Utc::now();
     let since_12m = (now - Duration::days(365)).format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let this_year = i64::from(now.year());

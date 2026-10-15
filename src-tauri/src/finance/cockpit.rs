@@ -14,11 +14,12 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use chrono::{Datelike, Utc};
+use chrono::Utc;
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use serde::{Deserialize, Serialize};
 
 use crate::errors::AppResult;
+use crate::finance::fiscal;
 use crate::finance::settlement::posting_budget_version;
 use crate::finance::wo_costing::{decode, resolve_wo_cost_center, round_money, BUCKET_PARTS, BUCKET_SERVICES};
 
@@ -69,6 +70,8 @@ pub struct BudgetCockpitRow {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BudgetCockpitMonth {
     pub period_month: i64,
+    /// Calendar month of the fiscal period (fiscal year start month setting).
+    pub calendar_month: i64,
     pub budget: f64,
     pub actual: f64,
     /// Running totals for the burn chart.
@@ -90,6 +93,8 @@ pub struct BudgetCockpit {
     pub currency_code: Option<String>,
     /// Current month when the year is the current year (forecast boundary).
     pub as_of_month: Option<i64>,
+    /// Fiscal-year start month (Settings › Localization); period 1 is this calendar month.
+    pub fiscal_start_month: i64,
     pub totals: CockpitFigures,
     pub rows: Vec<BudgetCockpitRow>,
     pub months: Vec<BudgetCockpitMonth>,
@@ -345,8 +350,8 @@ pub(crate) fn forecast_at_completion(
 }
 
 pub async fn get_budget_cockpit<C: ConnectionTrait>(db: &C, filter: BudgetCockpitFilter) -> AppResult<BudgetCockpit> {
-    let now = Utc::now();
-    let (this_year, this_month) = (i64::from(now.year()), i64::from(now.month()));
+    let fiscal_start_month = fiscal::fiscal_start_month(db).await?;
+    let (this_year, this_month) = fiscal::current_period(fiscal_start_month);
     let fy = filter.fiscal_year;
     let as_of_month = (fy == this_year).then_some(this_month);
 
@@ -571,6 +576,7 @@ pub async fn get_budget_cockpit<C: ConnectionTrait>(db: &C, filter: BudgetCockpi
             cum_actual += actual;
             BudgetCockpitMonth {
                 period_month: m,
+                calendar_month: fiscal::calendar_month(fy, m, fiscal_start_month).1,
                 budget: round_money(budget),
                 actual: round_money(actual),
                 cumulative_budget: round_money(cum_budget),
@@ -584,6 +590,7 @@ pub async fn get_budget_cockpit<C: ConnectionTrait>(db: &C, filter: BudgetCockpi
         version,
         currency_code,
         as_of_month,
+        fiscal_start_month,
         totals,
         rows,
         months,
@@ -685,7 +692,8 @@ pub async fn get_budget_cockpit_drilldown<C: ConnectionTrait>(
                 due_at: decode(&r, "due_at")?,
             });
         }
-        if filter.fiscal_year >= i64::from(Utc::now().year()) {
+        let (current_fy, _) = fiscal::current_period(fiscal::fiscal_start_month(db).await?);
+        if filter.fiscal_year >= current_fy {
             for (cc, c) in live_commitments_by_cost_center(db).await? {
                 if cc != Some(filter.cost_center_id) || bucket.as_deref().is_some_and(|b| b != c.bucket) {
                     continue;

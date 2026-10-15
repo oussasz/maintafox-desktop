@@ -16,7 +16,11 @@ import { variancePct } from "@/components/finance/VarianceReviewsPanel";
 import { parseAmount } from "@/components/finance/WoCostEstimateDialog";
 import { WoCostPanel, costVariance } from "@/components/finance/WoCostPanel";
 import { forecastTone } from "@/components/finance/finance-tone";
-import { catalogLabel, resetFinanceCatalogCache } from "@/components/finance/use-finance-catalogs";
+import {
+  catalogLabel,
+  periodCalendarMonth,
+  resetFinanceCatalogCache,
+} from "@/components/finance/use-finance-catalogs";
 import { useFormatters } from "@/hooks/use-formatters";
 import enCommon from "@/i18n/en/common.json";
 import enBudget from "@/i18n/locale-data/en/budget.json";
@@ -201,6 +205,7 @@ const catalogs = {
       sort_order: 1,
     },
   ],
+  fiscal_year_start_month: 1,
 };
 
 beforeAll(async () => {
@@ -227,6 +232,14 @@ beforeEach(() => {
 });
 
 describe("finance helpers", () => {
+  it("maps fiscal periods to calendar months from the start month", () => {
+    expect(periodCalendarMonth(1, 1)).toBe(1);
+    expect(periodCalendarMonth(1, 7)).toBe(7);
+    expect(periodCalendarMonth(6, 7)).toBe(12);
+    expect(periodCalendarMonth(7, 7)).toBe(1);
+    expect(periodCalendarMonth(12, 7)).toBe(6);
+  });
+
   it("labels catalog values in the interface language, never inventing one", () => {
     const value = catalogs.cost_categories[0] as (typeof catalogs.cost_categories)[number];
     expect(catalogLabel(value, "fr")).toBe("Main-d'œuvre");
@@ -271,6 +284,8 @@ describe("finance helpers", () => {
       actual_amount: 0,
       pending_settlements: 0,
       is_future: false,
+      calendar_year: 2026,
+      calendar_month: 9,
       row_version: null,
       ...over,
     });
@@ -372,6 +387,8 @@ describe("BudgetPeriodsPanel", () => {
       actual_amount: 0,
       pending_settlements: i === 1 ? 1 : 0,
       is_future: false,
+      calendar_year: 2025,
+      calendar_month: i + 1,
       row_version: null,
     }));
     svc.listBudgetPeriods.mockResolvedValue(months);
@@ -408,6 +425,7 @@ const cockpit = (over: Partial<BudgetCockpit> = {}): BudgetCockpit => ({
   },
   currency_code: "DZD",
   as_of_month: 10,
+  fiscal_start_month: 1,
   totals: { budget: 4200, committed: 80, actual: 460, forecast: 1500, variance: 2700 },
   rows: [
     {
@@ -427,6 +445,7 @@ const cockpit = (over: Partial<BudgetCockpit> = {}): BudgetCockpit => ({
   ],
   months: Array.from({ length: 12 }, (_, i) => ({
     period_month: i + 1,
+    calendar_month: i + 1,
     budget: 350,
     actual: i === 9 ? 460 : 0,
     cumulative_budget: 350 * (i + 1),
