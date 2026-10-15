@@ -676,7 +676,10 @@
       "holiday": "Férié",
       "no_schedule": "Sans horaire",
       "not_employed": "Hors contrat"
-    }
+    },
+    "migratedTitle": "Capacité reprise d'avant la mise à jour — à vérifier",
+    "migratedBody": "Cette équipe n'avait pas d'horaires : la mise à jour a conservé son ancienne capacité de {{hours}} h par jour sous forme de règle de capacité. Donnez des horaires à ses membres (jours fériés et absences seront alors comptés), ou confirmez ou modifiez la règle.",
+    "migratedConfirm": "Confirmer cette capacité"
   },
   "holidays": {
     "year": "Année",

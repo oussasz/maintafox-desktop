@@ -112,6 +112,10 @@ pub struct CapacityRule {
     pub row_version: i64,
     pub created_at: String,
     pub updated_at: String,
+    /// `migrated_default` when the upgrade created this rule to keep the team's former 8 h/day
+    /// (migration 192) and nobody has reviewed it yet; `None` once a planner saves it.
+    #[serde(default)]
+    pub origin: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

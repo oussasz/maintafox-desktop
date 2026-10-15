@@ -123,6 +123,8 @@
     "matchingSkills": "{{count}} matching skills",
     "costRange": "Estimated labor cost: {{min}} – {{max}}",
     "capacityRemaining": "Crew capacity this day: {{remaining}} h remaining of {{available}} h.",
+    "noTeamCapacity": "This team has no working hours that day (no shift schedule and no capacity rule).",
+    "setUpTeamCapacity": "Set up the team's capacity",
     "capacityBasis": {
       "rule": "capacity rule",
       "roster": "from shift schedules",

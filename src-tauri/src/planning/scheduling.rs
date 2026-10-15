@@ -18,7 +18,7 @@ use super::domain::{
 };
 use super::wo_sync::{self, WoSyncOutcome};
 
-const CAPACITY_COLS: &str = "id,entity_id,team_id,effective_start,effective_end,available_hours_per_day,max_overtime_hours_per_day,row_version,created_at,updated_at";
+const CAPACITY_COLS: &str = "id,entity_id,team_id,effective_start,effective_end,available_hours_per_day,max_overtime_hours_per_day,row_version,created_at,updated_at,origin";
 const WINDOW_COLS: &str =
     "id,entity_id,window_type,start_datetime,end_datetime,is_locked,lock_reason,row_version,created_at,updated_at";
 const COMMITMENT_COLS: &str = "sc.id,sc.schedule_candidate_id,sc.source_type,sc.source_id,sc.schedule_period_start,sc.schedule_period_end,sc.committed_start,sc.committed_end,sc.assigned_team_id,sc.assigned_personnel_id,sc.committed_by_id,sc.frozen_at,sc.estimated_labor_cost,sc.budget_threshold,sc.cost_variance_warning,sc.has_blocking_conflict,sc.nearest_feasible_window,sc.row_version,sc.created_at,sc.updated_at";
@@ -119,6 +119,7 @@ fn map_capacity_rule(row: &QueryResult) -> AppResult<CapacityRule> {
             .map_err(|e| decode_err("row_version", e))?,
         created_at: row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
         updated_at: row.try_get("", "updated_at").map_err(|e| decode_err("updated_at", e))?,
+        origin: row.try_get("", "origin").ok().flatten(),
     })
 }
 
@@ -989,7 +990,8 @@ pub async fn update_capacity_rule(
         DbBackend::Sqlite,
         "UPDATE capacity_rules
          SET effective_start = ?, effective_end = ?, available_hours_per_day = ?, max_overtime_hours_per_day = ?,
-             row_version = row_version + 1, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+             row_version = row_version + 1, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+             origin = NULL
          WHERE id = ? AND row_version = ?",
         [
             effective_start.into(),

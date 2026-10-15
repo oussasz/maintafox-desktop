@@ -15,7 +15,7 @@ import {
   ENTITY_DETAIL_HEADER_ACTION_BTN,
 } from "@/components/detail";
 import { CrewBadge } from "@/components/personnel/CrewBadge";
-import { TeamCapacityDays } from "@/components/personnel/TeamCapacityDays";
+import { MigratedCapacityNotice, TeamCapacityDays } from "@/components/personnel/TeamCapacityDays";
 import { TeamSkillsHeatmap } from "@/components/personnel/TeamSkillsHeatmap";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -420,6 +420,7 @@ export function TeamDetailWorkspace({
             </TabsContent>
 
             <TabsContent value="capacity" className="space-y-3">
+              <MigratedCapacityNotice teamId={teamId} />
               <DetailSectionCard title={t("capacityDays.title")}>
                 <TeamCapacityDays teamId={teamId} />
               </DetailSectionCard>

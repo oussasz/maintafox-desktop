@@ -6,11 +6,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { Button } from "@/components/ui/button";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import { Input } from "@/components/ui/input";
 import { StatusChip } from "@/components/ui/status-chip";
 import { mfTone, toneOf } from "@/design-system/tone";
+import { usePermissions } from "@/hooks/use-permissions";
 import { cn } from "@/lib/utils";
+import { listCapacityRules, updateCapacityRule } from "@/services/planning-service";
 import {
   CAPACITY_MAX_RANGE_DAYS,
   type PersonDayCapacity,
@@ -18,6 +21,8 @@ import {
   getPersonCapacity,
   getTeamCapacity,
 } from "@/services/workforce-service";
+import type { CapacityRule } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 import {
   CAPACITY_BASIS_TONE,
@@ -329,6 +334,82 @@ export function PersonCapacityDays({ personnelId }: { personnelId: number }) {
           </span>
         </div>
       ))}
+    </div>
+  );
+}
+
+/**
+ * Notice shown on a team until its capacity rule created by the upgrade ("migrated default",
+ * the former 8 h/day) has been reviewed: confirm it as is, or set up shift schedules / change
+ * the rule. Saving the rule clears the mark.
+ */
+export function MigratedCapacityNotice({
+  teamId,
+  onReviewed,
+}: {
+  teamId: number;
+  onReviewed?: () => void;
+}) {
+  const { t } = useTranslation("personnel");
+  const { can } = usePermissions();
+  const [rules, setRules] = useState<CapacityRule[]>([]);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      setRules(
+        (await listCapacityRules({ team_id: teamId })).filter(
+          (r) => r.origin === "migrated_default",
+        ),
+      );
+    } catch {
+      setRules([]);
+    }
+  }, [teamId]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  if (rules.length === 0) return null;
+  const rule = rules[0];
+  if (!rule) return null;
+
+  const confirm = async () => {
+    setBusy(true);
+    try {
+      await updateCapacityRule(rule.id, rule.row_version, {
+        effective_start: rule.effective_start,
+        effective_end: rule.effective_end,
+        available_hours_per_day: rule.available_hours_per_day,
+        max_overtime_hours_per_day: rule.max_overtime_hours_per_day,
+      });
+      await load();
+      onReviewed?.();
+    } catch {
+      // Reported by the global toast.
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div role="status" className={cn("rounded-md border p-3 text-sm", mfTone.attention.panel)}>
+      <p className="font-medium text-text-primary">{t("capacityDays.migratedTitle")}</p>
+      <p className="mt-1 text-text-secondary">
+        {t("capacityDays.migratedBody", { hours: rule.available_hours_per_day })}
+      </p>
+      {can(P.PLAN_EDIT) ? (
+        <Button
+          size="sm"
+          variant="outline"
+          className="mt-2"
+          disabled={busy}
+          onClick={() => void confirm()}
+        >
+          {t("capacityDays.migratedConfirm")}
+        </Button>
+      ) : null}
     </div>
   );
 }

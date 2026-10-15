@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Link } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { OverrideReasonDialog } from "@/components/planning/OverrideReasonDialog";
@@ -684,6 +685,15 @@ export function CommitDialog({
                     {dayCapacity.basis
                       ? ` · ${t(`commitment.capacityBasis.${dayCapacity.basis}`, { defaultValue: dayCapacity.basis })}`
                       : null}
+                  </p>
+                ) : null}
+                {dayCapacity &&
+                (dayCapacity.basis === "no_schedule" || dayCapacity.basis === "no_members") ? (
+                  <p className="text-[11px] text-tone-attention-fg" role="alert">
+                    {t("commitment.noTeamCapacity")}{" "}
+                    <Link to="/personnel?tab=teams" className="underline">
+                      {t("commitment.setUpTeamCapacity")}
+                    </Link>
                   </p>
                 ) : null}
                 {capacityBlocked ? (

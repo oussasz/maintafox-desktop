@@ -121,7 +121,44 @@ async fn insert_approved_di(db: &DatabaseConnection, code: &str) {
     .expect("insert approved di");
 }
 
+/// Capacity comes from the roster (no default hours): the test crew gets one member on a
+/// 7-day 08:00–16:00 shift, i.e. 8 h available every day.
+async fn give_team_roster_capacity(db: &DatabaseConnection, team_id: i64) {
+    for sql in [
+        "INSERT OR IGNORE INTO reference_values (entity_sync_id, set_id, code, label, sort_order, is_active) \
+         SELECT 'planning-test-7d-shift', rs.id, 'PLN-7D', 'Planning test 7-day shift', 99, 1 \
+         FROM reference_sets rs JOIN reference_domains rd ON rd.id = rs.domain_id \
+         WHERE UPPER(rd.code) = 'ORG.SCHEDULE_CLASS' AND rs.status = 'published' \
+         ORDER BY rs.version_no DESC LIMIT 1",
+        "INSERT OR IGNORE INTO schedule_details (reference_value_id, day_of_week, shift_start, shift_end, is_rest_day) \
+         SELECT rv.id, d.n, '08:00', '16:00', 0 FROM reference_values rv \
+         CROSS JOIN (SELECT 1 AS n UNION SELECT 2 UNION SELECT 3 UNION SELECT 4 UNION SELECT 5 UNION SELECT 6 \
+                     UNION SELECT 7) d \
+         WHERE rv.entity_sync_id = 'planning-test-7d-shift'",
+    ] {
+        db.execute(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
+            .await
+            .expect("test shift schedule");
+    }
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT OR IGNORE INTO personnel (employee_code, full_name, availability_status, primary_team_id, \
+         home_schedule_reference_value_id) \
+         SELECT ?, 'Planning roster technician', 'available', ?, rv.id FROM reference_values rv \
+         WHERE rv.entity_sync_id = 'planning-test-7d-shift'",
+        [format!("PLN-ROSTER-{team_id}").into(), team_id.into()],
+    ))
+    .await
+    .expect("roster member");
+}
+
 async fn get_any_team_id(db: &DatabaseConnection) -> i64 {
+    let team_id = get_any_team_id_inner(db).await;
+    give_team_roster_capacity(db, team_id).await;
+    team_id
+}
+
+async fn get_any_team_id_inner(db: &DatabaseConnection) -> i64 {
     let existing = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,

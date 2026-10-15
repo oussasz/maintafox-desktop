@@ -120,6 +120,8 @@ const CapacityRuleSchema = z.object({
   row_version: z.number(),
   created_at: z.string(),
   updated_at: z.string(),
+  /** `migrated_default` until a planner reviews the rule the upgrade created. */
+  origin: z.string().nullable().optional(),
 });
 
 const PlanningWindowSchema = z.object({

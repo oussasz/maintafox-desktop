@@ -123,6 +123,8 @@
     "matchingSkills": "{{count}} compétences correspondantes",
     "costRange": "Coût main-d'œuvre estimé : {{min}} – {{max}}",
     "capacityRemaining": "Capacité équipe ce jour : {{remaining}} h restantes sur {{available}} h.",
+    "noTeamCapacity": "Cette équipe n'a aucune heure de travail ce jour-là (ni horaire ni règle de capacité).",
+    "setUpTeamCapacity": "Définir la capacité de l'équipe",
     "capacityBasis": {
       "rule": "règle de capacité",
       "roster": "selon les horaires",

@@ -676,7 +676,10 @@
       "holiday": "Holiday",
       "no_schedule": "No schedule",
       "not_employed": "Not under contract"
-    }
+    },
+    "migratedTitle": "Capacity kept from before the update — please review",
+    "migratedBody": "This team had no shift schedules, so the update kept its former capacity of {{hours}} h every day as a capacity rule. Give its members shift schedules (holidays and absences are then counted), or confirm or change the rule.",
+    "migratedConfirm": "Confirm this capacity"
   },
   "holidays": {
     "year": "Year",

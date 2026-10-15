@@ -6,6 +6,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { GanttChart, LayoutGrid, List, Plus, RefreshCw, Users } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useSearchParams } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { DataTable } from "@/components/data/DataTable";
@@ -89,7 +90,13 @@ export function PersonnelPage() {
     () => (localStorage.getItem(VIEW_STORAGE_KEY) as PersonnelViewMode) || "list",
   );
   const [availabilityView, setAvailabilityView] = useState<AvailabilityViewMode>("chronology");
-  const [activeTab, setActiveTab] = useState<PersonnelTab>("directory");
+  const [searchParams] = useSearchParams();
+  const requestedTab = searchParams.get("tab");
+  const [activeTab, setActiveTab] = useState<PersonnelTab>(
+    requestedTab === "teams" || requestedTab === "calendar" || requestedTab === "companies"
+      ? requestedTab
+      : "directory",
+  );
   const [searchInput, setSearchInput] = useState("");
   const isDirectoryTab = activeTab === "directory";
   const isAvailabilityTab = activeTab === "availability";

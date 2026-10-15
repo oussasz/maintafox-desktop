@@ -5072,7 +5072,7 @@ export interface WoExecTask {
   result_code: TaskResultCode | null;
   notes: string | null;
   /** "planned" | "execution_added" | "generated" — enriched by backend JOIN */
-  origin?: string | null;
+  origin?: string | null | undefined;
 }
 
 /** Labor/intervener row as returned by execution commands (raw FK columns). */
@@ -5113,7 +5113,7 @@ export interface WoExecPart {
   notes: string | null;
   article_label?: string | null;
   /** "planned" | "execution_added" — origin of this part line */
-  origin?: string | null;
+  origin?: string | null | undefined;
   /** "pending" | "used" | "not_used" | "partial" */
   consumption_status?: string | null;
   not_used_reason_id?: number | null;
@@ -8069,6 +8069,8 @@ export interface CapacityRule {
   row_version: number;
   created_at: string;
   updated_at: string;
+  /** `migrated_default` until a planner reviews the rule the upgrade created. */
+  origin?: string | null | undefined;
 }
 
 export interface CapacityRuleFilter {

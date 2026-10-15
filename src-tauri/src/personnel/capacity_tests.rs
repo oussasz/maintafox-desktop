@@ -3,7 +3,7 @@
 
 use chrono::NaiveDate;
 use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
-use sea_orm_migration::MigratorTrait;
+use sea_orm_migration::{MigrationName, MigratorTrait};
 
 use crate::personnel::calendar::{list_holidays, upsert_holiday, WorkCalendarHolidayFilter, WorkCalendarHolidayUpsertInput};
 use crate::personnel::capacity::{person_capacity_range, team_capacity_hours, team_capacity_range};
@@ -93,6 +93,65 @@ async fn add_person(db: &DatabaseConnection, code: &str, team: i64, schedule_id:
     )
     .await;
     scalar_i64(db, &format!("SELECT id FROM personnel WHERE employee_code = '{code}'")).await
+}
+
+/// Upgrade path: a tenant's teams from before the update keep the capacity they had (the former
+/// 8 h/day default) as an editable rule marked for review; a team already on shift schedules
+/// keeps its roster capacity.
+#[tokio::test]
+async fn upgrade_keeps_existing_team_capacity_as_a_rule_to_review() {
+    let db = Database::connect("sqlite::memory:").await.expect("in-memory SQLite");
+    exec(&db, "PRAGMA foreign_keys = ON;").await;
+    let migrations = crate::migrations::Migrator::migrations();
+    let before = migrations
+        .iter()
+        .position(|m| m.name() == "m20261014_000192_work_calendar_holidays")
+        .expect("migration 192 registered");
+    crate::migrations::Migrator::up(&db, Some(u32::try_from(before).expect("count")))
+        .await
+        .expect("migrate to the pre-update schema");
+    for sql in [
+        "INSERT INTO teams (entity_sync_id, code, name, team_type, status, created_at, updated_at) \
+         VALUES ('upg-a', 'EQ-A', 'Mécanique', 'maintenance', 'active', datetime('now'), datetime('now'))",
+        "INSERT INTO teams (entity_sync_id, code, name, team_type, status, created_at, updated_at) \
+         VALUES ('upg-b', 'EQ-B', 'Électricité', 'maintenance', 'active', datetime('now'), datetime('now'))",
+    ] {
+        exec(&db, sql).await;
+    }
+    let team_b = scalar_i64(&db, "SELECT id FROM teams WHERE code = 'EQ-B'").await;
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO personnel (employee_code, full_name, availability_status, primary_team_id, \
+             home_schedule_reference_value_id) \
+             SELECT 'UPG-1', 'Électricien de jour', 'available', {team_b}, sd.reference_value_id \
+             FROM schedule_details sd WHERE sd.is_rest_day = 0 ORDER BY sd.reference_value_id LIMIT 1"
+        ),
+    )
+    .await;
+
+    crate::migrations::Migrator::up(&db, None).await.expect("apply the update");
+
+    let team_a = scalar_i64(&db, "SELECT id FROM teams WHERE code = 'EQ-A'").await;
+    assert_eq!(
+        scalar_i64(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM capacity_rules WHERE team_id = {team_a} AND origin = 'migrated_default' \
+                 AND available_hours_per_day = 8.0 AND effective_end IS NULL"
+            )
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        scalar_i64(&db, &format!("SELECT COUNT(*) FROM capacity_rules WHERE team_id = {team_b}")).await,
+        0,
+        "a team on shift schedules keeps its roster capacity"
+    );
+    let today = chrono::Utc::now().date_naive();
+    let kept = team_capacity_hours(&db, team_a, today).await.expect("capacity");
+    assert_eq!(kept.rule_available_hours, Some(8.0));
 }
 
 #[tokio::test]
