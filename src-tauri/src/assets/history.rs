@@ -276,11 +276,15 @@ pub async fn list_asset_history_events(
     let meter_rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT mr.id, mr.reading_at, mr.reading_value, mr.quality_flag, \
-                    em.name AS meter_name, em.unit AS meter_unit \
+            concat!(
+                "SELECT mr.id, mr.reading_at, mr.reading_value, mr.quality_flag, \
+                    em.name AS meter_name, ",
+                crate::reference::units::unit_symbol_of!("em.unit_value_id"),
+                " AS meter_unit \
              FROM asset_meter_readings mr \
              INNER JOIN equipment_meters em ON em.id = mr.meter_id \
-             WHERE em.equipment_id = ?",
+             WHERE em.equipment_id = ?"
+            ),
             [asset_id.into()],
         ))
         .await?;

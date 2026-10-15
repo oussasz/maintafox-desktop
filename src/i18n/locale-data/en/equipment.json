@@ -666,7 +666,7 @@
     "type": "Type",
     "typePlaceholder": "Choose a type",
     "unit": "Unit",
-    "unitHint": "For example h, cycles, km, m³.",
+    "unitHint": "Units of measure from Reference data (h, cycle, km, m³…).",
     "initial": "Initial reading",
     "rate": "Expected use per day",
     "rateHint": "Used to forecast meter-based maintenance.",

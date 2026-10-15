@@ -72,6 +72,7 @@
         "stock_locations",
         "warehouses",
         "lookup_values",
+        "reference_values",
         "article_families"
       ],
       "sync_status": "synced"
@@ -459,7 +460,8 @@
       "conflict_policy": "operator_review",
       "apply_priority": 5,
       "parents": [
-        "equipment"
+        "equipment",
+        "reference_values"
       ],
       "sync_status": "synced"
     },
@@ -626,7 +628,8 @@
       "apply_priority": 6,
       "parents": [
         "equipment",
-        "inspection_template_versions"
+        "inspection_template_versions",
+        "reference_values"
       ],
       "sync_status": "synced"
     },
@@ -862,7 +865,8 @@
       "parents": [
         "articles",
         "inventory_suppliers",
-        "lookup_values"
+        "lookup_values",
+        "reference_values"
       ],
       "sync_status": "synced"
     },
@@ -1997,7 +2001,7 @@
       "conflict_policy": "operator_review",
       "apply_priority": 4,
       "parents": [
-        "lookup_values",
+        "reference_values",
         "articles",
         "user_accounts"
       ],

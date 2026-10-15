@@ -666,7 +666,7 @@
     "type": "Type",
     "typePlaceholder": "Choisir un type",
     "unit": "Unité",
-    "unitHint": "Par exemple h, cycles, km, m³.",
+    "unitHint": "Unités de mesure des Données de référence (h, cycle, km, m³…).",
     "initial": "Relevé initial",
     "rate": "Utilisation prévue par jour",
     "rateHint": "Sert à prévoir la maintenance basée sur le compteur.",

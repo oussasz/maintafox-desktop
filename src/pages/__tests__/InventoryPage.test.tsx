@@ -41,8 +41,6 @@ vi.mock("@/services/inventory-service", async (importOriginal) => {
 vi.mock("@/services/lookup-service", () => ({
   getLookupValues: vi.fn(async (domain: string) => {
     const base = { fr_label: null, en_label: null, color: null, is_active: 1 };
-    if (domain === "inventory.unit_of_measure")
-      return [{ id: 10, code: "EA", label: "Each", ...base }];
     if (domain === "inventory.stocking_type")
       return [{ id: 11, code: "STOCK", label: "Stocked", ...base }];
     if (domain === "inventory.tax_category")
@@ -50,6 +48,35 @@ vi.mock("@/services/lookup-service", () => ({
     return [];
   }),
 }));
+
+// Stock units come from the governed reference list MEASURE.UNITS.
+vi.mock("@/services/reference-service", async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  return {
+    ...actual,
+    listPublishedReferenceValuesByDomainCode: vi.fn(async (code: string) =>
+      code === "MEASURE.UNITS"
+        ? [
+            {
+              id: 10,
+              set_id: 1,
+              parent_id: null,
+              code: "EA",
+              label: "Each",
+              description: null,
+              sort_order: 1,
+              color_hex: null,
+              icon_name: null,
+              semantic_tag: "count",
+              external_code: "H87",
+              is_active: true,
+              metadata_json: '{"origin":"system","symbol":"ea","label_en":"Each"}',
+            },
+          ]
+        : [],
+    ),
+  };
+});
 
 vi.mock("@/components/PermissionGate", () => ({
   PermissionGate: ({ children }: { children: ReactNode }) => <>{children}</>,
@@ -116,6 +143,7 @@ function article(overrides: Partial<InventoryArticleRow> = {}): InventoryArticle
     unit_value_id: 10,
     unit_code: "EA",
     unit_label: "Each",
+    unit_symbol: "ea",
     criticality_value_id: null,
     criticality_code: null,
     criticality_label: null,

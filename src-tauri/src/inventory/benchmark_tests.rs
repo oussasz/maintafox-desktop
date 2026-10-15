@@ -70,7 +70,7 @@ async fn article(db: &DatabaseConnection, code: &str, tracking: Tracking, barcod
         article_code: code.to_string(),
         article_name: format!("Article {code}"),
         family_id: None,
-        unit_value_id: lookup_id(db, "inventory.unit_of_measure").await,
+        unit_value_id: crate::reference::units::unit_id_by_code(db, "U").await.expect("unit U"),
         criticality_value_id: None,
         stocking_type_value_id: lookup_id(db, "inventory.stocking_type").await,
         tax_category_value_id: lookup_id(db, "inventory.tax_category").await,

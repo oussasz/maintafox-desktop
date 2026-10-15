@@ -1279,7 +1279,7 @@
   },
   "unitConversions": {
     "tab": "Unités et conversions",
-    "help": "1 unité de gauche = facteur × unité de droite. Le sens inverse est calculé ; une conversion propre à un article prime sur la conversion générale.",
+    "help": "1 unité de gauche = facteur × unité de droite ; le sens inverse est calculé. Ordre appliqué : la conversion propre à l'article, puis le facteur général d'une unité de l'usine (réglé sur l'unité dans les Données de référence, ex. 1 sac = 25 kg), puis une conversion générale entre unités standard.",
     "from": "Unité de départ",
     "to": "Unité d'arrivée",
     "factor": "Facteur",
@@ -1294,11 +1294,13 @@
     "path": {
       "identity": "même unité",
       "direct": "conversion directe",
-      "inverse": "inverse d'une conversion"
+      "inverse": "inverse d'une conversion",
+      "unit_factor": "facteur de l'unité"
     },
     "rule": "Conversion",
     "empty": "Aucune conversion définie pour l'instant.",
-    "deactivate": "Désactiver"
+    "deactivate": "Désactiver",
+    "plantUnitGeneral": "Le facteur général d'une unité de l'usine se règle sur l'unité, dans les Données de référence. Ici, choisissez un article pour une conversion qui lui est propre."
   },
   "page": {
     "title": "Magasin & achats",

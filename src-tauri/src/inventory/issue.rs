@@ -226,7 +226,7 @@ pub async fn resolve_scan(db: &DatabaseConnection, value: String) -> AppResult<S
         })
     };
     const ARTICLE_SELECT: &str = "SELECT a.id, a.article_code, a.article_name, u.code AS unit_code
-         FROM articles a JOIN lookup_values u ON u.id = a.unit_value_id";
+         FROM articles a JOIN reference_values u ON u.id = a.unit_value_id";
     for (column, matched) in [("a.barcode", "barcode"), ("a.article_code", "article_code")] {
         let rows = db
             .query_all(Statement::from_sql_and_values(

@@ -1279,7 +1279,7 @@
   },
   "unitConversions": {
     "tab": "Units & conversions",
-    "help": "1 unit on the left = factor × unit on the right. The reverse direction is derived; a conversion for one article takes precedence over the general one.",
+    "help": "1 unit on the left = factor × unit on the right; the inverse is derived. Order applied: the article's own conversion, then the general factor of a plant unit (set on the unit in Reference data, e.g. 1 bag = 25 kg), then a general conversion between standard units.",
     "from": "From unit",
     "to": "To unit",
     "factor": "Factor",
@@ -1294,11 +1294,13 @@
     "path": {
       "identity": "same unit",
       "direct": "direct conversion",
-      "inverse": "reverse of a conversion"
+      "inverse": "reverse of a conversion",
+      "unit_factor": "unit factor"
     },
     "rule": "Conversion",
     "empty": "No conversion defined yet.",
-    "deactivate": "Deactivate"
+    "deactivate": "Deactivate",
+    "plantUnitGeneral": "The general factor of a plant unit is set on the unit, in Reference data. Here, choose an article for a conversion of its own."
   },
   "page": {
     "title": "Inventory & procurement",

@@ -28,6 +28,8 @@ pub async fn ensure_system_reference_catalog_integrity(db: &DatabaseConnection) 
     // Shared DI / OT urgency scale and the OT types with their maintenance nature.
     crate::reference::urgency_scale::ensure_urgency_scale(db).await?;
     crate::wo::types::ensure_work_order_type_catalog(db).await?;
+    // Units of measure (COMPANY list) and their physical dimensions (SYSTEM list).
+    crate::reference::units::ensure_unit_catalog(db).await?;
     // Finance cost categories and variance reasons.
     crate::finance::reference_catalog::ensure_finance_reference_catalogs(db).await?;
     // Certification / authorisation types and skills in the tenant's language.

@@ -1,11 +1,19 @@
 /**
- * Unit conversions of stock units (Phase 6.8): `1 from unit = factor × to unit`, for every
- * article or for one article; the inverse is derived. Includes a converter to check a quantity.
+ * Unit conversions (Phase 6.8): `1 from unit = factor × to unit` between units of the governed
+ * list MEASURE.UNITS, for one article or (between standard units) for every article; the
+ * inverse is derived. The general factor of a plant unit (1 bag = 25 kg) is set on the unit in
+ * Données de référence; the article's own conversion wins over it. Includes a converter to check
+ * a quantity with the same rule the server applies.
  */
 
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import {
+  MeasureUnitSelect,
+  isStandardUnit,
+  unitSymbol,
+} from "@/components/lookups/MeasureUnitPicker";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { usePermissions } from "@/hooks/use-permissions";
@@ -18,7 +26,7 @@ import {
   listUnitConversions,
 } from "@/services/unit-conversion-service";
 import { toErrorMessage } from "@/utils/errors";
-import type { InventoryArticle, LookupValueOption } from "@shared/ipc-types";
+import type { InventoryArticle, ReferenceValue } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
 const selectClass = "h-9 rounded-md border border-surface-border bg-surface-1 px-2 text-sm";
@@ -31,7 +39,8 @@ export function parseFactor(raw: string): number | null {
 }
 
 interface Props {
-  unitOptions: LookupValueOption[];
+  /** Active units of MEASURE.UNITS. */
+  unitOptions: ReferenceValue[];
   articles: InventoryArticle[];
 }
 
@@ -65,8 +74,23 @@ export function UnitConversionsPanel({ unitOptions, articles }: Props) {
   }, [load]);
 
   const factorValue = parseFactor(factor);
-  const canCreate = from !== "" && to !== "" && from !== to && factorValue != null && !busy;
   const articleId = article === "" ? null : Number(article);
+  const unitById = (id: string) => unitOptions.find((u) => String(u.id) === id);
+  // A general conversion is only stored between standard units: the general factor of a plant
+  // unit is the one set on the unit (the server refuses the other case too).
+  const plantUnitInGeneralRule =
+    articleId == null &&
+    [from, to].some((id) => {
+      const u = unitById(id);
+      return u != null && !isStandardUnit(u);
+    });
+  const canCreate =
+    from !== "" &&
+    to !== "" &&
+    from !== to &&
+    factorValue != null &&
+    !plantUnitInGeneralRule &&
+    !busy;
 
   const onCreate = async () => {
     if (!canCreate || factorValue == null) return;
@@ -112,7 +136,10 @@ export function UnitConversionsPanel({ unitOptions, articles }: Props) {
     }
   };
 
-  const unitCode = (id: string) => unitOptions.find((u) => String(u.id) === id)?.code ?? "";
+  const unitCode = (id: string) => {
+    const u = unitById(id);
+    return u ? unitSymbol(u) : "";
+  };
 
   return (
     <div className="space-y-4 text-sm">
@@ -126,14 +153,12 @@ export function UnitConversionsPanel({ unitOptions, articles }: Props) {
       <div className="flex flex-wrap items-end gap-2">
         <label className="flex flex-col gap-1">
           <span className="text-xs text-text-muted">{t("unitConversions.from")}</span>
-          <select className={selectClass} value={from} onChange={(e) => setFrom(e.target.value)}>
-            <option value="">—</option>
-            {unitOptions.map((u) => (
-              <option key={u.id} value={String(u.id)}>
-                {u.code} — {u.label}
-              </option>
-            ))}
-          </select>
+          <MeasureUnitSelect
+            className={selectClass}
+            value={from === "" ? null : Number(from)}
+            units={unitOptions}
+            onChange={(id) => setFrom(id == null ? "" : String(id))}
+          />
         </label>
         <label className="flex flex-col gap-1">
           <span className="text-xs text-text-muted">{t("unitConversions.factor")}</span>
@@ -146,14 +171,12 @@ export function UnitConversionsPanel({ unitOptions, articles }: Props) {
         </label>
         <label className="flex flex-col gap-1">
           <span className="text-xs text-text-muted">{t("unitConversions.to")}</span>
-          <select className={selectClass} value={to} onChange={(e) => setTo(e.target.value)}>
-            <option value="">—</option>
-            {unitOptions.map((u) => (
-              <option key={u.id} value={String(u.id)}>
-                {u.code} — {u.label}
-              </option>
-            ))}
-          </select>
+          <MeasureUnitSelect
+            className={selectClass}
+            value={to === "" ? null : Number(to)}
+            units={unitOptions}
+            onChange={(id) => setTo(id == null ? "" : String(id))}
+          />
         </label>
         <label className="flex flex-col gap-1">
           <span className="text-xs text-text-muted">{t("unitConversions.article")}</span>
@@ -182,6 +205,9 @@ export function UnitConversionsPanel({ unitOptions, articles }: Props) {
           </>
         ) : null}
       </div>
+      {canManage && plantUnitInGeneralRule ? (
+        <p className="text-xs text-text-secondary">{t("unitConversions.plantUnitGeneral")}</p>
+      ) : null}
       {from !== "" && to !== "" && factorValue != null ? (
         <p className="text-xs text-text-secondary">
           {t("unitConversions.preview", {

@@ -73,6 +73,8 @@ pub struct InventoryArticle {
     pub unit_value_id: i64,
     pub unit_code: String,
     pub unit_label: String,
+    /// Symbol of the stock unit (`MEASURE.UNITS`).
+    pub unit_symbol: String,
     pub criticality_value_id: Option<i64>,
     pub criticality_code: Option<String>,
     pub criticality_label: Option<String>,

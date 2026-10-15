@@ -373,6 +373,7 @@ describe("TemplateBuilderDialog", () => {
         checkpoint_code: "PRESS",
         description: "Pressure",
         check_type: "numeric",
+        measurement_unit_id: 21,
         measurement_unit: "bar",
         normal_min: null,
         normal_max: 7.5,

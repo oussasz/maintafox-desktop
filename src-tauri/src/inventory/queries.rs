@@ -993,9 +993,9 @@ pub async fn update_stock_location(
 
 /// Article master rows with their stock totals summed over every location, in one query
 /// (no per-article balance calls from the UI).
-const ARTICLE_LIST_SELECT: &str = r#"
+const ARTICLE_LIST_SELECT_TEMPLATE: &str = r#"
     SELECT a.id, a.article_code, a.article_name, a.family_id, af.code AS family_code, af.name AS family_name,
-           a.unit_value_id, u.code AS unit_code, u.label AS unit_label,
+           a.unit_value_id, u.code AS unit_code, u.label AS unit_label, {UNIT_SYMBOL} AS unit_symbol,
            a.criticality_value_id, c.code AS criticality_code, c.label AS criticality_label,
            COALESCE(a.stocking_type_value_id, 0) AS stocking_type_value_id,
            COALESCE(st.code, '') AS stocking_type_code,
@@ -1025,7 +1025,7 @@ const ARTICLE_LIST_SELECT: &str = r#"
            CAST(COALESCE(sb.unvalued_qty, 0) AS REAL) AS unvalued_qty
     FROM articles a
     LEFT JOIN article_families af ON af.id = a.family_id
-    JOIN lookup_values u ON u.id = a.unit_value_id
+    JOIN reference_values u ON u.id = a.unit_value_id
     LEFT JOIN lookup_values c ON c.id = a.criticality_value_id
     LEFT JOIN lookup_values st ON st.id = a.stocking_type_value_id
     LEFT JOIN lookup_values tx ON tx.id = a.tax_category_value_id
@@ -1048,16 +1048,22 @@ const ARTICLE_LIST_SELECT: &str = r#"
     ) sb ON sb.article_id = a.id
 "#;
 
+/// Article list query with the symbol of the stock unit (`reference::units::symbol_sql`).
+fn article_list_select() -> String {
+    ARTICLE_LIST_SELECT_TEMPLATE.replace("{UNIT_SYMBOL}", &crate::reference::units::symbol_sql("u"))
+}
+
 pub async fn list_articles(
     db: &DatabaseConnection,
     filter: InventoryArticleFilter,
 ) -> AppResult<Vec<InventoryArticle>> {
+    let article_list_select = article_list_select();
     let rows = if let Some(search) = filter.search {
         let q = format!("%{}%", search.trim().to_lowercase());
         db.query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             format!(
-                "{ARTICLE_LIST_SELECT} \
+                "{article_list_select} \
                  WHERE LOWER(a.article_code) LIKE ? OR LOWER(a.article_name) LIKE ? \
                  ORDER BY a.article_code ASC"
             ),
@@ -1067,7 +1073,7 @@ pub async fn list_articles(
     } else {
         db.query_all(Statement::from_string(
             DbBackend::Sqlite,
-            format!("{ARTICLE_LIST_SELECT} ORDER BY a.article_code ASC"),
+            format!("{article_list_select} ORDER BY a.article_code ASC"),
         ))
         .await?
     };
@@ -1092,6 +1098,7 @@ pub async fn list_articles(
                 unit_value_id: row.try_get("", "unit_value_id")?,
                 unit_code: row.try_get("", "unit_code")?,
                 unit_label: row.try_get("", "unit_label")?,
+                unit_symbol: row.try_get("", "unit_symbol")?,
                 criticality_value_id: row.try_get("", "criticality_value_id")?,
                 criticality_code: row.try_get("", "criticality_code")?,
                 criticality_label: row.try_get("", "criticality_label")?,
@@ -1148,7 +1155,8 @@ pub async fn list_articles(
 }
 
 pub async fn create_article(db: &DatabaseConnection, input: InventoryArticleInput) -> AppResult<InventoryArticle> {
-    ensure_lookup_value_in_domain(db, input.unit_value_id, "inventory.unit_of_measure", "unit_value_id").await?;
+    // Stock unit: an active unit of the governed list MEASURE.UNITS.
+    crate::reference::units::ensure_unit(db, input.unit_value_id, "unit_value_id", true).await?;
     if let Some(criticality_id) = input.criticality_value_id {
         ensure_lookup_value_in_domain(db, criticality_id, "equipment.criticality", "criticality_value_id").await?;
     }
@@ -1311,7 +1319,24 @@ pub async fn update_article(
     expected_row_version: i64,
     input: InventoryArticleInput,
 ) -> AppResult<InventoryArticle> {
-    ensure_lookup_value_in_domain(db, input.unit_value_id, "inventory.unit_of_measure", "unit_value_id").await?;
+    // Stock unit: a new unit must be active in MEASURE.UNITS; the unit the article already has is
+    // kept even if the plant retired it since.
+    let current_unit: Option<i64> = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT unit_value_id FROM articles WHERE id = ?",
+            [article_id.into()],
+        ))
+        .await?
+        .map(|r| r.try_get::<i64>("", "unit_value_id"))
+        .transpose()?;
+    crate::reference::units::ensure_unit(
+        db,
+        input.unit_value_id,
+        "unit_value_id",
+        current_unit != Some(input.unit_value_id),
+    )
+    .await?;
     if let Some(criticality_id) = input.criticality_value_id {
         ensure_lookup_value_in_domain(db, criticality_id, "equipment.criticality", "criticality_value_id").await?;
     }

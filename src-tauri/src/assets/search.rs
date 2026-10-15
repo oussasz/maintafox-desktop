@@ -469,7 +469,8 @@ pub(crate) fn ids_json(ids: &[i64]) -> String {
 
 /// Enriched SELECT for search results. Class / family / subfamily / criticality /
 /// status expressions match `ASSET_SELECT` in identity.rs so List and Details share SSOT.
-const SEARCH_SELECT: &str = r"
+const SEARCH_SELECT: &str = concat!(
+    r"
     e.id,
     e.entity_sync_id,
     e.asset_id_code         AS asset_code,
@@ -491,12 +492,15 @@ const SEARCH_SELECT: &str = r"
     -- Primary meter summary
     pm.name                 AS primary_meter_name,
     pm.current_reading      AS primary_meter_reading,
-    pm.unit                 AS primary_meter_unit,
+    ",
+    crate::reference::units::unit_symbol_of!("pm.unit_value_id"),
+    r" AS primary_meter_unit,
     pm.last_read_at         AS primary_meter_last_read_at,
     -- External ID count
     COALESCE(xid.ext_count, 0) AS external_id_count,
     e.row_version
-";
+"
+);
 
 const SEARCH_FROM: &str = r"
     FROM equipment e

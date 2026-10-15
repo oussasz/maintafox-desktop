@@ -196,7 +196,7 @@ async fn bearing_article(db: &DatabaseConnection) -> (i64, i64) {
         article_code: "ROUL-6205".to_string(),
         article_name: "Roulement 6205".to_string(),
         family_id: None,
-        unit_value_id: lookup_id(db, "inventory.unit_of_measure").await,
+        unit_value_id: crate::reference::units::unit_id_by_code(db, "U").await.expect("unit U"),
         criticality_value_id: None,
         stocking_type_value_id: lookup_id(db, "inventory.stocking_type").await,
         tax_category_value_id: lookup_id(db, "inventory.tax_category").await,

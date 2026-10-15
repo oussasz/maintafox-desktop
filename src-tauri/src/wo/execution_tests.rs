@@ -1336,7 +1336,7 @@ mod tests {
 
     /// Article with `qty` on hand at the seeded MAIN-BIN location. Returns (article_id, location_id).
     async fn seed_stock_article(db: &sea_orm::DatabaseConnection, code: &str, qty: f64) -> (i64, i64) {
-        let unit = lookup_value_id(db, "inventory.unit_of_measure").await;
+        let unit = crate::reference::units::unit_id_by_code(db, "U").await.expect("unit U");
         let stocking = lookup_value_id(db, "inventory.stocking_type").await;
         let tax = lookup_value_id(db, "inventory.tax_category").await;
         db.execute(Statement::from_sql_and_values(

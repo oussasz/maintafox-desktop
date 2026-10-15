@@ -77,7 +77,7 @@ const LINE_SELECT: &str = "SELECT sp.id, sp.equipment_id, sp.article_id, sp.quan
     COALESCE((SELECT SUM(sb.available_qty) FROM stock_balances sb WHERE sb.article_id = a.id), 0.0) AS available_qty \
     FROM equipment_spare_parts sp \
     JOIN articles a ON a.id = sp.article_id \
-    LEFT JOIN lookup_values u ON u.id = a.unit_value_id";
+    LEFT JOIN reference_values u ON u.id = a.unit_value_id";
 
 fn map_line(row: &QueryResult) -> AppResult<AssetSparePart> {
     Ok(AssetSparePart {

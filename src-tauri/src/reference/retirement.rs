@@ -299,6 +299,9 @@ pub async fn merge_domain_into(conn: &impl ConnectionTrait, retired: &str, targe
 /// retired list is not linked by id (its codes were rewritten in place), it is only deleted.
 /// - `DI.PRIORITY` → shared urgency scale `WORK.URGENCY` (codes rewritten by migration 198);
 /// - `DI.SYMPTOM` → shared failure-symptom list `WORK.SYMPTOMS` (migration 199).
+///
+/// The fixed lookup `inventory.unit_of_measure` (`lookup_*` tables) is retired by the same pass,
+/// see `units::retire_legacy_unit_lookup` (migration 201).
 pub const RETIRED_DOMAINS: &[(&str, Option<&str>)] = &[("DI.PRIORITY", None), ("DI.SYMPTOM", Some("WORK.SYMPTOMS"))];
 
 /// Startup retirement pass, run once change capture is installed. Migrations run with capture
@@ -332,6 +335,12 @@ async fn retire_superseded_domains_in(conn: &impl ConnectionTrait) -> AppResult<
         if done {
             retired.push((*domain).to_string());
         }
+    }
+    // The fixed lookup of stock units, replaced by the units of measure `MEASURE.UNITS`
+    // (migration 201): links moved by code, then the lookup deleted.
+    if crate::reference::units::retire_legacy_unit_lookup(conn, crate::reference::units::LegacyLinkMode::Replay).await?
+    {
+        retired.push(crate::reference::units::LEGACY_UNIT_LOOKUP_DOMAIN.to_string());
     }
     Ok(retired)
 }

@@ -40,6 +40,9 @@ pub struct InspectionCheckpoint {
     /// Instruction shown to the technician in the field.
     pub description: Option<String>,
     pub check_type: String,
+    /// Unit of a measurement (`reference_values.id` of `MEASURE.UNITS`).
+    pub measurement_unit_id: Option<i64>,
+    /// Symbol of that unit, read from the reference data (never stored on the checkpoint).
     pub measurement_unit: Option<String>,
     pub normal_min: Option<f64>,
     pub normal_max: Option<f64>,
@@ -87,7 +90,9 @@ pub struct InspectionCheckpointDraft {
     #[serde(default)]
     pub description: Option<String>,
     pub check_type: String,
-    pub measurement_unit: Option<String>,
+    /// Unit of a measurement: an active unit of `MEASURE.UNITS`.
+    #[serde(default)]
+    pub measurement_unit_id: Option<i64>,
     pub normal_min: Option<f64>,
     pub normal_max: Option<f64>,
     pub warning_min: Option<f64>,

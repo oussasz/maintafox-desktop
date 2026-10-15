@@ -85,6 +85,7 @@ function makeArticle(overrides: Partial<InventoryArticleRow> = {}): InventoryArt
     unit_value_id: 10,
     unit_code: "EA",
     unit_label: "Each",
+    unit_symbol: "ea",
     criticality_value_id: null,
     criticality_code: null,
     criticality_label: null,

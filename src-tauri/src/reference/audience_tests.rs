@@ -23,6 +23,8 @@ use crate::reference::{
 const SYSTEM_CODES: &[&str] = &["DI.DISPOSITION", "EQUIPMENT.CRITICALITY", "EQUIPMENT.STATUS"];
 /// SYSTEM lists added by migration 198 (shared urgency scale, OT types and their natures).
 const SYSTEM_CODES_198: &[&str] = &["WORK.MAINTENANCE_NATURES", "WORK.ORDER_TYPES", "WORK.URGENCY"];
+/// SYSTEM list added by migration 201 (physical dimensions of the units of measure).
+const SYSTEM_CODES_201: &[&str] = &["MEASURE.DIMENSIONS"];
 
 fn assert_gate<T: std::fmt::Debug>(result: Result<T, AppError>, what: &str) {
     match result {
@@ -121,6 +123,7 @@ async fn backfill_marks_only_the_maintafox_lists_system() {
         SYSTEM_CODES
             .iter()
             .chain(SYSTEM_CODES_198)
+            .chain(SYSTEM_CODES_201)
             .copied()
             .collect::<BTreeSet<_>>()
     );

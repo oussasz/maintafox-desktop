@@ -88,10 +88,14 @@ pub async fn list_pm_asset_meters(db: &impl ConnectionTrait, equipment_id: i64) 
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, name, meter_type, unit, current_reading, current_reading + reading_offset AS lifetime,
+            concat!(
+                "SELECT id, name, meter_type, unit_value_id, ",
+                crate::reference::units::unit_symbol_of!("equipment_meters.unit_value_id"),
+                " AS unit, current_reading, current_reading + reading_offset AS lifetime,
                     rollover_value, last_read_at, is_primary
              FROM equipment_meters WHERE equipment_id = ? AND is_active = 1
-             ORDER BY is_primary DESC, name",
+             ORDER BY is_primary DESC, name"
+            ),
             [equipment_id.into()],
         ))
         .await?;
@@ -101,6 +105,7 @@ pub async fn list_pm_asset_meters(db: &impl ConnectionTrait, equipment_id: i64) 
                 id: r.try_get("", "id")?,
                 name: r.try_get("", "name")?,
                 meter_type: r.try_get("", "meter_type")?,
+                unit_value_id: r.try_get("", "unit_value_id")?,
                 unit: r.try_get("", "unit")?,
                 current_reading: r.try_get("", "current_reading")?,
                 lifetime_reading: r.try_get("", "lifetime")?,

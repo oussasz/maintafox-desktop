@@ -2,6 +2,7 @@ import { Loader2 } from "lucide-react";
 import { type Dispatch, type SetStateAction, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { unitOptionText } from "@/components/lookups/MeasureUnitPicker";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -12,7 +13,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { InventoryArticleInputFull } from "@/services/inventory-service";
-import type { ArticleFamily, LookupValueOption, StockLocation, Warehouse } from "@shared/ipc-types";
+import type {
+  ArticleFamily,
+  LookupValueOption,
+  ReferenceValue,
+  StockLocation,
+  Warehouse,
+} from "@shared/ipc-types";
 
 /** Article form state: the full item-master payload accepted by the backend. */
 export type ExtendedArticleInput = InventoryArticleInputFull;
@@ -23,7 +30,8 @@ export type ArticleEditorFieldsProps = {
   families: ArticleFamily[];
   warehouses: Warehouse[];
   preferredWarehouseLocations: StockLocation[];
-  unitOptions: LookupValueOption[];
+  /** Active units of the governed list MEASURE.UNITS. */
+  unitOptions: ReferenceValue[];
   criticalityOptions: LookupValueOption[];
   stockingTypeOptions: LookupValueOption[];
   taxCategoryOptions: LookupValueOption[];
@@ -80,7 +88,7 @@ export function ArticleEditorFields({
   procurementCategoryOptions,
   onRecalculateClasses,
 }: ArticleEditorFieldsProps) {
-  const { t } = useTranslation("inventory");
+  const { t, i18n } = useTranslation("inventory");
   const [recalculating, setRecalculating] = useState<"abc" | "xyz" | null>(null);
 
   const recalculate = async (kind: "abc" | "xyz") => {
@@ -143,7 +151,7 @@ export function ArticleEditorFields({
           <SelectContent>
             {unitOptions.map((u) => (
               <SelectItem key={u.id} value={String(u.id)}>
-                {u.code} - {u.label}
+                {unitOptionText(u, i18n.language)}
               </SelectItem>
             ))}
           </SelectContent>

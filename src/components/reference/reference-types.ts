@@ -39,7 +39,8 @@ export type ReferenceTypeId =
   | "inventory.abc_class"
   | "inventory.xyz_class"
   | "inventory.equivalence_type"
-  | "inventory.document_link_purpose";
+  | "inventory.document_link_purpose"
+  | "measure.unit";
 
 export interface ReferenceTypeConfig {
   /** Stable form-facing type id. */
@@ -61,7 +62,7 @@ export interface ReferenceTypeConfig {
    * Optional Manager value extensions for this domain (e.g. weekly schedule pattern).
    * Drives ReferenceValueEditor columns — not combobox create flags.
    */
-  valueExtensions?: ReadonlyArray<"schedule_pattern" | "maintenance_nature">;
+  valueExtensions?: ReadonlyArray<"schedule_pattern" | "maintenance_nature" | "measure_unit">;
   /** Empty-state copy key suffix under reference.combobox.types.{id} */
   emptyMessageFr: string;
   emptyMessageEn: string;
@@ -326,6 +327,17 @@ export const REFERENCE_TYPE_REGISTRY: Record<ReferenceTypeId, ReferenceTypeConfi
     gender: "m",
     emptyMessageFr: "Aucun objet disponible",
     emptyMessageEn: "No document link purpose available",
+  },
+  "measure.unit": {
+    id: "measure.unit",
+    domainCode: "MEASURE.UNITS",
+    entityLabelFr: "unité de mesure",
+    entityLabelEn: "unit of measure",
+    gender: "f",
+    // Symbol, EN label, base standard unit and factor of a plant unit (reference::units).
+    valueExtensions: ["measure_unit"],
+    emptyMessageFr: "Aucune unité disponible",
+    emptyMessageEn: "No unit available",
   },
 };
 

@@ -366,9 +366,9 @@ async fn seed_meter(db: &DatabaseConnection, reading: f64, read_at: &str, rollov
         db,
         &format!(
             "INSERT INTO equipment_meters
-                (id, entity_sync_id, equipment_id, name, meter_type, unit, current_reading, last_read_at,
+                (id, entity_sync_id, equipment_id, name, meter_type, unit_value_id, current_reading, last_read_at,
                  expected_rate_per_day, rollover_value, is_primary, is_active, created_at, updated_at)
-             VALUES (9, 'bm_meter', 1, 'Heures marche', 'HOURS', 'h', {reading}, '{read_at}', 0, {rollover}, 1, 1,
+             VALUES (9, 'bm_meter', 1, 'Heures marche', 'HOURS', (SELECT v.id FROM reference_values v JOIN reference_sets s ON s.id = v.set_id JOIN reference_domains d ON d.id = s.domain_id WHERE d.code = 'MEASURE.UNITS' AND s.status = 'published' AND v.code = 'H'), {reading}, '{read_at}', 0, {rollover}, 1, 1,
                      strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'))"
         ),
     )

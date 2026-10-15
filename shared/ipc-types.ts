@@ -2173,6 +2173,9 @@ export interface AssetMeter {
   name: string;
   meter_code: string | null;
   meter_type: string;
+  /** Unit of the meter: `reference_values.id` of the governed list MEASURE.UNITS. */
+  unit_value_id: number | null;
+  /** Symbol of that unit, read from the reference data. */
   unit: string | null;
   current_reading: number;
   last_read_at: string | null;
@@ -2189,7 +2192,8 @@ export interface CreateAssetMeterPayload {
   name: string;
   meter_code?: string | null;
   meter_type: string;
-  unit?: string | null;
+  /** Unit of the meter: an active unit of MEASURE.UNITS. */
+  unit_value_id?: number | null;
   initial_reading?: number | null;
   expected_rate_per_day?: number | null;
   rollover_value?: number | null;
@@ -2569,6 +2573,8 @@ export interface InventoryArticle {
   unit_value_id: number;
   unit_code: string;
   unit_label: string;
+  /** Symbol of the stock unit (MEASURE.UNITS). */
+  unit_symbol: string;
   criticality_value_id: number | null;
   criticality_code: string | null;
   criticality_label: string | null;
@@ -7711,6 +7717,9 @@ export interface InspectionCheckpoint {
   /** Instruction shown to the technician in the field. */
   description: string | null;
   check_type: string;
+  /** Unit of a measurement: `reference_values.id` of MEASURE.UNITS. */
+  measurement_unit_id: number | null;
+  /** Symbol of that unit, read from the reference data. */
   measurement_unit: string | null;
   normal_min: number | null;
   normal_max: number | null;
@@ -7755,7 +7764,8 @@ export interface InspectionCheckpointDraft {
   checkpoint_code: string;
   description?: string | null;
   check_type: string;
-  measurement_unit?: string | null;
+  /** Unit of a measurement: an active unit of MEASURE.UNITS. */
+  measurement_unit_id?: number | null;
   normal_min?: number | null;
   normal_max?: number | null;
   warning_min?: number | null;

@@ -138,6 +138,7 @@ const InventoryArticleSchema = z.object({
   unit_value_id: z.number(),
   unit_code: z.string(),
   unit_label: z.string(),
+  unit_symbol: z.string(),
   criticality_value_id: z.number().nullable(),
   criticality_code: z.string().nullable(),
   criticality_label: z.string().nullable(),

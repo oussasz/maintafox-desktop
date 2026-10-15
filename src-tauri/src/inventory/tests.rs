@@ -49,7 +49,7 @@ async fn main_location_id(db: &DatabaseConnection) -> i64 {
 }
 
 async fn create_test_article(db: &DatabaseConnection, code: &str) -> i64 {
-    let unit_value_id = first_active_lookup_value_id(db, "inventory.unit_of_measure").await;
+    let unit_value_id = crate::reference::units::unit_id_by_code(db, "U").await.expect("unit U");
     let stocking_type_value_id = first_active_lookup_value_id(db, "inventory.stocking_type").await;
     let tax_category_value_id = first_active_lookup_value_id(db, "inventory.tax_category").await;
     let created = queries::create_article(

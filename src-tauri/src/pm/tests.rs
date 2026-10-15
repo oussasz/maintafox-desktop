@@ -426,8 +426,8 @@ async fn meter_generation_respects_threshold_and_idempotency() {
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "INSERT INTO equipment_meters (entity_sync_id, equipment_id, name, meter_type, unit, current_reading, expected_rate_per_day, is_primary, is_active, created_at, updated_at)
-         VALUES ('meter_sync_pm', ?, 'Runtime', 'hours', 'h', 120, 0, 1, 1, strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
+        "INSERT INTO equipment_meters (entity_sync_id, equipment_id, name, meter_type, unit_value_id, current_reading, expected_rate_per_day, is_primary, is_active, created_at, updated_at)
+         VALUES ('meter_sync_pm', ?, 'Runtime', 'hours', (SELECT v.id FROM reference_values v JOIN reference_sets s ON s.id = v.set_id JOIN reference_domains d ON d.id = s.domain_id WHERE d.code = 'MEASURE.UNITS' AND s.status = 'published' AND v.code = 'H'), 120, 0, 1, 1, strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
         [equipment_id.into()],
     ))
     .await
@@ -1245,8 +1245,8 @@ async fn meter_reading_hook_generates_for_equipment_scope() {
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "INSERT INTO equipment_meters (entity_sync_id, equipment_id, name, meter_type, unit, current_reading, expected_rate_per_day, is_primary, is_active, created_at, updated_at)
-         VALUES ('meter_sync_pm_hook', ?, 'Runtime', 'hours', 'h', 50, 0, 1, 1, strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
+        "INSERT INTO equipment_meters (entity_sync_id, equipment_id, name, meter_type, unit_value_id, current_reading, expected_rate_per_day, is_primary, is_active, created_at, updated_at)
+         VALUES ('meter_sync_pm_hook', ?, 'Runtime', 'hours', (SELECT v.id FROM reference_values v JOIN reference_sets s ON s.id = v.set_id JOIN reference_domains d ON d.id = s.domain_id WHERE d.code = 'MEASURE.UNITS' AND s.status = 'published' AND v.code = 'H'), 50, 0, 1, 1, strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
         [equipment_id.into()],
     ))
     .await
@@ -1877,8 +1877,8 @@ async fn meter_plan_on_a_chosen_asset_meter_recurs_every_interval() {
     .expect("insert equipment");
     db.execute(Statement::from_string(
         DbBackend::Sqlite,
-        "INSERT INTO equipment_meters (id, entity_sync_id, equipment_id, name, meter_type, unit, current_reading, expected_rate_per_day, is_primary, is_active, created_at, updated_at)
-         VALUES (7, 'meter_sync_interval', 1, 'Heures marche', 'hours', 'h', 1100, 0, 1, 1,
+        "INSERT INTO equipment_meters (id, entity_sync_id, equipment_id, name, meter_type, unit_value_id, current_reading, expected_rate_per_day, is_primary, is_active, created_at, updated_at)
+         VALUES (7, 'meter_sync_interval', 1, 'Heures marche', 'hours', (SELECT v.id FROM reference_values v JOIN reference_sets s ON s.id = v.set_id JOIN reference_domains d ON d.id = s.domain_id WHERE d.code = 'MEASURE.UNITS' AND s.status = 'published' AND v.code = 'H'), 1100, 0, 1, 1,
                  strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'))"
             .to_string(),
     ))

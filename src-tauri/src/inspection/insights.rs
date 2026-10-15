@@ -119,13 +119,16 @@ pub async fn get_inspection_kpis(db: &impl ConnectionTrait, input: InspectionKpi
     })
 }
 
-const ANOMALY_ROW_SELECT: &str = "SELECT a.id, a.round_id, a.result_id, a.anomaly_type, a.severity, a.description, \
+const ANOMALY_ROW_SELECT: &str = concat!(
+    "SELECT a.id, a.round_id, a.result_id, a.anomaly_type, a.severity, a.description, \
        a.linked_di_id, a.linked_work_order_id, a.requires_permit_review, a.resolution_status, \
        a.routing_decision, a.entity_sync_id, a.row_version, \
        ir.status AS round_status, ir.scheduled_at AS round_scheduled_at, ir.completed_at AS round_completed_at, \
        t.code AS template_code, t.name AS template_name, \
        c.id AS checkpoint_id, c.checkpoint_code, c.description AS checkpoint_description, c.check_type, \
-       c.measurement_unit, c.normal_min, c.normal_max, c.warning_min, c.warning_max, \
+       c.measurement_unit_id, ",
+    crate::reference::units::unit_symbol_of!("c.measurement_unit_id"),
+    " AS measurement_unit, c.normal_min, c.normal_max, c.warning_min, c.warning_max, \
        e.id AS asset_id, e.asset_id_code AS asset_code, e.name AS asset_name, \
        (CASE WHEN e.installed_at_node_id IS NOT NULL THEN 1 ELSE 0 END) AS asset_has_location, \
        r.result_status, r.numeric_value, r.text_value, r.comment AS result_comment, r.recorded_at, \
@@ -138,7 +141,8 @@ const ANOMALY_ROW_SELECT: &str = "SELECT a.id, a.round_id, a.result_id, a.anomal
      LEFT JOIN inspection_checkpoints c ON c.id = r.checkpoint_id \
      LEFT JOIN equipment e ON e.id = c.asset_id \
      LEFT JOIN intervention_requests di ON di.id = a.linked_di_id \
-     LEFT JOIN work_orders wo ON wo.id = a.linked_work_order_id";
+     LEFT JOIN work_orders wo ON wo.id = a.linked_work_order_id"
+);
 
 fn map_anomaly_row(row: &sea_orm::QueryResult) -> AppResult<InspectionAnomalyRow> {
     macro_rules! get {
@@ -168,6 +172,7 @@ fn map_anomaly_row(row: &sea_orm::QueryResult) -> AppResult<InspectionAnomalyRow
                 checkpoint_code: checkpoint_code.clone().unwrap_or_default(),
                 description: None,
                 check_type: "numeric".into(),
+                measurement_unit_id: None,
                 measurement_unit: measurement_unit.clone(),
                 normal_min,
                 normal_max,
