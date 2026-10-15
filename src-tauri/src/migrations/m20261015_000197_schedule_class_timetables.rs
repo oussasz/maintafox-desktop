@@ -17,7 +17,8 @@
 //! - every existing Classe horaire gets a first version from its weekly rows (`schedule_details`),
 //!   at 100 % utilisation, flagged for review (the planner sets the factor then);
 //! - a team that had its own capacity rule keeps that rule's hours: the rule was a team total, so
-//!   it becomes a day shift of (rule hours ÷ the team's active members at the update) on the
+//!   it becomes a day shift of (rule hours ÷ the team's headcount at the update, in full-time
+//!   equivalents: active members weighted by their allocation, as capacity counts them) on the
 //!   site's working days, 100 %, set as the team's default and flagged for review, with the
 //!   derivation in the version's note. No other team gets hours: a member without a Classe
 //!   horaire counts 0 h and is listed on the team page.
@@ -287,13 +288,24 @@ impl MigrationTrait for Migration {
                 DatabaseBackend::Sqlite,
                 "SELECT t.id, t.code, t.name, cr.available_hours_per_day AS hours, \
                         cr.max_overtime_hours_per_day AS overtime, cr.effective_start, \
-                        (SELECT COUNT(DISTINCT p.id) FROM personnel p \
-                          WHERE p.employment_status = 'active' AND (p.primary_team_id = t.id \
-                             OR EXISTS (SELECT 1 FROM personnel_team_assignments pta \
-                                         WHERE pta.personnel_id = p.id AND pta.team_id = t.id \
-                                           AND (pta.valid_to IS NULL OR date(pta.valid_to) >= date('now'))))) \
-                        AS members \
+                        hc.members, hc.fte \
                  FROM teams t \
+                 LEFT JOIN ( \
+                     SELECT team_id, COUNT(*) AS members, SUM(share) AS fte FROM ( \
+                         SELECT team_id, personnel_id, MAX(share) AS share FROM ( \
+                             SELECT pta.team_id, pta.personnel_id, \
+                                    MIN(MAX(pta.allocation_percent, 0.0), 100.0) / 100.0 AS share \
+                               FROM personnel_team_assignments pta \
+                               JOIN personnel p ON p.id = pta.personnel_id \
+                              WHERE p.employment_status = 'active' \
+                                AND (pta.valid_from IS NULL OR date(pta.valid_from) <= date('now')) \
+                                AND (pta.valid_to IS NULL OR date(pta.valid_to) >= date('now')) \
+                             UNION ALL \
+                             SELECT p.primary_team_id, p.id, 1.0 FROM personnel p \
+                              WHERE p.primary_team_id IS NOT NULL AND p.employment_status = 'active' \
+                                AND NOT EXISTS (SELECT 1 FROM personnel_team_assignments x WHERE x.personnel_id = p.id)) \
+                         GROUP BY team_id, personnel_id) \
+                     WHERE share > 0 GROUP BY team_id) hc ON hc.team_id = t.id \
                  JOIN capacity_rules cr ON cr.id = ( \
                      SELECT r.id FROM capacity_rules r WHERE r.team_id = t.id \
                      ORDER BY (r.effective_end IS NULL OR r.effective_end >= date('now')) DESC, \
@@ -316,21 +328,26 @@ impl MigrationTrait for Migration {
             let hours: f64 = team.try_get("", "hours").map_err(|e| err("rule hours", e))?;
             let overtime: f64 = team.try_get("", "overtime").unwrap_or(0.0);
             let since: String = team.try_get("", "effective_start").unwrap_or_default();
-            let members: i64 = team.try_get("", "members").unwrap_or(0);
+            let members: i64 = team.try_get::<Option<i64>>("", "members").ok().flatten().unwrap_or(0);
+            let fte: f64 = team.try_get::<Option<f64>>("", "fte").ok().flatten().unwrap_or(0.0);
             let code = format!("{RULE_CLASS_PREFIX}{}", code_part(&team_code));
             let h = format_hours(hours);
             let ot = format_hours(overtime);
-            // The rule was a team total: share it among the members of the time.
-            let per_member = if members > 0 { hours / members as f64 } else { hours };
+            // The rule was a team total: share it over the headcount capacity counts — each active
+            // member weighted by their allocation to the team (full-time equivalents).
+            let shared = members > 0 && fte > 0.0;
+            let per_member = if shared { hours / fte } else { hours };
             let pm = format_hours(per_member.min(24.0));
+            let headcount = format_hours(fte);
             let (label, note) = if english {
                 (
                     format!("{team_name} — former capacity rule ({h} h/day)"),
-                    if members > 0 {
+                    if shared {
                         format!(
                             "Built by the update from the team's capacity rule ({h} h per day, {ot} h overtime, since \
-                             {since}): {h} h ÷ {members} members = {pm} h per member per working day. It applies to \
-                             each member of the team who has no Classe horaire of their own: review it."
+                             {since}): {h} h ÷ {headcount} full-time equivalents ({members} members weighted by their \
+                             allocation to the team) = {pm} h per member per working day. It applies to each member of \
+                             the team who has no Classe horaire of their own: review it."
                         )
                     } else {
                         format!(
@@ -343,11 +360,12 @@ impl MigrationTrait for Migration {
             } else {
                 (
                     format!("{team_name} — ancienne règle de capacité ({h} h/jour)"),
-                    if members > 0 {
+                    if shared {
                         format!(
                             "Créée par la mise à jour à partir de la règle de capacité de l'équipe ({h} h par jour, \
-                             {ot} h sup., depuis le {since}) : {h} h ÷ {members} membres = {pm} h par membre et par \
-                             jour travaillé. Elle s'applique à chaque membre de l'équipe sans classe horaire propre : \
+                             {ot} h sup., depuis le {since}) : {h} h ÷ {headcount} équivalents temps plein ({members} \
+                             membres pondérés par leur affectation à l'équipe) = {pm} h par membre et par jour \
+                             travaillé. Elle s'applique à chaque membre de l'équipe sans classe horaire propre : \
                              à revoir."
                         )
                     } else {

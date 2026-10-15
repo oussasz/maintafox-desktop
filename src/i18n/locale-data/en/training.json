@@ -79,7 +79,7 @@
     "expired": "Expired",
     "pending": "To verify",
     "rejected": "Rejected",
-    "unvalidated": "Self-declared"
+    "unvalidated": "Not validated"
   },
   "skillStatus": {
     "validated": "Validated",
@@ -95,7 +95,8 @@
     "pending_verification": "Not verified",
     "rejected": "Rejected",
     "level_too_low": "Level too low",
-    "unvalidated": "Not validated"
+    "unvalidated": "Not validated",
+    "unverifiable": "Cannot be checked"
   },
   "gap": {
     "missing": "{{qualification}} is not held.",
@@ -104,7 +105,8 @@
     "pending_verification": "{{qualification}} is recorded but not verified yet.",
     "rejected": "{{qualification}} was rejected at verification.",
     "level_too_low": "{{qualification}}: level {{required}} required, level {{held}} held.",
-    "unvalidated": "{{qualification}} is self-declared and not validated."
+    "unvalidated": "{{qualification}} is not validated by a manager.",
+    "unverifiable": "{{qualification}} cannot be checked: the account has no personnel record."
   },
   "coverage": {
     "each": "Every person",
@@ -357,7 +359,8 @@
     "TIMETABLE_EXCEPTION_OVERLAP": "Another exception of this person (from {{from}}) covers part of these dates.",
     "SITE_WEEK_DAY_INVALID": "Weekdays run from Monday (1) to Sunday (7).",
     "SITE_WEEK_NO_WORKING_DAY": "Leave at least one working day in the week.",
-    "QUALIFICATION_PERSON_UNKNOWN": "This work order requires qualifications: link the account of {{name}} to a personnel record first.",
+    "QUALIFICATION_PERSON_UNKNOWN": "This work order requires qualifications: link the account of {{name}} to a personnel record, or have an authorised supervisor record an override for it on this work order.",
+    "QUALIFICATION_OVERRIDE_USE_PERSON": "The account of {{name}} is linked to a personnel record: check and override the person instead.",
     "QUALIFICATION_OVERRIDE_SELF": "You cannot override your own qualification gap: another authorised supervisor must do it.",
     "LABOR_PERSON_INACTIVE": "This person is no longer active: labour cannot be booked to them."
   }

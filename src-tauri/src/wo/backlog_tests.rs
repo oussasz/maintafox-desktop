@@ -153,6 +153,18 @@ async fn heatmap_compares_planned_load_with_capacity_and_lists_backlog() {
     ))
     .await
     .expect("crew");
+    // A crew without anybody on a Classe horaire: capacity unknown, nothing called overloaded.
+    let unscheduled = get_wo_backlog_heatmap(
+        &db,
+        WoBacklogHeatmapInput {
+            start_date: None,
+            weeks: 1,
+        },
+    )
+    .await
+    .expect("heatmap");
+    assert!(!unscheduled.capacity_configured);
+    assert!(unscheduled.days.iter().all(|d| !d.overloaded && d.capacity_hours.is_none()));
     // Capacity comes from the crew's Classes horaires: one member on a continuous 7 h shift, plus
     // the planner's overtime ceiling of 1 h (the rule's typed hours do not count).
     for sql in [

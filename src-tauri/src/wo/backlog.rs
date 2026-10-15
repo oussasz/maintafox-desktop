@@ -6,8 +6,8 @@
 //!   `expected_duration_hours`. Orders without an estimate are counted separately (never as 0 h).
 //! - Capacity of a day: for every active crew, the hours its members' Classes horaires give for
 //!   work orders that day plus the planner's overtime ceiling (`personnel::capacity`, the same
-//!   figure planning books against). Without any active crew the capacity is unknown (`None`)
-//!   and no day is called overloaded.
+//!   figure planning books against). Without any crew working to a schedule in the period the
+//!   capacity is unknown (`None`) and no day is called overloaded.
 //! - Blocked work: orders on hold, grouped by the semantic tag of their open delay reason.
 
 use std::collections::BTreeMap;
@@ -119,14 +119,18 @@ async fn capacity_by_day(db: &impl ConnectionTrait, days: &[NaiveDate]) -> AppRe
         return Ok(None);
     }
     let mut out: BTreeMap<String, f64> = days.iter().map(|d| (d.format("%Y-%m-%d").to_string(), 0.0)).collect();
+    // Without any crew working to a schedule in the period, capacity is unknown: no day is called
+    // overloaded (an upgraded database whose people have no Classe horaire yet).
+    let mut any_schedule = false;
     for team in teams {
         for day in crate::personnel::capacity::team_capacity_span(db, team, *first, *last).await? {
+            any_schedule |= day.basis == "roster";
             if let Some(total) = out.get_mut(&day.day) {
                 *total += day.available_hours + day.rule_overtime_hours.unwrap_or(0.0);
             }
         }
     }
-    Ok(Some(out))
+    Ok(any_schedule.then_some(out))
 }
 
 pub async fn get_wo_backlog_heatmap(

@@ -543,6 +543,8 @@ pub async fn is_weakening_change(
         && current.skill_reference_value_id == input.skill_reference_value_id;
     let not_lower = match (current.min_proficiency_level, input.min_proficiency_level) {
         (Some(was), Some(now)) => now >= was,
+        // Removing a minimum level loosens the requirement.
+        (Some(_), None) => false,
         _ => true,
     };
     let not_narrower = !(current.coverage == "each" && input.coverage.as_deref() == Some("any"));

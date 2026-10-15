@@ -501,12 +501,16 @@ pub async fn check_person_for_permit_role(
         crate::rbac::permissions::PTW_VIEW,
         PermissionScope::Global
     );
+    require_any_permission(&state, &user, PEOPLE_VIEW).await?;
     gate::check_person_for_permit_role(&state.db, personnel_id, permit_id, &role).await
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct RecordQualificationOverrideInput {
-    pub personnel_id: i64,
+    /// The person overridden…
+    pub personnel_id: Option<i64>,
+    /// …or a login that has no personnel record (work orders only).
+    pub user_id: Option<i64>,
     /// `work_order` | `permit_role`.
     pub context_kind: String,
     pub work_order_id: Option<i64>,
@@ -515,14 +519,21 @@ pub struct RecordQualificationOverrideInput {
     pub reason: String,
 }
 
-/// An authorised supervisor lets a person work although a requirement is not met (recorded,
-/// synchronised and audited; the assignment can then go ahead). Returns the person's check
-/// after the override.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RecordedQualificationOverride {
+    pub override_id: i64,
+    /// The person's check after the override (`None` for a login with no personnel record).
+    pub check: Option<PersonQualificationCheck>,
+}
+
+/// An authorised supervisor lets a person — or, on a work order, a login with no personnel
+/// record — work although a requirement is not met (recorded, synchronised and audited; the
+/// assignment can then go ahead). Never the supervisor's own gap.
 #[tauri::command]
 pub async fn record_qualification_override(
     input: RecordQualificationOverrideInput,
     state: State<'_, AppState>,
-) -> AppResult<PersonQualificationCheck> {
+) -> AppResult<RecordedQualificationOverride> {
     let user = require_session!(state);
     require_permission!(
         state,
@@ -536,12 +547,44 @@ pub async fn record_qualification_override(
         approved_by_id: i64::from(user.user_id),
     };
     let txn = state.db.begin().await?;
-    let check = match input.context_kind.as_str() {
+    // A login linked to a personnel record is overridden as that person.
+    let personnel_id = match (input.personnel_id, input.user_id) {
+        (Some(pid), _) => pid,
+        (None, Some(uid)) => match gate::personnel_for_user(&txn, uid).await? {
+            Some(pid) => pid,
+            None => {
+                if input.context_kind != "work_order" {
+                    return Err(crate::qualification::issue(
+                        "QUALIFICATION_PERSON_UNKNOWN",
+                        "This role requires qualifications: link this account to a personnel record first.",
+                        &[("name", gate::user_name(&txn, uid).await?)],
+                    ));
+                }
+                let wo_id = input.work_order_id.ok_or_else(|| {
+                    crate::qualification::issue("REQUIREMENT_TARGET_REQUIRED", "Choose the work order.", &[])
+                })?;
+                let override_id = gate::record_account_work_order_override(&txn, uid, wo_id, &override_input).await?;
+                txn.commit().await?;
+                return Ok(RecordedQualificationOverride {
+                    override_id,
+                    check: None,
+                });
+            }
+        },
+        (None, None) => {
+            return Err(crate::qualification::issue(
+                "REQUIREMENT_TARGET_REQUIRED",
+                "Choose the person.",
+                &[],
+            ))
+        }
+    };
+    let (override_id, check) = match input.context_kind.as_str() {
         "work_order" => {
             let wo_id = input.work_order_id.ok_or_else(|| {
                 crate::qualification::issue("REQUIREMENT_TARGET_REQUIRED", "Choose the work order.", &[])
             })?;
-            let before = gate::check_person_for_work_order(&txn, input.personnel_id, wo_id).await?;
+            let before = gate::check_person_for_work_order(&txn, personnel_id, wo_id).await?;
             if before.qualified {
                 return Err(crate::qualification::issue(
                     "QUALIFICATION_OVERRIDE_NOT_NEEDED",
@@ -549,15 +592,15 @@ pub async fn record_qualification_override(
                     &[("person", before.full_name)],
                 ));
             }
-            gate::enforce_work_order_assignment(&txn, input.personnel_id, wo_id, Some(&override_input)).await?;
-            gate::check_person_for_work_order(&txn, input.personnel_id, wo_id).await?
+            let id = gate::enforce_work_order_assignment(&txn, personnel_id, wo_id, Some(&override_input)).await?;
+            (id, gate::check_person_for_work_order(&txn, personnel_id, wo_id).await?)
         }
         "permit_role" => {
             let permit_id = input
                 .permit_id
                 .ok_or_else(|| crate::qualification::issue("REQUIREMENT_TARGET_REQUIRED", "Choose the permit.", &[]))?;
             let role = input.role.unwrap_or_default();
-            let before = gate::check_person_for_permit_role(&txn, input.personnel_id, permit_id, &role).await?;
+            let before = gate::check_person_for_permit_role(&txn, personnel_id, permit_id, &role).await?;
             if before.qualified {
                 return Err(crate::qualification::issue(
                     "QUALIFICATION_OVERRIDE_NOT_NEEDED",
@@ -565,8 +608,11 @@ pub async fn record_qualification_override(
                     &[("person", before.full_name)],
                 ));
             }
-            gate::enforce_permit_role(&txn, input.personnel_id, permit_id, &role, Some(&override_input)).await?;
-            gate::check_person_for_permit_role(&txn, input.personnel_id, permit_id, &role).await?
+            let id = gate::enforce_permit_role(&txn, personnel_id, permit_id, &role, Some(&override_input)).await?;
+            (
+                id,
+                gate::check_person_for_permit_role(&txn, personnel_id, permit_id, &role).await?,
+            )
         }
         other => {
             return Err(crate::qualification::issue(
@@ -576,8 +622,13 @@ pub async fn record_qualification_override(
             ))
         }
     };
+    let override_id = override_id
+        .ok_or_else(|| crate::errors::AppError::Internal(anyhow::anyhow!("qualification override: not recorded")))?;
     txn.commit().await?;
-    Ok(check)
+    Ok(RecordedQualificationOverride {
+        override_id,
+        check: Some(check),
+    })
 }
 
 #[tauri::command]

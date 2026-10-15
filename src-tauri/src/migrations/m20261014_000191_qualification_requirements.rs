@@ -11,7 +11,8 @@
 //!   certification type or a skill at a minimum level. `coverage` says whether every person
 //!   assigned needs it (`each`) or at least one member of the crew (`any`).
 //! - `qualification_overrides`: append-only record of an authorised supervisor letting a person
-//!   work although a requirement was not met (who, on what, which gaps, why, when).
+//!   work although a requirement was not met (who, on what, which gaps, why, when). The person
+//!   is a personnel record, or — on a work order — a login that has no personnel record.
 //!
 //! Synchronised entity types: `qualification_requirements`, `qualification_overrides`.
 
@@ -102,7 +103,8 @@ impl MigrationTrait for Migration {
             "CREATE TABLE IF NOT EXISTS qualification_overrides (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
                 entity_sync_id  TEXT NOT NULL UNIQUE,
-                personnel_id    INTEGER NOT NULL REFERENCES personnel(id),
+                personnel_id    INTEGER NULL REFERENCES personnel(id),
+                user_id         INTEGER NULL REFERENCES user_accounts(id),
                 context_kind    TEXT NOT NULL CHECK (context_kind IN ('work_order', 'permit_role')),
                 work_order_id   INTEGER NULL REFERENCES work_orders(id),
                 permit_id       INTEGER NULL REFERENCES work_permits(id),
@@ -113,7 +115,10 @@ impl MigrationTrait for Migration {
                 approved_at     TEXT NOT NULL,
                 created_at      TEXT NOT NULL,
                 CHECK ((context_kind = 'work_order' AND work_order_id IS NOT NULL)
-                    OR (context_kind = 'permit_role' AND permit_id IS NOT NULL AND role_code IS NOT NULL))
+                    OR (context_kind = 'permit_role' AND permit_id IS NOT NULL AND role_code IS NOT NULL)),
+                -- A personnel record, or a login that has none (work orders only).
+                CHECK ((personnel_id IS NULL) <> (user_id IS NULL)),
+                CHECK (user_id IS NULL OR context_kind = 'work_order')
             )",
         )
         .await?;
@@ -125,6 +130,11 @@ impl MigrationTrait for Migration {
         db.execute_unprepared(
             "CREATE INDEX IF NOT EXISTS idx_qualification_overrides_wo \
              ON qualification_overrides(work_order_id)",
+        )
+        .await?;
+        db.execute_unprepared(
+            "CREATE INDEX IF NOT EXISTS idx_qualification_overrides_user \
+             ON qualification_overrides(user_id, work_order_id)",
         )
         .await?;
         Ok(())

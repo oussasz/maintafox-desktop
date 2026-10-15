@@ -310,6 +310,8 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
         "'Supervised on site by the shift lead'",
     ),
     ("qualification_overrides", "role_code", "NULL"),
+    // A personnel record or a login without one, never both.
+    ("qualification_overrides", "user_id", "NULL"),
     ("qualification_overrides", "permit_id", "NULL"),
     // A calendar day, not a timestamp.
     ("work_calendar_holidays", "holiday_date", "'2026-12-25'"),

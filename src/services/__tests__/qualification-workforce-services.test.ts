@@ -13,6 +13,7 @@ import {
   getWoQualificationAssessment,
   listQualificationOverrides,
   listQualificationRequirements,
+  recordAccountQualificationOverride,
   recordQualificationOverride,
   upsertQualificationRequirement,
 } from "../qualification-gate-service";
@@ -149,18 +150,32 @@ describe("qualification gate service", () => {
   });
 
   it("records an override and lists the log", async () => {
-    mockInvoke.mockResolvedValueOnce({ ...check, qualified: true });
-    await recordQualificationOverride(
+    mockInvoke.mockResolvedValueOnce({ override_id: 3, check: { ...check, qualified: true } });
+    const after = await recordQualificationOverride(
       7,
       { context_kind: "work_order", work_order_id: 4 },
       "Encadré sur place",
     );
+    expect(after.qualified).toBe(true);
     expect(mockInvoke).toHaveBeenLastCalledWith("record_qualification_override", {
       input: {
         personnel_id: 7,
+        user_id: null,
         reason: "Encadré sur place",
         context_kind: "work_order",
         work_order_id: 4,
+      },
+    });
+    // A login with no personnel record, on a work order.
+    mockInvoke.mockResolvedValueOnce({ override_id: 4, check: null });
+    expect(await recordAccountQualificationOverride(12, 4, "Intérim encadré par le chef")).toBe(4);
+    expect(mockInvoke).toHaveBeenLastCalledWith("record_qualification_override", {
+      input: {
+        personnel_id: null,
+        user_id: 12,
+        context_kind: "work_order",
+        work_order_id: 4,
+        reason: "Intérim encadré par le chef",
       },
     });
     mockInvoke.mockResolvedValueOnce([]);

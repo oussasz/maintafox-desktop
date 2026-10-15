@@ -486,8 +486,8 @@ pub async fn upsert_class_version(
     Ok(saved)
 }
 
-/// A planner confirms the Classe horaire as it stands (the upgrade's 85 % and Sunday–Thursday
-/// week, for instance): its versions are no longer flagged for review.
+/// A planner confirms the Classe horaire as it stands (for instance the 100 % and the day shift the
+/// upgrade gave it): its versions are no longer flagged for review.
 pub async fn confirm_class_review(
     db: &DatabaseConnection,
     reference_value_id: i64,

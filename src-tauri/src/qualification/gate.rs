@@ -85,7 +85,8 @@ pub struct QualificationGap {
     pub code: Option<String>,
     pub label: String,
     /// `missing` | `expired` | `expires_before_work` | `pending_verification` | `rejected` |
-    /// `level_too_low` | `unvalidated`.
+    /// `level_too_low` | `unvalidated` | `unverifiable` (a login with no personnel record,
+    /// recorded by its override).
     pub status: String,
     pub expires_at: Option<String>,
     pub held_level: Option<i64>,
@@ -199,7 +200,7 @@ pub async fn personnel_for_user(db: &impl ConnectionTrait, user_id: i64) -> AppR
 }
 
 /// Name shown for a login.
-async fn user_name(db: &impl ConnectionTrait, user_id: i64) -> AppResult<String> {
+pub async fn user_name(db: &impl ConnectionTrait, user_id: i64) -> AppResult<String> {
     Ok(db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -213,21 +214,31 @@ async fn user_name(db: &impl ConnectionTrait, user_id: i64) -> AppResult<String>
 
 /// Booking or assigning a login on a work order: the person behind it must hold what the work
 /// order requires. A login with no personnel card cannot be checked, so it is refused whenever
-/// the work order has any requirement (fails closed, like the LOTO roles).
+/// the work order has any requirement (fails closed, like the LOTO roles), unless an authorised
+/// supervisor recorded an override for that login on this work order.
 pub async fn enforce_user_on_work_order(db: &impl ConnectionTrait, user_id: i64, wo_id: i64) -> AppResult<()> {
-    match personnel_for_user(db, user_id).await? {
-        Some(pid) => enforce_work_order_assignment(db, pid, wo_id, None).await.map(|_| ()),
-        None if work_order_requirements(db, wo_id).await?.is_empty() => Ok(()),
-        None => Err(crate::qualification::issue(
-            "QUALIFICATION_PERSON_UNKNOWN",
-            "This work order requires qualifications: link this account to a personnel record first.",
-            &[("name", user_name(db, user_id).await?)],
-        )),
+    if let Some(pid) = personnel_for_user(db, user_id).await? {
+        return enforce_work_order_assignment(db, pid, wo_id, None).await.map(|_| ());
     }
+    let requirements = work_order_requirements(db, wo_id).await?;
+    if account_overridden(db, user_id, wo_id, &requirements).await? {
+        return Ok(());
+    }
+    Err(crate::qualification::issue(
+        "QUALIFICATION_PERSON_UNKNOWN",
+        "This work order requires qualifications: link this account to a personnel record, or have an \
+         authorised supervisor record an override for it on this work order.",
+        &[("name", user_name(db, user_id).await?)],
+    ))
 }
 
-/// Logins on a work order (labour, responsible) with no personnel card.
-async fn work_order_unidentified(db: &impl ConnectionTrait, wo_id: i64) -> AppResult<Vec<UnidentifiedUser>> {
+/// Logins on a work order (labour, responsible) with no personnel card and no override covering
+/// the requirements.
+async fn work_order_unidentified(
+    db: &impl ConnectionTrait,
+    wo_id: i64,
+    requirements: &[JobRequirement],
+) -> AppResult<Vec<UnidentifiedUser>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -245,15 +256,19 @@ async fn work_order_unidentified(db: &impl ConnectionTrait, wo_id: i64) -> AppRe
             [wo_id.into(), wo_id.into()],
         ))
         .await?;
-    rows.iter()
-        .map(|r| {
-            Ok(UnidentifiedUser {
-                user_id: r.try_get("", "user_id").map_err(|e| decode_err("user_id", e))?,
-                name: r.try_get("", "name").map_err(|e| decode_err("name", e))?,
-                role: r.try_get("", "role").map_err(|e| decode_err("role", e))?,
-            })
-        })
-        .collect()
+    let mut out = Vec::new();
+    for r in &rows {
+        let user_id: i64 = r.try_get("", "user_id").map_err(|e| decode_err("user_id", e))?;
+        if account_overridden(db, user_id, wo_id, requirements).await? {
+            continue;
+        }
+        out.push(UnidentifiedUser {
+            user_id,
+            name: r.try_get("", "name").map_err(|e| decode_err("name", e))?,
+            role: r.try_get("", "role").map_err(|e| decode_err("role", e))?,
+        });
+    }
+    Ok(out)
 }
 
 async fn person_identity(db: &impl ConnectionTrait, personnel_id: i64) -> AppResult<(String, String)> {
@@ -913,7 +928,7 @@ pub async fn assess_work_order(db: &impl ConnectionTrait, wo_id: i64) -> AppResu
     let unidentified = if requirements.is_empty() {
         Vec::new()
     } else {
-        work_order_unidentified(db, wo_id).await?
+        work_order_unidentified(db, wo_id, &requirements).await?
     };
     let ok = checks.iter().all(|c| c.qualified) && uncovered.is_empty() && unidentified.is_empty();
     Ok(WoQualificationAssessment {
@@ -1066,6 +1081,7 @@ pub(crate) fn validate_role(role: &str) -> AppResult<()> {
 /// Translation code of a gap (`training:errors.<code>`).
 pub fn gap_issue_code(gap: &QualificationGap) -> &'static str {
     match (gap.kind.as_str(), gap.status.as_str()) {
+        (_, "unverifiable") => "QUALIFICATION_PERSON_UNKNOWN",
         ("certification", "expired") => "QUALIFICATION_EXPIRED",
         ("certification", "expires_before_work") => "QUALIFICATION_EXPIRES_BEFORE_WORK",
         ("certification", "pending_verification") => "QUALIFICATION_PENDING_VERIFICATION",
@@ -1081,6 +1097,9 @@ pub fn gap_issue_code(gap: &QualificationGap) -> &'static str {
 fn gap_message(person: &str, gap: &QualificationGap) -> String {
     let expires = gap.expires_at.clone().unwrap_or_default();
     match gap_issue_code(gap) {
+        "QUALIFICATION_PERSON_UNKNOWN" => {
+            format!("{person}: {} cannot be checked (no personnel record).", gap.label)
+        }
         "QUALIFICATION_EXPIRED" => format!("{person}: {} expired on {expires}.", gap.label),
         "QUALIFICATION_EXPIRES_BEFORE_WORK" => {
             format!("{person}: {} expires on {expires}, before the planned work.", gap.label)
@@ -1141,12 +1160,7 @@ pub fn blocked_error(check: &PersonQualificationCheck) -> AppError {
     AppError::OrgValidationFailed(issues)
 }
 
-async fn record_override(
-    db: &impl ConnectionTrait,
-    check: &PersonQualificationCheck,
-    context: &OverrideContext<'_>,
-    input: &QualificationOverrideInput,
-) -> AppResult<i64> {
+fn override_reason(input: &QualificationOverrideInput) -> AppResult<&str> {
     let reason = input.reason.trim();
     if reason.chars().count() < MIN_OVERRIDE_REASON_CHARS {
         return Err(super::issue(
@@ -1155,36 +1169,179 @@ async fn record_override(
             &[("min", MIN_OVERRIDE_REASON_CHARS.to_string())],
         ));
     }
+    Ok(reason)
+}
+
+fn override_self_error() -> AppError {
+    super::issue(
+        "QUALIFICATION_OVERRIDE_SELF",
+        "You cannot override your own qualification gap: another authorised supervisor must do it.",
+        &[],
+    )
+}
+
+/// Who an override lets work: a personnel record, or a login that has none.
+enum OverrideSubject<'a> {
+    Person { personnel_id: i64, name: &'a str },
+    Account { user_id: i64, name: &'a str },
+}
+
+async fn record_override(
+    db: &impl ConnectionTrait,
+    check: &PersonQualificationCheck,
+    context: &OverrideContext<'_>,
+    input: &QualificationOverrideInput,
+) -> AppResult<i64> {
+    let reason = override_reason(input)?;
     // Separation of duties: nobody waives their own qualification gap.
     if personnel_for_user(db, input.approved_by_id).await? == Some(check.personnel_id) {
+        return Err(override_self_error());
+    }
+    let subject = OverrideSubject::Person {
+        personnel_id: check.personnel_id,
+        name: &check.full_name,
+    };
+    write_override(db, &subject, context, &check.gaps, reason, input.approved_by_id).await
+}
+
+/// A login with no personnel record on a work order with requirements: nothing can be checked,
+/// so an authorised supervisor (never that login itself) may let it work, recorded against every
+/// current requirement. A requirement added later blocks it again.
+pub async fn record_account_work_order_override(
+    db: &impl ConnectionTrait,
+    user_id: i64,
+    wo_id: i64,
+    input: &QualificationOverrideInput,
+) -> AppResult<i64> {
+    let reason = override_reason(input)?;
+    let exists = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id FROM user_accounts WHERE id = ? AND deleted_at IS NULL",
+            [user_id.into()],
+        ))
+        .await?
+        .is_some();
+    if !exists {
+        return Err(AppError::NotFound {
+            entity: "UserAccount".into(),
+            id: user_id.to_string(),
+        });
+    }
+    let name = user_name(db, user_id).await?;
+    if personnel_for_user(db, user_id).await?.is_some() {
         return Err(super::issue(
-            "QUALIFICATION_OVERRIDE_SELF",
-            "You cannot override your own qualification gap: another authorised supervisor must do it.",
-            &[],
+            "QUALIFICATION_OVERRIDE_USE_PERSON",
+            "This account is linked to a personnel record: check and override the person instead.",
+            &[("name", name)],
         ));
     }
+    if input.approved_by_id == user_id {
+        return Err(override_self_error());
+    }
+    let requirements = work_order_requirements(db, wo_id).await?;
+    if account_overridden(db, user_id, wo_id, &requirements).await? {
+        return Err(super::issue(
+            "QUALIFICATION_OVERRIDE_NOT_NEEDED",
+            "This person already meets the requirements; no override is needed.",
+            &[("person", name)],
+        ));
+    }
+    let gaps = unverifiable_gaps(&requirements);
+    let subject = OverrideSubject::Account { user_id, name: &name };
+    write_override(
+        db,
+        &subject,
+        &OverrideContext::WorkOrder(wo_id),
+        &gaps,
+        reason,
+        input.approved_by_id,
+    )
+    .await
+}
+
+/// What a login with no personnel record cannot show: every requirement of the work order.
+fn unverifiable_gaps(requirements: &[JobRequirement]) -> Vec<QualificationGap> {
+    requirements
+        .iter()
+        .map(|r| QualificationGap {
+            requirement_key: r.key(),
+            kind: r.kind().to_string(),
+            code: r.code.clone(),
+            label: r.label.clone(),
+            status: "unverifiable".to_string(),
+            expires_at: None,
+            held_level: None,
+            required_level: r.min_proficiency_level,
+            source_kind: r.source_kind.clone(),
+            source_code: r.source_code.clone(),
+        })
+        .collect()
+}
+
+/// A recorded override lets this login (no personnel record) work on the work order: it covers
+/// every current requirement (an unreadable override covers nothing).
+async fn account_overridden(
+    db: &impl ConnectionTrait,
+    user_id: i64,
+    wo_id: i64,
+    requirements: &[JobRequirement],
+) -> AppResult<bool> {
+    if requirements.is_empty() {
+        return Ok(true);
+    }
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT gaps_json FROM qualification_overrides \
+             WHERE user_id = ? AND context_kind = 'work_order' AND work_order_id = ?",
+            [user_id.into(), wo_id.into()],
+        ))
+        .await?;
+    let mut covered = BTreeSet::new();
+    for row in rows {
+        let gaps_json: String = row.try_get("", "gaps_json").map_err(|e| decode_err("gaps_json", e))?;
+        let gaps: Vec<QualificationGap> = serde_json::from_str(&gaps_json).unwrap_or_default();
+        covered.extend(gaps.into_iter().map(|g| g.requirement_key));
+    }
+    Ok(requirements.iter().all(|r| covered.contains(&r.key())))
+}
+
+async fn write_override(
+    db: &impl ConnectionTrait,
+    subject: &OverrideSubject<'_>,
+    context: &OverrideContext<'_>,
+    gaps: &[QualificationGap],
+    reason: &str,
+    approved_by_id: i64,
+) -> AppResult<i64> {
     let (kind, wo_id, permit_id, role): (&str, Option<i64>, Option<i64>, Option<&str>) = match context {
         OverrideContext::WorkOrder(wo) => ("work_order", Some(*wo), None, None),
         OverrideContext::PermitRole { permit_id, role } => ("permit_role", None, Some(*permit_id), Some(*role)),
     };
-    let gaps_json = serde_json::to_string(&check.gaps)?;
+    let (personnel_id, user_id, name) = match subject {
+        OverrideSubject::Person { personnel_id, name } => (Some(*personnel_id), None, *name),
+        OverrideSubject::Account { user_id, name } => (None, Some(*user_id), *name),
+    };
+    let gaps_json = serde_json::to_string(gaps)?;
     let now = now_ts();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO qualification_overrides \
-         (entity_sync_id, personnel_id, context_kind, work_order_id, permit_id, role_code, gaps_json, reason, \
-          approved_by_id, approved_at, created_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         (entity_sync_id, personnel_id, user_id, context_kind, work_order_id, permit_id, role_code, gaps_json, \
+          reason, approved_by_id, approved_at, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             crate::sync::identity::new_entity_sync_id().into(),
-            check.personnel_id.into(),
+            personnel_id.into(),
+            user_id.into(),
             kind.into(),
             wo_id.into(),
             permit_id.into(),
             role.map(str::to_string).into(),
             gaps_json.into(),
             reason.to_string().into(),
-            input.approved_by_id.into(),
+            approved_by_id.into(),
             now.clone().into(),
             now.into(),
         ],
@@ -1206,7 +1363,7 @@ async fn record_override(
             action_code: "qualification.override".to_string(),
             target_type: Some(kind.to_string()),
             target_id: wo_id.or(permit_id).map(|v| v.to_string()),
-            actor_id: Some(input.approved_by_id),
+            actor_id: Some(approved_by_id),
             auth_context: "step_up".to_string(),
             result: "success".to_string(),
             before_hash: None,
@@ -1214,10 +1371,11 @@ async fn record_override(
             retention_class: "standard".to_string(),
             details_json: Some(serde_json::json!({
                 "override_id": id,
-                "personnel_id": check.personnel_id,
-                "person": check.full_name,
+                "personnel_id": personnel_id,
+                "user_id": user_id,
+                "person": name,
                 "role": role,
-                "gaps": check.gaps.iter().map(|g| serde_json::json!({
+                "gaps": gaps.iter().map(|g| serde_json::json!({
                     "code": gap_issue_code(g),
                     "qualification": g.label,
                     "status": g.status,
@@ -1284,7 +1442,9 @@ pub async fn enforce_permit_role(
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QualificationOverrideRow {
     pub id: i64,
-    pub personnel_id: i64,
+    /// The person overridden, or — `user_id` — a login that has no personnel record.
+    pub personnel_id: Option<i64>,
+    pub user_id: Option<i64>,
     pub person_name: String,
     pub context_kind: String,
     pub work_order_id: Option<i64>,
@@ -1311,11 +1471,14 @@ pub async fn list_overrides(
     filter: QualificationOverrideFilter,
 ) -> AppResult<Vec<QualificationOverrideRow>> {
     let mut sql = String::from(
-        "SELECT qo.id, qo.personnel_id, p.full_name, qo.context_kind, qo.work_order_id, wo.code AS wo_code, \
+        "SELECT qo.id, qo.personnel_id, qo.user_id, \
+                COALESCE(p.full_name, NULLIF(TRIM(su.display_name), ''), su.username, '') AS full_name, \
+                qo.context_kind, qo.work_order_id, wo.code AS wo_code, \
                 qo.permit_id, wp.code AS permit_code, qo.role_code, qo.gaps_json, qo.reason, qo.approved_by_id, \
                 COALESCE(ua.display_name, ua.username) AS approver, qo.approved_at \
          FROM qualification_overrides qo \
-         JOIN personnel p ON p.id = qo.personnel_id \
+         LEFT JOIN personnel p ON p.id = qo.personnel_id \
+         LEFT JOIN user_accounts su ON su.id = qo.user_id \
          LEFT JOIN work_orders wo ON wo.id = qo.work_order_id \
          LEFT JOIN work_permits wp ON wp.id = qo.permit_id \
          LEFT JOIN user_accounts ua ON ua.id = qo.approved_by_id \
@@ -1340,9 +1503,8 @@ pub async fn list_overrides(
             let gaps_json: String = r.try_get("", "gaps_json").map_err(|e| decode_err("gaps_json", e))?;
             Ok(QualificationOverrideRow {
                 id: r.try_get("", "id").map_err(|e| decode_err("id", e))?,
-                personnel_id: r
-                    .try_get("", "personnel_id")
-                    .map_err(|e| decode_err("personnel_id", e))?,
+                personnel_id: r.try_get("", "personnel_id").ok().flatten(),
+                user_id: r.try_get("", "user_id").ok().flatten(),
                 person_name: r.try_get("", "full_name").map_err(|e| decode_err("full_name", e))?,
                 context_kind: r
                     .try_get("", "context_kind")

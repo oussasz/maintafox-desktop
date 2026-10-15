@@ -79,7 +79,7 @@
     "expired": "Échue",
     "pending": "À vérifier",
     "rejected": "Refusée",
-    "unvalidated": "Auto-déclarée"
+    "unvalidated": "Non validée"
   },
   "skillStatus": {
     "validated": "Validée",
@@ -95,7 +95,8 @@
     "pending_verification": "Non vérifiée",
     "rejected": "Refusée",
     "level_too_low": "Niveau insuffisant",
-    "unvalidated": "Non validée"
+    "unvalidated": "Non validée",
+    "unverifiable": "Invérifiable"
   },
   "gap": {
     "missing": "{{qualification}} : non détenue.",
@@ -104,7 +105,8 @@
     "pending_verification": "{{qualification}} : enregistrée mais pas encore vérifiée.",
     "rejected": "{{qualification}} : refusée à la vérification.",
     "level_too_low": "{{qualification}} : niveau {{required}} exigé, niveau {{held}} détenu.",
-    "unvalidated": "{{qualification}} : auto-déclarée, non validée."
+    "unvalidated": "{{qualification}} : non validée par un responsable.",
+    "unverifiable": "{{qualification}} : invérifiable, le compte n'est relié à aucune fiche du personnel."
   },
   "coverage": {
     "each": "Chaque personne",
@@ -357,7 +359,8 @@
     "TIMETABLE_EXCEPTION_OVERLAP": "Une autre exception de cette personne (à partir du {{from}}) couvre une partie de ces dates.",
     "SITE_WEEK_DAY_INVALID": "Les jours vont du lundi (1) au dimanche (7).",
     "SITE_WEEK_NO_WORKING_DAY": "Laissez au moins un jour travaillé dans la semaine.",
-    "QUALIFICATION_PERSON_UNKNOWN": "Cet OT exige des habilitations : reliez d'abord le compte de {{name}} à une fiche du personnel.",
+    "QUALIFICATION_PERSON_UNKNOWN": "Cet OT exige des habilitations : reliez le compte de {{name}} à une fiche du personnel, ou faites enregistrer une dérogation pour ce compte sur cet OT par un responsable autorisé.",
+    "QUALIFICATION_OVERRIDE_USE_PERSON": "Le compte de {{name}} est relié à une fiche du personnel : vérifiez et dérogez sur la personne.",
     "QUALIFICATION_OVERRIDE_SELF": "Vous ne pouvez pas lever votre propre écart d'habilitation : un autre responsable autorisé doit le faire.",
     "LABOR_PERSON_INACTIVE": "Cette personne n’est plus active : la main-d’œuvre ne peut pas lui être imputée."
   }

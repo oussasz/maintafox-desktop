@@ -23,6 +23,7 @@ export const GAP_STATUS_TONE: Record<GapStatus, Tone> = {
   rejected: "danger",
   level_too_low: "warning",
   unvalidated: "neutral",
+  unverifiable: "danger",
 };
 
 /** `readiness_status` of a recorded certificate (backend `readiness_status`). */

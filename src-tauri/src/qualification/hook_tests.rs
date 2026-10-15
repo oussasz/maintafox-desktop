@@ -536,3 +536,104 @@ async fn nobody_overrides_their_own_qualification_gap() {
     override_on_wo(&db, tech, wo.id).await;
     assert_eq!(audit_overrides(&db).await, 1);
 }
+
+/// A login with no personnel card on a work order with requirements is not stuck: another
+/// authorised supervisor records an override for that login on that work order (audited, never
+/// the login itself); a requirement added later blocks it again.
+#[tokio::test]
+async fn an_account_without_a_personnel_card_can_be_overridden_on_a_work_order() {
+    use crate::qualification::gate::{list_overrides, record_account_work_order_override, QualificationOverrideFilter};
+
+    let db = setup().await;
+    let actor = admin(&db).await;
+    let labour = |wo_id: i64| crate::wo::labor::AddLaborInput {
+        wo_id,
+        intervener_id: actor,
+        skill_id: None,
+        started_at: Some(yesterday(8)),
+        ended_at: Some(yesterday(10)),
+        hours_worked: None,
+        hourly_rate: None,
+        notes: None,
+    };
+    let wo = work_order(&db).await;
+    require_on_wo(&db, wo.id, cert(&db, "HAB-T").await).await;
+
+    // The refusal names both ways out.
+    let refused = crate::wo::labor::add_labor_entry(&db, labour(wo.id))
+        .await
+        .expect_err("unlinked login");
+    match refused {
+        AppError::OrgValidationFailed(issues) => {
+            assert_eq!(issues[0].code, "QUALIFICATION_PERSON_UNKNOWN");
+            assert!(issues[0].message.contains("personnel record"), "{}", issues[0].message);
+            assert!(issues[0].message.contains("override"), "{}", issues[0].message);
+        }
+        other => panic!("expected coded issues, got {other:?}"),
+    }
+
+    // Not by the login itself.
+    let own = QualificationOverrideInput {
+        reason: "Intervention urgente sous ma responsabilité".into(),
+        approved_by_id: actor,
+    };
+    let refused = record_account_work_order_override(&db, actor, wo.id, &own)
+        .await
+        .expect_err("self override");
+    assert_eq!(codes(refused), vec!["QUALIFICATION_OVERRIDE_SELF".to_string()]);
+    // A login linked to a personnel record is overridden as the person.
+    let linked = record_account_work_order_override(
+        &db,
+        TECH_USER,
+        wo.id,
+        &QualificationOverrideInput {
+            reason: "Intervention urgente sous contrôle".into(),
+            approved_by_id: actor,
+        },
+    )
+    .await
+    .expect_err("linked login");
+    assert_eq!(codes(linked), vec!["QUALIFICATION_OVERRIDE_USE_PERSON".to_string()]);
+    assert_eq!(audit_overrides(&db).await, 0);
+
+    // Another supervisor lets it work.
+    let by_supervisor = QualificationOverrideInput {
+        reason: "Intérimaire encadré par le chef d'équipe habilité".into(),
+        approved_by_id: TECH_USER,
+    };
+    record_account_work_order_override(&db, actor, wo.id, &by_supervisor)
+        .await
+        .expect("override recorded");
+    assert_eq!(audit_overrides(&db).await, 1);
+    crate::wo::labor::add_labor_entry(&db, labour(wo.id))
+        .await
+        .expect("accepted under the override");
+    let assessment = crate::qualification::gate::assess_work_order(&db, wo.id)
+        .await
+        .expect("assessment");
+    assert!(assessment.unidentified.is_empty(), "{:?}", assessment.unidentified);
+    let again = record_account_work_order_override(&db, actor, wo.id, &by_supervisor)
+        .await
+        .expect_err("already covered");
+    assert_eq!(codes(again), vec!["QUALIFICATION_OVERRIDE_NOT_NEEDED".to_string()]);
+    let log = list_overrides(
+        &db,
+        QualificationOverrideFilter {
+            work_order_id: Some(wo.id),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("log");
+    assert_eq!(log.len(), 1);
+    assert_eq!(log[0].user_id, Some(actor));
+    assert_eq!(log[0].personnel_id, None);
+    assert_eq!(log[0].gaps[0].status, "unverifiable");
+
+    // A requirement added afterwards is not covered: refused again.
+    require_on_wo(&db, wo.id, cert(&db, "LOTO-T").await).await;
+    let refused = crate::wo::labor::add_labor_entry(&db, labour(wo.id))
+        .await
+        .expect_err("new requirement");
+    assert_eq!(codes(refused), vec!["QUALIFICATION_PERSON_UNKNOWN".to_string()]);
+}

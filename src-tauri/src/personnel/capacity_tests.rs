@@ -624,6 +624,25 @@ async fn upgrade_keeps_capacity_rules_as_classes_to_review_and_assumes_no_hours(
         )
         .await;
     }
+    // A third EQ-A member, from another team, assigned at 50 %: the rule is shared over
+    // 2.5 full-time equivalents, the headcount capacity counts.
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO personnel (employee_code, full_name, availability_status, primary_team_id) \
+             VALUES ('UPG-A3', 'Tech UPG-A3', 'available', {team_b})"
+        ),
+    )
+    .await;
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO personnel_team_assignments (personnel_id, team_id, role_code, allocation_percent, is_lead, \
+             created_at, updated_at) SELECT id, {team_a}, 'member', 50, 0, datetime('now'), datetime('now') \
+             FROM personnel WHERE employee_code = 'UPG-A3'"
+        ),
+    )
+    .await;
 
     crate::migrations::Migrator::up(&db, None)
         .await
@@ -670,7 +689,7 @@ async fn upgrade_keeps_capacity_rules_as_classes_to_review_and_assumes_no_hours(
     assert!(
         v.note
             .as_deref()
-            .is_some_and(|n| n.contains("7.5 h ÷ 2 membres = 3.75 h")),
+            .is_some_and(|n| n.contains("7.5 h ÷ 2.5 équivalents temps plein (3 membres") && n.contains("= 3 h")),
         "{:?}",
         v.note
     );

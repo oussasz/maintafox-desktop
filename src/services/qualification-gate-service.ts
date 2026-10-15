@@ -101,6 +101,8 @@ export const GAP_STATUSES = [
   "rejected",
   "level_too_low",
   "unvalidated",
+  /** A login with no personnel record (recorded by its override). */
+  "unverifiable",
 ] as const;
 export type GapStatus = (typeof GAP_STATUSES)[number];
 
@@ -192,6 +194,11 @@ export type QualificationOverrideContext =
   | { context_kind: "work_order"; work_order_id: number }
   | { context_kind: "permit_role"; permit_id: number; role: LotoRole };
 
+const RecordedOverrideSchema = z.object({
+  override_id: z.number(),
+  check: PersonQualificationCheckSchema.nullable(),
+});
+
 /** Records a supervisor override (needs `trn.certify` and a recent step-up). */
 export async function recordQualificationOverride(
   personnelId: number,
@@ -199,14 +206,40 @@ export async function recordQualificationOverride(
   reason: string,
 ): Promise<PersonQualificationCheck> {
   const raw = await invoke<unknown>("record_qualification_override", {
-    input: { personnel_id: personnelId, reason, ...context },
+    input: { personnel_id: personnelId, user_id: null, reason, ...context },
   });
-  return PersonQualificationCheckSchema.parse(raw);
+  const recorded = RecordedOverrideSchema.parse(raw);
+  if (!recorded.check) throw new Error("record_qualification_override: no check returned");
+  return recorded.check;
+}
+
+/**
+ * Lets a login that has no personnel record work on a work order with requirements (its
+ * qualifications cannot be checked). Needs `trn.certify` and a recent step-up; never one's own
+ * account. Returns the override id.
+ */
+export async function recordAccountQualificationOverride(
+  userId: number,
+  workOrderId: number,
+  reason: string,
+): Promise<number> {
+  const raw = await invoke<unknown>("record_qualification_override", {
+    input: {
+      personnel_id: null,
+      user_id: userId,
+      context_kind: "work_order",
+      work_order_id: workOrderId,
+      reason,
+    },
+  });
+  return RecordedOverrideSchema.parse(raw).override_id;
 }
 
 const QualificationOverrideRowSchema = z.object({
   id: z.number(),
-  personnel_id: z.number(),
+  /** The person overridden, or — `user_id` — a login that has no personnel record. */
+  personnel_id: z.number().nullable(),
+  user_id: z.number().nullable().default(null),
   person_name: z.string(),
   context_kind: z.enum(["work_order", "permit_role"]),
   work_order_id: z.number().nullable(),
