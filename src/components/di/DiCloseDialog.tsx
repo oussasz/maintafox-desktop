@@ -6,9 +6,8 @@ import { AlertTriangle, Loader2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { DI_URGENCY_STYLE } from "@/components/di/status-meta";
+import { UrgencyBadge } from "@/components/common/urgency/UrgencyBadge";
 import { ReferenceCombobox } from "@/components/reference/ReferenceCombobox";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -243,12 +242,7 @@ export function DiCloseDialog() {
           <div className="flex items-center gap-2 text-sm">
             <span className="font-mono text-muted-foreground">{di.code}</span>
             <span className="font-semibold truncate">{di.title}</span>
-            <Badge
-              variant="outline"
-              className={`text-[10px] border-0 ml-auto ${DI_URGENCY_STYLE[di.reported_urgency] ?? ""}`}
-            >
-              {t(`priority.${di.reported_urgency}`)}
-            </Badge>
+            <UrgencyBadge code={di.validated_urgency ?? di.reported_urgency} className="ml-auto" />
           </div>
 
           <div className="space-y-1.5">

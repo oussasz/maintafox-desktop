@@ -28,6 +28,7 @@ import {
 } from "@/components/ui";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import { StatusChip } from "@/components/ui/status-chip";
+import { woTypeLabel } from "@/components/wo/use-wo-type-labels";
 import { toneOf } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
 import {
@@ -76,7 +77,7 @@ export function InspectionFollowUpDialog({
   onClose,
   onCreated,
 }: InspectionFollowUpDialogProps) {
-  const { t } = useTranslation("inspections");
+  const { t, i18n } = useTranslation("inspections");
   const { formatNumber, formatDateTime } = useFormatters();
   const woTypes = useWorkOrderTypesCatalog((s) => s.types);
   const loadWoTypes = useWorkOrderTypesCatalog((s) => s.load);
@@ -264,7 +265,7 @@ export function InspectionFollowUpDialog({
                     <SelectContent>
                       {activeWoTypes.map((w) => (
                         <SelectItem key={w.code} value={w.code}>
-                          {w.label}
+                          {woTypeLabel(w, i18n.language)}
                         </SelectItem>
                       ))}
                     </SelectContent>

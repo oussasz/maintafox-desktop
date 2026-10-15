@@ -5,7 +5,8 @@
 //!   `description` and `is_active`, so the catalogue reads like the plant's safety training plan.
 //! - `qualification_requirements`: what a job needs from the people doing it (SAP PM task-list
 //!   qualifications / Maximo craft-skill and qualification requirements). A requirement targets
-//!   one work order (`work_order_id`), every work order of a type (`work_order_type_id`), every
+//!   one work order (`work_order_id`), every work order of a type (`work_order_type_id`, a value
+//!   of the `WORK.ORDER_TYPES` reference list, like `work_orders.type_id` since migration 198), every
 //!   permit of a type (`permit_type_id`) — by id, so renaming a type cannot disable it — or a LOTO
 //!   role (`target_code` = `isolation_apply` / `isolation_verify` / `removal_verify`), and asks for a
 //!   certification type or a skill at a minimum level. `coverage` says whether every person
@@ -67,7 +68,7 @@ impl MigrationTrait for Migration {
                 target_kind              TEXT NOT NULL CHECK (target_kind IN
                                             ('work_order', 'work_order_type', 'permit_type', 'loto_role')),
                 work_order_id            INTEGER NULL REFERENCES work_orders(id),
-                work_order_type_id       INTEGER NULL REFERENCES work_order_types(id),
+                work_order_type_id       INTEGER NULL REFERENCES reference_values(id),
                 permit_type_id           INTEGER NULL REFERENCES permit_types(id),
                 target_code              TEXT NULL,
                 certification_type_id    INTEGER NULL REFERENCES certification_types(id),

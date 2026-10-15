@@ -25,12 +25,10 @@ import {
   INVENTORY_ARTICLE_FAMILY_SET_ID,
   INVENTORY_TAX_CATEGORY_DOMAIN_ID,
   INVENTORY_TAX_CATEGORY_SET_ID,
-  WORK_ORDER_PRIORITIES_DOMAIN_ID,
-  WORK_ORDER_PRIORITIES_SET_ID,
+  URGENCY_SCALE_DOMAIN_ID,
+  URGENCY_SCALE_SET_ID,
   WORK_ORDER_STATUSES_DOMAIN_ID,
   WORK_ORDER_STATUSES_SET_ID,
-  WORK_ORDER_TYPES_DOMAIN_ID,
-  WORK_ORDER_TYPES_SET_ID,
   useReferenceManagerStore,
 } from "../reference-manager-store";
 
@@ -46,12 +44,11 @@ const mockDomains = vi.mocked(listReferenceDomains);
 const mockCatalogs = vi.mocked(listReferenceModuleCatalogs);
 const mockSets = vi.mocked(listReferenceSets);
 
-/** What `list_reference_module_catalogs` answers (OT types and statuses are Maintafox lists). */
+/** What `list_reference_module_catalogs` answers (OT statuses are a Maintafox list). */
 const BACKEND_MODULE_CATALOGS: ReferenceModuleCatalog[] = [
   { code: "INVENTORY.ARTICLE_FAMILY", audience: "company" },
   { code: "INVENTORY.TAX_CATEGORY", audience: "company" },
-  { code: "WO.WORK_ORDER_TYPES", audience: "system" },
-  { code: "WO.WORK_ORDER_PRIORITIES", audience: "company" },
+  { code: "WORK.URGENCY_SCALE", audience: "company" },
   { code: "WO.WORK_ORDER_STATUSES", audience: "system" },
 ];
 
@@ -59,20 +56,19 @@ const BACKEND_MODULE_CATALOGS: ReferenceModuleCatalog[] = [
 const VISIBLE_SYNTHETIC_DOMAIN_IDS = [
   INVENTORY_ARTICLE_FAMILY_DOMAIN_ID,
   INVENTORY_TAX_CATEGORY_DOMAIN_ID,
-  WORK_ORDER_PRIORITIES_DOMAIN_ID,
+  URGENCY_SCALE_DOMAIN_ID,
 ];
 
 const VISIBLE_SYNTHETIC_PAIRS: Array<[number, number]> = [
   [INVENTORY_ARTICLE_FAMILY_DOMAIN_ID, INVENTORY_ARTICLE_FAMILY_SET_ID],
   [INVENTORY_TAX_CATEGORY_DOMAIN_ID, INVENTORY_TAX_CATEGORY_SET_ID],
-  [WORK_ORDER_PRIORITIES_DOMAIN_ID, WORK_ORDER_PRIORITIES_SET_ID],
+  [URGENCY_SCALE_DOMAIN_ID, URGENCY_SCALE_SET_ID],
 ];
 
 const SYNTHETIC_PAIRS: Array<[number, number]> = [
   [INVENTORY_ARTICLE_FAMILY_DOMAIN_ID, INVENTORY_ARTICLE_FAMILY_SET_ID],
   [INVENTORY_TAX_CATEGORY_DOMAIN_ID, INVENTORY_TAX_CATEGORY_SET_ID],
-  [WORK_ORDER_TYPES_DOMAIN_ID, WORK_ORDER_TYPES_SET_ID],
-  [WORK_ORDER_PRIORITIES_DOMAIN_ID, WORK_ORDER_PRIORITIES_SET_ID],
+  [URGENCY_SCALE_DOMAIN_ID, URGENCY_SCALE_SET_ID],
   [WORK_ORDER_STATUSES_DOMAIN_ID, WORK_ORDER_STATUSES_SET_ID],
 ];
 
@@ -209,20 +205,20 @@ describe("reference-manager-store — loadDomains", () => {
   });
 
   it("does not duplicate a synthetic domain the backend already returns", async () => {
-    const backendWoTypes = makeDomain({
-      id: WORK_ORDER_TYPES_DOMAIN_ID,
-      code: "WO.WORK_ORDER_TYPES",
-      name: "Types OT (backend)",
+    const backendScale = makeDomain({
+      id: URGENCY_SCALE_DOMAIN_ID,
+      code: "WORK.URGENCY_SCALE",
+      name: "Échelle (backend)",
     });
-    mockDomains.mockResolvedValueOnce([backendWoTypes]);
+    mockDomains.mockResolvedValueOnce([backendScale]);
     mockCaps.mockResolvedValue(makeCaps());
 
     await useReferenceManagerStore.getState().loadDomains();
 
     const { domains } = useReferenceManagerStore.getState();
-    const woTypes = domains.filter((d) => d.id === WORK_ORDER_TYPES_DOMAIN_ID);
-    expect(woTypes).toEqual([backendWoTypes]);
-    expect(domains).toHaveLength(4);
+    const scale = domains.filter((d) => d.id === URGENCY_SCALE_DOMAIN_ID);
+    expect(scale).toEqual([backendScale]);
+    expect(domains).toHaveLength(3);
   });
 
   it("loads domain-level capabilities only for backend domains, skipping failures", async () => {
@@ -254,7 +250,6 @@ describe("reference-manager-store — loadDomains", () => {
 
     const { setsMap } = useReferenceManagerStore.getState();
     expect(setsMap[9]).toEqual(existing);
-    expect(setsMap[WORK_ORDER_TYPES_DOMAIN_ID]).toBeUndefined();
     expect(setsMap[WORK_ORDER_STATUSES_DOMAIN_ID]).toBeUndefined();
     for (const [domainId, setId] of VISIBLE_SYNTHETIC_PAIRS) {
       expect(setsMap[domainId]).toHaveLength(1);
@@ -328,14 +323,13 @@ describe("reference-manager-store — Maintafox lists are hidden (owner rule)", 
     expect(mockCaps).not.toHaveBeenCalledWith(4, null);
   });
 
-  it("hides the OT types and statuses tables, keeps article families, tax categories and OT priorities", async () => {
+  it("hides the OT statuses table, keeps article families, tax categories and the urgency scale", async () => {
     mockDomains.mockResolvedValueOnce([]);
 
     await useReferenceManagerStore.getState().loadDomains();
 
     const { domains } = useReferenceManagerStore.getState();
     const ids = domains.map((d) => d.id);
-    expect(ids).not.toContain(WORK_ORDER_TYPES_DOMAIN_ID);
     expect(ids).not.toContain(WORK_ORDER_STATUSES_DOMAIN_ID);
     expect(ids).toEqual(expect.arrayContaining(VISIBLE_SYNTHETIC_DOMAIN_IDS));
     expect(domains.every((d) => d.audience === "company")).toBe(true);
@@ -345,13 +339,13 @@ describe("reference-manager-store — Maintafox lists are hidden (owner rule)", 
     mockDomains.mockResolvedValueOnce([]);
     mockCatalogs.mockResolvedValueOnce([
       { code: "INVENTORY.ARTICLE_FAMILY", audience: "system" },
-      { code: "WO.WORK_ORDER_TYPES", audience: "company" },
+      { code: "WO.WORK_ORDER_STATUSES", audience: "company" },
     ]);
 
     await useReferenceManagerStore.getState().loadDomains();
 
     const ids = useReferenceManagerStore.getState().domains.map((d) => d.id);
-    expect(ids).toEqual([WORK_ORDER_TYPES_DOMAIN_ID]);
+    expect(ids).toEqual([WORK_ORDER_STATUSES_DOMAIN_ID]);
   });
 
   it("surfaces an error when the module catalog classification cannot be read", async () => {

@@ -189,7 +189,7 @@ mod tests {
         let type_id: i64 = db
             .query_one(Statement::from_string(
                 DbBackend::Sqlite,
-                "SELECT id FROM work_order_types ORDER BY id ASC LIMIT 1".to_string(),
+                "SELECT v.id FROM reference_values v JOIN reference_sets s ON s.id = v.set_id JOIN reference_domains d ON d.id = s.domain_id WHERE d.code = 'WORK.ORDER_TYPES' AND v.code = 'corrective'".to_string(),
             ))
             .await
             .expect("query type")

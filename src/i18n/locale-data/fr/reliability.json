@@ -1088,13 +1088,6 @@
       "equipment": "Équipement",
       "chooseEquipment": "Choisir…",
       "woType": "Type d'OT",
-      "woTypes": {
-        "corrective": "Correctif",
-        "preventive": "Préventif",
-        "improvement": "Amélioration",
-        "inspection": "Inspection",
-        "emergency": "Urgence"
-      },
       "approver": "Approbateur",
       "anyApprover": "Toute personne habilitée",
       "justification": "Justification",

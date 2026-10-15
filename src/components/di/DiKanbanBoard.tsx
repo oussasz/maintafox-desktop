@@ -11,18 +11,12 @@ import { AlertTriangle, Calendar as CalendarIcon } from "lucide-react";
 import { useCallback, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 
+import { urgencyKanbanTone, useUrgencyScale } from "@/components/common/urgency/use-urgency-scale";
 import { useDiReferenceLabels } from "@/components/di/di-reference-labels";
 import { KanbanBoard } from "@/components/kanban";
 import type { KanbanBadge, KanbanCard, KanbanColumn, KanbanTone } from "@/components/kanban";
 import { formatShortDate, intlLocaleForLanguage } from "@/utils/format-date";
 import type { InterventionRequest } from "@shared/ipc-types";
-
-const URGENCY_TONE: Record<string, KanbanTone> = {
-  critical: "critical",
-  high: "high",
-  medium: "medium",
-  low: "low",
-};
 
 const COLUMN_DEFS = [
   { id: "submitted", labelKey: "kanban.colSubmitted", tone: "planning", statuses: ["submitted"] },
@@ -75,6 +69,7 @@ interface DiKanbanBoardProps {
 export function DiKanbanBoard({ items, onCardClick }: DiKanbanBoardProps) {
   const { t, i18n } = useTranslation(["di", "common"]);
   const { originLabel } = useDiReferenceLabels();
+  const { labelOf: urgencyLabel } = useUrgencyScale();
   const locale = intlLocaleForLanguage(i18n.language);
   const byId = useRef(new Map<string, InterventionRequest>());
 
@@ -99,13 +94,16 @@ export function DiKanbanBoard({ items, onCardClick }: DiKanbanBoardProps) {
       const id = String(di.id);
       map.set(id, di);
 
-      const urgencyTone = URGENCY_TONE[di.reported_urgency];
+      const urgencyTone = urgencyKanbanTone(di.validated_urgency ?? di.reported_urgency);
       const badges: KanbanBadge[] = [];
       if (di.is_modified) {
         badges.push({ label: t("review.modified"), tone: "warning" });
       }
       if (urgencyTone) {
-        badges.push({ label: t(`priority.${di.reported_urgency}`), tone: urgencyTone });
+        badges.push({
+          label: urgencyLabel(di.validated_urgency ?? di.reported_urgency),
+          tone: urgencyTone,
+        });
       }
       badges.push({ label: originLabel(di.origin_type) });
       if (di.safety_flag) {
@@ -132,7 +130,7 @@ export function DiKanbanBoard({ items, onCardClick }: DiKanbanBoardProps) {
 
     byId.current = map;
     return result;
-  }, [items, locale, originLabel, t]);
+  }, [items, locale, originLabel, t, urgencyLabel]);
 
   const handleCardClick = useCallback(
     (card: KanbanCard) => {

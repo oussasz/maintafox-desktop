@@ -11,6 +11,7 @@ import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
+import { UrgencySelect } from "@/components/common/urgency/UrgencySelect";
 import { OverrideReasonDialog } from "@/components/planning/OverrideReasonDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -48,7 +49,6 @@ import {
   setWoPermitRequirement,
 } from "@/services/wo-service";
 import { useWoStore } from "@/stores/wo-store";
-import { useWorkOrderPrioritiesCatalog } from "@/stores/work-order-priorities-catalog-store";
 import { toErrorMessage } from "@/utils/errors";
 import type {
   InventoryArticle,
@@ -59,14 +59,15 @@ import type {
   WoMaterialReadiness,
   WoReadinessResult,
   WoTool,
+  UrgencyCode,
   WorkOrder,
-  WorkOrderPriorityOption,
   WoShift,
 } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
 import { WoPermitRequirementField } from "./WoPermitRequirementField";
 import { useWoPeopleOptions } from "./use-wo-people";
+import { useWoTypeLabels } from "./use-wo-type-labels";
 
 export interface WoPlanningPanelHandle {
   refreshReadiness: () => Promise<WoReadinessResult | null>;
@@ -110,10 +111,6 @@ interface SelectOption {
 const PLANNING_EDITABLE = new Set(["planning"]);
 /** Ready allows reschedule / reassign only */
 const READY_SCHEDULE_EDITABLE = new Set(["ready"]);
-
-function planningPriorityLabel(p: WorkOrderPriorityOption, lang: string): string {
-  return lang.toLowerCase().startsWith("fr") ? p.label_fr : p.label;
-}
 
 const SHIFT_OPTIONS: Array<{ value: WoShift; label: string }> = [
   { value: "morning", label: "morning" },
@@ -177,14 +174,9 @@ function blockingMessagesFromReport(result: WoReadinessResult): string[] {
 
 export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanelProps>(
   function WoPlanningPanel({ wo, canEdit, onReadinessChange }, ref) {
-    const { t, i18n } = useTranslation("ot");
+    const { t } = useTranslation("ot");
+    const { typeLabel } = useWoTypeLabels();
     const navigate = useNavigate();
-    const prioritiesCatalog = useWorkOrderPrioritiesCatalog((s) => s.priorities);
-    const loadPriorities = useWorkOrderPrioritiesCatalog((s) => s.load);
-    const activePriorities = useMemo(
-      () => prioritiesCatalog.filter((p) => p.is_active).sort((a, b) => a.level - b.level),
-      [prioritiesCatalog],
-    );
     const { info } = useSession();
     const refreshActiveWo = useWoStore((s) => s.refreshActiveWo);
     const people = useWoPeopleOptions();
@@ -202,7 +194,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
     const [plannedDowntimeHours, setPlannedDowntimeHours] = useState(
       wo.planned_downtime_hours != null ? String(wo.planned_downtime_hours) : "",
     );
-    const [urgencyId, setUrgencyId] = useState(wo.urgency_id != null ? String(wo.urgency_id) : "");
+    const [urgencyId, setUrgencyId] = useState<string>(wo.urgency_code ?? "");
     const [requiresPermit, setRequiresPermit] = useState<boolean>(Boolean(wo.requires_permit));
     const [permitBusy, setPermitBusy] = useState(false);
 
@@ -255,7 +247,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
       setPlannedDowntimeHours(
         wo.planned_downtime_hours != null ? String(wo.planned_downtime_hours) : "",
       );
-      setUrgencyId(wo.urgency_id != null ? String(wo.urgency_id) : "");
+      setUrgencyId(wo.urgency_code ?? "");
       setRequiresPermit(Boolean(wo.requires_permit));
       setAssignedTeamId(wo.assigned_team_id != null ? String(wo.assigned_team_id) : "");
       setPrimaryResponsibleId(
@@ -268,10 +260,6 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
         setPlannerId(String(info.user_id));
       }
     }, [plannerId, info?.user_id]);
-
-    useEffect(() => {
-      void loadPriorities();
-    }, [loadPriorities]);
 
     useEffect(() => {
       let cancelled = false;
@@ -597,7 +585,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
           shift: shift || null,
           expected_duration_hours: parseNumber(expectedHours),
           planned_downtime_hours: parseNumber(plannedDowntimeHours),
-          urgency_id: parseNumber(urgencyId),
+          urgency_code: urgencyId ? (urgencyId as UrgencyCode) : null,
         });
 
         setRowVersion(next.row_version);
@@ -886,7 +874,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
             </div>
             <div>
               <span className="text-muted-foreground">{t("detail.fields.type")}: </span>
-              <span className="font-medium">{wo.type_label ?? "—"}</span>
+              <span className="font-medium">{typeLabel(wo.type_code, wo.type_label) || "—"}</span>
             </div>
             <div>
               <span className="text-muted-foreground">{t("detail.fields.equipment")}: </span>
@@ -908,7 +896,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
             </div>
             <div>
               <span className="text-muted-foreground">{t("detail.fields.type")}: </span>
-              <span className="font-medium">{wo.type_label ?? "—"}</span>
+              <span className="font-medium">{typeLabel(wo.type_code, wo.type_label) || "—"}</span>
             </div>
             <div>
               <span className="text-muted-foreground">{t("detail.fields.equipment")}: </span>
@@ -1024,28 +1012,14 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
 
         <section className="space-y-3">
           <h3 className="text-sm font-semibold">2. {t("planning.urgency")}</h3>
-          <Select
-            {...(urgencyId ? { value: urgencyId } : {})}
-            onValueChange={setUrgencyId}
+          <UrgencySelect
+            id="wo-planning-urgency"
+            value={urgencyId || null}
+            onChange={setUrgencyId}
             disabled={allFieldsDisabled}
-          >
-            <SelectTrigger className="max-w-sm">
-              <SelectValue placeholder={t("planning.selectUrgency")} />
-            </SelectTrigger>
-            <SelectContent>
-              {activePriorities.map((p) => (
-                <SelectItem key={p.id} value={String(p.id)}>
-                  <span className="inline-flex items-center gap-2">
-                    <span
-                      className="h-2.5 w-2.5 shrink-0 rounded-full"
-                      style={{ backgroundColor: p.hex_color }}
-                    />
-                    {planningPriorityLabel(p, i18n.language)}
-                  </span>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            placeholder={t("planning.selectUrgency")}
+            className="max-w-sm"
+          />
         </section>
 
         {(isPlanningEditable || isReadyScheduleEditable) && (

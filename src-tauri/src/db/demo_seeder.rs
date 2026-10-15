@@ -345,7 +345,7 @@ pub async fn seed_demo_data(db: &DatabaseConnection) -> AppResult<()> {
             "Fuite d'huile visible au niveau du joint SPI côté ventilateur. Tache au sol ~30cm diamètre.",
             2,
             line_1,
-            "medium",
+            "normal",
             "technician",
             "pending_review",
             false,
@@ -365,7 +365,7 @@ pub async fn seed_demo_data(db: &DatabaseConnection) -> AppResult<()> {
             "Alarme surpression répétée 3 fois ce matin. Soupape de sécurité s'est déclenchée une fois.",
             6,
             bat_a,
-            "critical",
+            "emergency",
             "operator",
             "approved_for_planning",
             true,
@@ -375,7 +375,7 @@ pub async fn seed_demo_data(db: &DatabaseConnection) -> AppResult<()> {
             "Bruit de roulement type grincement sur moteur agitateur cuve T2. Détecté lors de la ronde hebdomadaire.",
             3,
             line_2,
-            "medium",
+            "normal",
             "inspection",
             "submitted",
             false,
@@ -395,7 +395,7 @@ pub async fn seed_demo_data(db: &DatabaseConnection) -> AppResult<()> {
             "Le débit de la pompe doseuse oscille entre 30% et 80% de la consigne. Impact sur la qualité produit.",
             1,
             line_2,
-            "critical",
+            "emergency",
             "quality",
             "approved_for_planning",
             false,
@@ -425,7 +425,7 @@ pub async fn seed_demo_data(db: &DatabaseConnection) -> AppResult<()> {
             "Bruit de cavitation détecté à la mise en route. Pression d'aspiration insuffisante ?",
             10,
             bat_util,
-            "medium",
+            "normal",
             "technician",
             "submitted",
             false,
@@ -445,7 +445,7 @@ pub async fn seed_demo_data(db: &DatabaseConnection) -> AppResult<()> {
             "Suite DI vibrations : le joint mécanique doit être remplacé lors de l'arrêt programmé.",
             0,
             line_1,
-            "medium",
+            "normal",
             "pm",
             "deferred",
             false,
@@ -1090,14 +1090,14 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
     let s_closed = status_id(db, "closed").await?;
 
     // WO definitions:
-    // (demo_key, title, description, type_id, status_id, urgency_id, eq_index, planned_start, planned_end, duration_h)
-    let wo_defs: &[(&str, &str, &str, i64, i64, i64, usize, &str, &str, f64)] = &[
+    // (demo_key, title, description, OT type code, status_id, urgency level code, eq_index, planned_start, planned_end, duration_h)
+    let wo_defs: &[(&str, &str, &str, &str, i64, &str, usize, &str, &str, f64)] = &[
         // 1. Draft — corrective
         (
             "demo_001",
             "Remplacement roulement pompe P-001",
             "Suite DI vibrations anormales. Roulement côté accouplement à remplacer. Prévoir joint mécanique en même temps.",
-            1, s_draft, 4, 0,
+            "corrective", s_draft, "high", 0,
             "2026-04-15T08:00:00Z", "2026-04-15T16:00:00Z", 8.0,
         ),
         // 2. Draft — preventive
@@ -1105,7 +1105,7 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
             "demo_002",
             "Lubrification générale moteur MOT-001",
             "Lubrification planifiée semestrielle. Graisse EP2, points A/B/C selon fiche constructeur.",
-            2, s_draft, 2, 1,
+            "preventive", s_draft, "low", 1,
             "2026-04-20T08:00:00Z", "2026-04-20T12:00:00Z", 4.0,
         ),
         // 3. Planned
@@ -1113,7 +1113,7 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
             "demo_003",
             "Contrôle alignement laser pompe P-002",
             "Alignement laser après intervention roulement. Tolérance constructeur ±0.05 mm.",
-            1, s_planned, 3, 2,
+            "corrective", s_planned, "normal", 2,
             "2026-04-10T07:00:00Z", "2026-04-10T11:00:00Z", 4.0,
         ),
         // 4. Ready to schedule
@@ -1121,7 +1121,7 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
             "demo_004",
             "Remplacement courroie ventilateur VEN-001",
             "Courroie usée détectée en ronde. Remplacement préventif avant rupture.",
-            2, s_ready, 3, 3,
+            "preventive", s_ready, "normal", 3,
             "2026-04-12T08:00:00Z", "2026-04-12T10:00:00Z", 2.0,
         ),
         // 5. Assigned
@@ -1129,7 +1129,7 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
             "demo_005",
             "Inspection visuelle réducteur RED-001",
             "Inspection visuelle et contrôle niveau huile. Signalement DI bruits anormaux.",
-            3, s_assigned, 3, 4,
+            "inspection", s_assigned, "normal", 4,
             "2026-04-08T08:00:00Z", "2026-04-08T12:00:00Z", 4.0,
         ),
         // 6. In progress
@@ -1137,7 +1137,7 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
             "demo_006",
             "Diagnostic cavitation pompe P-003",
             "Pompe en cavitation intermittente. Diagnostic en cours : NPSH, crépine, vanne aspiration.",
-            1, s_in_progress, 4, 0,
+            "corrective", s_in_progress, "high", 0,
             "2026-04-05T06:00:00Z", "2026-04-05T18:00:00Z", 12.0,
         ),
         // 7. Paused
@@ -1145,7 +1145,7 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
             "demo_007",
             "Remplacement joint torique vérin HYD-001",
             "En attente pièce joint torique 50x3 NBR70. Fournisseur confirmé livraison J+2.",
-            1, s_paused, 3, 5,
+            "corrective", s_paused, "normal", 5,
             "2026-04-01T08:00:00Z", "2026-04-03T16:00:00Z", 4.0,
         ),
         // 8. Mechanically complete (older status name may map differently — keep seed status ids)
@@ -1153,7 +1153,7 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
             "demo_008",
             "Réglage fin de course vérin HYD-002",
             "Fin de course mécanique réglée. Essais à vide OK. En attente validation production.",
-            1, s_mech_complete, 2, 6,
+            "corrective", s_mech_complete, "low", 6,
             "2026-03-28T08:00:00Z", "2026-03-28T12:00:00Z", 4.0,
         ),
         // 9. Mechanically complete — partial close-out
@@ -1161,7 +1161,7 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
             "demo_009",
             "Changement filtre hydraulique HYD-003",
             "Filtre remplacé. Analyse huile en attente retour labo.",
-            2, s_mech_complete, 2, 7,
+            "preventive", s_mech_complete, "low", 7,
             "2026-03-25T08:00:00Z", "2026-03-25T10:00:00Z", 2.0,
         ),
         // 10. Technically verified — full close-out data
@@ -1169,7 +1169,7 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
             "demo_010",
             "Remplacement roulement moteur MOT-002",
             "Roulement NDE remplacé. Alignement vérifié. Vibrations nominales après reprise.",
-            1, s_tech_verified, 4, 1,
+            "corrective", s_tech_verified, "high", 1,
             "2026-03-20T06:00:00Z", "2026-03-20T18:00:00Z", 10.0,
         ),
         // 11. Closed — full close-out
@@ -1177,7 +1177,7 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
             "demo_011",
             "Révision annuelle compresseur COMP-001",
             "Révision annuelle complète. Filtres, séparateur, clapets, huile. Rapport joint.",
-            2, s_closed, 2, 8,
+            "preventive", s_closed, "low", 8,
             "2026-03-10T06:00:00Z", "2026-03-12T18:00:00Z", 24.0,
         ),
         // 12. Closed — emergency
@@ -1185,12 +1185,14 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
             "demo_012",
             "Dépannage bande convoyeur CONV-002",
             "Bande décentrée corrigée. Réglage tension et alignement galets effectués. Reprise production OK.",
-            5, s_closed, 4, 5,
+            "emergency", s_closed, "high", 5,
             "2026-03-28T06:00:00Z", "2026-03-28T14:00:00Z", 6.0,
         ),
     ];
 
-    for (demo_key, title, desc, type_id, sid, urgency_id, eq_idx, p_start, p_end, dur) in wo_defs {
+    for (demo_key, title, desc, type_code, sid, urgency_code, eq_idx, p_start, p_end, dur) in wo_defs {
+        let type_id = crate::wo::types::resolve_work_order_type_id_by_code(db, type_code).await?;
+        let urgency_id = crate::reference::urgency_scale::urgency_value_id(db, urgency_code).await?;
         let eq_id = if *eq_idx < eq_ids.len() {
             Some(eq_ids[*eq_idx])
         } else {
@@ -1210,7 +1212,7 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
             [
                 crate::sync::identity::new_entity_sync_id().into(),
                 code.into(),
-                (*type_id).into(),
+                type_id.into(),
                 (*sid).into(),
                 eq_id
                     .map(sea_orm::Value::from)
@@ -1218,7 +1220,7 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
                 entity_id.into(),
                 admin_id.into(),
                 admin_id.into(),
-                (*urgency_id).into(),
+                urgency_id.into(),
                 (*title).into(),
                 (*desc).into(),
                 (*p_start).into(),

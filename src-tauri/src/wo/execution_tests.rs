@@ -205,7 +205,8 @@ mod tests {
                 source_rca_cause_text: None,
                 entity_id: None,
                 planner_id: None,
-                urgency_id: Some(3),
+                urgency_code: Some("normal".into()),
+                subtype_code: None,
                 title: "Test WO for execution".into(),
                 description: Some("Integration test".into()),
                 notes: None,
@@ -247,7 +248,7 @@ mod tests {
                 shift: None,
                 expected_duration_hours: Some(8.0),
                 planned_downtime_hours: None,
-                urgency_id: None,
+                urgency_code: None,
             },
         )
         .await
@@ -421,7 +422,8 @@ mod tests {
                 source_rca_cause_text: None,
                 entity_id: None,
                 planner_id: None,
-                urgency_id: Some(3),
+                urgency_code: Some("normal".into()),
+                subtype_code: None,
                 title: "Task gate test".into(),
                 description: None,
                 notes: None,
@@ -520,7 +522,8 @@ mod tests {
                 source_rca_cause_text: None,
                 entity_id: None,
                 planner_id: None,
-                urgency_id: Some(3),
+                urgency_code: Some("normal".into()),
+                subtype_code: None,
                 title: "Parts gate test".into(),
                 description: None,
                 notes: None,
@@ -655,7 +658,8 @@ mod tests {
                 source_rca_cause_text: None,
                 entity_id: None,
                 planner_id: None,
-                urgency_id: Some(3),
+                urgency_code: Some("normal".into()),
+                subtype_code: None,
                 title: "Full path test".into(),
                 description: Some("S2 V2".into()),
                 notes: None,
@@ -698,7 +702,7 @@ mod tests {
                 shift: None,
                 expected_duration_hours: Some(8.0),
                 planned_downtime_hours: None,
-                urgency_id: None,
+                urgency_code: None,
             },
         )
         .await
@@ -864,7 +868,11 @@ mod tests {
         let wo_lines: Vec<&str> = lib_rs.lines().filter(|l| l.contains("commands::wo::")).collect();
 
         // Snapshot of the registered WO command surface; update deliberately when adding commands.
-        assert_eq!(wo_lines.len(), 69, "invoke_handler must contain exactly 69 WO commands");
+        // Migration 198: the OT type CRUD (3) and the OT priority commands (2) gave way to the shared
+        // urgency scale commands (`list_urgency_levels`, `update_urgency_level`) and the plant's
+        // OT sub-types (`list_work_order_subtypes`). Personnel added labour for a person without a
+        // login (`add_personnel_labor`) and the people list (`list_wo_labor_people`).
+        assert_eq!(wo_lines.len(), 67, "invoke_handler must contain exactly 67 WO commands");
 
         let mut seen = std::collections::HashSet::new();
         for line in &wo_lines {
@@ -933,7 +941,8 @@ mod tests {
                 source_rca_cause_text: None,
                 entity_id: None,
                 planner_id: None,
-                urgency_id: None,
+                urgency_code: None,
+                subtype_code: None,
                 title: "Shift persistence test".into(),
                 description: None,
                 notes: None,
@@ -975,7 +984,7 @@ mod tests {
                 shift: Some("night".into()),
                 expected_duration_hours: None,
                 planned_downtime_hours: None,
-                urgency_id: None,
+                urgency_code: None,
             },
         )
         .await
@@ -1198,7 +1207,8 @@ mod tests {
             source_rca_cause_text: None,
             entity_id: None,
             planner_id: None,
-            urgency_id: Some(3),
+            urgency_code: Some("normal".into()),
+            subtype_code: None,
             title: "Corrective WO with LOTO".into(),
             description: None,
             notes: None,

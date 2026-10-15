@@ -127,21 +127,16 @@ export const DI_STATUS_TONE: Record<string, Tone> = {
   closed: "neutral",
 };
 
-/** DI reported / validated urgency → tone. */
-export const DI_URGENCY_TONE: Record<string, Tone> = {
-  low: "neutral",
-  medium: "warning",
-  high: "attention",
-  critical: "danger",
-};
-
-/** Urgency / priority level 1 (lowest) … 5 (emergency) → tone. */
+/**
+ * Level of the urgency scale shared by requests and work orders (`WORK.URGENCY`) → tone.
+ * Codes are fixed by Maintafox; labels and target times come from the backend.
+ */
 export const URGENCY_TONE: Record<string, Tone> = {
-  "1": "neutral",
-  "2": "info",
-  "3": "warning",
-  "4": "attention",
-  "5": "danger",
+  emergency: "danger",
+  urgent: "attention",
+  high: "warning",
+  normal: "info",
+  low: "neutral",
 };
 
 export function toneOf(map: Record<string, Tone>, code: string | null | undefined): Tone {

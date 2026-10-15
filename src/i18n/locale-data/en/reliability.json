@@ -1088,13 +1088,6 @@
       "equipment": "Equipment",
       "chooseEquipment": "Choose…",
       "woType": "Work order type",
-      "woTypes": {
-        "corrective": "Corrective",
-        "preventive": "Preventive",
-        "improvement": "Improvement",
-        "inspection": "Inspection",
-        "emergency": "Emergency"
-      },
       "approver": "Approver",
       "anyApprover": "Anyone authorised",
       "justification": "Justification",

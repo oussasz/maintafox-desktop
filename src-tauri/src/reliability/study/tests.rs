@@ -147,7 +147,7 @@ async fn wo_from_di(f: &Fixture, code: &str, eq: i64, di_at: &str) -> i64 {
         &f.db,
         &format!(
             "INSERT INTO work_orders (code, type_id, status_id, equipment_id, entity_id, title, source_di_id, row_version, \
-             created_at, updated_at) VALUES ('{code}', (SELECT id FROM work_order_types WHERE code = 'corrective'), \
+             created_at, updated_at) VALUES ('{code}', (SELECT v.id FROM reference_values v JOIN reference_sets s ON s.id = v.set_id JOIN reference_domains d ON d.id = s.domain_id WHERE d.code = 'WORK.ORDER_TYPES' AND v.code = 'corrective'), \
              (SELECT id FROM work_order_statuses WHERE code = 'closed'), {eq}, 1, 'Roulement', \
              (SELECT id FROM intervention_requests WHERE code = 'DI-{code}'), 1, '{di_at}', '{di_at}')"
         ),
@@ -161,8 +161,7 @@ async fn pm_wo(f: &Fixture, code: &str, eq: i64, done_at: &str) -> i64 {
         &f.db,
         &format!(
             "INSERT INTO work_orders (code, type_id, status_id, equipment_id, entity_id, title, actual_end, closed_at, \
-             row_version, created_at, updated_at) VALUES ('{code}', (SELECT id FROM work_order_types WHERE code = \
-             'preventive'), (SELECT id FROM work_order_statuses WHERE code = 'closed'), {eq}, 1, 'Remplacement roulement', \
+             row_version, created_at, updated_at) VALUES ('{code}', (SELECT v.id FROM reference_values v JOIN reference_sets s ON s.id = v.set_id JOIN reference_domains d ON d.id = s.domain_id WHERE d.code = 'WORK.ORDER_TYPES' AND v.code = 'preventive'), (SELECT id FROM work_order_statuses WHERE code = 'closed'), {eq}, 1, 'Remplacement roulement', \
              '{done_at}', '{done_at}', 1, '{done_at}', '{done_at}')"
         ),
     )

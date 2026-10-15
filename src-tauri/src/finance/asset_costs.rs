@@ -2,7 +2,7 @@
 //!
 //! Reads the cost columns of closed OTs, which the settlement keeps equal to the settled figures
 //! (`settlement::write_back_wo_costs`), so this view, the asset record, SMRP cost/RAV and the RAMS
-//! cost-of-failure all agree. Corrective = OT types `corrective` / `emergency` (failure cost, used
+//! cost-of-failure all agree. Corrective = OT types of a corrective EN 13306 nature (failure cost, used
 //! by RAMS cost-based intervals); preventive = every other type.
 
 use chrono::{Duration, Utc};
@@ -91,31 +91,35 @@ pub async fn list_asset_cost_history<C: ConnectionTrait>(
     let only_with_cost = filter.only_with_cost.unwrap_or(true);
     let limit = filter.limit.unwrap_or(200).clamp(1, 2000);
 
+    // Corrective work by the EN 13306 nature of the OT type (immediate + deferred), not its code.
+    let corrective = crate::wo::types::nature_sql_list(&crate::wo::types::MaintenanceNature::CORRECTIVE);
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT e.id, e.asset_id_code AS code, e.name, e.cost_center_code, e.replacement_value,
+            format!(
+                "SELECT e.id, e.asset_id_code AS code, e.name, e.cost_center_code, e.replacement_value,
                     COUNT(wo.id) AS closed_wos,
                     COALESCE(SUM(wo.total_cost), 0.0) AS lifetime_cost,
                     COALESCE(SUM(wo.labor_cost), 0.0) AS lifetime_labor,
                     COALESCE(SUM(wo.parts_cost), 0.0) AS lifetime_parts,
                     COALESCE(SUM(wo.service_cost), 0.0) AS lifetime_services,
                     COALESCE(SUM(CASE WHEN wo.closed_at >= ?1 THEN wo.total_cost END), 0.0) AS cost_12m,
-                    COALESCE(SUM(CASE WHEN wot.code IN ('corrective', 'emergency') THEN 1 ELSE 0 END), 0) AS corrective_wos,
-                    COALESCE(SUM(CASE WHEN wot.code IN ('corrective', 'emergency') THEN wo.total_cost END), 0.0) AS corrective_cost,
-                    COALESCE(SUM(CASE WHEN wo.id IS NOT NULL AND (wot.code IS NULL OR wot.code NOT IN ('corrective', 'emergency'))
+                    COALESCE(SUM(CASE WHEN wot.semantic_tag IN ({corrective}) THEN 1 ELSE 0 END), 0) AS corrective_wos,
+                    COALESCE(SUM(CASE WHEN wot.semantic_tag IN ({corrective}) THEN wo.total_cost END), 0.0) AS corrective_cost,
+                    COALESCE(SUM(CASE WHEN wo.id IS NOT NULL AND (wot.semantic_tag IS NULL OR wot.semantic_tag NOT IN ({corrective}))
                                       THEN wo.total_cost END), 0.0) AS preventive_cost,
                     MAX(wo.closed_at) AS last_closed_at
              FROM equipment e
              LEFT JOIN work_orders wo ON wo.equipment_id = e.id AND wo.closed_at IS NOT NULL
-             LEFT JOIN work_order_types wot ON wot.id = wo.type_id
+             LEFT JOIN reference_values wot ON wot.id = wo.type_id
              WHERE e.deleted_at IS NULL
                AND (?2 IS NULL OR lower(e.asset_id_code || ' ' || e.name) LIKE ?2)
                AND (?3 IS NULL OR e.cost_center_code = ?3)
              GROUP BY e.id
              HAVING (?4 = 0 OR COALESCE(SUM(wo.total_cost), 0.0) > 0)
              ORDER BY lifetime_cost DESC, code ASC
-             LIMIT ?5",
+             LIMIT ?5"
+            ),
             [
                 since_12m.clone().into(),
                 search.into(),

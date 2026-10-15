@@ -29,8 +29,10 @@ const SYSTEM_META: &str = r#"{"origin":"system","standard":"ISO 14224"}"#;
 /// (code, French label, English term, ISO 14224 code)
 type Row = (&'static str, &'static str, &'static str, &'static str);
 
-/// Observed symptoms. Codes shared with `DI.SYMPTOM` (vibration, leakage, overheating, noise,
-/// performance_drop) let a converted request carry its symptom onto the WO close-out.
+/// Observed failure symptoms: the single list shared by the request intake (DI), the OT
+/// close-out and the RAMS failure events (migration 199 merged the former `DI.SYMPTOM` into it).
+/// Codes and English terms follow the ISO 14224 failure-mode codes (Annex B, Tables B.6–B.15:
+/// the failure modes as observed on the equipment), the ISO code is in `external_code`.
 const SYMPTOMS: &[Row] = &[
     ("vibration", "Vibration anormale", "Vibration", "VIB"),
     ("noise", "Bruit anormal", "Noise", "NOI"),
@@ -85,7 +87,48 @@ const SYMPTOMS: &[Row] = &[
         "Minor in-service problems",
         "SER",
     ),
+    ("breakdown", "Panne franche (arrêt total)", "Breakdown", "BRD"),
+    (
+        "fail_to_function",
+        "Ne fonctionne pas à la sollicitation",
+        "Fail to function on demand",
+        "FTF",
+    ),
+    ("fail_to_open", "Refus d'ouverture", "Fail to open on demand", "FTO"),
+    ("fail_to_close", "Refus de fermeture", "Fail to close on demand", "FTC"),
+    (
+        "delayed_operation",
+        "Fonctionnement retardé",
+        "Delayed operation",
+        "DOP",
+    ),
+    (
+        "leakage_closed_position",
+        "Fuite en position fermée",
+        "Leakage in closed position",
+        "LCP",
+    ),
+    (
+        "leakage_fuel",
+        "Fuite externe (combustible)",
+        "External leakage - fuel",
+        "ELF",
+    ),
+    (
+        "insufficient_power",
+        "Puissance insuffisante",
+        "Insufficient power",
+        "POW",
+    ),
+    (
+        "faulty_output_voltage",
+        "Tension de sortie anormale",
+        "Faulty output voltage",
+        "FOV",
+    ),
+    ("load_drop", "Chute de charge", "Load drop", "LOA"),
     ("other", "Autre symptôme", "Other", "OTH"),
+    ("unknown", "Symptôme inconnu", "Unknown", "UNK"),
 ];
 
 /// Failure causes (ISO 14224 Table B.3).

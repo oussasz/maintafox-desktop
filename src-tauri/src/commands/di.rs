@@ -1208,7 +1208,7 @@ mod tests {
                 safety_flag: false,
                 environmental_flag: false,
                 quality_flag: false,
-                reported_urgency: "medium".into(),
+                reported_urgency: "normal".into(),
                 observed_at: None,
                 source_inspection_anomaly_id: None,
                 submitter_id: user_id,

@@ -324,7 +324,7 @@ const REQUIREMENT_SELECT: &str = "SELECT qr.id, qr.target_kind, \
      qr.skill_reference_value_id, qr.min_proficiency_level, qr.coverage, \
      ct.code AS cert_code, ct.name AS cert_name, rv.code AS skill_code, rv.label AS skill_label \
      FROM qualification_requirements qr \
-     LEFT JOIN work_order_types wot ON wot.id = qr.work_order_type_id \
+     LEFT JOIN reference_values wot ON wot.id = qr.work_order_type_id \
      LEFT JOIN permit_types pt ON pt.id = qr.permit_type_id \
      LEFT JOIN certification_types ct ON ct.id = qr.certification_type_id \
      LEFT JOIN reference_values rv ON rv.id = qr.skill_reference_value_id \

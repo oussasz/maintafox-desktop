@@ -182,7 +182,7 @@ export function PmExecutionDialog({
               <>
                 <div className="grid gap-1">
                   <ReferenceCombobox
-                    referenceType="di.symptom"
+                    referenceType="work.symptom"
                     label={t("fields.findingType")}
                     value={findingType}
                     onChange={setFindingType}

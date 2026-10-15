@@ -10,6 +10,7 @@ import { AlertTriangle, Clock, RefreshCw, Shield, TrendingUp } from "lucide-reac
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { useUrgencyScale } from "@/components/common/urgency/use-urgency-scale";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useDiStatsStore } from "@/stores/di-stats-store";
@@ -28,6 +29,7 @@ function subtractMonths(months: number): string {
 
 export function DiDashboardView() {
   const { t } = useTranslation("di");
+  const { labelOf: urgencyLabel } = useUrgencyScale();
   const stats = useDiStatsStore((s) => s.stats);
   const loading = useDiStatsStore((s) => s.loading);
   const loadStats = useDiStatsStore((s) => s.loadStats);
@@ -157,9 +159,7 @@ export function DiDashboardView() {
               const pct = stats.total > 0 ? (d.count / stats.total) * 100 : 0;
               return (
                 <div key={d.priority} className="flex items-center gap-2 text-xs">
-                  <span className="w-20 truncate text-text-muted">
-                    {t(`priority.${d.priority}`)}
-                  </span>
+                  <span className="w-20 truncate text-text-muted">{urgencyLabel(d.priority)}</span>
                   <div className="flex-1 h-2 rounded bg-surface-1">
                     <div className="h-2 rounded bg-amber-400" style={{ width: `${pct}%` }} />
                   </div>

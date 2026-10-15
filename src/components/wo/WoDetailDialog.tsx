@@ -29,7 +29,8 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
+import { LinkedEntityBadge, roundTitle } from "@/components/common/LinkedEntityBadge";
+import { UrgencyBadge } from "@/components/common/urgency/UrgencyBadge";
 import { WoCostPanel } from "@/components/finance/WoCostPanel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -55,6 +56,7 @@ import {
 } from "@/components/wo/WoExecutionControls";
 import { WoPlanningPanel } from "@/components/wo/WoPlanningPanel";
 import { printWoFiche } from "@/components/wo/WoPrintFiche";
+import { useWoTypeLabels } from "@/components/wo/use-wo-type-labels";
 import { usePermissions } from "@/hooks/use-permissions";
 import { needsPlanningApproval, useWoLifecycleActions } from "@/hooks/use-wo-lifecycle-actions";
 import { formatAssetLabel } from "@/lib/display";
@@ -64,7 +66,7 @@ import { useWoStore } from "@/stores/wo-store";
 import { toErrorMessage } from "@/utils/errors";
 import { formatDate } from "@/utils/format-date";
 import { isWoLifecycleState } from "@/utils/wo-lifecycle";
-import { statusToI18nKey, STATUS_STYLE, URGENCY_STYLE } from "@/utils/wo-status";
+import { statusToI18nKey, STATUS_STYLE } from "@/utils/wo-status";
 import type { WoCompletionGate, WoStatus, WorkOrder } from "@shared/ipc-types";
 import { P, type PermissionName } from "@shared/rbac/permissions.generated";
 
@@ -89,6 +91,7 @@ interface WoDetailDialogProps {
 
 export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailDialogProps) {
   const { t, i18n } = useTranslation("ot");
+  const { typeLabel, natureLabel } = useWoTypeLabels();
   const { can } = usePermissions();
 
   const saving = useWoStore((s) => s.saving);
@@ -243,14 +246,7 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
                     {t(`lifecycle.${wo.lifecycle_state}`)}
                   </Badge>
                 ) : null}
-                {wo.urgency_id != null && (
-                  <Badge
-                    variant="outline"
-                    className={`text-xs border-0 ${URGENCY_STYLE[String(wo.urgency_id)] ?? ""}`}
-                  >
-                    {wo.urgency_label ?? t("form.urgency.label")}
-                  </Badge>
-                )}
+                <UrgencyBadge code={wo.urgency_code} size="md" />
               </div>
             </div>
           </DialogHeader>
@@ -291,7 +287,17 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
 
             <Card>
               <CardContent className="p-3 grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2 text-xs">
-                <InfoRow label={t("detail.fields.type")} value={wo.type_label ?? "—"} />
+                <InfoRow
+                  label={t("detail.fields.type")}
+                  value={typeLabel(wo.type_code, wo.type_label) || "—"}
+                />
+                {wo.subtype_label ? (
+                  <InfoRow label={t("detail.fields.subtype")} value={wo.subtype_label} />
+                ) : null}
+                <InfoRow
+                  label={t("detail.fields.nature")}
+                  value={natureLabel(wo.type_code) ?? wo.nature_label ?? "—"}
+                />
                 <InfoRow
                   label={t("detail.fields.equipment")}
                   value={formatAssetLabel(wo.asset_code, wo.asset_label)}
@@ -339,6 +345,23 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
                         code={wo.source_di_code}
                         entityId={wo.source_di_id}
                         title={wo.source_di_title}
+                      />
+                    }
+                  />
+                )}
+                {wo.source_inspection_round_id != null && (
+                  <InfoRow
+                    label={t("detail.fields.sourceInspectionRound")}
+                    value={
+                      <LinkedEntityBadge
+                        entity="inspection_round"
+                        code={wo.source_inspection_round_code}
+                        entityId={wo.source_inspection_round_id}
+                        title={roundTitle(
+                          wo.source_inspection_round_title,
+                          wo.source_inspection_round_scheduled_at,
+                          i18n.language,
+                        )}
                       />
                     }
                   />

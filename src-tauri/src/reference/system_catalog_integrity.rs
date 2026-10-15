@@ -25,6 +25,9 @@ pub async fn ensure_system_reference_catalog_integrity(db: &DatabaseConnection) 
     ensure_org_schedule_class_reference_catalog(db).await?;
     // WO close-out coding (symptoms, causes, effects, mechanisms, detection methods).
     crate::wo::closeout_reference_catalog::ensure_closeout_reference_catalogs(db).await?;
+    // Shared DI / OT urgency scale and the OT types with their maintenance nature.
+    crate::reference::urgency_scale::ensure_urgency_scale(db).await?;
+    crate::wo::types::ensure_work_order_type_catalog(db).await?;
     // Finance cost categories and variance reasons.
     crate::finance::reference_catalog::ensure_finance_reference_catalogs(db).await?;
     // Certification / authorisation types and skills in the tenant's language.
@@ -32,8 +35,8 @@ pub async fn ensure_system_reference_catalog_integrity(db: &DatabaseConnection) 
     Ok(())
 }
 
-async fn ensure_domain(
-    db: &DatabaseConnection,
+pub(crate) async fn ensure_domain(
+    db: &impl ConnectionTrait,
     code: &str,
     name: &str,
     structure_type: &str,
@@ -75,7 +78,7 @@ async fn ensure_domain(
     Ok(())
 }
 
-async fn ensure_published_set(db: &DatabaseConnection, domain_code: &str) -> AppResult<()> {
+pub(crate) async fn ensure_published_set(db: &impl ConnectionTrait, domain_code: &str) -> AppResult<()> {
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO reference_sets \
@@ -154,29 +157,6 @@ async fn insert_seed_values(db: &DatabaseConnection, domain_code: &str, rows: &[
     Ok(())
 }
 
-const DI_SYMPTOMS: &[SeedValue] = &[
-    SeedValue {
-        description: Some("Niveau vibratoire anormal détecté."),
-        ..seed("vibration", "Vibration anormale", 1, "di_symptom")
-    },
-    SeedValue {
-        description: Some("Présence de fuite (huile, eau, air, etc.)."),
-        ..seed("leakage", "Fuite", 2, "di_symptom")
-    },
-    SeedValue {
-        description: Some("Montée en température anormale."),
-        ..seed("overheating", "Surchauffe", 3, "di_symptom")
-    },
-    SeedValue {
-        description: Some("Bruit ou cliquetis inhabituel."),
-        ..seed("noise", "Bruit anormal", 4, "di_symptom")
-    },
-    SeedValue {
-        description: Some("Dégradation notable des performances."),
-        ..seed("performance_drop", "Perte de performance", 5, "di_symptom")
-    },
-];
-
 const DI_ORIGINS: &[SeedValue] = &[
     seed("operator", "Opérateur", 1, "di_origin"),
     seed("technician", "Technicien", 2, "di_origin"),
@@ -189,25 +169,6 @@ const DI_ORIGINS: &[SeedValue] = &[
     seed("external", "Externe", 9, "di_origin"),
 ];
 
-const DI_PRIORITIES: &[SeedValue] = &[
-    SeedValue {
-        color_hex: Some("#198754"),
-        ..seed("low", "Basse", 1, "di_priority")
-    },
-    SeedValue {
-        color_hex: Some("#0dcaf0"),
-        ..seed("medium", "Normale", 2, "di_priority")
-    },
-    SeedValue {
-        color_hex: Some("#ffc107"),
-        ..seed("high", "Haute", 3, "di_priority")
-    },
-    SeedValue {
-        color_hex: Some("#dc3545"),
-        ..seed("critical", "Critique", 4, "di_priority")
-    },
-];
-
 const DI_IMPACT_LEVELS: &[SeedValue] = &[
     seed("unknown", "Inconnu", 1, "di_impact_level"),
     seed("none", "Aucun", 2, "di_impact_level"),
@@ -216,6 +177,9 @@ const DI_IMPACT_LEVELS: &[SeedValue] = &[
     seed("critical", "Critique", 5, "di_impact_level"),
 ];
 
+/// Request types (COMPANY list, extended by the plant through draft → publish). The semantic tag
+/// of a shipped type names the EN 13306 nature of the OT the request becomes
+/// (`wo::types::DI_REQUEST_TYPE_NATURES`); a type without a nature tag becomes corrective work.
 const DI_REQUEST_TYPES: &[SeedValue] = &[
     SeedValue {
         description: Some("Intervention corrective / réparation."),
@@ -223,23 +187,23 @@ const DI_REQUEST_TYPES: &[SeedValue] = &[
     },
     SeedValue {
         description: Some("Maintenance préventive planifiée."),
-        ..seed("preventive", "Préventif", 2, "di_request_type")
+        ..seed("preventive", "Préventif", 2, "preventive_predetermined")
     },
     SeedValue {
         description: Some("Contrôle / inspection."),
-        ..seed("inspection", "Inspection", 3, "di_request_type")
+        ..seed("inspection", "Inspection", 3, "preventive_condition_based")
     },
     SeedValue {
         description: Some("Mise en place / installation."),
-        ..seed("installation", "Installation", 4, "di_request_type")
+        ..seed("installation", "Installation", 4, "improvement")
     },
     SeedValue {
         description: Some("Étalonnage / calibrage."),
-        ..seed("calibration", "Calibrage", 5, "di_request_type")
+        ..seed("calibration", "Calibrage", 5, "preventive_predetermined")
     },
     SeedValue {
         description: Some("Amélioration / modification."),
-        ..seed("improvement", "Amélioration", 6, "di_request_type")
+        ..seed("improvement", "Amélioration", 6, "improvement")
     },
     SeedValue {
         description: Some("Information seule — observation."),
@@ -254,31 +218,11 @@ const DI_REQUEST_TYPES: &[SeedValue] = &[
 async fn ensure_di_reference_catalog(db: &DatabaseConnection) -> AppResult<()> {
     ensure_domain(
         db,
-        "DI.SYMPTOM",
-        "Symptômes DI",
-        "flat",
-        "tenant_managed",
-        1,
-        DomainAudience::Company,
-    )
-    .await?;
-    ensure_domain(
-        db,
         "DI.ORIGIN",
         "Origines DI",
         "flat",
         "tenant_managed",
         1,
-        DomainAudience::Company,
-    )
-    .await?;
-    ensure_domain(
-        db,
-        "DI.PRIORITY",
-        "Priorités DI",
-        "flat",
-        "protected_analytical",
-        0,
         DomainAudience::Company,
     )
     .await?;
@@ -298,24 +242,18 @@ async fn ensure_di_reference_catalog(db: &DatabaseConnection) -> AppResult<()> {
         "Types de demande DI",
         "flat",
         "protected_analytical",
-        0,
+        1,
         DomainAudience::Company,
     )
     .await?;
 
-    for code in [
-        "DI.SYMPTOM",
-        "DI.ORIGIN",
-        "DI.PRIORITY",
-        "DI.IMPACT_LEVEL",
-        "DI.REQUEST_TYPE",
-    ] {
+    // Symptoms: shared ISO 14224 list `WORK.SYMPTOMS` (migration 199). Urgency: shared scale
+    // `WORK.URGENCY` (migration 198, `reference::urgency_scale`).
+    for code in ["DI.ORIGIN", "DI.IMPACT_LEVEL", "DI.REQUEST_TYPE"] {
         ensure_published_set(db, code).await?;
     }
 
-    insert_seed_values(db, "DI.SYMPTOM", DI_SYMPTOMS).await?;
     insert_seed_values(db, "DI.ORIGIN", DI_ORIGINS).await?;
-    insert_seed_values(db, "DI.PRIORITY", DI_PRIORITIES).await?;
     insert_seed_values(db, "DI.IMPACT_LEVEL", DI_IMPACT_LEVELS).await?;
     insert_seed_values(db, "DI.REQUEST_TYPE", DI_REQUEST_TYPES).await?;
 

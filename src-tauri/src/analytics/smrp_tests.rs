@@ -57,7 +57,7 @@ async fn status_id(db: &DatabaseConnection, code: &str) -> i64 {
 }
 
 async fn type_id(db: &DatabaseConnection, code: &str) -> i64 {
-    id_of(db, &format!("SELECT id FROM work_order_types WHERE code = '{code}'")).await
+    id_of(db, &format!("SELECT v.id FROM reference_values v JOIN reference_sets s ON s.id = v.set_id JOIN reference_domains d ON d.id = s.domain_id WHERE d.code = 'WORK.ORDER_TYPES' AND v.code = '{code}'")).await
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -17,7 +17,9 @@ use crate::errors::{AppError, AppResult};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
-use super::domain::{guard_transition, map_intervention_request, DiStatus, InterventionRequest};
+use super::domain::{
+    guard_transition, map_intervention_request, DiStatus, InterventionRequest, IR_COLS, IR_JOINS, IR_JOIN_COLS,
+};
 use crate::wo::domain::generate_wo_code;
 use crate::wo::time::now_utc_z;
 
@@ -43,46 +45,6 @@ pub struct WoConversionResult {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Constants
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/// All columns from `intervention_requests` for SELECT reuse (aliased as `ir`).
-const IR_COLS: &str = "\
-    ir.id, ir.code, ir.equipment_id, ir.sub_asset_ref, ir.org_node_id, \
-    ir.status, ir.title, ir.description, ir.origin_type, ir.request_type, ir.symptom_code_id, \
-    ir.impact_level, ir.production_impact, ir.safety_flag, ir.environmental_flag, \
-    ir.quality_flag, ir.reported_urgency, ir.validated_urgency, \
-    ir.observed_at, ir.submitted_at, \
-    ir.reviewer_id, ir.screened_at, ir.approved_at, \
-    ir.deferred_until, ir.declined_at, ir.closed_at, ir.archived_at, \
-    ir.converted_to_wo_id, ir.converted_at, \
-    ir.sla_rule_id, ir.sla_target_response_hours, ir.sla_target_resolution_hours, \
-    ir.sla_escalation_threshold_hours, ir.sla_response_deadline, ir.sla_resolution_deadline, \
-    ir.sla_response_breach_notified_at, ir.sla_resolution_breach_notified_at, \
-    ir.reviewer_note, ir.classification_code_id, \
-    ir.is_recurrence_flag, ir.recurrence_di_id, \
-    ir.source_inspection_anomaly_id, \
-    ir.disposition_code, ir.disposition_notes, ir.related_di_id, ir.closed_by_id, ir.deferred_from_status, \
-    ir.row_version, ir.submitter_id, ir.created_at, ir.updated_at";
-
-/// Display enrichment columns (must be paired with `IR_JOINS`).
-const IR_JOIN_COLS: &str = "\
-    eq.asset_id_code AS asset_code, eq.name AS asset_label, \
-    org.code AS org_node_code, org.name AS org_node_label, \
-    COALESCE(us.display_name, us.username) AS submitter_display_name, \
-    COALESCE(urv.display_name, urv.username) AS reviewer_display_name, \
-    wo.code AS converted_to_wo_code, wo.title AS converted_to_wo_title, \
-    related_di.code AS related_di_code";
-
-const IR_JOINS: &str = "\
-    LEFT JOIN equipment eq ON eq.id = ir.equipment_id \
-    LEFT JOIN org_nodes org ON org.id = ir.org_node_id \
-    LEFT JOIN user_accounts us ON us.id = ir.submitter_id \
-    LEFT JOIN user_accounts urv ON urv.id = ir.reviewer_id \
-    LEFT JOIN work_orders wo ON wo.id = ir.converted_to_wo_id \
-    LEFT JOIN intervention_requests related_di ON related_di.id = ir.related_di_id";
-
-// ═══════════════════════════════════════════════════════════════════════════════
 // Helpers
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -98,31 +60,25 @@ fn check_concurrency(rows_affected: u64) -> AppResult<()> {
     Ok(())
 }
 
-/// Resolve the WO urgency level that matches a DI urgency code.
-///
-/// DI urgencies (`low`, `medium`, `high`, `critical`) share their codes with the
-/// `urgency_levels` reference scale, so the match is by code and only among
-/// active levels. A code the tenant has retired yields `None` (the planner sets
-/// it) instead of failing the conversion.
-pub(crate) async fn resolve_wo_urgency_id<C: ConnectionTrait>(
+/// Nature of the OT a request becomes (EN 13306): the nature its request type names (semantic
+/// tag of the `DI.REQUEST_TYPE` value: preventive, inspection, improvement…), else corrective —
+/// *immediate* when the carried urgency is the top level of the shared scale (emergency),
+/// *deferred* otherwise.
+pub(crate) async fn conversion_nature<C: ConnectionTrait>(
     conn: &C,
-    di_urgency_code: &str,
-) -> AppResult<Option<i64>> {
-    let row = conn
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT id FROM urgency_levels \
-             WHERE code = ? AND COALESCE(is_active, 1) = 1 \
-             ORDER BY id LIMIT 1",
-            [di_urgency_code.to_string().into()],
-        ))
-        .await?;
-    match row {
-        Some(r) => Ok(Some(r.try_get::<i64>("", "id").map_err(|e| {
-            AppError::Internal(anyhow::anyhow!("urgency_levels id decode: {e}"))
-        })?)),
-        None => Ok(None),
-    }
+    request_type: &str,
+    urgency: crate::reference::urgency_scale::UrgencyCode,
+) -> AppResult<crate::wo::types::MaintenanceNature> {
+    use crate::wo::types::MaintenanceNature;
+    Ok(
+        match crate::wo::types::nature_for_request_type(conn, request_type).await? {
+            Some(nature) => nature,
+            None if urgency == crate::reference::urgency_scale::UrgencyCode::Emergency => {
+                MaintenanceNature::CorrectiveImmediate
+            }
+            None => MaintenanceNature::CorrectiveDeferred,
+        },
+    )
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -232,32 +188,22 @@ pub async fn convert_di_to_work_order(
         .try_get("", "id")
         .map_err(|e| AppError::Internal(anyhow::anyhow!("planning status_id decode: {e}")))?;
 
-    // Resolve default type_id (corrective)
-    let type_row = txn
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT id FROM work_order_types WHERE lower(code) = 'corrective' LIMIT 1",
-            [],
-        ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("work_order_types missing 'corrective' row")))?;
-    let type_id: i64 = type_row
-        .try_get("", "id")
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("corrective type_id decode: {e}")))?;
-
     // Single SSOT allocator (same sequence as manual / PM / inspection create).
     let wo_code = generate_wo_code(&txn).await?;
 
-    // Carry the triage context onto the WO: the urgency the reviewer validated
-    // (falling back to what the requester reported) and the safety flag, which
-    // makes the permit / LOTO gate mandatory before execution can start.
-    let carried_urgency_code = di
-        .validated_urgency
-        .as_deref()
-        .filter(|code| !code.trim().is_empty())
-        .unwrap_or(di.reported_urgency.as_str())
-        .to_string();
-    let urgency_id = resolve_wo_urgency_id(&txn, &carried_urgency_code).await?;
+    // Carry the triage context onto the WO: the urgency the reviewer validated (falling back to
+    // what the requester reported) on the shared DI / OT scale, the OT type of the matching
+    // maintenance nature, and the safety flag, which makes the permit / LOTO gate mandatory
+    // before execution can start.
+    let carried_urgency = crate::reference::urgency_scale::validate_urgency_code(
+        di.validated_urgency
+            .as_deref()
+            .filter(|code| !code.trim().is_empty())
+            .unwrap_or(di.reported_urgency.as_str()),
+    )?;
+    let urgency_id = crate::reference::urgency_scale::urgency_value_id(&txn, carried_urgency.as_str()).await?;
+    let nature = conversion_nature(&txn, &di.request_type, carried_urgency).await?;
+    let type_id = crate::wo::types::default_type_for_nature(&txn, nature).await?.id;
     let requires_permit: i64 = i64::from(di.safety_flag);
 
     txn.execute(Statement::from_sql_and_values(
@@ -286,9 +232,7 @@ pub async fn convert_di_to_work_order(
             input.actor_id.into(),
             di.title.clone().into(),
             di.description.clone().into(),
-            urgency_id
-                .map(sea_orm::Value::from)
-                .unwrap_or(sea_orm::Value::from(None::<i64>)),
+            urgency_id.into(),
             requires_permit.into(),
             crate::sync::identity::new_entity_sync_id().into(),
             now.clone().into(),
@@ -318,27 +262,9 @@ pub async fn convert_di_to_work_order(
         .try_get("", "id")
         .map_err(|e| AppError::Internal(anyhow::anyhow!("WO id decode: {e}")))?;
 
-    // The close-out codes symptoms from WORK.SYMPTOMS; carry the DI symptom as the WORK value
-    // with the same code so it shows (and can be changed) on the close-out, else keep the DI id.
-    let wo_symptom_id = match di.symptom_code_id {
-        Some(di_symptom_id) => {
-            let code: Option<String> = txn
-                .query_one(Statement::from_sql_and_values(
-                    DbBackend::Sqlite,
-                    "SELECT code FROM reference_values WHERE id = ?",
-                    [di_symptom_id.into()],
-                ))
-                .await?
-                .and_then(|r| r.try_get::<String>("", "code").ok());
-            match code {
-                Some(code) => crate::wo::closeout_reference_catalog::resolve_work_symptom_id_by_code(&txn, &code)
-                    .await?
-                    .or(Some(di_symptom_id)),
-                None => Some(di_symptom_id),
-            }
-        }
-        None => None,
-    };
+    // Requests and the close-out share one symptom list (`WORK.SYMPTOMS`): the observed symptom
+    // carries over as is, and from the close-out into the RAMS failure event.
+    let wo_symptom_id = di.symptom_code_id;
 
     // Carry-over DI technical context into WO closeout context for RAMS.
     txn.execute(Statement::from_sql_and_values(

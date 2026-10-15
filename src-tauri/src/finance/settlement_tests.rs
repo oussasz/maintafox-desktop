@@ -279,7 +279,8 @@ async fn wo_in_progress(db: &DatabaseConnection) -> i64 {
             source_rca_cause_text: None,
             entity_id: None,
             planner_id: None,
-            urgency_id: Some(3),
+            urgency_code: Some("normal".into()),
+            subtype_code: None,
             title: "Fuite garniture pompe".into(),
             description: None,
             notes: None,
@@ -315,7 +316,7 @@ async fn wo_in_progress(db: &DatabaseConnection) -> i64 {
             shift: None,
             expected_duration_hours: Some(2.0),
             planned_downtime_hours: None,
-            urgency_id: None,
+            urgency_code: None,
         },
     )
     .await

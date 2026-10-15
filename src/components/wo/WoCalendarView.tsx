@@ -11,6 +11,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { urgencyBorderClass } from "@/components/common/urgency/use-urgency-scale";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { statusToI18nKey } from "@/utils/wo-status";
@@ -26,19 +27,6 @@ interface WoCalendarViewProps {
 }
 
 // ── Urgency → border-left colour (matches DI pattern) ────────────────────────
-
-const URGENCY_BORDER: Record<number, string> = {
-  1: "border-l-green-400", // very low
-  2: "border-l-green-400", // low
-  3: "border-l-yellow-400", // medium
-  4: "border-l-orange-400", // high
-  5: "border-l-red-500", // critical
-};
-
-function urgencyBorderClass(level: number | null | undefined): string {
-  if (level == null) return "border-l-gray-300";
-  return URGENCY_BORDER[level] ?? "border-l-gray-300";
-}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -219,7 +207,7 @@ export function WoCalendarView({ items, onSelect }: WoCalendarViewProps) {
                         key={wo.id}
                         type="button"
                         aria-label={`${wo.code} – ${wo.title}`}
-                        className={`w-full text-left text-[9px] rounded px-1 py-0.5 truncate border-l-2 bg-surface-1 hover:bg-surface-2 cursor-pointer ${urgencyBorderClass(wo.urgency_level)}`}
+                        className={`w-full text-left text-[9px] rounded px-1 py-0.5 truncate border-l-2 bg-surface-1 hover:bg-surface-2 cursor-pointer ${urgencyBorderClass(wo.urgency_code)}`}
                         onClick={() => onSelect(wo)}
                       >
                         {wo.code}
@@ -257,7 +245,7 @@ export function WoCalendarView({ items, onSelect }: WoCalendarViewProps) {
                         key={wo.id}
                         type="button"
                         aria-label={`${wo.code} – ${wo.title}`}
-                        className={`w-full text-left text-[10px] rounded px-1.5 py-1 border-l-2 bg-surface-1 hover:bg-surface-2 cursor-pointer ${urgencyBorderClass(wo.urgency_level)}`}
+                        className={`w-full text-left text-[10px] rounded px-1.5 py-1 border-l-2 bg-surface-1 hover:bg-surface-2 cursor-pointer ${urgencyBorderClass(wo.urgency_code)}`}
                         onClick={() => onSelect(wo)}
                       >
                         <span className="font-mono">{wo.code}</span>
@@ -286,7 +274,7 @@ export function WoCalendarView({ items, onSelect }: WoCalendarViewProps) {
                   <button
                     key={wo.id}
                     type="button"
-                    className={`w-full text-left rounded-lg border border-surface-border p-3 border-l-4 hover:bg-surface-1 transition-colors cursor-pointer ${urgencyBorderClass(wo.urgency_level)}`}
+                    className={`w-full text-left rounded-lg border border-surface-border p-3 border-l-4 hover:bg-surface-1 transition-colors cursor-pointer ${urgencyBorderClass(wo.urgency_code)}`}
                     onClick={() => onSelect(wo)}
                     aria-label={`${wo.code} – ${wo.title}`}
                   >

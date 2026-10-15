@@ -168,9 +168,11 @@
       "di": "Ouvrir la demande {{code}}",
       "permit": "Ouvrir le permis {{code}}",
       "pm_plan": "Ouvrir le plan de maintenance préventive {{code}}",
-      "asset": "Ouvrir l’équipement {{code}}"
+      "asset": "Ouvrir l’équipement {{code}}",
+      "inspection_round": "Ouvrir la tournée d’inspection {{code}}"
     },
-    "asset": "{{code}}"
+    "asset": "{{code}}",
+    "inspection_round": "Tournée {{code}}"
   },
   "time": {
     "just_now": "À l'instant",
@@ -223,5 +225,13 @@
     "kpi": {
       "open": "Ouvrir la liste"
     }
+  },
+  "urgency": {
+    "placeholder": "Choisir un niveau d’urgence",
+    "loading": "Chargement de l’échelle…",
+    "loadError": "L’échelle d’urgence n’a pas pu être chargée.",
+    "none": "Sans urgence",
+    "targetsShort": "Prise en charge ≤ {{response}} h · réalisation ≤ {{completion}} h",
+    "targetsTooltip": "Délais cibles : prise en charge ≤ {{response}} h, réalisation ≤ {{completion}} h"
   }
 }

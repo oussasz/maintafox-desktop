@@ -9,6 +9,8 @@
 
 import QRCode from "qrcode";
 
+import { urgencyLabelFor } from "@/components/common/urgency/use-urgency-scale";
+import { woTypeLabel } from "@/components/wo/use-wo-type-labels";
 import {
   DOCUMENT_HEADER_PRINT_CSS,
   loadDocumentHeaderHtml,
@@ -21,6 +23,7 @@ import {
   type WoVerification,
 } from "@/services/wo-closeout-service";
 import { listLabor, listParts, listTasks } from "@/services/wo-execution-service";
+import { useWorkOrderTypesCatalog } from "@/stores/work-order-types-catalog-store";
 import type { WoExecPart, WoExecTask, WoIntervener, WorkOrder } from "@shared/ipc-types";
 
 // ── i18n keys for the print template ────────────────────────────────────────
@@ -73,6 +76,8 @@ function buildHtml(
   t: TFn,
   locale: string,
   letterheadHtml: string,
+  urgencyText: string,
+  typeText: string,
   qrSvg: string,
 ): string {
   const now = new Date().toLocaleDateString(locale);
@@ -148,8 +153,8 @@ function buildHtml(
     <table>
       <tr><th>${esc(t("print.woCode"))}</th><td>${esc(wo.code)}</td></tr>
       <tr><th>${esc(t("print.woTitle"))}</th><td>${esc(wo.title)}</td></tr>
-      <tr><th>${esc(t("print.woType"))}</th><td>${esc(wo.type_label ?? "—")}</td></tr>
-      <tr><th>${esc(t("print.woUrgency"))}</th><td>${esc(wo.urgency_label ?? "—")}</td></tr>
+      <tr><th>${esc(t("print.woType"))}</th><td>${esc(typeText || "—")}</td></tr>
+      <tr><th>${esc(t("print.woUrgency"))}</th><td>${esc(urgencyText || "—")}</td></tr>
       <tr><th>${esc(t("print.woStatus"))}</th><td>${esc(wo.status_code ?? "—")}</td></tr>
       <tr><th>${esc(t("print.createdAt"))}</th><td>${fmtDate(wo.created_at, locale)}</td></tr>
     </table>
@@ -312,7 +317,7 @@ export async function printWoFiche(
 ): Promise<void> {
   // A sheet missing its tasks or parts would mislead the technician: any load failure stops the
   // print and is reported by the caller.
-  const [tasks, labor, parts, snapshot, letterheadHtml, qrSvg] = await Promise.all([
+  const [tasks, labor, parts, snapshot, letterheadHtml, qrSvg, urgencyText] = await Promise.all([
     listTasks(wo.id),
     listLabor(wo.id),
     listParts(wo.id),
@@ -321,7 +326,10 @@ export async function printWoFiche(
     // The WO number is unique across devices (device code, SYNC_STRATEGY §6a) and is what the
     // work-order search finds: scanning it on any device leads to the same order.
     QRCode.toString(wo.code, { type: "svg", margin: 0, errorCorrectionLevel: "M" }),
+    urgencyLabelFor(wo.urgency_code, locale),
   ]);
+  const type = useWorkOrderTypesCatalog.getState().types.find((x) => x.code === wo.type_code);
+  const typeText = type ? woTypeLabel(type, locale) : (wo.type_label ?? "");
 
   const failureDetails = snapshot.failure_details;
   const verifications = snapshot.verifications;
@@ -343,6 +351,8 @@ export async function printWoFiche(
     t,
     locale,
     letterheadHtml,
+    urgencyText,
+    typeText,
     qrSvg,
   );
 

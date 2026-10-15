@@ -152,45 +152,6 @@ impl std::fmt::Display for DiOriginType {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// DiUrgency
-// ═══════════════════════════════════════════════════════════════════════════════
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum DiUrgency {
-    Low,
-    Medium,
-    High,
-    Critical,
-}
-
-impl DiUrgency {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Low => "low",
-            Self::Medium => "medium",
-            Self::High => "high",
-            Self::Critical => "critical",
-        }
-    }
-
-    pub fn try_from_str(s: &str) -> Result<Self, String> {
-        match s {
-            "low" => Ok(Self::Low),
-            "medium" => Ok(Self::Medium),
-            "high" => Ok(Self::High),
-            "critical" => Ok(Self::Critical),
-            other => Err(format!("Unknown DI urgency: '{other}'")),
-        }
-    }
-}
-
-impl std::fmt::Display for DiUrgency {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
 // DiImpactLevel
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -316,6 +277,12 @@ pub struct InterventionRequest {
     pub converted_to_wo_code: Option<String>,
     pub converted_to_wo_title: Option<String>,
     pub related_di_code: Option<String>,
+    /// Inspection round of the finding the request was raised from (`source_inspection_anomaly_id`).
+    pub source_inspection_round_id: Option<i64>,
+    /// Code and name of the round's inspection template (the round has no code of its own).
+    pub source_inspection_round_code: Option<String>,
+    pub source_inspection_round_title: Option<String>,
+    pub source_inspection_round_scheduled_at: Option<String>,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -331,6 +298,18 @@ pub struct DiTransitionInput {
     pub reason_code: Option<String>,
     pub notes: Option<String>,
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Shared SELECT fragments (every read of a full request uses these, aliased `ir`)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// All columns of `intervention_requests` read by [`map_intervention_request`].
+pub(crate) const IR_COLS: &str = "    ir.id, ir.code, ir.equipment_id, ir.sub_asset_ref, ir.org_node_id,     ir.status, ir.title, ir.description, ir.origin_type, ir.request_type, ir.symptom_code_id,     ir.impact_level, ir.production_impact, ir.safety_flag, ir.environmental_flag,     ir.quality_flag, ir.reported_urgency, ir.validated_urgency,     ir.observed_at, ir.submitted_at,     ir.reviewer_id, ir.screened_at, ir.approved_at,     ir.deferred_until, ir.declined_at, ir.closed_at, ir.archived_at,     ir.converted_to_wo_id, ir.converted_at,     ir.sla_rule_id, ir.sla_target_response_hours, ir.sla_target_resolution_hours,     ir.sla_escalation_threshold_hours, ir.sla_response_deadline, ir.sla_resolution_deadline,     ir.sla_response_breach_notified_at, ir.sla_resolution_breach_notified_at,     ir.reviewer_note, ir.classification_code_id,     ir.is_recurrence_flag, ir.recurrence_di_id,     ir.source_inspection_anomaly_id,     ir.disposition_code, ir.disposition_notes, ir.related_di_id, ir.closed_by_id, ir.deferred_from_status,     ir.row_version, ir.submitter_id, ir.created_at, ir.updated_at";
+
+/// Display enrichment columns (must be paired with [`IR_JOINS`]).
+pub(crate) const IR_JOIN_COLS: &str = "    eq.asset_id_code AS asset_code, eq.name AS asset_label,     org.code AS org_node_code, org.name AS org_node_label,     COALESCE(us.display_name, us.username) AS submitter_display_name,     COALESCE(urv.display_name, urv.username) AS reviewer_display_name,     wo.code AS converted_to_wo_code, wo.title AS converted_to_wo_title,     related_di.code AS related_di_code,     src_round.id AS source_inspection_round_id, src_tpl.code AS source_inspection_round_code,     src_tpl.name AS source_inspection_round_title, src_round.scheduled_at AS source_inspection_round_scheduled_at";
+
+pub(crate) const IR_JOINS: &str = "    LEFT JOIN equipment eq ON eq.id = ir.equipment_id     LEFT JOIN org_nodes org ON org.id = ir.org_node_id     LEFT JOIN user_accounts us ON us.id = ir.submitter_id     LEFT JOIN user_accounts urv ON urv.id = ir.reviewer_id     LEFT JOIN work_orders wo ON wo.id = ir.converted_to_wo_id     LEFT JOIN intervention_requests related_di ON related_di.id = ir.related_di_id     LEFT JOIN inspection_anomalies src_anomaly ON src_anomaly.id = ir.source_inspection_anomaly_id     LEFT JOIN inspection_rounds src_round ON src_round.id = src_anomaly.round_id     LEFT JOIN inspection_templates src_tpl ON src_tpl.id = src_round.template_id";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Row mapping helpers
@@ -517,6 +496,18 @@ pub fn map_intervention_request(row: &QueryResult) -> AppResult<InterventionRequ
             .try_get::<Option<String>>("", "converted_to_wo_title")
             .map_err(|e| decode_err("converted_to_wo_title", e))?,
         related_di_code: row.try_get::<Option<String>>("", "related_di_code").ok().flatten(),
+        source_inspection_round_id: row
+            .try_get::<Option<i64>>("", "source_inspection_round_id")
+            .map_err(|e| decode_err("source_inspection_round_id", e))?,
+        source_inspection_round_code: row
+            .try_get::<Option<String>>("", "source_inspection_round_code")
+            .map_err(|e| decode_err("source_inspection_round_code", e))?,
+        source_inspection_round_title: row
+            .try_get::<Option<String>>("", "source_inspection_round_title")
+            .map_err(|e| decode_err("source_inspection_round_title", e))?,
+        source_inspection_round_scheduled_at: row
+            .try_get::<Option<String>>("", "source_inspection_round_scheduled_at")
+            .map_err(|e| decode_err("source_inspection_round_scheduled_at", e))?,
     })
 }
 
@@ -693,16 +684,6 @@ mod tests {
             let s = t.as_str();
             let parsed = DiOriginType::try_from_str(s).unwrap();
             assert_eq!(*t, parsed);
-        }
-    }
-
-    #[test]
-    fn test_urgency_round_trip() {
-        let all = [DiUrgency::Low, DiUrgency::Medium, DiUrgency::High, DiUrgency::Critical];
-        for u in &all {
-            let s = u.as_str();
-            let parsed = DiUrgency::try_from_str(s).unwrap();
-            assert_eq!(*u, parsed);
         }
     }
 

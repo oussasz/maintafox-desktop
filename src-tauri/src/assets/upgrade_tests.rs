@@ -381,7 +381,7 @@ async fn work_order(
         &format!(
             "INSERT INTO work_orders (code, type_id, status_id, equipment_id, title, labor_cost, parts_cost, service_cost, \
                total_cost, downtime_hours, created_at, updated_at, closed_at) VALUES ('{code}', \
-               (SELECT id FROM work_order_types WHERE code = '{type_code}'), \
+               (SELECT v.id FROM reference_values v JOIN reference_sets s ON s.id = v.set_id JOIN reference_domains d ON d.id = s.domain_id WHERE d.code = 'WORK.ORDER_TYPES' AND v.code = '{type_code}'), \
                (SELECT id FROM work_order_statuses WHERE code = '{status}'), {asset_id}, 'Test {code}', \
                {labor}, {parts}, 0, {total}, 2, '{at}', '{at}', '{at}')",
             labor = total * 0.6,

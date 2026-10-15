@@ -81,7 +81,7 @@ const SELECT: &str = "SELECT qr.id, qr.entity_sync_id, qr.target_kind, qr.work_o
         qr.min_proficiency_level, qr.coverage, qr.notes, qr.is_active, qr.row_version, qr.created_at, qr.updated_at \
      FROM qualification_requirements qr \
      LEFT JOIN work_orders wo ON wo.id = qr.work_order_id \
-     LEFT JOIN work_order_types wot ON wot.id = qr.work_order_type_id \
+     LEFT JOIN reference_values wot ON wot.id = qr.work_order_type_id \
      LEFT JOIN permit_types pt ON pt.id = qr.permit_type_id \
      LEFT JOIN certification_types ct ON ct.id = qr.certification_type_id \
      LEFT JOIN reference_values rv ON rv.id = qr.skill_reference_value_id";
@@ -204,6 +204,25 @@ struct Target {
     role_code: Option<String>,
 }
 
+/// A work-order type of the `WORK.ORDER_TYPES` reference list (migration 198), by code — the
+/// same values `work_orders.type_id` points at.
+async fn work_order_type_id(db: &impl ConnectionTrait, code: &str) -> AppResult<Option<i64>> {
+    Ok(db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT t.id FROM reference_values t \
+                   JOIN reference_sets rs ON rs.id = t.set_id AND rs.status = 'published' \
+                   JOIN reference_domains d ON d.id = rs.domain_id AND UPPER(TRIM(d.code)) = '{}' \
+                  WHERE UPPER(TRIM(t.code)) = UPPER(TRIM(?)) LIMIT 1",
+                crate::wo::types::WORK_ORDER_TYPES_DOMAIN
+            ),
+            [code.into()],
+        ))
+        .await?
+        .and_then(|r| r.try_get::<i64>("", "id").ok()))
+}
+
 async fn type_id(db: &impl ConnectionTrait, table: &str, code: &str) -> AppResult<Option<i64>> {
     Ok(db
         .query_one(Statement::from_sql_and_values(
@@ -242,9 +261,7 @@ async fn validate(db: &impl ConnectionTrait, input: &QualificationRequirementUps
         }
         "work_order_type" => {
             let c = code.ok_or_else(|| target_required("work_order_type"))?;
-            let id = type_id(db, "work_order_types", &c)
-                .await?
-                .ok_or_else(|| target_unknown(&c))?;
+            let id = work_order_type_id(db, &c).await?.ok_or_else(|| target_unknown(&c))?;
             Target {
                 work_order_type_id: Some(id),
                 ..Target::default()

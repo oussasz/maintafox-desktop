@@ -14,7 +14,6 @@ pub mod lifecycle;
 pub mod parts;
 pub mod permissions;
 pub mod plan_adherence;
-pub mod priorities;
 pub mod queries;
 pub mod stats;
 pub mod statuses;

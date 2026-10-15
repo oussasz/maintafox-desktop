@@ -19,11 +19,9 @@ use serde::Serialize;
 use crate::analytics::as_of::{self, instant};
 use crate::errors::AppResult;
 
-/// Work-order type codes counted as planned / proactive work.
-pub const PLANNED_TYPE_CODES: &[&str] = &["preventive", "condition_based", "inspection", "overhaul", "improvement"];
-/// Work-order type codes counted as reactive work (emergency is a subset reported on its own).
-pub const REACTIVE_TYPE_CODES: &[&str] = &["corrective", "emergency"];
-pub const EMERGENCY_TYPE_CODE: &str = "emergency";
+// Work mix by the EN 13306 nature of the OT type (`wo::types::MaintenanceNature`): planned work
+// = preventive natures and improvement; reactive work = corrective natures; emergency work (a
+// subset of reactive work, reported on its own) = immediate corrective maintenance.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SmrpWindow {
@@ -228,19 +226,19 @@ async fn work_mix_totals(db: &DatabaseConnection, window: SmrpWindow, org: Optio
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT t.code AS type_code, COUNT(*) AS n, \
+            "SELECT t.semantic_tag AS nature_code, COUNT(*) AS n, \
                     COALESCE(SUM(COALESCE( \
                       (SELECT SUM(i.hours_worked) FROM work_order_interveners i WHERE i.work_order_id = wo.id), \
                       wo.actual_duration_hours, 0)), 0) AS hours \
              FROM work_orders wo \
-             JOIN work_order_types t ON t.id = wo.type_id \
+             LEFT JOIN reference_values t ON t.id = wo.type_id \
              JOIN work_order_statuses s ON s.id = wo.status_id \
              WHERE s.code <> 'cancelled' \
                AND COALESCE(wo.mechanically_completed_at, wo.closed_at) IS NOT NULL \
                AND datetime(COALESCE(wo.mechanically_completed_at, wo.closed_at)) >= datetime(?) \
                AND datetime(COALESCE(wo.mechanically_completed_at, wo.closed_at)) < datetime(?) \
                AND (? IS NULL OR wo.entity_id = ?) \
-             GROUP BY t.code",
+             GROUP BY t.semantic_tag",
             vec![
                 instant(window.from).into(),
                 instant(window.to).into(),
@@ -251,20 +249,25 @@ async fn work_mix_totals(db: &DatabaseConnection, window: SmrpWindow, org: Optio
         .await?;
     let mut m = MixTotals::default();
     for r in rows {
-        let code: String = r.try_get("", "type_code").unwrap_or_default();
+        let nature = r
+            .try_get::<Option<String>>("", "nature_code")
+            .ok()
+            .flatten()
+            .as_deref()
+            .and_then(crate::wo::types::MaintenanceNature::parse);
         let n = i64::try_get(&r, "", "n").unwrap_or(0) as f64;
         let h = f64::try_get(&r, "", "hours").unwrap_or(0.0);
         m.total_hours += h;
         m.total_count += n;
-        if PLANNED_TYPE_CODES.contains(&code.as_str()) {
+        if nature.is_some_and(|n| n.is_planned()) {
             m.planned_hours += h;
             m.planned_count += n;
         }
-        if REACTIVE_TYPE_CODES.contains(&code.as_str()) {
+        if nature.is_some_and(|n| n.is_corrective()) {
             m.reactive_hours += h;
             m.reactive_count += n;
         }
-        if code == EMERGENCY_TYPE_CODE {
+        if nature.is_some_and(|n| n.is_emergency()) {
             m.emergency_hours += h;
             m.emergency_count += n;
         }

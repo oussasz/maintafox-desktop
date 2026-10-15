@@ -284,15 +284,10 @@ pub async fn create_decision(
                 .filter(|s| !s.is_empty())
                 .map(str::to_string)
                 .ok_or_else(|| invalid("DECISION_WO_TYPE_REQUIRED"))?;
-            let known = db
-                .query_one(Statement::from_sql_and_values(
-                    DbBackend::Sqlite,
-                    "SELECT 1 FROM work_order_types WHERE code = ?",
-                    [wo_type.clone().into()],
-                ))
-                .await?
-                .is_some();
-            if !known {
+            if crate::wo::types::resolve_work_order_type_id_by_code(db, &wo_type)
+                .await
+                .is_err()
+            {
                 return Err(invalid("DECISION_WO_TYPE_UNKNOWN"));
             }
             (Some(eq), None, None, None, Some(wo_type))

@@ -77,7 +77,7 @@ impl Template {
 
 /// A private in-memory database on a single connection that lives as long as the pool, opened
 /// like `Database::connect("sqlite::memory:")` does (sqlx defaults, so `foreign_keys = ON`).
-async fn empty_memory_db() -> DatabaseConnection {
+pub(crate) async fn empty_memory_db() -> DatabaseConnection {
     let opts = SqliteConnectOptions::new().in_memory(true).shared_cache(false);
     let pool = SqlitePoolOptions::new()
         .max_connections(1)

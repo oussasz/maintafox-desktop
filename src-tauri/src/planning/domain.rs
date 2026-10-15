@@ -37,7 +37,11 @@ pub struct ScheduleCandidate {
     pub source_title: Option<String>,
     pub assigned_team_label: Option<String>,
     pub assigned_personnel_name: Option<String>,
+    /// Level of the shared DI / OT urgency scale held by `priority_id`.
     pub priority_label: Option<String>,
+    pub priority_code: Option<String>,
+    /// 1 = most urgent … 5 = least urgent (backlog order).
+    pub priority_rank: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

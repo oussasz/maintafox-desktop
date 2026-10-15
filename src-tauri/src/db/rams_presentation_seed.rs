@@ -412,7 +412,8 @@ async fn create_and_close_corrective_wo(db: &DatabaseConnection, ctx: CreateWoSe
             source_rca_cause_text: None,
             entity_id: Some(ctx.org_node_id),
             planner_id: Some(ctx.actor_id),
-            urgency_id: Some(3),
+            urgency_code: Some("normal".into()),
+            subtype_code: None,
             title: ctx.title,
             description: Some("RAMS presentation seed — governed corrective close-out.".into()),
             notes: None,
@@ -437,7 +438,7 @@ async fn create_and_close_corrective_wo(db: &DatabaseConnection, ctx: CreateWoSe
             planned_end: Some(ctx.fail_end.clone()),
             shift: None,
             expected_duration_hours: Some(ctx.repair_hours),
-            urgency_id: None,
+            urgency_code: None,
             planned_downtime_hours: None,
         },
     )

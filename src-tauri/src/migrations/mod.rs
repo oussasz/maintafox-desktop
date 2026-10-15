@@ -181,6 +181,8 @@ mod m20261015_000194_inspection_schedules;
 mod m20261015_000195_inspection_round_scheduling;
 mod m20261015_000196_reference_domain_audience;
 mod m20261015_000197_schedule_class_timetables;
+mod m20261015_000198_shared_urgency_and_wo_natures;
+mod m20261015_000199_shared_failure_symptoms;
 mod m20261101_000036_activity_audit_log;
 mod m20261201_000037_observability_permissions;
 mod m_test;
@@ -375,6 +377,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20261015_000195_inspection_round_scheduling::Migration),
             Box::new(m20261015_000196_reference_domain_audience::Migration),
             Box::new(m20261015_000197_schedule_class_timetables::Migration),
+            Box::new(m20261015_000198_shared_urgency_and_wo_natures::Migration),
+            Box::new(m20261015_000199_shared_failure_symptoms::Migration),
         ]
     }
 }

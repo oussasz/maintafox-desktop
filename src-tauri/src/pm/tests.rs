@@ -1439,7 +1439,7 @@ async fn wo_close_hook_completes_linked_occurrence_and_regens() {
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO work_orders (entity_sync_id, code, type_id, status_id, title, row_version, created_at, updated_at)
-         SELECT ?, 'WO-PM-CLOSE-1', (SELECT id FROM work_order_types LIMIT 1),
+         SELECT ?, 'WO-PM-CLOSE-1', (SELECT v.id FROM reference_values v JOIN reference_sets s ON s.id = v.set_id JOIN reference_domains d ON d.id = s.domain_id WHERE d.code = 'WORK.ORDER_TYPES' AND v.code = 'preventive'),
                 (SELECT id FROM work_order_statuses WHERE code = 'closed' LIMIT 1),
                 'PM close hook', 1, strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now')",
         [crate::sync::identity::new_entity_sync_id().into()],

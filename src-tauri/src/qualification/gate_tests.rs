@@ -139,7 +139,8 @@ async fn work_order(db: &DatabaseConnection, title: &str, planned_end: Option<St
             source_rca_cause_text: None,
             entity_id: None,
             planner_id: None,
-            urgency_id: Some(3),
+            urgency_code: Some("normal".into()),
+            subtype_code: None,
             title: title.into(),
             description: None,
             notes: None,
@@ -427,7 +428,7 @@ async fn work_order_type_requirements_apply_to_every_order_of_the_type() {
     let db = setup().await;
     let lina = person(&db, "G-2").await;
     let ct = cert_type(&db, "WORK-HEIGHT-T").await;
-    let type_code = scalar_i64(&db, "SELECT COUNT(*) FROM work_order_types WHERE code = 'corrective'").await;
+    let type_code = scalar_i64(&db, "SELECT COUNT(*) FROM reference_values WHERE set_id IN (SELECT rs.id FROM reference_sets rs JOIN reference_domains d ON d.id = rs.domain_id WHERE d.code = 'WORK.ORDER_TYPES') AND code = 'corrective'").await;
     assert_eq!(type_code, 1);
     upsert_requirement(
         &db,
@@ -728,7 +729,7 @@ async fn requirements_survive_a_type_rename_are_audited_and_weakening_is_detecte
     // The plant renames the type's code: the requirement still applies.
     db.execute(Statement::from_string(
         DbBackend::Sqlite,
-        "UPDATE work_order_types SET code = 'CORR-2027' WHERE code = 'corrective'".to_string(),
+        "UPDATE reference_values SET code = 'CORR-2027' WHERE code = 'corrective' AND id IN (SELECT id FROM reference_values WHERE set_id IN (SELECT rs.id FROM reference_sets rs JOIN reference_domains d ON d.id = rs.domain_id WHERE d.code = 'WORK.ORDER_TYPES'))".to_string(),
     ))
     .await
     .expect("rename type");

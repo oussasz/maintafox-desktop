@@ -23,8 +23,9 @@ import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 
 import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
+import { UrgencyBadge } from "@/components/common/urgency/UrgencyBadge";
+import { useUrgencyScale } from "@/components/common/urgency/use-urgency-scale";
 import { DiScreenDialog } from "@/components/di/DiScreenDialog";
-import { DI_URGENCY_STYLE } from "@/components/di/status-meta";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -35,15 +36,6 @@ import { useDiStore } from "@/stores/di-store";
 import { intlLocaleForLanguage } from "@/utils/format-date";
 import type { InterventionRequest } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
-
-// ── Priority ordering ───────────────────────────────────────────────────────
-
-const URGENCY_ORDER: Record<string, number> = {
-  critical: 4,
-  high: 3,
-  medium: 2,
-  low: 1,
-};
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -59,12 +51,15 @@ function formatShortDateStr(iso: string, locale: string): string {
   }
 }
 
-function sortReviewQueue(items: InterventionRequest[]): InterventionRequest[] {
+function sortReviewQueue(
+  items: InterventionRequest[],
+  rankOf: (code: string | null | undefined) => number,
+): InterventionRequest[] {
   return [...items].sort((a, b) => {
-    // 1. priority desc
-    const pa = URGENCY_ORDER[a.reported_urgency] ?? 0;
-    const pb = URGENCY_ORDER[b.reported_urgency] ?? 0;
-    if (pa !== pb) return pb - pa;
+    // 1. most urgent first (rank 1 = emergency on the shared DI / OT scale)
+    const pa = rankOf(a.reported_urgency);
+    const pb = rankOf(b.reported_urgency);
+    if (pa !== pb) return pa - pb;
     // 2. submitted_at asc
     if (a.submitted_at !== b.submitted_at) return a.submitted_at.localeCompare(b.submitted_at);
     // 3. equipment (equipment_id) asc
@@ -97,7 +92,8 @@ export function DiReviewPanel() {
     void loadReviewQueue();
   }, [loadReviewQueue]);
 
-  const sorted = useMemo(() => sortReviewQueue(reviewQueue), [reviewQueue]);
+  const { rankOf } = useUrgencyScale();
+  const sorted = useMemo(() => sortReviewQueue(reviewQueue, rankOf), [reviewQueue, rankOf]);
   const previewItems = useMemo(() => sorted.slice(0, REVIEW_QUEUE_PREVIEW_LIMIT), [sorted]);
   const hiddenInPreview = Math.max(0, sorted.length - previewItems.length);
 
@@ -240,12 +236,7 @@ function ReviewRow({
       />
 
       {/* Priority */}
-      <Badge
-        variant="outline"
-        className={`text-[10px] border-0 shrink-0 ${DI_URGENCY_STYLE[di.reported_urgency] ?? ""}`}
-      >
-        {t(`priority.${di.reported_urgency}`)}
-      </Badge>
+      <UrgencyBadge code={di.reported_urgency} className="shrink-0" />
 
       {/* Equipment */}
       <span

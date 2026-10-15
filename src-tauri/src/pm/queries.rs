@@ -1381,20 +1381,12 @@ async fn resolve_preventive_work_order_type_id(
         return Ok(type_id);
     }
 
-    let row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT id FROM work_order_types WHERE lower(code) = 'preventive' LIMIT 1",
-            [],
-        ))
-        .await?
-        .ok_or_else(|| {
-            AppError::ValidationFailed(vec![
-                "Unable to resolve work_order_types.preventive for PM work order creation.".to_string(),
-            ])
-        })?;
-    let type_id: i64 = row.try_get("", "id")?;
-    Ok(type_id)
+    // A PM plan generates time-based preventive work (EN 13306 predetermined maintenance).
+    Ok(
+        crate::wo::types::default_type_for_nature(db, crate::wo::types::MaintenanceNature::PreventivePredetermined)
+            .await?
+            .id,
+    )
 }
 
 pub async fn transition_pm_occurrence(
@@ -1456,7 +1448,8 @@ pub async fn transition_pm_occurrence(
                 source_rca_cause_text: None,
                 entity_id: None, // Derived from equipment in WO create invariants.
                 planner_id: None,
-                urgency_id: None,
+                urgency_code: None,
+                subtype_code: None,
                 title: content.title.clone(),
                 description: content.description.clone(),
                 // The planner's note on this transition, as written; the PM origin is the
@@ -1911,18 +1904,20 @@ async fn create_follow_up_di_from_finding(
         ]));
     };
 
-    let urgency = match finding.severity.as_deref().unwrap_or("medium").to_lowercase().as_str() {
-        "critical" => "critical",
-        "high" => "high",
-        "low" => "low",
-        _ => "medium",
-    };
+    // Finding severity (critical / high / medium / low) → level of the shared DI / OT urgency
+    // scale, with the same correspondence as the migrated request codes
+    // (`urgency_scale::legacy_urgency_code`); an unknown or missing severity is normal work.
+    use crate::reference::urgency_scale::{legacy_urgency_code, UrgencyCode};
+    let urgency = finding
+        .severity
+        .as_deref()
+        .and_then(legacy_urgency_code)
+        .unwrap_or(UrgencyCode::Normal);
 
     let impact = match urgency {
-        "critical" => "critical",
-        "high" => "major",
-        "low" => "minor",
-        _ => "minor",
+        UrgencyCode::Emergency => "critical",
+        UrgencyCode::Urgent | UrgencyCode::High => "major",
+        UrgencyCode::Normal | UrgencyCode::Low => "minor",
     };
 
     let symptom_code_id = crate::di::reference_catalog::resolve_system_di_symptom_id(db, &finding.finding_type).await?;
@@ -1939,10 +1934,10 @@ async fn create_follow_up_di_from_finding(
             symptom_code_id: Some(symptom_code_id),
             impact_level: impact.to_string(),
             production_impact: false,
-            safety_flag: urgency == "critical",
+            safety_flag: urgency == UrgencyCode::Emergency,
             environmental_flag: false,
             quality_flag: false,
-            reported_urgency: urgency.to_string(),
+            reported_urgency: urgency.as_str().to_string(),
             observed_at: Some(now_rfc3339()),
             source_inspection_anomaly_id: None,
             submitter_id: actor_id,
@@ -1996,7 +1991,8 @@ async fn create_follow_up_wo_from_finding(
             source_rca_cause_text: None,
             entity_id: None,
             planner_id: None,
-            urgency_id: None,
+            urgency_code: None,
+            subtype_code: None,
             title: follow_up_title(occurrence, finding),
             description: Some(finding.description.clone()),
             // The origin is the PM finding → OT link (`pm_findings.follow_up_work_order_id`).

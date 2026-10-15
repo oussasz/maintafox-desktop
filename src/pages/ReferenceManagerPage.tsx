@@ -17,9 +17,8 @@ import { DomainBrowserPanel } from "@/components/lookups/DomainBrowserPanel";
 import { ReferenceValueEditor } from "@/components/lookups/ReferenceValueEditor";
 import { InventoryArticleFamilyHost } from "@/components/lookups/adapters/InventoryArticleFamilyHost";
 import { InventoryTaxCategoryHost } from "@/components/lookups/adapters/InventoryTaxCategoryHost";
-import { WorkOrderPrioritiesHost } from "@/components/lookups/adapters/WorkOrderPrioritiesHost";
+import { UrgencyScaleHost } from "@/components/lookups/adapters/UrgencyScaleHost";
 import { WorkOrderStatusesHost } from "@/components/lookups/adapters/WorkOrderStatusesHost";
-import { WorkOrderTypesHost } from "@/components/lookups/adapters/WorkOrderTypesHost";
 import {
   REFERENCE_SET_STATUS_TONE,
   isSyntheticReferenceId,
@@ -39,12 +38,11 @@ import { createDraftReferenceSet } from "@/services/reference-service";
 import {
   INVENTORY_ARTICLE_FAMILY_DOMAIN_ID,
   INVENTORY_TAX_CATEGORY_DOMAIN_ID,
-  WORK_ORDER_PRIORITIES_DOMAIN_ID,
+  URGENCY_SCALE_DOMAIN_ID,
   WORK_ORDER_STATUSES_DOMAIN_ID,
-  WORK_ORDER_TYPES_DOMAIN_ID,
   useReferenceManagerStore,
 } from "@/stores/reference-manager-store";
-import { refreshWorkOrderPrioritiesCatalog } from "@/stores/work-order-priorities-catalog-store";
+import { refreshUrgencyScale } from "@/stores/urgency-scale-store";
 import { refreshWorkOrderTypesCatalog } from "@/stores/work-order-types-catalog-store";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -55,10 +53,8 @@ function SyntheticDomainHost({ domainId }: { domainId: number }) {
       return <InventoryArticleFamilyHost />;
     case INVENTORY_TAX_CATEGORY_DOMAIN_ID:
       return <InventoryTaxCategoryHost />;
-    case WORK_ORDER_TYPES_DOMAIN_ID:
-      return <WorkOrderTypesHost />;
-    case WORK_ORDER_PRIORITIES_DOMAIN_ID:
-      return <WorkOrderPrioritiesHost />;
+    case URGENCY_SCALE_DOMAIN_ID:
+      return <UrgencyScaleHost />;
     case WORK_ORDER_STATUSES_DOMAIN_ID:
       return <WorkOrderStatusesHost />;
     default:
@@ -96,7 +92,7 @@ export function ReferenceManagerPage() {
   const handleRefresh = useCallback(() => {
     void loadDomains();
     void refreshWorkOrderTypesCatalog();
-    void refreshWorkOrderPrioritiesCatalog();
+    void refreshUrgencyScale();
     if (selectedDomainId != null) {
       void loadSetsForDomain(selectedDomainId);
     }

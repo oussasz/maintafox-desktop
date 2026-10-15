@@ -42,6 +42,7 @@
       "history": "Historique"
     },
     "fields": {
+      "sourceInspectionRound": "Tournée d'inspection",
       "number": "Numéro",
       "subject": "Objet",
       "description": "Description",
@@ -197,12 +198,6 @@
     "closed": "Clôturée",
     "cancelled": "Annulée"
   },
-  "priority": {
-    "low": "Basse",
-    "medium": "Normale",
-    "high": "Haute",
-    "critical": "Critique"
-  },
   "action": {
     "create": "Nouvelle DI",
     "approve": "Approuver",
@@ -245,6 +240,7 @@
   "sla": {
     "title": "Règles SLA",
     "description": "Configurez les délais de réponse et de résolution pour chaque niveau d'urgence.",
+    "scaleHint": "Les délais d'un niveau pour toutes les demandes se règlent dans l'échelle d'urgence (Données de référence). Les règles ci-dessous sont les exceptions par origine ou criticité d'équipement.",
     "loading": "Chargement des règles…",
     "empty": "Aucune règle SLA configurée.",
     "columns": {

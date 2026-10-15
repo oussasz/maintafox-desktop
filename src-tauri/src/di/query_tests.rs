@@ -105,7 +105,7 @@ mod tests {
             safety_flag: false,
             environmental_flag: false,
             quality_flag: false,
-            reported_urgency: "medium".to_string(),
+            reported_urgency: "normal".to_string(),
             observed_at: None,
             source_inspection_anomaly_id: None,
             submitter_id: user_id,
@@ -178,7 +178,7 @@ mod tests {
         assert_eq!(di.title, "Pump vibration alert");
         assert_eq!(di.origin_type, "operator");
         assert_eq!(di.impact_level, "unknown");
-        assert_eq!(di.reported_urgency, "medium");
+        assert_eq!(di.reported_urgency, "normal");
         assert!(!di.submitted_at.is_empty(), "submitted_at must be set");
         assert_eq!(di.row_version, 1);
         assert_eq!(di.submitter_id, user_id);

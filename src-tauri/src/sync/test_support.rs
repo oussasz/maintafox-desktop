@@ -64,12 +64,12 @@ pub(crate) async fn started_file_db(path: &std::path::Path) -> DatabaseConnectio
 async fn prepare_started(db: &DatabaseConnection) {
     crate::migrations::Migrator::up(db, None).await.expect("migrations");
     crate::db::seeder::seed_system_data(db).await.expect("system seed");
-    crate::wo::types::ensure_required_work_order_types(db)
+    crate::wo::types::ensure_work_order_type_catalog(db)
         .await
         .expect("work order types");
-    crate::wo::priorities::ensure_required_urgency_levels(db)
+    crate::reference::urgency_scale::ensure_urgency_scale(db)
         .await
-        .expect("urgency levels");
+        .expect("urgency scale");
     crate::wo::statuses::ensure_required_work_order_statuses(db)
         .await
         .expect("work order statuses");

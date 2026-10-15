@@ -31,7 +31,8 @@ import type { ReactNode } from "react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
+import { LinkedEntityBadge, roundTitle } from "@/components/common/LinkedEntityBadge";
+import { UrgencyBadge } from "@/components/common/urgency/UrgencyBadge";
 import { DiDeferDialog } from "@/components/di/DiDeferDialog";
 import { DiDetailPanel } from "@/components/di/DiDetailPanel";
 import { printDiFiche } from "@/components/di/DiPrintFiche";
@@ -41,7 +42,6 @@ import { useDiReferenceLabels } from "@/components/di/di-reference-labels";
 import { dispositionLabelKey } from "@/components/di/disposition-meta";
 import {
   DI_STATUS_STYLE,
-  DI_URGENCY_STYLE,
   diStatusToI18nKey,
   TERMINAL_DI_STATES,
 } from "@/components/di/status-meta";
@@ -326,26 +326,30 @@ export function DiDetailDialog({ di, transitions, open, onClose }: DiDetailDialo
               />
               <InfoRow
                 label={t("detail.fields.priority")}
-                value={
-                  <Badge
-                    variant="outline"
-                    className={`text-[10px] border-0 ${DI_URGENCY_STYLE[di.reported_urgency] ?? ""}`}
-                  >
-                    {t(`priority.${di.reported_urgency}`)}
-                  </Badge>
-                }
+                value={<UrgencyBadge code={di.reported_urgency} />}
               />
+              {di.source_inspection_round_id != null && (
+                <InfoRow
+                  icon={<ClipboardCheck className="h-3 w-3" />}
+                  label={t("detail.fields.sourceInspectionRound")}
+                  value={
+                    <LinkedEntityBadge
+                      entity="inspection_round"
+                      code={di.source_inspection_round_code}
+                      entityId={di.source_inspection_round_id}
+                      title={roundTitle(
+                        di.source_inspection_round_title,
+                        di.source_inspection_round_scheduled_at,
+                        i18n.language,
+                      )}
+                    />
+                  }
+                />
+              )}
               {di.validated_urgency != null && (
                 <InfoRow
                   label={t("screening.validatedUrgency")}
-                  value={
-                    <Badge
-                      variant="outline"
-                      className={`text-[10px] border-0 ${DI_URGENCY_STYLE[di.validated_urgency] ?? ""}`}
-                    >
-                      {t(`priority.${di.validated_urgency}`)}
-                    </Badge>
-                  }
+                  value={<UrgencyBadge code={di.validated_urgency} />}
                 />
               )}
               {di.status === "deferred" && di.deferred_until && (

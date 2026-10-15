@@ -6,7 +6,7 @@ import { listPublishedReferenceValuesByDomainCode } from "@/services/reference-s
 import { PM_WO_FINDING_TYPES } from "./pm-labels";
 
 /** Finding types are the request symptom catalogue (the backend maps them to DI symptoms). */
-export const PM_FINDING_TYPE_DOMAIN = "DI.SYMPTOM";
+export const PM_FINDING_TYPE_DOMAIN = "WORK.SYMPTOMS";
 
 const WO_TYPES = new Set<string>(PM_WO_FINDING_TYPES);
 

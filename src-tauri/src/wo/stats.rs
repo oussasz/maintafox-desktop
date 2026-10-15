@@ -19,6 +19,7 @@ pub struct StatusCount {
 /// Urgency distribution entry.
 #[derive(Debug, Clone, Serialize)]
 pub struct UrgencyCount {
+    /// Level code of the shared DI / OT urgency scale; empty for work orders without urgency.
     pub urgency: String,
     pub count: i64,
 }
@@ -130,10 +131,10 @@ pub async fn get_wo_stats(db: &DatabaseConnection) -> AppResult<WoStatsPayload> 
         let rows = db
             .query_all(Statement::from_string(
                 DbBackend::Sqlite,
-                "SELECT COALESCE(u.label, 'N/A') AS label, COUNT(*) AS cnt \
+                "SELECT COALESCE(u.code, '') AS label, COUNT(*) AS cnt \
                  FROM work_orders wo \
-                 LEFT JOIN urgency_levels u ON u.id = wo.urgency_id \
-                 GROUP BY label ORDER BY cnt DESC"
+                 LEFT JOIN reference_values u ON u.id = wo.urgency_id \
+                 GROUP BY u.code ORDER BY COALESCE(MIN(u.sort_order), 99) ASC"
                     .to_owned(),
             ))
             .await?;

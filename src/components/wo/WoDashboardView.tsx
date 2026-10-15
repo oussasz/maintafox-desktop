@@ -10,6 +10,7 @@ import { AlertTriangle, CheckCircle2, ClipboardList, PlayCircle } from "lucide-r
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { useUrgencyScale } from "@/components/common/urgency/use-urgency-scale";
 import { KpiTile } from "@/components/metrics/KpiTile";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import { WoBacklogHeatmap } from "@/components/wo/WoBacklogHeatmap";
@@ -23,6 +24,7 @@ import type { WoStatsPayload } from "@shared/ipc-types";
 
 export function WoDashboardView() {
   const { t } = useTranslation("ot");
+  const { labelOf: urgencyLabel } = useUrgencyScale();
   const [stats, setStats] = useState<WoStatsPayload | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<unknown>(null);
@@ -144,7 +146,9 @@ export function WoDashboardView() {
               const pct = stats.total > 0 ? (d.count / stats.total) * 100 : 0;
               return (
                 <div key={d.urgency} className="flex items-center gap-2 text-xs">
-                  <span className="w-20 truncate text-text-muted">{d.urgency}</span>
+                  <span className="w-20 truncate text-text-muted">
+                    {d.urgency ? urgencyLabel(d.urgency) : t("dashboard.noUrgency")}
+                  </span>
                   <div className="flex-1 h-2 rounded bg-surface-1">
                     <div
                       className="h-2 rounded bg-tone-attention-fg"

@@ -21,8 +21,7 @@ use crate::errors::{AppError, AppResult};
 use crate::state::AppState;
 use crate::wo::types;
 use crate::wo::{
-    analytics, attachments, audit, closeout, costs, delay, execution, labor, parts, priorities, queries, stats,
-    statuses, tasks,
+    analytics, attachments, audit, closeout, costs, delay, execution, labor, parts, queries, stats, statuses, tasks,
 };
 use crate::{require_permission, require_session};
 
@@ -156,11 +155,31 @@ pub async fn list_work_order_types(state: State<'_, AppState>) -> AppResult<Vec<
     types::list_work_order_types(&state.db).await
 }
 
+/// The plant's OT sub-types (`WORK.ORDER_SUBTYPES`), each with the maintenance nature it belongs to.
 #[tauri::command]
-pub async fn create_work_order_type(
-    input: types::CreateWorkOrderTypeInput,
+pub async fn list_work_order_subtypes(state: State<'_, AppState>) -> AppResult<Vec<types::WorkOrderSubtypeOption>> {
+    let _user = require_session!(state);
+    types::list_work_order_subtypes(&state.db).await
+}
+
+/// The shared DI / OT urgency scale (`WORK.URGENCY`), most urgent first, with the plant's
+/// labels and target times. Read by the request and work-order forms, lists and SLA screens.
+#[tauri::command]
+pub async fn list_urgency_levels(
     state: State<'_, AppState>,
-) -> AppResult<types::WorkOrderTypeOption> {
+) -> AppResult<Vec<crate::reference::urgency_scale::UrgencyLevel>> {
+    let _user = require_session!(state);
+    crate::reference::urgency_scale::list_urgency_levels(&state.db).await
+}
+
+/// Saves the company attributes of one urgency level (labels FR/EN and target times). The
+/// levels themselves are fixed by Maintafox.
+#[tauri::command]
+pub async fn update_urgency_level(
+    code: String,
+    input: crate::reference::urgency_scale::UpdateUrgencyLevelInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::reference::urgency_scale::UrgencyLevel> {
     let user = require_session!(state);
     require_permission!(
         state,
@@ -169,89 +188,9 @@ pub async fn create_work_order_type(
         PermissionScope::Global
     );
     crate::reference::audience::assert_module_catalog_editable(
-        crate::reference::audience::MODULE_CATALOG_WORK_ORDER_TYPES,
+        crate::reference::audience::MODULE_CATALOG_URGENCY_SCALE,
     )?;
-    types::create_work_order_type(&state.db, input).await
-}
-
-#[tauri::command]
-pub async fn update_work_order_type(
-    id: i64,
-    input: types::UpdateWorkOrderTypeInput,
-    state: State<'_, AppState>,
-) -> AppResult<types::WorkOrderTypeOption> {
-    let user = require_session!(state);
-    require_permission!(
-        state,
-        &user,
-        crate::rbac::permissions::REF_MANAGE,
-        PermissionScope::Global
-    );
-    crate::reference::audience::assert_module_catalog_editable(
-        crate::reference::audience::MODULE_CATALOG_WORK_ORDER_TYPES,
-    )?;
-    types::update_work_order_type(&state.db, id, input).await
-}
-
-#[tauri::command]
-pub async fn delete_work_order_type(id: i64, state: State<'_, AppState>) -> AppResult<()> {
-    let user = require_session!(state);
-    require_permission!(
-        state,
-        &user,
-        crate::rbac::permissions::REF_MANAGE,
-        PermissionScope::Global
-    );
-    crate::reference::audience::assert_module_catalog_editable(
-        crate::reference::audience::MODULE_CATALOG_WORK_ORDER_TYPES,
-    )?;
-    types::delete_work_order_type(&state.db, id).await
-}
-
-#[tauri::command]
-pub async fn list_work_order_priorities(
-    state: State<'_, AppState>,
-) -> AppResult<Vec<priorities::WorkOrderPriorityOption>> {
-    let user = require_session!(state);
-    let has_ref_view = crate::auth::rbac::check_permission(
-        &state.db,
-        user.user_id,
-        crate::rbac::permissions::REF_VIEW,
-        &PermissionScope::Global,
-    )
-    .await?;
-    let has_ot_view = crate::auth::rbac::check_permission(
-        &state.db,
-        user.user_id,
-        crate::rbac::permissions::OT_VIEW,
-        &PermissionScope::Global,
-    )
-    .await?;
-    if !has_ref_view && !has_ot_view {
-        require_permission!(
-            state,
-            &user,
-            crate::rbac::permissions::OT_CREATE,
-            PermissionScope::Global
-        );
-    }
-    priorities::list_work_order_priorities(&state.db).await
-}
-
-#[tauri::command]
-pub async fn update_work_order_priority(
-    id: i64,
-    input: priorities::UpdateWorkOrderPriorityInput,
-    state: State<'_, AppState>,
-) -> AppResult<priorities::WorkOrderPriorityOption> {
-    let user = require_session!(state);
-    require_permission!(
-        state,
-        &user,
-        crate::rbac::permissions::REF_MANAGE,
-        PermissionScope::Global
-    );
-    priorities::update_work_order_priority(&state.db, id, input).await
+    crate::reference::urgency_scale::update_urgency_level(&state.db, &code, input).await
 }
 
 #[tauri::command]
