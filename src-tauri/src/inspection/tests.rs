@@ -785,11 +785,8 @@ async fn template_rows_are_refused_with_stable_codes() {
         "GATE_INSP_CHECK_CODE_REQUIRED: checkpoint 2",
     );
     assert_validation(
-        queries::create_inspection_template(
-            &db,
-            make(vec![numeric(1, "INV", (Some(5.0), Some(1.0)), (None, None))]),
-        )
-        .await,
+        queries::create_inspection_template(&db, make(vec![numeric(1, "INV", (Some(5.0), Some(1.0)), (None, None))]))
+            .await,
         "GATE_INSP_CHECK_LIMITS_ORDER",
     );
 }
@@ -904,13 +901,17 @@ async fn the_runner_shows_earlier_results_of_the_same_checkpoint() {
         .expect("first round reading");
     }
     let second = pressure_round(&db, "RND-PRESS", "2026-10-11T06:00:00Z").await;
-    let view = runner::get_inspection_round_runner(&db, second.id).await.expect("runner");
+    let view = runner::get_inspection_round_runner(&db, second.id)
+        .await
+        .expect("runner");
     let history = &view.checkpoints[0].history;
     assert_eq!(history.len(), 1, "one result per round, the latest reading");
     assert_eq!(history[0].round_id, first.id);
     assert_eq!(history[0].numeric_value, Some(8.1));
     assert_eq!(history[0].result_status, "warning");
-    let own = runner::get_inspection_round_runner(&db, first.id).await.expect("runner");
+    let own = runner::get_inspection_round_runner(&db, first.id)
+        .await
+        .expect("runner");
     assert!(own.checkpoints[0].history.is_empty(), "a round never lists itself");
 }
 
@@ -936,12 +937,18 @@ async fn an_out_of_tolerance_anomaly_becomes_a_linked_request_with_a_written_tit
     .expect("record");
     let (anomaly_id, rv) = open_anomaly(&db, &format!("result_id = {}", res.id)).await;
 
-    let row = insights::get_inspection_anomaly_row(&db, anomaly_id).await.expect("row");
+    let row = insights::get_inspection_anomaly_row(&db, anomaly_id)
+        .await
+        .expect("row");
     assert_eq!(row.asset_code.as_deref(), Some("PMP-101"));
     assert!(row.asset_has_location);
     assert_eq!(row.numeric_value, Some(90.0));
     assert_eq!(row.violation_direction.as_deref(), Some("above"));
-    assert_eq!(row.violation_limit, Some(85.0), "beyond the warning band: the warning limit");
+    assert_eq!(
+        row.violation_limit,
+        Some(85.0),
+        "beyond the warning band: the warning limit"
+    );
     assert_eq!(row.result_comment.as_deref(), Some("Hot to the touch"));
     assert_eq!(row.template_name, "Pump house round");
 
@@ -962,7 +969,11 @@ async fn an_out_of_tolerance_anomaly_becomes_a_linked_request_with_a_written_tit
     .expect("route to DI");
     assert_eq!(di.title, title);
     assert_eq!(di.equipment_id, row.asset_id.expect("asset"));
-    assert_eq!(di.source_inspection_anomaly_id, Some(anomaly_id), "the request points back");
+    assert_eq!(
+        di.source_inspection_anomaly_id,
+        Some(anomaly_id),
+        "the request points back"
+    );
     // Urgency and impact are real codes of the governed DI lists, so conversion to an OT keeps them.
     assert_eq!(di.reported_urgency, routing::severity_urgency_code(anomaly.severity));
     assert!(["low", "medium", "high", "critical"].contains(&di.reported_urgency.as_str()));
@@ -1031,7 +1042,10 @@ async fn a_follow_up_needs_equipment_and_a_work_order_links_back() {
     )
     .await;
     assert_eq!(
-        insights::get_inspection_anomaly_row(&db, leak_anomaly).await.expect("row").asset_id,
+        insights::get_inspection_anomaly_row(&db, leak_anomaly)
+            .await
+            .expect("row")
+            .asset_id,
         None
     );
     assert_validation(
@@ -1082,7 +1096,10 @@ async fn a_follow_up_needs_equipment_and_a_work_order_links_back() {
     .await
     .expect("route to WO");
     assert_eq!(wo.title, "Replace drive-end bearing on PMP-101");
-    assert!(wo.urgency_id.is_some(), "the OT gets the urgency matching the finding's severity");
+    assert!(
+        wo.urgency_id.is_some(),
+        "the OT gets the urgency matching the finding's severity"
+    );
     assert_eq!(anomaly.linked_work_order_id, Some(wo.id));
     let source: Option<i64> = db
         .query_one(Statement::from_sql_and_values(
@@ -1096,14 +1113,18 @@ async fn a_follow_up_needs_equipment_and_a_work_order_links_back() {
         .try_get("", "source_inspection_anomaly_id")
         .expect("source");
     assert_eq!(source, Some(anomaly_id), "the work order points back");
-    let linked = insights::get_inspection_anomaly_row(&db, anomaly_id).await.expect("row");
+    let linked = insights::get_inspection_anomaly_row(&db, anomaly_id)
+        .await
+        .expect("row");
     assert_eq!(linked.linked_wo_code.as_deref(), Some(wo.code.as_str()));
 }
 
 // ── Phase 6.3: recurring rounds ──────────────────────────────────────────────────────────
 
 fn utc(raw: &str) -> chrono::DateTime<chrono::Utc> {
-    chrono::DateTime::parse_from_rfc3339(raw).expect("ts").with_timezone(&chrono::Utc)
+    chrono::DateTime::parse_from_rfc3339(raw)
+        .expect("ts")
+        .with_timezone(&chrono::Utc)
 }
 
 #[test]
@@ -1309,7 +1330,9 @@ async fn a_calendar_schedule_generates_assigned_rounds_once_and_marks_missed_one
     assert_eq!(rounds.len(), 4, "{rounds:?}");
     assert!(rounds.iter().all(|r| r.status == "scheduled"));
     assert!(rounds.iter().all(|r| r.assigned_to_id == Some(tech)));
-    assert!(rounds.iter().all(|r| r.due_basis.as_deref().is_some_and(|b| b.starts_with("calendar:"))));
+    assert!(rounds
+        .iter()
+        .all(|r| r.due_basis.as_deref().is_some_and(|b| b.starts_with("calendar:"))));
     let first = &rounds[0];
     let due = utc(first.scheduled_at.as_deref().expect("due"));
     assert_eq!(
@@ -1374,7 +1397,9 @@ async fn editing_a_schedule_replaces_its_unstarted_future_rounds() {
     let before = schedule_rounds(&db, saved.schedule.id).await;
     assert_eq!(before.len(), 3, "+1 h, +25 h, +49 h within 3 days");
     // One round was started: it is kept whatever the new rules.
-    runner::start_inspection_round(&db, action(&before[0])).await.expect("start");
+    runner::start_inspection_round(&db, action(&before[0]))
+        .await
+        .expect("start");
 
     assert_validation(
         scheduling::save_inspection_schedule(
@@ -1407,7 +1432,10 @@ async fn editing_a_schedule_replaces_its_unstarted_future_rounds() {
     // Every 2 days after the started round: +49 h (the +25 h round was replaced).
     assert_eq!(after.len(), 2, "{after:?}");
     assert_eq!(after[1].scheduled_at, before[2].scheduled_at);
-    assert_ne!(after[1].entity_sync_id, before[2].entity_sync_id, "new rules, new identity");
+    assert_ne!(
+        after[1].entity_sync_id, before[2].entity_sync_id,
+        "new rules, new identity"
+    );
     assert_eq!(edited.schedule.row_version, saved.schedule.row_version + 1);
 
     // Another schedule cannot take the same code.
@@ -1487,7 +1515,11 @@ async fn a_meter_schedule_generates_one_round_when_the_meter_crosses_its_interva
     ))
     .await
     .expect("meter");
-    let meter = scalar_i64(&db, "SELECT id FROM equipment_meters WHERE entity_sync_id = 'insp-meter'").await;
+    let meter = scalar_i64(
+        &db,
+        "SELECT id FROM equipment_meters WHERE entity_sync_id = 'insp-meter'",
+    )
+    .await;
     let saved = scheduling::save_inspection_schedule(
         &db,
         SaveInspectionScheduleInput {
@@ -1575,7 +1607,9 @@ async fn a_schedule_without_a_published_checklist_is_reported_not_fatal() {
         .expect("generate");
     assert_eq!(run.issues.len(), 1);
     assert_eq!(run.issues[0].schedule_code, saved.schedule.code);
-    assert!(run.issues[0].message.starts_with("GATE_INSP_SCHEDULE_TEMPLATE_NOT_PUBLISHED"));
+    assert!(run.issues[0]
+        .message
+        .starts_with("GATE_INSP_SCHEDULE_TEMPLATE_NOT_PUBLISHED"));
 }
 
 // ── Phase 6.3: module figures and round lists ────────────────────────────────────────────
@@ -1733,5 +1767,8 @@ async fn the_round_page_searches_and_counts_beyond_the_page() {
 #[test]
 fn finding_severity_maps_to_governed_urgency_codes() {
     use routing::severity_urgency_code as code;
-    assert_eq!([code(1), code(2), code(3), code(4), code(5)], ["low", "low", "medium", "high", "critical"]);
+    assert_eq!(
+        [code(1), code(2), code(3), code(4), code(5)],
+        ["low", "low", "medium", "high", "critical"]
+    );
 }
