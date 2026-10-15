@@ -18,6 +18,7 @@
 //! consume the same capability snapshot and need no structural rewrite.
 
 use crate::errors::{AppError, AppResult};
+use crate::reference::audience::DomainAudience;
 use crate::reference::domains::ReferenceDomain;
 use crate::reference::sets::ReferenceSet;
 use serde::{Deserialize, Serialize};
@@ -322,20 +323,25 @@ pub struct ReferenceGovernanceCapabilities {
     pub set_status: Option<String>,
     /// Product-seeded values of this domain cannot be edited, deactivated or moved by tenants.
     pub system_values_locked: bool,
+    /// `system` | `company` (see `reference::audience`). A SYSTEM domain is fully read-only.
+    pub audience: String,
 }
 
 /// Build capability snapshot for a domain and optional selected set.
 ///
 /// When `set` is `None`, value-mutation flags are `false` (mutation is set-scoped).
+/// A SYSTEM domain (`reference::audience`) is read-only whatever its category.
 pub fn capabilities_for(domain: &ReferenceDomain, set: Option<&ReferenceSet>) -> ReferenceGovernanceCapabilities {
     let cat = category_of(domain);
-    let can_mutate = set.map(|s| allows_value_mutation(cat, s)).unwrap_or(false);
-    let can_draft = allows_create_draft_set(cat);
+    let editable = domain.audience == DomainAudience::Company;
+    let can_mutate = editable && set.map(|s| allows_value_mutation(cat, s)).unwrap_or(false);
+    let can_draft = editable && allows_create_draft_set(cat);
     let can_discard = can_draft && set.map(|s| s.status == "draft").unwrap_or(false);
-    let can_pub = allows_publish(cat);
-    let can_op = allows_operational_create(cat);
-    let read_only =
-        matches!(cat, GovernanceCategory::SystemCatalog) || (!can_mutate && !can_draft && !can_pub && !can_op);
+    let can_pub = editable && allows_publish(cat);
+    let can_op = editable && allows_operational_create(cat);
+    let read_only = !editable
+        || matches!(cat, GovernanceCategory::SystemCatalog)
+        || (!can_mutate && !can_draft && !can_pub && !can_op);
 
     ReferenceGovernanceCapabilities {
         category: cat.as_str().to_string(),
@@ -351,6 +357,7 @@ pub fn capabilities_for(domain: &ReferenceDomain, set: Option<&ReferenceSet>) ->
         requires_analytical_protection: requires_analytical_protection(domain),
         set_status: set.map(|s| s.status.clone()),
         system_values_locked: system_values_locked(domain),
+        audience: domain.audience.as_str().to_string(),
     }
 }
 

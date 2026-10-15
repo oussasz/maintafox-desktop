@@ -353,6 +353,7 @@ async fn execute_migration_operation(
 ) -> AppResult<ReferenceUsageMigrationResult> {
     let (domain, source_value, target_value) =
         validate_migration_pair(db, domain_id, from_value_id, to_value_id).await?;
+    crate::reference::audience::assert_domain_editable(&domain)?;
 
     // Policy check before transaction: operation may deactivate source.
     if source_value.is_active {

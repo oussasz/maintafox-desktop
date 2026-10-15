@@ -53,6 +53,7 @@ const classDomain: ReferenceDomain = {
   structure_type: "flat",
   governance_level: "system_seeded",
   governance_category: "controlled_catalog",
+  audience: "company",
   is_extendable: false,
   validation_rules_json: null,
   created_at: TS,
@@ -112,6 +113,7 @@ function caps(status: string): ReferenceGovernanceCapabilities {
     requires_analytical_protection: false,
     set_status: status,
     system_values_locked: true,
+    audience: "company",
   };
 }
 

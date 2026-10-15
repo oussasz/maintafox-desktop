@@ -63,6 +63,7 @@
     "INTERNAL_ERROR": "Une erreur interne s'est produite."
   },
   "gateError": {
+    "GATE_REF_SYSTEM_DOMAIN_READ_ONLY": "Modification refusée : cette liste est gérée par Maintafox et ne peut pas être modifiée dans les Données de référence. Ses valeurs restent disponibles dans les formulaires qui les utilisent.",
     "GATE_WO_SHIFT_INVALID": "Planification refusée : le poste doit être matin, après-midi, nuit ou journée complète.",
     "GATE_INV_PERIOD_CLOSED": "Mouvement refusé : cette date tombe dans une période de stock clôturée. Utilisez une date postérieure à la période clôturée.",
     "GATE_PROC_SELF_APPROVAL": "Approbation refusée : vous ne pouvez pas approuver un document que vous avez vous-même demandé. Un autre approbateur doit l'approuver.",

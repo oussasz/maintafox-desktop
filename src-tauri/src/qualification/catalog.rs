@@ -422,8 +422,8 @@ const HABILITATIONS: &[(&str, &str, &str)] = &[
 ];
 
 /// Seeds the habilitation list once — when the domain does not exist yet — so a symbol the
-/// company removed or renamed is never put back. Marks the domain as a company list when the
-/// reference data audience is stored.
+/// company removed or renamed is never put back. The list is a company list (audience
+/// `company`): shown and managed in Données de référence.
 async fn ensure_habilitation_list(db: &impl ConnectionTrait, french: bool) -> AppResult<()> {
     let exists = db
         .query_one(Statement::from_sql_and_values(
@@ -457,16 +457,13 @@ async fn ensure_habilitation_list(db: &impl ConnectionTrait, french: bool) -> Ap
         ],
     ))
     .await?;
-    let has_audience = db
-        .query_all(Statement::from_string(
-            DbBackend::Sqlite,
-            "PRAGMA table_info(reference_domains)".to_string(),
-        ))
-        .await?
-        .iter()
-        .any(|r| r.try_get::<String>("", "name").is_ok_and(|n| n == "audience"));
-    if has_audience {
-        db.execute(Statement::from_sql_and_values(
+    crate::reference::audience::declare_domain_audience(
+        db,
+        HABILITATIONS_DOMAIN,
+        crate::reference::audience::DomainAudience::Company,
+    )
+    .await?;
+    db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE reference_domains SET audience = 'company' WHERE UPPER(TRIM(code)) = ?",
             [HABILITATIONS_DOMAIN.into()],

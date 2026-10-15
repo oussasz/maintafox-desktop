@@ -1710,10 +1710,23 @@ export interface ReferenceDomain {
   governance_level: string;
   /** A/B/C: system_catalog | operational_dictionary | controlled_catalog */
   governance_category: string;
+  /**
+   * Who maintains the list. `system`: shipped by Maintafox, hidden from Données de référence and
+   * read-only (pickers still list its values). `company`: configured by the plant.
+   */
+  audience: ReferenceDomainAudience;
   is_extendable: boolean;
   validation_rules_json: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export type ReferenceDomainAudience = "system" | "company";
+
+/** A module table (OT types, article families…) listed in the Données de référence tree. */
+export interface ReferenceModuleCatalog {
+  code: string;
+  audience: ReferenceDomainAudience;
 }
 
 /** Capability snapshot from governance engine (Manager / Combobox SSOT). */
@@ -1732,6 +1745,8 @@ export interface ReferenceGovernanceCapabilities {
   set_status: string | null;
   /** Product-seeded values (`origin: system`) of this domain cannot be edited or deactivated. */
   system_values_locked: boolean;
+  /** `system` domains are read-only whatever their category. */
+  audience: ReferenceDomainAudience;
 }
 
 export interface CreateReferenceDomainPayload {

@@ -11,6 +11,7 @@
 //! seeders when `MAINTAFOX_SEED_DEMO=1` and activation is not complete.
 
 use crate::errors::{AppError, AppResult};
+use crate::reference::audience::DomainAudience;
 use crate::reference::governance::derive_category_for_persist;
 use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
@@ -517,13 +518,16 @@ pub async fn seed_reference_demo_data(db: &DatabaseConnection) -> AppResult<()> 
     let now = Utc::now().to_rfc3339();
 
     // ── Reference domains ─────────────────────────────────────────────
-    let domains: &[(&str, &str, &str, &str, bool)] = &[
+    // (code, name, structure, governance level, extendable, audience). EQUIPMENT.STATUS is a
+    // Maintafox list (its codes drive decommissioning); the rest are the company's own lists.
+    let domains: &[(&str, &str, &str, &str, bool, DomainAudience)] = &[
         (
             "EQUIPMENT.FAMILY",
             "Familles d'équipements",
             "hierarchical",
             "tenant_managed",
             true,
+            DomainAudience::Company,
         ),
         (
             "EQUIPMENT.CLASS",
@@ -531,14 +535,23 @@ pub async fn seed_reference_demo_data(db: &DatabaseConnection) -> AppResult<()> 
             "flat",
             "system_seeded",
             false,
+            DomainAudience::Company,
         ),
-        ("EQUIPMENT.STATUS", "Statuts équipement", "flat", "system_seeded", false),
+        (
+            "EQUIPMENT.STATUS",
+            "Statuts équipement",
+            "flat",
+            "system_seeded",
+            false,
+            DomainAudience::System,
+        ),
         (
             "WORK.PRIORITY",
             "Priorités ordre de travail",
             "flat",
             "protected_analytical",
             false,
+            DomainAudience::Company,
         ),
         (
             "WORK.FAILURE_MODES",
@@ -546,6 +559,7 @@ pub async fn seed_reference_demo_data(db: &DatabaseConnection) -> AppResult<()> 
             "hierarchical",
             "system_seeded",
             false,
+            DomainAudience::Company,
         ),
         (
             "ORG.POSITIONS",
@@ -553,14 +567,23 @@ pub async fn seed_reference_demo_data(db: &DatabaseConnection) -> AppResult<()> 
             "flat",
             "tenant_managed",
             true,
+            DomainAudience::Company,
         ),
-        ("ORG.SCHEDULE_CLASS", "Classes horaires", "flat", "tenant_managed", true),
+        (
+            "ORG.SCHEDULE_CLASS",
+            "Classes horaires",
+            "flat",
+            "tenant_managed",
+            true,
+            DomainAudience::Company,
+        ),
         (
             "PERSONNEL.SKILLS",
             "Compétences techniques",
             "hierarchical",
             "tenant_managed",
             true,
+            DomainAudience::Company,
         ),
         (
             "PERSONNEL.CERTIFICATIONS",
@@ -568,23 +591,26 @@ pub async fn seed_reference_demo_data(db: &DatabaseConnection) -> AppResult<()> 
             "flat",
             "tenant_managed",
             true,
+            DomainAudience::Company,
         ),
     ];
 
     let mut domain_ids: Vec<(i64, &str)> = Vec::new();
-    for (code, name, structure, governance, extendable) in domains {
+    for (code, name, structure, governance, extendable, audience) in domains {
         let category = derive_category_for_persist(code, governance);
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             r"INSERT INTO reference_domains
-                (code, name, structure_type, governance_level, governance_category, is_extendable, created_at, updated_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (code, name, structure_type, governance_level, governance_category, audience, is_extendable,
+                 created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 (*code).into(),
                 (*name).into(),
                 (*structure).into(),
                 (*governance).into(),
                 category.as_str().into(),
+                audience.as_str().into(),
                 (*extendable as i32).into(),
                 now.clone().into(),
                 now.clone().into(),

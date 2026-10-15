@@ -418,10 +418,15 @@ pub const ROW_SPECS: &[RowSpec] = &[
     ),
     spec("lookup_value_aliases", &[r("value_id", "lookup_values")]),
     spec("reference_domains", &[]),
-    spec(
-        "reference_sets",
-        &[r("domain_id", "reference_domains"), r("created_by_id", USER)],
-    ),
+    RowSpec {
+        // When the publish impact preview ran on this device (cleared when the set's values
+        // change): a preview made on one device does not count for another.
+        device_local: &["impact_previewed_at"],
+        ..spec(
+            "reference_sets",
+            &[r("domain_id", "reference_domains"), r("created_by_id", USER)],
+        )
+    },
     spec(
         "reference_values",
         &[r("set_id", "reference_sets"), r("parent_id", "reference_values")],

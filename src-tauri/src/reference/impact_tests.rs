@@ -15,9 +15,7 @@ async fn exec(db: &DatabaseConnection, sql: &str) {
 }
 
 async fn setup() -> DatabaseConnection {
-    let db = crate::db::test_db::seeded().await;
-    publish::clear_impact_cache();
-    db
+    crate::db::test_db::seeded().await
 }
 
 async fn add_value(db: &DatabaseConnection, set_id: i64, code: &str) {

@@ -288,6 +288,13 @@ async fn ensure_domain(conn: &impl ConnectionTrait, code: &str, name: &str) -> A
         ],
     ))
     .await?;
+    // Failure coding differs per plant (ISO 14224 lists extended locally): a company list.
+    crate::reference::audience::declare_domain_audience(
+        conn,
+        code,
+        crate::reference::audience::DomainAudience::Company,
+    )
+    .await?;
     conn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO reference_sets \

@@ -11,6 +11,7 @@ function domain(
     name: "Test",
     governance_level: "tenant_managed",
     governance_category: "operational_dictionary",
+    audience: "company",
     is_extendable: true,
     validation_rules_json: null,
     created_at: "",

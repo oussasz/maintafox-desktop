@@ -463,19 +463,32 @@ async fn ensure_equipment_taxonomy_domains_and_published_sets(db: &DatabaseConne
     db.execute(Statement::from_string(
         DbBackend::Sqlite,
         "INSERT OR IGNORE INTO reference_domains \
-         (code, name, structure_type, governance_level, governance_category, \
+         (code, name, structure_type, governance_level, governance_category, audience, \
           is_extendable, validation_rules_json, created_at, updated_at) \
          VALUES \
-         ('EQUIPMENT.CLASS', 'Classes d''équipement', 'flat', 'system_seeded', 'system_catalog', 0, NULL, \
+         ('EQUIPMENT.CLASS', 'Classes d''équipement', 'flat', 'system_seeded', 'system_catalog', 'company', 0, NULL, \
           strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now')), \
-         ('EQUIPMENT.CRITICALITY', 'Criticités d''équipement', 'flat', 'system_seeded', 'system_catalog', 0, NULL, \
+         ('EQUIPMENT.CRITICALITY', 'Criticités d''équipement', 'flat', 'system_seeded', 'system_catalog', 'system', 0, NULL, \
           strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now')), \
-         ('EQUIPMENT.STATUS', 'Statuts d''équipement', 'flat', 'system_seeded', 'system_catalog', 0, NULL, \
+         ('EQUIPMENT.STATUS', 'Statuts d''équipement', 'flat', 'system_seeded', 'system_catalog', 'system', 0, NULL, \
           strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now')), \
-         ('EQUIPMENT.FAMILY', 'Familles d''équipement', 'flat', 'tenant_managed', 'operational_dictionary', 1, NULL, \
+         ('EQUIPMENT.FAMILY', 'Familles d''équipement', 'flat', 'tenant_managed', 'operational_dictionary', 'company', 1, NULL, \
           strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now')), \
-         ('EQUIPMENT.SUBFAMILY', 'Sous-familles d''équipement', 'flat', 'tenant_managed', 'operational_dictionary', 1, NULL, \
+         ('EQUIPMENT.SUBFAMILY', 'Sous-familles d''équipement', 'flat', 'tenant_managed', 'operational_dictionary', 'company', 1, NULL, \
           strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'))"
+            .to_string(),
+    ))
+    .await?;
+
+    // Audience is decided by the product: the criticality scale and the status codes (they drive
+    // decommissioning) are Maintafox lists; classes and families are the plant's own.
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "UPDATE reference_domains \
+            SET audience = CASE WHEN UPPER(TRIM(code)) IN ('EQUIPMENT.CRITICALITY','EQUIPMENT.STATUS') \
+                                THEN 'system' ELSE 'company' END \
+          WHERE UPPER(TRIM(code)) IN ('EQUIPMENT.CLASS','EQUIPMENT.CRITICALITY','EQUIPMENT.STATUS', \
+                                      'EQUIPMENT.FAMILY','EQUIPMENT.SUBFAMILY')"
             .to_string(),
     ))
     .await?;

@@ -88,35 +88,31 @@ pub struct ReferencePublishResult {
     pub readiness: ReferencePublishReadiness,
 }
 
-// ─── Impact preview cache key ─────────────────────────────────────────────────
+// ─── Impact preview marker ────────────────────────────────────────────────────
 
-/// In-memory flag tracking whether impact preview was computed for a set.
-/// In a production system this would be persisted; for now the publish engine
-/// accepts the preview result directly as proof of completion.
-static IMPACT_CACHE: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<i64>>> =
-    std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashSet::new()));
-
-/// Mark impact preview as computed for a set.
-fn mark_impact_computed(set_id: i64) {
-    if let Ok(mut cache) = IMPACT_CACHE.lock() {
-        cache.insert(set_id);
-    }
+/// Records on the set row that the impact preview ran (`reference_sets.impact_previewed_at`,
+/// migration 196). Triggers on `reference_values` clear it whenever a value of the set changes, so
+/// the marker always refers to the values being published. Device-local in sync.
+async fn mark_impact_computed(db: &DatabaseConnection, set_id: i64, at: &str) -> AppResult<()> {
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE reference_sets SET impact_previewed_at = ? WHERE id = ?",
+        [at.into(), set_id.into()],
+    ))
+    .await?;
+    Ok(())
 }
 
-/// Check if impact preview was computed for a set.
-fn is_impact_computed(set_id: i64) -> bool {
-    IMPACT_CACHE
-        .lock()
-        .map(|cache| cache.contains(&set_id))
-        .unwrap_or(false)
-}
-
-/// Clear impact cache (useful for tests).
-#[cfg(test)]
-pub fn clear_impact_cache() {
-    if let Ok(mut cache) = IMPACT_CACHE.lock() {
-        cache.clear();
-    }
+/// Whether the impact preview ran for the current values of the set.
+async fn is_impact_computed(db: &DatabaseConnection, set_id: i64) -> AppResult<bool> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS ok FROM reference_sets WHERE id = ? AND impact_previewed_at IS NOT NULL",
+            [set_id.into()],
+        ))
+        .await?;
+    Ok(row.is_some())
 }
 
 // ─── Module dimension constants ───────────────────────────────────────────────
@@ -190,7 +186,7 @@ pub async fn compute_publish_readiness(db: &DatabaseConnection, set_id: i64) -> 
     }
 
     // ── Check 4: protected domain → impact preview required ───────────────
-    let impact_preview_available = is_impact_computed(set_id);
+    let impact_preview_available = is_impact_computed(db, set_id).await?;
     let impact_preview_required = is_protected;
 
     if is_protected && !impact_preview_available {
@@ -276,7 +272,7 @@ pub async fn preview_publish_impact(db: &DatabaseConnection, set_id: i64) -> App
     let now = Utc::now().to_rfc3339();
 
     // Mark preview as computed so readiness check passes.
-    mark_impact_computed(set_id);
+    mark_impact_computed(db, set_id, &now).await?;
 
     Ok(ReferenceImpactSummary {
         set_id,
@@ -301,6 +297,7 @@ pub async fn publish_reference_set(
 ) -> AppResult<ReferencePublishResult> {
     let set_probe = sets::get_reference_set(db, set_id).await?;
     let domain_probe = domains::get_reference_domain(db, set_probe.domain_id).await?;
+    crate::reference::audience::assert_domain_editable(&domain_probe)?;
     crate::reference::governance::assert_allows_publish(&domain_probe)?;
 
     // Run full readiness assessment.
