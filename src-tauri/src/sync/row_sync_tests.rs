@@ -154,6 +154,9 @@ pub(crate) const FINANCE_TYPES: &[&str] = &[
     "budget_alert_events",
     "posted_export_batches",
     "integration_exceptions",
+    "wo_cost_estimates",
+    "wo_cost_settlements",
+    "budget_periods",
 ];
 
 /// Personnel records, skills and qualifications.

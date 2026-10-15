@@ -346,22 +346,6 @@ fn valid_version_transition(current: &str, next: &str) -> bool {
     )
 }
 
-fn valid_variance_driver(driver_code: &str) -> bool {
-    matches!(
-        driver_code,
-        "emergency_break_in"
-            | "vendor_delay"
-            | "labor_overrun"
-            | "estimate_error"
-            | "scope_change"
-            | "price_increase"
-            | "permit_delay"
-            | "availability_loss"
-            | "repeat_failure"
-            | "shutdown_scope_growth"
-    )
-}
-
 fn valid_variance_transition(current: &str, next: &str) -> bool {
     matches!(
         (current, next),
@@ -1082,6 +1066,13 @@ pub async fn create_budget_line(db: &DatabaseConnection, input: CreateBudgetLine
     let version = ensure_version_editable(&txn, input.budget_version_id).await?;
     let _ = version;
     let budget_bucket = required_trimmed("Budget bucket", &input.budget_bucket)?;
+    crate::finance::reference_catalog::ensure_active_code(
+        &txn,
+        crate::finance::reference_catalog::DOMAIN_COST_CATEGORIES,
+        &budget_bucket,
+        "Cost category",
+    )
+    .await?;
     if input.period_month.is_some_and(|month| !(1..=12).contains(&month)) {
         return Err(AppError::ValidationFailed(vec![
             "Period month must be between 1 and 12.".to_string(),
@@ -1188,6 +1179,15 @@ pub async fn update_budget_line(
         .as_deref()
         .map(|value| required_trimmed("Budget bucket", value))
         .transpose()?;
+    if let Some(bucket) = budget_bucket.as_deref() {
+        crate::finance::reference_catalog::ensure_active_code(
+            &txn,
+            crate::finance::reference_catalog::DOMAIN_COST_CATEGORIES,
+            bucket,
+            "Cost category",
+        )
+        .await?;
+    }
 
     let result = txn
         .execute(Statement::from_sql_and_values(
@@ -1293,8 +1293,18 @@ pub async fn create_budget_actual(
     input: CreateBudgetActualInput,
     allow_posted: bool,
 ) -> AppResult<BudgetActual> {
-    let _ = get_budget_version(db, input.budget_version_id).await?;
+    let version = get_budget_version(db, input.budget_version_id).await?;
+    if let Some(month) = input.period_month.filter(|m| (1..=12).contains(m)) {
+        crate::finance::periods::ensure_period_open(db, version.fiscal_year, month).await?;
+    }
     let budget_bucket = required_trimmed("Budget bucket", &input.budget_bucket)?;
+    crate::finance::reference_catalog::ensure_active_code(
+        db,
+        crate::finance::reference_catalog::DOMAIN_COST_CATEGORIES,
+        &budget_bucket,
+        "Cost category",
+    )
+    .await?;
     let source_type = required_trimmed("Source type", &input.source_type)?;
     let source_id = required_trimmed("Source id", &input.source_id)?;
     let source_currency = required_trimmed("Source currency", &input.source_currency)?;
@@ -1696,6 +1706,13 @@ pub async fn create_budget_commitment(
         ]));
     }
     let budget_bucket = required_trimmed("Budget bucket", &input.budget_bucket)?;
+    crate::finance::reference_catalog::ensure_active_code(
+        db,
+        crate::finance::reference_catalog::DOMAIN_COST_CATEGORIES,
+        &budget_bucket,
+        "Cost category",
+    )
+    .await?;
     let commitment_type = required_trimmed("Commitment type", &input.commitment_type)?;
     let source_type = required_trimmed("Source type", &input.source_type)?;
     let source_id = required_trimmed("Source id", &input.source_id)?;
@@ -2099,6 +2116,13 @@ pub async fn create_budget_variance_review(
 ) -> AppResult<BudgetVarianceReview> {
     let _ = get_budget_version(db, input.budget_version_id).await?;
     let budget_bucket = required_trimmed("Budget bucket", &input.budget_bucket)?;
+    crate::finance::reference_catalog::ensure_active_code(
+        db,
+        crate::finance::reference_catalog::DOMAIN_COST_CATEGORIES,
+        &budget_bucket,
+        "Cost category",
+    )
+    .await?;
     let driver_code = required_trimmed("Driver code", &input.driver_code)?;
     let review_commentary = required_trimmed("Review commentary", &input.review_commentary)?;
     let snapshot_context_json = required_trimmed("Snapshot context json", &input.snapshot_context_json)?;
@@ -2107,11 +2131,13 @@ pub async fn create_budget_variance_review(
             "Period month must be between 1 and 12.".to_string(),
         ]));
     }
-    if !valid_variance_driver(&driver_code) {
-        return Err(AppError::ValidationFailed(vec![
-            "driver_code must be one of the governed variance taxonomy values.".to_string(),
-        ]));
-    }
+    crate::finance::reference_catalog::ensure_active_code(
+        db,
+        crate::finance::reference_catalog::DOMAIN_VARIANCE_REASONS,
+        &driver_code,
+        "Variance reason",
+    )
+    .await?;
 
     let duplicate = db
         .query_one(Statement::from_sql_and_values(
