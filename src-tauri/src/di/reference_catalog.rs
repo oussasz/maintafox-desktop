@@ -201,22 +201,12 @@ pub async fn resolve_system_di_symptom_id(db: &impl ConnectionTrait, preferred_c
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
-    use sea_orm_migration::MigratorTrait;
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
     use super::*;
 
     async fn setup() -> sea_orm::DatabaseConnection {
-        let db = Database::connect("sqlite::memory:").await.expect("connect");
-        db.execute(Statement::from_string(
-            DbBackend::Sqlite,
-            "PRAGMA foreign_keys = ON;".to_string(),
-        ))
-        .await
-        .expect("pragma");
-        crate::migrations::Migrator::up(&db, None).await.expect("migrate");
-        crate::db::seeder::seed_system_data(&db).await.expect("seed");
-        db
+        crate::db::test_db::seeded().await
     }
 
     async fn symptom_id(db: &sea_orm::DatabaseConnection, code: &str) -> i64 {

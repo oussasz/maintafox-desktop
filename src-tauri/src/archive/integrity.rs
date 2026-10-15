@@ -42,8 +42,7 @@ pub async fn verify_checksum(pool: &SqlitePool, archive_item_id: i64) -> Result<
 mod tests {
     use super::*;
     use crate::archive::writer::{archive_record, ArchiveInput};
-    use sea_orm::{Database, DbBackend, Statement};
-    use sea_orm_migration::MigratorTrait;
+    use sea_orm::{DbBackend, Statement};
 
     async fn setup_archived_record(db: &sea_orm::DatabaseConnection) -> i64 {
         let now = chrono::Utc::now().to_rfc3339();
@@ -101,12 +100,7 @@ mod tests {
 
     #[tokio::test]
     async fn verify_checksum_returns_true_for_fresh_payload() {
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("connect in-memory db");
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("apply migrations");
+        let db = crate::db::test_db::migrated().await;
 
         let archive_item_id = setup_archived_record(&db).await;
         let is_valid = verify_checksum(&db, archive_item_id).await.expect("verify checksum");
@@ -115,12 +109,7 @@ mod tests {
 
     #[tokio::test]
     async fn verify_checksum_returns_false_when_payload_tampered() {
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("connect in-memory db");
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("apply migrations");
+        let db = crate::db::test_db::migrated().await;
 
         let archive_item_id = setup_archived_record(&db).await;
 

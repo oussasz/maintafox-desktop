@@ -947,8 +947,7 @@ pub async fn list_connection_profiles(db: &DatabaseConnection) -> AppResult<Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sea_orm::{Database, DbBackend, Statement};
-    use sea_orm_migration::MigratorTrait;
+    use sea_orm::{DbBackend, Statement};
 
     #[test]
     fn sha256_hex_is_stable() {
@@ -960,11 +959,7 @@ mod tests {
 
     #[tokio::test]
     async fn load_session_policy_uses_defaults_when_missing() {
-        let db = Database::connect("sqlite::memory:").await.expect("In-memory DB");
-
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("Migrations should apply");
+        let db = crate::db::test_db::migrated().await;
 
         let policy = load_session_policy(&db).await;
         assert_eq!(policy, SessionPolicy::default());
@@ -972,11 +967,7 @@ mod tests {
 
     #[tokio::test]
     async fn set_setting_writes_setting_and_audit_event() {
-        let db = Database::connect("sqlite::memory:").await.expect("In-memory DB");
-
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("Migrations should apply");
+        let db = crate::db::test_db::migrated().await;
 
         set_setting(
             &db,
@@ -1017,11 +1008,7 @@ mod tests {
 
     #[tokio::test]
     async fn set_setting_rejects_invalid_json() {
-        let db = Database::connect("sqlite::memory:").await.expect("In-memory DB");
-
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("Migrations should apply");
+        let db = crate::db::test_db::migrated().await;
 
         let err = set_setting(
             &db,
@@ -1039,10 +1026,7 @@ mod tests {
 
     #[tokio::test]
     async fn ensure_default_policies_seeds_active_session_and_backup() {
-        let db = Database::connect("sqlite::memory:").await.expect("In-memory DB");
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("Migrations should apply");
+        let db = crate::db::test_db::migrated().await;
 
         ensure_default_policies(&db)
             .await
@@ -1078,10 +1062,7 @@ mod tests {
 
     #[tokio::test]
     async fn policy_draft_test_activate_discard_lifecycle() {
-        let db = Database::connect("sqlite::memory:").await.expect("In-memory DB");
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("Migrations should apply");
+        let db = crate::db::test_db::migrated().await;
 
         ensure_default_policies(&db).await.expect("seed defaults");
 

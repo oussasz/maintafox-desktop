@@ -937,30 +937,10 @@ mod masking_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
-    use sea_orm_migration::MigratorTrait;
+    use sea_orm::ConnectionTrait;
 
     async fn setup_migrated_db() -> DatabaseConnection {
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("in-memory SQLite should connect");
-
-        db.execute(Statement::from_string(
-            DbBackend::Sqlite,
-            "PRAGMA foreign_keys = ON;".to_string(),
-        ))
-        .await
-        .expect("PRAGMA foreign_keys");
-
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("migrations should apply");
-
-        crate::db::seeder::seed_system_data(&db)
-            .await
-            .expect("seeder should run");
-
-        db
+        crate::db::test_db::seeded().await
     }
 
     #[test]

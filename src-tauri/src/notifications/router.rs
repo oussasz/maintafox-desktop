@@ -323,15 +323,13 @@ async fn query_optional_i64<const N: usize>(
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
-    use sea_orm_migration::MigratorTrait;
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
     use super::node_responsible_user_ids;
 
     #[tokio::test]
     async fn node_responsibilities_route_by_governed_code_and_only_while_in_force() {
-        let db = Database::connect("sqlite::memory:").await.expect("connect");
-        crate::migrations::Migrator::up(&db, None).await.expect("migrations");
+        let db = crate::db::test_db::migrated().await;
         for sql in [
             "PRAGMA foreign_keys = OFF",
             "INSERT INTO personnel (id, employee_code, full_name, availability_status) VALUES              (1, 'MNT-001', 'Owner', 'available'), (2, 'MNT-002', 'Ended approver', 'available'),              (3, 'MNT-003', 'Planner', 'available'), (4, 'MNT-004', 'Future approver', 'available')",

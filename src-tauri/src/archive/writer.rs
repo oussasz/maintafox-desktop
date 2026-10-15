@@ -126,17 +126,11 @@ async fn lookup_retention_policy_id(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sea_orm::{Database, DbBackend, Statement};
-    use sea_orm_migration::MigratorTrait;
+    use sea_orm::{DbBackend, Statement};
 
     #[tokio::test]
     async fn archive_record_creates_archive_item_payload_and_action_rows() {
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("connect in-memory db");
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("apply migrations");
+        let db = crate::db::test_db::migrated().await;
 
         let now = chrono::Utc::now().to_rfc3339();
         db.execute(Statement::from_sql_and_values(

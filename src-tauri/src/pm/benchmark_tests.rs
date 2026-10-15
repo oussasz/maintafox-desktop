@@ -2,8 +2,7 @@
 //! whichever comes first, meter rollover / replacement, compliance %, revision from a finding,
 //! reservations of planned parts.
 
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
-use sea_orm_migration::MigratorTrait;
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 use crate::pm::domain::{
     CreatePmPlanInput, CreatePmPlanVersionInput, ExecutePmOccurrenceInput, GeneratePmOccurrencesInput,
@@ -13,11 +12,7 @@ use crate::pm::domain::{
 use crate::pm::queries;
 
 async fn setup_db() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:").await.expect("in-memory sqlite");
-    crate::migrations::Migrator::up(&db, None).await.expect("migrations");
-    crate::db::seeder::seed_system_data(&db)
-        .await
-        .expect("seed system data");
+    let db = crate::db::test_db::seeded().await;
     crate::locale::write_locale_config(&db, "locale.default_language", "fr")
         .await
         .expect("tenant locale");

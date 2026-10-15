@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 
-use sea_orm::{ConnectionTrait, Database, DatabaseBackend, DatabaseConnection, Statement, Value as SqlValue};
+use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement, Value as SqlValue};
 use sea_orm_migration::MigratorTrait;
 
 use super::domain::{
@@ -22,14 +22,22 @@ use super::queries::{apply_sync_batch, get_sync_push_payload};
 use super::registry::{self, SyncScope};
 use super::row_codec::{self, RowLocator};
 use super::row_layout::{self, Role, Target};
+use crate::db::test_db::Template;
+
+static STARTED: Template = Template::new(|db| Box::pin(prepare_started(db)));
 
 /// A database as the startup leaves it: migrations, every startup seeder, capture installed.
+/// A private in-memory copy of a database built that way once per test process (`db::test_db`).
+/// Every copy has the same replica identity (device code) and random ids: for two or more devices
+/// in one test use [`started_device_db`].
 pub(crate) async fn started_db() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:").await.expect("in-memory sqlite");
-    db.execute_unprepared("PRAGMA foreign_keys = ON")
-        .await
-        .expect("foreign keys");
-    prepare_started(db).await
+    STARTED.copy().await
+}
+
+/// Like [`started_db`], but built from scratch like a separately installed device: its own replica
+/// identity, device code and random ids. For tests that put several devices side by side.
+pub(crate) async fn started_device_db() -> DatabaseConnection {
+    STARTED.fresh().await
 }
 
 /// Like [`started_db`], but an encrypted database file opened like the app opens it
@@ -49,26 +57,26 @@ pub(crate) async fn started_file_db(path: &std::path::Path) -> DatabaseConnectio
     ] {
         db.execute_unprepared(pragma).await.expect("pragma");
     }
-    prepare_started(db).await
+    prepare_started(&db).await;
+    db
 }
 
-async fn prepare_started(db: DatabaseConnection) -> DatabaseConnection {
-    crate::migrations::Migrator::up(&db, None).await.expect("migrations");
-    crate::db::seeder::seed_system_data(&db).await.expect("system seed");
-    crate::wo::types::ensure_required_work_order_types(&db)
+async fn prepare_started(db: &DatabaseConnection) {
+    crate::migrations::Migrator::up(db, None).await.expect("migrations");
+    crate::db::seeder::seed_system_data(db).await.expect("system seed");
+    crate::wo::types::ensure_required_work_order_types(db)
         .await
         .expect("work order types");
-    crate::wo::priorities::ensure_required_urgency_levels(&db)
+    crate::wo::priorities::ensure_required_urgency_levels(db)
         .await
         .expect("urgency levels");
-    crate::wo::statuses::ensure_required_work_order_statuses(&db)
+    crate::wo::statuses::ensure_required_work_order_statuses(db)
         .await
         .expect("work order statuses");
-    crate::reference::system_catalog_integrity::ensure_system_reference_catalog_integrity(&db)
+    crate::reference::system_catalog_integrity::ensure_system_reference_catalog_integrity(db)
         .await
         .expect("reference catalog");
-    super::capture::install_capture(&db).await.expect("install capture");
-    db
+    super::capture::install_capture(db).await.expect("install capture");
 }
 
 pub(crate) async fn exec(db: &impl ConnectionTrait, sql: &str, values: Vec<SqlValue>) {
