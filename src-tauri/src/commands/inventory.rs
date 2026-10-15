@@ -445,7 +445,14 @@ pub async fn issue_inventory_stock(
         crate::rbac::permissions::INV_MANAGE,
         PermissionScope::Global
     );
-    queries::issue_reserved_stock(&state.db, input).await
+    let reservation = queries::issue_reserved_stock(&state.db, input).await?;
+    // An issue reaching an already settled OT is a late cost (finance settlement).
+    if let Some(wo_id) =
+        crate::finance::settlement::work_order_of_source(&reservation.source_type, reservation.source_id)
+    {
+        crate::finance::settlement::post_late_costs_best_effort(&state.db, &[wo_id], i64::from(user.user_id)).await;
+    }
+    Ok(reservation)
 }
 
 #[tauri::command]
@@ -460,7 +467,14 @@ pub async fn return_inventory_stock(
         crate::rbac::permissions::INV_MANAGE,
         PermissionScope::Global
     );
-    queries::return_reserved_stock(&state.db, input).await
+    let reservation = queries::return_reserved_stock(&state.db, input).await?;
+    // A return to an already settled OT is a late credit (finance settlement).
+    if let Some(wo_id) =
+        crate::finance::settlement::work_order_of_source(&reservation.source_type, reservation.source_id)
+    {
+        crate::finance::settlement::post_late_costs_best_effort(&state.db, &[wo_id], i64::from(user.user_id)).await;
+    }
+    Ok(reservation)
 }
 
 #[tauri::command]
@@ -721,7 +735,15 @@ pub async fn receive_inventory_purchase_order_goods(
     );
     // Who did it comes from the session, never from the UI payload.
     input.actor_id = Some(i64::from(user.user_id));
-    procurement::receive_purchase_order_goods(&state.db, input).await
+    let receipt = procurement::receive_purchase_order_goods(&state.db, input).await?;
+    // A contractor / service receipt reaching an already settled OT is a late cost.
+    match crate::finance::settlement::work_orders_of_receipt(&state.db, receipt.id).await {
+        Ok(wo_ids) => {
+            crate::finance::settlement::post_late_costs_best_effort(&state.db, &wo_ids, i64::from(user.user_id)).await
+        }
+        Err(e) => tracing::warn!(target: "maintafox", "late cost lookup for receipt {}: {e}", receipt.id),
+    }
+    Ok(receipt)
 }
 
 #[tauri::command]
@@ -1600,7 +1622,11 @@ pub async fn issue_inventory_stock_to_work_order(
     );
     // Who issued comes from the session, never from the UI payload.
     request.actor_id = Some(i64::from(user.user_id));
-    crate::inventory::issue::issue_stock(&state.db, request).await
+    let outcome = crate::inventory::issue::issue_stock(&state.db, request).await?;
+    if let Some(wo_id) = outcome.work_order_id {
+        crate::finance::settlement::post_late_costs_best_effort(&state.db, &[wo_id], i64::from(user.user_id)).await;
+    }
+    Ok(outcome)
 }
 
 #[tauri::command]

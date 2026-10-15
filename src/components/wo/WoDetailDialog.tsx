@@ -31,6 +31,7 @@ import { useTranslation } from "react-i18next";
 
 import { LinkedEntityBadge, roundTitle } from "@/components/common/LinkedEntityBadge";
 import { UrgencyBadge } from "@/components/common/urgency/UrgencyBadge";
+import { WoCostPanel } from "@/components/finance/WoCostPanel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -49,7 +50,6 @@ import { WoCancelDialog } from "@/components/wo/WoCancelDialog";
 import { WoCloseOutPanel } from "@/components/wo/WoCloseOutPanel";
 import { WoCompletionDialog } from "@/components/wo/WoCompletionDialog";
 import { completionGatesProgress } from "@/components/wo/WoCompletionGatesChecklist";
-import { WoCostSummaryCard } from "@/components/wo/WoCostSummaryCard";
 import {
   WoExecutionControls,
   type WoExecutionControlsHandle,
@@ -379,7 +379,7 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
               </CardContent>
             </Card>
 
-            <WoCostSummaryCard woId={wo.id} status={wo.status_code ?? "draft"} />
+            <WoCostPanel woId={wo.id} status={wo.status_code ?? "draft"} />
 
             <Tabs value={activeTab} onValueChange={setActiveTab}>
               <TabsList className="w-full justify-start">

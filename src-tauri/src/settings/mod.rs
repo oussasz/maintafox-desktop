@@ -232,6 +232,8 @@ pub async fn set_setting(
 
     let _: serde_json::Value = serde_json::from_str(value_json)
         .map_err(|_| AppError::ValidationFailed(vec![format!("setting_value_json for '{}' is not valid JSON", key)]))?;
+    // Per-key check: the fiscal-year start month (finance periods depend on it).
+    crate::finance::fiscal::guard_fiscal_start_write(db, key, value_json).await?;
 
     let old_hash = get_setting(db, key, scope)
         .await?

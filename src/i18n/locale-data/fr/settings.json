@@ -71,7 +71,8 @@
     "diagnostics.log_retention_days": "Rétention des logs (jours)",
     "ram.fmeca_rpn_critical_threshold": "Seuil RPN critique FMECA",
     "documents.default_header": "En-tête de document par défaut",
-    "wo.reopen_window_days": "Délai de réouverture après clôture (jours)"
+    "wo.reopen_window_days": "Délai de réouverture après clôture (jours)",
+    "locale.fiscal_year_start_month": "Début de l'exercice comptable"
   },
   "documentHeader": {
     "title": "Documents et identité visuelle",
@@ -220,6 +221,20 @@
     "channel": {
       "stable": "Stable",
       "beta": "Bêta"
+    },
+    "month": {
+      "1": "Janvier",
+      "2": "Février",
+      "3": "Mars",
+      "4": "Avril",
+      "5": "Mai",
+      "6": "Juin",
+      "7": "Juillet",
+      "8": "Août",
+      "9": "Septembre",
+      "10": "Octobre",
+      "11": "Novembre",
+      "12": "Décembre"
     }
   },
   "tabs": {
