@@ -186,6 +186,10 @@ async fn remap_usage_references<C: ConnectionTrait>(
 
     total += remap_equipment_classification_codes(db, domain, from_value, to_value).await?;
     total += remap_lookup_consumer_usage(db, domain, from_value, to_value).await?;
+    if crate::reference::units::is_units_domain(&domain.code) {
+        // Units of measure: articles, prices, conversions, meters, checkpoints and packages.
+        total += crate::reference::units::remap_unit_value(db, from_value.id, to_value.id).await?;
+    }
 
     Ok(total)
 }
@@ -354,6 +358,11 @@ async fn execute_migration_operation(
     let (domain, source_value, target_value) =
         validate_migration_pair(db, domain_id, from_value_id, to_value_id).await?;
     crate::reference::audience::assert_domain_editable(&domain)?;
+    // The source is retired by the operation: a protected product value never is.
+    crate::reference::governance::assert_system_value_mutable(&domain, source_value.metadata_json.as_deref())?;
+    if crate::reference::units::is_units_domain(&domain.code) {
+        crate::reference::units::assert_merge_keeps_quantities(db, source_value.id, target_value.id).await?;
+    }
 
     // Policy check before transaction: operation may deactivate source.
     if source_value.is_active {

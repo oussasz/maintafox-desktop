@@ -29,6 +29,22 @@ import {
   MaintenanceNatureText,
   useMaintenanceNatures,
 } from "@/components/lookups/MaintenanceNaturePicker";
+import {
+  EMPTY_UNIT_EDIT,
+  UnitEditCells,
+  type UnitEditState,
+  UnitHeadCells,
+  UnitReadCells,
+  baseUnitCandidates,
+  isUnitToReview,
+  unitEditComplete,
+  unitEditStateFrom,
+} from "@/components/lookups/MeasureUnitColumns";
+import {
+  buildPlantUnitMetadata,
+  parsePositiveNumber,
+  useMeasureDimensions,
+} from "@/components/lookups/MeasureUnitPicker";
 import { PublishReadinessPanel } from "@/components/lookups/PublishReadinessPanel";
 import { ReferenceAliasPanel } from "@/components/lookups/ReferenceAliasPanel";
 import { ReferenceColorSwatchHex } from "@/components/lookups/ReferenceColorSwatchHex";
@@ -196,9 +212,26 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
   const [sortAsc, setSortAsc] = useState(true);
   const [parentCandidates, setParentCandidates] = useState<ReferenceValue[]>([]);
   const columnFlags = useMemo(() => resolveReferenceValueColumns(domain), [domain]);
-  const { showParent, showSchedule, showNature, crossDomainParentCode, sameSetHierarchy } =
-    columnFlags;
+  const {
+    showParent,
+    showSchedule,
+    showNature,
+    showUnit,
+    crossDomainParentCode,
+    sameSetHierarchy,
+  } = columnFlags;
   const natures = useMaintenanceNatures(showNature);
+  // Units of measure (MEASURE.UNITS): unit fields of the row being edited / created, the bases a
+  // plant unit may name (standard units of this version) and the "to review" filter.
+  const dimensions = useMeasureDimensions(showUnit);
+  const [editUnit, setEditUnit] = useState<UnitEditState>(EMPTY_UNIT_EDIT);
+  const [newUnit, setNewUnit] = useState<UnitEditState>(EMPTY_UNIT_EDIT);
+  const [reviewOnly, setReviewOnly] = useState(false);
+  const unitBases = useMemo(() => (showUnit ? baseUnitCandidates(values) : []), [showUnit, values]);
+  const reviewCount = useMemo(
+    () => (showUnit ? values.filter(isUnitToReview).length : 0),
+    [showUnit, values],
+  );
   const parentDomain = crossDomainParentCode
     ? (domains.find((d) => d.code === crossDomainParentCode) ?? null)
     : null;
@@ -252,14 +285,15 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
   }, [showParent, sameSetHierarchy, parentSetId]);
 
   const sortedValues = useMemo(() => {
-    return [...values].sort((a, b) => {
+    const shown = showUnit && reviewOnly ? values.filter(isUnitToReview) : values;
+    return [...shown].sort((a, b) => {
       let cmp = 0;
       if (sortField === "code") cmp = a.code.localeCompare(b.code);
       else if (sortField === "label") cmp = a.label.localeCompare(b.label);
       else cmp = Number(a.is_active) - Number(b.is_active);
       return sortAsc ? cmp : -cmp;
     });
-  }, [values, sortField, sortAsc]);
+  }, [values, sortField, sortAsc, showUnit, reviewOnly]);
 
   const showColorColumn = useMemo(
     () => values.some((v) => v.color_hex != null && String(v.color_hex).trim() !== ""),
@@ -288,12 +322,13 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
         parentId: v.parent_id ?? null,
         natureTag: v.semantic_tag ?? null,
       });
+      if (showUnit) setEditUnit(unitEditStateFrom(v));
       setAliasValueId(null);
       if (showSchedule) {
         setPatternValueId(v.id);
       }
     },
-    [setEditingValueId, showSchedule],
+    [setEditingValueId, showSchedule, showUnit],
   );
 
   const cancelEdit = useCallback(() => {
@@ -305,6 +340,28 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
     async (valueId: number) => {
       const existing = values.find((v) => v.id === valueId);
       try {
+        if (showUnit && existing) {
+          // A plant unit: its base first (the server checks base and factor together on save),
+          // then the labels, symbol and factor.
+          const factor = parsePositiveNumber(editUnit.factor);
+          if (factor == null || editUnit.baseId == null) return;
+          if ((existing.parent_id ?? null) !== editUnit.baseId) {
+            const moved = await moveReferenceValueParent(valueId, editUnit.baseId);
+            useReferenceGovernanceStore.setState((s) => ({
+              values: s.values.map((v) => (v.id === valueId ? moved : v)),
+            }));
+          }
+          await saveValue(valueId, {
+            label: editRow.label,
+            description: editRow.description || null,
+            metadata_json: buildPlantUnitMetadata(existing.metadata_json, {
+              symbol: editUnit.symbol,
+              labelEn: editUnit.labelEn,
+              baseFactor: factor,
+            }),
+          });
+          return;
+        }
         await saveValue(valueId, {
           label: editRow.label,
           description: editRow.description || null,
@@ -322,12 +379,13 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
         // The store keeps the translated error (shown above the table) and the row stays in edit.
       }
     },
-    [saveValue, editRow, values, showParent, showNature],
+    [saveValue, editRow, values, showParent, showNature, showUnit, editUnit],
   );
 
   const startNewRow = useCallback(() => {
     setNewValueDraft({});
     setNewRow({ code: "", label: "", description: "", parentId: null, natureTag: null });
+    setNewUnit(EMPTY_UNIT_EDIT);
   }, [setNewValueDraft]);
 
   const cancelNewRow = useCallback(() => {
@@ -336,6 +394,24 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
 
   const commitNewRow = useCallback(async () => {
     if (!newRow.code.trim() || !newRow.label.trim()) return;
+    if (showUnit) {
+      // A plant unit: base standard unit (same set) and factor; the dimension is the base's.
+      const factor = parsePositiveNumber(newUnit.factor);
+      if (factor == null || newUnit.baseId == null || !newUnit.symbol.trim()) return;
+      await addValue({
+        set_id: setId,
+        parent_id: newUnit.baseId,
+        code: newRow.code.trim(),
+        label: newRow.label.trim(),
+        description: newRow.description.trim() || null,
+        metadata_json: buildPlantUnitMetadata(null, {
+          symbol: newUnit.symbol,
+          labelEn: newUnit.labelEn || newRow.label,
+          baseFactor: factor,
+        }),
+      });
+      return;
+    }
     const payload: CreateReferenceValuePayload = {
       set_id: setId,
       ...(newRow.parentId != null ? { parent_id: newRow.parentId } : {}),
@@ -345,7 +421,7 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
       ...(showNature && newRow.natureTag ? { semantic_tag: newRow.natureTag } : {}),
     };
     await addValue(payload);
-  }, [addValue, setId, newRow, showNature]);
+  }, [addValue, setId, newRow, showNature, showUnit, newUnit]);
 
   const confirmDeactivate = useCallback(async () => {
     if (!deleteTarget) return;
@@ -609,6 +685,21 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
         }
         toolbar={
           <>
+            {showUnit && reviewCount > 0 ? (
+              <Button
+                type="button"
+                variant={reviewOnly ? "default" : "outline"}
+                className="h-11 gap-1.5"
+                aria-pressed={reviewOnly}
+                onClick={() => {
+                  setReviewOnly(!reviewOnly);
+                  setPage(0);
+                }}
+                title={t("units.toReviewHint")}
+              >
+                {t("units.reviewFilter", { count: reviewCount })}
+              </Button>
+            ) : null}
             {canDiscardDraftSet && setStatus === "draft" ? (
               <Button
                 type="button"
@@ -754,6 +845,7 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
               <ReferenceValueTableHeadCell>
                 {t("editor.colDescription")}
               </ReferenceValueTableHeadCell>
+              {showUnit ? <UnitHeadCells /> : null}
               {showSchedule ? (
                 <ReferenceValueTableHeadCell>
                   {t("schedulePattern.column")}
@@ -816,6 +908,15 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                     className="h-9 text-sm"
                   />
                 </ReferenceValueTableCell>
+                {showUnit ? (
+                  <UnitEditCells
+                    state={newUnit}
+                    onChange={setNewUnit}
+                    candidates={unitBases}
+                    dimensions={dimensions}
+                    onKeyDown={handleNewKeyDown}
+                  />
+                ) : null}
                 {showSchedule ? (
                   <ReferenceValueTableCell className="text-xs text-text-muted">
                     {t("schedulePattern.afterCreate")}
@@ -866,7 +967,12 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                       aria-label={t("editor.save")}
                       title={t("editor.save")}
                       onClick={() => void commitNewRow()}
-                      disabled={savingValue || !newRow.code.trim() || !newRow.label.trim()}
+                      disabled={
+                        savingValue ||
+                        !newRow.code.trim() ||
+                        !newRow.label.trim() ||
+                        (showUnit && !unitEditComplete(newUnit))
+                      }
                     >
                       <Check className="h-4 w-4 text-status-success" aria-hidden />
                     </Button>
@@ -981,6 +1087,19 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                       </span>
                     )}
                   </ReferenceValueTableCell>
+                  {showUnit ? (
+                    isEditing ? (
+                      <UnitEditCells
+                        state={editUnit}
+                        onChange={setEditUnit}
+                        candidates={unitBases.filter((b) => b.id !== v.id)}
+                        dimensions={dimensions}
+                        onKeyDown={(e) => handleEditKeyDown(e, v.id)}
+                      />
+                    ) : (
+                      <UnitReadCells value={v} values={values} dimensions={dimensions} />
+                    )
+                  ) : null}
                   {showSchedule ? (
                     <ReferenceValueTableCell className="text-xs text-text-muted">
                       <button
@@ -1064,7 +1183,7 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                           aria-label={t("editor.save")}
                           title={t("editor.save")}
                           onClick={() => void commitEdit(v.id)}
-                          disabled={savingValue}
+                          disabled={savingValue || (showUnit && !unitEditComplete(editUnit))}
                         >
                           <Check className="h-4 w-4 text-status-success" aria-hidden />
                         </Button>

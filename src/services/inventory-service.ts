@@ -138,6 +138,7 @@ const InventoryArticleSchema = z.object({
   unit_value_id: z.number(),
   unit_code: z.string(),
   unit_label: z.string(),
+  unit_symbol: z.string(),
   criticality_value_id: z.number().nullable(),
   criticality_code: z.string().nullable(),
   criticality_label: z.string().nullable(),
@@ -877,6 +878,11 @@ export interface ReceiptLotInput {
 
 export type ReceiveGoodsLineInput = ReceiveGoodsInput["lines"][number] & {
   lots?: ReceiptLotInput[] | null;
+  /**
+   * Unit the received / rejected quantities are entered in (a supplier or purchase unit of
+   * MEASURE.UNITS); null = the article's stock unit. Converted to the stock unit on receipt.
+   */
+  entered_unit_value_id?: number | null;
 };
 
 export type ReceiveGoodsInputFull = Omit<ReceiveGoodsInput, "lines"> & {
@@ -1868,7 +1874,10 @@ const IssuedLineSchema = z.object({
   lot_id: z.number().nullable(),
   lot_number: z.string().nullable(),
   serial_number: z.string().nullable(),
+  /** Stock-unit quantity; the unit cost is per stock unit. */
   quantity: z.number(),
+  /** Part of the entered quantity (null when entered in the stock unit). */
+  entered_quantity: z.number().nullable(),
   unit_cost: z.number().nullable(),
   extended_cost: z.number().nullable(),
 });
@@ -1877,6 +1886,10 @@ const IssueOutcomeSchema = z.object({
   reservation_id: z.number(),
   work_order_id: z.number().nullable(),
   work_order_code: z.string().nullable(),
+  /** Quantity issued in the stock unit. */
+  stock_quantity: z.number(),
+  entered_unit_value_id: z.number().nullable(),
+  entered_quantity: z.number(),
   lines: z.array(IssuedLineSchema),
   total_cost: z.number().nullable(),
 });
@@ -1893,6 +1906,8 @@ export interface IssueStockRequest {
   /** Chosen lot / serial; tracked articles without one are picked first-expired-first-out. */
   lot_id: number | null;
   notes: string | null;
+  /** Unit `quantity` is entered in (MEASURE.UNITS); null = the article's stock unit. */
+  entered_unit_value_id?: number | null;
 }
 
 const ScanResolutionSchema = z.object({

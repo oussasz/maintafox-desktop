@@ -28,6 +28,35 @@ vi.mock("@/services/inventory-service", async (importOriginal) => {
   const actual = await importOriginal<InventoryServiceModule>();
   return { ...actual, ...svc };
 });
+const ref = vi.hoisted(() => ({ listPublishedReferenceValuesByDomainCode: vi.fn() }));
+const conv = vi.hoisted(() => ({ previewInventoryStockQuantity: vi.fn() }));
+vi.mock("@/services/reference-service", async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  return { ...actual, ...ref };
+});
+vi.mock("@/services/unit-conversion-service", async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  return { ...actual, ...conv };
+});
+
+/** A unit of MEASURE.UNITS as the reference service returns it. */
+function unitValue(id: number, code: string, symbol: string, label: string, origin = "system") {
+  return {
+    id,
+    set_id: 1,
+    parent_id: null,
+    code,
+    label,
+    description: null,
+    sort_order: id,
+    color_hex: null,
+    icon_name: null,
+    semantic_tag: "mass",
+    external_code: null,
+    is_active: true,
+    metadata_json: JSON.stringify({ origin, symbol, label_en: label }),
+  };
+}
 
 const po = {
   id: 601,
@@ -87,6 +116,8 @@ describe("ReceiveGoodsDialog", () => {
 
   beforeEach(() => {
     Object.values(svc).forEach((fn) => fn.mockReset());
+    ref.listPublishedReferenceValuesByDomainCode.mockReset().mockResolvedValue([]);
+    conv.previewInventoryStockQuantity.mockReset();
     useLocaleStore.setState({ activeCurrencyCode: "DZD" });
     svc.listInventoryPurchaseOrderLines.mockResolvedValue([
       {
@@ -215,6 +246,83 @@ describe("ReceiveGoodsDialog", () => {
           lines: [
             expect.objectContaining({
               lots: [{ lot_number: "L-77", serial_number: null, expiry_date: null, quantity: 3 }],
+            }),
+          ],
+        }),
+      ),
+    );
+  });
+
+  it("receives in bags: the stock quantity is shown, checked against the PO and sent with the unit", async () => {
+    const cement = {
+      ...plainArticle,
+      unit_value_id: 20,
+      unit_symbol: "kg",
+    } as unknown as InventoryArticleRow;
+    svc.listInventoryPurchaseOrderLines.mockResolvedValue([
+      {
+        id: 7001,
+        article_id: 11,
+        article_code: "A-11",
+        article_name: "Cement",
+        ordered_qty: 100,
+        received_qty: 0,
+        remaining_qty: 100,
+        unit_price: 2,
+        demand_source_ref: null,
+      },
+    ]);
+    ref.listPublishedReferenceValuesByDomainCode.mockResolvedValue([
+      unitValue(20, "KG", "kg", "Kilogram"),
+      unitValue(21, "SAC", "sac", "Bag", "plant"),
+    ]);
+    conv.previewInventoryStockQuantity.mockResolvedValue({
+      stock_quantity: 25,
+      stock_unit_value_id: 20,
+      entered_unit_value_id: 21,
+      entered_quantity: 1,
+      factor: 25,
+      path: "unit_factor",
+    });
+    render(
+      <ReceiveGoodsDialog
+        open
+        onOpenChange={vi.fn()}
+        purchaseOrders={[{ ...po, currency_code: null }]}
+        locations={locations}
+        articles={[cement]}
+        initialPoId={601}
+      />,
+    );
+    const dialog = await screen.findByRole("dialog");
+    await fillLine(dialog, "5");
+    const unit = within(dialog).getByLabelText("Receipt unit");
+    await within(dialog).findByRole("option", { name: "Bag (sac)" });
+    fireEvent.change(unit, { target: { value: "21" } });
+    await waitFor(() => expect(conv.previewInventoryStockQuantity).toHaveBeenCalledWith(11, 21, 1));
+    // 5 bags = 125 kg: more than the 100 kg left on the PO line.
+    const post = within(dialog).getByRole("button", { name: "Post receipt" });
+    expect(
+      await within(dialog).findByText(/In the stock unit: 125 kg received/),
+    ).toBeInTheDocument();
+    expect(post).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText("Received"), { target: { value: "4" } });
+    fireEvent.change(within(dialog).getByLabelText("Rejected"), { target: { value: "1" } });
+    expect(
+      await within(dialog).findByText(/In the stock unit: 100 kg received, 25 kg of them rejected/),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText("75 kg")).toBeInTheDocument();
+    await waitFor(() => expect(post).toBeEnabled());
+    fireEvent.click(post);
+    await waitFor(() =>
+      expect(svc.receiveInventoryPurchaseOrderGoods).toHaveBeenCalledWith(
+        expect.objectContaining({
+          lines: [
+            expect.objectContaining({
+              received_qty: 4,
+              accepted_qty: 3,
+              rejected_qty: 1,
+              entered_unit_value_id: 21,
             }),
           ],
         }),

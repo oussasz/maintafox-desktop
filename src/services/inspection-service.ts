@@ -79,6 +79,7 @@ const InspectionCheckpointSchema = z.object({
   checkpoint_code: z.string(),
   description: z.string().nullable(),
   check_type: z.string(),
+  measurement_unit_id: z.number().nullable(),
   measurement_unit: z.string().nullable(),
   normal_min: z.number().nullable(),
   normal_max: z.number().nullable(),

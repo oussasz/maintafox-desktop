@@ -182,15 +182,8 @@ pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
     )
     .await?;
     seed_domain(db, "personnel.contract_type", "Type de contrat", "tenant", false, true).await?;
-    seed_domain(
-        db,
-        "inventory.unit_of_measure",
-        "Unité de mesure stock",
-        "tenant",
-        false,
-        true,
-    )
-    .await?;
+    // Stock units are the governed list MEASURE.UNITS (`reference::units`, migration 201); the
+    // former lookup `inventory.unit_of_measure` is no longer seeded.
     seed_domain(
         db,
         "inventory.movement_type",
@@ -1355,19 +1348,6 @@ pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
         )
         .await?;
         seed_value(db, d, "STAGIAIRE", "Stagiaire", "Stagiaire", "Intern", None, 5, false).await?;
-    }
-
-    // inventory.unit_of_measure
-    {
-        let d = get_domain_id(db, "inventory.unit_of_measure").await?;
-        seed_value(db, d, "U", "Unit\u{00e9}", "Unit\u{00e9}", "Unit", None, 1, true).await?;
-        seed_value(db, d, "KG", "kg", "kg", "kg", None, 2, true).await?;
-        seed_value(db, d, "L", "L", "L", "L", None, 3, true).await?;
-        seed_value(db, d, "M", "m", "m", "m", None, 4, true).await?;
-        seed_value(db, d, "M2", "m\u{00b2}", "m\u{00b2}", "m\u{00b2}", None, 5, true).await?;
-        seed_value(db, d, "BOX", "Bo\u{00ee}te", "Bo\u{00ee}te", "Box", None, 6, true).await?;
-        seed_value(db, d, "ROUL", "Rouleau", "Rouleau", "Roll", None, 7, true).await?;
-        seed_value(db, d, "PAIRE", "Paire", "Paire", "Pair", None, 8, true).await?;
     }
 
     // inventory.movement_type

@@ -713,7 +713,12 @@ pub const ROW_SPECS: &[RowSpec] = &[
     ),
     RowSpec {
         // The checkpoint package lists the equipment of each checkpoint by local id.
-        json_refs: &[json_ref("checkpoint_package_json", "[*].asset_id", "equipment")],
+        // The unit of each measurement checkpoint (MEASURE.UNITS, migration 201) is a history
+        // value of the published package: a unit retired since is sent empty.
+        json_refs: &[
+            json_ref("checkpoint_package_json", "[*].asset_id", "equipment"),
+            json_ref_hist("checkpoint_package_json", "[*].measurement_unit_id", "reference_values"),
+        ],
         ..spec("inspection_template_versions", &[])
     },
     // No command writes the checkpoint component yet: synchronised only while empty.
@@ -1146,7 +1151,8 @@ pub const ROW_SPECS: &[RowSpec] = &[
         "inventory_supplier_prices",
         &[
             r("currency_value_id", "lookup_values"),
-            r("price_unit_value_id", "lookup_values"),
+            // Price unit: a unit of MEASURE.UNITS (migration 201).
+            r("price_unit_value_id", "reference_values"),
         ],
     ),
     spec(

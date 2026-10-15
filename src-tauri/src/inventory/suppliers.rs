@@ -530,6 +530,22 @@ pub async fn upsert_supplier_price(
             id: input.article_id.to_string(),
         });
     }
+    if let Some(unit_id) = input.price_unit_value_id {
+        // Price unit: a unit of MEASURE.UNITS; a new one must be active, the unit a price
+        // already has is kept even if the plant retired it since.
+        let current: Option<i64> = match price_id {
+            Some(id) => db
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "SELECT price_unit_value_id FROM inventory_supplier_prices WHERE id = ?",
+                    [id.into()],
+                ))
+                .await?
+                .and_then(|r| r.try_get::<Option<i64>>("", "price_unit_value_id").ok().flatten()),
+            None => None,
+        };
+        crate::reference::units::ensure_unit(db, unit_id, "price_unit_value_id", current != Some(unit_id)).await?;
+    }
     let valid_from = input.valid_from.clone().unwrap_or_else(now_iso);
     let price_is_active = input.is_active.unwrap_or(true) as i64;
 

@@ -21,6 +21,19 @@ function domain(
 }
 
 describe("resolveReferenceValueColumns", () => {
+  it("shows the unit columns (symbol, base unit and factor) for MEASURE.UNITS only", () => {
+    const units = resolveReferenceValueColumns(
+      domain({ code: "MEASURE.UNITS", structure_type: "unit_set" }),
+    );
+    expect(units.showUnit).toBe(true);
+    // The base unit is edited in the unit columns, not as a generic parent.
+    expect(units.showParent).toBe(false);
+    expect(
+      resolveReferenceValueColumns(domain({ code: "EQUIPMENT.CLASS", structure_type: "flat" }))
+        .showUnit,
+    ).toBe(false);
+  });
+
   it("hides parent and shows schedule for ORG.SCHEDULE_CLASS", () => {
     const flags = resolveReferenceValueColumns(
       domain({ code: "ORG.SCHEDULE_CLASS", structure_type: "flat" }),

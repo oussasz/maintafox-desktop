@@ -70,7 +70,7 @@ async fn article(db: &DatabaseConnection, code: &str, tracking: Tracking, barcod
         article_code: code.to_string(),
         article_name: format!("Article {code}"),
         family_id: None,
-        unit_value_id: lookup_id(db, "inventory.unit_of_measure").await,
+        unit_value_id: crate::reference::units::unit_id_by_code(db, "U").await.expect("unit U"),
         criticality_value_id: None,
         stocking_type_value_id: lookup_id(db, "inventory.stocking_type").await,
         tax_category_value_id: lookup_id(db, "inventory.tax_category").await,
@@ -203,6 +203,7 @@ fn issue_request(article_id: i64, location_id: i64, qty: f64, work_order_id: i64
         lot_id: None,
         notes: None,
         actor_id: None,
+        entered_unit_value_id: None,
     }
 }
 
@@ -282,6 +283,7 @@ fn receipt_line(po_line_id: i64, article_id: i64, location_id: i64, qty: f64) ->
         rejected_qty: 0.0,
         rejection_reason: None,
         lots: None,
+        entered_unit_value_id: None,
     }
 }
 
@@ -1091,5 +1093,299 @@ async fn foreign_currency_po_is_valued_in_tenant_currency_at_the_receipt_rate() 
         .await
         .is_err(),
         "one active rate per pair and date"
+    );
+}
+
+// ── Buy in one unit, issue in another (plant units, migration 204) ─────────────────────────
+
+/// A plant unit `code` = `factor` × `base` straight in the published units list.
+async fn plant_unit(db: &DatabaseConnection, code: &str, base: &str, factor: f64) -> i64 {
+    let base_id = crate::reference::units::unit_id_by_code(db, base)
+        .await
+        .expect("base unit");
+    exec(
+        db,
+        "INSERT INTO reference_values (entity_sync_id, set_id, parent_id, code, label, sort_order, semantic_tag, \
+         is_active, metadata_json) \
+         SELECT ?, b.set_id, b.id, ?, ?, 900, b.semantic_tag, 1, ? FROM reference_values b WHERE b.id = ?",
+        vec![
+            format!("sync-plant-unit-{code}").into(),
+            code.into(),
+            code.into(),
+            serde_json::json!({ "symbol": code.to_lowercase(), "base_factor": factor })
+                .to_string()
+                .into(),
+            base_id.into(),
+        ],
+    )
+    .await;
+    crate::reference::units::unit_id_by_code(db, code)
+        .await
+        .expect("plant unit")
+}
+
+/// Article `code` kept in kilograms.
+async fn article_in_kg(db: &DatabaseConnection, code: &str, tracking: Tracking) -> i64 {
+    let id = article(db, code, tracking, None).await;
+    let kg = crate::reference::units::unit_id_by_code(db, "KG").await.expect("kg");
+    exec(
+        db,
+        "UPDATE articles SET unit_value_id = ? WHERE id = ?",
+        vec![kg.into(), id.into()],
+    )
+    .await;
+    id
+}
+
+/// `(entered_unit_value_id, entered_quantity, unit_conversion_factor, quantity)` of a movement.
+async fn movement_units(db: &DatabaseConnection, movement_id: i64) -> (Option<i64>, Option<f64>, Option<f64>, f64) {
+    let r = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT entered_unit_value_id, entered_quantity, unit_conversion_factor, quantity \
+               FROM inventory_transactions WHERE id = ?",
+            [movement_id.into()],
+        ))
+        .await
+        .expect("query")
+        .expect("movement");
+    (
+        r.try_get("", "entered_unit_value_id").expect("unit"),
+        r.try_get("", "entered_quantity").expect("entered"),
+        r.try_get("", "unit_conversion_factor").expect("factor"),
+        r.try_get("", "quantity").expect("quantity"),
+    )
+}
+
+#[tokio::test]
+async fn cement_is_bought_in_bags_stocked_in_kg_and_issued_in_grams_or_bags() {
+    let db = setup_db().await;
+    let location_id = main_location_id(&db).await;
+    let article_id = article_in_kg(&db, "INV-CIM-25", Tracking::default()).await;
+    let bag = plant_unit(&db, "SAC", "KG", 25.0).await;
+    let gram = crate::reference::units::unit_id_by_code(&db, "G").await.expect("g");
+    let kg = crate::reference::units::unit_id_by_code(&db, "KG").await.expect("kg");
+    let requester = user(&db, "uom_requester").await;
+    let approver = user(&db, "uom_approver").await;
+
+    // A PO of 100 kg at 2.00 per kg.
+    let req = procurement::create_procurement_requisition(
+        &db,
+        CreateProcurementRequisitionInput {
+            article_id,
+            preferred_location_id: Some(location_id),
+            requested_qty: 100.0,
+            demand_source_type: "MANUAL".to_string(),
+            demand_source_id: None,
+            demand_source_ref: None,
+            demand_source_line_id: None,
+            source_reservation_id: None,
+            source_reorder_trigger: None,
+            purchase_priority: None,
+            reason: None,
+            actor_id: Some(requester),
+        },
+    )
+    .await
+    .expect("requisition");
+    let req = transition_req(&db, &req, "SUBMITTED", Some(requester))
+        .await
+        .expect("submit");
+    let req = transition_req(&db, &req, "APPROVED", Some(approver))
+        .await
+        .expect("approve");
+    let po = procurement::create_purchase_order_from_requisition(
+        &db,
+        CreatePurchaseOrderFromRequisitionInput {
+            requisition_id: req.id,
+            supplier_id: None,
+            supplier_company_id: None,
+            actor_id: Some(requester),
+            currency_code: None,
+        },
+    )
+    .await
+    .expect("po");
+    let lines = procurement::list_purchase_order_lines(&db, po.id).await.expect("lines");
+    procurement::set_purchase_order_line_price(&db, lines[0].id, Some(2.0))
+        .await
+        .expect("price per kg");
+    let po = procurement::get_purchase_order_detail(&db, po.id)
+        .await
+        .expect("detail")
+        .order;
+    let po = transition_po(&db, &po, "SUBMITTED", Some(requester))
+        .await
+        .expect("submit po");
+    let po = transition_po(&db, &po, "APPROVED", Some(approver))
+        .await
+        .expect("approve po");
+
+    let in_bags = |qty: f64, rejected: f64| ReceiveGoodsInput {
+        purchase_order_id: po.id,
+        lines: vec![ReceivePurchaseOrderLineInput {
+            received_qty: qty,
+            accepted_qty: qty - rejected,
+            rejected_qty: rejected,
+            entered_unit_value_id: Some(bag),
+            ..receipt_line(lines[0].id, article_id, location_id, qty)
+        }],
+        fulfillment_action: None,
+        actor_id: Some(approver),
+        exchange_rate: None,
+        posting_date: None,
+    };
+    // Receiving: 3 bags delivered, 1 torn = 75 kg received, 50 kg accepted into stock.
+    let gr = procurement::receive_purchase_order_goods(&db, in_bags(3.0, 1.0))
+        .await
+        .expect("receipt in bags");
+    let gr_line = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT received_qty, accepted_qty, rejected_qty, entered_unit_value_id, entered_received_qty, \
+                    entered_rejected_qty, unit_conversion_factor FROM goods_receipt_lines WHERE goods_receipt_id = ?",
+            [gr.id.into()],
+        ))
+        .await
+        .expect("query")
+        .expect("line");
+    let get = |c: &str| gr_line.try_get::<Option<f64>>("", c).expect(c);
+    assert_eq!(
+        (get("received_qty"), get("accepted_qty"), get("rejected_qty")),
+        (Some(75.0), Some(50.0), Some(25.0)),
+        "the receipt line counts in kg"
+    );
+    assert_eq!(
+        (
+            get("entered_received_qty"),
+            get("entered_rejected_qty"),
+            get("unit_conversion_factor")
+        ),
+        (Some(3.0), Some(1.0), Some(25.0)),
+        "and keeps what was entered"
+    );
+    assert_eq!(
+        gr_line
+            .try_get::<Option<i64>>("", "entered_unit_value_id")
+            .expect("unit"),
+        Some(bag)
+    );
+    let (on_hand, _, avg) = on_hand_and_reserved(&db, article_id, location_id).await;
+    assert!(close(on_hand, 50.0));
+    assert!(close(avg.expect("avg"), 2.0), "valued per kg, the stock unit");
+    let accept = scalar_i64(
+        &db,
+        "SELECT id FROM inventory_transactions WHERE source_type = 'PO_GR' AND source_id = ? AND movement_type = 'GR_ACCEPT'",
+        vec![gr.id.into()],
+    )
+    .await;
+    assert_eq!(
+        movement_units(&db, accept).await,
+        (Some(bag), Some(2.0), Some(25.0), 50.0)
+    );
+    // Over-receipt is checked in the stock unit: 2 more bags (50 kg) exceed the 25 kg left.
+    assert!(procurement::receive_purchase_order_goods(&db, in_bags(2.0, 0.0))
+        .await
+        .is_err());
+
+    // Issuing in grams (general kg → g conversion between standard units) and in bags.
+    let wo_id = work_order(&db, "OT-UOM-0001", "in_progress").await;
+    crate::inventory::unit_conversions::create_unit_conversion(
+        &db,
+        approver,
+        crate::inventory::unit_conversions::CreateUnitConversionInput {
+            from_unit_value_id: kg,
+            to_unit_value_id: gram,
+            article_id: None,
+            factor: 1000.0,
+            notes: None,
+        },
+    )
+    .await
+    .expect("kg -> g");
+    let in_grams = issue::issue_stock(
+        &db,
+        IssueStockRequest {
+            entered_unit_value_id: Some(gram),
+            ..issue_request(article_id, location_id, 500.0, wo_id)
+        },
+    )
+    .await
+    .expect("issue in grams");
+    assert!(close(in_grams.stock_quantity, 0.5));
+    assert_eq!(
+        (in_grams.entered_unit_value_id, in_grams.entered_quantity),
+        (Some(gram), 500.0)
+    );
+    assert!(
+        close(in_grams.total_cost.expect("cost"), 1.0),
+        "cost per kg, 0.5 kg issued"
+    );
+    let (unit, entered, factor, _) = movement_units(&db, in_grams.lines[0].transaction_id).await;
+    assert_eq!((unit, entered, factor), (Some(gram), Some(500.0), Some(0.001)));
+    let in_bag = issue::issue_stock(
+        &db,
+        IssueStockRequest {
+            entered_unit_value_id: Some(bag),
+            ..issue_request(article_id, location_id, 1.0, wo_id)
+        },
+    )
+    .await
+    .expect("issue one bag");
+    assert!(close(in_bag.stock_quantity, 25.0));
+    let (on_hand, _, _) = on_hand_and_reserved(&db, article_id, location_id).await;
+    assert!(close(on_hand, 24.5));
+
+    // A unit of another dimension is refused, never converted.
+    let metre = crate::reference::units::unit_id_by_code(&db, "M").await.expect("m");
+    let refused = issue::issue_stock(
+        &db,
+        IssueStockRequest {
+            entered_unit_value_id: Some(metre),
+            ..issue_request(article_id, location_id, 1.0, wo_id)
+        },
+    )
+    .await
+    .expect_err("metres of cement");
+    assert!(
+        message(&refused).contains("GATE_UNIT_DIMENSION_MISMATCH"),
+        "{refused:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_serial_tracked_article_refuses_an_entered_unit_giving_a_fraction() {
+    let db = setup_db().await;
+    let location_id = main_location_id(&db).await;
+    let article_id = article(
+        &db,
+        "INV-SER-UOM",
+        Tracking {
+            serial: true,
+            ..Tracking::default()
+        },
+        None,
+    )
+    .await;
+    let half = plant_unit(&db, "DEMI", "U", 0.5).await;
+    let wo_id = work_order(&db, "OT-UOM-0002", "in_progress").await;
+    let refused = issue::issue_stock(
+        &db,
+        IssueStockRequest {
+            entered_unit_value_id: Some(half),
+            ..issue_request(article_id, location_id, 1.0, wo_id)
+        },
+    )
+    .await
+    .expect_err("half a serial");
+    assert!(message(&refused).contains("GATE_UNIT_WHOLE_UNITS"), "{refused:?}");
+    // The rounding rule of converted quantities: half away from zero, six decimals.
+    assert_eq!(
+        crate::inventory::unit_conversions::round_stock_quantity(0.000_000_1),
+        0.0
+    );
+    assert_eq!(
+        crate::inventory::unit_conversions::round_stock_quantity(2.0 / 3.0),
+        0.666_667
     );
 }

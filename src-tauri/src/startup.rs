@@ -291,7 +291,8 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
         }
     }
 
-    // Phase 4a': lists replaced by shared lists (DI.PRIORITY, DI.SYMPTOM). Migrations retire them
+    // Phase 4a': lists replaced by shared lists (DI.PRIORITY, DI.SYMPTOM, the stock unit lookup
+    // inventory.unit_of_measure → MEASURE.UNITS). Migrations retire them
     // with capture suspended; if a replayed sync history brings one back, it is merged / deleted
     // here with capture on, so the change reaches the other devices. A link that cannot be moved
     // keeps the list in place (nothing is lost) and is logged.

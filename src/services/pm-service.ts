@@ -104,6 +104,8 @@ export interface PmAssetMeter {
   id: number;
   name: string;
   meter_type: string;
+  /** Unit of the meter (MEASURE.UNITS) and its symbol. */
+  unit_value_id: number | null;
   unit: string | null;
   current_reading: number;
   lifetime_reading: number;
@@ -340,6 +342,7 @@ const PmAssetMeterSchema = z.object({
   id: z.number(),
   name: z.string(),
   meter_type: z.string(),
+  unit_value_id: z.number().nullable(),
   unit: z.string().nullable(),
   current_reading: z.number(),
   lifetime_reading: z.number(),

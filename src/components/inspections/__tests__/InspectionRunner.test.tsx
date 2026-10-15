@@ -74,6 +74,7 @@ function checkpoint(id: number, partial: Partial<InspectionCheckpoint>): Inspect
     checkpoint_code: `CP-${id}`,
     description: null,
     check_type: "pass_fail",
+    measurement_unit_id: null,
     measurement_unit: null,
     normal_min: null,
     normal_max: null,

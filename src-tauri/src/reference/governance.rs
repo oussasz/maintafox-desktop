@@ -90,7 +90,9 @@ fn category_for_known_code(code: &str) -> Option<GovernanceCategory> {
         | "DI.IMPACT_LEVEL"
         | "WORK.URGENCY"
         | "WORK.MAINTENANCE_NATURES"
-        | "WORK.ORDER_TYPES" => Some(GovernanceCategory::SystemCatalog),
+        | "WORK.ORDER_TYPES"
+        // Physical dimensions of the units: the conversion guard depends on them (`units`).
+        | "MEASURE.DIMENSIONS" => Some(GovernanceCategory::SystemCatalog),
 
         "EQUIPMENT.FAMILY"
         | "EQUIPMENT.SUBFAMILY"
@@ -116,7 +118,10 @@ fn category_for_known_code(code: &str) -> Option<GovernanceCategory> {
         | "DI.REQUEST_TYPE"
         // A plant's own OT sub-types, each under one protected maintenance nature, governed through
         // draft → validate → publish like the other governed lists (owner, 2026-10-15).
-        | "WORK.ORDER_SUBTYPES" => Some(GovernanceCategory::ControlledCatalog),
+        | "WORK.ORDER_SUBTYPES"
+        // Units of measure: the plant adds its own units through draft → validate → publish, every
+        // module links them by id (`units`, owner decision of the reference data review).
+        | "MEASURE.UNITS" => Some(GovernanceCategory::ControlledCatalog),
 
         _ => None,
     }
@@ -260,6 +265,9 @@ fn has_integrity_owned_system_values(code: &str) -> bool {
             // OT settlement posts to the seeded cost categories: tenants add categories, never
             // retire or recode the seeded ones.
             | "FINANCE.COST_CATEGORIES"
+            // Standard units of measure: stock and meter history depend on them; the plant adds
+            // its own units (`reference::units`), never retires or recodes the standard ones.
+            | "MEASURE.UNITS"
     )
 }
 

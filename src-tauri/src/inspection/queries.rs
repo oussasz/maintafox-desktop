@@ -13,7 +13,14 @@ use super::domain::{
 
 pub(crate) const CHECK_TYPES: &[&str] = &["numeric", "boolean", "observation", "pass_fail"];
 
-pub(crate) const CHECKPOINT_COLUMNS: &str = "id, entity_sync_id, template_version_id, sequence_order, asset_id,      component_id, checkpoint_code, description, check_type, measurement_unit, normal_min, normal_max, warning_min,      warning_max, requires_photo, requires_comment_on_exception, row_version";
+/// Checkpoint columns; the unit symbol is read from `MEASURE.UNITS` (`measurement_unit`).
+pub(crate) const CHECKPOINT_COLUMNS: &str = concat!(
+    "id, entity_sync_id, template_version_id, sequence_order, asset_id, component_id, checkpoint_code, \
+     description, check_type, measurement_unit_id, ",
+    crate::reference::units::unit_symbol_of!("measurement_unit_id"),
+    " AS measurement_unit, normal_min, normal_max, warning_min, warning_max, requires_photo, \
+     requires_comment_on_exception, row_version"
+);
 
 pub(crate) const ROUND_COLUMNS: &str = "id, entity_sync_id, template_id, template_version_id, scheduled_at,      assigned_to_id, status, started_at, completed_at, reviewed_at, reviewed_by_id, review_note,      completion_percentage, row_version, schedule_id, due_basis, window_end_at, assigned_team_id,      due_meter_value, missed_at";
 
@@ -48,7 +55,7 @@ struct CheckpointPackageEntry {
     checkpoint_code: String,
     description: Option<String>,
     check_type: String,
-    measurement_unit: Option<String>,
+    measurement_unit_id: Option<i64>,
     normal_min: Option<f64>,
     normal_max: Option<f64>,
     warning_min: Option<f64>,
@@ -67,7 +74,7 @@ fn package_json_from_drafts(drafts: &[InspectionCheckpointDraft]) -> AppResult<S
             checkpoint_code: d.checkpoint_code.clone(),
             description: trimmed(d.description.as_deref()),
             check_type: d.check_type.clone(),
-            measurement_unit: d.measurement_unit.clone(),
+            measurement_unit_id: d.measurement_unit_id,
             normal_min: d.normal_min,
             normal_max: d.normal_max,
             warning_min: d.warning_min,
@@ -179,10 +186,19 @@ async fn insert_checkpoints(
 ) -> AppResult<Vec<InspectionCheckpoint>> {
     let mut out = Vec::with_capacity(drafts.len());
     for d in drafts {
+        if let Some(unit_id) = d.measurement_unit_id {
+            crate::reference::units::ensure_unit(
+                txn,
+                unit_id,
+                &format!("checkpoint {}: measurement_unit_id", d.checkpoint_code.trim()),
+                true,
+            )
+            .await?;
+        }
         txn.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO inspection_checkpoints (entity_sync_id, template_version_id, sequence_order, asset_id, \
-             component_id, checkpoint_code, description, check_type, measurement_unit, normal_min, normal_max, \
+             component_id, checkpoint_code, description, check_type, measurement_unit_id, normal_min, normal_max, \
              warning_min, warning_max, requires_photo, requires_comment_on_exception, row_version) \
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
             [
@@ -194,7 +210,7 @@ async fn insert_checkpoints(
                 d.checkpoint_code.trim().into(),
                 opt_string(trimmed(d.description.as_deref())),
                 d.check_type.clone().into(),
-                opt_string(trimmed(d.measurement_unit.as_deref())),
+                opt_i64(d.measurement_unit_id),
                 opt_f64(d.normal_min),
                 opt_f64(d.normal_max),
                 opt_f64(d.warning_min),
@@ -309,6 +325,9 @@ fn map_checkpoint(row: &sea_orm::QueryResult) -> AppResult<InspectionCheckpoint>
             .try_get("", "description")
             .map_err(|e| decode_err("description", e))?,
         check_type: row.try_get("", "check_type").map_err(|e| decode_err("check_type", e))?,
+        measurement_unit_id: row
+            .try_get("", "measurement_unit_id")
+            .map_err(|e| decode_err("measurement_unit_id", e))?,
         measurement_unit: row
             .try_get("", "measurement_unit")
             .map_err(|e| decode_err("measurement_unit", e))?,

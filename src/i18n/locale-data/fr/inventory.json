@@ -756,7 +756,8 @@
         "receivedQty": "Reçu",
         "rejectedQty": "Refusé",
         "accepted": "Accepté",
-        "rejectionReason": "Motif du refus"
+        "rejectionReason": "Motif du refus",
+        "unit": "Unité de réception"
       },
       "selectLocation": "Sélectionner un emplacement",
       "cancel": "Annuler",
@@ -769,7 +770,8 @@
         "postingDate": "Saisissez la date de réception.",
         "futureDate": "La date de réception ne peut pas être dans le futur.",
         "rate": "Saisissez un taux de change supérieur à 0.",
-        "rateMissing": "Saisissez le taux de change {{currency}} : aucun n'est enregistré pour cette date."
+        "rateMissing": "Saisissez le taux de change {{currency}} : aucun n'est enregistré pour cette date.",
+        "unitFactor": "{{article}} : l'unité de réception ne se convertit pas dans l'unité de stock (aucune conversion, autre grandeur ou unité à revoir)."
       },
       "fulfillmentAction": "Action d'affectation",
       "fulfillmentValues": {
@@ -804,7 +806,10 @@
           "serialQty": "{{article}} : un numéro de série correspond à une seule unité.",
           "sum": "{{article}} : les lots doivent totaliser la quantité acceptée."
         }
-      }
+      },
+      "unitRefused": "Cette unité ne se convertit pas dans l'unité de stock de l'article.",
+      "inStockUnit": "En unité de stock : {{received}} {{unit}} reçus, dont {{rejected}} {{unit}} refusés.",
+      "converting": "Conversion en unité de stock…"
     },
     "poWorkspace": {
       "title": "Bon de commande",
@@ -1279,7 +1284,7 @@
   },
   "unitConversions": {
     "tab": "Unités et conversions",
-    "help": "1 unité de gauche = facteur × unité de droite. Le sens inverse est calculé ; une conversion propre à un article prime sur la conversion générale.",
+    "help": "1 unité de gauche = facteur × unité de droite ; le sens inverse est calculé. Ordre appliqué : la conversion propre à l'article, puis le facteur général d'une unité de l'usine (réglé sur l'unité dans les Données de référence, ex. 1 sac = 25 kg), puis une conversion générale entre unités standard.",
     "from": "Unité de départ",
     "to": "Unité d'arrivée",
     "factor": "Facteur",
@@ -1294,11 +1299,13 @@
     "path": {
       "identity": "même unité",
       "direct": "conversion directe",
-      "inverse": "inverse d'une conversion"
+      "inverse": "inverse d'une conversion",
+      "unit_factor": "facteur de l'unité"
     },
     "rule": "Conversion",
     "empty": "Aucune conversion définie pour l'instant.",
-    "deactivate": "Désactiver"
+    "deactivate": "Désactiver",
+    "plantUnitGeneral": "Le facteur général d'une unité de l'usine se règle sur l'unité, dans les Données de référence. Ici, choisissez un article pour une conversion qui lui est propre."
   },
   "page": {
     "title": "Magasin & achats",
@@ -1502,7 +1509,9 @@
       "hint": "En automatique, la sortie prend le lot qui expire en premier et ignore les lots périmés."
     },
     "quantity": {
-      "label": "Quantité"
+      "label": "Quantité",
+      "unit": "Unité de sortie",
+      "inStock": "= {{qty}} {{unit}} en unité de stock"
     },
     "submit": "Sortir vers l'OT",
     "submitting": "Sortie en cours…",
@@ -1512,7 +1521,9 @@
       "workOrder": "Choisissez l'OT auquel les pièces sont destinées.",
       "location": "Choisissez l'emplacement d'où partent les pièces.",
       "quantity": "Saisissez une quantité supérieure à 0.",
-      "tooMuch": "Seulement {{qty}} {{unit}} peuvent sortir d'ici."
+      "tooMuch": "Seulement {{qty}} {{unit}} peuvent sortir d'ici.",
+      "unitRefused": "Cette unité ne se convertit pas dans l'unité de stock de l'article (aucune conversion, autre grandeur ou unité à revoir).",
+      "converting": "Conversion en unité de stock…"
     },
     "outcome": {
       "title": "{{code}} sorti vers {{wo}}",

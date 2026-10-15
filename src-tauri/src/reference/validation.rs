@@ -177,6 +177,7 @@ pub async fn validate_reference_set(
 
     // ── Check 4c: nature tag of request types (EN 13306 nature or empty) ───
     check_nature_tags(db, &domain, &all_values, &mut issues).await?;
+    check_unit_dimensions(db, &domain, &all_values, &mut issues).await?;
 
     // ── Check 5: invalid color format ─────────────────────────────────────
     check_invalid_colors(&all_values, &mut issues);
@@ -407,6 +408,77 @@ async fn check_required_parents(
                 value_id: Some(v.id),
                 value_code: Some(v.code.clone()),
             });
+        }
+    }
+    Ok(())
+}
+
+/// Check 4d: units of `MEASURE.UNITS`. A standard unit names one of the physical dimensions; a
+/// plant unit names an active standard unit of the same dimension as its base and a positive
+/// factor (blocking). A unit migration 201 created to review, still without base or factor, is a
+/// warning: its links were carried over and nothing about it is assumed.
+async fn check_unit_dimensions(
+    db: &DatabaseConnection,
+    domain: &crate::reference::domains::ReferenceDomain,
+    vals: &[values::ReferenceValue],
+    issues: &mut Vec<ReferenceValidationIssue>,
+) -> AppResult<()> {
+    use crate::reference::units;
+    if !units::is_units_domain(&domain.code) {
+        return Ok(());
+    }
+    for v in vals {
+        let meta: serde_json::Value = v
+            .metadata_json
+            .as_deref()
+            .and_then(|m| serde_json::from_str(m).ok())
+            .unwrap_or(serde_json::Value::Null);
+        let standard = meta.get("origin").and_then(serde_json::Value::as_str) == Some("system");
+        let to_review = meta.get("review_required").and_then(serde_json::Value::as_bool) == Some(true);
+        let result = if standard {
+            match units::checked_dimension_tag(db, v.semantic_tag.as_deref()).await {
+                Ok(Some(_)) => Ok(()),
+                Ok(None) => Err(AppError::ValidationFailed(vec![format!(
+                    "{}: l'unité standard n'a pas de grandeur physique.",
+                    units::GATE_UNIT_DIMENSION_INVALID
+                )])),
+                Err(e) => Err(e),
+            }
+        } else if to_review && v.parent_id.is_none() && meta.get("base_factor").is_none() {
+            issues.push(ReferenceValidationIssue {
+                check: "unit_to_review".into(),
+                message: format!(
+                    "L'unité '{}' est à revoir : indiquez son unité standard de base et le facteur. \
+                     Aucune conversion ne l'utilisera avant.",
+                    v.code
+                ),
+                severity: IssueSeverity::Warning,
+                value_id: Some(v.id),
+                value_code: Some(v.code.clone()),
+            });
+            Ok(())
+        } else {
+            units::checked_plant_unit(
+                db,
+                v.set_id,
+                &v.code,
+                v.parent_id,
+                v.semantic_tag.as_deref(),
+                v.metadata_json.as_deref(),
+            )
+            .await
+            .map(|_| ())
+        };
+        match result {
+            Ok(()) => {}
+            Err(AppError::ValidationFailed(errs)) => issues.push(ReferenceValidationIssue {
+                check: "invalid_unit".into(),
+                message: format!("L'unité '{}' : {}", v.code, errs.join(" ")),
+                severity: IssueSeverity::Blocking,
+                value_id: Some(v.id),
+                value_code: Some(v.code.clone()),
+            }),
+            Err(e) => return Err(e),
         }
     }
     Ok(())

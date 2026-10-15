@@ -78,6 +78,21 @@ categories) get their audience from `reference::audience::MODULE_CATALOGS`
 
 ---
 
+### Units of measure (`MEASURE.UNITS`, migration 201)
+
+One list for every module: article stock unit, supplier price unit, both units of a conversion, equipment meter unit, inspection measurement unit (all linked by `reference_values.id`). It replaces the fixed lookup `inventory.unit_of_measure` and the free-text unit fields (`reference::units`).
+
+- A value carries its FR label (`label`), EN label (`metadata_json.label_en`), symbol (`metadata_json.symbol`), dimension (`semantic_tag`, a code of `MEASURE.DIMENSIONS`, checked on the server) and UN/CEFACT Rec 20 code (`external_code`) where one exists.
+- **Standard units** (kg, m, L, h, bar, °C, pieces…) are protected by the protected-value guard: no edit, deactivation or recode.
+- **Plant units** name a base standard unit of the same dimension (`parent_id`) and a factor > 0 (`metadata_json.base_factor`: 1 bag = 25 kg), required and checked on the server (`GATE_UNIT_BASE_REQUIRED` / `GATE_UNIT_BASE_INVALID`).
+- Units created by migration 201 for unknown codes or texts are flagged `review_required` (draft validation warning, "To review" filter in the editor); editing one makes base and factor required and clears the flag.
+- Conversions: the article's own conversion, then the plant unit's general factor, then a general row between standard units; units of different dimensions never convert (`GATE_UNIT_DIMENSION_MISMATCH`), and a missing factor is never taken as 1 (`GATE_UNIT_FACTOR_MISSING`).
+- Receipts and issues may be entered in another unit (migration 204): converted to the stock unit with the same order (`unit_conversions::to_stock_quantity`), rounded half away from zero to 6 decimals; serial-tracked articles refuse a non-whole result (`GATE_UNIT_WHOLE_UNITS`). The receipt line and the movement keep the entered unit, quantity and factor; PO quantities, balances, lots and valuation stay in the stock unit.
+- Merging units (`reference::migrations`): standard units are never a source; a unit with a factor only merges into a unit with the same base and factor (`GATE_UNIT_MERGE_CHANGES_QUANTITIES`); records, conversions, meters, checkpoints and checkpoint packages follow. Publishing a new version also moves the unit ids inside checkpoint packages.
+- Sync: a row of a device older than migration 201 naming a unit by the sync id of the retired lookup, or by a unit text, is linked on apply to the unit with that code / the same synonym rule (`units::unit_for_legacy_sync_id`, `units::upgrade_legacy_unit_payload`).
+
+---
+
 ## Behavioral matrix
 
 | Action | A | B | C |
@@ -116,6 +131,8 @@ categories) get their audience from `reference::audience::MODULE_CATALOGS`
 | `WORK.PART_UNUSED_REASON` | **B** — why a planned part was not consumed during execution |
 | `WORK.FAILURE_MODES` | **C** |
 | `PM.MAINTENANCE_TASK_LIST` | **C** |
+| `MEASURE.UNITS` | **C** — units of measure (COMPANY). Standard units seeded and protected (`origin = system`); each plant unit names a base standard unit and a factor (see below) |
+| `MEASURE.DIMENSIONS` | **A** — physical dimensions of the units (SYSTEM, hidden): the conversion engine depends on them |
 
 ### Adjacent (same philosophy, not necessarily `reference_domains` yet)
 

@@ -6,7 +6,11 @@
 //!   desk reserves for the work order first, in the same transaction;
 //! - tracked articles issue from the chosen lot/serial, or FEFO across lots (one ISSUE per lot);
 //! - each ISSUE is valued at the location's weighted-average cost;
-//! - postings in a closed valuation period are refused (ledger insert guard).
+//! - postings in a closed valuation period are refused (ledger insert guard);
+//! - a quantity entered in an alternate unit (a plant unit, a pack…) is converted to the
+//!   article's stock unit first (`unit_conversions::to_stock_quantity`: the article's own
+//!   conversion, then the plant unit's factor, then a general row); the reservation, the ledger
+//!   and the cost count in the stock unit, and each ISSUE keeps the entered unit and quantity.
 
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 
@@ -57,8 +61,22 @@ pub async fn issue_stock_with_source(
             "The issued quantity must be greater than 0.".to_string(),
         ]));
     }
+    let converted = crate::inventory::unit_conversions::to_stock_quantity(
+        db,
+        request.article_id,
+        request.entered_unit_value_id,
+        request.quantity,
+    )
+    .await?;
+    let stock_quantity = converted.stock_quantity;
+    if stock_quantity <= 0.0 {
+        return Err(AppError::ValidationFailed(vec![
+            "The issued quantity must be greater than 0.".to_string(),
+        ]));
+    }
     let tracking = lots::article_tracking(db, request.article_id).await?;
-    lots::ensure_whole_units(&tracking, request.quantity)?;
+    crate::inventory::unit_conversions::ensure_whole_stock_units(&tracking, &converted)?;
+    lots::ensure_whole_units(&tracking, stock_quantity)?;
 
     let tx = db.begin().await?;
     let (reservation_id, work_order_id, work_order_code_value) = match request.reservation_id {
@@ -112,7 +130,7 @@ pub async fn issue_stock_with_source(
                 &InventoryReserveInput {
                     article_id: request.article_id,
                     location_id: request.location_id,
-                    quantity: request.quantity,
+                    quantity: stock_quantity,
                     source_type: "WORK_ORDER".to_string(),
                     source_id: Some(work_order_id),
                     source_ref: Some(code.clone()),
@@ -127,10 +145,10 @@ pub async fn issue_stock_with_source(
     let allocation: Vec<(Option<i64>, f64)> = if tracking.is_tracked() {
         match request.lot_id {
             Some(lot) => {
-                lots::ensure_lot_available(&tx, lot, request.article_id, request.location_id, request.quantity).await?;
-                vec![(Some(lot), request.quantity)]
+                lots::ensure_lot_available(&tx, lot, request.article_id, request.location_id, stock_quantity).await?;
+                vec![(Some(lot), stock_quantity)]
             }
-            None => lots::fefo_allocate(&tx, request.article_id, request.location_id, request.quantity)
+            None => lots::fefo_allocate(&tx, request.article_id, request.location_id, stock_quantity)
                 .await?
                 .into_iter()
                 .map(|(lot, qty)| (Some(lot), qty))
@@ -142,7 +160,7 @@ pub async fn issue_stock_with_source(
                 "This article is not lot-tracked; issue it without a lot.".to_string(),
             ]));
         }
-        vec![(None, request.quantity)]
+        vec![(None, stock_quantity)]
     };
 
     let source_type = source.source_type.clone().or_else(|| Some("WORK_ORDER".to_string()));
@@ -167,6 +185,7 @@ pub async fn issue_stock_with_source(
             request.actor_id,
         )
         .await?;
+        crate::inventory::unit_conversions::stamp_entered_unit(&tx, transaction_id, &converted, quantity).await?;
         let (lot_number, serial_number) = match lot_id {
             Some(lot) => {
                 let row = tx
@@ -192,6 +211,9 @@ pub async fn issue_stock_with_source(
             lot_number,
             serial_number,
             quantity,
+            entered_quantity: converted
+                .entered_unit_value_id
+                .map(|_| converted.entered_part(quantity)),
             unit_cost,
             extended_cost: unit_cost.map(|c| c * quantity),
         });
@@ -204,6 +226,9 @@ pub async fn issue_stock_with_source(
         work_order_id,
         work_order_code: work_order_code_value,
         total_cost: (!valued.is_empty()).then(|| valued.iter().sum()),
+        stock_quantity,
+        entered_unit_value_id: converted.entered_unit_value_id,
+        entered_quantity: converted.entered_quantity,
         lines,
     })
 }
@@ -226,7 +251,7 @@ pub async fn resolve_scan(db: &DatabaseConnection, value: String) -> AppResult<S
         })
     };
     const ARTICLE_SELECT: &str = "SELECT a.id, a.article_code, a.article_name, u.code AS unit_code
-         FROM articles a JOIN lookup_values u ON u.id = a.unit_value_id";
+         FROM articles a JOIN reference_values u ON u.id = a.unit_value_id";
     for (column, matched) in [("a.barcode", "barcode"), ("a.article_code", "article_code")] {
         let rows = db
             .query_all(Statement::from_sql_and_values(

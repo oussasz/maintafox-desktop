@@ -62,7 +62,7 @@ fn draft(seq: i64, code: &str, check_type: &str) -> InspectionCheckpointDraft {
         checkpoint_code: code.into(),
         description: None,
         check_type: check_type.into(),
-        measurement_unit: None,
+        measurement_unit_id: None,
         normal_min: None,
         normal_max: None,
         warning_min: None,
@@ -79,7 +79,6 @@ fn numeric(
     w: (Option<f64>, Option<f64>),
 ) -> InspectionCheckpointDraft {
     InspectionCheckpointDraft {
-        measurement_unit: Some("°C".into()),
         normal_min: n.0,
         normal_max: n.1,
         warning_min: w.0,
@@ -99,7 +98,8 @@ fn cp_from(d: &InspectionCheckpointDraft) -> InspectionCheckpoint {
         checkpoint_code: d.checkpoint_code.clone(),
         description: None,
         check_type: d.check_type.clone(),
-        measurement_unit: d.measurement_unit.clone(),
+        measurement_unit_id: d.measurement_unit_id,
+        measurement_unit: None,
         normal_min: d.normal_min,
         normal_max: d.normal_max,
         warning_min: d.warning_min,
@@ -803,7 +803,7 @@ async fn pressure_round(db: &DatabaseConnection, code: &str, scheduled_at: &str)
         Some(t) => t.id,
         None => {
             let mut press = numeric(1, "PRESS", (None, Some(7.5)), (None, Some(9.0)));
-            press.measurement_unit = Some("bar".into());
+            press.measurement_unit_id = Some(crate::reference::units::unit_id_by_code(db, "BAR").await.expect("bar"));
             press.asset_id = Some(asset);
             press.description = Some("Discharge pressure".into());
             queries::create_inspection_template(
@@ -1511,9 +1511,9 @@ async fn a_meter_schedule_generates_one_round_when_the_meter_crosses_its_interva
     let asset = scalar_i64(&db, "SELECT id FROM equipment WHERE asset_id_code = 'PMP-101'").await;
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "INSERT INTO equipment_meters (entity_sync_id, equipment_id, name, meter_type, unit, current_reading, \
+        "INSERT INTO equipment_meters (entity_sync_id, equipment_id, name, meter_type, unit_value_id, current_reading, \
          expected_rate_per_day, is_primary, is_active, created_at, updated_at) \
-         VALUES ('insp-meter', ?, 'Run hours', 'HOURS', 'h', 50, 0, 1, 1, datetime('now'), datetime('now'))",
+         VALUES ('insp-meter', ?, 'Run hours', 'HOURS', (SELECT v.id FROM reference_values v JOIN reference_sets s ON s.id = v.set_id JOIN reference_domains d ON d.id = s.domain_id WHERE d.code = 'MEASURE.UNITS' AND s.status = 'published' AND v.code = 'H'), 50, 0, 1, 1, datetime('now'), datetime('now'))",
         [asset.into()],
     ))
     .await

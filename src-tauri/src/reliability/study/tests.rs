@@ -352,8 +352,8 @@ async fn run_hours_meter_gives_operating_ages() {
     exec(
         &f.db,
         &format!(
-            "INSERT INTO equipment_meters (entity_sync_id, equipment_id, name, meter_type, unit, current_reading, \
-             is_primary, is_active, created_at, updated_at) VALUES ('st-meter', {}, 'Compteur', 'HOURS', 'h', 0, 1, 1, \
+            "INSERT INTO equipment_meters (entity_sync_id, equipment_id, name, meter_type, unit_value_id, current_reading, \
+             is_primary, is_active, created_at, updated_at) VALUES ('st-meter', {}, 'Compteur', 'HOURS', (SELECT v.id FROM reference_values v JOIN reference_sets s ON s.id = v.set_id JOIN reference_domains d ON d.id = s.domain_id WHERE d.code = 'MEASURE.UNITS' AND s.status = 'published' AND v.code = 'H'), 0, 1, 1, \
              datetime('now'), datetime('now'))",
             f.p101
         ),

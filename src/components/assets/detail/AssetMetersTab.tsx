@@ -12,6 +12,7 @@ import { PermissionGate } from "@/components/PermissionGate";
 import { useLoad } from "@/components/assets/detail/use-load";
 import { DetailSectionCard } from "@/components/detail";
 import { EntityFormDialog, EntityFormFooter } from "@/components/entity-form";
+import { MeasureUnitSelect, useMeasureUnits } from "@/components/lookups/MeasureUnitPicker";
 import { FormField } from "@/components/ui/FormField";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -379,7 +380,9 @@ function AddMeterDialog({
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
   const [type, setType] = useState("");
-  const [unit, setUnit] = useState("");
+  // Unit of the meter: a unit of the governed list MEASURE.UNITS (Données de référence).
+  const { units } = useMeasureUnits(open);
+  const [unitId, setUnitId] = useState<number | null>(null);
   const [initial, setInitial] = useState("");
   const [rate, setRate] = useState("");
   const [rollover, setRollover] = useState("");
@@ -400,7 +403,7 @@ function AddMeterDialog({
     setName("");
     setCode("");
     setType("");
-    setUnit("");
+    setUnitId(null);
     setInitial("");
     setRate("");
     setRollover("");
@@ -421,7 +424,7 @@ function AddMeterDialog({
         name: name.trim(),
         meter_code: code.trim() || null,
         meter_type: type,
-        unit: unit.trim() || null,
+        unit_value_id: unitId,
         initial_reading: nums.initial,
         expected_rate_per_day: nums.rate,
         rollover_value: nums.rollover,
@@ -480,7 +483,13 @@ function AddMeterDialog({
           label={t("meters.unit")}
           description={t("meters.unitHint")}
         >
-          <Input id={`${formId}-unit`} value={unit} onChange={(e) => setUnit(e.target.value)} />
+          <MeasureUnitSelect
+            id={`${formId}-unit`}
+            value={unitId}
+            units={units}
+            onChange={setUnitId}
+            allowEmpty
+          />
         </FormField>
         <FormField
           name={`${formId}-initial`}

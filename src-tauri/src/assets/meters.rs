@@ -13,7 +13,8 @@
 //!   asset_id             → equipment_meters.equipment_id
 //!   meter_code           → equipment_meters.meter_code         (migration 011)
 //!   meter_type           → equipment_meters.meter_type
-//!   unit                 → equipment_meters.unit
+//!   unit                 → equipment_meters.unit_value_id → MEASURE.UNITS (migration 201;
+//!                          the read model carries the unit's symbol in `unit`)
 //!   current_reading      → equipment_meters.current_reading
 //!   last_read_at         → equipment_meters.last_read_at
 //!   expected_rate_per_day→ equipment_meters.expected_rate_per_day
@@ -50,6 +51,9 @@ pub struct AssetMeter {
     pub name: String,
     pub meter_code: Option<String>,
     pub meter_type: String,
+    /// Unit of the meter (`reference_values.id` of `MEASURE.UNITS`).
+    pub unit_value_id: Option<i64>,
+    /// Symbol of that unit (read from the reference data, never stored here).
     pub unit: Option<String>,
     pub current_reading: f64,
     pub last_read_at: Option<String>,
@@ -68,7 +72,8 @@ pub struct CreateAssetMeterPayload {
     pub name: String,
     pub meter_code: Option<String>,
     pub meter_type: String,
-    pub unit: Option<String>,
+    /// Unit of the meter: an active unit of `MEASURE.UNITS`.
+    pub unit_value_id: Option<i64>,
     pub initial_reading: Option<f64>,
     pub expected_rate_per_day: Option<f64>,
     pub rollover_value: Option<f64>,
@@ -187,6 +192,9 @@ fn map_meter(row: &QueryResult) -> AppResult<AssetMeter> {
         meter_type: row
             .try_get::<String>("", "meter_type")
             .map_err(|e| decode_err("meter_type", e))?,
+        unit_value_id: row
+            .try_get::<Option<i64>>("", "unit_value_id")
+            .map_err(|e| decode_err("unit_value_id", e))?,
         unit: row
             .try_get::<Option<String>>("", "unit")
             .map_err(|e| decode_err("unit", e))?,
@@ -348,11 +356,18 @@ async fn assert_single_primary(
 
 // ─── Select fragments ─────────────────────────────────────────────────────────
 
-const METER_SELECT: &str = r"
-    id, entity_sync_id, equipment_id, name, meter_code, meter_type, unit,
-    current_reading, last_read_at, expected_rate_per_day, rollover_value,
-    is_primary, is_active, created_at, updated_at
-";
+/// Meter columns over `equipment_meters em` joined to its unit `mu` (see [`meter_from`]).
+fn meter_select() -> String {
+    format!(
+        "em.id, em.entity_sync_id, em.equipment_id, em.name, em.meter_code, em.meter_type, em.unit_value_id, \
+         {} AS unit, em.current_reading, em.last_read_at, em.expected_rate_per_day, em.rollover_value, \
+         em.is_primary, em.is_active, em.created_at, em.updated_at",
+        crate::reference::units::symbol_sql("mu")
+    )
+}
+
+/// `FROM` clause matching [`meter_select`].
+const METER_FROM: &str = "equipment_meters em LEFT JOIN reference_values mu ON mu.id = em.unit_value_id";
 
 const READING_SELECT: &str = r"
     id, meter_id, reading_value, reading_at, source_type,
@@ -366,10 +381,10 @@ const READING_SELECT: &str = r"
 /// Returns active meters first, ordered by `is_primary DESC, name ASC`.
 pub async fn list_asset_meters(db: &DatabaseConnection, asset_id: i64) -> AppResult<Vec<AssetMeter>> {
     let sql = format!(
-        "SELECT {METER_SELECT} \
-         FROM equipment_meters \
-         WHERE equipment_id = ? \
-         ORDER BY is_active DESC, is_primary DESC, name ASC"
+        "SELECT {} FROM {METER_FROM} \
+         WHERE em.equipment_id = ? \
+         ORDER BY em.is_active DESC, em.is_primary DESC, em.name ASC",
+        meter_select()
     );
     let rows = db
         .query_all(Statement::from_sql_and_values(
@@ -425,6 +440,9 @@ pub async fn create_asset_meter(
     if !errors.is_empty() {
         return Err(AppError::ValidationFailed(errors));
     }
+    if let Some(unit_id) = payload.unit_value_id {
+        crate::reference::units::ensure_unit(&txn, unit_id, "unit_value_id", true).await?;
+    }
 
     // ── 4. Enforce single-primary constraint ─────────────────────────────
     let is_primary = payload.is_primary.unwrap_or(false);
@@ -444,7 +462,7 @@ pub async fn create_asset_meter(
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO equipment_meters \
-         (entity_sync_id, equipment_id, name, meter_code, meter_type, unit, \
+         (entity_sync_id, equipment_id, name, meter_code, meter_type, unit_value_id, \
           current_reading, expected_rate_per_day, rollover_value, \
           is_primary, is_active, created_at, updated_at) \
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
@@ -454,7 +472,7 @@ pub async fn create_asset_meter(
             name.into(),
             meter_code.into(),
             payload.meter_type.into(),
-            payload.unit.into(),
+            payload.unit_value_id.into(),
             initial.into(),
             payload.expected_rate_per_day.into(),
             payload.rollover_value.into(),
@@ -469,7 +487,10 @@ pub async fn create_asset_meter(
     let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            format!("SELECT {METER_SELECT} FROM equipment_meters WHERE entity_sync_id = ?"),
+            format!(
+                "SELECT {} FROM {METER_FROM} WHERE em.entity_sync_id = ?",
+                meter_select()
+            ),
             [entity_sync_id.into()],
         ))
         .await?

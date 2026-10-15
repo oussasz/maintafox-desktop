@@ -402,5 +402,27 @@
     "done_one": "{{count}} value exported",
     "done_other": "{{count}} values exported",
     "nothingToExport": "No values to export"
+  },
+  "units": {
+    "none": "No unit",
+    "choose": "Choose a unit",
+    "retired": "{{unit}} (retired from reference data)",
+    "colSymbol": "Symbol",
+    "colLabelEn": "English label",
+    "colDimension": "Dimension",
+    "colBase": "Base unit and factor",
+    "colRec20": "UN/CEFACT code",
+    "noDimension": "Not set",
+    "standard": "Standard unit (protected)",
+    "factorRule": "1 {{unit}} = {{factor}} {{base}}",
+    "toReview": "To review",
+    "toReviewHint": "Unit created by the migration for an unknown code or text: set its base standard unit and the factor. No conversion uses it until then.",
+    "symbolPlaceholder": "e.g. bag",
+    "dimensionFromBase": "The base unit's",
+    "factor": "Factor",
+    "baseUnit": "Base standard unit",
+    "chooseBase": "Base unit…",
+    "factorInvalid": "The factor must be a number greater than zero.",
+    "reviewFilter": "To review ({{count}})"
   }
 }

@@ -184,7 +184,9 @@ mod m20261015_000197_schedule_class_timetables;
 mod m20261015_000198_shared_urgency_and_wo_natures;
 mod m20261015_000199_shared_failure_symptoms;
 pub(crate) mod m20261015_000200_pm_follow_up_corrective_and_governed_lists;
+pub(crate) mod m20261015_000201_governed_units_of_measure;
 mod m20261015_000202_wo_shift_from_timetable;
+pub(crate) mod m20261015_000204_entered_units_on_receipts_and_issues;
 mod m20261016_000205_commitment_planned_labor;
 mod m20261016_000206_planned_crew_size;
 mod m20261101_000036_activity_audit_log;
@@ -384,7 +386,9 @@ impl MigratorTrait for Migrator {
             Box::new(m20261015_000198_shared_urgency_and_wo_natures::Migration),
             Box::new(m20261015_000199_shared_failure_symptoms::Migration),
             Box::new(m20261015_000200_pm_follow_up_corrective_and_governed_lists::Migration),
+            Box::new(m20261015_000201_governed_units_of_measure::Migration),
             Box::new(m20261015_000202_wo_shift_from_timetable::Migration),
+            Box::new(m20261015_000204_entered_units_on_receipts_and_issues::Migration),
             Box::new(m20261016_000205_commitment_planned_labor::Migration),
             Box::new(m20261016_000206_planned_crew_size::Migration),
         ]

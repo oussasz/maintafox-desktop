@@ -33,6 +33,7 @@ import {
   ViewToggle,
 } from "@/components/layout/ModuleHeaderControls";
 import { ModulePageShell } from "@/components/layout/ModulePageShell";
+import { useMeasureUnits } from "@/components/lookups/MeasureUnitPicker";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState } from "@/components/ui/data-state";
@@ -134,7 +135,6 @@ export function InventoryPage() {
   const createArticle = useInventoryStore((s) => s.createArticle);
   const updateArticle = useInventoryStore((s) => s.updateArticle);
 
-  const [unitOptions, setUnitOptions] = useState<LookupValueOption[]>([]);
   const [criticalityOptions, setCriticalityOptions] = useState<LookupValueOption[]>([]);
   const [stockingTypeOptions, setStockingTypeOptions] = useState<LookupValueOption[]>([]);
   const [taxCategoryOptions, setTaxCategoryOptions] = useState<LookupValueOption[]>([]);
@@ -143,6 +143,8 @@ export function InventoryPage() {
   );
   const [lookupError, setLookupError] = useState<unknown>(null);
   const [lookupVersion, setLookupVersion] = useState(0);
+  // Stock units: the governed reference list MEASURE.UNITS (Données de référence).
+  const { units: unitOptions, error: unitsError } = useMeasureUnits(true, lookupVersion);
   const [articleForm, setArticleForm] = useState<ExtendedArticleInput>(EMPTY_ARTICLE_FORM);
   const [selectedArticle, setSelectedArticle] = useState<InventoryArticleRow | null>(null);
   const [isEditingInDialog, setEditingInDialog] = useState(false);
@@ -213,18 +215,15 @@ export function InventoryPage() {
     let cancelled = false;
     setLookupError(null);
     Promise.all([
-      getLookupValues("inventory.unit_of_measure"),
       getLookupValues("equipment.criticality"),
       getLookupValues("inventory.stocking_type"),
       getLookupValues("inventory.tax_category"),
       getLookupValues("inventory.procurement_category"),
     ])
-      .then(([units, crit, stockingTypes, taxCategories, procurementCategories]) => {
+      .then(([crit, stockingTypes, taxCategories, procurementCategories]) => {
         if (cancelled) return;
-        const activeUnits = units.filter((u) => u.is_active !== 0);
         const activeStockingTypes = stockingTypes.filter((item) => item.is_active !== 0);
         const activeTaxCategories = taxCategories.filter((item) => item.is_active !== 0);
-        setUnitOptions(activeUnits);
         setCriticalityOptions(crit.filter((c) => c.is_active !== 0));
         setStockingTypeOptions(activeStockingTypes);
         setTaxCategoryOptions(activeTaxCategories);
@@ -232,7 +231,6 @@ export function InventoryPage() {
         // New articles start on the first active value of each required list (backend order).
         setArticleForm((prev) => ({
           ...prev,
-          unit_value_id: prev.unit_value_id || activeUnits[0]?.id || 0,
           stocking_type_value_id: prev.stocking_type_value_id || activeStockingTypes[0]?.id || 0,
           tax_category_value_id: prev.tax_category_value_id || activeTaxCategories[0]?.id || 0,
         }));
@@ -244,6 +242,16 @@ export function InventoryPage() {
       cancelled = true;
     };
   }, [lookupVersion]);
+
+  // New articles start on the first unit of the published list (the list's own order).
+  useEffect(() => {
+    const first = unitOptions[0]?.id;
+    if (first == null) return;
+    setArticleForm((prev) => (prev.unit_value_id ? prev : { ...prev, unit_value_id: first }));
+  }, [unitOptions]);
+  useEffect(() => {
+    if (unitsError) setLookupError(unitsError);
+  }, [unitsError]);
 
   const formatQty = useCallback(
     (value: number) => formatNumber(value, { maximumFractionDigits: 3 }),

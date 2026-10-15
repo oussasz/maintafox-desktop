@@ -10,6 +10,8 @@ export interface ReferenceValueColumnFlags {
   showSchedule: boolean;
   /** EN 13306 nature picker (`semantic_tag`) of request types. */
   showNature: boolean;
+  /** Units of measure: symbol, EN label, dimension, base unit and factor (`MEASURE.UNITS`). */
+  showUnit: boolean;
   /** Cross-domain parent (e.g. FAMILY → CLASS). Null when same-set hierarchy only. */
   crossDomainParentCode: string | null;
   /** Same-set parent select for hierarchical domains without cross-domain parent. */
@@ -24,6 +26,7 @@ export function resolveReferenceValueColumns(
       showParent: false,
       showSchedule: false,
       showNature: false,
+      showUnit: false,
       crossDomainParentCode: null,
       sameSetHierarchy: false,
     };
@@ -36,11 +39,13 @@ export function resolveReferenceValueColumns(
   const showParent = crossDomainParentCode != null || sameSetHierarchy;
   const showSchedule = Boolean(registry?.valueExtensions?.includes("schedule_pattern"));
   const showNature = Boolean(registry?.valueExtensions?.includes("maintenance_nature"));
+  const showUnit = Boolean(registry?.valueExtensions?.includes("measure_unit"));
 
   return {
     showParent,
     showSchedule,
     showNature,
+    showUnit,
     crossDomainParentCode,
     sameSetHierarchy,
   };

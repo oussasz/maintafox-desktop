@@ -402,5 +402,27 @@
     "done_one": "{{count}} valeur exportée",
     "done_other": "{{count}} valeurs exportées",
     "nothingToExport": "Aucune valeur à exporter"
+  },
+  "units": {
+    "none": "Sans unité",
+    "choose": "Choisir une unité",
+    "retired": "{{unit}} (retirée des données de référence)",
+    "colSymbol": "Symbole",
+    "colLabelEn": "Libellé anglais",
+    "colDimension": "Grandeur",
+    "colBase": "Unité de base et facteur",
+    "colRec20": "Code UN/CEFACT",
+    "noDimension": "Non renseignée",
+    "standard": "Unité standard (protégée)",
+    "factorRule": "1 {{unit}} = {{factor}} {{base}}",
+    "toReview": "À revoir",
+    "toReviewHint": "Unité créée à la migration pour un code ou un texte inconnu : indiquez son unité standard de base et le facteur. Aucune conversion ne l'utilise avant.",
+    "symbolPlaceholder": "ex. sac",
+    "dimensionFromBase": "Celle de l'unité de base",
+    "factor": "Facteur",
+    "baseUnit": "Unité standard de base",
+    "chooseBase": "Unité de base…",
+    "factorInvalid": "Le facteur doit être un nombre strictement positif.",
+    "reviewFilter": "À revoir ({{count}})"
   }
 }

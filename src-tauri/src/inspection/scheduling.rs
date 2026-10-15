@@ -107,7 +107,7 @@ fn summary_sql(where_clause: &str) -> String {
     format!(
         "SELECT {SCHEDULE_COLUMNS}, t.code AS template_code, t.name AS template_name, \
          p.full_name AS assigned_to_name, tm.name AS assigned_team_name, \
-         m.name AS meter_name, m.unit AS meter_unit, m.equipment_id AS meter_asset_id, \
+         m.name AS meter_name, {meter_unit} AS meter_unit, m.equipment_id AS meter_asset_id, \
          e.asset_id_code AS meter_asset_code, \
          (m.current_reading + m.reading_offset) AS meter_lifetime_reading, \
          (SELECT MIN(r.scheduled_at) FROM inspection_rounds r WHERE r.schedule_id = s.id \
@@ -125,7 +125,8 @@ fn summary_sql(where_clause: &str) -> String {
          LEFT JOIN teams tm ON tm.id = s.assigned_team_id \
          LEFT JOIN equipment_meters m ON m.id = s.meter_id \
          LEFT JOIN equipment e ON e.id = m.equipment_id \
-         {where_clause}"
+         {where_clause}",
+        meter_unit = crate::reference::units::unit_symbol_of!("m.unit_value_id")
     )
 }
 

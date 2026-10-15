@@ -1605,6 +1605,25 @@ pub async fn convert_unit_quantity(
     .await
 }
 
+/// The stock quantity a quantity entered in another unit stands for (receipt and issue screens
+/// show it while the storekeeper types): same rule and rounding as the posting.
+#[tauri::command]
+pub async fn preview_inventory_stock_quantity(
+    article_id: i64,
+    entered_unit_value_id: Option<i64>,
+    quantity: f64,
+    state: State<'_, AppState>,
+) -> AppResult<crate::inventory::unit_conversions::StockQuantity> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INV_VIEW,
+        PermissionScope::Global
+    );
+    crate::inventory::unit_conversions::to_stock_quantity(&state.db, article_id, entered_unit_value_id, quantity).await
+}
+
 // ── Issue desk (migration 184) ───────────────────────────────────────────────
 
 /// Issues stock to a work order from the store (scan + pick). Same posting path as WO part usage.

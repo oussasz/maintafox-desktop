@@ -453,8 +453,9 @@ async fn article(db: &DatabaseConnection, code: &str) -> i64 {
         db,
         &format!(
             "INSERT INTO articles (entity_sync_id, article_code, article_name, unit_value_id) VALUES ('upg-{code}', '{code}', 'Roulement {code}', \
-             (SELECT lv.id FROM lookup_values lv JOIN lookup_domains ld ON ld.id = lv.domain_id \
-              WHERE ld.domain_key = 'inventory.unit_of_measure' AND lv.code = 'U'))"
+             (SELECT v.id FROM reference_values v JOIN reference_sets s ON s.id = v.set_id \
+              JOIN reference_domains d ON d.id = s.domain_id \
+              WHERE d.code = 'MEASURE.UNITS' AND s.status = 'published' AND v.code = 'U'))"
         ),
     )
     .await;

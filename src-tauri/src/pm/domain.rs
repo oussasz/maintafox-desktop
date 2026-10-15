@@ -498,6 +498,8 @@ pub struct PmAssetMeter {
     pub id: i64,
     pub name: String,
     pub meter_type: String,
+    /// Unit of the meter (`MEASURE.UNITS`) and its symbol, read from the reference data.
+    pub unit_value_id: Option<i64>,
     pub unit: Option<String>,
     pub current_reading: f64,
     pub lifetime_reading: f64,

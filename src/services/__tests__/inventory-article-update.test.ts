@@ -25,6 +25,7 @@ function storedArticle(): InventoryArticleRow {
     unit_value_id: 10,
     unit_code: "U",
     unit_label: "Unité",
+    unit_symbol: "u",
     criticality_value_id: 20,
     criticality_code: "A",
     criticality_label: "Critique",

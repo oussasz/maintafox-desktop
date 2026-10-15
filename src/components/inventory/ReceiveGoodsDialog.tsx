@@ -6,12 +6,23 @@
  * line (the rest stays open on the PO). For a PO in a supplier currency the receipt captures the
  * exchange rate (entered, else the stored rate valid on the receipt date) and stock is valued in
  * the tenant currency. Lot / serial-tracked articles record the lots received.
+ *
+ * A line may be received in another unit than the article's stock unit (a supplier or purchase
+ * unit: bags, drums…). The quantities are typed in that unit; the stock quantity is shown live and
+ * the PO, the lots, the balances and the valuation count in the stock unit
+ * (`inventory::unit_conversions::to_stock_quantity` on the server).
  */
 
 import { Plus, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import {
+  roundStockQuantity,
+  toStockQuantity,
+  useEntryFactor,
+} from "@/components/inventory/entered-unit";
+import { MeasureUnitSelect, useMeasureUnits } from "@/components/lookups/MeasureUnitPicker";
 import { Button } from "@/components/ui/button";
 import { ErrorState } from "@/components/ui/data-state";
 import {
@@ -44,7 +55,12 @@ import {
   receiveInventoryPurchaseOrderGoods,
   resolveCurrencyExchangeRate,
 } from "@/services/inventory-service";
-import type { PurchaseOrder, PurchaseOrderLine, StockLocation } from "@shared/ipc-types";
+import type {
+  PurchaseOrder,
+  PurchaseOrderLine,
+  ReferenceValue,
+  StockLocation,
+} from "@shared/ipc-types";
 
 const FULFILLMENT_ACTIONS = ["STOCK_ONLY", "RESERVE_FOR_DEMAND", "ISSUE_TO_DEMAND"] as const;
 
@@ -65,6 +81,8 @@ type LotDraft = {
 
 type LineDraft = {
   locationId: number;
+  /** Unit the quantities are typed in; null = the article's stock unit. */
+  unitId: number | null;
   receivedQty: string;
   rejectedQty: string;
   rejectionReason: string;
@@ -73,6 +91,7 @@ type LineDraft = {
 
 const EMPTY_DRAFT: LineDraft = {
   locationId: 0,
+  unitId: null,
   receivedQty: "",
   rejectedQty: "",
   rejectionReason: "",
@@ -83,6 +102,46 @@ let lotSeq = 0;
 function newLot(quantity = ""): LotDraft {
   lotSeq += 1;
   return { key: `lot-${lotSeq}`, lotNumber: "", serialNumber: "", expiryDate: "", quantity };
+}
+
+/** Receipt unit of a line, reporting the factor to the stock unit to the dialog. */
+function ReceiptUnitField({
+  id,
+  articleId,
+  stockUnitId,
+  unitId,
+  units,
+  onChange,
+  onFactor,
+  label,
+}: {
+  id: string;
+  articleId: number;
+  stockUnitId: number | null;
+  unitId: number | null;
+  units: ReferenceValue[];
+  onChange: (unitId: number | null) => void;
+  onFactor: (factor: number | null, error: unknown) => void;
+  label: string;
+}) {
+  const { factor, error } = useEntryFactor(articleId, unitId, stockUnitId);
+  useEffect(() => {
+    onFactor(factor, error);
+  }, [factor, error, onFactor]);
+  return (
+    <div className="space-y-1">
+      <Label htmlFor={id} className="text-xs">
+        {label}
+      </Label>
+      <MeasureUnitSelect
+        id={id}
+        value={unitId ?? stockUnitId}
+        units={units}
+        onChange={(next) => onChange(next === stockUnitId ? null : next)}
+        className="h-10 w-full rounded-md border border-surface-border bg-surface-0 px-2 text-sm"
+      />
+    </div>
+  );
 }
 
 export interface ReceiveGoodsDialogProps {
@@ -153,6 +212,18 @@ export function ReceiveGoodsDialog({
   const [storedRate, setStoredRate] = useState<ResolvedExchangeRate | null>(null);
   const [loadedArticles, setLoadedArticles] = useState<InventoryArticleRow[]>([]);
   const articles = articlesProp ?? loadedArticles;
+  // Receipt units: the governed list MEASURE.UNITS; factor of each line to its stock unit.
+  const { units } = useMeasureUnits(open);
+  const [factors, setFactors] = useState<Record<number, { factor: number | null; error: unknown }>>(
+    {},
+  );
+  const reportFactor = useCallback((lineId: number, factor: number | null, error: unknown) => {
+    setFactors((current) => {
+      const prev = current[lineId];
+      if (prev && prev.factor === factor && prev.error === error) return current;
+      return { ...current, [lineId]: { factor, error } };
+    });
+  }, []);
 
   const receivablePos = useMemo(
     () => purchaseOrders.filter((po) => isReceivablePurchaseOrder(po.status)),
@@ -175,6 +246,7 @@ export function ReceiveGoodsDialog({
     setPostingDate(todayIso());
     setRateInput("");
     setStoredRate(null);
+    setFactors({});
   }, [open, initialPoId]);
 
   useEffect(() => {
@@ -251,6 +323,27 @@ export function ReceiveGoodsDialog({
     [articles],
   );
 
+  const stockUnitOf = useCallback(
+    (articleId: number) => {
+      const article = articles.find((a) => a.id === articleId);
+      return { id: article?.unit_value_id ?? null, symbol: article?.unit_symbol ?? "" };
+    },
+    [articles],
+  );
+
+  /** Stock-unit quantities of a line (null while the factor of its receipt unit is unknown). */
+  const stockQuantities = useCallback(
+    (line: PurchaseOrderLine) => {
+      const draft = drafts[line.id] ?? EMPTY_DRAFT;
+      const factor = draft.unitId == null ? 1 : (factors[line.id]?.factor ?? null);
+      if (factor == null) return null;
+      const received = toStockQuantity(toQty(draft.receivedQty), factor);
+      const rejected = toStockQuantity(toQty(draft.rejectedQty), factor);
+      return { factor, received, rejected, accepted: roundStockQuantity(received - rejected) };
+    },
+    [drafts, factors],
+  );
+
   const activeLines = useMemo(
     () => lines.filter((line) => toQty(drafts[line.id]?.receivedQty ?? "") > 0),
     [lines, drafts],
@@ -278,12 +371,16 @@ export function ReceiveGoodsDialog({
       const received = toQty(draft.receivedQty);
       const rejected = toQty(draft.rejectedQty);
       if (draft.locationId <= 0) return t("procurement.receive.errors.location");
-      if (received > line.remaining_qty) return t("procurement.receive.errors.overRemaining");
+      const stock = stockQuantities(line);
+      if (stock == null)
+        return t("procurement.receive.errors.unitFactor", { article: line.article_code });
+      if (stock.received > line.remaining_qty + 1e-6)
+        return t("procurement.receive.errors.overRemaining");
       if (rejected < 0 || rejected > received)
         return t("procurement.receive.errors.rejectedExceeds");
       const tracking = trackingOf(line.article_id);
       if (tracking.tracked) {
-        const problem = lotProblem(draft.lots, received - rejected, tracking);
+        const problem = lotProblem(draft.lots, stock.accepted, tracking);
         if (problem)
           return t(`procurement.receive.lots.errors.${problem}`, {
             article: line.article_code,
@@ -291,7 +388,17 @@ export function ReceiveGoodsDialog({
       }
     }
     return null;
-  }, [activeLines, drafts, enteredRate, poCurrency, postingDate, storedRate, t, trackingOf]);
+  }, [
+    activeLines,
+    drafts,
+    enteredRate,
+    poCurrency,
+    postingDate,
+    storedRate,
+    t,
+    trackingOf,
+    stockQuantities,
+  ]);
 
   const post = async () => {
     if (poId <= 0 || validationError) return;
@@ -320,6 +427,7 @@ export function ReceiveGoodsDialog({
           rejected_qty: rejected,
           rejection_reason: draft.rejectionReason.trim() || null,
           lots,
+          entered_unit_value_id: draft.unitId,
         };
       });
       await receiveInventoryPurchaseOrderGoods({
@@ -425,7 +533,12 @@ export function ReceiveGoodsDialog({
                 const draft = drafts[line.id] ?? EMPTY_DRAFT;
                 const received = toQty(draft.receivedQty);
                 const rejected = toQty(draft.rejectedQty);
-                const accepted = Math.max(0, received - rejected);
+                const stockUnit = stockUnitOf(line.article_id);
+                const stock = stockQuantities(line);
+                const converted = draft.unitId != null;
+                const factorError = converted ? factors[line.id]?.error : null;
+                // Accepted quantity in the stock unit (what enters stock and the lots).
+                const accepted = Math.max(0, stock?.accepted ?? received - rejected);
                 const tracking = trackingOf(line.article_id);
                 const patchLot = (key: string, patch: Partial<LotDraft>) =>
                   patchDraft(line.id, {
@@ -444,7 +557,7 @@ export function ReceiveGoodsDialog({
                         </strong>
                       </span>
                     </div>
-                    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
                       <div className="space-y-1">
                         <Label htmlFor={`gr-loc-${line.id}`} className="text-xs">
                           {t("procurement.receive.columns.location")}
@@ -468,6 +581,16 @@ export function ReceiveGoodsDialog({
                           </SelectContent>
                         </Select>
                       </div>
+                      <ReceiptUnitField
+                        id={`gr-unit-${line.id}`}
+                        label={t("procurement.receive.columns.unit")}
+                        articleId={line.article_id}
+                        stockUnitId={stockUnit.id}
+                        unitId={draft.unitId}
+                        units={units}
+                        onChange={(unitId) => patchDraft(line.id, { unitId })}
+                        onFactor={(factor, error) => reportFactor(line.id, factor, error)}
+                      />
                       <div className="space-y-1">
                         <Label htmlFor={`gr-received-${line.id}`} className="text-xs">
                           {t("procurement.receive.columns.receivedQty")}
@@ -476,7 +599,7 @@ export function ReceiveGoodsDialog({
                           id={`gr-received-${line.id}`}
                           type="number"
                           min={0}
-                          max={line.remaining_qty}
+                          max={converted ? undefined : line.remaining_qty}
                           step="0.01"
                           value={draft.receivedQty}
                           onChange={(e) => {
@@ -484,7 +607,17 @@ export function ReceiveGoodsDialog({
                             // A tracked line starts with one lot holding the whole quantity.
                             const lots =
                               tracking.tracked && draft.lots.length === 0 && toQty(value) > 0
-                                ? [newLot(tracking.serial ? "1" : value)]
+                                ? [
+                                    newLot(
+                                      tracking.serial
+                                        ? "1"
+                                        : String(
+                                            stock
+                                              ? toStockQuantity(toQty(value), stock.factor)
+                                              : value,
+                                          ),
+                                    ),
+                                  ]
                                 : draft.lots;
                             patchDraft(line.id, { receivedQty: value, lots });
                           }}
@@ -515,9 +648,24 @@ export function ReceiveGoodsDialog({
                         />
                       </div>
                     </div>
+                    {converted ? (
+                      <p role="status" className="text-xs text-text-secondary tabular-nums">
+                        {factorError
+                          ? t("procurement.receive.unitRefused")
+                          : stock
+                            ? t("procurement.receive.inStockUnit", {
+                                received: qtyLabel(stock.received),
+                                rejected: qtyLabel(stock.rejected),
+                                unit: stockUnit.symbol,
+                              })
+                            : t("procurement.receive.converting")}
+                      </p>
+                    ) : null}
                     <p className="text-xs text-text-muted">
                       {t("procurement.receive.columns.accepted")}:{" "}
-                      <strong className="text-foreground tabular-nums">{qtyLabel(accepted)}</strong>
+                      <strong className="text-foreground tabular-nums">
+                        {qtyLabel(accepted)} {stockUnit.symbol}
+                      </strong>
                       {line.unit_price != null && effectiveRate != null ? (
                         <span className="ml-3 tabular-nums">
                           {t("procurement.receive.stockCost", {

@@ -73,6 +73,8 @@ pub struct InventoryArticle {
     pub unit_value_id: i64,
     pub unit_code: String,
     pub unit_label: String,
+    /// Symbol of the stock unit (`MEASURE.UNITS`).
+    pub unit_symbol: String,
     pub criticality_value_id: Option<i64>,
     pub criticality_code: Option<String>,
     pub criticality_label: Option<String>,
@@ -1057,9 +1059,15 @@ pub struct ReceivePurchaseOrderLineInput {
     pub accepted_qty: f64,
     pub rejected_qty: f64,
     pub rejection_reason: Option<String>,
-    /// Lots / serials of the accepted quantity (required for tracked articles).
+    /// Lots / serials of the accepted quantity (required for tracked articles), in the article's
+    /// stock unit.
     #[serde(default)]
     pub lots: Option<Vec<ReceiptLotInput>>,
+    /// Unit the received / accepted / rejected quantities are entered in (a supplier or purchase
+    /// unit of `MEASURE.UNITS`); `None`: the article's stock unit. Converted to the stock unit on
+    /// receipt (`unit_conversions::to_stock_quantity`); the line keeps both.
+    #[serde(default)]
+    pub entered_unit_value_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1312,6 +1320,10 @@ pub struct IssueStockRequest {
     pub lot_id: Option<i64>,
     pub notes: Option<String>,
     pub actor_id: Option<i64>,
+    /// Unit `quantity` is entered in (an alternate unit of `MEASURE.UNITS`); `None`: the article's
+    /// stock unit. Converted to the stock unit; the movements keep the entered unit and quantity.
+    #[serde(default)]
+    pub entered_unit_value_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1320,7 +1332,10 @@ pub struct IssuedLine {
     pub lot_id: Option<i64>,
     pub lot_number: Option<String>,
     pub serial_number: Option<String>,
+    /// Stock-unit quantity of the line; the unit cost is per stock unit.
     pub quantity: f64,
+    /// Part of the entered quantity this line stands for (`None`: entered in the stock unit).
+    pub entered_quantity: Option<f64>,
     pub unit_cost: Option<f64>,
     pub extended_cost: Option<f64>,
 }
@@ -1330,6 +1345,11 @@ pub struct IssueOutcome {
     pub reservation_id: i64,
     pub work_order_id: Option<i64>,
     pub work_order_code: Option<String>,
+    /// Quantity issued in the article's stock unit (sum of the lines).
+    pub stock_quantity: f64,
+    /// Unit and quantity as entered at the desk (`None`: the stock unit).
+    pub entered_unit_value_id: Option<i64>,
+    pub entered_quantity: f64,
     pub lines: Vec<IssuedLine>,
     /// Sum of valued lines (tenant currency); None when no line is valued.
     pub total_cost: Option<f64>,

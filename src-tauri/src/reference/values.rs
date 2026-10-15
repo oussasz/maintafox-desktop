@@ -324,6 +324,10 @@ pub(crate) async fn checked_semantic_tag(
     domain_code: &str,
     tag: Option<&str>,
 ) -> AppResult<Option<String>> {
+    if crate::reference::units::is_units_domain(domain_code) {
+        // The tag of a unit is its physical dimension (`reference::units`).
+        return crate::reference::units::checked_dimension_tag(db, tag).await;
+    }
     let tag = tag.map(str::trim).filter(|t| !t.is_empty());
     if !is_nature_tagged_domain(domain_code) {
         return Ok(tag.map(str::to_string));
@@ -541,7 +545,22 @@ pub async fn create_value(
         validate_parent(db, payload.set_id, pid).await?;
     }
     assert_required_parent(db, payload.set_id, payload.parent_id).await?;
-    let semantic_tag = checked_semantic_tag(db, &domain.code, payload.semantic_tag.as_deref()).await?;
+    let mut semantic_tag = checked_semantic_tag(db, &domain.code, payload.semantic_tag.as_deref()).await?;
+    if crate::reference::units::is_units_domain(&domain.code) {
+        // A plant unit names its base standard unit (same dimension) and the factor to it; its
+        // dimension is the base unit's.
+        semantic_tag = Some(
+            crate::reference::units::checked_plant_unit(
+                db,
+                payload.set_id,
+                &code,
+                payload.parent_id,
+                semantic_tag.as_deref(),
+                payload.metadata_json.as_deref(),
+            )
+            .await?,
+        );
+    }
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -734,6 +753,34 @@ pub async fn update_value(
     let mut sets_clause: Vec<String> = Vec::new();
     let mut values: Vec<sea_orm::Value> = Vec::new();
 
+    // A plant unit keeps a valid base and factor after every edit; editing a migrated unit to
+    // review makes them required and clears its review flag (`reference::units`).
+    let unit_edit = if crate::reference::units::is_units_domain(&domain.code) {
+        let tag = match &payload.semantic_tag {
+            Some(t) => t.clone(),
+            None => existing.semantic_tag.clone(),
+        };
+        let metadata = match &payload.metadata_json {
+            Some(m) => m.clone(),
+            None => existing.metadata_json.clone(),
+        };
+        let dimension = crate::reference::units::checked_plant_unit(
+            db,
+            existing.set_id,
+            &existing.code,
+            existing.parent_id,
+            tag.as_deref(),
+            metadata.as_deref(),
+        )
+        .await?;
+        Some((
+            dimension,
+            crate::reference::units::reviewed_metadata(metadata.as_deref()),
+        ))
+    } else {
+        None
+    };
+
     if let Some(ref label) = payload.label {
         validate_label(label)?;
         sets_clause.push("label = ?".into());
@@ -755,7 +802,12 @@ pub async fn update_value(
         sets_clause.push("icon_name = ?".into());
         values.push(icon.clone().into());
     }
-    if let Some(ref st) = payload.semantic_tag {
+    if let Some((dimension, metadata)) = unit_edit {
+        sets_clause.push("semantic_tag = ?".into());
+        values.push(dimension.into());
+        sets_clause.push("metadata_json = ?".into());
+        values.push(metadata.into());
+    } else if let Some(ref st) = payload.semantic_tag {
         let tag = checked_semantic_tag(db, &domain.code, st.as_deref()).await?;
         sets_clause.push("semantic_tag = ?".into());
         values.push(tag.into());
@@ -765,8 +817,10 @@ pub async fn update_value(
         values.push(ec.clone().into());
     }
     if let Some(ref mj) = payload.metadata_json {
-        sets_clause.push("metadata_json = ?".into());
-        values.push(mj.clone().into());
+        if !crate::reference::units::is_units_domain(&domain.code) {
+            sets_clause.push("metadata_json = ?".into());
+            values.push(mj.clone().into());
+        }
     }
 
     if sets_clause.is_empty() {
@@ -868,6 +922,17 @@ pub async fn move_value_parent(
         detect_cycle(db, value_id, pid).await?;
     }
     assert_required_parent(db, existing.set_id, new_parent_id).await?;
+    if crate::reference::units::is_units_domain(&domain.code) {
+        // The parent of a plant unit is its base standard unit.
+        crate::reference::units::checked_base_move(
+            db,
+            existing.set_id,
+            &existing.code,
+            existing.semantic_tag.as_deref(),
+            new_parent_id,
+        )
+        .await?;
+    }
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,

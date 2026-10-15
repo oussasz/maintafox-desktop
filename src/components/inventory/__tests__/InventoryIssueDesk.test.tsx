@@ -29,12 +29,41 @@ const svc = vi.hoisted(() => ({
   listInventoryExpiringLots: vi.fn(),
 }));
 const wo = vi.hoisted(() => ({ listWos: vi.fn() }));
+const ref = vi.hoisted(() => ({ listPublishedReferenceValuesByDomainCode: vi.fn() }));
+const conv = vi.hoisted(() => ({ previewInventoryStockQuantity: vi.fn() }));
 
 vi.mock("@/services/inventory-service", async (importOriginal) => {
   const actual = await importOriginal<InventoryServiceModule>();
   return { ...actual, ...svc };
 });
 vi.mock("@/services/wo-service", () => wo);
+vi.mock("@/services/reference-service", async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  return { ...actual, ...ref };
+});
+vi.mock("@/services/unit-conversion-service", async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  return { ...actual, ...conv };
+});
+
+/** A unit of MEASURE.UNITS as the reference service returns it. */
+function unitValue(id: number, code: string, symbol: string, label: string) {
+  return {
+    id,
+    set_id: 1,
+    parent_id: null,
+    code,
+    label,
+    description: null,
+    sort_order: id,
+    color_hex: null,
+    icon_name: null,
+    semantic_tag: "mass",
+    external_code: null,
+    is_active: true,
+    metadata_json: JSON.stringify({ origin: "system", symbol, label_en: label }),
+  };
+}
 vi.mock("@/components/PermissionGate", () => ({
   PermissionGate: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
@@ -95,6 +124,8 @@ describe("InventoryIssueDesk", () => {
   beforeEach(() => {
     Object.values(svc).forEach((fn) => fn.mockReset());
     wo.listWos.mockReset();
+    ref.listPublishedReferenceValuesByDomainCode.mockReset().mockResolvedValue([]);
+    conv.previewInventoryStockQuantity.mockReset();
     svc.listInventoryExpiringLots.mockResolvedValue([
       lot({ lot_id: 9, lot_number: "L-NEAR", days_to_expiry: 6, expiry_date: "2026-10-20" }),
     ]);
@@ -184,6 +215,7 @@ describe("InventoryIssueDesk", () => {
         reservation_id: null,
         lot_id: null,
         notes: null,
+        entered_unit_value_id: null,
       }),
     );
     expect(await screen.findByText("ART-001 issued to OT-2026-0144")).toBeInTheDocument();
@@ -237,6 +269,61 @@ describe("InventoryIssueDesk", () => {
     await waitFor(() =>
       expect(svc.issueInventoryStockToWorkOrder).toHaveBeenCalledWith(
         expect.objectContaining({ lot_id: 22, quantity: 1 }),
+      ),
+    );
+  });
+
+  it("issues in another unit, shows the stock quantity live and checks it against the stock", async () => {
+    svc.listInventoryArticles.mockResolvedValue([
+      {
+        id: 4,
+        article_code: "ART-001",
+        article_name: "Grease",
+        is_active: 1,
+        requires_batch_tracking: 0,
+        requires_serial_tracking: 0,
+        preferred_location_id: 3,
+        unit_value_id: 10,
+        unit_symbol: "kg",
+      },
+    ]);
+    ref.listPublishedReferenceValuesByDomainCode.mockResolvedValue([
+      unitValue(10, "KG", "kg", "Kilogram"),
+      unitValue(11, "G", "g", "Gram"),
+    ]);
+    conv.previewInventoryStockQuantity.mockResolvedValue({
+      stock_quantity: 0.001,
+      stock_unit_value_id: 10,
+      entered_unit_value_id: 11,
+      entered_quantity: 1,
+      factor: 0.001,
+      path: "direct",
+    });
+    render(<InventoryIssueDesk />);
+    const scan = screen.getByLabelText("Scan or type an article");
+    fireEvent.change(scan, { target: { value: "ART-001" } });
+    fireEvent.submit(scan);
+    await screen.findByText("Found by barcode");
+    fireEvent.click(await screen.findByRole("option", { name: /OT-2026-0144/ }));
+
+    const unit = await screen.findByLabelText("Issue unit");
+    await waitFor(() => expect(unit).toBeEnabled());
+    await screen.findByRole("option", { name: "Gram (g)" });
+    fireEvent.change(unit, { target: { value: "11" } });
+    await waitFor(() => expect(conv.previewInventoryStockQuantity).toHaveBeenCalledWith(4, 11, 1));
+    const qty = screen.getByLabelText("Quantity (g)");
+    // 20 000 g = 20 kg: more than the 10 kg the location holds.
+    fireEvent.change(qty, { target: { value: "20000" } });
+    expect(await screen.findByText("Only 10 kg can be issued from here.")).toBeInTheDocument();
+    fireEvent.change(qty, { target: { value: "500" } });
+    // 500 g = 0.5 kg (formatted in the app locale).
+    expect(await screen.findByText(/^= 0[.,]5 kg in the stock unit$/)).toBeInTheDocument();
+    const issue = screen.getByRole("button", { name: "Issue to work order" });
+    await waitFor(() => expect(issue).toBeEnabled());
+    fireEvent.click(issue);
+    await waitFor(() =>
+      expect(svc.issueInventoryStockToWorkOrder).toHaveBeenCalledWith(
+        expect.objectContaining({ quantity: 500, entered_unit_value_id: 11 }),
       ),
     );
   });

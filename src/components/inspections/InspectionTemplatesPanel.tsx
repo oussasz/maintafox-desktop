@@ -12,6 +12,7 @@ import { useTranslation } from "react-i18next";
 
 import { AssetPicker } from "@/components/assets/AssetPicker";
 import { DataTable } from "@/components/data/DataTable";
+import { MeasureUnitSelect, useMeasureUnits } from "@/components/lookups/MeasureUnitPicker";
 import {
   Button,
   Dialog,
@@ -65,7 +66,9 @@ interface CheckRow {
   checkType: string;
   assetId: number | null;
   assetLabel: string | null;
-  unit: string;
+  /** Unit of a measurement (MEASURE.UNITS id) and the symbol the version was read with. */
+  unitId: number | null;
+  unitText: string | null;
   normalMin: string;
   normalMax: string;
   warningMin: string;
@@ -88,7 +91,8 @@ function emptyRow(): CheckRow {
     checkType: "pass_fail",
     assetId: null,
     assetLabel: null,
-    unit: "",
+    unitId: null,
+    unitText: null,
     normalMin: "",
     normalMax: "",
     warningMin: "",
@@ -108,7 +112,8 @@ function rowFrom(c: InspectionCheckpoint, assetLabel: string | null): CheckRow {
     checkType: c.check_type,
     assetId: c.asset_id,
     assetLabel,
-    unit: c.measurement_unit ?? "",
+    unitId: c.measurement_unit_id,
+    unitText: c.measurement_unit,
     normalMin: num(c.normal_min),
     normalMax: num(c.normal_max),
     warningMin: num(c.warning_min),
@@ -262,6 +267,8 @@ interface TemplateBuilderDialogProps {
 
 export function TemplateBuilderDialog({ target, onClose, onSaved }: TemplateBuilderDialogProps) {
   const { t } = useTranslation("inspections");
+  // Measurement units: the governed list MEASURE.UNITS (Données de référence).
+  const { units } = useMeasureUnits(target != null);
   const template = target != null && target !== "new" ? target : null;
   const [code, setCode] = useState("");
   const [name, setName] = useState("");
@@ -353,7 +360,7 @@ export function TemplateBuilderDialog({ target, onClose, onSaved }: TemplateBuil
         checkpoint_code: r.code.trim(),
         description: r.description.trim() || null,
         check_type: r.checkType,
-        measurement_unit: numeric ? r.unit.trim() || null : null,
+        measurement_unit_id: numeric ? r.unitId : null,
         normal_min: limit(r.normalMin),
         normal_max: limit(r.normalMax),
         warning_min: limit(r.warningMin),
@@ -604,12 +611,14 @@ export function TemplateBuilderDialog({ target, onClose, onSaved }: TemplateBuil
                     )}
                     {r.checkType === "numeric" ? (
                       <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
-                        <Input
-                          aria-label={t("templates.unit")}
-                          placeholder={t("templates.unit")}
-                          className="h-11"
-                          value={r.unit}
-                          onChange={(e) => update(r.key, { unit: e.target.value })}
+                        <MeasureUnitSelect
+                          ariaLabel={t("templates.unit")}
+                          className="h-11 w-full rounded-md border border-surface-border bg-surface-0 px-2 text-sm"
+                          value={r.unitId}
+                          units={units}
+                          currentText={r.unitText}
+                          onChange={(unitId) => update(r.key, { unitId, unitText: null })}
+                          allowEmpty
                         />
                         {LIMIT_FIELDS.map((f) => (
                           <Input
