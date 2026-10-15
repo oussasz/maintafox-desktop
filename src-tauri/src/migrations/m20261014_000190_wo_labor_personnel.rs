@@ -9,6 +9,7 @@
 //!   triggers: `intervener_id` becomes NULL-able and two columns are added:
 //!   - `personnel_id INTEGER NULL REFERENCES personnel(id)` — the person who did the work;
 //!   - `is_overtime INTEGER NOT NULL DEFAULT 0` — the hours are paid at the overtime rate.
+//!
 //!   A CHECK keeps at least one of `intervener_id` / `personnel_id` set.
 //! - Back-fills `personnel_id` from `user_accounts.personnel_id` for existing entries.
 //!

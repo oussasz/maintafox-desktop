@@ -562,11 +562,8 @@ pub async fn team_capacity_range(
     let memberships = team_memberships(db, team_id, from, to).await?;
     let mut facts: BTreeMap<i64, PersonFacts> = BTreeMap::new();
     for m in &memberships {
-        if !facts.contains_key(&m.personnel_id) {
-            facts.insert(
-                m.personnel_id,
-                load_person(db, m.personnel_id, from, to, english).await?,
-            );
+        if let std::collections::btree_map::Entry::Vacant(slot) = facts.entry(m.personnel_id) {
+            slot.insert(load_person(db, m.personnel_id, from, to, english).await?);
         }
     }
     let links = timetable::team_links(db, team_id).await?;

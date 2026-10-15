@@ -960,7 +960,7 @@ impl ClassBook {
     }
 
     /// The cycle day of `version` on `day`.
-    pub fn line_on<'a>(version: &'a ScheduleClassVersion, day: NaiveDate) -> Option<&'a ScheduleCycleDay> {
+    pub fn line_on(version: &ScheduleClassVersion, day: NaiveDate) -> Option<&ScheduleCycleDay> {
         let start = version
             .rotation_start_date
             .as_deref()
