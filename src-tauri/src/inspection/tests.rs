@@ -1,17 +1,19 @@
 //! Inspection rounds: thresholds, evidence rules, automatic anomalies, round lifecycle,
-//! runner view and the visible offline queue (PRD §6.25, Phase 6.2).
+//! runner view and the visible offline queue (PRD §6.25, Phase 6.2); recurring schedules,
+//! module figures, anomaly follow-up and checkpoint history (Phase 6.3).
 
 use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
 use sea_orm_migration::MigratorTrait;
 
 use crate::errors::AppError;
 use crate::inspection::domain::{
-    AddInspectionPhotoInput, CreateInspectionTemplateInput, InspectionCheckpoint, InspectionCheckpointDraft,
-    InspectionRound, InspectionRoundActionInput, InspectionRoundSummaryFilter, PublishInspectionTemplateVersionInput,
-    RecordInspectionResultInput, ScheduleInspectionRoundInput,
+    AddInspectionPhotoInput, CreateInspectionTemplateInput, GenerateInspectionRoundsInput, InspectionAnomalyRowFilter,
+    InspectionCheckpoint, InspectionCheckpointDraft, InspectionKpisInput, InspectionRound, InspectionRoundActionInput,
+    InspectionRoundSummaryFilter, PublishInspectionTemplateVersionInput, RecordInspectionResultInput,
+    SaveInspectionScheduleInput, ScheduleInspectionRoundInput,
 };
 use crate::inspection::results::{eval_numeric_status, record_inspection_result};
-use crate::inspection::{queries, routing, runner};
+use crate::inspection::{insights, queries, routing, runner, scheduling};
 use crate::sync::row_state::{row_sync_states, ROW_SYNC_ERROR, ROW_SYNC_SYNCED, ROW_SYNC_WAITING};
 
 async fn setup() -> DatabaseConnection {
@@ -148,6 +150,7 @@ async fn scheduled_round(db: &DatabaseConnection) -> InspectionRound {
             scheduled_at: Some("2026-10-12T06:00:00Z".into()),
             assigned_to_id: Some(technician(db).await),
             explicit_template_version_id: None,
+            assigned_team_id: None,
         },
     )
     .await
@@ -715,7 +718,7 @@ async fn runner_view_resolves_labels_and_summary_counts() {
         &db,
         InspectionRoundSummaryFilter {
             statuses: Some(vec!["in_progress".into()]),
-            limit: None,
+            ..Default::default()
         },
     )
     .await
@@ -726,7 +729,7 @@ async fn runner_view_resolves_labels_and_summary_counts() {
             &db,
             InspectionRoundSummaryFilter {
                 statuses: Some(vec!["bogus".into()]),
-                limit: None,
+                ..Default::default()
             },
         )
         .await,
@@ -760,4 +763,973 @@ async fn row_sync_state_follows_journal_and_outbox() {
     assert_eq!(states["c"], ROW_SYNC_WAITING, "latest outbox entry decides");
     assert_eq!(states["d"], ROW_SYNC_ERROR);
     assert_eq!(states["e"], ROW_SYNC_SYNCED);
+}
+
+// ── Phase 6.3: template gates, readings out of tolerance, history ─────────────────────────
+
+#[tokio::test]
+async fn template_rows_are_refused_with_stable_codes() {
+    let db = setup().await;
+    let make = |checkpoints: Vec<InspectionCheckpointDraft>| CreateInspectionTemplateInput {
+        code: "T-GATES".into(),
+        name: "Gates".into(),
+        org_scope_id: None,
+        route_scope: None,
+        estimated_duration_minutes: None,
+        is_active: None,
+        checkpoints,
+    };
+    assert_validation(
+        queries::create_inspection_template(&db, make(vec![])).await,
+        "GATE_INSP_TEMPLATE_NO_CHECK",
+    );
+    assert_validation(
+        queries::create_inspection_template(&db, make(vec![draft(1, "A", "pass_fail"), draft(2, "a", "boolean")]))
+            .await,
+        "GATE_INSP_CHECK_CODE_DUPLICATE: checkpoint 2",
+    );
+    assert_validation(
+        queries::create_inspection_template(&db, make(vec![draft(1, "A", "pass_fail"), draft(2, " ", "boolean")]))
+            .await,
+        "GATE_INSP_CHECK_CODE_REQUIRED: checkpoint 2",
+    );
+    assert_validation(
+        queries::create_inspection_template(
+            &db,
+            make(vec![numeric(1, "INV", (Some(5.0), Some(1.0)), (None, None))]),
+        )
+        .await,
+        "GATE_INSP_CHECK_LIMITS_ORDER",
+    );
+}
+
+/// Template with one plain numeric reading (no "comment on exception" flag) on PMP-101.
+async fn pressure_round(db: &DatabaseConnection, code: &str, scheduled_at: &str) -> InspectionRound {
+    let asset = scalar_i64(db, "SELECT id FROM equipment WHERE asset_id_code = 'PMP-101'").await;
+    let template_id = match queries::list_inspection_templates(db)
+        .await
+        .expect("list")
+        .into_iter()
+        .find(|t| t.code == code)
+    {
+        Some(t) => t.id,
+        None => {
+            let mut press = numeric(1, "PRESS", (None, Some(7.5)), (None, Some(9.0)));
+            press.measurement_unit = Some("bar".into());
+            press.asset_id = Some(asset);
+            press.description = Some("Discharge pressure".into());
+            queries::create_inspection_template(
+                db,
+                CreateInspectionTemplateInput {
+                    code: code.into(),
+                    name: "Pressure round".into(),
+                    org_scope_id: None,
+                    route_scope: None,
+                    estimated_duration_minutes: None,
+                    is_active: Some(true),
+                    checkpoints: vec![press],
+                },
+            )
+            .await
+            .expect("template")
+            .0
+            .id
+        }
+    };
+    queries::schedule_inspection_round(
+        db,
+        ScheduleInspectionRoundInput {
+            template_id,
+            scheduled_at: Some(scheduled_at.into()),
+            assigned_to_id: Some(technician(db).await),
+            explicit_template_version_id: None,
+            assigned_team_id: None,
+        },
+    )
+    .await
+    .expect("schedule")
+}
+
+#[tokio::test]
+async fn a_reading_out_of_tolerance_needs_a_comment_and_is_missing_until_given() {
+    let db = setup().await;
+    let r = pressure_round(&db, "RND-PRESS", "2026-10-12T06:00:00Z").await;
+    let tech = technician(&db).await;
+    let press = checkpoint_id(&db, "PRESS").await;
+    assert_validation(
+        record_inspection_result(
+            &db,
+            RecordInspectionResultInput {
+                numeric_value: Some(8.4),
+                ..record(r.id, press)
+            },
+            tech,
+        )
+        .await,
+        "GATE_INSP_READING_COMMENT_REQUIRED",
+    );
+    // Inside the limits no comment is needed.
+    record_inspection_result(
+        &db,
+        RecordInspectionResultInput {
+            numeric_value: Some(7.0),
+            ..record(r.id, press)
+        },
+        tech,
+    )
+    .await
+    .expect("in tolerance");
+    let res = record_inspection_result(
+        &db,
+        RecordInspectionResultInput {
+            numeric_value: Some(8.4),
+            comment: Some("Gauge vibrating".into()),
+            ..record(r.id, press)
+        },
+        tech,
+    )
+    .await
+    .expect("with comment");
+    assert_eq!(res.result_status, "warning");
+}
+
+#[tokio::test]
+async fn the_runner_shows_earlier_results_of_the_same_checkpoint() {
+    let db = setup().await;
+    let tech = technician(&db).await;
+    let first = pressure_round(&db, "RND-PRESS", "2026-10-10T06:00:00Z").await;
+    let press = checkpoint_id(&db, "PRESS").await;
+    for (value, comment) in [(6.9, None), (8.1, Some("High"))] {
+        record_inspection_result(
+            &db,
+            RecordInspectionResultInput {
+                numeric_value: Some(value),
+                comment: comment.map(str::to_string),
+                ..record(first.id, press)
+            },
+            tech,
+        )
+        .await
+        .expect("first round reading");
+    }
+    let second = pressure_round(&db, "RND-PRESS", "2026-10-11T06:00:00Z").await;
+    let view = runner::get_inspection_round_runner(&db, second.id).await.expect("runner");
+    let history = &view.checkpoints[0].history;
+    assert_eq!(history.len(), 1, "one result per round, the latest reading");
+    assert_eq!(history[0].round_id, first.id);
+    assert_eq!(history[0].numeric_value, Some(8.1));
+    assert_eq!(history[0].result_status, "warning");
+    let own = runner::get_inspection_round_runner(&db, first.id).await.expect("runner");
+    assert!(own.checkpoints[0].history.is_empty(), "a round never lists itself");
+}
+
+// ── Phase 6.3: anomaly → request / work order ────────────────────────────────────────────
+
+#[tokio::test]
+async fn an_out_of_tolerance_anomaly_becomes_a_linked_request_with_a_written_title() {
+    let db = setup().await;
+    let r = scheduled_round(&db).await;
+    let tech = technician(&db).await;
+    let admin = admin_user(&db).await;
+    let temp = checkpoint_id(&db, "TEMP-BRG").await;
+    let res = record_inspection_result(
+        &db,
+        RecordInspectionResultInput {
+            numeric_value: Some(90.0),
+            comment: Some("Hot to the touch".into()),
+            ..record(r.id, temp)
+        },
+        tech,
+    )
+    .await
+    .expect("record");
+    let (anomaly_id, rv) = open_anomaly(&db, &format!("result_id = {}", res.id)).await;
+
+    let row = insights::get_inspection_anomaly_row(&db, anomaly_id).await.expect("row");
+    assert_eq!(row.asset_code.as_deref(), Some("PMP-101"));
+    assert!(row.asset_has_location);
+    assert_eq!(row.numeric_value, Some(90.0));
+    assert_eq!(row.violation_direction.as_deref(), Some("above"));
+    assert_eq!(row.violation_limit, Some(85.0), "beyond the warning band: the warning limit");
+    assert_eq!(row.result_comment.as_deref(), Some("Hot to the touch"));
+    assert_eq!(row.template_name, "Pump house round");
+
+    assert_validation(
+        routing::route_inspection_anomaly_to_di(&db, anomaly_id, rv, admin, Some("  ".into()), None).await,
+        "GATE_INSP_FOLLOW_UP_TITLE_REQUIRED",
+    );
+    let title = "Bearing temperature out of tolerance on PMP-101: 90 °C > 85 °C";
+    let (di, anomaly) = routing::route_inspection_anomaly_to_di(
+        &db,
+        anomaly_id,
+        rv,
+        admin,
+        Some(title.into()),
+        Some("Round RND-PUMPS planned 12/10/2026. Reading 90 °C.".into()),
+    )
+    .await
+    .expect("route to DI");
+    assert_eq!(di.title, title);
+    assert_eq!(di.equipment_id, row.asset_id.expect("asset"));
+    assert_eq!(di.source_inspection_anomaly_id, Some(anomaly_id), "the request points back");
+    assert!(di.description.contains("Reading 90"));
+    assert_eq!(anomaly.linked_di_id, Some(di.id));
+    assert_eq!(anomaly.resolution_status, "triaged");
+
+    // The follow-up list links the created request.
+    let page = insights::list_inspection_anomaly_rows(
+        &db,
+        InspectionAnomalyRowFilter {
+            round_id: Some(r.id),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("rows");
+    let linked = page
+        .items
+        .iter()
+        .find(|x| x.anomaly.id == anomaly_id)
+        .expect("routed anomaly");
+    assert_eq!(linked.linked_di_code.as_deref(), Some(di.code.as_str()));
+    assert_eq!(linked.linked_di_title.as_deref(), Some(title));
+
+    assert_validation(
+        routing::route_inspection_anomaly_to_di(&db, anomaly_id, anomaly.row_version, admin, Some(title.into()), None)
+            .await,
+        "GATE_INSP_ANOMALY_ALREADY_ROUTED",
+    );
+}
+
+#[tokio::test]
+async fn a_follow_up_needs_equipment_and_a_work_order_links_back() {
+    let db = setup().await;
+    let r = scheduled_round(&db).await;
+    let tech = technician(&db).await;
+    let admin = admin_user(&db).await;
+    let wo_type: String = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT code FROM work_order_types ORDER BY id LIMIT 1".to_string(),
+        ))
+        .await
+        .expect("query")
+        .expect("row")
+        .try_get("", "code")
+        .expect("code");
+
+    // VIS-LEAK has no equipment: neither a request nor a work order can be written from it.
+    let visual = checkpoint_id(&db, "VIS-LEAK").await;
+    let leak = record_inspection_result(
+        &db,
+        RecordInspectionResultInput {
+            result_status: Some("fail".into()),
+            ..record(r.id, visual)
+        },
+        tech,
+    )
+    .await
+    .expect("record");
+    let (leak_anomaly, leak_rv) = open_anomaly(
+        &db,
+        &format!("result_id = {} AND anomaly_type = 'threshold_breach'", leak.id),
+    )
+    .await;
+    assert_eq!(
+        insights::get_inspection_anomaly_row(&db, leak_anomaly).await.expect("row").asset_id,
+        None
+    );
+    assert_validation(
+        routing::route_inspection_anomaly_to_di(&db, leak_anomaly, leak_rv, admin, Some("Leak".into()), None).await,
+        "GATE_INSP_ANOMALY_NO_EQUIPMENT",
+    );
+    assert_validation(
+        routing::route_inspection_anomaly_to_wo(
+            &db,
+            leak_anomaly,
+            leak_rv,
+            admin,
+            wo_type.clone(),
+            Some("Leak".into()),
+            None,
+        )
+        .await,
+        "GATE_INSP_ANOMALY_NO_EQUIPMENT",
+    );
+
+    // TEMP-BRG is on PMP-101: the work order takes the written title and points back.
+    let temp = checkpoint_id(&db, "TEMP-BRG").await;
+    let hot = record_inspection_result(
+        &db,
+        RecordInspectionResultInput {
+            numeric_value: Some(88.0),
+            comment: Some("Hot".into()),
+            ..record(r.id, temp)
+        },
+        tech,
+    )
+    .await
+    .expect("record");
+    let (anomaly_id, rv) = open_anomaly(&db, &format!("result_id = {}", hot.id)).await;
+    assert_validation(
+        routing::route_inspection_anomaly_to_wo(&db, anomaly_id, rv, admin, wo_type.clone(), None, None).await,
+        "GATE_INSP_FOLLOW_UP_TITLE_REQUIRED",
+    );
+    let (wo, anomaly) = routing::route_inspection_anomaly_to_wo(
+        &db,
+        anomaly_id,
+        rv,
+        admin,
+        wo_type,
+        Some("Replace drive-end bearing on PMP-101".into()),
+        Some("Reading 88 °C, warning limit 85 °C.".into()),
+    )
+    .await
+    .expect("route to WO");
+    assert_eq!(wo.title, "Replace drive-end bearing on PMP-101");
+    assert_eq!(anomaly.linked_work_order_id, Some(wo.id));
+    let source: Option<i64> = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT source_inspection_anomaly_id FROM work_orders WHERE id = ?",
+            [wo.id.into()],
+        ))
+        .await
+        .expect("query")
+        .expect("row")
+        .try_get("", "source_inspection_anomaly_id")
+        .expect("source");
+    assert_eq!(source, Some(anomaly_id), "the work order points back");
+    let linked = insights::get_inspection_anomaly_row(&db, anomaly_id).await.expect("row");
+    assert_eq!(linked.linked_wo_code.as_deref(), Some(wo.code.as_str()));
+}
+
+// ── Phase 6.3: recurring rounds ──────────────────────────────────────────────────────────
+
+fn utc(raw: &str) -> chrono::DateTime<chrono::Utc> {
+    chrono::DateTime::parse_from_rfc3339(raw).expect("ts").with_timezone(&chrono::Utc)
+}
+
+#[test]
+fn calendar_dates_skip_closed_windows_on_the_first_run_then_continue_after_the_last_round() {
+    let anchor = utc("2026-10-01T06:00:00Z");
+    let daily = scheduling::schedule_recurrence("day", 1).expect("daily");
+    let as_of = utc("2026-10-05T10:00:00Z");
+    let grace = chrono::Duration::hours(6);
+    let horizon = as_of + chrono::Duration::days(2);
+    // First run: the windows of 1–4 Oct closed before 5 Oct 10:00; the 5th is open until 12:00.
+    let (dates, cut) = scheduling::calendar_due_dates(anchor, daily, None, as_of, grace, horizon, 100);
+    assert!(!cut);
+    assert_eq!(
+        dates,
+        vec![
+            utc("2026-10-05T06:00:00Z"),
+            utc("2026-10-06T06:00:00Z"),
+            utc("2026-10-07T06:00:00Z")
+        ]
+    );
+    // Next run three days later: continues after the last generated date, closed ones included
+    // (they are recorded as missed: the application was not running).
+    let later = utc("2026-10-10T10:00:00Z");
+    let (dates, _) = scheduling::calendar_due_dates(
+        anchor,
+        daily,
+        Some(utc("2026-10-07T06:00:00Z")),
+        later,
+        grace,
+        later + chrono::Duration::days(1),
+        100,
+    );
+    assert_eq!(dates.first(), Some(&utc("2026-10-08T06:00:00Z")));
+    assert_eq!(dates.last(), Some(&utc("2026-10-11T06:00:00Z")));
+    // The limit cuts and says so.
+    let (dates, cut) = scheduling::calendar_due_dates(anchor, daily, None, anchor, grace, horizon, 2);
+    assert_eq!(dates.len(), 2);
+    assert!(cut);
+    // Months follow the calendar (31 Jan → 28 Feb → 31 Mar), as for PM.
+    let monthly = scheduling::schedule_recurrence("month", 1).expect("monthly");
+    let (dates, _) = scheduling::calendar_due_dates(
+        utc("2027-01-31T06:00:00Z"),
+        monthly,
+        None,
+        utc("2027-01-01T00:00:00Z"),
+        grace,
+        utc("2027-03-31T23:00:00Z"),
+        10,
+    );
+    assert_eq!(
+        dates,
+        vec![
+            utc("2027-01-31T06:00:00Z"),
+            utc("2027-02-28T06:00:00Z"),
+            utc("2027-03-31T06:00:00Z")
+        ]
+    );
+}
+
+fn schedule_input(template_id: i64, assignee: Option<i64>) -> SaveInspectionScheduleInput {
+    SaveInspectionScheduleInput {
+        id: None,
+        expected_row_version: None,
+        code: "SCH-PUMPS".into(),
+        name: "Pump house, daily".into(),
+        template_id,
+        trigger_kind: "calendar".into(),
+        interval_unit: Some("day".into()),
+        interval_value: Some(1),
+        anchor_at: None,
+        meter_id: None,
+        meter_interval: None,
+        meter_start_reading: None,
+        assigned_to_id: assignee,
+        assigned_team_id: None,
+        grace_hours: 6,
+        horizon_days: 3,
+        is_active: true,
+    }
+}
+
+#[test]
+fn schedule_input_is_validated_with_stable_codes() {
+    let ok = SaveInspectionScheduleInput {
+        anchor_at: Some("2026-10-15T06:00:00Z".into()),
+        ..schedule_input(1, Some(1))
+    };
+    assert!(scheduling::validate_schedule_input(&ok).is_ok());
+    let cases: Vec<(SaveInspectionScheduleInput, &str)> = vec![
+        (
+            SaveInspectionScheduleInput {
+                code: " ".into(),
+                ..ok.clone()
+            },
+            "GATE_INSP_SCHEDULE_CODE_REQUIRED",
+        ),
+        (
+            SaveInspectionScheduleInput {
+                assigned_to_id: None,
+                ..ok.clone()
+            },
+            "GATE_INSP_SCHEDULE_ASSIGNEE_REQUIRED",
+        ),
+        (
+            SaveInspectionScheduleInput {
+                grace_hours: 0,
+                ..ok.clone()
+            },
+            "GATE_INSP_SCHEDULE_GRACE_RANGE",
+        ),
+        (
+            SaveInspectionScheduleInput {
+                horizon_days: 400,
+                ..ok.clone()
+            },
+            "GATE_INSP_SCHEDULE_HORIZON_RANGE",
+        ),
+        (
+            SaveInspectionScheduleInput {
+                interval_unit: Some("fortnight".into()),
+                ..ok.clone()
+            },
+            "GATE_INSP_SCHEDULE_INTERVAL_REQUIRED",
+        ),
+        (
+            SaveInspectionScheduleInput {
+                anchor_at: None,
+                ..ok.clone()
+            },
+            "GATE_INSP_SCHEDULE_ANCHOR_REQUIRED",
+        ),
+        (
+            SaveInspectionScheduleInput {
+                trigger_kind: "meter".into(),
+                ..ok.clone()
+            },
+            "GATE_INSP_SCHEDULE_METER_REQUIRED",
+        ),
+        (
+            SaveInspectionScheduleInput {
+                trigger_kind: "meter".into(),
+                meter_id: Some(1),
+                meter_interval: Some(0.0),
+                ..ok.clone()
+            },
+            "GATE_INSP_SCHEDULE_METER_INTERVAL",
+        ),
+        (
+            SaveInspectionScheduleInput {
+                trigger_kind: "weekly".into(),
+                ..ok.clone()
+            },
+            "GATE_INSP_SCHEDULE_TRIGGER_INVALID",
+        ),
+    ];
+    for (input, code) in cases {
+        assert_validation(scheduling::validate_schedule_input(&input), code);
+    }
+}
+
+async fn template_id(db: &DatabaseConnection) -> i64 {
+    scheduled_round(db).await.template_id
+}
+
+async fn schedule_rounds(db: &DatabaseConnection, schedule_id: i64) -> Vec<InspectionRound> {
+    let mut rows = runner::list_inspection_round_summaries(
+        db,
+        InspectionRoundSummaryFilter {
+            schedule_id: Some(schedule_id),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("rounds")
+    .into_iter()
+    .map(|s| s.round)
+    .collect::<Vec<_>>();
+    rows.sort_by(|a, b| a.scheduled_at.cmp(&b.scheduled_at));
+    rows
+}
+
+#[tokio::test]
+async fn a_calendar_schedule_generates_assigned_rounds_once_and_marks_missed_ones() {
+    let db = setup().await;
+    let template = template_id(&db).await;
+    let tech = technician(&db).await;
+    let now = chrono::Utc::now();
+    // Daily at "now − 50 h": the round of now − 2 h is still in its 6 h window.
+    let anchor = now - chrono::Duration::hours(50);
+    let saved = scheduling::save_inspection_schedule(
+        &db,
+        SaveInspectionScheduleInput {
+            anchor_at: Some(scheduling::ts(anchor)),
+            ..schedule_input(template, Some(tech))
+        },
+    )
+    .await
+    .expect("save schedule");
+    assert_eq!(saved.template_name, "Pump house round");
+    assert_eq!(saved.assigned_to_name.as_deref(), Some("Amina Tech"));
+    let rounds = schedule_rounds(&db, saved.schedule.id).await;
+    // now − 2 h, + 22 h, + 46 h, + 70 h (3-day look-ahead); closed windows are not back-filled.
+    assert_eq!(rounds.len(), 4, "{rounds:?}");
+    assert!(rounds.iter().all(|r| r.status == "scheduled"));
+    assert!(rounds.iter().all(|r| r.assigned_to_id == Some(tech)));
+    assert!(rounds.iter().all(|r| r.due_basis.as_deref().is_some_and(|b| b.starts_with("calendar:"))));
+    let first = &rounds[0];
+    let due = utc(first.scheduled_at.as_deref().expect("due"));
+    assert_eq!(
+        utc(first.window_end_at.as_deref().expect("window")),
+        due + chrono::Duration::hours(6)
+    );
+    assert_eq!(saved.open_round_count, 4);
+    assert_eq!(saved.overdue_round_count, 1, "the round of now − 2 h");
+
+    // Generating again never duplicates.
+    let again = scheduling::generate_inspection_rounds(&db, GenerateInspectionRoundsInput::default())
+        .await
+        .expect("again");
+    assert_eq!(again.generated, 0);
+    assert_eq!(again.skipped, 0, "dates after the last generated round only");
+    assert_eq!(schedule_rounds(&db, saved.schedule.id).await.len(), 4);
+
+    // Five hours later the first window closed: the unstarted round is missed.
+    let later = scheduling::generate_inspection_rounds(
+        &db,
+        GenerateInspectionRoundsInput {
+            as_of: Some(scheduling::ts(now + chrono::Duration::hours(5))),
+            schedule_id: None,
+        },
+    )
+    .await
+    .expect("later");
+    assert_eq!(later.missed, 1);
+    assert!(later.issues.is_empty());
+    let missed = round(&db, first.id).await;
+    assert_eq!(missed.status, "missed");
+    assert_eq!(missed.missed_at, first.window_end_at);
+
+    let overdue_page = runner::list_inspection_round_page(
+        &db,
+        InspectionRoundSummaryFilter {
+            overdue_only: Some(true),
+            schedule_id: Some(saved.schedule.id),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("overdue");
+    assert_eq!(overdue_page.total, 0, "a missed round is no longer to do");
+}
+
+#[tokio::test]
+async fn editing_a_schedule_replaces_its_unstarted_future_rounds() {
+    let db = setup().await;
+    let template = template_id(&db).await;
+    let tech = technician(&db).await;
+    let anchor = chrono::Utc::now() + chrono::Duration::hours(1);
+    let saved = scheduling::save_inspection_schedule(
+        &db,
+        SaveInspectionScheduleInput {
+            anchor_at: Some(scheduling::ts(anchor)),
+            ..schedule_input(template, Some(tech))
+        },
+    )
+    .await
+    .expect("save");
+    let before = schedule_rounds(&db, saved.schedule.id).await;
+    assert_eq!(before.len(), 3, "+1 h, +25 h, +49 h within 3 days");
+    // One round was started: it is kept whatever the new rules.
+    runner::start_inspection_round(&db, action(&before[0])).await.expect("start");
+
+    assert_validation(
+        scheduling::save_inspection_schedule(
+            &db,
+            SaveInspectionScheduleInput {
+                id: Some(saved.schedule.id),
+                expected_row_version: Some(saved.schedule.row_version + 7),
+                anchor_at: Some(scheduling::ts(anchor)),
+                ..schedule_input(template, Some(tech))
+            },
+        )
+        .await,
+        "row_version mismatch",
+    );
+    let edited = scheduling::save_inspection_schedule(
+        &db,
+        SaveInspectionScheduleInput {
+            id: Some(saved.schedule.id),
+            expected_row_version: Some(saved.schedule.row_version),
+            interval_value: Some(2),
+            anchor_at: Some(scheduling::ts(anchor)),
+            ..schedule_input(template, Some(tech))
+        },
+    )
+    .await
+    .expect("edit");
+    let after = schedule_rounds(&db, saved.schedule.id).await;
+    assert_eq!(after[0].id, before[0].id, "the started round stays");
+    assert_eq!(after[0].status, "in_progress");
+    // Every 2 days after the started round: +49 h (the +25 h round was replaced).
+    assert_eq!(after.len(), 2, "{after:?}");
+    assert_eq!(after[1].scheduled_at, before[2].scheduled_at);
+    assert_ne!(after[1].entity_sync_id, before[2].entity_sync_id, "new rules, new identity");
+    assert_eq!(edited.schedule.row_version, saved.schedule.row_version + 1);
+
+    // Another schedule cannot take the same code.
+    assert_validation(
+        scheduling::save_inspection_schedule(
+            &db,
+            SaveInspectionScheduleInput {
+                anchor_at: Some(scheduling::ts(anchor)),
+                code: "sch-pumps".into(),
+                ..schedule_input(template, Some(tech))
+            },
+        )
+        .await,
+        "GATE_INSP_SCHEDULE_CODE_TAKEN",
+    );
+}
+
+#[tokio::test]
+async fn generated_rounds_have_the_same_identity_on_every_device() {
+    let a = setup().await;
+    let b = setup().await;
+    let mut ids = Vec::new();
+    for db in [&a, &b] {
+        let template = template_id(db).await;
+        let tech = technician(db).await;
+        // Same schedule identity on both devices (as after sync).
+        let saved = scheduling::save_inspection_schedule(
+            db,
+            SaveInspectionScheduleInput {
+                anchor_at: Some("2099-01-01T06:00:00Z".into()),
+                is_active: false,
+                ..schedule_input(template, Some(tech))
+            },
+        )
+        .await
+        .expect("save");
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE inspection_schedules SET entity_sync_id = 'shared-schedule', is_active = 1 WHERE id = ?",
+            [saved.schedule.id.into()],
+        ))
+        .await
+        .expect("align identity");
+        scheduling::generate_inspection_rounds(
+            db,
+            GenerateInspectionRoundsInput {
+                as_of: Some("2098-12-31T06:00:00Z".into()),
+                schedule_id: Some(saved.schedule.id),
+            },
+        )
+        .await
+        .expect("generate");
+        ids.push(
+            schedule_rounds(db, saved.schedule.id)
+                .await
+                .into_iter()
+                .map(|r| r.entity_sync_id)
+                .collect::<Vec<_>>(),
+        );
+    }
+    assert!(!ids[0].is_empty());
+    assert_eq!(ids[0], ids[1]);
+}
+
+#[tokio::test]
+async fn a_meter_schedule_generates_one_round_when_the_meter_crosses_its_interval() {
+    let db = setup().await;
+    let template = template_id(&db).await;
+    let tech = technician(&db).await;
+    let asset = scalar_i64(&db, "SELECT id FROM equipment WHERE asset_id_code = 'PMP-101'").await;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO equipment_meters (entity_sync_id, equipment_id, name, meter_type, unit, current_reading, \
+         expected_rate_per_day, is_primary, is_active, created_at, updated_at) \
+         VALUES ('insp-meter', ?, 'Run hours', 'HOURS', 'h', 50, 0, 1, 1, datetime('now'), datetime('now'))",
+        [asset.into()],
+    ))
+    .await
+    .expect("meter");
+    let meter = scalar_i64(&db, "SELECT id FROM equipment_meters WHERE entity_sync_id = 'insp-meter'").await;
+    let saved = scheduling::save_inspection_schedule(
+        &db,
+        SaveInspectionScheduleInput {
+            trigger_kind: "meter".into(),
+            interval_unit: None,
+            interval_value: None,
+            meter_id: Some(meter),
+            meter_interval: Some(100.0),
+            meter_start_reading: Some(0.0),
+            ..schedule_input(template, Some(tech))
+        },
+    )
+    .await
+    .expect("meter schedule");
+    assert_eq!(saved.meter_name.as_deref(), Some("Run hours"));
+    assert_eq!(saved.meter_asset_code.as_deref(), Some("PMP-101"));
+    assert!(schedule_rounds(&db, saved.schedule.id).await.is_empty(), "50 h < 100 h");
+
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE equipment_meters SET current_reading = 120 WHERE id = ?",
+        [meter.into()],
+    ))
+    .await
+    .expect("reading");
+    let run = scheduling::generate_inspection_rounds(&db, GenerateInspectionRoundsInput::default())
+        .await
+        .expect("generate");
+    assert_eq!(run.generated, 1);
+    let rounds = schedule_rounds(&db, saved.schedule.id).await;
+    assert_eq!(rounds.len(), 1);
+    assert_eq!(rounds[0].due_meter_value, Some(100.0));
+    assert!(rounds[0].due_basis.as_deref().is_some_and(|b| b.starts_with("meter:")));
+
+    // While that round is open, no other one; once done, the next threshold is 200 h.
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE equipment_meters SET current_reading = 230 WHERE id = ?",
+        [meter.into()],
+    ))
+    .await
+    .expect("reading");
+    let run = scheduling::generate_inspection_rounds(&db, GenerateInspectionRoundsInput::default())
+        .await
+        .expect("generate");
+    assert_eq!(run.generated, 0);
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE inspection_rounds SET status = 'completed', completed_at = datetime('now') WHERE id = ?",
+        [rounds[0].id.into()],
+    ))
+    .await
+    .expect("complete");
+    scheduling::generate_inspection_rounds(&db, GenerateInspectionRoundsInput::default())
+        .await
+        .expect("generate");
+    let rounds = schedule_rounds(&db, saved.schedule.id).await;
+    assert_eq!(rounds.len(), 2);
+    assert!(rounds.iter().any(|r| r.due_meter_value == Some(200.0)));
+}
+
+#[tokio::test]
+async fn a_schedule_without_a_published_checklist_is_reported_not_fatal() {
+    let db = setup().await;
+    let template = template_id(&db).await;
+    let tech = technician(&db).await;
+    let saved = scheduling::save_inspection_schedule(
+        &db,
+        SaveInspectionScheduleInput {
+            anchor_at: Some(scheduling::ts(chrono::Utc::now() + chrono::Duration::hours(1))),
+            ..schedule_input(template, Some(tech))
+        },
+    )
+    .await
+    .expect("save");
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE inspection_templates SET is_active = 0 WHERE id = ?",
+        [template.into()],
+    ))
+    .await
+    .expect("deactivate");
+    let run = scheduling::generate_inspection_rounds(&db, GenerateInspectionRoundsInput::default())
+        .await
+        .expect("generate");
+    assert_eq!(run.issues.len(), 1);
+    assert_eq!(run.issues[0].schedule_code, saved.schedule.code);
+    assert!(run.issues[0].message.starts_with("GATE_INSP_SCHEDULE_TEMPLATE_NOT_PUBLISHED"));
+}
+
+// ── Phase 6.3: module figures and round lists ────────────────────────────────────────────
+
+#[tokio::test]
+async fn kpis_count_due_done_on_time_missed_overdue_and_open_anomalies() {
+    let db = setup().await;
+    let tech = technician(&db).await;
+    let now = chrono::Utc::now();
+    let ts = |h: i64| scheduling::ts(now - chrono::Duration::hours(h));
+    // Planned 10 h ago and done on time, 30 h ago and done late, 20 h ago still to do,
+    // 40 h ago missed, 60 days ago (outside a 30-day period).
+    let on_time = pressure_round(&db, "RND-PRESS", &ts(10)).await;
+    let late = pressure_round(&db, "RND-PRESS", &ts(30)).await;
+    let todo = pressure_round(&db, "RND-PRESS", &ts(20)).await;
+    let missed = pressure_round(&db, "RND-PRESS", &ts(40)).await;
+    let old = pressure_round(&db, "RND-PRESS", &ts(24 * 60)).await;
+    for (r, status, completed, window) in [
+        (&on_time, "completed", Some(ts(9)), Some(ts(4))),
+        (&late, "completed_with_findings", Some(ts(2)), Some(ts(24))),
+        (&missed, "missed", None, Some(ts(34))),
+        (&old, "reviewed", Some(ts(24 * 60 - 1)), None),
+    ] {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE inspection_rounds SET status = ?, completed_at = ?, window_end_at = ? WHERE id = ?",
+            [status.into(), completed.into(), window.into(), r.id.into()],
+        ))
+        .await
+        .expect("set state");
+    }
+    let press = checkpoint_id(&db, "PRESS").await;
+    record_inspection_result(
+        &db,
+        RecordInspectionResultInput {
+            numeric_value: Some(9.5),
+            comment: Some("Way above".into()),
+            ..record(todo.id, press)
+        },
+        tech,
+    )
+    .await
+    .expect("anomaly");
+
+    let k = insights::get_inspection_kpis(&db, InspectionKpisInput { period_days: 30 })
+        .await
+        .expect("kpis");
+    assert_eq!(k.due_count, 4);
+    assert_eq!(k.done_count, 2);
+    assert_eq!(k.done_on_time_count, 1);
+    assert_eq!(k.missed_count, 1);
+    assert_eq!(k.overdue_count, 1, "the round still to do (now in progress)");
+    assert_eq!(k.open_anomaly_count, 1);
+    assert_eq!(k.compliance_pct, Some(25.0));
+    assert_validation(
+        insights::get_inspection_kpis(&db, InspectionKpisInput { period_days: 0 }).await,
+        "GATE_INSP_KPI_PERIOD_RANGE",
+    );
+
+    // The lists behind the tiles show the same rounds.
+    let not_cancelled: Vec<String> = runner::ROUND_STATUSES
+        .iter()
+        .filter(|s| **s != "cancelled")
+        .map(|s| (*s).to_string())
+        .collect();
+    let due = runner::list_inspection_round_page(
+        &db,
+        InspectionRoundSummaryFilter {
+            statuses: Some(not_cancelled),
+            due_from: Some(k.period_start.clone()),
+            due_to: Some(k.period_end.clone()),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("due list");
+    assert_eq!(due.total, k.due_count);
+    let overdue = runner::list_inspection_round_page(
+        &db,
+        InspectionRoundSummaryFilter {
+            overdue_only: Some(true),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("overdue list");
+    assert_eq!(overdue.total, k.overdue_count);
+    assert!(overdue.items[0].is_overdue);
+    let anomalies = insights::list_inspection_anomaly_rows(
+        &db,
+        InspectionAnomalyRowFilter {
+            statuses: Some(vec!["open".into()]),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("anomalies");
+    assert_eq!(anomalies.total, k.open_anomaly_count);
+}
+
+#[tokio::test]
+async fn the_round_page_searches_and_counts_beyond_the_page() {
+    let db = setup().await;
+    for h in 1..=3 {
+        pressure_round(&db, "RND-PRESS", &format!("2026-10-1{h}T06:00:00Z")).await;
+    }
+    scheduled_round(&db).await;
+    let page = runner::list_inspection_round_page(
+        &db,
+        InspectionRoundSummaryFilter {
+            search: Some("pressure".into()),
+            limit: Some(2),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("page");
+    assert_eq!(page.total, 3);
+    assert_eq!(page.items.len(), 2);
+    let next = runner::list_inspection_round_page(
+        &db,
+        InspectionRoundSummaryFilter {
+            search: Some("pressure".into()),
+            limit: Some(2),
+            offset: Some(2),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("next page");
+    assert_eq!(next.items.len(), 1);
+    let by_person = runner::list_inspection_round_page(
+        &db,
+        InspectionRoundSummaryFilter {
+            search: Some("Amina".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("by person");
+    assert_eq!(by_person.total, 4);
+    assert_validation(
+        runner::list_inspection_round_page(
+            &db,
+            InspectionRoundSummaryFilter {
+                due_from: Some("yesterday".into()),
+                ..Default::default()
+            },
+        )
+        .await,
+        "due_from must be an RFC 3339 timestamp",
+    );
 }

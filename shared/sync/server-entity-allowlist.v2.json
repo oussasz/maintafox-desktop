@@ -842,6 +842,10 @@
     {
       "entity_type": "equipment_spare_parts",
       "scope": "tenant"
+    },
+    {
+      "entity_type": "inspection_schedules",
+      "scope": "tenant"
     }
   ]
 }

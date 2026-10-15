@@ -712,6 +712,12 @@ pub const ROW_SPECS: &[RowSpec] = &[
     // No command writes the checkpoint component yet: synchronised only while empty.
     spec("inspection_checkpoints", &[unmapped("component_id")]),
     spec("inspection_rounds", &[]),
+    RowSpec {
+        // When this device last generated the schedule's rounds: each device generates for
+        // itself (generated rounds have deterministic identities), so it never travels.
+        device_local: &["last_generated_at"],
+        ..spec("inspection_schedules", &[])
+    },
     spec("inspection_results", &[]),
     spec("inspection_evidence", &[]),
     spec(

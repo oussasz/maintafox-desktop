@@ -174,6 +174,8 @@ mod m20261014_000185_asset_spares_criticality;
 mod m20261101_000036_activity_audit_log;
 mod m20261201_000037_observability_permissions;
 mod m_test;
+mod m20261015_000194_inspection_schedules;
+mod m20261015_000195_inspection_round_scheduling;
 
 pub struct Migrator;
 
@@ -355,6 +357,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20261014_000184_inventory_lots_fx_periods_approvals::Migration),
             Box::new(m20261014_000185_asset_spares_criticality::Migration),
             Box::new(m_test::Migration),
+            Box::new(m20261015_000194_inspection_schedules::Migration),
+            Box::new(m20261015_000195_inspection_round_scheduling::Migration),
         ]
     }
 }

@@ -15,7 +15,7 @@ pub(crate) const CHECK_TYPES: &[&str] = &["numeric", "boolean", "observation", "
 
 pub(crate) const CHECKPOINT_COLUMNS: &str = "id, entity_sync_id, template_version_id, sequence_order, asset_id,      component_id, checkpoint_code, description, check_type, measurement_unit, normal_min, normal_max, warning_min,      warning_max, requires_photo, requires_comment_on_exception, row_version";
 
-pub(crate) const ROUND_COLUMNS: &str = "id, entity_sync_id, template_id, template_version_id, scheduled_at,      assigned_to_id, status, started_at, completed_at, reviewed_at, reviewed_by_id, review_note,      completion_percentage, row_version";
+pub(crate) const ROUND_COLUMNS: &str = "id, entity_sync_id, template_id, template_version_id, scheduled_at,      assigned_to_id, status, started_at, completed_at, reviewed_at, reviewed_by_id, review_note,      completion_percentage, row_version, schedule_id, due_basis, window_end_at, assigned_team_id,      due_meter_value, missed_at";
 
 fn decode_err(field: &str, err: impl std::fmt::Display) -> AppError {
     AppError::SyncError(format!("Failed to decode inspection field '{field}': {err}"))
@@ -79,30 +79,55 @@ fn package_json_from_drafts(drafts: &[InspectionCheckpointDraft]) -> AppResult<S
     Ok(serde_json::to_string(&v)?)
 }
 
-fn validate_check_type(t: &str) -> AppResult<()> {
+fn gate(code: &str, detail: String) -> AppError {
+    AppError::ValidationFailed(vec![format!("{code}: {detail}")])
+}
+
+fn validate_check_type(code: &str, t: &str) -> AppResult<()> {
     if CHECK_TYPES.contains(&t) {
         Ok(())
     } else {
-        Err(AppError::ValidationFailed(vec![format!(
-            "check_type must be one of {:?}",
-            CHECK_TYPES
-        )]))
+        Err(gate(
+            "GATE_INSP_CHECK_TYPE_INVALID",
+            format!("{code}: check_type must be one of {CHECK_TYPES:?}."),
+        ))
     }
 }
 
+/// Checkpoints of a template version. Each failure names the checkpoint (position and code) and
+/// carries a stable `GATE_INSP_CHECK_*` code, so the template editor can point at the row.
 fn validate_drafts(drafts: &[InspectionCheckpointDraft]) -> AppResult<()> {
-    let mut seen = std::collections::HashSet::new();
-    for d in drafts {
-        if !seen.insert(d.sequence_order) {
-            return Err(AppError::ValidationFailed(vec![format!(
-                "Duplicate sequence_order {}.",
-                d.sequence_order
-            )]));
+    if drafts.is_empty() {
+        return Err(gate(
+            "GATE_INSP_TEMPLATE_NO_CHECK",
+            "a checklist needs at least one checkpoint.".into(),
+        ));
+    }
+    let mut seen_orders = std::collections::HashSet::new();
+    let mut seen_codes = std::collections::HashSet::new();
+    for (i, d) in drafts.iter().enumerate() {
+        let position = i + 1;
+        if !seen_orders.insert(d.sequence_order) {
+            return Err(gate(
+                "GATE_INSP_CHECK_SEQUENCE_DUPLICATE",
+                format!("checkpoint {position}: sequence {} is used twice.", d.sequence_order),
+            ));
         }
-        if d.checkpoint_code.trim().is_empty() {
-            return Err(AppError::ValidationFailed(vec!["checkpoint_code required.".into()]));
+        let code = d.checkpoint_code.trim();
+        if code.is_empty() {
+            return Err(gate(
+                "GATE_INSP_CHECK_CODE_REQUIRED",
+                format!("checkpoint {position}: the code is required."),
+            ));
         }
-        validate_check_type(&d.check_type)?;
+        // History and trends follow a checkpoint by its code across versions.
+        if !seen_codes.insert(code.to_uppercase()) {
+            return Err(gate(
+                "GATE_INSP_CHECK_CODE_DUPLICATE",
+                format!("checkpoint {position}: the code {code} is used twice."),
+            ));
+        }
+        validate_check_type(code, &d.check_type)?;
         validate_limits(d)?;
     }
     Ok(())
@@ -115,29 +140,33 @@ fn validate_limits(d: &InspectionCheckpointDraft) -> AppResult<()> {
     let limits = [d.normal_min, d.normal_max, d.warning_min, d.warning_max];
     if d.check_type != "numeric" {
         if limits.iter().any(Option::is_some) {
-            return Err(AppError::ValidationFailed(vec![format!(
-                "{code}: limits are only allowed on numeric checkpoints."
-            )]));
+            return Err(gate(
+                "GATE_INSP_CHECK_LIMITS_NOT_NUMERIC",
+                format!("{code}: limits are only allowed on numeric checkpoints."),
+            ));
         }
         return Ok(());
     }
     if limits.into_iter().flatten().any(|v| !v.is_finite()) {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "{code}: limits must be finite numbers."
-        )]));
+        return Err(gate(
+            "GATE_INSP_CHECK_LIMITS_NOT_FINITE",
+            format!("{code}: limits must be finite numbers."),
+        ));
     }
     let ordered = |lo: Option<f64>, hi: Option<f64>| lo.zip(hi).is_none_or(|(l, h)| l <= h);
     if !ordered(d.normal_min, d.normal_max) || !ordered(d.warning_min, d.warning_max) {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "{code}: a minimum is greater than its maximum."
-        )]));
+        return Err(gate(
+            "GATE_INSP_CHECK_LIMITS_ORDER",
+            format!("{code}: a minimum is greater than its maximum."),
+        ));
     }
     let wider_low = d.warning_min.is_none_or(|w| d.normal_min.is_some_and(|n| w <= n));
     let wider_high = d.warning_max.is_none_or(|w| d.normal_max.is_some_and(|n| w >= n));
     if !wider_low || !wider_high {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "{code}: the warning band must contain the normal band."
-        )]));
+        return Err(gate(
+            "GATE_INSP_CHECK_WARNING_BAND",
+            format!("{code}: the warning band must contain the normal band."),
+        ));
     }
     Ok(())
 }
@@ -337,6 +366,20 @@ pub(crate) fn map_round(row: &sea_orm::QueryResult) -> AppResult<InspectionRound
         row_version: row
             .try_get("", "row_version")
             .map_err(|e| decode_err("row_version", e))?,
+        schedule_id: row
+            .try_get("", "schedule_id")
+            .map_err(|e| decode_err("schedule_id", e))?,
+        due_basis: row.try_get("", "due_basis").map_err(|e| decode_err("due_basis", e))?,
+        window_end_at: row
+            .try_get("", "window_end_at")
+            .map_err(|e| decode_err("window_end_at", e))?,
+        assigned_team_id: row
+            .try_get("", "assigned_team_id")
+            .map_err(|e| decode_err("assigned_team_id", e))?,
+        due_meter_value: row
+            .try_get("", "due_meter_value")
+            .map_err(|e| decode_err("due_meter_value", e))?,
+        missed_at: row.try_get("", "missed_at").map_err(|e| decode_err("missed_at", e))?,
     })
 }
 
@@ -665,13 +708,14 @@ pub async fn schedule_inspection_round(
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO inspection_rounds (entity_sync_id, template_id, template_version_id, scheduled_at, \
-         assigned_to_id, status, row_version) VALUES (?, ?, ?, ?, ?, 'scheduled', 1)",
+         assigned_to_id, assigned_team_id, status, row_version) VALUES (?, ?, ?, ?, ?, ?, 'scheduled', 1)",
         [
             rs.into(),
             input.template_id.into(),
             version_id.into(),
             opt_string(scheduled_at),
             opt_i64(input.assigned_to_id),
+            opt_i64(input.assigned_team_id),
         ],
     ))
     .await?;

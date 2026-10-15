@@ -134,7 +134,7 @@
       "entity_type": "budget_actuals",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 11,
+      "apply_priority": 12,
       "parents": [
         "teams",
         "personnel",
@@ -178,7 +178,7 @@
       "entity_type": "budget_commitments",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 11,
+      "apply_priority": 12,
       "parents": [
         "work_orders",
         "cost_centers",
@@ -308,7 +308,7 @@
       "entity_type": "data_integrity_findings",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 12,
+      "apply_priority": 13,
       "parents": [
         "user_accounts",
         "work_order_failure_details",
@@ -321,7 +321,7 @@
       "entity_type": "data_integrity_repair_actions",
       "scope": "tenant",
       "conflict_policy": "append_only",
-      "apply_priority": 13,
+      "apply_priority": 14,
       "parents": [
         "user_accounts",
         "data_integrity_findings"
@@ -352,7 +352,7 @@
       "entity_type": "di_attachments",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 10,
+      "apply_priority": 11,
       "parents": [
         "intervention_requests",
         "user_accounts"
@@ -371,7 +371,7 @@
       "entity_type": "di_review_events",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 10,
+      "apply_priority": 11,
       "parents": [
         "intervention_requests"
       ],
@@ -518,7 +518,7 @@
       "entity_type": "failure_events",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 11,
+      "apply_priority": 12,
       "parents": [
         "failure_codes",
         "reference_values",
@@ -551,7 +551,7 @@
       "entity_type": "fmeca_item_parts",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 12,
+      "apply_priority": 13,
       "parents": [
         "articles",
         "fmeca_items"
@@ -562,7 +562,7 @@
       "entity_type": "fmeca_items",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 11,
+      "apply_priority": 12,
       "parents": [
         "fmeca_analyses",
         "pm_plan_versions",
@@ -588,7 +588,7 @@
       "entity_type": "goods_receipt_lines",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 14,
+      "apply_priority": 15,
       "parents": [
         "stock_locations",
         "articles",
@@ -612,7 +612,7 @@
       "entity_type": "inspection_anomalies",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 8,
+      "apply_priority": 9,
       "parents": [
         "inspection_results",
         "inspection_rounds"
@@ -634,7 +634,7 @@
       "entity_type": "inspection_evidence",
       "scope": "tenant",
       "conflict_policy": "append_only",
-      "apply_priority": 8,
+      "apply_priority": 9,
       "parents": [
         "inspection_results"
       ],
@@ -644,7 +644,7 @@
       "entity_type": "inspection_results",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 7,
+      "apply_priority": 8,
       "parents": [
         "personnel",
         "inspection_checkpoints",
@@ -656,12 +656,27 @@
       "entity_type": "inspection_rounds",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 6,
+      "apply_priority": 7,
       "parents": [
         "personnel",
         "inspection_template_versions",
         "inspection_templates",
-        "user_accounts"
+        "user_accounts",
+        "inspection_schedules",
+        "teams"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "inspection_schedules",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 6,
+      "parents": [
+        "inspection_templates",
+        "equipment_meters",
+        "personnel",
+        "teams"
       ],
       "sync_status": "synced"
     },
@@ -689,7 +704,7 @@
       "entity_type": "integration_exceptions",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 12,
+      "apply_priority": 13,
       "parents": [
         "posted_export_batches",
         "budget_actuals",
@@ -701,7 +716,7 @@
       "entity_type": "intervention_requests",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 9,
+      "apply_priority": 10,
       "parents": [
         "inspection_anomalies",
         "equipment",
@@ -726,7 +741,7 @@
       "entity_type": "inventory_count_lines",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 17,
+      "apply_priority": 18,
       "parents": [
         "inventory_transactions",
         "stock_locations",
@@ -753,7 +768,7 @@
       "entity_type": "inventory_document_links",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 15,
+      "apply_priority": 16,
       "parents": [
         "inventory_suppliers",
         "purchase_orders",
@@ -767,7 +782,7 @@
       "entity_type": "inventory_lots",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 15,
+      "apply_priority": 16,
       "parents": [
         "articles",
         "goods_receipt_lines",
@@ -779,7 +794,7 @@
       "entity_type": "inventory_mutation_audit_links",
       "scope": "tenant",
       "conflict_policy": "append_only",
-      "apply_priority": 18,
+      "apply_priority": 19,
       "parents": [
         "inventory_transactions",
         "inventory_count_lines",
@@ -867,7 +882,7 @@
       "entity_type": "inventory_transactions",
       "scope": "tenant",
       "conflict_policy": "append_only",
-      "apply_priority": 16,
+      "apply_priority": 17,
       "parents": [
         "inventory_lots",
         "lookup_values",
@@ -964,7 +979,7 @@
       "entity_type": "loto_card_print_jobs",
       "scope": "tenant",
       "conflict_policy": "append_only",
-      "apply_priority": 13,
+      "apply_priority": 14,
       "parents": [
         "work_permits",
         "permit_isolations",
@@ -998,7 +1013,7 @@
       "entity_type": "media_attachments",
       "scope": "tenant",
       "conflict_policy": "append_only",
-      "apply_priority": 11,
+      "apply_priority": 12,
       "parents": [
         "equipment",
         "intervention_requests",
@@ -1164,7 +1179,7 @@
       "entity_type": "permit_handover_logs",
       "scope": "tenant",
       "conflict_policy": "append_only",
-      "apply_priority": 12,
+      "apply_priority": 13,
       "parents": [
         "work_permits"
       ],
@@ -1174,7 +1189,7 @@
       "entity_type": "permit_isolations",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 12,
+      "apply_priority": 13,
       "parents": [
         "work_permits",
         "user_accounts"
@@ -1185,7 +1200,7 @@
       "entity_type": "permit_suspensions",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 12,
+      "apply_priority": 13,
       "parents": [
         "work_permits",
         "user_accounts"
@@ -1308,7 +1323,7 @@
       "entity_type": "pm_executions",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 12,
+      "apply_priority": 13,
       "parents": [
         "user_accounts",
         "work_orders",
@@ -1320,7 +1335,7 @@
       "entity_type": "pm_findings",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 13,
+      "apply_priority": 14,
       "parents": [
         "work_orders",
         "intervention_requests",
@@ -1332,7 +1347,7 @@
       "entity_type": "pm_occurrence_transitions",
       "scope": "tenant",
       "conflict_policy": "append_only",
-      "apply_priority": 12,
+      "apply_priority": 13,
       "parents": [
         "user_accounts",
         "pm_occurrences"
@@ -1343,7 +1358,7 @@
       "entity_type": "pm_occurrences",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 11,
+      "apply_priority": 12,
       "parents": [
         "work_orders",
         "pm_plan_versions",
@@ -1381,7 +1396,7 @@
       "entity_type": "pm_trigger_events",
       "scope": "tenant",
       "conflict_policy": "append_only",
-      "apply_priority": 12,
+      "apply_priority": 13,
       "parents": [
         "pm_occurrences",
         "pm_plan_versions",
@@ -1442,7 +1457,7 @@
       "entity_type": "procurement_requisition_lines",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 12,
+      "apply_priority": 13,
       "parents": [
         "lookup_values",
         "stock_reservations",
@@ -1466,7 +1481,7 @@
       "entity_type": "purchase_order_lines",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 13,
+      "apply_priority": 14,
       "parents": [
         "stock_reservations",
         "articles",
@@ -1561,7 +1576,7 @@
       "entity_type": "rcm_decisions",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 12,
+      "apply_priority": 13,
       "parents": [
         "pm_plan_versions",
         "pm_plans",
@@ -1700,7 +1715,7 @@
       "entity_type": "reliability_study_decisions",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 13,
+      "apply_priority": 14,
       "parents": [
         "reliability_studies",
         "equipment",
@@ -1718,7 +1733,7 @@
       "entity_type": "reliability_study_record_events",
       "scope": "tenant",
       "conflict_policy": "append_only",
-      "apply_priority": 12,
+      "apply_priority": 13,
       "parents": [
         "reliability_studies",
         "failure_events",
@@ -1732,7 +1747,7 @@
       "entity_type": "repairable_orders",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 14,
+      "apply_priority": 15,
       "parents": [
         "inventory_suppliers",
         "stock_reservations",
@@ -1822,7 +1837,7 @@
       "entity_type": "schedule_break_ins",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 14,
+      "apply_priority": 15,
       "parents": [
         "personnel",
         "schedule_commitments",
@@ -1834,7 +1849,7 @@
       "entity_type": "schedule_candidates",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 12,
+      "apply_priority": 13,
       "parents": [
         "teams",
         "personnel",
@@ -1849,7 +1864,7 @@
       "entity_type": "schedule_change_log",
       "scope": "tenant",
       "conflict_policy": "append_only",
-      "apply_priority": 14,
+      "apply_priority": 15,
       "parents": [
         "schedule_commitments",
         "user_accounts"
@@ -1860,7 +1875,7 @@
       "entity_type": "schedule_commitments",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 13,
+      "apply_priority": 14,
       "parents": [
         "personnel",
         "teams",
@@ -1922,7 +1937,7 @@
       "entity_type": "stock_reservations",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 11,
+      "apply_priority": 12,
       "parents": [
         "stock_locations",
         "warehouses",
@@ -2072,7 +2087,7 @@
       "entity_type": "wo_action_events",
       "scope": "tenant",
       "conflict_policy": "append_only",
-      "apply_priority": 11,
+      "apply_priority": 12,
       "parents": [
         "work_orders"
       ],
@@ -2098,7 +2113,7 @@
       "entity_type": "work_order_attachments",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 11,
+      "apply_priority": 12,
       "parents": [
         "user_accounts",
         "work_orders"
@@ -2109,7 +2124,7 @@
       "entity_type": "work_order_delay_segments",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 11,
+      "apply_priority": 12,
       "parents": [
         "user_accounts",
         "reference_values",
@@ -2121,7 +2136,7 @@
       "entity_type": "work_order_downtime_segments",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 11,
+      "apply_priority": 12,
       "parents": [
         "work_orders"
       ],
@@ -2131,7 +2146,7 @@
       "entity_type": "work_order_execution_events",
       "scope": "tenant",
       "conflict_policy": "append_only",
-      "apply_priority": 11,
+      "apply_priority": 12,
       "parents": [
         "user_accounts",
         "work_orders"
@@ -2142,7 +2157,7 @@
       "entity_type": "work_order_failure_details",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 11,
+      "apply_priority": 12,
       "parents": [
         "failure_codes",
         "reference_values",
@@ -2154,7 +2169,7 @@
       "entity_type": "work_order_interveners",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 11,
+      "apply_priority": 12,
       "parents": [
         "user_accounts",
         "work_orders",
@@ -2166,7 +2181,7 @@
       "entity_type": "work_order_parts",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 12,
+      "apply_priority": 13,
       "parents": [
         "reference_values",
         "lookup_values",
@@ -2189,7 +2204,7 @@
       "entity_type": "work_order_tasks",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 11,
+      "apply_priority": 12,
       "parents": [
         "user_accounts",
         "work_orders"
@@ -2200,7 +2215,7 @@
       "entity_type": "work_order_tools",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 11,
+      "apply_priority": 12,
       "parents": [
         "work_orders"
       ],
@@ -2218,7 +2233,7 @@
       "entity_type": "work_order_verifications",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 11,
+      "apply_priority": 12,
       "parents": [
         "user_accounts",
         "work_orders"
@@ -2229,7 +2244,7 @@
       "entity_type": "work_orders",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 10,
+      "apply_priority": 11,
       "parents": [
         "user_accounts",
         "ram_ishikawa_diagrams",
@@ -2249,7 +2264,7 @@
       "entity_type": "work_permits",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 11,
+      "apply_priority": 12,
       "parents": [
         "work_orders",
         "permit_types",
