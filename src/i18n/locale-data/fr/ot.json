@@ -200,6 +200,8 @@
     "shiftOutsideWindow": "Le début ou la fin prévus sont en dehors du poste choisi. Vérifiez les heures, ou choisissez un autre poste.",
     "shiftTimetableChanged": "Horaire modifié depuis la planification : planifié {{planned}}, l'horaire indique maintenant {{now}}. Vérifiez les heures.",
     "expectedDuration": "Durée estimée (heures)",
+    "plannedCrewSize": "Effectif prévu (personnes)",
+    "plannedCrewSizeHint": "Le planning réserve la durée × l'effectif sur la capacité de l'équipe.",
     "urgency": "Urgence",
     "selectUrgency": "Sélectionner l'urgence",
     "assignment": "Planning & équipe (SSOT Planning)",

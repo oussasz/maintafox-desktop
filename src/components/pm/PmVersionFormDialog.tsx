@@ -119,6 +119,12 @@ function optionalNumber(raw: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/** Whole people; the backend refuses fewer than one. */
+function optionalCrewSize(raw: string): number | null {
+  const n = optionalNumber(raw);
+  return n == null ? null : Math.trunc(n);
+}
+
 const NEW_OR_METER: PmMeterSpec = {
   assetMeterId: null,
   meterType: null,
@@ -146,6 +152,7 @@ export function PmVersionFormDialog({
   const [skills, setSkills] = useState<string[]>([]);
   const [toolsCsv, setToolsCsv] = useState("");
   const [duration, setDuration] = useState("");
+  const [crewSize, setCrewSize] = useState("");
   const [laborCost, setLaborCost] = useState("");
   const [partsCost, setPartsCost] = useState("");
   const [serviceCost, setServiceCost] = useState("");
@@ -173,6 +180,7 @@ export function PmVersionFormDialog({
       setDuration(
         version.estimated_duration_hours != null ? String(version.estimated_duration_hours) : "",
       );
+      setCrewSize(version.planned_crew_size != null ? String(version.planned_crew_size) : "");
       setLaborCost(
         version.estimated_labor_cost != null ? String(version.estimated_labor_cost) : "",
       );
@@ -192,6 +200,7 @@ export function PmVersionFormDialog({
       setSkills([]);
       setToolsCsv("");
       setDuration("");
+      setCrewSize("");
       setLaborCost("");
       setPartsCost("");
       setServiceCost("");
@@ -235,6 +244,7 @@ export function PmVersionFormDialog({
       required_skills_json: skills.length > 0 ? JSON.stringify(skills) : null,
       required_tools_json: csvToJsonArray(toolsCsv),
       estimated_duration_hours: optionalNumber(duration),
+      planned_crew_size: optionalCrewSize(crewSize),
       estimated_labor_cost: optionalNumber(laborCost),
       estimated_parts_cost: optionalNumber(partsCost),
       estimated_service_cost: optionalNumber(serviceCost),
@@ -400,6 +410,18 @@ export function PmVersionFormDialog({
               value={duration}
               onChange={(e) => setDuration(e.target.value)}
             />
+          </div>
+          <div className="grid gap-1">
+            <Label htmlFor="pm-version-crew">{t("fields.plannedCrewSize")}</Label>
+            <Input
+              id="pm-version-crew"
+              type="number"
+              step="1"
+              min="1"
+              value={crewSize}
+              onChange={(e) => setCrewSize(e.target.value)}
+            />
+            <p className="text-xs text-text-muted">{t("fields.plannedCrewSizeHint")}</p>
           </div>
           <div className="grid gap-1">
             <Label htmlFor="pm-version-labor">{t("fields.estimatedLaborCost")}</Label>

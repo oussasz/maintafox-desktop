@@ -235,6 +235,7 @@ pub async fn create_pm_revision_from_finding(db: &DatabaseConnection, finding_id
             required_skills_json: base.required_skills_json.clone(),
             required_tools_json: base.required_tools_json.clone(),
             estimated_duration_hours: base.estimated_duration_hours,
+            planned_crew_size: base.planned_crew_size,
             estimated_labor_cost: base.estimated_labor_cost,
             estimated_parts_cost: base.estimated_parts_cost,
             estimated_service_cost: base.estimated_service_cost,

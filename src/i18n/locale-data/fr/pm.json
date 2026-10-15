@@ -111,6 +111,8 @@
     "requiredSkills": "Compétences requises",
     "requiredTools": "Outillage requis (séparé par des virgules)",
     "estimatedDurationHours": "Durée estimée (h)",
+    "plannedCrewSize": "Effectif prévu (personnes)",
+    "plannedCrewSizeHint": "Reporté sur l'OT généré par ce PM ; le planning réserve durée × effectif.",
     "estimatedLaborCost": "Coût main-d'œuvre estimé",
     "estimatedPartsCost": "Coût pièces estimé",
     "estimatedServiceCost": "Coût prestations estimé",

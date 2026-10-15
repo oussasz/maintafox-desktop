@@ -480,7 +480,7 @@ pub async fn create_pm_revision_from_source(
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT trigger_definition_json, task_package_json, required_parts_json, required_skills_json, \
-             required_tools_json, estimated_duration_hours, estimated_labor_cost, estimated_parts_cost, \
+             required_tools_json, estimated_duration_hours, planned_crew_size, estimated_labor_cost, estimated_parts_cost, \
              estimated_service_cost FROM pm_plan_versions WHERE pm_plan_id = ? ORDER BY version_no DESC LIMIT 1",
             [input.pm_plan_id.into()],
         ))
@@ -512,6 +512,9 @@ pub async fn create_pm_revision_from_source(
             required_skills_json: get_s("required_skills_json")?,
             required_tools_json: get_s("required_tools_json")?,
             estimated_duration_hours: get_f("estimated_duration_hours")?,
+            planned_crew_size: latest
+                .try_get("", "planned_crew_size")
+                .map_err(|e| decode_err("planned_crew_size", e))?,
             estimated_labor_cost: get_f("estimated_labor_cost")?,
             estimated_parts_cost: get_f("estimated_parts_cost")?,
             estimated_service_cost: get_f("estimated_service_cost")?,

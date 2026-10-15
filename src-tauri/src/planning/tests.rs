@@ -41,8 +41,10 @@ async fn insert_candidate(
             readiness_status,
             readiness_score,
             permit_status,
-            prerequisite_status
-         ) VALUES (?, ?, ?, ?, 'not_required', 'ready')",
+            prerequisite_status,
+            estimated_duration_hours,
+            planned_crew_size
+         ) VALUES (?, ?, ?, ?, 'not_required', 'ready', 1.0, 1)",
         [
             source_type.into(),
             source_id.into(),
@@ -63,6 +65,26 @@ async fn insert_candidate(
         .expect("query candidate")
         .expect("candidate row");
     row.try_get("", "id").expect("candidate id")
+}
+
+async fn set_estimate(db: &DatabaseConnection, candidate_id: i64, hours: Option<f64>) {
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE schedule_candidates SET estimated_duration_hours = ? WHERE id = ?",
+        [hours.into(), candidate_id.into()],
+    ))
+    .await
+    .expect("set estimate");
+}
+
+async fn set_crew(db: &DatabaseConnection, candidate_id: i64, crew: Option<i64>) {
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE schedule_candidates SET planned_crew_size = ? WHERE id = ?",
+        [crew.into(), candidate_id.into()],
+    ))
+    .await
+    .expect("set crew");
 }
 
 async fn insert_conflict(db: &DatabaseConnection, candidate_id: i64, conflict_type: &str, resolved: bool) {
@@ -394,7 +416,7 @@ async fn ensure_planning_notification_rule(db: &DatabaseConnection) {
 }
 
 #[tokio::test]
-async fn list_candidates_hides_unresolved_conflicts_by_default() {
+async fn list_candidates_shows_blocked_work_by_default_and_can_hide_it() {
     let db = setup_db().await;
     let candidate_id = insert_candidate(&db, "manual_test", 1, "blocked", 40.0).await;
     insert_conflict(&db, candidate_id, "missing_critical_part", false).await;
@@ -405,7 +427,7 @@ async fn list_candidates_hides_unresolved_conflicts_by_default() {
             source_type: Some("manual_test".to_string()),
             readiness_status: None,
             assigned_personnel_id: None,
-            include_resolved_conflicts: None,
+            include_resolved_conflicts: Some(false),
             limit: Some(20),
         },
     )
@@ -419,13 +441,13 @@ async fn list_candidates_hides_unresolved_conflicts_by_default() {
             source_type: Some("manual_test".to_string()),
             readiness_status: None,
             assigned_personnel_id: None,
-            include_resolved_conflicts: Some(true),
+            include_resolved_conflicts: None,
             limit: Some(20),
         },
     )
     .await
     .expect("list visible");
-    assert_eq!(visible.len(), 1);
+    assert_eq!(visible.len(), 1, "blocked work is listed by default");
 }
 
 #[tokio::test]
@@ -506,6 +528,7 @@ async fn commitment_requires_all_three_gates() {
     let db = setup_db().await;
     let team_id = get_any_team_id(&db).await;
     let candidate_id = insert_candidate(&db, "pm_occurrence", 3001, "ready", 100.0).await;
+    set_estimate(&db, candidate_id, Some(8.0)).await;
 
     let no_capacity = scheduling::create_schedule_commitment(
         &db,
@@ -539,6 +562,7 @@ async fn commitment_requires_all_three_gates() {
     .await
     .expect("capacity rule");
     let candidate2 = insert_candidate(&db, "pm_occurrence", 3002, "ready", 100.0).await;
+    set_estimate(&db, candidate2, Some(2.0)).await;
     let overloaded = scheduling::create_schedule_commitment(
         &db,
         1,
@@ -601,6 +625,8 @@ async fn double_booking_requires_override_audit() {
     let personnel_id = ensure_personnel_with_rate(&db, "TECH-BOOKED").await;
     let c1 = insert_candidate(&db, "pm_occurrence", 5001, "ready", 100.0).await;
     let c2 = insert_candidate(&db, "pm_occurrence", 5002, "ready", 100.0).await;
+    // 2 h × 1 person at 45/h = 90 > the 50 budget threshold (the cost follows the labour hours).
+    set_estimate(&db, c2, Some(2.0)).await;
 
     scheduling::create_schedule_commitment(
         &db,
@@ -778,6 +804,7 @@ async fn break_in_requires_approval_or_dangerous_override() {
             new_slot_end: "2026-08-15T12:00:00Z".to_string(),
             new_assigned_team_id: Some(team_id),
             new_assigned_personnel_id: Some(assignee_id),
+            clear_assignee: None,
             bypass_availability: Some(false),
             override_reason: None,
             dangerous_override_reason: None,
@@ -799,6 +826,7 @@ async fn break_in_requires_approval_or_dangerous_override() {
             new_slot_end: "2026-08-15T12:00:00Z".to_string(),
             new_assigned_team_id: Some(team_id),
             new_assigned_personnel_id: Some(assignee_id),
+            clear_assignee: None,
             bypass_availability: Some(false),
             override_reason: Some("line stop".to_string()),
             dangerous_override_reason: None,
@@ -1282,6 +1310,7 @@ async fn break_in_write_back_updates_work_order_slot() {
             new_slot_end: "2026-11-01T16:00:00Z".to_string(),
             new_assigned_team_id: Some(team_id),
             new_assigned_personnel_id: Some(personnel_id),
+            clear_assignee: None,
             approved_by_user_id: Some(66),
             override_reason: Some("Emergency move".to_string()),
             dangerous_override_reason: None,
@@ -1407,4 +1436,414 @@ async fn commitment_rejects_when_work_order_not_planning_or_ready() {
         .and_then(|r| r.try_get("", "c").ok())
         .unwrap_or(0);
     assert_eq!(commitment_count, 0);
+}
+
+// ── Step A: load over working days, finished work, estimates, no-capacity days ───────────────
+
+/// An RFC 3339 instant for a local date-time (`YYYY-MM-DDTHH:MM`), as the planning screen sends it.
+fn local(at: &str) -> String {
+    use chrono::TimeZone;
+    let naive = chrono::NaiveDateTime::parse_from_str(at, "%Y-%m-%dT%H:%M").expect("local date-time");
+    chrono::Local
+        .from_local_datetime(&naive)
+        .earliest()
+        .expect("local instant")
+        .with_timezone(&chrono::Utc)
+        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+}
+
+fn day(d: &str) -> chrono::NaiveDate {
+    chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").expect("day")
+}
+
+fn commit_input(candidate_id: i64, team_id: i64, start: &str, end: &str) -> CreateScheduleCommitmentInput {
+    CreateScheduleCommitmentInput {
+        schedule_candidate_id: candidate_id,
+        expected_candidate_row_version: None,
+        committed_start: local(start),
+        committed_end: local(end),
+        assigned_team_id: team_id,
+        assigned_personnel_id: None,
+        allow_double_booking_override: Some(false),
+        override_reason: None,
+        budget_threshold: None,
+    }
+}
+
+async fn team_loads(
+    db: &DatabaseConnection,
+    team_id: i64,
+    from: &str,
+    to: &str,
+) -> std::collections::BTreeMap<String, (f64, Option<f64>, String)> {
+    scheduling::list_team_capacity_load(
+        db,
+        format!("{from}T00:00:00Z"),
+        format!("{to}T23:00:00Z"),
+        Some(team_id),
+    )
+    .await
+    .expect("capacity load")
+    .into_iter()
+    .map(|r| (r.work_date.clone(), (r.committed_hours, r.utilization_ratio, r.basis)))
+    .collect()
+}
+
+#[test]
+fn a_slot_spreads_its_labour_over_the_working_days_it_covers() {
+    use crate::planning::load::{slot_days, spread};
+    // Monday 08:00 → Wednesday 16:00 (local): two-thirds of Monday, all Tuesday, two-thirds of
+    // Wednesday; Tuesday is a rest day for the team.
+    let days = slot_days(&local("2026-05-04T08:00"), &local("2026-05-06T16:00")).expect("days");
+    assert_eq!(
+        days.iter().map(|d| d.0).collect::<Vec<_>>(),
+        vec![day("2026-05-04"), day("2026-05-05"), day("2026-05-06")]
+    );
+    let available = std::collections::BTreeMap::from([
+        (day("2026-05-04"), 8.0),
+        (day("2026-05-05"), 0.0),
+        (day("2026-05-06"), 8.0),
+    ]);
+    let shares = spread(12.0, &days, &available);
+    assert!((shares[&day("2026-05-04")] - 6.0).abs() < 1e-6, "{shares:?}");
+    assert!(!shares.contains_key(&day("2026-05-05")), "nothing on the rest day");
+    assert!((shares[&day("2026-05-06")] - 6.0).abs() < 1e-6, "{shares:?}");
+    // A slot ending at midnight stops the day before.
+    let one_day = slot_days(&local("2026-05-04T08:00"), &local("2026-05-05T00:00")).expect("days");
+    assert_eq!(one_day.len(), 1);
+}
+
+#[tokio::test]
+async fn a_multi_day_job_is_committed_and_loads_each_day_with_its_share() {
+    let db = setup_db().await;
+    let team_id = get_any_team_id(&db).await; // 8 h every day
+    let candidate = insert_candidate(&db, "pm_occurrence", 7101, "ready", 100.0).await;
+    set_estimate(&db, candidate, Some(12.0)).await;
+    // Monday 08:00 → Tuesday 16:00: 12 labour hours over two days (it used to count 32 h on Monday).
+    scheduling::create_schedule_commitment(
+        &db,
+        1,
+        commit_input(candidate, team_id, "2026-05-04T08:00", "2026-05-05T16:00"),
+    )
+    .await
+    .expect("a two-day job fits two days of 8 h");
+    let loads = team_loads(&db, team_id, "2026-05-04", "2026-05-05").await;
+    assert!((loads["2026-05-04"].0 - 6.0).abs() < 0.01, "{loads:?}");
+    assert!((loads["2026-05-05"].0 - 6.0).abs() < 0.01, "{loads:?}");
+    assert!((loads["2026-05-04"].1.expect("ratio") - 0.75).abs() < 0.01);
+    let stored = scheduling::list_schedule_commitments(
+        &db,
+        ScheduleCommitmentFilter {
+            period_start: None,
+            period_end: None,
+            team_id: Some(team_id),
+            personnel_id: None,
+        },
+    )
+    .await
+    .expect("commitments");
+    assert_eq!(stored[0].planned_labor_hours, Some(12.0), "the labour hours it booked");
+
+    // A second 6 h job on Monday no longer fits (6 + 6 > 8).
+    let second = insert_candidate(&db, "pm_occurrence", 7102, "ready", 100.0).await;
+    set_estimate(&db, second, Some(6.0)).await;
+    let refused = scheduling::create_schedule_commitment(
+        &db,
+        1,
+        commit_input(second, team_id, "2026-05-04T08:00", "2026-05-04T14:00"),
+    )
+    .await
+    .expect_err("overloaded");
+    assert!(format!("{refused:?}").contains("2026-05-04"), "{refused:?}");
+}
+
+#[tokio::test]
+async fn work_without_an_estimate_cannot_be_committed() {
+    let db = setup_db().await;
+    let team_id = get_any_team_id(&db).await;
+    let candidate = insert_candidate(&db, "pm_occurrence", 7201, "ready", 100.0).await;
+    set_estimate(&db, candidate, None).await;
+    let refused = scheduling::create_schedule_commitment(
+        &db,
+        1,
+        commit_input(candidate, team_id, "2026-05-04T08:00", "2026-05-04T10:00"),
+    )
+    .await
+    .expect_err("not estimated");
+    assert!(format!("{refused:?}").contains("PLANNING_NOT_ESTIMATED"), "{refused:?}");
+}
+
+#[tokio::test]
+async fn finished_work_no_longer_loads_the_team() {
+    let db = setup_db().await;
+    let team_id = get_any_team_id(&db).await;
+    let (wo_id, _) = create_planning_wo(&db, "Finished job").await;
+    let candidate = insert_candidate(&db, "work_order", wo_id, "ready", 100.0).await;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO schedule_commitments (schedule_candidate_id, source_type, source_id, schedule_period_start, \
+         schedule_period_end, committed_start, committed_end, assigned_team_id, planned_labor_hours) \
+         VALUES (?, 'work_order', ?, '2026-05-04', '2026-05-04', ?, ?, ?, 4.0)",
+        [
+            candidate.into(),
+            wo_id.into(),
+            local("2026-05-04T08:00").into(),
+            local("2026-05-04T12:00").into(),
+            team_id.into(),
+        ],
+    ))
+    .await
+    .expect("commitment");
+    assert!((team_loads(&db, team_id, "2026-05-04", "2026-05-04").await["2026-05-04"].0 - 4.0).abs() < 0.01);
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE work_orders SET cancelled_at = '2026-05-03T10:00:00Z' WHERE id = ?",
+        [wo_id.into()],
+    ))
+    .await
+    .expect("cancel");
+    assert_eq!(
+        team_loads(&db, team_id, "2026-05-04", "2026-05-04").await["2026-05-04"].0,
+        0.0,
+        "cancelled work drops out"
+    );
+}
+
+#[tokio::test]
+async fn a_day_without_capacity_is_reported_as_such_not_as_full() {
+    let db = setup_db().await;
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "INSERT INTO teams (entity_sync_id, code, name, team_type, status, created_at, updated_at) \
+         VALUES ('pln-empty-team', 'PLN-EMPTY', 'Équipe vide', 'maintenance', 'active', datetime('now'), datetime('now'))"
+            .to_string(),
+    ))
+    .await
+    .expect("team");
+    let team_id: i64 = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT id FROM teams WHERE code = 'PLN-EMPTY'".to_string(),
+        ))
+        .await
+        .expect("query")
+        .expect("row")
+        .try_get("", "id")
+        .expect("id");
+    let loads = team_loads(&db, team_id, "2026-05-04", "2026-05-04").await;
+    let (committed, ratio, basis) = &loads["2026-05-04"];
+    assert_eq!(*committed, 0.0);
+    assert_eq!(*ratio, None, "no capacity is not 100 %");
+    assert_eq!(basis, "no_members");
+}
+
+#[tokio::test]
+async fn a_shutdown_requirement_is_checked_against_open_windows() {
+    let db = setup_db().await;
+    let candidate = insert_candidate(&db, "manual_test", 7301, "ready", 100.0).await;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE schedule_candidates SET shutdown_requirement = 'required', window_start = ?, window_end = ? WHERE id = ?",
+        [
+            local("2026-05-04T08:00").into(),
+            local("2026-05-04T12:00").into(),
+            candidate.into(),
+        ],
+    ))
+    .await
+    .expect("needs a shutdown");
+    let refresh = || async {
+        queries::refresh_schedule_candidates(
+            &db,
+            RefreshScheduleCandidatesInput {
+                include_work_orders: Some(false),
+                include_pm_occurrences: Some(false),
+                include_approved_di: Some(false),
+                limit_per_source: Some(50),
+            },
+        )
+        .await
+        .expect("the refresh no longer fails on a shutdown requirement")
+    };
+    refresh().await;
+    let conflicts = |db: &DatabaseConnection| {
+        let db = db.clone();
+        async move {
+            db.query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT COUNT(*) AS c FROM scheduling_conflicts WHERE candidate_id = ? AND reason_code = 'NO_FEASIBLE_WINDOW'",
+                [candidate.into()],
+            ))
+            .await
+            .expect("query")
+            .expect("row")
+            .try_get::<i64>("", "c")
+            .expect("count")
+        }
+    };
+    assert_eq!(conflicts(&db).await, 1, "no open window yet");
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO planning_windows (window_type, start_datetime, end_datetime, is_locked) VALUES ('shutdown', ?, ?, 0)",
+        [local("2026-05-04T06:00").into(), local("2026-05-04T18:00").into()],
+    ))
+    .await
+    .expect("window");
+    refresh().await;
+    assert_eq!(conflicts(&db).await, 0, "the shutdown window covers the work");
+}
+
+#[tokio::test]
+async fn a_break_in_can_unassign_the_technician() {
+    let db = setup_db().await;
+    let team_id = get_any_team_id(&db).await;
+    let assignee_id = ensure_personnel_with_rate(&db, "TECH-UNASSIGN").await;
+    let candidate = insert_candidate(&db, "pm_occurrence", 7401, "ready", 100.0).await;
+    let mut input = commit_input(candidate, team_id, "2026-05-04T08:00", "2026-05-04T09:00");
+    input.assigned_personnel_id = Some(assignee_id);
+    let commitment = scheduling::create_schedule_commitment(&db, 1, input)
+        .await
+        .expect("committed");
+    let break_in = scheduling::create_schedule_break_in(
+        &db,
+        1,
+        CreateScheduleBreakInInput {
+            schedule_commitment_id: commitment.id,
+            expected_commitment_row_version: commitment.row_version,
+            break_in_reason: "other".to_string(),
+            approved_by_user_id: None,
+            new_slot_start: local("2026-05-04T10:00"),
+            new_slot_end: local("2026-05-04T11:00"),
+            new_assigned_team_id: None,
+            new_assigned_personnel_id: None,
+            clear_assignee: Some(true),
+            bypass_availability: Some(false),
+            override_reason: None,
+            dangerous_override_reason: None,
+        },
+    )
+    .await
+    .expect("break-in");
+    let moved = scheduling::list_schedule_commitments(
+        &db,
+        ScheduleCommitmentFilter {
+            period_start: None,
+            period_end: None,
+            team_id: Some(team_id),
+            personnel_id: None,
+        },
+    )
+    .await
+    .expect("commitments")
+    .into_iter()
+    .find(|c| c.id == break_in.schedule_commitment_id)
+    .expect("moved commitment");
+    assert_eq!(
+        moved.assigned_personnel_id, None,
+        "\"Unassigned\" removes the technician"
+    );
+}
+
+#[tokio::test]
+async fn labour_is_duration_times_crew_and_work_without_a_crew_cannot_be_committed() {
+    let db = setup_db().await;
+    let team_id = get_any_team_id(&db).await; // 8 h every day
+    let candidate = insert_candidate(&db, "pm_occurrence", 7401, "ready", 100.0).await;
+    set_estimate(&db, candidate, Some(3.0)).await;
+    set_crew(&db, candidate, Some(2)).await;
+    scheduling::create_schedule_commitment(
+        &db,
+        1,
+        commit_input(candidate, team_id, "2026-05-04T08:00", "2026-05-04T11:00"),
+    )
+    .await
+    .expect("3 h × 2 people = 6 h fits 8 h");
+    let loads = team_loads(&db, team_id, "2026-05-04", "2026-05-04").await;
+    assert!((loads["2026-05-04"].0 - 6.0).abs() < 0.01, "{loads:?}");
+
+    // 2 h × 2 people = 4 h no longer fits the 2 h left.
+    let second = insert_candidate(&db, "pm_occurrence", 7402, "ready", 100.0).await;
+    set_estimate(&db, second, Some(2.0)).await;
+    set_crew(&db, second, Some(2)).await;
+    scheduling::create_schedule_commitment(
+        &db,
+        1,
+        commit_input(second, team_id, "2026-05-04T13:00", "2026-05-04T15:00"),
+    )
+    .await
+    .expect_err("the crew's hours exceed the day");
+
+    // A duration without a crew size is not estimated: refused, nothing assumed.
+    let third = insert_candidate(&db, "pm_occurrence", 7403, "ready", 100.0).await;
+    set_estimate(&db, third, Some(1.0)).await;
+    set_crew(&db, third, None).await;
+    let refused = scheduling::create_schedule_commitment(
+        &db,
+        1,
+        commit_input(third, team_id, "2026-05-05T08:00", "2026-05-05T09:00"),
+    )
+    .await
+    .expect_err("no crew size");
+    assert!(format!("{refused:?}").contains("PLANNING_NOT_ESTIMATED"), "{refused:?}");
+}
+
+#[tokio::test]
+async fn the_work_order_crew_size_reaches_the_backlog() {
+    let db = setup_db().await;
+    let (wo_id, _) = create_planning_wo(&db, "Crew job").await;
+    let refresh = || async {
+        queries::refresh_schedule_candidates(
+            &db,
+            RefreshScheduleCandidatesInput {
+                include_work_orders: Some(true),
+                include_pm_occurrences: Some(false),
+                include_approved_di: Some(false),
+                limit_per_source: Some(50),
+            },
+        )
+        .await
+        .expect("refresh");
+    };
+    let crew_and_conflict = |db: &DatabaseConnection| {
+        let db = db.clone();
+        async move {
+            let row = db
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "SELECT sc.planned_crew_size AS crew,
+                            (SELECT COUNT(*) FROM scheduling_conflicts c
+                              WHERE c.candidate_id = sc.id AND c.reason_code = 'NOT_ESTIMATED'
+                                AND c.resolved_at IS NULL) AS not_estimated
+                     FROM schedule_candidates sc
+                     WHERE sc.source_type = 'work_order' AND sc.source_id = ?",
+                    [wo_id.into()],
+                ))
+                .await
+                .expect("query")
+                .expect("candidate");
+            (
+                row.try_get::<Option<i64>>("", "crew").expect("crew"),
+                row.try_get::<i64>("", "not_estimated").expect("count"),
+            )
+        }
+    };
+    refresh().await;
+    assert_eq!(
+        crew_and_conflict(&db).await,
+        (None, 1),
+        "2 h but no crew size: not estimated"
+    );
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE work_orders SET planned_crew_size = 3 WHERE id = ?",
+        [wo_id.into()],
+    ))
+    .await
+    .expect("crew size");
+    refresh().await;
+    assert_eq!(
+        crew_and_conflict(&db).await,
+        (Some(3), 0),
+        "estimated once the crew size is set"
+    );
 }

@@ -15,6 +15,9 @@ pub struct ScheduleCandidate {
     pub shutdown_requirement: Option<String>,
     pub prerequisite_status: String,
     pub estimated_duration_hours: Option<f64>,
+    /// People the job takes (work order / PM version); labour hours = duration × crew size.
+    #[serde(default)]
+    pub planned_crew_size: Option<i64>,
     pub assigned_personnel_id: Option<i64>,
     pub assigned_team_id: Option<i64>,
     pub window_start: Option<String>,
@@ -153,6 +156,10 @@ pub struct ScheduleCommitment {
     pub cost_variance_warning: i64,
     pub has_blocking_conflict: i64,
     pub nearest_feasible_window: Option<String>,
+    /// Labour hours the commitment books (`planning::load`); `None` for a commitment from before
+    /// migration 205 without an estimate (its slot length then counts).
+    #[serde(default)]
+    pub planned_labor_hours: Option<f64>,
     pub row_version: i64,
     pub created_at: String,
     pub updated_at: String,
@@ -210,8 +217,12 @@ pub struct TeamCapacityLoad {
     pub work_date: String,
     pub available_hours: f64,
     pub overtime_hours: f64,
+    /// Labour hours committed that day (`planning::load`: spread over working days, finished work
+    /// excluded).
     pub committed_hours: f64,
-    pub utilization_ratio: f64,
+    /// committed ÷ (available + overtime); `None` when the team has no hours that day (see `basis`)
+    /// — never shown as 100 %.
+    pub utilization_ratio: Option<f64>,
     /// Where `available_hours` comes from: `roster` (the members' Classes horaires minus
     /// absences, × utilisation), or why there are none: `rest_day`, `holiday`, `no_schedule`
     /// (no Classe horaire) or `no_members`.
@@ -361,6 +372,9 @@ pub struct CreateScheduleBreakInInput {
     pub new_slot_end: String,
     pub new_assigned_team_id: Option<i64>,
     pub new_assigned_personnel_id: Option<i64>,
+    /// "Unassigned" chosen explicitly: the technician is removed (otherwise kept when none is sent).
+    #[serde(default)]
+    pub clear_assignee: Option<bool>,
     pub bypass_availability: Option<bool>,
     pub override_reason: Option<String>,
     pub dangerous_override_reason: Option<String>,

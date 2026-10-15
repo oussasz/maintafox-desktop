@@ -95,6 +95,7 @@ export const WorkOrderSchema = z.object({
   closed_at: z.string().nullable(),
   cancelled_at: z.string().nullable(),
   expected_duration_hours: z.number().nullable(),
+  planned_crew_size: z.number().nullable(),
   actual_duration_hours: z.number().nullable(),
   active_labor_hours: z.number().nullable(),
   total_waiting_hours: z.number().nullable(),

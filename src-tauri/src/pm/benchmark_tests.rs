@@ -140,6 +140,7 @@ async fn active_plan(db: &DatabaseConnection, spec: PlanSpec<'_>) -> i64 {
             required_skills_json: Some("[]".to_string()),
             required_tools_json: None,
             estimated_duration_hours: None,
+            planned_crew_size: None,
             estimated_labor_cost: None,
             estimated_parts_cost: None,
             estimated_service_cost: None,

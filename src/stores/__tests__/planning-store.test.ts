@@ -100,6 +100,7 @@ function makeCommitment(overrides: Partial<ScheduleCommitment> = {}): ScheduleCo
     cost_variance_warning: 0,
     has_blocking_conflict: 0,
     nearest_feasible_window: null,
+    planned_labor_hours: 2,
     row_version: 1,
     created_at: TS,
     updated_at: TS,
@@ -151,6 +152,7 @@ function makeLoad(overrides: Partial<TeamCapacityLoad> = {}): TeamCapacityLoad {
     overtime_hours: 0,
     committed_hours: 4,
     utilization_ratio: 0.5,
+    basis: "roster",
     ...overrides,
   };
 }

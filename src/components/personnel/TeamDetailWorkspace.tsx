@@ -288,7 +288,10 @@ export function TeamDetailWorkspace({
       {
         accessorKey: "utilization_ratio",
         header: t("crews.detail.utilization"),
-        cell: ({ row }) => `${Math.round(row.original.utilization_ratio * 100)}%`,
+        cell: ({ row }) =>
+          row.original.utilization_ratio == null
+            ? "—"
+            : `${Math.round(row.original.utilization_ratio * 100)}%`,
       },
     ],
     [t],

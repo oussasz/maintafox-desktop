@@ -73,7 +73,10 @@
     "emptyBlocked": "No blocked candidates.",
     "readyHint": "Click a Ready card to commit it to the schedule.",
     "blockedHint": "Open a blocked item to clear its blockers in the work order or request.",
-    "openSource": "Open {{code}}"
+    "openSource": "Open {{code}}",
+    "estimate": "{{hours}} h × {{crew}} people",
+    "noCrew": "{{hours}} h · crew size missing",
+    "notEstimated": "Not estimated"
   },
   "blockers": {
     "missing_critical_part": "Critical parts not reserved",
@@ -81,7 +84,8 @@
     "permit_not_ready": "Permit not ready",
     "prerequisite_incomplete": "Prerequisites incomplete",
     "locked_window": "Locked window",
-    "double_booking": "Double booking"
+    "double_booking": "Double booking",
+    "not_estimated": "Not estimated"
   },
   "board": {
     "unassignedLane": "Team — not yet assigned to a person",
@@ -156,8 +160,12 @@
       "outsideHorizon": "Committed start and end must fall inside the board From–To period.",
       "assigneeNotOnCrew": "Assignee must be a member of the selected board crew.",
       "capacityExceeded": "This slot exceeds remaining crew capacity for that day ({{remaining}} h left). Choose a shorter slot or another day.",
-      "budgetInvalid": "Budget threshold must be a non-negative number."
-    }
+      "budgetInvalid": "Budget threshold must be a non-negative number.",
+      "capacityExceededDay": "Not enough capacity on {{day}}: {{share}} h needed, {{remaining}} h free."
+    },
+    "notEstimated": "This work is not estimated: enter its duration and crew size on the work order or the PM before committing it.",
+    "labourHours": "{{hours}} h of labour ({{duration}} h × {{crew}} people)",
+    "capacityByDay": "{{day}}: {{share}} h of this job, {{remaining}} h free of {{available}} h"
   },
   "gantt": {
     "capacityTitle": "Team capacity",
@@ -168,7 +176,8 @@
     "laneHeader": "Assignee",
     "overrideReasonPrompt": "Double-booking override reason",
     "defaultReason": "Schedule frozen by planner.",
-    "freezeOverlayTitle": "Locked windows"
+    "freezeOverlayTitle": "Locked windows",
+    "noCapacity": "no capacity"
   },
   "windows": {
     "title": "Production windows",
@@ -254,5 +263,9 @@
     "woNotInBacklog": "This work order is not in the planning backlog (not ready to plan yet, already committed or filtered out).",
     "openWo": "Open the work order",
     "dismiss": "Dismiss"
+  },
+  "notes": {
+    "PM_PARTS_TO_CHECK": "Parts listed on the PM: check they are available before the work.",
+    "PM_PERMIT_TO_OBTAIN": "Permit required: to obtain before the work starts."
   }
 }

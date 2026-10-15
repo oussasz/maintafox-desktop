@@ -49,6 +49,9 @@ pub struct PmPlanVersion {
     pub required_skills_json: Option<String>,
     pub required_tools_json: Option<String>,
     pub estimated_duration_hours: Option<f64>,
+    /// People the job takes; copied onto the OT the PM generates.
+    #[serde(default)]
+    pub planned_crew_size: Option<i64>,
     pub estimated_labor_cost: Option<f64>,
     pub estimated_parts_cost: Option<f64>,
     pub estimated_service_cost: Option<f64>,
@@ -112,6 +115,9 @@ pub struct CreatePmPlanVersionInput {
     pub required_skills_json: Option<String>,
     pub required_tools_json: Option<String>,
     pub estimated_duration_hours: Option<f64>,
+    /// People the job takes; copied onto the OT the PM generates.
+    #[serde(default)]
+    pub planned_crew_size: Option<i64>,
     pub estimated_labor_cost: Option<f64>,
     pub estimated_parts_cost: Option<f64>,
     pub estimated_service_cost: Option<f64>,
@@ -128,6 +134,9 @@ pub struct UpdatePmPlanVersionInput {
     pub required_skills_json: Option<String>,
     pub required_tools_json: Option<String>,
     pub estimated_duration_hours: Option<f64>,
+    /// People the job takes; copied onto the OT the PM generates.
+    #[serde(default)]
+    pub planned_crew_size: Option<i64>,
     pub estimated_labor_cost: Option<f64>,
     pub estimated_parts_cost: Option<f64>,
     pub estimated_service_cost: Option<f64>,

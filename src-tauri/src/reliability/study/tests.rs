@@ -580,6 +580,7 @@ async fn decision_creates_a_pm_revision_with_the_new_interval_then_a_work_order(
             required_skills_json: Some("[]".into()),
             required_tools_json: None,
             estimated_duration_hours: Some(3.0),
+            planned_crew_size: None,
             estimated_labor_cost: None,
             estimated_parts_cost: None,
             estimated_service_cost: None,

@@ -63,6 +63,7 @@ const version: PmPlanVersion = {
   required_skills_json: null,
   required_tools_json: null,
   estimated_duration_hours: null,
+  planned_crew_size: null,
   estimated_labor_cost: null,
   estimated_parts_cost: null,
   estimated_service_cost: null,

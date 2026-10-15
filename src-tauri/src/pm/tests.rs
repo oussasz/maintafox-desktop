@@ -86,6 +86,7 @@ async fn create_plan_with_published_version(
             required_skills_json: Some("[]".to_string()),
             required_tools_json: None,
             estimated_duration_hours: None,
+            planned_crew_size: None,
             estimated_labor_cost: None,
             estimated_parts_cost: None,
             estimated_service_cost: None,
@@ -853,6 +854,7 @@ async fn planning_readiness_projection_returns_blockers_without_scheduler_side_e
             required_skills_json: None,
             required_tools_json: None,
             estimated_duration_hours: None,
+            planned_crew_size: None,
             estimated_labor_cost: None,
             estimated_parts_cost: None,
             estimated_service_cost: None,
@@ -969,6 +971,7 @@ async fn governance_kpi_report_returns_transparent_derivations() {
             required_skills_json: Some("[]".to_string()),
             required_tools_json: None,
             estimated_duration_hours: Some(4.0),
+            planned_crew_size: None,
             estimated_labor_cost: None,
             estimated_parts_cost: None,
             estimated_service_cost: None,
@@ -1315,6 +1318,7 @@ async fn meter_reading_hook_generates_for_equipment_scope() {
             required_skills_json: Some("[]".to_string()),
             required_tools_json: None,
             estimated_duration_hours: None,
+            planned_crew_size: None,
             estimated_labor_cost: None,
             estimated_parts_cost: None,
             estimated_service_cost: None,
@@ -1617,6 +1621,7 @@ async fn occurrence_with_generated_wo(db: &DatabaseConnection, code: &str) -> cr
             required_skills_json: Some("[]".to_string()),
             required_tools_json: Some(r#"["Pompe à graisse"]"#.to_string()),
             estimated_duration_hours: Some(1.5),
+            planned_crew_size: Some(2),
             estimated_labor_cost: None,
             estimated_parts_cost: None,
             estimated_service_cost: None,
@@ -1714,6 +1719,7 @@ async fn generated_work_order_carries_the_pm_version_content() {
     assert!(description.contains("Outillage requis :\n- Pompe à graisse"));
     assert!(description.contains("Arrêt de l'équipement requis."));
     assert_eq!(wo.expected_duration_hours, Some(1.5));
+    assert_eq!(wo.planned_crew_size, Some(2), "the PM crew size is copied onto the OT");
     assert!(wo.notes.is_none(), "no generated English note on the OT");
 
     let permit = count_for(&db, "SELECT requires_permit AS c FROM work_orders WHERE id = ?", wo_id).await;

@@ -213,6 +213,7 @@ mod tests {
                 shift_class_version_id: None,
                 clear_shift: false,
                 expected_duration_hours: Some(8.0),
+                planned_crew_size: None,
                 planned_downtime_hours: None,
                 urgency_code: None,
             },

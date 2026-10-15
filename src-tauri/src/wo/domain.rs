@@ -126,6 +126,8 @@ pub struct WorkOrder {
     pub cancelled_at: Option<String>,
     // Duration accumulators
     pub expected_duration_hours: Option<f64>,
+    /// People the job takes (planned on the OT); planning books duration × crew size.
+    pub planned_crew_size: Option<i64>,
     pub actual_duration_hours: Option<f64>,
     pub active_labor_hours: Option<f64>,
     pub total_waiting_hours: Option<f64>,
@@ -454,6 +456,9 @@ pub fn map_work_order(row: &QueryResult) -> AppResult<WorkOrder> {
         expected_duration_hours: row
             .try_get::<Option<f64>>("", "expected_duration_hours")
             .map_err(|e| decode_err("expected_duration_hours", e))?,
+        planned_crew_size: row
+            .try_get::<Option<i64>>("", "planned_crew_size")
+            .map_err(|e| decode_err("planned_crew_size", e))?,
         actual_duration_hours: row
             .try_get::<Option<f64>>("", "actual_duration_hours")
             .map_err(|e| decode_err("actual_duration_hours", e))?,

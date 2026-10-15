@@ -162,6 +162,7 @@ const PmPlanVersionSchema = z.object({
   required_skills_json: z.string().nullable(),
   required_tools_json: z.string().nullable(),
   estimated_duration_hours: z.number().nullable(),
+  planned_crew_size: z.number().nullable(),
   estimated_labor_cost: z.number().nullable(),
   estimated_parts_cost: z.number().nullable(),
   estimated_service_cost: z.number().nullable(),
