@@ -1,49 +1,74 @@
 /**
- * SchedulePatternEditor — weekly calendar body for ORG.SCHEDULE_CLASS.
- * Hosted in EntityFormDialog (wide) via SchedulePatternDialog.
- * Storage/IPC unchanged: getSchedulePattern / upsertSchedulePattern.
+ * Classe horaire (ORG.SCHEDULE_CLASS) timetable — opened from the reference data editor.
+ *
+ * A Classe horaire is versioned (`personnel::timetable`): each version applies from a date and
+ * describes a cycle (a week, or an N-day rotation from a start date) with each day's shift,
+ * break and net hours, whether it runs continuously (3×8, 24/7: through the site's rest days
+ * and holidays), and the utilisation factor — the share of shift time available for work orders.
+ * A version in force is never changed: the planner adds one from today or later, so past
+ * capacity and plans stay as they were. Versions created by the upgrade are flagged for review.
  */
-
-import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { EntityFormDialog, EntityFormFooter } from "@/components/entity-form";
 import {
-  applyTemplate,
-  computeMetrics,
-  DAY_KEYS,
-  dayDurationHours,
-  defaultEditorDays,
-  fromScheduleDetails,
-  intervalBarSegments,
-  SCHEDULE_TEMPLATE_IDS,
-  toScheduleDetails,
-  updateDayInterval,
-  updateDayMode,
-  validateEditorDays,
-  type DayOfWeek,
-  type EditorDay,
-  type ScheduleTemplateId,
-} from "@/components/lookups/schedule-pattern-editor";
+  MAX_CYCLE_DAYS,
+  TIMETABLE_TEMPLATE_IDS,
+  type TimetableDraft,
+  WEEK_DAYS,
+  isoWeekday,
+  netMinutes,
+  plusDaysIso,
+  resizeCycle,
+  templateDraft,
+  timetableMetrics,
+  validateTimetable,
+} from "@/components/lookups/timetable-editor";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { StatusChip } from "@/components/ui/status-chip";
 import { TimeInput } from "@/components/ui/time-input";
 import { mfCard } from "@/design-system/tokens";
+import { mfTone } from "@/design-system/tone";
 import { cn } from "@/lib/utils";
-import { getSchedulePattern, upsertSchedulePattern } from "@/services/reference-service";
-import { referenceErrorText } from "@/stores/reference-error-text";
+import {
+  type ScheduleClassVersion,
+  type ScheduleCycleDay,
+  confirmScheduleClassReview,
+  listScheduleClassVersions,
+  listSiteWorkWeeks,
+  upsertScheduleClassVersion,
+} from "@/services/workforce-service";
+import { formatOrgIpcError } from "@/utils/errors";
 import type { ReferenceValue } from "@shared/ipc-types";
 
-export interface SchedulePatternEditorProps {
-  value: ReferenceValue;
-  canMutate: boolean;
-  onSaved?: () => void;
-  /** Called when save completes successfully so the dialog can close. */
-  onRequestClose?: () => void;
-  /** Expose chrome state to the dialog footer. */
-  onChromeChange?: (chrome: SchedulePatternChromeState) => void;
+function todayIso(): string {
+  const d = new Date();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${m}-${day}`;
+}
+
+/** Version in force on `day` (versions sorted oldest first). */
+function versionOn(
+  versions: ScheduleClassVersion[],
+  day: string,
+): ScheduleClassVersion | undefined {
+  return [...versions].reverse().find((v) => v.effective_from <= day);
+}
+
+function draftFrom(v: ScheduleClassVersion): TimetableDraft {
+  return {
+    kind: v.rotation_start_date ? "rotation" : "week",
+    cycleLength: v.cycle_length_days,
+    rotationStart: v.rotation_start_date ?? todayIso(),
+    days: v.days.map((d) => ({ ...d })),
+    isContinuous: v.is_continuous,
+  };
 }
 
 export interface SchedulePatternChromeState {
@@ -53,355 +78,569 @@ export interface SchedulePatternChromeState {
   save: () => void;
 }
 
-export function SchedulePatternEditor({
+export interface ClasseHoraireEditorProps {
+  value: ReferenceValue;
+  canMutate: boolean;
+  onSaved?: () => void;
+  onChromeChange?: (chrome: SchedulePatternChromeState) => void;
+}
+
+export function ClasseHoraireEditor({
   value,
   canMutate,
   onSaved,
-  onRequestClose,
   onChromeChange,
-}: SchedulePatternEditorProps) {
-  const { t } = useTranslation("reference");
+}: ClasseHoraireEditorProps) {
+  const { t, i18n } = useTranslation("personnel");
+  const today = todayIso();
+  const [versions, setVersions] = useState<ScheduleClassVersion[]>([]);
+  const [siteRestDays, setSiteRestDays] = useState<number[]>([]);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [error, setError] = useState<string | null>(null);
-  const [shiftPatternCode, setShiftPatternCode] = useState(value.code);
-  const [isContinuous, setIsContinuous] = useState(false);
-  const [days, setDays] = useState<EditorDay[]>(defaultEditorDays);
-  const [selectedDay, setSelectedDay] = useState<DayOfWeek>(1);
-  const [activeTemplate, setActiveTemplate] = useState<ScheduleTemplateId | null>("normal_day");
+  const [saving, setSaving] = useState(false);
+  const [editing, setEditing] = useState<ScheduleClassVersion | null>(null);
+  const [effectiveFrom, setEffectiveFrom] = useState(today);
+  const [utilisation, setUtilisation] = useState("");
+  const [note, setNote] = useState("");
+  const [draft, setDraft] = useState<TimetableDraft>(() => templateDraft("day_week", today));
+
+  const weekdayFmt = useMemo(
+    () => new Intl.DateTimeFormat(i18n.language, { weekday: "long", timeZone: "UTC" }),
+    [i18n.language],
+  );
+  const dateFmt = useMemo(
+    () => new Intl.DateTimeFormat(i18n.language, { dateStyle: "medium", timeZone: "UTC" }),
+    [i18n.language],
+  );
+  const num = useMemo(
+    () => new Intl.NumberFormat(i18n.language, { maximumFractionDigits: 1 }),
+    [i18n.language],
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
-    setError(null);
+    setLoadError(null);
     try {
-      const pattern = await getSchedulePattern(value.id);
-      setShiftPatternCode(pattern.shift_pattern_code);
-      setIsContinuous(pattern.is_continuous);
-      setDays(
-        pattern.details.length === 7 ? fromScheduleDetails(pattern.details) : defaultEditorDays(),
-      );
-      setActiveTemplate("personalized");
-      setSelectedDay(1);
+      const [rows, weeks] = await Promise.all([
+        listScheduleClassVersions(value.id),
+        listSiteWorkWeeks(),
+      ]);
+      setVersions(rows);
+      const allSites = weeks
+        .filter((w) => w.entity_id == null && w.effective_from <= today)
+        .sort((a, b) => a.effective_from.localeCompare(b.effective_from));
+      setSiteRestDays(allSites.at(-1)?.weekend_days ?? []);
+      const current = versionOn(rows, today) ?? rows.at(-1);
+      if (current) {
+        setDraft(draftFrom(current));
+        setUtilisation(String(current.utilisation_percent));
+      }
     } catch (e) {
-      setError(referenceErrorText(e));
-      setDays(defaultEditorDays());
+      setLoadError(e);
     } finally {
       setLoading(false);
     }
-  }, [value.id]);
+  }, [today, value.id]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  const metrics = useMemo(() => computeMetrics(days, selectedDay), [days, selectedDay]);
-  const validation = useMemo(() => validateEditorDays(days), [days]);
+  const utilisationValue = utilisation.trim() === "" ? null : Number(utilisation);
+  const issue = validateTimetable(draft, utilisationValue);
+  const metrics = timetableMetrics(draft.days, utilisationValue);
+  const toReview = versions.some((v) => v.review_status === "to_review");
+  const dateOk = /^\d{4}-\d{2}-\d{2}$/.test(effectiveFrom) && effectiveFrom >= today;
 
-  const markPersonalized = () => setActiveTemplate("personalized");
-
-  const handleApplyTemplate = (id: ScheduleTemplateId) => {
-    if (!canMutate) return;
-    if (id === "personalized") {
-      setActiveTemplate("personalized");
-      return;
-    }
-    const applied = applyTemplate(id);
-    setDays(applied.days);
-    setIsContinuous(applied.isContinuous);
-    setActiveTemplate(id);
+  const startEdit = (v: ScheduleClassVersion | null) => {
+    setEditing(v);
     setError(null);
-  };
-
-  const patchDay = (next: EditorDay) => {
-    setDays((prev) => prev.map((d) => (d.dayOfWeek === next.dayOfWeek ? next : d)));
-    markPersonalized();
-  };
-
-  const handleSave = useCallback(async () => {
-    if (!canMutate) return;
-    const check = validateEditorDays(days);
-    if (!check.valid) {
-      setError(
-        check.errorKey
-          ? String(t(`schedulePattern.validation.${check.errorKey}`))
-          : String(t("schedulePattern.validation.generic")),
-      );
-      return;
+    if (v) {
+      setDraft(draftFrom(v));
+      setEffectiveFrom(v.effective_from);
+      setUtilisation(String(v.utilisation_percent));
+      setNote(v.note ?? "");
+    } else {
+      setEffectiveFrom(today);
+      setNote("");
     }
+  };
+
+  const save = useCallback(async () => {
+    if (!canMutate || issue || !dateOk || utilisationValue == null) return;
     setSaving(true);
     setError(null);
     try {
-      await upsertSchedulePattern({
+      await upsertScheduleClassVersion({
+        id: editing?.id ?? null,
+        expected_row_version: editing?.row_version ?? null,
         reference_value_id: value.id,
-        shift_pattern_code: shiftPatternCode.trim() || value.code,
-        is_continuous: isContinuous,
-        nominal_hours_per_day: metrics.nominalHoursPerDay || 8,
-        details: toScheduleDetails(days),
+        effective_from: effectiveFrom,
+        cycle_length_days: draft.cycleLength,
+        rotation_start_date: draft.kind === "rotation" ? draft.rotationStart : null,
+        days: draft.days,
+        is_continuous: draft.isContinuous,
+        utilisation_percent: utilisationValue,
+        note: note.trim() || null,
       });
+      setEditing(null);
+      await load();
       onSaved?.();
-      onRequestClose?.();
     } catch (e) {
-      setError(referenceErrorText(e));
+      setError(formatOrgIpcError(e));
     } finally {
       setSaving(false);
     }
   }, [
     canMutate,
-    days,
-    isContinuous,
-    metrics.nominalHoursPerDay,
-    onRequestClose,
+    dateOk,
+    draft,
+    editing,
+    effectiveFrom,
+    issue,
+    load,
+    note,
     onSaved,
-    shiftPatternCode,
-    t,
-    value.code,
+    utilisationValue,
     value.id,
   ]);
-
-  const canSave = canMutate && !saving && !loading && validation.valid;
 
   useEffect(() => {
     onChromeChange?.({
       saving,
       loading,
-      canSave,
-      save: () => {
-        void handleSave();
-      },
+      canSave: canMutate && !saving && !loading && issue == null && dateOk,
+      save: () => void save(),
     });
-  }, [canSave, handleSave, loading, onChromeChange, saving]);
+  }, [canMutate, dateOk, issue, loading, onChromeChange, save, saving]);
 
-  const onWeekKeyDown = (e: KeyboardEvent) => {
-    if (e.key === "ArrowRight" || e.key === "ArrowDown") {
-      e.preventDefault();
-      setSelectedDay((d) => (d === 7 ? 1 : ((d + 1) as DayOfWeek)));
-    } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
-      e.preventDefault();
-      setSelectedDay((d) => (d === 1 ? 7 : ((d - 1) as DayOfWeek)));
+  const confirmReview = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      setVersions(await confirmScheduleClassReview(value.id));
+    } catch (e) {
+      setError(formatOrgIpcError(e));
+    } finally {
+      setSaving(false);
     }
   };
 
-  if (loading) {
-    return <p className="text-sm text-text-muted">{t("schedulePattern.loading")}</p>;
-  }
+  const patchDay = (next: ScheduleCycleDay) =>
+    setDraft((d) => ({
+      ...d,
+      days: d.days.map((x) => (x.cycle_day === next.cycle_day ? next : x)),
+    }));
+
+  const dayLabel = (cycleDay: number) => {
+    if (draft.kind === "week") {
+      // 2024-01-01 is a Monday: cycle day 1 … 7 = Monday … Sunday.
+      return weekdayFmt.format(new Date(Date.UTC(2024, 0, cycleDay)));
+    }
+    const valid = /^\d{4}-\d{2}-\d{2}$/.test(draft.rotationStart);
+    return t("timetable.editor.rotationDay", {
+      day: cycleDay,
+      date: valid
+        ? dateFmt.format(new Date(`${plusDaysIso(draft.rotationStart, cycleDay - 1)}T00:00:00Z`))
+        : "—",
+    });
+  };
+
+  const worksOnSiteRestDay =
+    !draft.isContinuous &&
+    siteRestDays.length > 0 &&
+    draft.days.some((d) => {
+      if (d.is_rest_day) return false;
+      const weekday =
+        draft.kind === "week"
+          ? d.cycle_day
+          : isoWeekday(plusDaysIso(draft.rotationStart, d.cycle_day - 1));
+      return siteRestDays.includes(weekday);
+    });
+
+  if (loading && versions.length === 0) return <LoadingState />;
+  if (loadError) return <ErrorState error={loadError} onRetry={() => void load()} />;
 
   return (
     <div className="space-y-4">
-      <div className={cn(mfCard.panelMuted, "grid grid-cols-2 gap-3 sm:grid-cols-4")}>
-        <Metric
-          label={t("schedulePattern.metrics.workingDays")}
-          value={String(metrics.workingDays)}
-        />
-        <Metric label={t("schedulePattern.metrics.restDays")} value={String(metrics.restDays)} />
-        <Metric
-          label={t("schedulePattern.metrics.weeklyHours")}
-          value={t("schedulePattern.metrics.hoursValue", {
-            hours: metrics.weeklyHours,
-          })}
-        />
-        <Metric
-          label={t("schedulePattern.metrics.dayDuration")}
-          value={
-            days.find((d) => d.dayOfWeek === selectedDay)?.mode === "rest"
-              ? t("schedulePattern.restDayLabel")
-              : t("schedulePattern.metrics.hoursValue", {
-                  hours: metrics.selectedDayHours,
-                })
-          }
-        />
-      </div>
-
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div className="grid gap-1.5">
-          <Label htmlFor="shift-pattern-code">{t("schedulePattern.shiftPatternCode")}</Label>
-          <Input
-            id="shift-pattern-code"
-            value={shiftPatternCode}
-            disabled={!canMutate}
-            onChange={(e) => {
-              setShiftPatternCode(e.target.value);
-              markPersonalized();
-            }}
-            className="h-9"
-          />
-        </div>
-        <div className="flex items-end gap-2 pb-1">
-          <Checkbox
-            id="is-continuous"
-            checked={isContinuous}
-            disabled={!canMutate}
-            onCheckedChange={(v) => {
-              setIsContinuous(v === true);
-              markPersonalized();
-            }}
-          />
-          <Label htmlFor="is-continuous">{t("schedulePattern.isContinuous")}</Label>
-        </div>
-      </div>
-
-      <div className="space-y-1.5">
-        <p className="text-xs font-medium text-text-muted">
-          {t("schedulePattern.templates.title")}
-        </p>
-        <div
-          className="flex flex-wrap gap-1.5"
-          role="group"
-          aria-label={t("schedulePattern.templates.title")}
-        >
-          {SCHEDULE_TEMPLATE_IDS.map((id) => (
+      {toReview ? (
+        <div role="status" className={cn("rounded-md border p-3 text-sm", mfTone.attention.panel)}>
+          <p className="font-medium text-text-primary">{t("timetable.review.classTitle")}</p>
+          <p className="mt-1 text-text-secondary">{t("timetable.review.classBody")}</p>
+          {canMutate ? (
             <Button
-              key={id}
-              type="button"
               size="sm"
-              variant={activeTemplate === id ? "default" : "outline"}
-              className="h-7 text-xs"
-              disabled={!canMutate && id !== "personalized"}
-              onClick={() => handleApplyTemplate(id)}
+              variant="outline"
+              className="mt-2"
+              disabled={saving}
+              onClick={() => void confirmReview()}
             >
-              {t(`schedulePattern.templates.${id}`)}
+              {t("timetable.review.confirm")}
             </Button>
-          ))}
+          ) : null}
         </div>
-      </div>
-
-      <div className={cn(mfCard.insetCanvas, "min-h-0 space-y-1 p-3")}>
-        <p className="mb-2 text-xs font-medium text-text-muted">
-          {t("schedulePattern.weekCanvas")}
-        </p>
-        <div
-          role="listbox"
-          aria-label={t("schedulePattern.weekCanvas")}
-          aria-activedescendant={`schedule-day-${selectedDay}`}
-          tabIndex={0}
-          onKeyDown={onWeekKeyDown}
-          className="space-y-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
-        >
-          {days.map((day) => {
-            const isSelected = day.dayOfWeek === selectedDay;
-            const dayName = t(`schedulePattern.days.${DAY_KEYS[day.dayOfWeek - 1]}`);
-            const interval = day.intervals[0];
-            const segments =
-              day.mode === "work" && interval
-                ? intervalBarSegments(interval.start, interval.end)
-                : [];
-            const hours = day.mode === "work" ? formatHours(dayDurationHours(day)) : null;
-
-            return (
-              <div
-                key={day.dayOfWeek}
-                id={`schedule-day-${day.dayOfWeek}`}
-                role="option"
-                aria-selected={isSelected}
-                aria-label={
-                  day.mode === "rest"
-                    ? t("schedulePattern.dayAriaRest", { day: dayName })
-                    : t("schedulePattern.dayAriaWork", {
-                        day: dayName,
-                        start: interval?.start ?? "",
-                        end: interval?.end ?? "",
-                      })
-                }
-                className={cn(
-                  "flex w-full flex-wrap items-center gap-2 rounded-md border px-2 py-1.5 text-left transition-colors",
-                  "focus-within:ring-2 focus-within:ring-primary/40",
-                  isSelected
-                    ? "border-primary/50 bg-primary/5"
-                    : "cursor-pointer border-transparent hover:bg-surface-1",
-                  day.mode === "rest" && "bg-surface-2/60",
-                )}
-                onClick={() => setSelectedDay(day.dayOfWeek)}
-              >
-                <span className="w-16 shrink-0 text-xs font-medium text-text-primary">
-                  {t(`schedulePattern.daysShort.${DAY_KEYS[day.dayOfWeek - 1]}`)}
-                </span>
-                <div className="relative h-6 min-w-0 flex-1 rounded bg-surface-2/80">
-                  {day.mode === "rest" ? (
-                    <div className="flex h-full items-center justify-center text-[10px] text-text-muted">
-                      {t("schedulePattern.restDayLabel")}
-                    </div>
-                  ) : (
-                    segments.map((seg, i) => (
-                      <div
-                        key={i}
-                        className="absolute top-0.5 bottom-0.5 rounded-sm bg-primary"
-                        style={{ left: `${seg.leftPct}%`, width: `${seg.widthPct}%` }}
-                      />
-                    ))
-                  )}
-                </div>
-
-                {isSelected ? (
-                  <div
-                    className="flex shrink-0 flex-wrap items-center gap-2"
-                    onClick={(e) => e.stopPropagation()}
-                    onKeyDown={(e) => e.stopPropagation()}
-                  >
-                    <label className="flex items-center gap-1.5 text-xs text-text-primary">
-                      <input
-                        type="checkbox"
-                        checked={day.mode === "rest"}
-                        disabled={!canMutate}
-                        aria-label={t("schedulePattern.mode.rest")}
-                        className="h-3.5 w-3.5 accent-primary"
-                        onChange={(e) =>
-                          patchDay(updateDayMode(day, e.target.checked ? "rest" : "work"))
-                        }
-                      />
-                      {t("schedulePattern.restDay")}
-                    </label>
-                    {day.mode === "work" ? (
-                      <>
-                        <TimeInput
-                          id={`schedule-start-${day.dayOfWeek}`}
-                          value={interval?.start ?? ""}
-                          disabled={!canMutate}
-                          aria-label={t("schedulePattern.start")}
-                          className="h-8 w-[7.5rem]"
-                          onChange={(v) => patchDay(updateDayInterval(day, { start: v }))}
-                        />
-                        <span className="text-xs text-text-muted">–</span>
-                        <TimeInput
-                          id={`schedule-end-${day.dayOfWeek}`}
-                          value={interval?.end ?? ""}
-                          disabled={!canMutate}
-                          aria-label={t("schedulePattern.end")}
-                          className="h-8 w-[7.5rem]"
-                          onChange={(v) => patchDay(updateDayInterval(day, { end: v }))}
-                        />
-                      </>
-                    ) : (
-                      <span className="text-xs text-text-muted">
-                        {t("schedulePattern.restDayLabel")}
-                      </span>
-                    )}
-                  </div>
-                ) : (
-                  <span className="w-20 shrink-0 text-right font-mono text-[10px] tabular-nums text-text-muted">
-                    {day.mode === "rest" ? "—" : `${interval?.start ?? ""}–${interval?.end ?? ""}`}
-                  </span>
-                )}
-
-                <span className="w-10 shrink-0 text-right text-[10px] text-text-muted">
-                  {hours != null ? `${hours}h` : ""}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {!validation.valid && validation.errorKey ? (
-        <p className="text-xs text-status-danger" role="alert">
-          {t(`schedulePattern.validation.${validation.errorKey}`)}
-        </p>
       ) : null}
+
+      <section className="space-y-2">
+        <h3 className="text-sm font-semibold text-text-primary">{t("timetable.editor.history")}</h3>
+        {versions.length === 0 ? (
+          <p className="text-sm text-text-muted">{t("timetable.editor.noVersion")}</p>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-surface-border text-left text-xs text-text-muted">
+                <th className="py-1.5 pr-2 font-medium">{t("timetable.editor.from")}</th>
+                <th className="py-1.5 pr-2 font-medium">{t("timetable.editor.cycle")}</th>
+                <th className="py-1.5 pr-2 text-right font-medium">
+                  {t("timetable.editor.netHours")}
+                </th>
+                <th className="py-1.5 pr-2 text-right font-medium">
+                  {t("timetable.editor.utilisation")}
+                </th>
+                <th className="py-1.5 pr-2 font-medium">{t("timetable.editor.status")}</th>
+                <th className="py-1.5 font-medium">
+                  <span className="sr-only">{t("timetable.editor.edit")}</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {versions.map((v) => {
+                const inForce = versionOn(versions, today)?.id === v.id;
+                const planned = v.effective_from > today;
+                return (
+                  <tr key={v.id} className="border-b border-surface-border/60">
+                    <td className="py-1.5 pr-2">
+                      {dateFmt.format(new Date(`${v.effective_from}T00:00:00Z`))}
+                    </td>
+                    <td className="py-1.5 pr-2">
+                      {v.rotation_start_date
+                        ? t("timetable.editor.rotationOf", { days: v.cycle_length_days })
+                        : t("timetable.editor.weekly")}
+                      {v.is_continuous ? ` · ${t("timetable.editor.continuousShort")}` : ""}
+                    </td>
+                    <td className="py-1.5 pr-2 text-right tabular-nums">
+                      {t("timetable.editor.hoursPerCycle", {
+                        hours: num.format(v.net_hours_per_cycle),
+                        days: v.working_days_per_cycle,
+                      })}
+                    </td>
+                    <td className="py-1.5 pr-2 text-right tabular-nums">
+                      {num.format(v.utilisation_percent)} %
+                    </td>
+                    <td className="py-1.5 pr-2">
+                      <span className="flex flex-wrap gap-1">
+                        <StatusChip
+                          label={t(
+                            inForce
+                              ? "timetable.editor.inForce"
+                              : planned
+                                ? "timetable.editor.planned"
+                                : "timetable.editor.past",
+                          )}
+                          tone={inForce ? "success" : planned ? "info" : "neutral"}
+                          dot
+                        />
+                        {v.review_status === "to_review" ? (
+                          <StatusChip label={t("timetable.review.chip")} tone="attention" dot />
+                        ) : null}
+                      </span>
+                    </td>
+                    <td className="py-1.5 text-right">
+                      {planned && canMutate ? (
+                        <Button size="sm" variant="ghost" onClick={() => startEdit(v)}>
+                          {t("timetable.editor.edit")}
+                        </Button>
+                      ) : null}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </section>
+
+      {canMutate ? (
+        <section className={cn(mfCard.panelMuted, "space-y-3")}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold text-text-primary">
+              {editing
+                ? t("timetable.editor.editPlanned")
+                : versions.length === 0
+                  ? t("timetable.editor.firstVersion")
+                  : t("timetable.editor.newVersion")}
+            </h3>
+            {editing ? (
+              <Button size="sm" variant="ghost" onClick={() => startEdit(null)}>
+                {t("timetable.editor.cancelEdit")}
+              </Button>
+            ) : null}
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-1.5">
+              <Label htmlFor="tt-from">{t("timetable.editor.effectiveFrom")}</Label>
+              <Input
+                id="tt-from"
+                type="date"
+                min={today}
+                value={effectiveFrom}
+                onChange={(e) => setEffectiveFrom(e.target.value)}
+                className="h-9"
+              />
+              <p className="text-xs text-text-muted">{t("timetable.editor.effectiveFromHelp")}</p>
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="tt-util">{t("timetable.editor.utilisationLabel")}</Label>
+              <Input
+                id="tt-util"
+                type="number"
+                min={1}
+                max={100}
+                step={1}
+                inputMode="decimal"
+                placeholder={t("timetable.editor.utilisationPlaceholder")}
+                value={utilisation}
+                aria-describedby="tt-util-help"
+                onChange={(e) => setUtilisation(e.target.value)}
+                className="h-9 w-32"
+              />
+              <p id="tt-util-help" className="text-xs text-text-muted">
+                {t("timetable.editor.utilisationHelp")}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-start gap-2">
+            <Checkbox
+              id="tt-continuous"
+              checked={draft.isContinuous}
+              onCheckedChange={(v) => setDraft((d) => ({ ...d, isContinuous: v === true }))}
+            />
+            <div>
+              <Label htmlFor="tt-continuous">{t("timetable.editor.continuous")}</Label>
+              <p className="text-xs text-text-muted">{t("timetable.editor.continuousHelp")}</p>
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <p className="text-xs font-medium text-text-muted">{t("timetable.editor.templates")}</p>
+            <div
+              className="flex flex-wrap gap-1.5"
+              role="group"
+              aria-label={t("timetable.editor.templates")}
+            >
+              {TIMETABLE_TEMPLATE_IDS.map((id) => (
+                <Button
+                  key={id}
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs"
+                  onClick={() => setDraft(templateDraft(id, draft.rotationStart))}
+                >
+                  {t(`timetable.editor.template.${id}`)}
+                </Button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="flex gap-1.5" role="group" aria-label={t("timetable.editor.cycle")}>
+              <Button
+                type="button"
+                size="sm"
+                variant={draft.kind === "week" ? "default" : "outline"}
+                aria-pressed={draft.kind === "week"}
+                onClick={() =>
+                  setDraft((d) => ({
+                    ...d,
+                    kind: "week",
+                    cycleLength: WEEK_DAYS,
+                    days: resizeCycle(d.days, WEEK_DAYS),
+                  }))
+                }
+              >
+                {t("timetable.editor.weekly")}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={draft.kind === "rotation" ? "default" : "outline"}
+                aria-pressed={draft.kind === "rotation"}
+                onClick={() => setDraft((d) => ({ ...d, kind: "rotation" }))}
+              >
+                {t("timetable.editor.rotation")}
+              </Button>
+            </div>
+            {draft.kind === "rotation" ? (
+              <>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="tt-cycle">{t("timetable.editor.cycleLength")}</Label>
+                  <Input
+                    id="tt-cycle"
+                    type="number"
+                    min={1}
+                    max={MAX_CYCLE_DAYS}
+                    value={draft.cycleLength}
+                    onChange={(e) => {
+                      const n = Number(e.target.value);
+                      if (!Number.isFinite(n) || n < 1) return;
+                      const length = Math.min(MAX_CYCLE_DAYS, Math.trunc(n));
+                      setDraft((d) => ({
+                        ...d,
+                        cycleLength: length,
+                        days: resizeCycle(d.days, length),
+                      }));
+                    }}
+                    className="h-9 w-24"
+                  />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="tt-rotation-start">{t("timetable.editor.rotationStart")}</Label>
+                  <Input
+                    id="tt-rotation-start"
+                    type="date"
+                    value={draft.rotationStart}
+                    onChange={(e) => setDraft((d) => ({ ...d, rotationStart: e.target.value }))}
+                    className="h-9"
+                  />
+                </div>
+              </>
+            ) : null}
+          </div>
+
+          <div className={cn(mfCard.insetCanvas, "overflow-x-auto p-2")}>
+            <table className="w-full min-w-[34rem] text-sm">
+              <thead>
+                <tr className="text-left text-xs text-text-muted">
+                  <th className="py-1 pr-2 font-medium">{t("timetable.editor.day")}</th>
+                  <th className="py-1 pr-2 font-medium">{t("timetable.editor.restDay")}</th>
+                  <th className="py-1 pr-2 font-medium">{t("timetable.editor.start")}</th>
+                  <th className="py-1 pr-2 font-medium">{t("timetable.editor.end")}</th>
+                  <th className="py-1 pr-2 font-medium">{t("timetable.editor.breakMinutes")}</th>
+                  <th className="py-1 text-right font-medium">{t("timetable.editor.net")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {draft.days.map((d) => {
+                  const label = dayLabel(d.cycle_day);
+                  return (
+                    <tr key={d.cycle_day} className={cn(d.is_rest_day && "text-text-muted")}>
+                      <td className="py-1 pr-2 capitalize">{label}</td>
+                      <td className="py-1 pr-2">
+                        <Checkbox
+                          checked={d.is_rest_day}
+                          aria-label={t("timetable.editor.restDayOf", { day: label })}
+                          onCheckedChange={(v) => patchDay({ ...d, is_rest_day: v === true })}
+                        />
+                      </td>
+                      <td className="py-1 pr-2">
+                        <TimeInput
+                          value={d.shift_start}
+                          disabled={d.is_rest_day}
+                          aria-label={t("timetable.editor.startOf", { day: label })}
+                          className="h-8 w-[7.5rem]"
+                          onChange={(v) => patchDay({ ...d, shift_start: v })}
+                        />
+                      </td>
+                      <td className="py-1 pr-2">
+                        <TimeInput
+                          value={d.shift_end}
+                          disabled={d.is_rest_day}
+                          aria-label={t("timetable.editor.endOf", { day: label })}
+                          className="h-8 w-[7.5rem]"
+                          onChange={(v) => patchDay({ ...d, shift_end: v })}
+                        />
+                      </td>
+                      <td className="py-1 pr-2">
+                        <Input
+                          type="number"
+                          min={0}
+                          step={5}
+                          value={d.break_minutes}
+                          disabled={d.is_rest_day}
+                          aria-label={t("timetable.editor.breakOf", { day: label })}
+                          className="h-8 w-20"
+                          onChange={(e) => {
+                            const n = Number(e.target.value);
+                            patchDay({
+                              ...d,
+                              break_minutes: Number.isFinite(n) && n >= 0 ? Math.trunc(n) : 0,
+                            });
+                          }}
+                        />
+                      </td>
+                      <td className="py-1 text-right tabular-nums">
+                        {d.is_rest_day ? "—" : `${num.format(netMinutes(d) / 60)} h`}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <dl className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
+            <div>
+              <dt className="text-xs text-text-muted">{t("timetable.editor.workingDays")}</dt>
+              <dd className="font-semibold">{metrics.workingDays}</dd>
+            </div>
+            <div>
+              <dt className="text-xs text-text-muted">{t("timetable.editor.netHoursCycle")}</dt>
+              <dd className="font-semibold">{num.format(metrics.netHoursPerCycle)} h</dd>
+            </div>
+            <div>
+              <dt className="text-xs text-text-muted">
+                {t("timetable.editor.plannableHoursCycle")}
+              </dt>
+              <dd className="font-semibold">
+                {metrics.plannableHoursPerCycle == null
+                  ? "—"
+                  : `${num.format(metrics.plannableHoursPerCycle)} h`}
+              </dd>
+            </div>
+          </dl>
+
+          {worksOnSiteRestDay ? (
+            <p className={cn("rounded border p-2 text-xs", mfTone.info.panel)} role="note">
+              {t("timetable.editor.siteRestWarning", {
+                days: siteRestDays
+                  .map((wd) => weekdayFmt.format(new Date(Date.UTC(2024, 0, wd))))
+                  .join(", "),
+              })}
+            </p>
+          ) : null}
+
+          <div className="grid gap-1.5">
+            <Label htmlFor="tt-note">{t("timetable.editor.note")}</Label>
+            <Input
+              id="tt-note"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              className="h-9"
+            />
+          </div>
+
+          {issue ? (
+            <p className={cn("text-xs", mfTone.danger.text)} role="alert">
+              {t(`timetable.editor.issues.${issue}`)}
+            </p>
+          ) : !dateOk ? (
+            <p className={cn("text-xs", mfTone.danger.text)} role="alert">
+              {t("timetable.editor.issues.date")}
+            </p>
+          ) : null}
+        </section>
+      ) : (
+        <p className="text-xs text-text-muted">{t("timetable.editor.readOnly")}</p>
+      )}
+
       {error ? (
-        <p className="text-xs text-status-danger" role="alert">
+        <p className={cn("text-xs", mfTone.danger.text)} role="alert">
           {error}
         </p>
-      ) : null}
-      {!canMutate ? (
-        <p className="text-xs text-text-muted">{t("schedulePattern.readOnly")}</p>
       ) : null}
     </div>
   );
@@ -415,7 +654,7 @@ interface SchedulePatternDialogProps {
   onSaved?: () => void;
 }
 
-/** Centered wide entity dialog hosting the weekly calendar editor. */
+/** Wide entity dialog hosting a Classe horaire's timetable. */
 export function SchedulePatternDialog({
   value,
   open,
@@ -423,7 +662,7 @@ export function SchedulePatternDialog({
   canMutate,
   onSaved,
 }: SchedulePatternDialogProps) {
-  const { t } = useTranslation("reference");
+  const { t } = useTranslation("personnel");
   const [chrome, setChrome] = useState<SchedulePatternChromeState>({
     saving: false,
     loading: true,
@@ -442,12 +681,12 @@ export function SchedulePatternDialog({
       open={open}
       onOpenChange={onOpenChange}
       size="wide"
-      title={t("schedulePattern.title")}
-      description={`${value.code} — ${value.label}`}
+      title={t("timetable.editor.title", { name: value.label })}
+      description={t("timetable.editor.description")}
       footer={
         <EntityFormFooter
-          cancelLabel={t("schedulePattern.cancel")}
-          primaryLabel={chrome.saving ? t("schedulePattern.saving") : t("schedulePattern.save")}
+          cancelLabel={t("timetable.editor.close")}
+          primaryLabel={chrome.saving ? t("timetable.editor.saving") : t("timetable.editor.save")}
           onCancel={() => onOpenChange(false)}
           onPrimary={() => chrome.save()}
           primaryType="button"
@@ -457,11 +696,10 @@ export function SchedulePatternDialog({
         />
       }
     >
-      <SchedulePatternEditor
+      <ClasseHoraireEditor
         key={value.id}
         value={value}
         canMutate={canMutate}
-        onRequestClose={() => onOpenChange(false)}
         onChromeChange={handleChromeChange}
         {...(onSaved ? { onSaved } : {})}
       />
@@ -471,16 +709,3 @@ export function SchedulePatternDialog({
 
 /** @deprecated Prefer SchedulePatternDialog — kept for import stability. */
 export const SchedulePatternPanel = SchedulePatternDialog;
-
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <p className="text-[10px] uppercase tracking-wide text-text-muted">{label}</p>
-      <p className="text-sm font-semibold text-text-primary">{value}</p>
-    </div>
-  );
-}
-
-function formatHours(h: number): string {
-  return Number.isInteger(h) ? String(h) : h.toFixed(1);
-}

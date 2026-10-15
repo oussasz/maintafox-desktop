@@ -39,13 +39,16 @@ export const DAY_REASON_TONE: Record<string, Tone> = {
   working: "success",
   absent: "warning",
   rest_day: "neutral",
+  site_rest_day: "neutral",
   holiday: "info",
-  no_schedule: "neutral",
+  no_schedule: "warning",
+  timetable_not_set_up: "warning",
   not_employed: "neutral",
 };
 
 export const CAPACITY_BASIS_TONE: Record<string, Tone> = {
   roster: "success",
+  rest_day: "neutral",
   holiday: "info",
   no_schedule: "warning",
   no_members: "warning",

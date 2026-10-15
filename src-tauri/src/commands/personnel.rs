@@ -17,7 +17,9 @@ use crate::personnel::domain::{
     PositionUpsertInput, ScheduleClassWithDetails, SuccessionRiskRow,
 };
 use crate::personnel::queries;
-use crate::personnel::{assignment_history, availability, calendar, capacity, import, photos, reports, skills, teams};
+use crate::personnel::{
+    assignment_history, availability, calendar, capacity, import, photos, reports, skills, teams, timetable,
+};
 use crate::state::AppState;
 use crate::{require_permission, require_session, require_step_up};
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
@@ -1078,7 +1080,10 @@ pub async fn get_person_capacity(
         parse_capacity_day("date_to", &date_to)?,
     )
     .await?;
-    if !SensitiveAccess::load(&state, user.user_id).await?.can_view(personnel_id) {
+    if !SensitiveAccess::load(&state, user.user_id)
+        .await?
+        .can_view(personnel_id)
+    {
         for day in &mut days {
             day.absence_types.clear();
         }
@@ -1162,4 +1167,161 @@ pub async fn remove_personnel_skill(
         PermissionScope::Global
     );
     skills::remove_personnel_skill(&state.db, personnel_id, reference_value_id).await
+}
+
+// ── Timetables (Classes horaires), team links, person exceptions, site week ────
+
+/// Versions of a Classe horaire (or of all of them), oldest first.
+#[tauri::command]
+pub async fn list_schedule_class_versions(
+    reference_value_id: Option<i64>,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<timetable::ScheduleClassVersion>> {
+    let _user = require_session!(state);
+    timetable::list_class_versions(&state.db, reference_value_id).await
+}
+
+/// Adds a version of a Classe horaire from a date, or edits one not yet in force.
+#[tauri::command]
+pub async fn upsert_schedule_class_version(
+    input: timetable::ScheduleClassVersionInput,
+    state: State<'_, AppState>,
+) -> AppResult<timetable::ScheduleClassVersion> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::REF_MANAGE,
+        PermissionScope::Global
+    );
+    timetable::upsert_class_version(&state.db, input, i64::from(user.user_id)).await
+}
+
+/// Confirms a Classe horaire flagged for review by the upgrade.
+#[tauri::command]
+pub async fn confirm_schedule_class_review(
+    reference_value_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<timetable::ScheduleClassVersion>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::REF_MANAGE,
+        PermissionScope::Global
+    );
+    timetable::confirm_class_review(&state.db, reference_value_id).await
+}
+
+/// A team's Classe horaire history.
+#[tauri::command]
+pub async fn list_team_schedule(
+    team_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<timetable::TeamScheduleAssignment>> {
+    let _user = require_session!(state);
+    timetable::list_team_schedule(&state.db, team_id).await
+}
+
+/// Links a team to a Classe horaire from a date.
+#[tauri::command]
+pub async fn set_team_schedule(
+    input: timetable::TeamScheduleAssignmentInput,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<timetable::TeamScheduleAssignment>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PER_MANAGE,
+        PermissionScope::Global
+    );
+    timetable::set_team_schedule(&state.db, input, i64::from(user.user_id)).await
+}
+
+/// Confirms a team's Classe horaire link flagged for review by the upgrade.
+#[tauri::command]
+pub async fn confirm_team_schedule_review(
+    team_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<timetable::TeamScheduleAssignment>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PER_MANAGE,
+        PermissionScope::Global
+    );
+    timetable::confirm_team_schedule_review(&state.db, team_id).await
+}
+
+/// A person's timetable exceptions. The reason is personal data (`per.sensitiveview`).
+#[tauri::command]
+pub async fn list_personnel_schedule_exceptions(
+    personnel_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<timetable::PersonnelScheduleException>> {
+    let user = require_session!(state);
+    if !can_read_personnel_record(&state, &user, personnel_id).await? {
+        return Err(AppError::PermissionDenied("Permission requise : per.view".to_string()));
+    }
+    let mut rows = timetable::list_personnel_schedule_exceptions(&state.db, personnel_id).await?;
+    if !SensitiveAccess::load(&state, user.user_id)
+        .await?
+        .can_view(personnel_id)
+    {
+        for row in &mut rows {
+            row.reason = None;
+        }
+    }
+    Ok(rows)
+}
+
+#[tauri::command]
+pub async fn upsert_personnel_schedule_exception(
+    input: timetable::PersonnelScheduleExceptionInput,
+    state: State<'_, AppState>,
+) -> AppResult<timetable::PersonnelScheduleException> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PER_MANAGE,
+        PermissionScope::Global
+    );
+    timetable::upsert_personnel_schedule_exception(&state.db, input, i64::from(user.user_id)).await
+}
+
+#[tauri::command]
+pub async fn delete_personnel_schedule_exception(id: i64, state: State<'_, AppState>) -> AppResult<()> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PER_MANAGE,
+        PermissionScope::Global
+    );
+    timetable::delete_personnel_schedule_exception(&state.db, id).await
+}
+
+/// Weekly rest days of every site and of the sites that set their own.
+#[tauri::command]
+pub async fn list_site_work_weeks(state: State<'_, AppState>) -> AppResult<Vec<calendar::SiteWorkWeek>> {
+    let _user = require_session!(state);
+    calendar::list_site_work_weeks(&state.db).await
+}
+
+#[tauri::command]
+pub async fn set_site_work_week(
+    input: calendar::SiteWorkWeekInput,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<calendar::SiteWorkWeek>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PER_MANAGE,
+        PermissionScope::Global
+    );
+    calendar::set_site_work_week(&state.db, input, i64::from(user.user_id)).await
 }

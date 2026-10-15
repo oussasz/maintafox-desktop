@@ -112,10 +112,6 @@ pub struct CapacityRule {
     pub row_version: i64,
     pub created_at: String,
     pub updated_at: String,
-    /// `migrated_default` when the upgrade created this rule to keep the team's former 8 h/day
-    /// (migration 192) and nobody has reviewed it yet; `None` once a planner saves it.
-    #[serde(default)]
-    pub origin: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -210,8 +206,9 @@ pub struct TeamCapacityLoad {
     pub overtime_hours: f64,
     pub committed_hours: f64,
     pub utilization_ratio: f64,
-    /// Where `available_hours` comes from: `rule` (planner's capacity rule), `roster` (shift
-    /// calendars minus absences), `holiday`, `no_schedule` or `no_members` (0 h).
+    /// Where `available_hours` comes from: `roster` (the members' Classes horaires minus
+    /// absences, × utilisation), or why there are none: `rest_day`, `holiday`, `no_schedule`
+    /// (no Classe horaire) or `no_members`.
     #[serde(default)]
     pub basis: String,
 }

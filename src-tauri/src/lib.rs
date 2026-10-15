@@ -1071,6 +1071,17 @@ pub fn run() {
             commands::personnel::update_external_company,
             commands::wo::add_personnel_labor,
             commands::wo::list_wo_labor_people,
+            commands::personnel::list_schedule_class_versions,
+            commands::personnel::upsert_schedule_class_version,
+            commands::personnel::confirm_schedule_class_review,
+            commands::personnel::list_team_schedule,
+            commands::personnel::set_team_schedule,
+            commands::personnel::confirm_team_schedule_review,
+            commands::personnel::list_personnel_schedule_exceptions,
+            commands::personnel::upsert_personnel_schedule_exception,
+            commands::personnel::delete_personnel_schedule_exception,
+            commands::personnel::list_site_work_weeks,
+            commands::personnel::set_site_work_week,
         ])
         .run(tauri::generate_context!())
         // EXPECT: If the Tauri context cannot be loaded, the application binary is corrupt or

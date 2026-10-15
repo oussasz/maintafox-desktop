@@ -177,6 +177,10 @@ pub(crate) const PERSONNEL_TYPES: &[&str] = &[
     "qualification_requirements",
     "qualification_overrides",
     "work_calendar_holidays",
+    "site_work_weeks",
+    "schedule_class_versions",
+    "team_schedule_assignments",
+    "personnel_schedule_exceptions",
 ];
 
 /// Inspections and work permits.

@@ -3,8 +3,7 @@
 //! requirement validation and the FR/EN starter catalogue.
 
 use chrono::{Duration, Utc};
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
-use sea_orm_migration::MigratorTrait;
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 use crate::errors::AppError;
 use crate::qualification::gate::{
@@ -15,15 +14,7 @@ use crate::qualification::requirements::{upsert_requirement, QualificationRequir
 use crate::wo::domain::WoCreateInput;
 
 async fn setup() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:").await.expect("in-memory SQLite");
-    db.execute(Statement::from_string(
-        DbBackend::Sqlite,
-        "PRAGMA foreign_keys = ON;".to_string(),
-    ))
-    .await
-    .expect("PRAGMA foreign_keys");
-    crate::migrations::Migrator::up(&db, None).await.expect("migrations");
-    crate::db::seeder::seed_system_data(&db).await.expect("seeder");
+    let db = crate::db::test_db::seeded().await;
     for sql in [
         // Two in-house technicians and one contractor without any login.
         "INSERT INTO personnel (employee_code, full_name, availability_status) VALUES ('G-1', 'Karim Électricien', 'available')",
@@ -235,15 +226,24 @@ async fn missing_or_expired_certification_blocks_assignment() {
     give_cert(&db, karim, b2v, "verified", Some(day(400))).await;
     give_cert(&db, lina, b2v, "verified", Some(day(-3))).await;
 
-    assert_eq!(enforce_work_order_assignment(&db, karim, wo, None).await.expect("karim ok"), None);
+    assert_eq!(
+        enforce_work_order_assignment(&db, karim, wo, None)
+            .await
+            .expect("karim ok"),
+        None
+    );
 
-    let lina_err = enforce_work_order_assignment(&db, lina, wo, None).await.expect_err("lina expired");
+    let lina_err = enforce_work_order_assignment(&db, lina, wo, None)
+        .await
+        .expect_err("lina expired");
     let codes = issue_codes(lina_err);
     assert_eq!(codes[0], "QUALIFICATION_EXPIRED");
     assert_eq!(codes.last().map(String::as_str), Some("QUALIFICATION_GATE_BLOCKED"));
 
     // The contractor has no login and no habilitation: refused with a clear reason.
-    let samir_err = enforce_work_order_assignment(&db, samir, wo, None).await.expect_err("samir missing");
+    let samir_err = enforce_work_order_assignment(&db, samir, wo, None)
+        .await
+        .expect_err("samir missing");
     assert_eq!(issue_codes(samir_err)[0], "QUALIFICATION_MISSING");
 }
 
@@ -303,7 +303,9 @@ async fn skill_level_and_self_declared_skills() {
     assert_eq!(lina_check.gaps[0].status, "level_too_low");
     assert_eq!(lina_check.gaps[0].held_level, Some(2));
     assert_eq!(lina_check.gaps[0].required_level, Some(3));
-    let samir_err = enforce_work_order_assignment(&db, samir, wo, None).await.expect_err("self declared");
+    let samir_err = enforce_work_order_assignment(&db, samir, wo, None)
+        .await
+        .expect_err("self declared");
     assert_eq!(issue_codes(samir_err)[0], "SKILL_UNVALIDATED");
 }
 
@@ -326,14 +328,22 @@ async fn audited_override_lets_the_person_work_until_a_new_gap_appears() {
         &db,
         samir,
         wo,
-        Some(&override_by(actor, "Habilitation B1V en cours de renouvellement, accompagné par K. (B2V)")),
+        Some(&override_by(
+            actor,
+            "Habilitation B1V en cours de renouvellement, accompagné par K. (B2V)",
+        )),
     )
     .await
     .expect("override")
     .expect("override id");
 
     // Now the person passes without a new override, and the override is visible and audited.
-    assert_eq!(enforce_work_order_assignment(&db, samir, wo, None).await.expect("covered"), None);
+    assert_eq!(
+        enforce_work_order_assignment(&db, samir, wo, None)
+            .await
+            .expect("covered"),
+        None
+    );
     let check = check_person_for_work_order(&db, samir, wo).await.expect("check");
     assert!(check.qualified);
     assert_eq!(check.override_info.as_ref().map(|o| o.id), Some(id));
@@ -359,7 +369,9 @@ async fn audited_override_lets_the_person_work_until_a_new_gap_appears() {
 
     // A requirement added afterwards is a new gap: blocked again.
     require_cert_on_wo(&db, wo, atex, "each").await;
-    let again = enforce_work_order_assignment(&db, samir, wo, None).await.expect_err("new gap");
+    let again = enforce_work_order_assignment(&db, samir, wo, None)
+        .await
+        .expect_err("new gap");
     assert!(issue_codes(again).contains(&"QUALIFICATION_MISSING".to_string()));
 }
 
@@ -442,15 +454,19 @@ async fn loto_role_requires_the_authorisation() {
     give_cert(&db, karim, loto, "verified", Some(day(200))).await;
 
     // No permit is needed to evaluate the person; the override context references one.
-    assert!(check_person_for_permit_role(&db, karim, 1, "isolation_apply")
-        .await
-        .expect("k")
-        .qualified);
+    assert!(
+        check_person_for_permit_role(&db, karim, 1, "isolation_apply")
+            .await
+            .expect("k")
+            .qualified
+    );
     let err = enforce_permit_role(&db, lina, 1, "isolation_apply", None)
         .await
         .expect_err("lina has no LOTO authority");
     assert_eq!(issue_codes(err)[0], "QUALIFICATION_MISSING");
-    let unknown = check_person_for_permit_role(&db, lina, 1, "boss").await.expect_err("role");
+    let unknown = check_person_for_permit_role(&db, lina, 1, "boss")
+        .await
+        .expect_err("role");
     assert_eq!(issue_codes(unknown), vec!["LOTO_ROLE_UNKNOWN"]);
 }
 

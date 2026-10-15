@@ -232,7 +232,9 @@ pub async fn list_personnel_skills(db: &impl ConnectionTrait, personnel_id: i64)
                 proficiency_level: r
                     .try_get("", "proficiency_level")
                     .map_err(|e| skill_decode_err("proficiency_level", e))?,
-                valid_from: r.try_get("", "valid_from").map_err(|e| skill_decode_err("valid_from", e))?,
+                valid_from: r
+                    .try_get("", "valid_from")
+                    .map_err(|e| skill_decode_err("valid_from", e))?,
                 valid_to: r.try_get("", "valid_to").map_err(|e| skill_decode_err("valid_to", e))?,
                 source_type: r
                     .try_get("", "source_type")

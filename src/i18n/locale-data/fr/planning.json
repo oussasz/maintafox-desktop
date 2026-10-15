@@ -123,13 +123,13 @@
     "matchingSkills": "{{count}} compétences correspondantes",
     "costRange": "Coût main-d'œuvre estimé : {{min}} – {{max}}",
     "capacityRemaining": "Capacité équipe ce jour : {{remaining}} h restantes sur {{available}} h.",
-    "noTeamCapacity": "Cette équipe n'a aucune heure de travail ce jour-là (ni horaire ni règle de capacité).",
-    "setUpTeamCapacity": "Définir la capacité de l'équipe",
+    "noTeamCapacity": "Cette équipe n'a aucune heure de travail ce jour-là : elle n'est liée à aucune classe horaire ou n'a pas de membre.",
+    "setUpTeamCapacity": "Définir la classe horaire de l'équipe",
     "capacityBasis": {
-      "rule": "règle de capacité",
-      "roster": "selon les horaires",
+      "roster": "selon les classes horaires",
+      "rest_day": "jour de repos",
       "holiday": "jour férié",
-      "no_schedule": "aucun poste prévu",
+      "no_schedule": "aucune classe horaire",
       "no_members": "équipe sans membre"
     },
     "capacityBlockedHint": "Ce créneau dépasse la capacité restante de l'équipe ({{remaining}} h). Raccourcissez la fin.",

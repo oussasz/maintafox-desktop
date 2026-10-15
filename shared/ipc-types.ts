@@ -8069,8 +8069,6 @@ export interface CapacityRule {
   row_version: number;
   created_at: string;
   updated_at: string;
-  /** `migrated_default` until a planner reviews the rule the upgrade created. */
-  origin?: string | null | undefined;
 }
 
 export interface CapacityRuleFilter {

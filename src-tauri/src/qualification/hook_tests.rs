@@ -3,8 +3,7 @@
 //! Each hook is refused without an override and allowed once a supervisor override is
 //! recorded (with its audit row).
 
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
-use sea_orm_migration::MigratorTrait;
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 use crate::errors::AppError;
 use crate::qualification::gate::{enforce_permit_role, enforce_work_order_assignment, QualificationOverrideInput};
@@ -35,10 +34,7 @@ async fn admin(db: &DatabaseConnection) -> i64 {
 /// Site, asset, a technician with a login (user 2) and a contractor without one; the HAB
 /// certification type.
 async fn setup() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:").await.expect("in-memory SQLite");
-    exec(&db, "PRAGMA foreign_keys = ON;").await;
-    crate::migrations::Migrator::up(&db, None).await.expect("migrations");
-    crate::db::seeder::seed_system_data(&db).await.expect("seeder");
+    let db = crate::db::test_db::seeded().await;
     for sql in [
         "INSERT OR IGNORE INTO org_structure_models (id, entity_sync_id, version_number, status, created_at, updated_at) \
          VALUES (1, 'hook-model', 1, 'active', datetime('now'), datetime('now'))",
@@ -230,7 +226,11 @@ async fn readiness_blocks_an_unqualified_crew_until_overridden() {
     let crew = report.checks.iter().find(|c| c.code == "crew_qualified").expect("rule");
     assert_eq!(crew.outcome, "fail");
     assert!(crew.blocking);
-    assert!(crew.message.as_deref().unwrap_or_default().contains("Yacine Prestataire"));
+    assert!(crew
+        .message
+        .as_deref()
+        .unwrap_or_default()
+        .contains("Yacine Prestataire"));
 
     override_on_wo(&db, contractor, wo.id).await;
     let report = crate::wo::workflow::readiness::evaluate_wo_readiness(&db, wo.id)
@@ -308,9 +308,12 @@ async fn planning_assignee_is_gated_and_capacity_has_no_default_hours() {
     .await;
     let team = scalar_i64(&db, "SELECT id FROM teams WHERE code = 'EQ-H'").await;
     let day = chrono::NaiveDate::from_ymd_opt(2026, 10, 12).expect("day");
-    let empty = crate::planning::scheduling::team_day_hours(&db, team, day).await.expect("hours");
+    let empty = crate::planning::scheduling::team_day_hours(&db, team, day)
+        .await
+        .expect("hours");
     assert_eq!(empty.basis, "no_members");
     assert_eq!(empty.available, 0.0);
+    // Hours typed on a capacity rule do not make capacity: only its overtime ceiling counts.
     exec(
         &db,
         &format!(
@@ -319,10 +322,17 @@ async fn planning_assignee_is_gated_and_capacity_has_no_default_hours() {
         ),
     )
     .await;
-    let ruled = crate::planning::scheduling::team_day_hours(&db, team, day).await.expect("hours");
-    assert_eq!(ruled.basis, "rule");
-    assert_eq!(ruled.available, 16.0);
-    assert_eq!(ruled.overtime, 2.0);
+    exec(
+        &db,
+        &format!("UPDATE personnel SET primary_team_id = {team} WHERE id = {tech}"),
+    )
+    .await;
+    let unscheduled = crate::planning::scheduling::team_day_hours(&db, team, day)
+        .await
+        .expect("hours");
+    assert_eq!(unscheduled.basis, "no_schedule");
+    assert_eq!(unscheduled.available, 0.0);
+    assert_eq!(unscheduled.overtime, 2.0);
 }
 
 #[tokio::test]

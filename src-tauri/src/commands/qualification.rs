@@ -21,11 +21,11 @@ use crate::qualification::gate::{
     WoQualificationAssessment,
 };
 use crate::qualification::matrix::{self, QualificationMatrix, QualificationMatrixFilter};
+use crate::qualification::queries;
+use crate::qualification::readiness;
 use crate::qualification::requirements::{
     self, QualificationRequirement, QualificationRequirementFilter, QualificationRequirementUpsertInput,
 };
-use crate::qualification::queries;
-use crate::qualification::readiness;
 use crate::qualification::training;
 use crate::state::AppState;
 use crate::{require_permission, require_session, require_step_up};
@@ -426,12 +426,7 @@ pub async fn get_wo_qualification_assessment(
     state: State<'_, AppState>,
 ) -> AppResult<WoQualificationAssessment> {
     let user = require_session!(state);
-    require_permission!(
-        state,
-        &user,
-        crate::rbac::permissions::OT_VIEW,
-        PermissionScope::Global
-    );
+    require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
     gate::assess_work_order(&state.db, wo_id).await
 }
 
@@ -443,12 +438,7 @@ pub async fn check_person_for_work_order(
     state: State<'_, AppState>,
 ) -> AppResult<PersonQualificationCheck> {
     let user = require_session!(state);
-    require_permission!(
-        state,
-        &user,
-        crate::rbac::permissions::OT_VIEW,
-        PermissionScope::Global
-    );
+    require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
     gate::check_person_for_work_order(&state.db, personnel_id, wo_id).await
 }
 
@@ -519,9 +509,9 @@ pub async fn record_qualification_override(
             gate::check_person_for_work_order(&txn, input.personnel_id, wo_id).await?
         }
         "permit_role" => {
-            let permit_id = input.permit_id.ok_or_else(|| {
-                crate::qualification::issue("REQUIREMENT_TARGET_REQUIRED", "Choose the permit.", &[])
-            })?;
+            let permit_id = input
+                .permit_id
+                .ok_or_else(|| crate::qualification::issue("REQUIREMENT_TARGET_REQUIRED", "Choose the permit.", &[]))?;
             let role = input.role.unwrap_or_default();
             let before = gate::check_person_for_permit_role(&txn, input.personnel_id, permit_id, &role).await?;
             if before.qualified {

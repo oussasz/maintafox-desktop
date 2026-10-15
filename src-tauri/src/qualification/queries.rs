@@ -5,8 +5,9 @@ use uuid::Uuid;
 use crate::errors::{AppError, AppResult};
 
 use super::domain::{
-    CertificationType, CertificationTypeUpsertInput, PersonnelCertification, CERTIFICATION_CATEGORIES, PersonnelCertificationListFilter,
+    CertificationType, CertificationTypeUpsertInput, PersonnelCertification, PersonnelCertificationListFilter,
     PersonnelCertificationUpsertInput, QualificationRequirementProfile, QualificationRequirementProfileUpsertInput,
+    CERTIFICATION_CATEGORIES,
 };
 
 const VERIFICATION: &[&str] = &["pending", "verified", "rejected"];

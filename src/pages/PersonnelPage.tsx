@@ -92,6 +92,8 @@ export function PersonnelPage() {
   const [availabilityView, setAvailabilityView] = useState<AvailabilityViewMode>("chronology");
   const [searchParams] = useSearchParams();
   const requestedTab = searchParams.get("tab");
+  const requestedTeam = Number(searchParams.get("team"));
+  const openTeamId = Number.isInteger(requestedTeam) && requestedTeam > 0 ? requestedTeam : null;
   const [activeTab, setActiveTab] = useState<PersonnelTab>(
     requestedTab === "teams" || requestedTab === "calendar" || requestedTab === "companies"
       ? requestedTab
@@ -604,6 +606,7 @@ export function PersonnelPage() {
                 <TeamCapacityBoard
                   ref={teamsRef}
                   entityId={filter.entity_id ?? null}
+                  openTeamId={openTeamId}
                   onOpenPersonnel={(personnelId) => {
                     void openPersonnel(personnelId);
                   }}

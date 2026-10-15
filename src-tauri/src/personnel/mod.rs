@@ -14,6 +14,7 @@ pub mod queries;
 pub mod reports;
 pub mod skills;
 pub mod teams;
+pub mod timetable;
 
 #[cfg(test)]
 mod capacity_tests;

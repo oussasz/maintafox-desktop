@@ -864,7 +864,7 @@ mod tests {
         let wo_lines: Vec<&str> = lib_rs.lines().filter(|l| l.contains("commands::wo::")).collect();
 
         // Snapshot of the registered WO command surface; update deliberately when adding commands.
-        assert_eq!(wo_lines.len(), 67, "invoke_handler must contain exactly 67 WO commands");
+        assert_eq!(wo_lines.len(), 69, "invoke_handler must contain exactly 69 WO commands");
 
         let mut seen = std::collections::HashSet::new();
         for line in &wo_lines {

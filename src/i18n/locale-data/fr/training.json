@@ -336,6 +336,25 @@
     "COMPANY_STATUS_UNKNOWN": "État de référencement ou d'assurance inconnu.",
     "COMPANY_CONTRACT_DATES": "La fin du contrat précède son début.",
     "TEAM_NO_SCHEDULE": "L'équipe n'a aucune heure de travail le {{day}} : donnez un horaire à ses membres ou définissez une règle de capacité.",
-    "LOTO_ROLE_PERSON_UNKNOWN": "Ce rôle de consignation exige des habilitations : reliez d'abord votre compte à votre fiche personnel."
+    "LOTO_ROLE_PERSON_UNKNOWN": "Ce rôle de consignation exige des habilitations : reliez d'abord votre compte à votre fiche personnel.",
+    "TIMETABLE_DATE_INVALID": "Saisissez la date au format AAAA-MM-JJ.",
+    "TIMETABLE_DATE_IN_PAST": "Une modification d'horaire s'applique à partir d'aujourd'hui ({{today}}) ou plus tard : la capacité passée n'est jamais réécrite.",
+    "TIMETABLE_UTILISATION_RANGE": "Saisissez un taux d'utilisation entre 1 et 100 %.",
+    "TIMETABLE_CYCLE_LENGTH": "Un roulement dure entre 1 et {{max}} jours.",
+    "TIMETABLE_ROTATION_START_REQUIRED": "Indiquez la date du jour 1 du roulement.",
+    "TIMETABLE_DAYS_INCOMPLETE": "Décrivez chaque jour du cycle une seule fois.",
+    "TIMETABLE_TIME_INVALID": "Saisissez les heures au format HH:MM (jour {{day}}).",
+    "TIMETABLE_BREAK_TOO_LONG": "La pause du jour {{day}} doit être plus courte que son poste.",
+    "TIMETABLE_NO_WORKING_DAY": "Un horaire doit comporter au moins un jour travaillé.",
+    "TIMETABLE_VERSION_DUPLICATE": "Cette classe horaire a déjà une version qui commence ce jour-là : modifiez-la.",
+    "TIMETABLE_VERSION_MISMATCH": "Cette version appartient à une autre classe horaire.",
+    "TIMETABLE_VERSION_IN_FORCE": "Cette version est déjà en vigueur : ajoutez plutôt une nouvelle version à partir d'une date.",
+    "TIMETABLE_PERIOD_INVALID": "La date de fin précède la date de début.",
+    "TIMETABLE_EXCEPTION_EMPTY": "Choisissez une autre classe horaire, un pourcentage de temps partiel, ou les deux.",
+    "TIMETABLE_WORK_PERCENT_RANGE": "Saisissez un pourcentage de temps partiel entre 1 et 100.",
+    "TIMETABLE_EXCEPTION_STARTED": "Cette exception a commencé : vous pouvez seulement fixer sa date de fin ; ajoutez-en une nouvelle pour d'autres changements.",
+    "TIMETABLE_EXCEPTION_OVERLAP": "Une autre exception de cette personne (à partir du {{from}}) couvre une partie de ces dates.",
+    "SITE_WEEK_DAY_INVALID": "Les jours vont du lundi (1) au dimanche (7).",
+    "SITE_WEEK_NO_WORKING_DAY": "Laissez au moins un jour travaillé dans la semaine."
   }
 }

@@ -1166,10 +1166,14 @@ pub const ROW_SPECS: &[RowSpec] = &[
     spec("goods_receipts", &[r("received_by_id", USER)]),
     spec("goods_receipt_lines", &[]),
     spec("repairable_orders", &[r("created_by_id", USER)]),
-    // Personnel, qualifications and training (migrations 191-192).
+    // Personnel, qualifications and training (migrations 191-194).
     spec("qualification_requirements", &[]),
     spec("qualification_overrides", &[]),
     spec("work_calendar_holidays", &[]),
+    spec("site_work_weeks", &[]),
+    spec("schedule_class_versions", &[]),
+    spec("team_schedule_assignments", &[]),
+    spec("personnel_schedule_exceptions", &[]),
 ];
 
 /// Rules of an entity type synchronised by the generic engine.

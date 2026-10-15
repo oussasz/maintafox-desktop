@@ -336,6 +336,25 @@
     "COMPANY_STATUS_UNKNOWN": "Unknown onboarding or insurance status.",
     "COMPANY_CONTRACT_DATES": "The contract end is before its start.",
     "TEAM_NO_SCHEDULE": "The team has no working hours on {{day}}: give its members a shift schedule or set a capacity rule.",
-    "LOTO_ROLE_PERSON_UNKNOWN": "This LOTO role requires qualifications: link your account to your personnel record first."
+    "LOTO_ROLE_PERSON_UNKNOWN": "This LOTO role requires qualifications: link your account to your personnel record first.",
+    "TIMETABLE_DATE_INVALID": "Enter the date as YYYY-MM-DD.",
+    "TIMETABLE_DATE_IN_PAST": "A timetable change applies from today ({{today}}) or later: past capacity is never rewritten.",
+    "TIMETABLE_UTILISATION_RANGE": "Enter the utilisation factor between 1 and 100 %.",
+    "TIMETABLE_CYCLE_LENGTH": "A rotation lasts between 1 and {{max}} days.",
+    "TIMETABLE_ROTATION_START_REQUIRED": "Give the date on which day 1 of the rotation falls.",
+    "TIMETABLE_DAYS_INCOMPLETE": "Describe each day of the cycle exactly once.",
+    "TIMETABLE_TIME_INVALID": "Enter shift times as HH:MM (day {{day}}).",
+    "TIMETABLE_BREAK_TOO_LONG": "The break of day {{day}} must be shorter than its shift.",
+    "TIMETABLE_NO_WORKING_DAY": "A timetable needs at least one working day.",
+    "TIMETABLE_VERSION_DUPLICATE": "This Classe horaire already has a version starting that day: edit it instead.",
+    "TIMETABLE_VERSION_MISMATCH": "This version belongs to another Classe horaire.",
+    "TIMETABLE_VERSION_IN_FORCE": "This version is already in force: add a new version from a date instead.",
+    "TIMETABLE_PERIOD_INVALID": "The end date comes before the start date.",
+    "TIMETABLE_EXCEPTION_EMPTY": "Choose another Classe horaire, a part-time percentage, or both.",
+    "TIMETABLE_WORK_PERCENT_RANGE": "Enter the part-time percentage between 1 and 100.",
+    "TIMETABLE_EXCEPTION_STARTED": "This exception has started: you can only set its end date; add a new one for other changes.",
+    "TIMETABLE_EXCEPTION_OVERLAP": "Another exception of this person (from {{from}}) covers part of these dates.",
+    "SITE_WEEK_DAY_INVALID": "Weekdays run from Monday (1) to Sunday (7).",
+    "SITE_WEEK_NO_WORKING_DAY": "Leave at least one working day in the week."
   }
 }

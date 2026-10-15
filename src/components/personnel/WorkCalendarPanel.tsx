@@ -1,6 +1,8 @@
 /**
- * Plant holiday calendar: public holidays and shutdown days, for every site or for one
- * organisation node and everything under it. Capacity counts them as non-working days.
+ * Site calendar: the weekly rest days of the sites (SiteWorkWeekPanel), then public holidays and
+ * shutdown days entered year by year with French and English names, for every site or for one
+ * organisation node and everything under it. Capacity counts them as non-working days, except
+ * for continuous Classes horaires.
  */
 import { CalendarOff, Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -38,6 +40,8 @@ import {
 } from "@/services/workforce-service";
 import { P } from "@shared/rbac/permissions.generated";
 
+import { SiteWorkWeekPanel } from "./SiteWorkWeekPanel";
+
 const ALL_SITES = "__all__";
 
 interface Draft {
@@ -45,6 +49,7 @@ interface Draft {
   row_version: number | null;
   date: string;
   label: string;
+  labelEn: string;
   entity: string;
   active: boolean;
 }
@@ -56,6 +61,7 @@ export interface WorkCalendarPanelProps {
 
 export function WorkCalendarPanel({ entities }: WorkCalendarPanelProps) {
   const { t, i18n } = useTranslation("personnel");
+  const english = i18n.language.startsWith("en");
   const { can } = usePermissions();
   const canManage = can(P.PER_MANAGE);
   const thisYear = new Date().getFullYear();
@@ -107,6 +113,7 @@ export function WorkCalendarPanel({ entities }: WorkCalendarPanelProps) {
         expected_row_version: draft.row_version,
         holiday_date: draft.date,
         label: draft.label.trim(),
+        label_en: draft.labelEn.trim() || null,
         entity_id: draft.entity === ALL_SITES ? null : Number(draft.entity),
         is_active: draft.active,
       });
@@ -121,6 +128,8 @@ export function WorkCalendarPanel({ entities }: WorkCalendarPanelProps) {
 
   return (
     <div className="space-y-3">
+      <SiteWorkWeekPanel entities={entities} />
+      <h3 className="pt-2 text-sm font-semibold text-text-primary">{t("holidays.title")}</h3>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <label htmlFor="holiday-year" className="text-sm text-text-muted">
@@ -148,6 +157,7 @@ export function WorkCalendarPanel({ entities }: WorkCalendarPanelProps) {
                 row_version: null,
                 date: `${year}-01-01`,
                 label: "",
+                labelEn: "",
                 entity: ALL_SITES,
                 active: true,
               })
@@ -177,7 +187,16 @@ export function WorkCalendarPanel({ entities }: WorkCalendarPanelProps) {
               <span className="w-56 tabular-nums text-text-secondary">
                 {fmt.format(new Date(`${h.holiday_date}T00:00:00Z`))}
               </span>
-              <span className="min-w-[160px] flex-1 font-medium text-text-primary">{h.label}</span>
+              <span className="min-w-[160px] flex-1">
+                <span className="font-medium text-text-primary">
+                  {english && h.label_en ? h.label_en : h.label}
+                </span>
+                {h.label_en ? (
+                  <span className="ml-2 text-xs text-text-muted">
+                    {english ? h.label : h.label_en}
+                  </span>
+                ) : null}
+              </span>
               <span className="text-text-muted">{h.entity_name ?? t("holidays.allSites")}</span>
               {!h.is_active ? <StatusChip label={t("holidays.cancelled")} tone="neutral" /> : null}
               {canManage ? (
@@ -190,6 +209,7 @@ export function WorkCalendarPanel({ entities }: WorkCalendarPanelProps) {
                       row_version: h.row_version,
                       date: h.holiday_date,
                       label: h.label,
+                      labelEn: h.label_en ?? "",
                       entity: h.entity_id != null ? String(h.entity_id) : ALL_SITES,
                       active: h.is_active,
                     })
@@ -221,11 +241,20 @@ export function WorkCalendarPanel({ entities }: WorkCalendarPanelProps) {
                   onChange={(e) => setDraft({ ...draft, date: e.target.value })}
                 />
               </FormField>
-              <FormField name="holiday-label" label={t("holidays.label")} required>
+              <FormField name="holiday-label" label={t("holidays.labelFr")} required>
                 <Input
                   id="holiday-label"
+                  lang="fr"
                   value={draft.label}
                   onChange={(e) => setDraft({ ...draft, label: e.target.value })}
+                />
+              </FormField>
+              <FormField name="holiday-label-en" label={t("holidays.labelEn")}>
+                <Input
+                  id="holiday-label-en"
+                  lang="en"
+                  value={draft.labelEn}
+                  onChange={(e) => setDraft({ ...draft, labelEn: e.target.value })}
                 />
               </FormField>
               <FormField name="holiday-scope" label={t("holidays.scope")}>

@@ -1,19 +1,17 @@
 /**
- * Real capacity day by day — from shift calendars, minus absences and plant holidays
- * (`personnel::capacity`). Team view: hours available, people on shift / absent, the planner's
- * capacity rule shown alongside. Person view: shift, hours available and why.
+ * Real capacity day by day — from the Classes horaires on the site's working days, minus
+ * absences, × utilisation (`personnel::capacity`). Team view: hours available for work orders,
+ * hours at work, people on shift / absent, the Classe horaire of the day and the planner's
+ * overtime ceiling. Person view: Classe horaire, shift, hours and why.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { Button } from "@/components/ui/button";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import { Input } from "@/components/ui/input";
 import { StatusChip } from "@/components/ui/status-chip";
 import { mfTone, toneOf } from "@/design-system/tone";
-import { usePermissions } from "@/hooks/use-permissions";
 import { cn } from "@/lib/utils";
-import { listCapacityRules, updateCapacityRule } from "@/services/planning-service";
 import {
   CAPACITY_MAX_RANGE_DAYS,
   type PersonDayCapacity,
@@ -21,8 +19,6 @@ import {
   getPersonCapacity,
   getTeamCapacity,
 } from "@/services/workforce-service";
-import type { CapacityRule } from "@shared/ipc-types";
-import { P } from "@shared/rbac/permissions.generated";
 
 import {
   CAPACITY_BASIS_TONE,
@@ -152,15 +148,19 @@ export function TeamCapacityDays({ teamId }: { teamId: number }) {
             <thead>
               <tr className="border-b border-surface-border text-left text-xs text-text-muted">
                 <th className="py-1.5 pr-2 font-medium">{t("capacityDays.day")}</th>
+                <th className="py-1.5 pr-2 font-medium">{t("capacityDays.classe")}</th>
                 <th className="py-1.5 pr-2 text-right font-medium">
                   {t("capacityDays.available")}
+                </th>
+                <th className="py-1.5 pr-2 text-right font-medium">
+                  {t("capacityDays.attendance")}
                 </th>
                 <th className="py-1.5 pr-2 text-right font-medium">
                   {t("capacityDays.absentHours")}
                 </th>
                 <th className="py-1.5 pr-2 text-right font-medium">{t("capacityDays.onShift")}</th>
                 <th className="py-1.5 pr-2 font-medium">{t("capacityDays.basis")}</th>
-                <th className="py-1.5 font-medium">{t("capacityDays.rule")}</th>
+                <th className="py-1.5 text-right font-medium">{t("capacityDays.overtime")}</th>
               </tr>
             </thead>
             <tbody>
@@ -206,8 +206,12 @@ function FragmentRow({
             {label}
           </button>
         </td>
+        <td className="py-1.5 pr-2 text-text-secondary">{day.schedule_class_label ?? "—"}</td>
         <td className="py-1.5 pr-2 text-right font-medium tabular-nums">
           {hours(day.available_hours, i18n.language)} h
+        </td>
+        <td className="py-1.5 pr-2 text-right tabular-nums text-text-muted">
+          {hours(day.attendance_hours, i18n.language)} h
         </td>
         <td className="py-1.5 pr-2 text-right tabular-nums text-text-muted">
           {hours(day.absent_hours, i18n.language)} h
@@ -222,18 +226,15 @@ function FragmentRow({
             dot
           />
         </td>
-        <td className="py-1.5 tabular-nums text-text-muted">
-          {day.rule_available_hours != null
-            ? t("capacityDays.ruleValue", {
-                hours: hours(day.rule_available_hours, i18n.language),
-                overtime: hours(day.rule_overtime_hours ?? 0, i18n.language),
-              })
+        <td className="py-1.5 text-right tabular-nums text-text-muted">
+          {day.rule_overtime_hours != null
+            ? `${hours(day.rule_overtime_hours, i18n.language)} h`
             : "—"}
         </td>
       </tr>
       {expanded ? (
         <tr>
-          <td colSpan={6} className="bg-surface-1 px-3 py-2">
+          <td colSpan={8} className="bg-surface-1 px-3 py-2">
             {day.members.length === 0 ? (
               <p className="text-sm text-text-muted">{t("capacityDays.noMembers")}</p>
             ) : (
@@ -248,6 +249,14 @@ function FragmentRow({
                       {m.allocation_percent < 100 ? (
                         <span className="ml-1 text-xs text-text-muted">
                           ({m.allocation_percent} %)
+                        </span>
+                      ) : null}
+                      {m.schedule_class_label && m.schedule_source !== "team" ? (
+                        <span className="ml-1 text-xs text-text-muted">
+                          ·{" "}
+                          {t(`capacityDays.sources.${m.schedule_source ?? "team"}`, {
+                            name: m.schedule_class_label,
+                          })}
                         </span>
                       ) : null}
                     </span>
@@ -308,9 +317,20 @@ export function PersonCapacityDays({ personnelId }: { personnelId: number }) {
         >
           <span>
             <span className="font-medium">{dayFmt.format(new Date(`${d.day}T00:00:00Z`))}</span>
+            {d.schedule_class_label ? (
+              <span className="ml-2 text-xs text-text-muted">{d.schedule_class_label}</span>
+            ) : null}
             {d.shift_start && d.shift_end ? (
               <span className="ml-2 text-xs text-text-muted">
                 {d.shift_start}–{d.shift_end}
+                {d.break_minutes > 0
+                  ? ` ${t("capacityDays.breakShort", { minutes: d.break_minutes })}`
+                  : ""}
+              </span>
+            ) : null}
+            {d.work_percent < 100 ? (
+              <span className="ml-2 text-xs text-text-muted">
+                {t("timetable.exceptions.partTime", { percent: d.work_percent })}
               </span>
             ) : null}
             {d.holiday_label ? (
@@ -325,7 +345,15 @@ export function PersonCapacityDays({ personnelId }: { personnelId: number }) {
             ) : null}
           </span>
           <span className="flex items-center gap-2">
-            <span className="tabular-nums">{hours(d.available_minutes / 60, i18n.language)} h</span>
+            <span
+              className="tabular-nums"
+              title={t("capacityDays.personHoursTitle", {
+                attendance: hours(d.available_minutes / 60, i18n.language),
+                utilisation: d.utilisation_percent ?? "—",
+              })}
+            >
+              {hours(d.plannable_minutes / 60, i18n.language)} h
+            </span>
             <StatusChip
               label={t(`capacityDays.reasons.${d.reason}`)}
               tone={toneOf(DAY_REASON_TONE, d.reason)}
@@ -334,82 +362,6 @@ export function PersonCapacityDays({ personnelId }: { personnelId: number }) {
           </span>
         </div>
       ))}
-    </div>
-  );
-}
-
-/**
- * Notice shown on a team until its capacity rule created by the upgrade ("migrated default",
- * the former 8 h/day) has been reviewed: confirm it as is, or set up shift schedules / change
- * the rule. Saving the rule clears the mark.
- */
-export function MigratedCapacityNotice({
-  teamId,
-  onReviewed,
-}: {
-  teamId: number;
-  onReviewed?: () => void;
-}) {
-  const { t } = useTranslation("personnel");
-  const { can } = usePermissions();
-  const [rules, setRules] = useState<CapacityRule[]>([]);
-  const [busy, setBusy] = useState(false);
-
-  const load = useCallback(async () => {
-    try {
-      setRules(
-        (await listCapacityRules({ team_id: teamId })).filter(
-          (r) => r.origin === "migrated_default",
-        ),
-      );
-    } catch {
-      setRules([]);
-    }
-  }, [teamId]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  if (rules.length === 0) return null;
-  const rule = rules[0];
-  if (!rule) return null;
-
-  const confirm = async () => {
-    setBusy(true);
-    try {
-      await updateCapacityRule(rule.id, rule.row_version, {
-        effective_start: rule.effective_start,
-        effective_end: rule.effective_end,
-        available_hours_per_day: rule.available_hours_per_day,
-        max_overtime_hours_per_day: rule.max_overtime_hours_per_day,
-      });
-      await load();
-      onReviewed?.();
-    } catch {
-      // Reported by the global toast.
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div role="status" className={cn("rounded-md border p-3 text-sm", mfTone.attention.panel)}>
-      <p className="font-medium text-text-primary">{t("capacityDays.migratedTitle")}</p>
-      <p className="mt-1 text-text-secondary">
-        {t("capacityDays.migratedBody", { hours: rule.available_hours_per_day })}
-      </p>
-      {can(P.PLAN_EDIT) ? (
-        <Button
-          size="sm"
-          variant="outline"
-          className="mt-2"
-          disabled={busy}
-          onClick={() => void confirm()}
-        >
-          {t("capacityDays.migratedConfirm")}
-        </Button>
-      ) : null}
     </div>
   );
 }

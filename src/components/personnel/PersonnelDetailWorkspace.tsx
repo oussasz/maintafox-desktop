@@ -15,6 +15,7 @@ import {
   EntityDetailHeader,
   EntityDetailViewSwitcher,
 } from "@/components/detail";
+import { PersonScheduleExceptions } from "@/components/personnel/PersonScheduleExceptions";
 import { PersonnelPortrait } from "@/components/personnel/PersonnelPortrait";
 import { PersonCapacityDays } from "@/components/personnel/TeamCapacityDays";
 import { PersonQualificationSheet } from "@/components/personnel/qualification/PersonQualificationSheet";
@@ -379,6 +380,7 @@ export function PersonnelDetailWorkspace({ detail }: PersonnelDetailWorkspacePro
         <DetailSectionCard title={t("detail.tabs.availability")}>
           <p className="text-sm text-text-muted">{t("capacityDays.personIntro")}</p>
           <PersonCapacityDays personnelId={p.id} />
+          <PersonScheduleExceptions personnelId={p.id} />
           {blocks.length > 0 ? (
             <h4 className="pt-2 text-sm font-semibold text-text-primary">
               {t("availability.detail.blocks")}

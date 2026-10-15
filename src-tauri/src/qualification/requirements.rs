@@ -87,7 +87,9 @@ fn map_row(r: &sea_orm::QueryResult) -> AppResult<QualificationRequirement> {
             .try_get("", "entity_sync_id")
             .map_err(|e| decode_err("entity_sync_id", e))?,
         target_kind: r.try_get("", "target_kind").map_err(|e| decode_err("target_kind", e))?,
-        work_order_id: r.try_get("", "work_order_id").map_err(|e| decode_err("work_order_id", e))?,
+        work_order_id: r
+            .try_get("", "work_order_id")
+            .map_err(|e| decode_err("work_order_id", e))?,
         work_order_code: r.try_get("", "wo_code").ok().flatten(),
         target_code: r.try_get("", "target_code").map_err(|e| decode_err("target_code", e))?,
         target_label: r.try_get("", "target_label").ok().flatten(),
@@ -184,10 +186,7 @@ fn target_unknown(code: &str) -> AppError {
 }
 
 /// Validates the target and the qualification asked for; returns the normalised target code.
-async fn validate(
-    db: &impl ConnectionTrait,
-    input: &QualificationRequirementUpsertInput,
-) -> AppResult<Option<String>> {
+async fn validate(db: &impl ConnectionTrait, input: &QualificationRequirementUpsertInput) -> AppResult<Option<String>> {
     if !TARGET_KINDS.contains(&input.target_kind.as_str()) {
         return Err(target_unknown(&input.target_kind));
     }

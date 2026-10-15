@@ -2158,7 +2158,8 @@
       "parents": [
         "user_accounts",
         "work_orders",
-        "reference_values"
+        "reference_values",
+        "personnel"
       ],
       "sync_status": "synced"
     },
@@ -2255,6 +2256,89 @@
         "permit_types",
         "equipment",
         "org_nodes"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "qualification_overrides",
+      "scope": "tenant",
+      "conflict_policy": "append_only",
+      "apply_priority": 12,
+      "parents": [
+        "personnel",
+        "work_orders",
+        "work_permits",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "qualification_requirements",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 11,
+      "parents": [
+        "work_orders",
+        "certification_types",
+        "reference_values",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "work_calendar_holidays",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 4,
+      "parents": [
+        "org_nodes",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "site_work_weeks",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 4,
+      "parents": [
+        "org_nodes",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "schedule_class_versions",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 3,
+      "parents": [
+        "reference_values",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "team_schedule_assignments",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 5,
+      "parents": [
+        "teams",
+        "reference_values",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "personnel_schedule_exceptions",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 6,
+      "parents": [
+        "personnel",
+        "reference_values",
+        "user_accounts"
       ],
       "sync_status": "synced"
     }

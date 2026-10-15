@@ -339,7 +339,7 @@
     "save": "Enregistrer"
   },
   "schedulePattern": {
-    "title": "Calendrier hebdomadaire",
+    "title": "Horaire de la classe horaire",
     "column": "Horaire",
     "cancel": "Annuler",
     "close": "Fermer le modèle horaire",
@@ -404,7 +404,7 @@
       "saturday": "Sam",
       "sunday": "Dim"
     },
-    "open": "Voir l'horaire",
+    "open": "Ouvrir l’horaire",
     "afterCreate": "Après création"
   },
   "export": {

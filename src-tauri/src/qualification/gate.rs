@@ -496,7 +496,9 @@ pub(crate) async fn load_holdings(db: &impl ConnectionTrait, personnel_id: i64) 
         .iter()
         .map(|r| {
             let source: String = r.try_get("", "source_type").map_err(|e| decode_err("source_type", e))?;
-            let validated: i64 = r.try_get("", "is_validated").map_err(|e| decode_err("is_validated", e))?;
+            let validated: i64 = r
+                .try_get("", "is_validated")
+                .map_err(|e| decode_err("is_validated", e))?;
             Ok(HeldSkill {
                 reference_value_id: r
                     .try_get("", "reference_value_id")
@@ -540,11 +542,7 @@ pub(crate) fn evaluate(
     today: NaiveDate,
 ) -> (Option<QualificationGap>, Option<QualificationWarning>) {
     if let Some(ct_id) = req.certification_type_id {
-        let mine: Vec<&HeldCert> = held
-            .certs
-            .iter()
-            .filter(|c| c.certification_type_id == ct_id)
-            .collect();
+        let mine: Vec<&HeldCert> = held.certs.iter().filter(|c| c.certification_type_id == ct_id).collect();
         // Expiry of a certificate: `None` = never expires, `Some(None)` = unreadable (fails
         // closed: treated as expired), `Some(Some(day))`.
         let expiry_of = |c: &HeldCert| c.expires_at.as_deref().map(parse_iso_date);
@@ -594,7 +592,12 @@ pub(crate) fn evaluate(
     if let Some(valid_to) = &skill.valid_to {
         match parse_iso_date(valid_to) {
             Some(d) if d >= work_day => {}
-            _ => return (Some(gap(req, "expired", Some(valid_to.clone()), Some(skill.level))), None),
+            _ => {
+                return (
+                    Some(gap(req, "expired", Some(valid_to.clone()), Some(skill.level))),
+                    None,
+                )
+            }
         }
     }
     if skill.self_declared_unvalidated {
@@ -1258,9 +1261,7 @@ pub async fn list_overrides(
                     .try_get("", "approved_by_id")
                     .map_err(|e| decode_err("approved_by_id", e))?,
                 approved_by_name: r.try_get("", "approver").ok().flatten(),
-                approved_at: r
-                    .try_get("", "approved_at")
-                    .map_err(|e| decode_err("approved_at", e))?,
+                approved_at: r.try_get("", "approved_at").map_err(|e| decode_err("approved_at", e))?,
             })
         })
         .collect()

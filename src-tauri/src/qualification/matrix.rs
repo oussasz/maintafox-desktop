@@ -70,7 +70,12 @@ fn decode_err(field: &str, err: impl std::fmt::Display) -> AppError {
 }
 
 /// State of a certificate on `today` (fails closed: an unreadable expiry is expired).
-fn cert_status(verification: &str, expires_at: Option<&str>, lead_days: Option<i64>, today: chrono::NaiveDate) -> &'static str {
+fn cert_status(
+    verification: &str,
+    expires_at: Option<&str>,
+    lead_days: Option<i64>,
+    today: chrono::NaiveDate,
+) -> &'static str {
     match verification {
         "rejected" => "rejected",
         "verified" => match expires_at {
@@ -234,7 +239,9 @@ pub async fn get_qualification_matrix(
         ))
         .await?
     {
-        let pid: i64 = r.try_get("", "personnel_id").map_err(|e| decode_err("personnel_id", e))?;
+        let pid: i64 = r
+            .try_get("", "personnel_id")
+            .map_err(|e| decode_err("personnel_id", e))?;
         if !index.contains_key(&pid) {
             continue;
         }
@@ -276,7 +283,9 @@ pub async fn get_qualification_matrix(
         ))
         .await?
     {
-        let pid: i64 = r.try_get("", "personnel_id").map_err(|e| decode_err("personnel_id", e))?;
+        let pid: i64 = r
+            .try_get("", "personnel_id")
+            .map_err(|e| decode_err("personnel_id", e))?;
         let Some(&row_index) = index.get(&pid) else {
             continue;
         };
@@ -288,7 +297,9 @@ pub async fn get_qualification_matrix(
             .map_err(|e| decode_err("valid_to", e))?
             .filter(|s| !s.trim().is_empty());
         let source: String = r.try_get("", "source_type").map_err(|e| decode_err("source_type", e))?;
-        let validated: i64 = r.try_get("", "is_validated").map_err(|e| decode_err("is_validated", e))?;
+        let validated: i64 = r
+            .try_get("", "is_validated")
+            .map_err(|e| decode_err("is_validated", e))?;
         let expired = valid_to
             .as_deref()
             .is_some_and(|v| parse_iso_date(v).is_none_or(|d| d < today));
@@ -330,7 +341,10 @@ mod tests {
         let today = NaiveDate::from_ymd_opt(2026, 10, 14).unwrap();
         assert_eq!(cert_status("verified", None, None, today), "valid");
         assert_eq!(cert_status("verified", Some("2026-10-13"), None, today), "expired");
-        assert_eq!(cert_status("verified", Some("2026-10-30"), Some(30), today), "expiring_soon");
+        assert_eq!(
+            cert_status("verified", Some("2026-10-30"), Some(30), today),
+            "expiring_soon"
+        );
         assert_eq!(cert_status("verified", Some("2027-06-01"), Some(30), today), "valid");
         assert_eq!(cert_status("verified", Some("not a date"), None, today), "expired");
         assert_eq!(cert_status("pending", Some("2027-06-01"), None, today), "pending");

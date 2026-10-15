@@ -92,7 +92,9 @@ impl MigrationTrait for Migration {
         .ok_or_else(|| DbErr::Custom(format!("{TABLE} not found")))?;
         let indexes = schema_sql(
             db,
-            &format!("SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = '{TABLE}' AND sql IS NOT NULL"),
+            &format!(
+                "SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = '{TABLE}' AND sql IS NOT NULL"
+            ),
         )
         .await?;
         let triggers = schema_sql(

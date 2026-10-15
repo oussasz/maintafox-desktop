@@ -18,13 +18,24 @@ import {
 } from "../qualification-gate-service";
 import { addPersonnelLabor, listWoLaborPeople } from "../wo-execution-service";
 import {
+  confirmScheduleClassReview,
+  confirmTeamScheduleReview,
+  deletePersonnelScheduleException,
   getPersonCapacity,
   getTeamCapacity,
+  listPersonnelScheduleExceptions,
   listPersonnelSkills,
+  listScheduleClassVersions,
+  listSiteWorkWeeks,
+  listTeamSchedule,
   listWorkCalendarHolidays,
   removePersonnelSkill,
+  setSiteWorkWeek,
+  setTeamSchedule,
   updateExternalCompany,
+  upsertPersonnelScheduleException,
   upsertPersonnelSkill,
+  upsertScheduleClassVersion,
   upsertWorkCalendarHoliday,
 } from "../workforce-service";
 
@@ -170,16 +181,28 @@ describe("workforce service", () => {
       {
         team_id: 1,
         day: "2026-10-12",
-        available_hours: 12,
+        schedule_class_id: 4,
+        schedule_class_label: "Standard 8 h (migrée)",
+        available_hours: 10.2,
+        attendance_hours: 12,
         scheduled_hours: 16,
         absent_hours: 4,
         people: 2,
         people_scheduled: 2,
         people_absent: 0,
         basis: "roster",
-        rule_available_hours: null,
-        rule_overtime_hours: null,
-        members: [],
+        rule_overtime_hours: 2,
+        members: [
+          {
+            personnel_id: 7,
+            full_name: "Samir",
+            allocation_percent: 100,
+            schedule_class_label: "Standard 8 h (migrée)",
+            schedule_source: "team",
+            available_hours: 6.8,
+            reason: "working",
+          },
+        ],
       },
     ]);
     expect((await getTeamCapacity(1, "2026-10-12", "2026-10-12"))[0]?.basis).toBe("roster");
@@ -198,6 +221,7 @@ describe("workforce service", () => {
       entity_sync_id: "h-1",
       holiday_date: "2026-11-01",
       label: "Fête de la Révolution",
+      label_en: "Revolution Day",
       entity_id: null,
       entity_name: null,
       is_active: true,
@@ -254,6 +278,133 @@ describe("workforce service", () => {
       is_active: true,
     });
     expect(company.onboarding_status).toBe("active");
+  });
+});
+
+describe("timetables (Classes horaires)", () => {
+  const version = {
+    id: 5,
+    entity_sync_id: "v-5",
+    reference_value_id: 4,
+    class_code: "STD_8H_MIGRATED",
+    class_label: "Standard 8 h (migrée)",
+    is_continuous: false,
+    effective_from: "2000-01-01",
+    cycle_length_days: 7,
+    rotation_start_date: null,
+    days: [
+      {
+        cycle_day: 1,
+        shift_start: "08:00",
+        shift_end: "16:00",
+        break_minutes: 0,
+        is_rest_day: false,
+      },
+    ],
+    utilisation_percent: 85,
+    review_status: "to_review",
+    note: null,
+    row_version: 1,
+    working_days_per_cycle: 5,
+    net_hours_per_cycle: 40,
+  };
+  const link = {
+    id: 9,
+    entity_sync_id: "l-9",
+    team_id: 2,
+    schedule_reference_value_id: 4,
+    schedule_code: "STD_8H_MIGRATED",
+    schedule_label: "Standard 8 h (migrée)",
+    effective_from: "2000-01-01",
+    review_status: null,
+    row_version: 2,
+  };
+
+  it("lists, saves and confirms Classe horaire versions", async () => {
+    mockInvoke.mockResolvedValueOnce([version]);
+    expect((await listScheduleClassVersions(4))[0]?.utilisation_percent).toBe(85);
+    expect(mockInvoke).toHaveBeenLastCalledWith("list_schedule_class_versions", {
+      referenceValueId: 4,
+    });
+    mockInvoke.mockResolvedValueOnce({ ...version, id: 6, review_status: null });
+    const input = {
+      reference_value_id: 4,
+      effective_from: "2026-11-01",
+      cycle_length_days: 7,
+      rotation_start_date: null,
+      days: version.days,
+      is_continuous: false,
+      utilisation_percent: 90,
+    };
+    expect((await upsertScheduleClassVersion(input)).id).toBe(6);
+    expect(mockInvoke).toHaveBeenLastCalledWith("upsert_schedule_class_version", { input });
+    mockInvoke.mockResolvedValueOnce([{ ...version, review_status: null }]);
+    expect((await confirmScheduleClassReview(4))[0]?.review_status).toBeNull();
+    expect(mockInvoke).toHaveBeenLastCalledWith("confirm_schedule_class_review", {
+      referenceValueId: 4,
+    });
+  });
+
+  it("links a team from a date and confirms the migrated link", async () => {
+    mockInvoke.mockResolvedValueOnce([link]);
+    expect(await listTeamSchedule(2)).toHaveLength(1);
+    expect(mockInvoke).toHaveBeenLastCalledWith("list_team_schedule", { teamId: 2 });
+    mockInvoke.mockResolvedValueOnce([link, { ...link, id: 10, effective_from: "2026-11-01" }]);
+    const input = { team_id: 2, schedule_reference_value_id: 4, effective_from: "2026-11-01" };
+    expect(await setTeamSchedule(input)).toHaveLength(2);
+    expect(mockInvoke).toHaveBeenLastCalledWith("set_team_schedule", { input });
+    mockInvoke.mockResolvedValueOnce([link]);
+    await confirmTeamScheduleReview(2);
+    expect(mockInvoke).toHaveBeenLastCalledWith("confirm_team_schedule_review", { teamId: 2 });
+  });
+
+  it("records, lists and removes a person's exceptions", async () => {
+    const exception = {
+      id: 3,
+      entity_sync_id: "x-3",
+      personnel_id: 7,
+      schedule_reference_value_id: null,
+      schedule_code: null,
+      schedule_label: null,
+      work_percent: 50,
+      valid_from: "2026-11-01",
+      valid_to: null,
+      reason: null,
+      row_version: 1,
+    };
+    mockInvoke.mockResolvedValueOnce([exception]);
+    expect((await listPersonnelScheduleExceptions(7))[0]?.work_percent).toBe(50);
+    mockInvoke.mockResolvedValueOnce(exception);
+    const input = {
+      personnel_id: 7,
+      schedule_reference_value_id: null,
+      work_percent: 50,
+      valid_from: "2026-11-01",
+      valid_to: null,
+    };
+    expect((await upsertPersonnelScheduleException(input)).id).toBe(3);
+    expect(mockInvoke).toHaveBeenLastCalledWith("upsert_personnel_schedule_exception", { input });
+    mockInvoke.mockResolvedValueOnce(null);
+    await deletePersonnelScheduleException(3);
+    expect(mockInvoke).toHaveBeenLastCalledWith("delete_personnel_schedule_exception", { id: 3 });
+  });
+
+  it("reads and sets the sites' weekly rest days", async () => {
+    const week = {
+      id: 1,
+      entity_sync_id: "w-1",
+      entity_id: null,
+      entity_name: null,
+      effective_from: "2000-01-01",
+      weekend_days: [5, 6],
+      row_version: 1,
+    };
+    mockInvoke.mockResolvedValueOnce([week]);
+    expect((await listSiteWorkWeeks())[0]?.weekend_days).toEqual([5, 6]);
+    mockInvoke.mockResolvedValueOnce([week]);
+    const input = { entity_id: 2, effective_from: "2026-11-01", weekend_days: [6] };
+    await setSiteWorkWeek(input);
+    expect(mockInvoke).toHaveBeenLastCalledWith("set_site_work_week", { input });
   });
 });
 

@@ -288,10 +288,7 @@ async fn notify_expiry_alerts(db: &DatabaseConnection, created: &[TrainingExpiry
         };
         let input = crate::notifications::emitter::NotificationEventInput {
             source_module: "personnel".to_string(),
-            source_record_id: row
-                .try_get::<i64>("", "personnel_id")
-                .ok()
-                .map(|id| id.to_string()),
+            source_record_id: row.try_get::<i64>("", "personnel_id").ok().map(|id| id.to_string()),
             event_code: "cert_expiry".to_string(),
             category_code: "cert_expiry".to_string(),
             severity: event.severity.clone(),

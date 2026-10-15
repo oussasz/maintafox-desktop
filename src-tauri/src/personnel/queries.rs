@@ -2008,10 +2008,7 @@ pub async fn update_external_company(
     let (start, end) = (clean(input.contract_start), clean(input.contract_end));
     if let (Some(s), Some(e)) = (&start, &end) {
         if e < s {
-            return Err(issue(
-                "COMPANY_CONTRACT_DATES",
-                "The contract end is before its start.",
-            ));
+            return Err(issue("COMPANY_CONTRACT_DATES", "The contract end is before its start."));
         }
     }
     let res = db

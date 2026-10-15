@@ -221,7 +221,10 @@ pub struct AddPersonnelLaborInput {
     pub notes: Option<String>,
 }
 
-pub async fn add_personnel_labor_entry(db: &DatabaseConnection, input: AddPersonnelLaborInput) -> AppResult<WoIntervener> {
+pub async fn add_personnel_labor_entry(
+    db: &DatabaseConnection,
+    input: AddPersonnelLaborInput,
+) -> AppResult<WoIntervener> {
     let person = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,

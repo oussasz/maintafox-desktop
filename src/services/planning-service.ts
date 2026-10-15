@@ -1,12 +1,12 @@
-import { z, ZodError } from "zod";
+import { ZodError, z } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
 import type {
   CapacityRule,
   CapacityRuleFilter,
   CreateCapacityRuleInput,
-  CreateScheduleBreakInInput,
   CreatePlanningWindowInput,
+  CreateScheduleBreakInInput,
   CreateScheduleCommitmentInput,
   ExportPlanningGanttPdfInput,
   ExportedBinaryDocument,
@@ -120,8 +120,6 @@ const CapacityRuleSchema = z.object({
   row_version: z.number(),
   created_at: z.string(),
   updated_at: z.string(),
-  /** `migrated_default` until a planner reviews the rule the upgrade created. */
-  origin: z.string().nullable().optional(),
 });
 
 const PlanningWindowSchema = z.object({

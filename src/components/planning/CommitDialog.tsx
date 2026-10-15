@@ -691,7 +691,10 @@ export function CommitDialog({
                 (dayCapacity.basis === "no_schedule" || dayCapacity.basis === "no_members") ? (
                   <p className="text-[11px] text-tone-attention-fg" role="alert">
                     {t("commitment.noTeamCapacity")}{" "}
-                    <Link to="/personnel?tab=teams" className="underline">
+                    <Link
+                      to={`/personnel?tab=teams&team=${effectiveTeamId ?? ""}`}
+                      className="underline"
+                    >
                       {t("commitment.setUpTeamCapacity")}
                     </Link>
                   </p>

@@ -15,8 +15,9 @@ import {
   ENTITY_DETAIL_HEADER_ACTION_BTN,
 } from "@/components/detail";
 import { CrewBadge } from "@/components/personnel/CrewBadge";
-import { MigratedCapacityNotice, TeamCapacityDays } from "@/components/personnel/TeamCapacityDays";
+import { TeamCapacityDays } from "@/components/personnel/TeamCapacityDays";
 import { TeamSkillsHeatmap } from "@/components/personnel/TeamSkillsHeatmap";
+import { TeamTimetablePanel } from "@/components/personnel/TeamTimetablePanel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -50,6 +51,8 @@ export type TeamDetailWorkspaceProps = {
   /** Called after roster lead changes so the parent can refresh lead_count. */
   onRosterChanged?: (() => void) | undefined;
   canManage?: boolean | undefined;
+  /** Tab shown first (planning links open the capacity tab). */
+  initialTab?: string | undefined;
 };
 
 export function TeamDetailWorkspace({
@@ -62,6 +65,7 @@ export function TeamDetailWorkspace({
   onOpenPersonnel,
   onRosterChanged,
   canManage = false,
+  initialTab,
 }: TeamDetailWorkspaceProps) {
   const { t } = useTranslation("personnel");
   const [team, setTeam] = useState<TeamSummary | null>(null);
@@ -73,7 +77,9 @@ export function TeamDetailWorkspace({
   const [error, setError] = useState<string | null>(null);
   const [skillsError, setSkillsError] = useState<string | null>(null);
   const [capacityNote, setCapacityNote] = useState<string | null>(null);
-  const [tab, setTab] = useState("overview");
+  /** Bumped when the team's Classe horaire changes, so its capacity reloads. */
+  const [timetableRevision, setTimetableRevision] = useState(0);
+  const [tab, setTab] = useState(initialTab ?? "overview");
   const [leadBusyId, setLeadBusyId] = useState<number | null>(null);
 
   const load = useCallback(async () => {
@@ -420,9 +426,14 @@ export function TeamDetailWorkspace({
             </TabsContent>
 
             <TabsContent value="capacity" className="space-y-3">
-              <MigratedCapacityNotice teamId={teamId} />
+              <DetailSectionCard title={t("timetable.team.title")}>
+                <TeamTimetablePanel
+                  teamId={teamId}
+                  onChanged={() => setTimetableRevision((n) => n + 1)}
+                />
+              </DetailSectionCard>
               <DetailSectionCard title={t("capacityDays.title")}>
-                <TeamCapacityDays teamId={teamId} />
+                <TeamCapacityDays key={timetableRevision} teamId={teamId} />
               </DetailSectionCard>
               <DetailSectionCard title={t("crews.detail.horizonKpis")}>
                 {capacity ? (
