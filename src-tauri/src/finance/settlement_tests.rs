@@ -9,8 +9,7 @@
 //! - S5 cockpit shows budget / committed / actual / forecast and drills down to the OT and PO.
 
 use chrono::{Datelike, Utc};
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
-use sea_orm_migration::MigratorTrait;
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 use crate::finance::cockpit::{self, BudgetCockpitDrilldownFilter, BudgetCockpitFilter};
 use crate::finance::periods::{self, CloseBudgetPeriodInput, ReopenBudgetPeriodInput};
@@ -30,17 +29,9 @@ const CC_CODE: &str = "CC-MNT-PMP";
 
 // ── Fixtures ───────────────────────────────────────────────────────────────────────────────
 
+/// Migrated and seeded database (shared template copy; foreign keys on).
 async fn setup() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:").await.expect("in-memory sqlite");
-    db.execute(Statement::from_string(
-        DbBackend::Sqlite,
-        "PRAGMA foreign_keys = ON;".to_string(),
-    ))
-    .await
-    .expect("foreign keys");
-    crate::migrations::Migrator::up(&db, None).await.expect("migrations");
-    crate::db::seeder::seed_system_data(&db).await.expect("seed");
-    db
+    crate::db::test_db::seeded().await
 }
 
 async fn exec(db: &DatabaseConnection, sql: &str, values: Vec<sea_orm::Value>) {
