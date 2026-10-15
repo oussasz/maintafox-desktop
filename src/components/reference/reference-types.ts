@@ -61,7 +61,7 @@ export interface ReferenceTypeConfig {
    * Optional Manager value extensions for this domain (e.g. weekly schedule pattern).
    * Drives ReferenceValueEditor columns — not combobox create flags.
    */
-  valueExtensions?: ReadonlyArray<"schedule_pattern">;
+  valueExtensions?: ReadonlyArray<"schedule_pattern" | "maintenance_nature">;
   /** Empty-state copy key suffix under reference.combobox.types.{id} */
   emptyMessageFr: string;
   emptyMessageEn: string;
@@ -139,6 +139,8 @@ export const REFERENCE_TYPE_REGISTRY: Record<ReferenceTypeId, ReferenceTypeConfi
     entityLabelFr: "type de demande",
     entityLabelEn: "request type",
     gender: "m",
+    // Each request type may name the EN 13306 nature of the OT it becomes (semantic_tag).
+    valueExtensions: ["maintenance_nature"],
     emptyMessageFr: "Aucun type de demande disponible",
     emptyMessageEn: "No request type available",
   },

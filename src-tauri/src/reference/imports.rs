@@ -515,6 +515,50 @@ pub async fn validate_import_batch(
             _ => {}
         }
 
+        // ── Check: required parent in another domain (OT sub-type → maintenance nature) ──
+        if let Some(parent_domain) = values::required_parent_domain(&domain.code) {
+            match input.parent_code.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
+                None => {
+                    messages.push(ImportRowMessage {
+                        category: "MissingParent".into(),
+                        severity: "error".into(),
+                        message: format!(
+                            "Ligne {row_no}: la valeur doit etre rattachee a une valeur de '{parent_domain}' \
+                             (colonne parent_code)."
+                        ),
+                    });
+                    status = "error";
+                }
+                Some(parent_code) => {
+                    if values::published_value_id_by_code(&txn, parent_domain, parent_code)
+                        .await?
+                        .is_none()
+                    {
+                        messages.push(ImportRowMessage {
+                            category: "InvalidParent".into(),
+                            severity: "error".into(),
+                            message: format!(
+                                "Ligne {row_no}: parent '{parent_code}' introuvable dans '{parent_domain}'."
+                            ),
+                        });
+                        status = "error";
+                    }
+                }
+            }
+        }
+
+        // ── Check: nature tag (request types: EN 13306 nature of the OT, or empty) ──
+        if let Err(AppError::ValidationFailed(errs)) =
+            values::checked_semantic_tag(&txn, &domain.code, input.semantic_tag.as_deref()).await
+        {
+            messages.push(ImportRowMessage {
+                category: "InvalidNatureTag".into(),
+                severity: "error".into(),
+                message: format!("Ligne {row_no}: {}", errs.join(" ")),
+            });
+            status = "error";
+        }
+
         let messages_json = serde_json::to_string(&messages)?;
 
         txn.execute(Statement::from_sql_and_values(
@@ -689,10 +733,40 @@ pub async fn apply_import_batch(
             continue;
         }
 
+        // Same server rules as a value created in the editor: a required cross-domain parent named
+        // by `parent_code`, and a nature tag that is one of the maintenance natures.
+        let parent_id = match values::required_parent_domain(&target_domain.code) {
+            Some(parent_domain) => {
+                let named = input.parent_code.as_deref().map(str::trim).filter(|c| !c.is_empty());
+                match named {
+                    Some(pc) => match values::published_value_id_by_code(&txn, parent_domain, pc).await? {
+                        Some(id) => Some(id),
+                        None => {
+                            errored += 1;
+                            continue;
+                        }
+                    },
+                    None => {
+                        errored += 1;
+                        continue;
+                    }
+                }
+            }
+            None => None,
+        };
+        let semantic_tag =
+            match values::checked_semantic_tag(&txn, &target_domain.code, input.semantic_tag.as_deref()).await {
+                Ok(tag) => tag,
+                Err(_) => {
+                    errored += 1;
+                    continue;
+                }
+            };
+
         // Check if this code already exists in the draft set.
         if let Some(existing_id) = existing_in_set.get(&code) {
             // Update existing value.
-            match apply_update_value(&txn, *existing_id, &input, &label).await {
+            match apply_update_value(&txn, *existing_id, &input, &label, parent_id, semantic_tag.as_deref()).await {
                 Ok(_) => updated += 1,
                 Err(_) => errored += 1,
             }
@@ -704,10 +778,11 @@ pub async fn apply_import_batch(
                     DbBackend::Sqlite,
                     "INSERT INTO reference_values (entity_sync_id, set_id, parent_id, code, label, description, sort_order, \
                       color_hex, icon_name, semantic_tag, external_code, is_active, metadata_json) \
-                     VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
                     [
                         crate::sync::identity::new_entity_sync_id().into(),
                         policy.target_set_id.into(),
+                        parent_id.into(),
                         code.clone().into(),
                         label.into(),
                         input
@@ -729,8 +804,7 @@ pub async fn apply_import_batch(
                             .clone()
                             .map(|c| sea_orm::Value::String(Some(Box::new(c))))
                             .unwrap_or(sea_orm::Value::String(None)),
-                        input
-                            .semantic_tag
+                        semantic_tag
                             .clone()
                             .map(|c| sea_orm::Value::String(Some(Box::new(c))))
                             .unwrap_or(sea_orm::Value::String(None)),
@@ -947,9 +1021,16 @@ async fn apply_update_value(
     value_id: i64,
     input: &ImportRowInput,
     label: &str,
+    parent_id: Option<i64>,
+    semantic_tag: Option<&str>,
 ) -> AppResult<()> {
     let mut set_clauses: Vec<String> = vec!["label = ?".into()];
     let mut binds: Vec<sea_orm::Value> = vec![label.into()];
+
+    if let Some(pid) = parent_id {
+        set_clauses.push("parent_id = ?".into());
+        binds.push(pid.into());
+    }
 
     if let Some(ref desc) = input.description {
         set_clauses.push("description = ?".into());
@@ -967,9 +1048,9 @@ async fn apply_update_value(
         set_clauses.push("icon_name = ?".into());
         binds.push(icon.clone().into());
     }
-    if let Some(ref tag) = input.semantic_tag {
+    if input.semantic_tag.is_some() {
         set_clauses.push("semantic_tag = ?".into());
-        binds.push(tag.clone().into());
+        binds.push(semantic_tag.map(str::to_string).into());
     }
     if let Some(ref ext) = input.external_code {
         set_clauses.push("external_code = ?".into());

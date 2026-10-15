@@ -224,6 +224,16 @@ pub struct WorkOrder {
     pub source_inspection_round_title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_inspection_round_scheduled_at: Option<String>,
+    /// PM plan / occurrence whose finding raised this OT (`pm_findings.follow_up_work_order_id`):
+    /// a failure found by preventive maintenance.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_pm_plan_id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_pm_plan_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_pm_plan_title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_pm_occurrence_id: Option<i64>,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -566,6 +576,14 @@ pub fn map_work_order(row: &QueryResult) -> AppResult<WorkOrder> {
             .unwrap_or(None),
         source_inspection_round_scheduled_at: row
             .try_get::<Option<String>>("", "source_inspection_round_scheduled_at")
+            .unwrap_or(None),
+        source_pm_plan_id: row.try_get::<Option<i64>>("", "source_pm_plan_id").unwrap_or(None),
+        source_pm_plan_code: row.try_get::<Option<String>>("", "source_pm_plan_code").unwrap_or(None),
+        source_pm_plan_title: row
+            .try_get::<Option<String>>("", "source_pm_plan_title")
+            .unwrap_or(None),
+        source_pm_occurrence_id: row
+            .try_get::<Option<i64>>("", "source_pm_occurrence_id")
             .unwrap_or(None),
     })
 }

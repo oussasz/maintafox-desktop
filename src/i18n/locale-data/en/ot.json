@@ -699,6 +699,7 @@
     "fields": {
       "subtype": "Sub-type",
       "sourceInspectionRound": "Inspection round",
+      "sourcePmPlan": "Found by PM (plan)",
       "nature": "Nature (EN 13306)",
       "number": "Number",
       "title": "Title",

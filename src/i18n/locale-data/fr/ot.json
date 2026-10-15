@@ -699,6 +699,7 @@
     "fields": {
       "subtype": "Sous-type",
       "sourceInspectionRound": "Tournée d'inspection",
+      "sourcePmPlan": "Constat de préventif (plan)",
       "nature": "Nature (EN 13306)",
       "number": "Numéro",
       "title": "Titre",

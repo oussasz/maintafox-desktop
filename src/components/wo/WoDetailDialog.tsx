@@ -366,6 +366,19 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
                     }
                   />
                 )}
+                {wo.source_pm_plan_id != null && (
+                  <InfoRow
+                    label={t("detail.fields.sourcePmPlan")}
+                    value={
+                      <LinkedEntityBadge
+                        entity="pm_plan"
+                        code={wo.source_pm_plan_code}
+                        entityId={wo.source_pm_plan_id}
+                        title={wo.source_pm_plan_title}
+                      />
+                    }
+                  />
+                )}
                 {wo.source_ram_ishikawa_diagram_id != null && wo.source_rca_cause_text && (
                   <InfoRow
                     label={t("detail.fields.sourceRca")}

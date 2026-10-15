@@ -1244,10 +1244,16 @@ pub async fn get_pm_governance_kpi_report(
     let first_pass_numerator: i64 = first_pass_row.try_get("", "numerator")?;
     let first_pass_denominator: i64 = first_pass_row.try_get("", "denominator")?;
 
-    let mut follow_up_sql = String::from(
+    // Failures found by PM: follow-up work orders of a corrective nature (EN 13306) raised from the
+    // findings of the period, through the PM finding → OT link (`pm_findings.follow_up_work_order_id`).
+    let mut follow_up_sql = format!(
         "SELECT
             COALESCE(SUM(CASE WHEN pf.follow_up_di_id IS NOT NULL OR pf.follow_up_work_order_id IS NOT NULL THEN 1 ELSE 0 END), 0) AS numerator,
-            COALESCE(COUNT(*), 0) AS denominator
+            COALESCE(COUNT(*), 0) AS denominator,
+            COALESCE(SUM(CASE WHEN EXISTS (
+                SELECT 1 FROM work_orders fw JOIN reference_values ft ON ft.id = fw.type_id
+                 WHERE fw.id = pf.follow_up_work_order_id AND ft.semantic_tag IN ({corrective})
+            ) THEN 1 ELSE 0 END), 0) AS failures_found
          FROM pm_findings pf
          JOIN pm_executions pe ON pe.id = pf.pm_execution_id
          JOIN pm_occurrences po ON po.id = pe.pm_occurrence_id
@@ -1255,6 +1261,7 @@ pub async fn get_pm_governance_kpi_report(
          LEFT JOIN lookup_values lv ON lv.id = pp.criticality_value_id
          WHERE pe.executed_at >= ?
            AND pe.executed_at <= ?",
+        corrective = crate::wo::types::nature_sql_list(&crate::wo::types::MaintenanceNature::CORRECTIVE)
     );
     let mut follow_up_binds: Vec<sea_orm::Value> = vec![from.clone().into(), to.clone().into()];
     if let Some(pm_plan_id) = input.pm_plan_id {
@@ -1275,6 +1282,7 @@ pub async fn get_pm_governance_kpi_report(
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("pm follow-up KPI row missing")))?;
     let follow_up_numerator: i64 = follow_up_row.try_get("", "numerator")?;
     let follow_up_denominator: i64 = follow_up_row.try_get("", "denominator")?;
+    let failures_found_by_pm: i64 = follow_up_row.try_get("", "failures_found")?;
 
     let mut effort_sql = String::from(
         "SELECT
@@ -1350,6 +1358,7 @@ pub async fn get_pm_governance_kpi_report(
             value_pct: rate_pct(follow_up_numerator, follow_up_denominator),
             derivation: "findings with DI/WO follow-up / all findings on executions in period".to_string(),
         },
+        failures_found_by_pm,
         effort_variance: PmEffortVarianceKpi {
             sample_size,
             estimated_hours,
@@ -1975,8 +1984,7 @@ async fn create_follow_up_wo_from_finding(
             "Cannot create follow-up OT without equipment scope on PM plan.".to_string(),
         ]));
     }
-    let wo_type_id = resolve_preventive_work_order_type_id(db, finding.follow_up_work_order_type_id).await?;
-    let wo_type_code = resolve_work_order_type_code_by_id(db, wo_type_id).await?;
+    let wo_type_code = follow_up_work_order_type_code(db, finding.follow_up_work_order_type_id).await?;
 
     let wo = wo_queries::create_work_order(
         db,
@@ -2008,6 +2016,39 @@ async fn create_follow_up_wo_from_finding(
     .await?;
 
     Ok(wo.id)
+}
+
+/// Stable gate code of a follow-up OT type that is not corrective work.
+pub const GATE_PM_FOLLOW_UP_NOT_CORRECTIVE: &str = "GATE_PM_FOLLOW_UP_NOT_CORRECTIVE";
+
+/// Type of the OT raised from a PM finding. A fault found during preventive work is repaired as
+/// deferred corrective maintenance (EN 13306), so the OT counts as a failure found by PM; an
+/// explicit type must be of a corrective nature.
+async fn follow_up_work_order_type_code(db: &DatabaseConnection, explicit_type_id: Option<i64>) -> AppResult<String> {
+    use crate::wo::types::{default_type_for_nature, list_work_order_types, MaintenanceNature};
+    let Some(type_id) = explicit_type_id else {
+        return Ok(default_type_for_nature(db, MaintenanceNature::CorrectiveDeferred)
+            .await?
+            .code);
+    };
+    let ty = list_work_order_types(db)
+        .await?
+        .into_iter()
+        .find(|t| t.id == type_id && t.is_active)
+        .ok_or_else(|| AppError::ValidationFailed(vec![format!("Type d'OT introuvable (type_id={type_id}).")]))?;
+    if !ty
+        .nature
+        .as_deref()
+        .and_then(MaintenanceNature::parse)
+        .is_some_and(|n| n.is_corrective())
+    {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "{GATE_PM_FOLLOW_UP_NOT_CORRECTIVE}: un OT de suite de constat préventif est de nature corrective \
+             (type '{}' refusé).",
+            ty.code
+        )]));
+    }
+    Ok(ty.code)
 }
 
 pub async fn list_pm_executions(db: &DatabaseConnection, filter: PmExecutionFilter) -> AppResult<Vec<PmExecution>> {

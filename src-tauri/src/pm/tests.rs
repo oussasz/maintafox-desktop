@@ -1933,3 +1933,212 @@ async fn meter_plan_on_a_chosen_asset_meter_recurs_every_interval() {
         .collect();
     assert_eq!(thresholds, vec![1250.0, 1500.0]);
 }
+
+// ── Owner decision 2026-10-15 (c): a PM follow-up OT is deferred corrective work ─────────────
+
+/// Site, node type and asset the PM execution tests run on.
+async fn seed_execution_asset(db: &DatabaseConnection) {
+    for sql in [
+        "INSERT OR IGNORE INTO org_structure_models
+            (id, entity_sync_id, version_number, status, description, activated_at, created_at, updated_at)
+         VALUES (1, 'pm_org_model', 1, 'active', 'PM test model',
+                 strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+                 strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
+        "INSERT OR IGNORE INTO org_node_types
+            (id, entity_sync_id, structure_model_id, code, label, can_host_assets, can_own_work, is_root_type, is_active,
+             created_at, updated_at)
+         VALUES (1, 'pm_org_type', 1, 'SITE', 'Site', 1, 1, 1, 1,
+                 strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
+        "INSERT OR IGNORE INTO org_nodes
+            (id, entity_sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status,
+             created_at, updated_at, row_version, structure_model_id)
+         VALUES (1, 'pm_org_node', 'SITE-1', 'Test Site', 1, NULL, '/', 0, 'active',
+                 strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1, 1)",
+        "INSERT OR IGNORE INTO equipment (id, entity_sync_id, asset_id_code, name, lifecycle_status, installed_at_node_id,
+             created_at, updated_at)
+         VALUES (1, 'eq_sync_pm_exec', 'EQ-PM-EXEC', 'PM Execution Asset', 'active_in_service', 1,
+                 strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
+    ] {
+        db.execute(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
+            .await
+            .expect("seed execution asset");
+    }
+}
+
+/// Brings the first occurrence of `plan_id` to `in_progress`.
+async fn occurrence_in_progress(db: &DatabaseConnection, plan_id: i64) -> crate::pm::domain::PmOccurrence {
+    queries::generate_pm_occurrences(
+        db,
+        GeneratePmOccurrencesInput {
+            as_of: Some("2026-01-10T00:00:00Z".to_string()),
+            horizon_days: Some(2),
+            pm_plan_id: Some(plan_id),
+            equipment_id: None,
+            event_codes: None,
+            condition_codes: None,
+        },
+    )
+    .await
+    .expect("generate occurrences");
+    let mut occ = queries::list_pm_occurrences(
+        db,
+        PmOccurrenceFilter {
+            pm_plan_id: Some(plan_id),
+            status: None,
+            due_from: None,
+            due_to: None,
+            include_completed: Some(true),
+        },
+    )
+    .await
+    .expect("list occurrences")
+    .remove(0);
+    for next in ["ready_for_scheduling", "scheduled", "in_progress"] {
+        occ = queries::transition_pm_occurrence(
+            db,
+            TransitionPmOccurrenceInput {
+                occurrence_id: occ.id,
+                expected_row_version: occ.row_version,
+                next_status: next.to_string(),
+                reason_code: None,
+                note: None,
+                generate_work_order: Some(false),
+                work_order_type_id: None,
+                actor_id: Some(1),
+            },
+        )
+        .await
+        .unwrap_or_else(|e| panic!("to {next}: {e:?}"));
+    }
+    occ
+}
+
+fn finding(kind: &str, di: bool, wo: bool, type_id: Option<i64>) -> crate::pm::domain::PmExecutionFindingInput {
+    crate::pm::domain::PmExecutionFindingInput {
+        finding_type: kind.to_string(),
+        severity: Some("high".to_string()),
+        description: format!("{kind} found during the PM round"),
+        create_follow_up_di: Some(di),
+        create_follow_up_work_order: Some(wo),
+        follow_up_work_order_type_id: type_id,
+    }
+}
+
+fn execute_input(
+    occ: &crate::pm::domain::PmOccurrence,
+    findings: Vec<crate::pm::domain::PmExecutionFindingInput>,
+) -> ExecutePmOccurrenceInput {
+    ExecutePmOccurrenceInput {
+        occurrence_id: occ.id,
+        expected_occurrence_row_version: occ.row_version,
+        execution_result: "completed_with_findings".to_string(),
+        note: None,
+        actor_id: Some(1),
+        work_order_id: None,
+        defer_reason_code: None,
+        miss_reason_code: None,
+        findings: Some(findings),
+    }
+}
+
+async fn type_id_of(db: &DatabaseConnection, code: &str) -> i64 {
+    crate::wo::types::list_work_order_types(db)
+        .await
+        .expect("types")
+        .into_iter()
+        .find(|t| t.code == code)
+        .unwrap_or_else(|| panic!("shipped type {code}"))
+        .id
+}
+
+#[tokio::test]
+async fn pm_follow_up_work_orders_are_corrective_failures_found_by_pm() {
+    let db = setup_db().await;
+    seed_execution_asset(&db).await;
+    let (plan_id, _) = create_plan_with_published_version(
+        &db,
+        "PM-FIND-001",
+        "fixed",
+        r#"{"interval_unit":"day","interval_value":1}"#,
+    )
+    .await;
+    let occ = occurrence_in_progress(&db, plan_id).await;
+    let emergency = type_id_of(&db, "emergency").await;
+
+    let done = queries::execute_pm_occurrence(
+        &db,
+        execute_input(
+            &occ,
+            vec![
+                finding("BEARING_WEAR", false, true, None),
+                finding("SEAL_LEAK", false, true, Some(emergency)),
+                finding("PAINT", true, false, None),
+            ],
+        ),
+    )
+    .await
+    .expect("execute occurrence");
+
+    // Default follow-up OT: deferred corrective work, with its PM origin on the OT.
+    let default_wo = done.findings[0].follow_up_work_order_id.expect("follow-up OT");
+    let wo = crate::wo::queries::get_work_order(&db, default_wo)
+        .await
+        .expect("read OT")
+        .expect("OT");
+    assert_eq!(wo.nature_code.as_deref(), Some("corrective_deferred"));
+    assert_eq!(wo.type_code.as_deref(), Some("corrective"));
+    assert_eq!(wo.source_pm_plan_id, Some(plan_id));
+    assert_eq!(wo.source_pm_plan_code.as_deref(), Some("PM-FIND-001"));
+    assert_eq!(wo.source_pm_plan_title.as_deref(), Some("PM-FIND-001 title"));
+    assert_eq!(wo.source_pm_occurrence_id, Some(occ.id));
+
+    // An explicit corrective type is kept.
+    let urgent_wo = done.findings[1].follow_up_work_order_id.expect("second OT");
+    let urgent = crate::wo::queries::get_work_order(&db, urgent_wo)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(urgent.nature_code.as_deref(), Some("corrective_immediate"));
+
+    // The count PM and reliability views read: corrective OTs raised from findings.
+    let report = queries::get_pm_governance_kpi_report(
+        &db,
+        PmGovernanceKpiInput {
+            from: Some("2000-01-01T00:00:00Z".to_string()),
+            to: Some("2100-01-01T00:00:00Z".to_string()),
+            pm_plan_id: Some(plan_id),
+            criticality_code: None,
+        },
+    )
+    .await
+    .expect("kpi report");
+    assert_eq!(report.failures_found_by_pm, 2, "the DI-only finding is not an OT");
+    assert_eq!(report.follow_up_ratio.numerator, 3);
+    assert_eq!(report.follow_up_ratio.denominator, 3);
+}
+
+#[tokio::test]
+async fn a_pm_follow_up_work_order_of_a_preventive_type_is_refused() {
+    let db = setup_db().await;
+    seed_execution_asset(&db).await;
+    let (plan_id, _) = create_plan_with_published_version(
+        &db,
+        "PM-FIND-002",
+        "fixed",
+        r#"{"interval_unit":"day","interval_value":1}"#,
+    )
+    .await;
+    let occ = occurrence_in_progress(&db, plan_id).await;
+    let preventive = type_id_of(&db, "preventive").await;
+
+    let err = queries::execute_pm_occurrence(
+        &db,
+        execute_input(&occ, vec![finding("BEARING_WEAR", false, true, Some(preventive))]),
+    )
+    .await
+    .expect_err("a follow-up OT is corrective work");
+    assert!(
+        matches!(err, AppError::ValidationFailed(ref m) if m.iter().any(|s| s.contains(queries::GATE_PM_FOLLOW_UP_NOT_CORRECTIVE))),
+        "{err:?}"
+    );
+}

@@ -162,8 +162,21 @@ pub async fn validate_reference_set(
     // ── Check 3: hierarchy cycles ─────────────────────────────────────────
     check_hierarchy_cycles(&all_values, &mut issues);
 
-    // ── Check 4: orphan parent references ─────────────────────────────────
-    check_orphan_parents(&all_values, &mut issues);
+    // ── Check 4: orphan parent references (a parent in an allowed parent domain is not one) ──
+    let mut cross_parents: HashSet<i64> = HashSet::new();
+    let in_set: HashSet<i64> = all_values.iter().map(|v| v.id).collect();
+    for pid in all_values.iter().filter_map(|v| v.parent_id) {
+        if !in_set.contains(&pid) && values::is_allowed_cross_domain_parent(db, &domain.code, pid).await? {
+            cross_parents.insert(pid);
+        }
+    }
+    check_orphan_parents(&all_values, &cross_parents, &mut issues);
+
+    // ── Check 4b: required parent domain (OT sub-type → maintenance nature) ──
+    check_required_parents(db, &domain, &all_values, &mut issues).await?;
+
+    // ── Check 4c: nature tag of request types (EN 13306 nature or empty) ───
+    check_nature_tags(db, &domain, &all_values, &mut issues).await?;
 
     // ── Check 5: invalid color format ─────────────────────────────────────
     check_invalid_colors(&all_values, &mut issues);
@@ -342,12 +355,16 @@ fn check_hierarchy_cycles(vals: &[values::ReferenceValue], issues: &mut Vec<Refe
 /// Check 4: orphan parent references.
 ///
 /// A value has parent_id set, but the parent does not exist in this set.
-fn check_orphan_parents(vals: &[values::ReferenceValue], issues: &mut Vec<ReferenceValidationIssue>) {
+fn check_orphan_parents(
+    vals: &[values::ReferenceValue],
+    cross_parents: &HashSet<i64>,
+    issues: &mut Vec<ReferenceValidationIssue>,
+) {
     let id_set: HashSet<i64> = vals.iter().map(|v| v.id).collect();
 
     for v in vals {
         if let Some(pid) = v.parent_id {
-            if !id_set.contains(&pid) {
+            if !id_set.contains(&pid) && !cross_parents.contains(&pid) {
                 issues.push(ReferenceValidationIssue {
                     check: "orphan_parent".into(),
                     message: format!(
@@ -361,6 +378,65 @@ fn check_orphan_parents(vals: &[values::ReferenceValue], issues: &mut Vec<Refere
             }
         }
     }
+}
+
+/// Check 4b: every value of a domain with a required parent domain hangs under a value of that
+/// domain (an OT sub-type under one EN 13306 maintenance nature).
+async fn check_required_parents(
+    db: &DatabaseConnection,
+    domain: &crate::reference::domains::ReferenceDomain,
+    vals: &[values::ReferenceValue],
+    issues: &mut Vec<ReferenceValidationIssue>,
+) -> AppResult<()> {
+    let Some(required) = values::required_parent_domain(&domain.code) else {
+        return Ok(());
+    };
+    for v in vals {
+        let parent_domain = match v.parent_id {
+            Some(pid) => values::domain_code_of_value(db, pid).await?,
+            None => None,
+        };
+        if parent_domain.as_deref().map(|d| d.eq_ignore_ascii_case(required)) != Some(true) {
+            issues.push(ReferenceValidationIssue {
+                check: "parent_required".into(),
+                message: format!(
+                    "La valeur '{}' doit etre rattachee a une valeur de '{required}'.",
+                    v.code
+                ),
+                severity: IssueSeverity::Blocking,
+                value_id: Some(v.id),
+                value_code: Some(v.code.clone()),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Check 4c: the nature tag of a nature-tagged domain (request types) is empty or one of the
+/// EN 13306 maintenance natures.
+async fn check_nature_tags(
+    db: &DatabaseConnection,
+    domain: &crate::reference::domains::ReferenceDomain,
+    vals: &[values::ReferenceValue],
+    issues: &mut Vec<ReferenceValidationIssue>,
+) -> AppResult<()> {
+    if !values::is_nature_tagged_domain(&domain.code) {
+        return Ok(());
+    }
+    for v in vals {
+        if let Err(AppError::ValidationFailed(errs)) =
+            values::checked_semantic_tag(db, &domain.code, v.semantic_tag.as_deref()).await
+        {
+            issues.push(ReferenceValidationIssue {
+                check: "invalid_nature_tag".into(),
+                message: format!("La valeur '{}' : {}", v.code, errs.join(" ")),
+                severity: IssueSeverity::Blocking,
+                value_id: Some(v.id),
+                value_code: Some(v.code.clone()),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Check 5: invalid color_hex format.

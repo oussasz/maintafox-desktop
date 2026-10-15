@@ -11,6 +11,7 @@ use sea_orm_migration::prelude::MigratorTrait;
 use crate::errors::AppError;
 use crate::migrations::Migrator;
 use crate::reference::urgency_scale::{self, UpdateUrgencyLevelInput};
+use crate::reference::{imports, publish, sets, validation, values};
 use crate::wo::types::{self as wo_types, MaintenanceNature};
 
 // ── helpers ────────────────────────────────────────────────────────────────────────────────
@@ -936,33 +937,22 @@ async fn ot_subtypes_hang_under_one_nature_and_must_match_the_ot_type() {
     seed_equipment(&db).await;
     let admin = i64_of(&db, "SELECT id FROM user_accounts WHERE username = 'admin'").await;
     let predetermined = value_id(&db, wo_types::NATURES_DOMAIN, "preventive_predetermined").await;
-    let create = |parent: Option<i64>, label: &'static str| {
+    let draft = draft_of(&db, wo_types::SUBTYPES_DOMAIN, admin).await;
+    let create = |parent: Option<i64>, code: &'static str, label: &'static str| {
         let db = &db;
-        async move {
-            crate::reference::values::create_operational_value(
-                db,
-                crate::reference::values::CreateOperationalReferenceValuePayload {
-                    domain_code: wo_types::SUBTYPES_DOMAIN.into(),
-                    label: label.into(),
-                    description: None,
-                    parent_id: parent,
-                    code: None,
-                },
-                admin,
-            )
-            .await
-        }
+        async move { values::create_value(db, value_payload(draft.id, parent, code, label, None), admin).await }
     };
-    let missing = create(None, "Sans nature")
+    let missing = create(None, "SANS_NATURE", "Sans nature")
         .await
         .expect_err("a sub-type needs a nature");
     assert!(matches!(missing, AppError::ValidationFailed(ref m) if m[0].contains("GATE_REF_PARENT_REQUIRED")));
     let wrong_domain = value_id(&db, "WORK.URGENCY", "high").await;
-    assert!(create(Some(wrong_domain), "Mauvais parent").await.is_err());
+    assert!(create(Some(wrong_domain), "MAUVAIS", "Mauvais parent").await.is_err());
 
-    let lubrication = create(Some(predetermined), "Lubrification")
+    let lubrication = create(Some(predetermined), "LUBRIFICATION", "Lubrification")
         .await
         .expect("plant sub-type");
+    publish_draft(&db, draft.id, admin).await;
     let listed = wo_types::list_work_order_subtypes(&db).await.expect("subtypes");
     let row = listed.iter().find(|s| s.id == lubrication.id).expect("listed");
     assert_eq!(row.nature.as_deref(), Some("preventive_predetermined"));
@@ -991,5 +981,490 @@ async fn ot_subtypes_hang_under_one_nature_and_must_match_the_ot_type() {
         .expect_err("legacy urgency code");
     assert!(
         matches!(err, AppError::ValidationFailed(ref m) if m[0].contains(urgency_scale::GATE_URGENCY_SCALE_INVALID))
+    );
+}
+
+// ── Owner answers c–e (2026-10-15): governed sub-types, request-type natures ────────────────
+
+/// A new draft of the COMPANY list `domain` (a copy of its published values).
+async fn draft_of(db: &DatabaseConnection, domain: &str, actor: i64) -> sets::ReferenceSet {
+    let domain = crate::reference::domains::get_reference_domain_by_code(db, domain)
+        .await
+        .expect("domain");
+    sets::create_draft_set(db, domain.id, actor).await.expect("draft")
+}
+
+fn value_payload(
+    set_id: i64,
+    parent_id: Option<i64>,
+    code: &str,
+    label: &str,
+    semantic_tag: Option<&str>,
+) -> values::CreateReferenceValuePayload {
+    values::CreateReferenceValuePayload {
+        set_id,
+        parent_id,
+        code: code.into(),
+        label: label.into(),
+        description: None,
+        sort_order: None,
+        color_hex: None,
+        icon_name: None,
+        semantic_tag: semantic_tag.map(str::to_string),
+        external_code: None,
+        metadata_json: None,
+    }
+}
+
+/// Validate → impact preview → governed publish, as the editor does.
+async fn publish_draft(db: &DatabaseConnection, set_id: i64, actor: i64) {
+    sets::validate_set(db, set_id, actor).await.expect("validate draft");
+    publish::preview_publish_impact(db, set_id)
+        .await
+        .expect("impact preview");
+    publish::publish_reference_set(db, set_id, actor)
+        .await
+        .expect("publish draft");
+}
+
+fn has_gate<T: std::fmt::Debug>(result: Result<T, AppError>, gate: &str) -> bool {
+    matches!(result, Err(AppError::ValidationFailed(ref m)) if m.iter().any(|s| s.contains(gate)))
+}
+
+fn import_row(code: &str, label: &str, parent_code: Option<&str>, tag: Option<&str>) -> imports::ImportRowInput {
+    imports::ImportRowInput {
+        code: Some(code.into()),
+        label: Some(label.into()),
+        description: None,
+        parent_code: parent_code.map(str::to_string),
+        sort_order: None,
+        color_hex: None,
+        icon_name: None,
+        semantic_tag: tag.map(str::to_string),
+        external_code: None,
+        metadata_json: None,
+    }
+}
+
+/// Stages `rows` for `domain`, validates them and applies the valid ones into `draft`.
+async fn import_into(
+    db: &DatabaseConnection,
+    domain: &str,
+    draft_id: i64,
+    sha: &str,
+    rows: Vec<imports::ImportRowInput>,
+    actor: i64,
+) -> (imports::RefImportBatchSummary, imports::RefImportApplyResult) {
+    let domain = crate::reference::domains::get_reference_domain_by_code(db, domain)
+        .await
+        .expect("domain");
+    let batch = imports::create_import_batch(db, domain.id, "import.csv", sha, Some(actor))
+        .await
+        .expect("batch");
+    imports::stage_import_rows(db, batch.id, rows).await.expect("stage");
+    let validated = imports::validate_import_batch(db, batch.id, Some(actor))
+        .await
+        .expect("validate import");
+    let applied = imports::apply_import_batch(
+        db,
+        batch.id,
+        imports::RefImportApplyPolicy {
+            include_warnings: true,
+            target_set_id: draft_id,
+        },
+        actor,
+    )
+    .await
+    .expect("apply import");
+    (validated, applied)
+}
+
+/// Inserts a value straight into a draft, the way an older replica or a hand-edited file could
+/// leave it, to check that draft validation still catches it.
+async fn raw_value(db: &DatabaseConnection, set_id: i64, code: &str, parent: Option<i64>, tag: Option<&str>) -> i64 {
+    let parent = parent.map(|p| p.to_string()).unwrap_or_else(|| "NULL".into());
+    let tag = tag.map(|t| format!("'{t}'")).unwrap_or_else(|| "NULL".into());
+    exec(
+        db,
+        &format!(
+            "INSERT INTO reference_values (entity_sync_id, set_id, parent_id, code, label, semantic_tag, is_active) \
+             VALUES ('sync-raw-{code}', {set_id}, {parent}, '{code}', '{code}', {tag}, 1)"
+        ),
+    )
+    .await;
+    i64_of(
+        db,
+        &format!("SELECT id FROM reference_values WHERE set_id = {set_id} AND code = '{code}'"),
+    )
+    .await
+}
+
+fn blocking_checks(result: &validation::ReferenceValidationResult) -> Vec<(String, Option<String>)> {
+    result
+        .issues
+        .iter()
+        .filter(|i| i.severity == validation::IssueSeverity::Blocking)
+        .map(|i| (i.check.clone(), i.value_code.clone()))
+        .collect()
+}
+
+#[tokio::test]
+async fn ot_subtypes_go_through_draft_and_publish_and_keep_their_nature() {
+    let db = crate::db::test_db::seeded().await;
+    let admin = i64_of(&db, "SELECT id FROM user_accounts WHERE username = 'admin'").await;
+    let domain = crate::reference::domains::get_reference_domain_by_code(&db, wo_types::SUBTYPES_DOMAIN)
+        .await
+        .expect("domain");
+    let published = sets::list_sets_for_domain(&db, domain.id)
+        .await
+        .expect("sets")
+        .into_iter()
+        .find(|s| s.status == "published")
+        .expect("published set");
+    let caps = crate::reference::governance::capabilities_for(&domain, Some(&published));
+    assert_eq!(caps.category, "controlled_catalog");
+    assert!(!caps.can_create_value, "no live edit of the published list: {caps:?}");
+    assert!(caps.can_create_draft_set && caps.can_publish, "{caps:?}");
+
+    // No live edit any more.
+    let predetermined = value_id(&db, wo_types::NATURES_DOMAIN, "preventive_predetermined").await;
+    let live = values::create_operational_value(
+        &db,
+        values::CreateOperationalReferenceValuePayload {
+            domain_code: wo_types::SUBTYPES_DOMAIN.into(),
+            label: "Lubrification".into(),
+            description: None,
+            parent_id: Some(predetermined),
+            code: None,
+        },
+        admin,
+    )
+    .await;
+    assert!(live.is_err(), "operational create refused: {live:?}");
+
+    // Draft → publish; the next draft keeps the nature parent of each copied sub-type.
+    let draft = draft_of(&db, wo_types::SUBTYPES_DOMAIN, admin).await;
+    values::create_value(
+        &db,
+        value_payload(draft.id, Some(predetermined), "LUBRIFICATION", "Lubrification", None),
+        admin,
+    )
+    .await
+    .expect("sub-type in draft");
+    publish_draft(&db, draft.id, admin).await;
+    let draft2 = draft_of(&db, wo_types::SUBTYPES_DOMAIN, admin).await;
+    let copied = values::list_values(&db, draft2.id).await.expect("draft values");
+    let lub = copied.iter().find(|v| v.code == "LUBRIFICATION").expect("copied");
+    assert_eq!(lub.parent_id, Some(predetermined), "the nature parent is kept");
+
+    // Draft validation: a copied nature parent is not an orphan, a missing nature blocks.
+    let clean = validation::validate_reference_set(&db, draft2.id, admin)
+        .await
+        .expect("validate");
+    assert!(blocking_checks(&clean).is_empty(), "{:?}", clean.issues);
+    let orphan = raw_value(&db, draft2.id, "SANS_NATURE", None, None).await;
+    let urgency = value_id(&db, "WORK.URGENCY", "high").await;
+    raw_value(&db, draft2.id, "MAUVAIS_PARENT", Some(urgency), None).await;
+    let flagged = validation::validate_reference_set(&db, draft2.id, admin)
+        .await
+        .expect("validate");
+    let checks = blocking_checks(&flagged);
+    assert!(
+        checks.contains(&("parent_required".into(), Some("SANS_NATURE".into()))),
+        "{checks:?}"
+    );
+    assert!(
+        checks.contains(&("parent_required".into(), Some("MAUVAIS_PARENT".into()))),
+        "{checks:?}"
+    );
+    assert!(sets::validate_set(&db, draft2.id, admin).await.is_err());
+    exec(
+        &db,
+        &format!(
+            "DELETE FROM reference_values WHERE set_id = {} AND id >= {orphan}",
+            draft2.id
+        ),
+    )
+    .await;
+
+    // CSV import: the same rule (the gap closed by answer e).
+    let (validated, applied) = import_into(
+        &db,
+        wo_types::SUBTYPES_DOMAIN,
+        draft2.id,
+        "sha-subtypes",
+        vec![
+            import_row("GRAISSAGE", "Graissage", Some("preventive_predetermined"), None),
+            import_row("SANS_NATURE", "Sans nature", None, None),
+            import_row("INCONNU", "Parent inconnu", Some("not_a_nature"), None),
+        ],
+        admin,
+    )
+    .await;
+    assert_eq!(validated.valid_rows, 1, "{validated:?}");
+    assert_eq!(validated.error_rows, 2, "{validated:?}");
+    assert_eq!(applied.created, 1, "{applied:?}");
+    let imported = values::list_values(&db, draft2.id).await.expect("values");
+    let graissage = imported.iter().find(|v| v.code == "GRAISSAGE").expect("imported");
+    assert_eq!(graissage.parent_id, Some(predetermined));
+    assert!(imported.iter().all(|v| v.code != "SANS_NATURE" && v.code != "INCONNU"));
+    publish_draft(&db, draft2.id, admin).await;
+    let listed = wo_types::list_work_order_subtypes(&db).await.expect("subtypes");
+    let row = listed
+        .iter()
+        .find(|s| s.code == "GRAISSAGE")
+        .expect("published sub-type");
+    assert_eq!(row.nature.as_deref(), Some("preventive_predetermined"));
+}
+
+#[tokio::test]
+async fn a_request_type_names_one_of_the_six_natures_or_none() {
+    let db = crate::db::test_db::seeded().await;
+    let admin = i64_of(&db, "SELECT id FROM user_accounts WHERE username = 'admin'").await;
+    let gate = values::GATE_REF_NATURE_TAG_INVALID;
+    let draft = draft_of(&db, "DI.REQUEST_TYPE", admin).await;
+
+    // Create: an unknown nature is refused, one of the six is kept, empty means none.
+    let bogus = values::create_value(
+        &db,
+        value_payload(draft.id, None, "THERMO", "Thermographie", Some("thermography")),
+        admin,
+    )
+    .await;
+    assert!(has_gate(bogus, gate));
+    let thermo = values::create_value(
+        &db,
+        value_payload(draft.id, None, "THERMO", "Thermographie", Some("preventive_predictive")),
+        admin,
+    )
+    .await
+    .expect("request type with a nature");
+    assert_eq!(thermo.semantic_tag.as_deref(), Some("preventive_predictive"));
+    let leak = values::create_value(&db, value_payload(draft.id, None, "LEAK", "Fuite", Some("")), admin)
+        .await
+        .expect("request type without a nature");
+    assert_eq!(leak.semantic_tag, None);
+
+    // Update: same rule; an empty tag clears the nature.
+    let update = |tag: &'static str| values::UpdateReferenceValuePayload {
+        label: None,
+        description: None,
+        sort_order: None,
+        color_hex: None,
+        icon_name: None,
+        semantic_tag: Some(Some(tag.to_string())),
+        external_code: None,
+        metadata_json: None,
+    };
+    assert!(has_gate(
+        values::update_value(&db, leak.id, update("repair"), admin).await,
+        gate
+    ));
+    let tagged = values::update_value(&db, leak.id, update("improvement"), admin)
+        .await
+        .expect("set a nature");
+    assert_eq!(tagged.semantic_tag.as_deref(), Some("improvement"));
+    let cleared = values::update_value(&db, leak.id, update(""), admin)
+        .await
+        .expect("clear the nature");
+    assert_eq!(cleared.semantic_tag, None);
+
+    // Draft validation catches a tag written around the editor (the old placeholder tag).
+    let raw = raw_value(&db, draft.id, "OLD_TAG", None, Some("di_request_type")).await;
+    let flagged = validation::validate_reference_set(&db, draft.id, admin)
+        .await
+        .expect("validate");
+    assert!(
+        blocking_checks(&flagged).contains(&("invalid_nature_tag".into(), Some("OLD_TAG".into()))),
+        "{:?}",
+        flagged.issues
+    );
+    exec(&db, &format!("DELETE FROM reference_values WHERE id = {raw}")).await;
+
+    // CSV import: same rule.
+    let (validated, applied) = import_into(
+        &db,
+        "DI.REQUEST_TYPE",
+        draft.id,
+        "sha-request-types",
+        vec![
+            import_row("RETROFIT", "Mise à niveau", None, Some("improvement")),
+            import_row("WRONG", "Mauvaise nature", None, Some("calibration")),
+        ],
+        admin,
+    )
+    .await;
+    assert_eq!((validated.valid_rows, validated.error_rows), (1, 1), "{validated:?}");
+    assert_eq!(applied.created, 1, "{applied:?}");
+
+    // Published, the DI → OT conversion reads the plant's tags; no tag = corrective.
+    publish_draft(&db, draft.id, admin).await;
+    use crate::reference::urgency_scale::UrgencyCode;
+    let nature = |code: &'static str, urgency: UrgencyCode| {
+        let db = &db;
+        async move {
+            crate::di::conversion::conversion_nature(db, code, urgency)
+                .await
+                .expect("conversion nature")
+        }
+    };
+    assert_eq!(
+        nature("THERMO", UrgencyCode::Normal).await,
+        MaintenanceNature::PreventivePredictive
+    );
+    assert_eq!(
+        nature("RETROFIT", UrgencyCode::Normal).await,
+        MaintenanceNature::Improvement
+    );
+    assert_eq!(
+        nature("LEAK", UrgencyCode::Normal).await,
+        MaintenanceNature::CorrectiveDeferred
+    );
+    assert_eq!(
+        nature("LEAK", UrgencyCode::Emergency).await,
+        MaintenanceNature::CorrectiveImmediate
+    );
+}
+
+// ── Migration 200: PM follow-up OTs re-tagged as deferred corrective ─────────────────────────
+
+const M200: &str = "m20261015_000200_pm_follow_up_corrective_and_governed_lists";
+
+async fn plain_wo(db: &DatabaseConnection, code: &str, type_id: i64, subtype: Option<i64>) -> i64 {
+    let subtype = subtype.map(|s| s.to_string()).unwrap_or_else(|| "NULL".into());
+    exec(
+        db,
+        &format!(
+            "INSERT INTO work_orders (entity_sync_id, code, type_id, subtype_id, status_id, title, row_version, \
+             created_at, updated_at) VALUES ('sync-{code}', '{code}', {type_id}, {subtype}, \
+             (SELECT id FROM work_order_statuses WHERE code = 'draft'), '{code}', 1, {NOW}, {NOW})"
+        ),
+    )
+    .await;
+    i64_of(db, &format!("SELECT id FROM work_orders WHERE code = '{code}'")).await
+}
+
+async fn type_code_of(db: &DatabaseConnection, wo: i64) -> Option<String> {
+    opt_str(
+        db,
+        &format!("SELECT v.code FROM work_orders w JOIN reference_values v ON v.id = w.type_id WHERE w.id = {wo}"),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn migration_200_retags_only_unambiguous_pm_follow_ups_and_can_run_again() {
+    let db = migrated_before(M200).await;
+    exec(&db, "PRAGMA foreign_keys = OFF").await;
+    let preventive = value_id(&db, "WORK.ORDER_TYPES", "preventive").await;
+    let overhaul = value_id(&db, "WORK.ORDER_TYPES", "overhaul").await;
+    let nature = value_id(&db, "WORK.MAINTENANCE_NATURES", "preventive_predetermined").await;
+    let follow_up = plain_wo(&db, "OT-FOLLOW", preventive, Some(nature)).await;
+    let shared = plain_wo(&db, "OT-TWO-FINDINGS", preventive, None).await;
+    let execution_wo = plain_wo(&db, "OT-EXECUTION", preventive, None).await;
+    let occurrence_wo = plain_wo(&db, "OT-OCCURRENCE", preventive, None).await;
+    let other_type = plain_wo(&db, "OT-OVERHAUL", overhaul, None).await;
+    let plain_pm = plain_wo(&db, "OT-PM", preventive, None).await;
+    for sql in [
+        format!(
+            "INSERT INTO pm_occurrences (id, pm_plan_id, plan_version_id, due_basis, status, linked_work_order_id) \
+             VALUES (900, 1, 1, 'calendar', 'completed', {occurrence_wo})"
+        ),
+        "INSERT INTO pm_occurrences (id, pm_plan_id, plan_version_id, due_basis, status) \
+         VALUES (901, 2, 2, 'calendar', 'completed')"
+            .to_string(),
+        format!(
+            "INSERT INTO pm_executions (id, pm_occurrence_id, execution_result, work_order_id) \
+             VALUES (800, 901, 'completed_with_findings', {execution_wo})"
+        ),
+        "INSERT INTO pm_executions (id, pm_occurrence_id, execution_result) VALUES (801, 901, 'completed_with_findings')"
+            .to_string(),
+    ] {
+        exec(&db, &sql).await;
+    }
+    for wo in [follow_up, shared, shared, execution_wo, occurrence_wo, other_type] {
+        exec(
+            &db,
+            &format!(
+                "INSERT INTO pm_findings (pm_execution_id, finding_type, description, follow_up_work_order_id) \
+                 VALUES (801, 'WEAR', 'Usure', {wo})"
+            ),
+        )
+        .await;
+    }
+    exec(
+        &db,
+        "UPDATE reference_values SET semantic_tag = 'di_request_type' WHERE code = 'repair' \
+           AND set_id IN (SELECT s.id FROM reference_sets s JOIN reference_domains d ON d.id = s.domain_id \
+                           WHERE d.code = 'DI.REQUEST_TYPE')",
+    )
+    .await;
+    exec(
+        &db,
+        "UPDATE reference_domains SET governance_category = 'operational_dictionary' WHERE code = 'WORK.ORDER_SUBTYPES'",
+    )
+    .await;
+    exec(&db, "PRAGMA foreign_keys = ON").await;
+
+    Migrator::up(&db, None).await.expect("migration 200");
+    let check = |db: &DatabaseConnection| {
+        let db = db.clone();
+        async move {
+            assert_eq!(type_code_of(&db, follow_up).await.as_deref(), Some("corrective"));
+            assert_eq!(
+                opt_i64(
+                    &db,
+                    &format!("SELECT subtype_id FROM work_orders WHERE id = {follow_up}")
+                )
+                .await,
+                None,
+                "the preventive sub-type does not fit corrective work"
+            );
+            for (wo, why) in [
+                (shared, "two findings name it"),
+                (execution_wo, "it is the OT of a PM execution"),
+                (occurrence_wo, "it is the OT of a PM occurrence"),
+                (plain_pm, "no finding names it"),
+            ] {
+                assert_eq!(type_code_of(&db, wo).await.as_deref(), Some("preventive"), "{why}");
+            }
+            assert_eq!(
+                type_code_of(&db, other_type).await.as_deref(),
+                Some("overhaul"),
+                "a type chosen on purpose stays"
+            );
+            assert_eq!(
+                opt_str(
+                    &db,
+                    "SELECT v.semantic_tag FROM reference_values v JOIN reference_sets s ON s.id = v.set_id \
+                     JOIN reference_domains d ON d.id = s.domain_id \
+                     WHERE d.code = 'DI.REQUEST_TYPE' AND s.status = 'published' AND v.code = 'repair'"
+                )
+                .await,
+                None
+            );
+            assert_eq!(
+                opt_str(
+                    &db,
+                    "SELECT governance_category FROM reference_domains WHERE code = 'WORK.ORDER_SUBTYPES'"
+                )
+                .await
+                .as_deref(),
+                Some("controlled_catalog")
+            );
+        }
+    };
+    check(&db).await;
+    assert_foreign_keys_hold(&db).await;
+
+    unrecord(&db, M200).await;
+    Migrator::up(&db, None).await.expect("migration 200 again");
+    check(&db).await;
+    assert_eq!(
+        crate::migrations::m20261015_000200_pm_follow_up_corrective_and_governed_lists::retag_pm_follow_ups(&db)
+            .await
+            .expect("retag"),
+        0,
+        "nothing left to re-tag"
     );
 }

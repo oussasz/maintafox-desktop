@@ -432,6 +432,8 @@ pub struct PmGovernanceKpiReport {
     pub overdue_risk: PmRateKpi,
     pub first_pass_completion: PmRateKpi,
     pub follow_up_ratio: PmRateKpi,
+    /// Failures found by PM: corrective follow-up OTs raised from the findings of the period.
+    pub failures_found_by_pm: i64,
     pub effort_variance: PmEffortVarianceKpi,
     pub derivation_rules: Vec<String>,
 }

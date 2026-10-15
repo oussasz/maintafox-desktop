@@ -747,6 +747,11 @@ export function PmPlanDetailDialog({
                         hint={ratio(governanceKpis.follow_up_ratio)}
                       />
                       <KpiTile
+                        label={t("kpi.failuresFoundByPm")}
+                        value={formatNumber(governanceKpis.failures_found_by_pm)}
+                        hint={t("kpi.failuresFoundByPmHint")}
+                      />
+                      <KpiTile
                         label={t("kpi.effortVariance")}
                         value={
                           governanceKpis.effort_variance.variance_pct != null

@@ -238,13 +238,32 @@ async fn clone_published_values_into_draft(
         }
     }
 
-    // Pass 2: remap parents; fail if parent was not in the cloned set (orphan).
+    // Pass 2: remap parents; a parent in an allowed parent domain (OT sub-type → maintenance
+    // nature, family → class) is kept as it is; any other parent outside the set is an orphan.
+    let child_domain: String = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT d.code AS domain_code FROM reference_sets rs JOIN reference_domains d ON d.id = rs.domain_id \
+              WHERE rs.id = ?",
+            [source_set_id.into()],
+        ))
+        .await?
+        .map(|r| r.try_get::<String>("", "domain_code"))
+        .transpose()
+        .map_err(|e| decode_err("domain_code", e))?
+        .unwrap_or_default();
     for (new_id, old_parent_id) in parent_jobs {
-        let Some(&new_parent_id) = id_map.get(&old_parent_id) else {
-            return Err(AppError::ValidationFailed(vec![format!(
-                "Impossible de cloner le jeu : parent_id={old_parent_id} \
-                 introuvable dans le jeu publié (hiérarchie orpheline)."
-            )]));
+        let new_parent_id = match id_map.get(&old_parent_id) {
+            Some(&id) => id,
+            None if super::values::is_allowed_cross_domain_parent(db, &child_domain, old_parent_id).await? => {
+                old_parent_id
+            }
+            None => {
+                return Err(AppError::ValidationFailed(vec![format!(
+                    "Impossible de cloner le jeu : parent_id={old_parent_id} \
+                     introuvable dans le jeu publié (hiérarchie orpheline)."
+                )]));
+            }
         };
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,

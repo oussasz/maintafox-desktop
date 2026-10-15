@@ -322,6 +322,11 @@
     "cancel": "Cancel",
     "save": "Save"
   },
+  "maintenanceNature": {
+    "column": "Work-order nature (EN 13306)",
+    "fallback": "Not set: corrective (immediate if emergency)",
+    "fallbackHint": "Without a nature, converting the request creates a corrective work order: immediate when the urgency is at the top level of the scale, deferred otherwise."
+  },
   "schedulePattern": {
     "title": "Weekly work calendar",
     "column": "Schedule",

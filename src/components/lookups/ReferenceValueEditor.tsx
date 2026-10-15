@@ -24,6 +24,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
 
+import {
+  MaintenanceNatureSelect,
+  MaintenanceNatureText,
+  useMaintenanceNatures,
+} from "@/components/lookups/MaintenanceNaturePicker";
 import { PublishReadinessPanel } from "@/components/lookups/PublishReadinessPanel";
 import { ReferenceAliasPanel } from "@/components/lookups/ReferenceAliasPanel";
 import { ReferenceColorSwatchHex } from "@/components/lookups/ReferenceColorSwatchHex";
@@ -102,6 +107,8 @@ interface EditRowState {
   label: string;
   description: string;
   parentId: number | null;
+  /** EN 13306 nature code (`semantic_tag`) of a request type; null = corrective fallback. */
+  natureTag: string | null;
 }
 
 interface ReferenceValueEditorProps {
@@ -173,12 +180,14 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
     label: "",
     description: "",
     parentId: null,
+    natureTag: null,
   });
   const [newRow, setNewRow] = useState<EditRowState>({
     code: "",
     label: "",
     description: "",
     parentId: null,
+    natureTag: null,
   });
   const [deleteTarget, setDeleteTarget] = useState<ReferenceValue | null>(null);
   const [aliasValueId, setAliasValueId] = useState<number | null>(null);
@@ -187,7 +196,9 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
   const [sortAsc, setSortAsc] = useState(true);
   const [parentCandidates, setParentCandidates] = useState<ReferenceValue[]>([]);
   const columnFlags = useMemo(() => resolveReferenceValueColumns(domain), [domain]);
-  const { showParent, showSchedule, crossDomainParentCode, sameSetHierarchy } = columnFlags;
+  const { showParent, showSchedule, showNature, crossDomainParentCode, sameSetHierarchy } =
+    columnFlags;
+  const natures = useMaintenanceNatures(showNature);
   const parentDomain = crossDomainParentCode
     ? (domains.find((d) => d.code === crossDomainParentCode) ?? null)
     : null;
@@ -275,6 +286,7 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
         label: v.label,
         description: v.description ?? "",
         parentId: v.parent_id ?? null,
+        natureTag: v.semantic_tag ?? null,
       });
       setAliasValueId(null);
       if (showSchedule) {
@@ -296,6 +308,8 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
         await saveValue(valueId, {
           label: editRow.label,
           description: editRow.description || null,
+          // "" clears the nature on the server (corrective fallback); null would leave it.
+          ...(showNature ? { semantic_tag: editRow.natureTag ?? "" } : {}),
         });
         if (showParent && existing && (existing.parent_id ?? null) !== (editRow.parentId ?? null)) {
           const moved = await moveReferenceValueParent(valueId, editRow.parentId);
@@ -308,12 +322,12 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
         // The store keeps the translated error (shown above the table) and the row stays in edit.
       }
     },
-    [saveValue, editRow, values, showParent],
+    [saveValue, editRow, values, showParent, showNature],
   );
 
   const startNewRow = useCallback(() => {
     setNewValueDraft({});
-    setNewRow({ code: "", label: "", description: "", parentId: null });
+    setNewRow({ code: "", label: "", description: "", parentId: null, natureTag: null });
   }, [setNewValueDraft]);
 
   const cancelNewRow = useCallback(() => {
@@ -328,9 +342,10 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
       code: newRow.code.trim(),
       label: newRow.label.trim(),
       description: newRow.description.trim() || null,
+      ...(showNature && newRow.natureTag ? { semantic_tag: newRow.natureTag } : {}),
     };
     await addValue(payload);
-  }, [addValue, setId, newRow]);
+  }, [addValue, setId, newRow, showNature]);
 
   const confirmDeactivate = useCallback(async () => {
     if (!deleteTarget) return;
@@ -747,6 +762,11 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
               {showParent ? (
                 <ReferenceValueTableHeadCell>{t("editor.colParent")}</ReferenceValueTableHeadCell>
               ) : null}
+              {showNature ? (
+                <ReferenceValueTableHeadCell>
+                  {t("maintenanceNature.column")}
+                </ReferenceValueTableHeadCell>
+              ) : null}
               {showColorColumn ? (
                 <ReferenceValueTableHeadCell>{t("editor.colColor")}</ReferenceValueTableHeadCell>
               ) : null}
@@ -821,6 +841,15 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                         </option>
                       ))}
                     </select>
+                  </ReferenceValueTableCell>
+                ) : null}
+                {showNature ? (
+                  <ReferenceValueTableCell>
+                    <MaintenanceNatureSelect
+                      value={newRow.natureTag}
+                      natures={natures}
+                      onChange={(natureTag) => setNewRow({ ...newRow, natureTag })}
+                    />
                   </ReferenceValueTableCell>
                 ) : null}
                 {showColorColumn ? <ReferenceValueTableCell>{null}</ReferenceValueTableCell> : null}
@@ -990,6 +1019,19 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                         parentLabel(parentValue)
                       ) : (
                         "—"
+                      )}
+                    </ReferenceValueTableCell>
+                  ) : null}
+                  {showNature ? (
+                    <ReferenceValueTableCell>
+                      {isEditing ? (
+                        <MaintenanceNatureSelect
+                          value={editRow.natureTag}
+                          natures={natures}
+                          onChange={(natureTag) => setEditRow({ ...editRow, natureTag })}
+                        />
+                      ) : (
+                        <MaintenanceNatureText value={v.semantic_tag ?? null} natures={natures} />
                       )}
                     </ReferenceValueTableCell>
                   ) : null}

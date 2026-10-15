@@ -256,9 +256,103 @@ fn allows_cross_domain_parent(child_domain_code: &str, parent_domain_code: &str)
     )
 }
 
+/// Domain code of the value `value_id`, `None` when the value does not exist.
+pub(crate) async fn domain_code_of_value(db: &impl ConnectionTrait, value_id: i64) -> AppResult<Option<String>> {
+    db.query_one(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "SELECT d.code AS domain_code FROM reference_values rv \
+           JOIN reference_sets rs ON rs.id = rv.set_id \
+           JOIN reference_domains d ON d.id = rs.domain_id WHERE rv.id = ?",
+        [value_id.into()],
+    ))
+    .await?
+    .map(|r| r.try_get::<String>("", "domain_code"))
+    .transpose()
+    .map_err(|e| decode_err("domain_code", e))
+}
+
+/// Whether `parent_id` is a value of a domain the domain `child_domain_code` may hang under
+/// (cross-domain parent: family → class, OT sub-type → maintenance nature…). Such a parent
+/// stays the same when a draft is cloned or validated: it lives in another domain's set.
+pub(crate) async fn is_allowed_cross_domain_parent(
+    db: &impl ConnectionTrait,
+    child_domain_code: &str,
+    parent_id: i64,
+) -> AppResult<bool> {
+    Ok(domain_code_of_value(db, parent_id).await?.is_some_and(|parent| {
+        allows_cross_domain_parent(&child_domain_code.to_ascii_uppercase(), &parent.to_ascii_uppercase())
+    }))
+}
+
+/// Id of the active value `code` in the published set of `domain` (a cross-domain parent named by
+/// code, as CSV import rows do).
+pub(crate) async fn published_value_id_by_code(
+    db: &impl ConnectionTrait,
+    domain: &str,
+    code: &str,
+) -> AppResult<Option<i64>> {
+    db.query_one(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "SELECT rv.id FROM reference_values rv \
+           JOIN reference_sets rs ON rs.id = rv.set_id AND rs.status = 'published' \
+           JOIN reference_domains d ON d.id = rs.domain_id \
+          WHERE UPPER(TRIM(d.code)) = ? AND UPPER(TRIM(rv.code)) = UPPER(TRIM(?)) AND rv.is_active = 1 \
+          ORDER BY rs.version_no DESC LIMIT 1",
+        [domain.to_ascii_uppercase().into(), code.into()],
+    ))
+    .await?
+    .map(|r| r.try_get::<i64>("", "id"))
+    .transpose()
+    .map_err(|e| decode_err("id", e))
+}
+
+/// Domains whose `semantic_tag` names the EN 13306 nature of the OT their value leads to (the
+/// DI → OT conversion reads it, `wo::types::nature_for_request_type`). Empty = no nature: the
+/// request becomes corrective work.
+pub(crate) fn is_nature_tagged_domain(domain_code: &str) -> bool {
+    domain_code.trim().eq_ignore_ascii_case("DI.REQUEST_TYPE")
+}
+
+/// Stable gate code of a nature tag that is not one of the maintenance natures.
+pub const GATE_REF_NATURE_TAG_INVALID: &str = "GATE_REF_NATURE_TAG_INVALID";
+
+/// Normalises and checks the nature tag of a value of a nature-tagged domain: empty means no
+/// nature; otherwise the tag must be the code of an active value of `WORK.MAINTENANCE_NATURES`.
+/// Other domains keep their free semantic tag.
+pub(crate) async fn checked_semantic_tag(
+    db: &impl ConnectionTrait,
+    domain_code: &str,
+    tag: Option<&str>,
+) -> AppResult<Option<String>> {
+    let tag = tag.map(str::trim).filter(|t| !t.is_empty());
+    if !is_nature_tagged_domain(domain_code) {
+        return Ok(tag.map(str::to_string));
+    }
+    let Some(tag) = tag else {
+        return Ok(None);
+    };
+    let known = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS ok FROM reference_values rv \
+               JOIN reference_sets rs ON rs.id = rv.set_id AND rs.status = 'published' \
+               JOIN reference_domains d ON d.id = rs.domain_id \
+              WHERE UPPER(TRIM(d.code)) = 'WORK.MAINTENANCE_NATURES' AND rv.code = ? AND rv.is_active = 1",
+            [tag.into()],
+        ))
+        .await?
+        .is_some();
+    if !known {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "{GATE_REF_NATURE_TAG_INVALID}: '{tag}' n'est pas une nature de maintenance (EN 13306)."
+        )]));
+    }
+    Ok(Some(tag.to_string()))
+}
+
 /// Domains whose every value must hang under a value of another domain: a plant's OT sub-type
 /// belongs to exactly one protected EN 13306 maintenance nature (`wo::types`).
-fn required_parent_domain(child_domain_code: &str) -> Option<&'static str> {
+pub(crate) fn required_parent_domain(child_domain_code: &str) -> Option<&'static str> {
     match child_domain_code.trim().to_ascii_uppercase().as_str() {
         "WORK.ORDER_SUBTYPES" => Some("WORK.MAINTENANCE_NATURES"),
         _ => None,
@@ -447,6 +541,7 @@ pub async fn create_value(
         validate_parent(db, payload.set_id, pid).await?;
     }
     assert_required_parent(db, payload.set_id, payload.parent_id).await?;
+    let semantic_tag = checked_semantic_tag(db, &domain.code, payload.semantic_tag.as_deref()).await?;
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -463,7 +558,7 @@ pub async fn create_value(
             payload.sort_order.into(),
             payload.color_hex.into(),
             payload.icon_name.into(),
-            payload.semantic_tag.into(),
+            semantic_tag.into(),
             payload.external_code.into(),
             payload.metadata_json.into(),
         ],
@@ -661,8 +756,9 @@ pub async fn update_value(
         values.push(icon.clone().into());
     }
     if let Some(ref st) = payload.semantic_tag {
+        let tag = checked_semantic_tag(db, &domain.code, st.as_deref()).await?;
         sets_clause.push("semantic_tag = ?".into());
-        values.push(st.clone().into());
+        values.push(tag.into());
     }
     if let Some(ref ec) = payload.external_code {
         sets_clause.push("external_code = ?".into());

@@ -134,6 +134,7 @@ function routeInvoke() {
           overdue_risk: rate,
           first_pass_completion: rate,
           follow_up_ratio: rate,
+          failures_found_by_pm: 0,
           effort_variance: {
             sample_size: 0,
             estimated_hours: 0,

@@ -145,7 +145,8 @@ async fn insert_seed_values(db: &DatabaseConnection, domain_code: &str, rows: &[
                 row.description.into(),
                 row.sort_order.into(),
                 row.color_hex.into(),
-                row.semantic_tag.into(),
+                // An empty tag is no tag (request types without an OT nature).
+                Some(row.semantic_tag).filter(|t| !t.is_empty()).map(str::to_string).into(),
                 row.metadata_json.into(),
                 domain_code.into(),
             ],
@@ -181,7 +182,7 @@ const DI_IMPACT_LEVELS: &[SeedValue] = &[
 const DI_REQUEST_TYPES: &[SeedValue] = &[
     SeedValue {
         description: Some("Intervention corrective / réparation."),
-        ..seed("repair", "Réparation", 1, "di_request_type")
+        ..seed("repair", "Réparation", 1, "")
     },
     SeedValue {
         description: Some("Maintenance préventive planifiée."),
@@ -205,11 +206,11 @@ const DI_REQUEST_TYPES: &[SeedValue] = &[
     },
     SeedValue {
         description: Some("Information seule — observation."),
-        ..seed("observation", "Observation", 7, "di_request_type")
+        ..seed("observation", "Observation", 7, "")
     },
     SeedValue {
         description: Some("Autre type de demande."),
-        ..seed("other", "Autre", 8, "di_request_type")
+        ..seed("other", "Autre", 8, "")
     },
 ];
 

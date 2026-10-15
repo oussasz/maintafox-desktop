@@ -322,6 +322,11 @@
     "cancel": "Annuler",
     "save": "Enregistrer"
   },
+  "maintenanceNature": {
+    "column": "Nature de l'OT (EN 13306)",
+    "fallback": "Non précisée : corrective (immédiate si urgence)",
+    "fallbackHint": "Sans nature, la conversion de la demande en OT crée un OT correctif : immédiat si l'urgence est au niveau le plus haut de l'échelle, différé sinon."
+  },
   "schedulePattern": {
     "title": "Calendrier hebdomadaire",
     "column": "Horaire",

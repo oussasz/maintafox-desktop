@@ -99,8 +99,6 @@ fn category_for_known_code(code: &str) -> Option<GovernanceCategory> {
         | "PERSONNEL.SKILLS"
         | "ORG.SCHEDULE_CLASS"
         | "WORK.DELAY_REASONS"
-        // A plant's own OT sub-types, each under one protected maintenance nature (owner, 2026-10-15).
-        | "WORK.ORDER_SUBTYPES"
         | "WORK.PART_UNUSED_REASON" => Some(GovernanceCategory::OperationalDictionary),
 
         // Equipment classes (ISO 14224 taxonomy): the product seeds the baseline classes, each plant
@@ -113,7 +111,10 @@ fn category_for_known_code(code: &str) -> Option<GovernanceCategory> {
         | "WORK.FAILURE_EFFECTS"
         | "PM.MAINTENANCE_TASK_LIST"
         // Request types differ per plant and are extended through draft → publish (owner, 2026-10-15).
-        | "DI.REQUEST_TYPE" => Some(GovernanceCategory::ControlledCatalog),
+        | "DI.REQUEST_TYPE"
+        // A plant's own OT sub-types, each under one protected maintenance nature, governed through
+        // draft → validate → publish like the other governed lists (owner, 2026-10-15).
+        | "WORK.ORDER_SUBTYPES" => Some(GovernanceCategory::ControlledCatalog),
 
         _ => None,
     }

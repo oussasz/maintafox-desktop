@@ -144,6 +144,8 @@ const WO_JOIN_COLS: &str = "\
     ul.code AS urgency_code, ul.sort_order AS urgency_rank, ul.label AS urgency_label, ul.color_hex AS urgency_color, \
     src_round.id AS source_inspection_round_id, src_tpl.code AS source_inspection_round_code, \
     src_tpl.name AS source_inspection_round_title, src_round.scheduled_at AS source_inspection_round_scheduled_at, \
+    src_pm.plan_id AS source_pm_plan_id, src_pm.plan_code AS source_pm_plan_code, \
+    src_pm.plan_title AS source_pm_plan_title, src_pm.occurrence_id AS source_pm_occurrence_id, \
     ar.asset_id_code AS asset_code, ar.name AS asset_label, \
     COALESCE(up.display_name, up.username) AS planner_username, \
     COALESCE(ur.display_name, ur.username) AS responsible_username, \
@@ -182,6 +184,15 @@ const WO_JOINS: &str = "\
            ON src_anomaly.id = COALESCE(wo.source_inspection_anomaly_id, irdi.source_inspection_anomaly_id) \
     LEFT JOIN inspection_rounds src_round ON src_round.id = src_anomaly.round_id \
     LEFT JOIN inspection_templates src_tpl ON src_tpl.id = src_round.template_id \
+    LEFT JOIN ( \
+        SELECT pf.follow_up_work_order_id AS wo_id, MIN(pf.id) AS finding_id, pp.id AS plan_id, \
+               pp.code AS plan_code, pp.title AS plan_title, po.id AS occurrence_id \
+          FROM pm_findings pf \
+          JOIN pm_executions pe ON pe.id = pf.pm_execution_id \
+          JOIN pm_occurrences po ON po.id = pe.pm_occurrence_id \
+          JOIN pm_plans pp ON pp.id = po.pm_plan_id \
+         WHERE pf.follow_up_work_order_id IS NOT NULL \
+         GROUP BY pf.follow_up_work_order_id) src_pm ON src_pm.wo_id = wo.id \
     LEFT JOIN teams tm ON tm.id = wo.assigned_team_id AND tm.deleted_at IS NULL";
 
 // ═══════════════════════════════════════════════════════════════════════════════

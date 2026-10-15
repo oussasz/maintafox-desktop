@@ -8,6 +8,8 @@ import type { ReferenceDomain } from "@shared/ipc-types";
 export interface ReferenceValueColumnFlags {
   showParent: boolean;
   showSchedule: boolean;
+  /** EN 13306 nature picker (`semantic_tag`) of request types. */
+  showNature: boolean;
   /** Cross-domain parent (e.g. FAMILY → CLASS). Null when same-set hierarchy only. */
   crossDomainParentCode: string | null;
   /** Same-set parent select for hierarchical domains without cross-domain parent. */
@@ -21,6 +23,7 @@ export function resolveReferenceValueColumns(
     return {
       showParent: false,
       showSchedule: false,
+      showNature: false,
       crossDomainParentCode: null,
       sameSetHierarchy: false,
     };
@@ -32,10 +35,12 @@ export function resolveReferenceValueColumns(
     domain.structure_type === "hierarchical" && crossDomainParentCode == null;
   const showParent = crossDomainParentCode != null || sameSetHierarchy;
   const showSchedule = Boolean(registry?.valueExtensions?.includes("schedule_pattern"));
+  const showNature = Boolean(registry?.valueExtensions?.includes("maintenance_nature"));
 
   return {
     showParent,
     showSchedule,
+    showNature,
     crossDomainParentCode,
     sameSetHierarchy,
   };

@@ -276,6 +276,8 @@
     "overdueRisk": "Overdue risk",
     "firstPass": "Completed without findings",
     "followUpRatio": "Findings with a follow-up",
+    "failuresFoundByPm": "Failures found by PM",
+    "failuresFoundByPmHint": "Corrective work orders raised from findings",
     "effortVariance": "Effort variance",
     "effortVarianceValue": "{{hours}} h ({{pct}})",
     "effortVarianceHours": "{{hours}} h",

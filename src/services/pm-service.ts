@@ -254,6 +254,7 @@ const PmGovernanceKpiReportSchema = z.object({
   overdue_risk: PmRateKpiSchema,
   first_pass_completion: PmRateKpiSchema,
   follow_up_ratio: PmRateKpiSchema,
+  failures_found_by_pm: z.number(),
   effort_variance: PmEffortVarianceKpiSchema,
   derivation_rules: z.array(z.string()),
 });

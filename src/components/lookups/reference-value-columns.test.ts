@@ -56,4 +56,25 @@ describe("resolveReferenceValueColumns", () => {
     expect(flags.showParent).toBe(false);
     expect(flags.showSchedule).toBe(false);
   });
+
+  it("shows the EN 13306 nature picker for request types only", () => {
+    const requestTypes = resolveReferenceValueColumns(
+      domain({ code: "DI.REQUEST_TYPE", structure_type: "flat" }),
+    );
+    expect(requestTypes.showNature).toBe(true);
+    expect(requestTypes.showParent).toBe(false);
+    const classes = resolveReferenceValueColumns(
+      domain({ code: "EQUIPMENT.CLASS", structure_type: "flat" }),
+    );
+    expect(classes.showNature).toBe(false);
+  });
+
+  it("hangs OT sub-types under a maintenance nature", () => {
+    const flags = resolveReferenceValueColumns(
+      domain({ code: "WORK.ORDER_SUBTYPES", structure_type: "flat" }),
+    );
+    expect(flags.showParent).toBe(true);
+    expect(flags.crossDomainParentCode).toBe("WORK.MAINTENANCE_NATURES");
+    expect(flags.showNature).toBe(false);
+  });
 });

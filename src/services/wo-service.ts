@@ -164,6 +164,10 @@ export const WorkOrderSchema = z.object({
   source_inspection_round_code: z.string().nullable().optional(),
   source_inspection_round_title: z.string().nullable().optional(),
   source_inspection_round_scheduled_at: z.string().nullable().optional(),
+  source_pm_plan_id: z.number().nullable().optional(),
+  source_pm_plan_code: z.string().nullable().optional(),
+  source_pm_plan_title: z.string().nullable().optional(),
+  source_pm_occurrence_id: z.number().nullable().optional(),
 });
 
 export const WoTransitionRowSchema = z.object({

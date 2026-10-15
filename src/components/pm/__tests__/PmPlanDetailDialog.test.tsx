@@ -129,6 +129,7 @@ const kpis: PmGovernanceKpiReport = {
   overdue_risk: rate(10),
   first_pass_completion: rate(50),
   follow_up_ratio: rate(null),
+  failures_found_by_pm: 0,
   effort_variance: {
     sample_size: 4,
     estimated_hours: 6,

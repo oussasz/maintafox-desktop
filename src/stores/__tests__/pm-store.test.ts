@@ -257,6 +257,7 @@ function makeKpis(overrides: Partial<PmGovernanceKpiReport> = {}): PmGovernanceK
     overdue_risk: makeRate(),
     first_pass_completion: makeRate(),
     follow_up_ratio: makeRate(),
+    failures_found_by_pm: 0,
     effort_variance: {
       sample_size: 1,
       estimated_hours: 2,

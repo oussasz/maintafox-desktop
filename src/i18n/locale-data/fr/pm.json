@@ -276,6 +276,8 @@
     "overdueRisk": "Risque de retard",
     "firstPass": "Terminées sans constat",
     "followUpRatio": "Constats avec suite",
+    "failuresFoundByPm": "Défaillances détectées par le préventif",
+    "failuresFoundByPmHint": "OT correctifs ouverts sur constat",
     "effortVariance": "Écart d'effort",
     "effortVarianceValue": "{{hours}} h ({{pct}})",
     "effortVarianceHours": "{{hours}} h",

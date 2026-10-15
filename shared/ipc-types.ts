@@ -3954,6 +3954,8 @@ export interface PmGovernanceKpiReport {
   overdue_risk: PmRateKpi;
   first_pass_completion: PmRateKpi;
   follow_up_ratio: PmRateKpi;
+  /** Failures found by PM: corrective follow-up OTs raised from the findings of the period. */
+  failures_found_by_pm: number;
   effort_variance: PmEffortVarianceKpi;
   derivation_rules: string[];
 }
@@ -4761,6 +4763,11 @@ export interface WorkOrder {
   source_inspection_round_code?: string | null;
   source_inspection_round_title?: string | null;
   source_inspection_round_scheduled_at?: string | null;
+  /** PM plan / occurrence whose finding raised this OT: a failure found by preventive maintenance. */
+  source_pm_plan_id?: number | null;
+  source_pm_plan_code?: string | null;
+  source_pm_plan_title?: string | null;
+  source_pm_occurrence_id?: number | null;
 }
 
 export interface WoTransitionRow {
