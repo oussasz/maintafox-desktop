@@ -198,6 +198,7 @@
     "shiftForNewTeam": "Shifts of the team being assigned: the choice is saved with the assignment.",
     "shiftPreviousNight": "night shift started the day before",
     "shiftOutsideWindow": "The planned start or end is outside the chosen shift. Check the hours, or choose another shift.",
+    "shiftTimetableChanged": "Timetable changed since planning: planned {{planned}}, the timetable now says {{now}}. Check the hours.",
     "expectedDuration": "Expected duration (hours)",
     "urgency": "Urgency",
     "selectUrgency": "Select urgency",

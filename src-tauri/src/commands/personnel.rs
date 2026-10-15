@@ -1194,6 +1194,22 @@ pub async fn list_schedule_class_versions(
     timetable::list_class_versions(&state.db, reference_value_id).await
 }
 
+/// Open work orders planned on a version, shown before editing it (they keep their window).
+#[tauri::command]
+pub async fn get_schedule_class_version_impact(
+    version_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<timetable::VersionWorkOrderImpact> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::REF_MANAGE,
+        PermissionScope::Global
+    );
+    timetable::version_work_order_impact(&state.db, version_id).await
+}
+
 /// Adds a version of a Classe horaire from a date, or edits one not yet in force.
 #[tauri::command]
 pub async fn upsert_schedule_class_version(

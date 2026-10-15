@@ -1093,6 +1093,7 @@ pub fn run() {
             commands::wo::list_wo_labor_people,
             commands::personnel::list_schedule_class_versions,
             commands::personnel::upsert_schedule_class_version,
+            commands::personnel::get_schedule_class_version_impact,
             commands::personnel::confirm_schedule_class_review,
             commands::personnel::list_team_schedule,
             commands::personnel::set_team_schedule,

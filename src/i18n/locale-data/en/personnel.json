@@ -751,6 +751,11 @@
     "restDays": "Rest days"
   },
   "timetable": {
+    "impact": {
+      "title": "Planned work orders use this version",
+      "description": "{{count}} open work order(s) are planned on this version ({{codes}}). They keep the hours they were planned with and will show that the timetable changed since planning.",
+      "confirm": "Save the change"
+    },
     "editor": {
       "title": "Classe horaire — {{name}}",
       "description": "Shift pattern of the teams and people linked to this Classe horaire. A change applies from a date and never rewrites past capacity.",

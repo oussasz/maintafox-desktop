@@ -168,6 +168,22 @@ describe("WoShiftSelect", () => {
     expect(await screen.findByText("planning.shiftOutsideWindow")).toBeTruthy();
   });
 
+  it("tells the planner the timetable changed since planning", async () => {
+    svc.listWoShiftOptions.mockResolvedValueOnce(options([{ ...DAY, shift_start: "07:00" }]));
+    renderSelect(
+      wo({
+        shift_class_version_id: 11,
+        shift_class_label: "Poste jour",
+        shift_start: "06:00",
+        shift_end: "14:00",
+      }),
+      { value: "11" },
+    );
+    const notice = await screen.findByText(/planning\.shiftTimetableChanged/);
+    expect(notice.textContent).toContain('"planned":"06:00–14:00"');
+    expect(notice.textContent).toContain('"now":"07:00–14:00"');
+  });
+
   it("drops the previous team's shifts while the new ones load", async () => {
     svc.listWoShiftOptions.mockResolvedValueOnce(options([], "no_shift"));
     const view = renderSelect(wo());

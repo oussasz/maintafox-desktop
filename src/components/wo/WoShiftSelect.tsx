@@ -88,6 +88,13 @@ export function WoShiftSelect({
       : null);
   const outside =
     chosenWindow != null && plannedOutsideWindow(plannedStart, plannedEnd, chosenWindow);
+  // The work order keeps the window it was planned with; its version was edited since.
+  const timetableChanged =
+    selected != null &&
+    wo.shift_class_version_id != null &&
+    String(wo.shift_class_version_id) === value &&
+    wo.shift_start != null &&
+    (selected.shift_start !== wo.shift_start || selected.shift_end !== wo.shift_end);
 
   return (
     <div className="space-y-1">
@@ -123,6 +130,14 @@ export function WoShiftSelect({
           ) : null}
         </SelectContent>
       </Select>
+      {timetableChanged ? (
+        <p className="text-xs text-text-muted" role="status">
+          {t("planning.shiftTimetableChanged", {
+            planned: formatWindow(wo.shift_start, wo.shift_end),
+            now: formatWindow(selected.shift_start, selected.shift_end),
+          })}
+        </p>
+      ) : null}
       {outside ? (
         <p className="text-xs text-text-muted" role="status">
           {t("planning.shiftOutsideWindow")}

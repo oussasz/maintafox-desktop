@@ -649,3 +649,26 @@ async fn a_move_across_a_new_version_keeps_the_classe_horaire() {
     assert_eq!(moved.shift_class_version_id, Some(new_version));
     assert_eq!(moved.shift_start.as_deref(), Some("21:00"));
 }
+
+/// Before editing a version not yet in force, the editor shows the open work orders planned on it.
+#[tokio::test]
+async fn editing_a_version_shows_the_work_orders_planned_on_it() {
+    let f = setup().await;
+    let first = work_order(&f.db, Some(f.team)).await;
+    let second = work_order(&f.db, Some(f.team)).await;
+    let first = plan(&f.db, &first, MONDAY, Some(f.night_version), false)
+        .await
+        .expect("planned");
+    plan(&f.db, &second, "2026-04-14", Some(f.night_version), false)
+        .await
+        .expect("planned");
+    let impact = crate::personnel::timetable::version_work_order_impact(&f.db, f.night_version)
+        .await
+        .expect("impact");
+    assert_eq!(impact.work_orders, 2);
+    assert_eq!(impact.codes[0], first.code, "by planned start");
+    let none = crate::personnel::timetable::version_work_order_impact(&f.db, f.other_version)
+        .await
+        .expect("impact");
+    assert_eq!(none.work_orders, 0);
+}

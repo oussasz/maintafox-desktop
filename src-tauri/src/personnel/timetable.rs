@@ -360,6 +360,39 @@ async fn get_version(db: &impl ConnectionTrait, id: i64) -> AppResult<ScheduleCl
     map_version(&row)
 }
 
+/// Open work orders planned on a version (`work_orders.shift_class_version_id`, migration 202):
+/// shown before an edit of a version not yet in force. They keep the window they were planned
+/// with; the planning tab tells the planner the timetable changed since.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct VersionWorkOrderImpact {
+    pub work_orders: i64,
+    /// The first few work-order codes, by planned start.
+    pub codes: Vec<String>,
+}
+
+pub async fn version_work_order_impact(
+    db: &impl ConnectionTrait,
+    version_id: i64,
+) -> AppResult<VersionWorkOrderImpact> {
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT code FROM work_orders \
+              WHERE shift_class_version_id = ? AND closed_at IS NULL AND cancelled_at IS NULL \
+              ORDER BY planned_start, id",
+            [version_id.into()],
+        ))
+        .await?;
+    let codes: Vec<String> = rows
+        .iter()
+        .filter_map(|r| r.try_get::<String>("", "code").ok())
+        .collect();
+    Ok(VersionWorkOrderImpact {
+        work_orders: codes.len() as i64,
+        codes: codes.into_iter().take(5).collect(),
+    })
+}
+
 /// Creates a version from a date (today or later), or edits one not yet in force. Saving a
 /// version settles the review of the Classe horaire's earlier versions.
 pub async fn upsert_class_version(
