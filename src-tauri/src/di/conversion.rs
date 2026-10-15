@@ -104,7 +104,10 @@ fn check_concurrency(rows_affected: u64) -> AppResult<()> {
 /// `urgency_levels` reference scale, so the match is by code and only among
 /// active levels. A code the tenant has retired yields `None` (the planner sets
 /// it) instead of failing the conversion.
-pub(crate) async fn resolve_wo_urgency_id<C: ConnectionTrait>(conn: &C, di_urgency_code: &str) -> AppResult<Option<i64>> {
+pub(crate) async fn resolve_wo_urgency_id<C: ConnectionTrait>(
+    conn: &C,
+    di_urgency_code: &str,
+) -> AppResult<Option<i64>> {
     let row = conn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,

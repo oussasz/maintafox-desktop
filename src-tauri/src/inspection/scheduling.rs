@@ -66,7 +66,9 @@ pub fn ts(t: DateTime<Utc>) -> String {
 }
 
 fn parse_ts(raw: &str) -> Option<DateTime<Utc>> {
-    DateTime::parse_from_rfc3339(raw.trim()).ok().map(|d| d.with_timezone(&Utc))
+    DateTime::parse_from_rfc3339(raw.trim())
+        .ok()
+        .map(|d| d.with_timezone(&Utc))
 }
 
 fn map_schedule(row: &sea_orm::QueryResult) -> AppResult<InspectionSchedule> {
@@ -337,7 +339,9 @@ pub async fn save_inspection_schedule(
             entity: "InspectionTemplate".into(),
             id: input.template_id.to_string(),
         })?;
-    let active: i64 = template.try_get("", "is_active").map_err(|e| decode_err("is_active", e))?;
+    let active: i64 = template
+        .try_get("", "is_active")
+        .map_err(|e| decode_err("is_active", e))?;
     let version: Option<i64> = template
         .try_get("", "current_version_id")
         .map_err(|e| decode_err("current_version_id", e))?;
@@ -663,7 +667,9 @@ async fn plan_rounds(
                 ));
             };
             let Some((reference, lifetime)) = meter_lifetime(db, meter_id).await? else {
-                return Ok(Err("GATE_INSP_SCHEDULE_METER_INACTIVE: the meter is unknown or inactive.".into()));
+                return Ok(Err(
+                    "GATE_INSP_SCHEDULE_METER_INACTIVE: the meter is unknown or inactive.".into(),
+                ));
             };
             let open = db
                 .query_one(Statement::from_sql_and_values(
@@ -702,7 +708,9 @@ async fn plan_rounds(
                 false,
             )))
         }
-        other => Ok(Err(format!("GATE_INSP_SCHEDULE_TRIGGER_INVALID: unknown trigger '{other}'."))),
+        other => Ok(Err(format!(
+            "GATE_INSP_SCHEDULE_TRIGGER_INVALID: unknown trigger '{other}'."
+        ))),
     }
 }
 
