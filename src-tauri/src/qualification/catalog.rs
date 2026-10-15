@@ -2,6 +2,13 @@
 //! tenant's language (French plants see « Habilitation électrique B2V », English ones
 //! "Electrical authorisation B2V").
 //!
+//! Electrical habilitations (NF C 18-510) are a company reference list, `PERSONNEL.HABILITATIONS`
+//! (controlled catalogue: draft → publish), seeded once with the standard symbols. Each published
+//! symbol has a certification type `HAB-<symbol>` so it can be required by a job and recorded on a
+//! person's sheet with its expiry (renewal every 3 years by default, editable). They are separate
+//! from the four rights the program grants (`AuthorizationType`: permit issuer, isolation
+//! authority, inspector, warehouse sign-off).
+//!
 //! Runs with the system reference catalogue at startup and on licence activation. Only adds
 //! what is missing (by code); a type or skill the plant renamed, deactivated or removed is never
 //! put back the way it was. Skills seeded earlier with their English label are relabelled in a
@@ -43,62 +50,6 @@ const fn cert(
 }
 
 const CERTIFICATIONS: &[CertSeed] = &[
-    cert(
-        "HAB-B0-H0V",
-        "electrical",
-        36,
-        60,
-        "Habilitation électrique B0 / H0V — non-électricien",
-        "Electrical authorisation B0 / H0V — non-electrician",
-    ),
-    cert(
-        "HAB-B1V",
-        "electrical",
-        36,
-        60,
-        "Habilitation électrique B1V — exécutant basse tension",
-        "Electrical authorisation B1V — low-voltage worker",
-    ),
-    cert(
-        "HAB-B2V",
-        "electrical",
-        36,
-        60,
-        "Habilitation électrique B2V — chargé de travaux basse tension",
-        "Electrical authorisation B2V — low-voltage work supervisor",
-    ),
-    cert(
-        "HAB-BR",
-        "electrical",
-        36,
-        60,
-        "Habilitation électrique BR — chargé d'intervention basse tension",
-        "Electrical authorisation BR — low-voltage troubleshooting",
-    ),
-    cert(
-        "HAB-BC",
-        "electrical",
-        36,
-        60,
-        "Habilitation électrique BC — chargé de consignation basse tension",
-        "Electrical authorisation BC — low-voltage isolation",
-    ),
-    cert(
-        "HAB-H1V",
-        "electrical",
-        36,
-        60,
-        "Habilitation électrique H1V — exécutant haute tension",
-        "Electrical authorisation H1V — high-voltage worker",
-    ),
-    cert(
-        "HAB-HC",
-        "electrical",
-        36,
-        60,
-        "Habilitation électrique HC — chargé de consignation haute tension",
-        "Electrical authorisation HC — high-voltage isolation",
-    ),
     cert(
         "LOTO-AUTH",
         "loto",
@@ -364,11 +315,259 @@ async fn ensure_skills(db: &impl ConnectionTrait, french: bool) -> AppResult<()>
     Ok(())
 }
 
+/// Reference list of electrical habilitations (NF C 18-510).
+pub const HABILITATIONS_DOMAIN: &str = "PERSONNEL.HABILITATIONS";
+const HABILITATIONS_DOMAIN_FR: &str = "Habilitations électriques (NF C 18-510)";
+const HABILITATIONS_DOMAIN_EN: &str = "Electrical authorisations (NF C 18-510)";
+/// Code prefix of the certification type of a habilitation symbol.
+pub const HABILITATION_CERT_PREFIX: &str = "HAB-";
+/// Renewal every 3 years (common practice for the NF C 18-510 refresher), reminded 60 days ahead.
+const HABILITATION_VALIDITY_MONTHS: i64 = 36;
+const HABILITATION_RENEWAL_LEAD_DAYS: i64 = 60;
+/// Starter values the company may change (not product-locked).
+const HABILITATION_META: &str = r#"{"origin":"starter","standard":"NF C 18-510"}"#;
+
+/// `(symbol, French label, English description)`.
+const HABILITATIONS: &[(&str, &str, &str)] = &[
+    (
+        "B0",
+        "B0 — exécutant non électricien, basse tension",
+        "B0 — non-electrician, low voltage",
+    ),
+    (
+        "B0V",
+        "B0V — non électricien au voisinage, basse tension",
+        "B0V — non-electrician near live low-voltage parts",
+    ),
+    (
+        "H0",
+        "H0 — exécutant non électricien, haute tension",
+        "H0 — non-electrician, high voltage",
+    ),
+    (
+        "H0V",
+        "H0V — non électricien au voisinage, haute tension",
+        "H0V — non-electrician near live high-voltage parts",
+    ),
+    (
+        "B1",
+        "B1 — exécutant électricien, basse tension",
+        "B1 — electrical worker, low voltage",
+    ),
+    (
+        "B1V",
+        "B1V — exécutant électricien au voisinage, basse tension",
+        "B1V — electrical worker near live low-voltage parts",
+    ),
+    (
+        "B2",
+        "B2 — chargé de travaux, basse tension",
+        "B2 — work supervisor, low voltage",
+    ),
+    (
+        "B2V",
+        "B2V — chargé de travaux au voisinage, basse tension",
+        "B2V — work supervisor near live low-voltage parts",
+    ),
+    (
+        "BR",
+        "BR — chargé d'intervention générale, basse tension",
+        "BR — general troubleshooting, low voltage",
+    ),
+    (
+        "BS",
+        "BS — chargé d'intervention élémentaire, basse tension",
+        "BS — basic troubleshooting, low voltage",
+    ),
+    (
+        "BC",
+        "BC — chargé de consignation, basse tension",
+        "BC — isolation (lock-out), low voltage",
+    ),
+    (
+        "BE",
+        "BE — chargé d'opérations spécifiques (essai, mesurage, vérification, manœuvre), basse tension",
+        "BE — specific operations (testing, measuring, checking, switching), low voltage",
+    ),
+    (
+        "H1",
+        "H1 — exécutant électricien, haute tension",
+        "H1 — electrical worker, high voltage",
+    ),
+    (
+        "H1V",
+        "H1V — exécutant électricien au voisinage, haute tension",
+        "H1V — electrical worker near live high-voltage parts",
+    ),
+    (
+        "H2",
+        "H2 — chargé de travaux, haute tension",
+        "H2 — work supervisor, high voltage",
+    ),
+    (
+        "H2V",
+        "H2V — chargé de travaux au voisinage, haute tension",
+        "H2V — work supervisor near live high-voltage parts",
+    ),
+    (
+        "HC",
+        "HC — chargé de consignation, haute tension",
+        "HC — isolation (lock-out), high voltage",
+    ),
+    (
+        "HE",
+        "HE — chargé d'opérations spécifiques (essai, mesurage, vérification, manœuvre), haute tension",
+        "HE — specific operations (testing, measuring, checking, switching), high voltage",
+    ),
+];
+
+/// Seeds the habilitation list once — when the domain does not exist yet — so a symbol the
+/// company removed or renamed is never put back. Marks the domain as a company list when the
+/// reference data audience is stored.
+async fn ensure_habilitation_list(db: &impl ConnectionTrait, french: bool) -> AppResult<()> {
+    let exists = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS x FROM reference_domains WHERE UPPER(TRIM(code)) = ?",
+            [HABILITATIONS_DOMAIN.into()],
+        ))
+        .await?
+        .is_some();
+    if exists {
+        return Ok(());
+    }
+    let category = crate::reference::governance::derive_category_for_persist(HABILITATIONS_DOMAIN, "tenant_managed");
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO reference_domains \
+         (code, name, structure_type, governance_level, governance_category, is_extendable, validation_rules_json, \
+          created_at, updated_at, entity_sync_id) \
+         VALUES (?, ?, 'flat', 'tenant_managed', ?, 1, NULL, strftime('%Y-%m-%dT%H:%M:%SZ','now'), \
+                 strftime('%Y-%m-%dT%H:%M:%SZ','now'), ?)",
+        [
+            HABILITATIONS_DOMAIN.into(),
+            (if french {
+                HABILITATIONS_DOMAIN_FR
+            } else {
+                HABILITATIONS_DOMAIN_EN
+            })
+            .into(),
+            category.as_str().into(),
+            crate::sync::identity::seeded_entity_sync_id("reference_domains", HABILITATIONS_DOMAIN).into(),
+        ],
+    ))
+    .await?;
+    let has_audience = db
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            "PRAGMA table_info(reference_domains)".to_string(),
+        ))
+        .await?
+        .iter()
+        .any(|r| r.try_get::<String>("", "name").is_ok_and(|n| n == "audience"));
+    if has_audience {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE reference_domains SET audience = 'company' WHERE UPPER(TRIM(code)) = ?",
+            [HABILITATIONS_DOMAIN.into()],
+        ))
+        .await?;
+    }
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO reference_sets (domain_id, version_no, status, effective_from, created_by_id, created_at, \
+          published_at, entity_sync_id) \
+         SELECT d.id, 1, 'published', strftime('%Y-%m-%dT%H:%M:%SZ','now'), NULL, \
+                strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), ? \
+           FROM reference_domains d WHERE UPPER(TRIM(d.code)) = ?",
+        [
+            crate::sync::identity::seeded_entity_sync_id("reference_sets", &format!("{HABILITATIONS_DOMAIN}:1")).into(),
+            HABILITATIONS_DOMAIN.into(),
+        ],
+    ))
+    .await?;
+    for (i, (code, fr, en)) in HABILITATIONS.iter().enumerate() {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO reference_values \
+             (set_id, parent_id, code, label, description, sort_order, color_hex, icon_name, semantic_tag, \
+              external_code, is_active, metadata_json, entity_sync_id) \
+             SELECT rs.id, NULL, ?, ?, ?, ?, NULL, NULL, 'habilitation', NULL, 1, ?, ? \
+               FROM reference_sets rs JOIN reference_domains d ON d.id = rs.domain_id \
+              WHERE UPPER(TRIM(d.code)) = ? AND rs.status = 'published'",
+            [
+                (*code).into(),
+                (if french { *fr } else { *en }).into(),
+                (if french { *en } else { *fr }).into(),
+                i64::try_from(i + 1).unwrap_or(0).into(),
+                HABILITATION_META.into(),
+                crate::sync::identity::seeded_entity_sync_id(
+                    "reference_values",
+                    &format!("{HABILITATIONS_DOMAIN}:{code}"),
+                )
+                .into(),
+                HABILITATIONS_DOMAIN.into(),
+            ],
+        ))
+        .await?;
+    }
+    Ok(())
+}
+
+/// Gives every active published habilitation its certification type `HAB-<symbol>` (only the
+/// missing ones: a type the plant renamed or deactivated is left as it is). Runs at startup and
+/// after the habilitation list is published.
+pub async fn ensure_habilitation_certification_types(db: &impl ConnectionTrait, french: bool) -> AppResult<()> {
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT rv.code, rv.label FROM reference_values rv \
+             JOIN reference_sets rs ON rs.id = rv.set_id \
+             JOIN reference_domains d ON d.id = rs.domain_id \
+             WHERE UPPER(TRIM(d.code)) = ? AND rs.status = 'published' AND rv.is_active = 1 \
+             ORDER BY rv.sort_order, rv.code",
+            [HABILITATIONS_DOMAIN.into()],
+        ))
+        .await?;
+    for r in rows {
+        let symbol: String = r.try_get("", "code")?;
+        let label: String = r.try_get("", "label")?;
+        let code = format!("{HABILITATION_CERT_PREFIX}{}", symbol.trim().to_ascii_uppercase());
+        let name = if french {
+            format!("Habilitation électrique {label}")
+        } else {
+            format!("Electrical authorisation {label}")
+        };
+        let sync_id = crate::sync::identity::seeded_entity_sync_id("certification_types", &code);
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO certification_types \
+             (entity_sync_id, code, name, default_validity_months, renewal_lead_days, category, is_active, row_version) \
+             SELECT ?, ?, ?, ?, ?, 'electrical', 1, 1 \
+             WHERE NOT EXISTS (SELECT 1 FROM certification_types WHERE UPPER(code) = ?) \
+               AND NOT EXISTS (SELECT 1 FROM certification_types WHERE entity_sync_id = ?)",
+            [
+                sync_id.clone().into(),
+                code.clone().into(),
+                name.into(),
+                HABILITATION_VALIDITY_MONTHS.into(),
+                HABILITATION_RENEWAL_LEAD_DAYS.into(),
+                code.into(),
+                sync_id.into(),
+            ],
+        ))
+        .await?;
+    }
+    Ok(())
+}
+
 /// Adds the starter certification types and skills missing for this tenant, in its language.
 pub async fn ensure_qualification_catalog(db: &DatabaseConnection) -> AppResult<()> {
     let locale = crate::pm::wo_content::tenant_text_locale(db).await?;
     let french = is_french(&locale);
     ensure_certification_types(db, french).await?;
+    ensure_habilitation_list(db, french).await?;
+    ensure_habilitation_certification_types(db, french).await?;
     ensure_skills(db, french).await?;
     Ok(())
 }
@@ -377,6 +576,8 @@ pub async fn ensure_qualification_catalog(db: &DatabaseConnection) -> AppResult<
 pub async fn ensure_qualification_catalog_in(db: &impl ConnectionTrait, locale: &str) -> AppResult<()> {
     let french = is_french(locale);
     ensure_certification_types(db, french).await?;
+    ensure_habilitation_list(db, french).await?;
+    ensure_habilitation_certification_types(db, french).await?;
     ensure_skills(db, french).await?;
     Ok(())
 }

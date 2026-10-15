@@ -349,6 +349,15 @@ pub async fn publish_reference_set(
 
     txn.commit().await?;
 
+    // A newly published electrical habilitation can be required and recorded at once.
+    if domain_probe
+        .code
+        .eq_ignore_ascii_case(crate::qualification::catalog::HABILITATIONS_DOMAIN)
+    {
+        let french = !crate::qualification::gate::tenant_writes_english(db).await?;
+        crate::qualification::catalog::ensure_habilitation_certification_types(db, french).await?;
+    }
+
     let published_set = sets::get_reference_set(db, set_id).await?;
 
     Ok(ReferencePublishResult {

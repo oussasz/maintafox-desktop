@@ -607,3 +607,81 @@ async fn starter_catalogue_speaks_the_tenant_language() {
     assert_eq!(label("MECH_GENERAL").await, "Méca atelier");
     assert_eq!(label("HYDRAULICS").await, "Hydraulics");
 }
+
+/// Electrical habilitations are a company reference list (NF C 18-510, controlled catalogue):
+/// seeded once, each published symbol has a certification type usable as a requirement and on a
+/// person's sheet; a symbol the company retires is not put back, a new one gets its type.
+#[tokio::test]
+async fn habilitations_are_a_company_list_each_with_a_certification_type() {
+    let db = setup().await;
+    crate::reference::system_catalog_integrity::ensure_system_reference_catalog_integrity(&db)
+        .await
+        .expect("system catalogue");
+    let domain = crate::qualification::catalog::HABILITATIONS_DOMAIN;
+    let category: String = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT governance_category FROM reference_domains WHERE code = ?",
+            [domain.into()],
+        ))
+        .await
+        .expect("q")
+        .expect("domain")
+        .try_get("", "governance_category")
+        .expect("category");
+    assert_eq!(category, "controlled_catalog");
+    let values = format!(
+        "SELECT COUNT(*) FROM reference_values rv JOIN reference_sets rs ON rs.id = rv.set_id \
+         JOIN reference_domains d ON d.id = rs.domain_id WHERE d.code = '{domain}' AND rs.status = 'published'"
+    );
+    assert_eq!(scalar_i64(&db, &values).await, 18);
+    for code in [
+        "HAB-B0", "HAB-B1V", "HAB-B2V", "HAB-BR", "HAB-BC", "HAB-H0V", "HAB-HC", "HAB-HE",
+    ] {
+        assert_eq!(
+            scalar_i64(
+                &db,
+                &format!("SELECT COUNT(*) FROM certification_types WHERE code = '{code}' AND category = 'electrical'")
+            )
+            .await,
+            1,
+            "{code}"
+        );
+    }
+
+    // The company retires BS and adds BF: BS is not put back, BF gets its certification type.
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        format!(
+            "DELETE FROM reference_values WHERE code = 'BS' AND set_id IN (SELECT rs.id FROM reference_sets rs \
+             JOIN reference_domains d ON d.id = rs.domain_id WHERE d.code = '{domain}')"
+        ),
+    ))
+    .await
+    .expect("retire BS");
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        format!(
+            "INSERT INTO reference_values (entity_sync_id, set_id, code, label, sort_order, is_active) \
+             SELECT 'hab-bf', rs.id, 'BF', 'BF — chargé de chantier, basse tension', 99, 1 FROM reference_sets rs \
+             JOIN reference_domains d ON d.id = rs.domain_id WHERE d.code = '{domain}' AND rs.status = 'published'"
+        ),
+    ))
+    .await
+    .expect("add BF");
+    crate::qualification::catalog::ensure_qualification_catalog_in(&db, "fr")
+        .await
+        .expect("catalogue again");
+    assert_eq!(scalar_i64(&db, &values).await, 18, "BS stays retired, BF added");
+    let bf: String = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT name FROM certification_types WHERE code = 'HAB-BF'".to_string(),
+        ))
+        .await
+        .expect("q")
+        .expect("HAB-BF")
+        .try_get("", "name")
+        .expect("name");
+    assert_eq!(bf, "Habilitation électrique BF — chargé de chantier, basse tension");
+}

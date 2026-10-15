@@ -106,7 +106,9 @@ fn category_for_known_code(code: &str) -> Option<GovernanceCategory> {
         | "WORK.SYMPTOMS"
         | "WORK.FAILURE_CAUSES"
         | "WORK.FAILURE_EFFECTS"
-        | "PM.MAINTENANCE_TASK_LIST" => Some(GovernanceCategory::ControlledCatalog),
+        | "PM.MAINTENANCE_TASK_LIST"
+        // Electrical habilitations (NF C 18-510): starter symbols, the company adds or retires its own.
+        | "PERSONNEL.HABILITATIONS" => Some(GovernanceCategory::ControlledCatalog),
 
         _ => None,
     }

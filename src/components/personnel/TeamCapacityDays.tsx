@@ -251,7 +251,7 @@ function FragmentRow({
                           ({m.allocation_percent} %)
                         </span>
                       ) : null}
-                      {m.schedule_class_label && m.schedule_source !== "team" ? (
+                      {m.schedule_class_label ? (
                         <span className="ml-1 text-xs text-text-muted">
                           ·{" "}
                           {t(`capacityDays.sources.${m.schedule_source ?? "team"}`, {
@@ -318,7 +318,11 @@ export function PersonCapacityDays({ personnelId }: { personnelId: number }) {
           <span>
             <span className="font-medium">{dayFmt.format(new Date(`${d.day}T00:00:00Z`))}</span>
             {d.schedule_class_label ? (
-              <span className="ml-2 text-xs text-text-muted">{d.schedule_class_label}</span>
+              <span className="ml-2 text-xs text-text-muted">
+                {t(`capacityDays.sources.${d.schedule_source ?? "personal"}`, {
+                  name: d.schedule_class_label,
+                })}
+              </span>
             ) : null}
             {d.shift_start && d.shift_end ? (
               <span className="ml-2 text-xs text-text-muted">

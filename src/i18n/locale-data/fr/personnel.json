@@ -686,7 +686,7 @@
     "sources": {
       "exception": "exception : {{name}}",
       "personal": "classe horaire propre : {{name}}",
-      "team": "{{name}}"
+      "team": "via la classe par défaut de l'équipe : {{name}}"
     }
   },
   "holidays": {
