@@ -10,6 +10,7 @@
 //!
 //! Sub-module layout:
 //!   `governance` — A/B/C category decision engine (single source of truth for permissions)
+//!   `audience`   — SYSTEM / COMPANY domain audience (hidden + read-only vs company-configured)
 //!   `domains`    — domain catalog CRUD with structure type and governance level validation
 //!   `sets`       — set version lifecycle (draft → validated → published → superseded)
 //!   `values`     — value tree CRUD with hierarchy cycle detection
@@ -22,6 +23,7 @@
 //!   `publish`    — publish readiness engine and impact preview
 
 pub mod aliases;
+pub mod audience;
 pub mod domains;
 pub mod governance;
 pub mod impact;
@@ -38,6 +40,8 @@ pub mod values;
 
 #[cfg(test)]
 mod aliases_tests;
+#[cfg(test)]
+mod audience_tests;
 #[cfg(test)]
 mod domains_tests;
 #[cfg(test)]

@@ -16,6 +16,7 @@
 //!   - `governance_level`: one of the PRD 6.13 levels
 
 use crate::errors::{AppError, AppResult};
+use crate::reference::audience::DomainAudience;
 use crate::reference::governance::{
     default_is_extendable, derive_category_for_persist, GovernanceCategory, GOVERNANCE_CATEGORIES,
 };
@@ -49,6 +50,9 @@ pub struct ReferenceDomain {
     pub governance_level: String,
     /// A/B/C category — permission decision source of truth.
     pub governance_category: String,
+    /// SYSTEM (maintained by Maintafox, hidden from the management screens, read-only) or
+    /// COMPANY (configured by the plant). See `reference::audience`.
+    pub audience: DomainAudience,
     pub is_extendable: bool,
     pub validation_rules_json: Option<String>,
     pub created_at: String,
@@ -104,6 +108,14 @@ fn map_domain(row: &QueryResult) -> AppResult<ReferenceDomain> {
         crate::reference::governance::resolve_category(&code, &governance_level, Some(&stored_category))
             .as_str()
             .to_string();
+    let raw_audience = row
+        .try_get::<String>("", "audience")
+        .map_err(|e| decode_err("audience", e))?;
+    let audience = DomainAudience::parse(&raw_audience).ok_or_else(|| {
+        AppError::Internal(anyhow::anyhow!(
+            "reference_domains.audience '{raw_audience}' of domain '{code}' is not system|company"
+        ))
+    })?;
     Ok(ReferenceDomain {
         id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
         code,
@@ -113,6 +125,7 @@ fn map_domain(row: &QueryResult) -> AppResult<ReferenceDomain> {
             .map_err(|e| decode_err("structure_type", e))?,
         governance_level,
         governance_category,
+        audience,
         is_extendable: i64_to_bool(
             row.try_get::<i64>("", "is_extendable")
                 .map_err(|e| decode_err("is_extendable", e))?,
@@ -225,7 +238,7 @@ pub async fn list_reference_domains(db: &DatabaseConnection) -> AppResult<Vec<Re
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
             "SELECT id, code, name, structure_type, governance_level, \
-                    governance_category, is_extendable, validation_rules_json, \
+                    governance_category, audience, is_extendable, validation_rules_json, \
                     created_at, updated_at \
              FROM reference_domains \
              ORDER BY name ASC",
@@ -241,7 +254,7 @@ pub async fn get_reference_domain(db: &DatabaseConnection, domain_id: i64) -> Ap
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, code, name, structure_type, governance_level, \
-                    governance_category, is_extendable, validation_rules_json, \
+                    governance_category, audience, is_extendable, validation_rules_json, \
                     created_at, updated_at \
              FROM reference_domains WHERE id = ?",
             [domain_id.into()],
@@ -267,7 +280,7 @@ pub async fn get_reference_domain_by_code(db: &DatabaseConnection, domain_code: 
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, code, name, structure_type, governance_level, \
-                    governance_category, is_extendable, validation_rules_json, \
+                    governance_category, audience, is_extendable, validation_rules_json, \
                     created_at, updated_at \
              FROM reference_domains WHERE UPPER(code) = ?",
             [code.clone().into()],
@@ -286,6 +299,7 @@ pub async fn get_reference_domain_by_code(db: &DatabaseConnection, domain_code: 
 /// Validates code format, structure type, governance level, and name.
 /// Code is normalized to uppercase before insertion.
 /// `governance_category` is derived from code + level when not provided.
+/// A domain created here is always COMPANY: SYSTEM domains are only created by Maintafox's seeders.
 pub async fn create_reference_domain(
     db: &DatabaseConnection,
     payload: CreateReferenceDomainPayload,
@@ -322,15 +336,16 @@ pub async fn create_reference_domain(
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO reference_domains \
-             (code, name, structure_type, governance_level, governance_category, \
+             (code, name, structure_type, governance_level, governance_category, audience, \
               is_extendable, validation_rules_json, created_at, updated_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             code.clone().into(),
             payload.name.trim().to_string().into(),
             payload.structure_type.clone().into(),
             payload.governance_level.clone().into(),
             category.as_str().into(),
+            DomainAudience::Company.as_str().into(),
             is_extendable.into(),
             payload.validation_rules_json.clone().into(),
             now.clone().into(),
@@ -352,7 +367,7 @@ pub async fn create_reference_domain(
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, code, name, structure_type, governance_level, \
-                    governance_category, is_extendable, validation_rules_json, \
+                    governance_category, audience, is_extendable, validation_rules_json, \
                     created_at, updated_at \
              FROM reference_domains WHERE code = ?",
             [code.into()],
@@ -366,7 +381,8 @@ pub async fn create_reference_domain(
 /// Updates an existing reference domain. Returns the updated domain.
 ///
 /// Only provided (Some) fields are changed; `None` fields are left untouched.
-/// Code is immutable after creation — it is not present in the update payload.
+/// Code and audience are immutable — neither is present in the update payload.
+/// A SYSTEM domain is refused (`GATE_REF_SYSTEM_DOMAIN_READ_ONLY`).
 pub async fn update_reference_domain(
     db: &DatabaseConnection,
     domain_id: i64,
@@ -375,6 +391,7 @@ pub async fn update_reference_domain(
 ) -> AppResult<ReferenceDomain> {
     // Verify the domain exists first.
     let existing = get_reference_domain(db, domain_id).await?;
+    crate::reference::audience::assert_domain_editable(&existing)?;
 
     // Build the SET clause dynamically for only provided fields.
     let mut sets: Vec<String> = Vec::new();

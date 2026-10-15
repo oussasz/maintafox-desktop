@@ -12,8 +12,8 @@ use tauri::State;
 use crate::auth::rbac::PermissionScope;
 use crate::errors::AppResult;
 use crate::reference::{
-    aliases, domains, governance, imports as ref_imports, migrations as ref_migrations, publish as ref_publish,
-    schedule_patterns, search as ref_search, sets, values,
+    aliases, audience, domains, governance, imports as ref_imports, migrations as ref_migrations,
+    publish as ref_publish, schedule_patterns, search as ref_search, sets, values,
 };
 use crate::state::AppState;
 use crate::{require_permission, require_session, require_step_up};
@@ -30,6 +30,20 @@ pub async fn list_reference_domains(state: State<'_, AppState>) -> AppResult<Vec
         PermissionScope::Global
     );
     domains::list_reference_domains(&state.db).await
+}
+
+/// Audience of the module catalogs (OT types, article families…) shown in the Données de
+/// référence tree next to the reference domains (`reference::audience::MODULE_CATALOGS`).
+#[tauri::command]
+pub async fn list_reference_module_catalogs(state: State<'_, AppState>) -> AppResult<Vec<audience::ModuleCatalog>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::REF_VIEW,
+        PermissionScope::Global
+    );
+    Ok(audience::MODULE_CATALOGS.to_vec())
 }
 
 #[tauri::command]

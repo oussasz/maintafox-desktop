@@ -296,6 +296,7 @@ pub async fn upsert_schedule_pattern(
     let value = assert_is_schedule_class_value(db, payload.reference_value_id).await?;
     let set = sets::get_reference_set(db, value.set_id).await?;
     let domain = domains::get_reference_domain(db, set.domain_id).await?;
+    crate::reference::audience::assert_domain_editable(&domain)?;
     crate::reference::governance::assert_allows_value_mutation(&domain, &set)?;
 
     let mut meta = parse_metadata(value.metadata_json.as_deref(), &value.code);

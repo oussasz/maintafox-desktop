@@ -19,6 +19,7 @@ fn domain(code: &str, governance_level: &str, governance_category: &str, is_exte
         governance_level: governance_level.into(),
         governance_category: governance_category.into(),
         is_extendable,
+        audience: crate::reference::audience::DomainAudience::Company,
         validation_rules_json: None,
         created_at: "2026-01-01T00:00:00Z".into(),
         updated_at: "2026-01-01T00:00:00Z".into(),

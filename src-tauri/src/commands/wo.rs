@@ -168,6 +168,9 @@ pub async fn create_work_order_type(
         crate::rbac::permissions::REF_MANAGE,
         PermissionScope::Global
     );
+    crate::reference::audience::assert_module_catalog_editable(
+        crate::reference::audience::MODULE_CATALOG_WORK_ORDER_TYPES,
+    )?;
     types::create_work_order_type(&state.db, input).await
 }
 
@@ -184,6 +187,9 @@ pub async fn update_work_order_type(
         crate::rbac::permissions::REF_MANAGE,
         PermissionScope::Global
     );
+    crate::reference::audience::assert_module_catalog_editable(
+        crate::reference::audience::MODULE_CATALOG_WORK_ORDER_TYPES,
+    )?;
     types::update_work_order_type(&state.db, id, input).await
 }
 
@@ -196,6 +202,9 @@ pub async fn delete_work_order_type(id: i64, state: State<'_, AppState>) -> AppR
         crate::rbac::permissions::REF_MANAGE,
         PermissionScope::Global
     );
+    crate::reference::audience::assert_module_catalog_editable(
+        crate::reference::audience::MODULE_CATALOG_WORK_ORDER_TYPES,
+    )?;
     types::delete_work_order_type(&state.db, id).await
 }
 
@@ -286,6 +295,9 @@ pub async fn update_work_order_status(
         crate::rbac::permissions::REF_MANAGE,
         PermissionScope::Global
     );
+    crate::reference::audience::assert_module_catalog_editable(
+        crate::reference::audience::MODULE_CATALOG_WORK_ORDER_STATUSES,
+    )?;
     statuses::update_work_order_status(&state.db, id, input).await
 }
 

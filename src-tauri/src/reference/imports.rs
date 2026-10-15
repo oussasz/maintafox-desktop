@@ -247,8 +247,9 @@ pub async fn create_import_batch(
     source_sha256: &str,
     actor_id: Option<i64>,
 ) -> AppResult<RefImportBatchSummary> {
-    // Verify domain exists.
-    domains::get_reference_domain(db, domain_id).await?;
+    // Verify domain exists and is a company list (SYSTEM lists are never imported into).
+    let domain = domains::get_reference_domain(db, domain_id).await?;
+    crate::reference::audience::assert_domain_editable(&domain)?;
 
     let now = Utc::now().to_rfc3339();
 
@@ -298,6 +299,7 @@ pub async fn stage_import_rows(
     rows: Vec<ImportRowInput>,
 ) -> AppResult<RefImportBatchSummary> {
     let batch = get_batch_by_id(db, batch_id).await?;
+    crate::reference::audience::assert_domain_id_editable(db, batch.domain_id).await?;
     if batch.status != "uploaded" {
         return Err(AppError::ValidationFailed(vec![format!(
             "Le lot d'import est en statut '{}'; seul le statut 'uploaded' permet le chargement.",
@@ -366,6 +368,7 @@ pub async fn validate_import_batch(
     _actor_id: Option<i64>,
 ) -> AppResult<RefImportBatchSummary> {
     let batch = get_batch_by_id(db, batch_id).await?;
+    crate::reference::audience::assert_domain_id_editable(db, batch.domain_id).await?;
     if batch.status != "uploaded" {
         return Err(AppError::ValidationFailed(vec![format!(
             "Le lot d'import est en statut '{}'; seul le statut 'uploaded' permet la validation.",
@@ -576,6 +579,7 @@ pub async fn apply_import_batch(
     _actor_id: i64,
 ) -> AppResult<RefImportApplyResult> {
     let batch = get_batch_by_id(db, batch_id).await?;
+    crate::reference::audience::assert_domain_id_editable(db, batch.domain_id).await?;
     if batch.status != "validated" {
         return Err(AppError::ValidationFailed(vec![format!(
             "Le lot d'import est en statut '{}'; seul le statut 'validated' permet l'application.",

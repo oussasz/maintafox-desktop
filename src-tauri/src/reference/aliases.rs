@@ -260,6 +260,7 @@ pub async fn create_alias(
     validate_locale(&locale)?;
     validate_alias_type(&alias_type)?;
     assert_value_exists(db, payload.reference_value_id).await?;
+    crate::reference::audience::assert_value_id_editable(db, payload.reference_value_id).await?;
 
     // Enforce preferred uniqueness before insert.
     if is_preferred {
@@ -326,6 +327,7 @@ pub async fn update_alias(
     _actor_id: i64,
 ) -> AppResult<ReferenceAlias> {
     let existing = get_alias(db, alias_id).await?;
+    crate::reference::audience::assert_alias_id_editable(db, alias_id).await?;
 
     let label = match &payload.alias_label {
         Some(l) => {
@@ -394,6 +396,7 @@ pub async fn update_alias(
 /// auto-promotes the oldest remaining alias in the same scope.
 pub async fn delete_alias(db: &DatabaseConnection, alias_id: i64, _actor_id: i64) -> AppResult<()> {
     let existing = get_alias(db, alias_id).await?;
+    crate::reference::audience::assert_alias_id_editable(db, alias_id).await?;
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,

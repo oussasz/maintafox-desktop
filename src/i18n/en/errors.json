@@ -63,6 +63,7 @@
     "INTERNAL_ERROR": "An internal error occurred."
   },
   "gateError": {
+    "GATE_REF_SYSTEM_DOMAIN_READ_ONLY": "Change refused: this list is maintained by Maintafox and cannot be changed in Reference data. Its values stay available in the forms that use them.",
     "GATE_WO_SHIFT_INVALID": "Planning refused: the shift must be morning, afternoon, night or full day.",
     "GATE_INV_PERIOD_CLOSED": "Posting refused: this date falls in a closed inventory period. Use a date after the closed period.",
     "GATE_PROC_SELF_APPROVAL": "Approval refused: you cannot approve a document you requested yourself. Another approver must approve it.",

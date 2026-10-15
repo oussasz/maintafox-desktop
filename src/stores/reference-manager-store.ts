@@ -12,6 +12,7 @@ import { create } from "zustand";
 import { preferredWorkingSet } from "@/lib/reference-governance-ui";
 import {
   listReferenceDomains,
+  listReferenceModuleCatalogs,
   listReferenceSets,
   getReferenceGovernanceCapabilities,
 } from "@/services/reference-service";
@@ -40,125 +41,104 @@ export const WORK_ORDER_PRIORITIES_SET_ID = -104;
 export const WORK_ORDER_STATUSES_DOMAIN_ID = -105;
 export const WORK_ORDER_STATUSES_SET_ID = -105;
 
-const INVENTORY_ARTICLE_FAMILY_DOMAIN: ReferenceDomain = {
-  id: INVENTORY_ARTICLE_FAMILY_DOMAIN_ID,
-  code: "INVENTORY.ARTICLE_FAMILY",
-  name: "Familles articles de stock",
-  structure_type: "flat",
+/**
+ * Module tables shown in the tree next to the reference domains (no versions: one live set).
+ * Only the wiring lives here (id, code, name, legacy governance fields). Whether a catalog is a
+ * Maintafox list (hidden) or a company list (shown) comes from the backend
+ * (`list_reference_module_catalogs`), like the audience of the real domains.
+ */
+interface SyntheticCatalog {
+  domain: Omit<ReferenceDomain, "audience">;
+  set: ReferenceSet;
+}
+
+function syntheticCatalog(
+  id: number,
+  code: string,
+  name: string,
+  governance: Pick<ReferenceDomain, "governance_level" | "governance_category" | "is_extendable">,
+): SyntheticCatalog {
+  return {
+    domain: {
+      id,
+      code,
+      name,
+      structure_type: "flat",
+      ...governance,
+      validation_rules_json: null,
+      created_at: "",
+      updated_at: "",
+    },
+    set: {
+      id,
+      domain_id: id,
+      version_no: 1,
+      status: "published",
+      effective_from: null,
+      created_by_id: null,
+      created_at: "",
+      published_at: null,
+    },
+  };
+}
+
+const TENANT_DICTIONARY = {
   governance_level: "tenant_managed",
   governance_category: "operational_dictionary",
   is_extendable: true,
-  validation_rules_json: null,
-  created_at: "",
-  updated_at: "",
-};
+} as const;
 
-const INVENTORY_ARTICLE_FAMILY_SET: ReferenceSet = {
-  id: INVENTORY_ARTICLE_FAMILY_SET_ID,
-  domain_id: INVENTORY_ARTICLE_FAMILY_DOMAIN_ID,
-  version_no: 1,
-  status: "published",
-  effective_from: null,
-  created_by_id: null,
-  created_at: "",
-  published_at: null,
-};
+const SYNTHETIC_CATALOGS: readonly SyntheticCatalog[] = [
+  syntheticCatalog(
+    INVENTORY_ARTICLE_FAMILY_DOMAIN_ID,
+    "INVENTORY.ARTICLE_FAMILY",
+    "Familles articles de stock",
+    TENANT_DICTIONARY,
+  ),
+  syntheticCatalog(
+    INVENTORY_TAX_CATEGORY_DOMAIN_ID,
+    "INVENTORY.TAX_CATEGORY",
+    "Catégories TVA articles de stock",
+    TENANT_DICTIONARY,
+  ),
+  syntheticCatalog(WORK_ORDER_TYPES_DOMAIN_ID, "WO.WORK_ORDER_TYPES", "Types d'ordre de travail", {
+    governance_level: "protected_analytical",
+    governance_category: "system_catalog",
+    is_extendable: true,
+  }),
+  syntheticCatalog(
+    WORK_ORDER_PRIORITIES_DOMAIN_ID,
+    "WO.WORK_ORDER_PRIORITIES",
+    "Priorités d'ordre de travail",
+    {
+      governance_level: "protected_analytical",
+      governance_category: "system_catalog",
+      is_extendable: false,
+    },
+  ),
+  syntheticCatalog(
+    WORK_ORDER_STATUSES_DOMAIN_ID,
+    "WO.WORK_ORDER_STATUSES",
+    "Statuts d'ordre de travail",
+    {
+      governance_level: "protected_analytical",
+      governance_category: "system_catalog",
+      is_extendable: false,
+    },
+  ),
+];
 
-const INVENTORY_TAX_CATEGORY_DOMAIN: ReferenceDomain = {
-  id: INVENTORY_TAX_CATEGORY_DOMAIN_ID,
-  code: "INVENTORY.TAX_CATEGORY",
-  name: "Catégories TVA articles de stock",
-  structure_type: "flat",
-  governance_level: "tenant_managed",
-  governance_category: "operational_dictionary",
-  is_extendable: true,
-  validation_rules_json: null,
-  created_at: "",
-  updated_at: "",
-};
+function syntheticCatalogById(domainId: number): SyntheticCatalog | undefined {
+  return SYNTHETIC_CATALOGS.find((c) => c.domain.id === domainId);
+}
 
-const INVENTORY_TAX_CATEGORY_SET: ReferenceSet = {
-  id: INVENTORY_TAX_CATEGORY_SET_ID,
-  domain_id: INVENTORY_TAX_CATEGORY_DOMAIN_ID,
-  version_no: 1,
-  status: "published",
-  effective_from: null,
-  created_by_id: null,
-  created_at: "",
-  published_at: null,
-};
-
-const WORK_ORDER_TYPES_DOMAIN: ReferenceDomain = {
-  id: WORK_ORDER_TYPES_DOMAIN_ID,
-  code: "WO.WORK_ORDER_TYPES",
-  name: "Types d'ordre de travail",
-  structure_type: "flat",
-  governance_level: "protected_analytical",
-  governance_category: "system_catalog",
-  is_extendable: true,
-  validation_rules_json: null,
-  created_at: "",
-  updated_at: "",
-};
-
-const WORK_ORDER_TYPES_SET: ReferenceSet = {
-  id: WORK_ORDER_TYPES_SET_ID,
-  domain_id: WORK_ORDER_TYPES_DOMAIN_ID,
-  version_no: 1,
-  status: "published",
-  effective_from: null,
-  created_by_id: null,
-  created_at: "",
-  published_at: null,
-};
-
-const WORK_ORDER_PRIORITIES_DOMAIN: ReferenceDomain = {
-  id: WORK_ORDER_PRIORITIES_DOMAIN_ID,
-  code: "WO.WORK_ORDER_PRIORITIES",
-  name: "Priorités d'ordre de travail",
-  structure_type: "flat",
-  governance_level: "protected_analytical",
-  governance_category: "system_catalog",
-  is_extendable: false,
-  validation_rules_json: null,
-  created_at: "",
-  updated_at: "",
-};
-
-const WORK_ORDER_PRIORITIES_SET: ReferenceSet = {
-  id: WORK_ORDER_PRIORITIES_SET_ID,
-  domain_id: WORK_ORDER_PRIORITIES_DOMAIN_ID,
-  version_no: 1,
-  status: "published",
-  effective_from: null,
-  created_by_id: null,
-  created_at: "",
-  published_at: null,
-};
-
-const WORK_ORDER_STATUSES_DOMAIN: ReferenceDomain = {
-  id: WORK_ORDER_STATUSES_DOMAIN_ID,
-  code: "WO.WORK_ORDER_STATUSES",
-  name: "Statuts d'ordre de travail",
-  structure_type: "flat",
-  governance_level: "protected_analytical",
-  governance_category: "system_catalog",
-  is_extendable: false,
-  validation_rules_json: null,
-  created_at: "",
-  updated_at: "",
-};
-
-const WORK_ORDER_STATUSES_SET: ReferenceSet = {
-  id: WORK_ORDER_STATUSES_SET_ID,
-  domain_id: WORK_ORDER_STATUSES_DOMAIN_ID,
-  version_no: 1,
-  status: "published",
-  effective_from: null,
-  created_by_id: null,
-  created_at: "",
-  published_at: null,
-};
+/**
+ * Données de référence lists only the company's own lists. Maintafox lists (`audience: system`)
+ * stay in the engine for pickers and links but are not managed here.
+ */
+function isCompanyList(domain: ReferenceDomain): boolean {
+  return domain.audience === "company";
+}
 
 // ── Store interface ───────────────────────────────────────────────────────────
 
@@ -223,33 +203,33 @@ export const useReferenceManagerStore = create<ReferenceManagerStoreState>()((se
   loadDomains: async () => {
     set({ domainsLoading: true, error: null });
     try {
-      const domains = await listReferenceDomains();
+      const [domains, moduleCatalogs] = await Promise.all([
+        listReferenceDomains(),
+        listReferenceModuleCatalogs(),
+      ]);
       const filteredDomains = domains.filter(
-        (domain) => !SUPERSEDED_REFERENCE_DOMAIN_CODES.has(domain.code.trim().toUpperCase()),
+        (domain) =>
+          isCompanyList(domain) &&
+          !SUPERSEDED_REFERENCE_DOMAIN_CODES.has(domain.code.trim().toUpperCase()),
       );
-      const hasInventoryFamilyDomain = filteredDomains.some(
-        (domain) => domain.id === INVENTORY_ARTICLE_FAMILY_DOMAIN_ID,
+      const backendIds = new Set(domains.map((domain) => domain.id));
+      const audienceByCode = new Map(
+        moduleCatalogs.map((c) => [c.code.trim().toUpperCase(), c.audience] as const),
       );
-      const hasInventoryTaxDomain = filteredDomains.some(
-        (domain) => domain.id === INVENTORY_TAX_CATEGORY_DOMAIN_ID,
+      // A module catalog the backend does not classify is not shown (no frontend default).
+      const syntheticDomains: ReferenceDomain[] = [];
+      const syntheticSets: Record<number, ReferenceSet[]> = {};
+      for (const catalog of SYNTHETIC_CATALOGS) {
+        const audience = audienceByCode.get(catalog.domain.code);
+        if (audience == null || backendIds.has(catalog.domain.id)) continue;
+        const domain: ReferenceDomain = { ...catalog.domain, audience };
+        if (!isCompanyList(domain)) continue;
+        syntheticDomains.push(domain);
+        syntheticSets[domain.id] = [catalog.set];
+      }
+      const nextDomains = [...filteredDomains, ...syntheticDomains].sort((a, b) =>
+        a.name.localeCompare(b.name),
       );
-      const hasWorkOrderTypesDomain = filteredDomains.some(
-        (domain) => domain.id === WORK_ORDER_TYPES_DOMAIN_ID,
-      );
-      const hasWorkOrderPrioritiesDomain = filteredDomains.some(
-        (domain) => domain.id === WORK_ORDER_PRIORITIES_DOMAIN_ID,
-      );
-      const hasWorkOrderStatusesDomain = filteredDomains.some(
-        (domain) => domain.id === WORK_ORDER_STATUSES_DOMAIN_ID,
-      );
-      const nextDomains = [
-        ...filteredDomains,
-        ...(hasInventoryFamilyDomain ? [] : [INVENTORY_ARTICLE_FAMILY_DOMAIN]),
-        ...(hasInventoryTaxDomain ? [] : [INVENTORY_TAX_CATEGORY_DOMAIN]),
-        ...(hasWorkOrderTypesDomain ? [] : [WORK_ORDER_TYPES_DOMAIN]),
-        ...(hasWorkOrderPrioritiesDomain ? [] : [WORK_ORDER_PRIORITIES_DOMAIN]),
-        ...(hasWorkOrderStatusesDomain ? [] : [WORK_ORDER_STATUSES_DOMAIN]),
-      ].sort((a, b) => a.name.localeCompare(b.name));
 
       const capabilityEntries = await Promise.all(
         filteredDomains.map(async (d) => {
@@ -269,14 +249,7 @@ export const useReferenceManagerStore = create<ReferenceManagerStoreState>()((se
       set({
         domains: nextDomains,
         domainCapabilities,
-        setsMap: {
-          ...get().setsMap,
-          [INVENTORY_ARTICLE_FAMILY_DOMAIN_ID]: [INVENTORY_ARTICLE_FAMILY_SET],
-          [INVENTORY_TAX_CATEGORY_DOMAIN_ID]: [INVENTORY_TAX_CATEGORY_SET],
-          [WORK_ORDER_TYPES_DOMAIN_ID]: [WORK_ORDER_TYPES_SET],
-          [WORK_ORDER_PRIORITIES_DOMAIN_ID]: [WORK_ORDER_PRIORITIES_SET],
-          [WORK_ORDER_STATUSES_DOMAIN_ID]: [WORK_ORDER_STATUSES_SET],
-        },
+        setsMap: { ...get().setsMap, ...syntheticSets },
       });
     } catch (err) {
       set({ error: referenceErrorText(err) });
@@ -286,49 +259,9 @@ export const useReferenceManagerStore = create<ReferenceManagerStoreState>()((se
   },
 
   loadSetsForDomain: async (domainId) => {
-    if (domainId === INVENTORY_ARTICLE_FAMILY_DOMAIN_ID) {
-      set({
-        setsMap: {
-          ...get().setsMap,
-          [INVENTORY_ARTICLE_FAMILY_DOMAIN_ID]: [INVENTORY_ARTICLE_FAMILY_SET],
-        },
-      });
-      return;
-    }
-    if (domainId === INVENTORY_TAX_CATEGORY_DOMAIN_ID) {
-      set({
-        setsMap: {
-          ...get().setsMap,
-          [INVENTORY_TAX_CATEGORY_DOMAIN_ID]: [INVENTORY_TAX_CATEGORY_SET],
-        },
-      });
-      return;
-    }
-    if (domainId === WORK_ORDER_TYPES_DOMAIN_ID) {
-      set({
-        setsMap: {
-          ...get().setsMap,
-          [WORK_ORDER_TYPES_DOMAIN_ID]: [WORK_ORDER_TYPES_SET],
-        },
-      });
-      return;
-    }
-    if (domainId === WORK_ORDER_PRIORITIES_DOMAIN_ID) {
-      set({
-        setsMap: {
-          ...get().setsMap,
-          [WORK_ORDER_PRIORITIES_DOMAIN_ID]: [WORK_ORDER_PRIORITIES_SET],
-        },
-      });
-      return;
-    }
-    if (domainId === WORK_ORDER_STATUSES_DOMAIN_ID) {
-      set({
-        setsMap: {
-          ...get().setsMap,
-          [WORK_ORDER_STATUSES_DOMAIN_ID]: [WORK_ORDER_STATUSES_SET],
-        },
-      });
+    const synthetic = syntheticCatalogById(domainId);
+    if (synthetic) {
+      set({ setsMap: { ...get().setsMap, [domainId]: [synthetic.set] } });
       return;
     }
 

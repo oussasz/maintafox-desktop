@@ -9,6 +9,7 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 use crate::assets::taxonomy_reference;
 use crate::errors::AppResult;
+use crate::reference::audience::DomainAudience;
 use crate::reference::governance::derive_category_for_persist;
 
 const SYSTEM_META: &str = r#"{"origin":"system"}"#;
@@ -34,14 +35,15 @@ async fn ensure_domain(
     structure_type: &str,
     governance_level: &str,
     is_extendable: i64,
+    audience: DomainAudience,
 ) -> AppResult<()> {
     let category = derive_category_for_persist(code, governance_level);
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT OR IGNORE INTO reference_domains \
-         (code, name, structure_type, governance_level, governance_category, \
+         (code, name, structure_type, governance_level, governance_category, audience, \
           is_extendable, validation_rules_json, created_at, updated_at) \
-         VALUES (?, ?, ?, ?, ?, ?, NULL, \
+         VALUES (?, ?, ?, ?, ?, ?, ?, NULL, \
                  strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
         [
             code.into(),
@@ -49,15 +51,21 @@ async fn ensure_domain(
             structure_type.into(),
             governance_level.into(),
             category.as_str().into(),
+            audience.as_str().into(),
             is_extendable.into(),
         ],
     ))
     .await?;
-    // Keep category aligned for rows created before governance_category existed.
+    // Keep category and audience aligned (rows created before these columns existed, or changed by
+    // a replica): both are decided by the product, not by the plant.
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "UPDATE reference_domains SET governance_category = ? WHERE UPPER(TRIM(code)) = ?",
-        [category.as_str().into(), code.to_ascii_uppercase().into()],
+        "UPDATE reference_domains SET governance_category = ?, audience = ? WHERE UPPER(TRIM(code)) = ?",
+        [
+            category.as_str().into(),
+            audience.as_str().into(),
+            code.to_ascii_uppercase().into(),
+        ],
     ))
     .await?;
     Ok(())
@@ -240,9 +248,36 @@ const DI_REQUEST_TYPES: &[SeedValue] = &[
 ];
 
 async fn ensure_di_reference_catalog(db: &DatabaseConnection) -> AppResult<()> {
-    ensure_domain(db, "DI.SYMPTOM", "Symptômes DI", "flat", "tenant_managed", 1).await?;
-    ensure_domain(db, "DI.ORIGIN", "Origines DI", "flat", "tenant_managed", 1).await?;
-    ensure_domain(db, "DI.PRIORITY", "Priorités DI", "flat", "protected_analytical", 0).await?;
+    ensure_domain(
+        db,
+        "DI.SYMPTOM",
+        "Symptômes DI",
+        "flat",
+        "tenant_managed",
+        1,
+        DomainAudience::Company,
+    )
+    .await?;
+    ensure_domain(
+        db,
+        "DI.ORIGIN",
+        "Origines DI",
+        "flat",
+        "tenant_managed",
+        1,
+        DomainAudience::Company,
+    )
+    .await?;
+    ensure_domain(
+        db,
+        "DI.PRIORITY",
+        "Priorités DI",
+        "flat",
+        "protected_analytical",
+        0,
+        DomainAudience::Company,
+    )
+    .await?;
     ensure_domain(
         db,
         "DI.IMPACT_LEVEL",
@@ -250,6 +285,7 @@ async fn ensure_di_reference_catalog(db: &DatabaseConnection) -> AppResult<()> {
         "flat",
         "protected_analytical",
         0,
+        DomainAudience::Company,
     )
     .await?;
     ensure_domain(
@@ -259,6 +295,7 @@ async fn ensure_di_reference_catalog(db: &DatabaseConnection) -> AppResult<()> {
         "flat",
         "protected_analytical",
         0,
+        DomainAudience::Company,
     )
     .await?;
 
@@ -316,6 +353,7 @@ async fn ensure_personnel_skills_reference_catalog(db: &DatabaseConnection) -> A
         "hierarchical",
         "tenant_managed",
         1,
+        DomainAudience::Company,
     )
     .await?;
     ensure_published_set(db, "PERSONNEL.SKILLS").await?;
@@ -364,6 +402,7 @@ async fn ensure_work_failure_modes_reference_catalog(db: &DatabaseConnection) ->
         "hierarchical",
         "system_seeded",
         0,
+        DomainAudience::Company,
     )
     .await?;
     ensure_published_set(db, "WORK.FAILURE_MODES").await?;
@@ -447,7 +486,16 @@ const WORK_DELAY_REASONS: &[SeedValue] = &[
 ];
 
 async fn ensure_work_delay_reasons_reference_catalog(db: &DatabaseConnection) -> AppResult<()> {
-    ensure_domain(db, "WORK.DELAY_REASONS", "Delay reasons", "flat", "tenant_managed", 1).await?;
+    ensure_domain(
+        db,
+        "WORK.DELAY_REASONS",
+        "Delay reasons",
+        "flat",
+        "tenant_managed",
+        1,
+        DomainAudience::Company,
+    )
+    .await?;
     ensure_published_set(db, "WORK.DELAY_REASONS").await?;
     insert_seed_values(db, "WORK.DELAY_REASONS", WORK_DELAY_REASONS).await?;
     Ok(())
@@ -469,6 +517,7 @@ async fn ensure_work_part_unused_reason_reference_catalog(db: &DatabaseConnectio
         "flat",
         "tenant_managed",
         1,
+        DomainAudience::Company,
     )
     .await?;
     ensure_published_set(db, "WORK.PART_UNUSED_REASON").await?;
@@ -489,6 +538,7 @@ async fn ensure_org_schedule_class_reference_catalog(db: &DatabaseConnection) ->
         "flat",
         "tenant_managed",
         1,
+        DomainAudience::Company,
     )
     .await?;
     ensure_published_set(db, "ORG.SCHEDULE_CLASS").await?;

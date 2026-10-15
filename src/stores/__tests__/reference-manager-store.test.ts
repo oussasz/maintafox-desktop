@@ -10,11 +10,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getReferenceGovernanceCapabilities,
   listReferenceDomains,
+  listReferenceModuleCatalogs,
   listReferenceSets,
 } from "@/services/reference-service";
 import type {
   ReferenceDomain,
   ReferenceGovernanceCapabilities,
+  ReferenceModuleCatalog,
   ReferenceSet,
 } from "@shared/ipc-types";
 
@@ -35,19 +37,35 @@ import {
 vi.mock("@/services/reference-service", () => ({
   getReferenceGovernanceCapabilities: vi.fn(),
   listReferenceDomains: vi.fn(),
+  listReferenceModuleCatalogs: vi.fn(),
   listReferenceSets: vi.fn(),
 }));
 
 const mockCaps = vi.mocked(getReferenceGovernanceCapabilities);
 const mockDomains = vi.mocked(listReferenceDomains);
+const mockCatalogs = vi.mocked(listReferenceModuleCatalogs);
 const mockSets = vi.mocked(listReferenceSets);
 
-const SYNTHETIC_DOMAIN_IDS = [
+/** What `list_reference_module_catalogs` answers (OT types and statuses are Maintafox lists). */
+const BACKEND_MODULE_CATALOGS: ReferenceModuleCatalog[] = [
+  { code: "INVENTORY.ARTICLE_FAMILY", audience: "company" },
+  { code: "INVENTORY.TAX_CATEGORY", audience: "company" },
+  { code: "WO.WORK_ORDER_TYPES", audience: "system" },
+  { code: "WO.WORK_ORDER_PRIORITIES", audience: "company" },
+  { code: "WO.WORK_ORDER_STATUSES", audience: "system" },
+];
+
+/** Module catalogs shown in Données de référence (company lists). */
+const VISIBLE_SYNTHETIC_DOMAIN_IDS = [
   INVENTORY_ARTICLE_FAMILY_DOMAIN_ID,
   INVENTORY_TAX_CATEGORY_DOMAIN_ID,
-  WORK_ORDER_TYPES_DOMAIN_ID,
   WORK_ORDER_PRIORITIES_DOMAIN_ID,
-  WORK_ORDER_STATUSES_DOMAIN_ID,
+];
+
+const VISIBLE_SYNTHETIC_PAIRS: Array<[number, number]> = [
+  [INVENTORY_ARTICLE_FAMILY_DOMAIN_ID, INVENTORY_ARTICLE_FAMILY_SET_ID],
+  [INVENTORY_TAX_CATEGORY_DOMAIN_ID, INVENTORY_TAX_CATEGORY_SET_ID],
+  [WORK_ORDER_PRIORITIES_DOMAIN_ID, WORK_ORDER_PRIORITIES_SET_ID],
 ];
 
 const SYNTHETIC_PAIRS: Array<[number, number]> = [
@@ -68,6 +86,7 @@ function makeDomain(overrides: Partial<ReferenceDomain> = {}): ReferenceDomain {
     structure_type: "flat",
     governance_level: "tenant_managed",
     governance_category: "controlled_catalog",
+    audience: "company",
     is_extendable: true,
     validation_rules_json: null,
     created_at: "2026-01-01T00:00:00Z",
@@ -107,6 +126,7 @@ function makeCaps(
     requires_analytical_protection: false,
     set_status: null,
     system_values_locked: false,
+    audience: "company",
     ...overrides,
   };
 }
@@ -131,6 +151,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockCaps.mockReset();
   mockDomains.mockReset();
+  mockCatalogs.mockReset();
+  mockCatalogs.mockResolvedValue(BACKEND_MODULE_CATALOGS);
   mockSets.mockReset();
   resetStore();
 });
@@ -154,7 +176,7 @@ describe("reference-manager-store — initial state", () => {
 });
 
 describe("reference-manager-store — loadDomains", () => {
-  it("merges backend domains with the five synthetic domains, sorted by name", async () => {
+  it("merges backend domains with the company module catalogs, sorted by name", async () => {
     const zeta = makeDomain({ id: 1, name: "Zèta domaine", code: "Z.DOMAIN" });
     const alpha = makeDomain({ id: 2, name: "Alpha domaine", code: "A.DOMAIN" });
     mockDomains.mockResolvedValueOnce([zeta, alpha]);
@@ -163,9 +185,9 @@ describe("reference-manager-store — loadDomains", () => {
     await useReferenceManagerStore.getState().loadDomains();
 
     const { domains } = useReferenceManagerStore.getState();
-    expect(domains).toHaveLength(7);
+    expect(domains).toHaveLength(5);
     expect(domains.map((d) => d.id)).toEqual(
-      expect.arrayContaining([1, 2, ...SYNTHETIC_DOMAIN_IDS]),
+      expect.arrayContaining([1, 2, ...VISIBLE_SYNTHETIC_DOMAIN_IDS]),
     );
     const names = domains.map((d) => d.name);
     expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b)));
@@ -200,7 +222,7 @@ describe("reference-manager-store — loadDomains", () => {
     const { domains } = useReferenceManagerStore.getState();
     const woTypes = domains.filter((d) => d.id === WORK_ORDER_TYPES_DOMAIN_ID);
     expect(woTypes).toEqual([backendWoTypes]);
-    expect(domains).toHaveLength(5);
+    expect(domains).toHaveLength(4);
   });
 
   it("loads domain-level capabilities only for backend domains, skipping failures", async () => {
@@ -223,7 +245,7 @@ describe("reference-manager-store — loadDomains", () => {
     expect(s.error).toBeNull();
   });
 
-  it("seeds setsMap with synthetic sets while preserving already-loaded sets", async () => {
+  it("seeds setsMap with the visible synthetic sets while preserving already-loaded sets", async () => {
     const existing = [makeSet({ id: 55, domain_id: 9 })];
     useReferenceManagerStore.setState({ setsMap: { 9: existing } });
     mockDomains.mockResolvedValueOnce([]);
@@ -232,7 +254,9 @@ describe("reference-manager-store — loadDomains", () => {
 
     const { setsMap } = useReferenceManagerStore.getState();
     expect(setsMap[9]).toEqual(existing);
-    for (const [domainId, setId] of SYNTHETIC_PAIRS) {
+    expect(setsMap[WORK_ORDER_TYPES_DOMAIN_ID]).toBeUndefined();
+    expect(setsMap[WORK_ORDER_STATUSES_DOMAIN_ID]).toBeUndefined();
+    for (const [domainId, setId] of VISIBLE_SYNTHETIC_PAIRS) {
       expect(setsMap[domainId]).toHaveLength(1);
       expect(setsMap[domainId]?.[0]?.id).toBe(setId);
       expect(setsMap[domainId]?.[0]?.status).toBe("published");
@@ -265,6 +289,80 @@ describe("reference-manager-store — loadDomains", () => {
     expect(s.domains).toEqual(previous);
     expect(s.domainsLoading).toBe(false);
     expect(mockCaps).not.toHaveBeenCalled();
+  });
+});
+
+describe("reference-manager-store — Maintafox lists are hidden (owner rule)", () => {
+  it("lists company domains only; system domains stay out of the tree", async () => {
+    const scheduleClasses = makeDomain({
+      id: 1,
+      code: "ORG.SCHEDULE_CLASS",
+      name: "Classes horaires",
+    });
+    const classes = makeDomain({ id: 2, code: "EQUIPMENT.CLASS", name: "Classes d'équipement" });
+    const status = makeDomain({
+      id: 3,
+      code: "EQUIPMENT.STATUS",
+      name: "Statuts d'équipement",
+      governance_category: "system_catalog",
+      audience: "system",
+    });
+    const disposition = makeDomain({
+      id: 4,
+      code: "DI.DISPOSITION",
+      name: "Dispositions de clôture DI",
+      governance_category: "operational_dictionary",
+      audience: "system",
+    });
+    mockDomains.mockResolvedValueOnce([scheduleClasses, classes, status, disposition]);
+    mockCaps.mockResolvedValue(makeCaps());
+
+    await useReferenceManagerStore.getState().loadDomains();
+
+    const codes = useReferenceManagerStore.getState().domains.map((d) => d.code);
+    expect(codes).toEqual(expect.arrayContaining(["ORG.SCHEDULE_CLASS", "EQUIPMENT.CLASS"]));
+    expect(codes).not.toContain("EQUIPMENT.STATUS");
+    expect(codes).not.toContain("DI.DISPOSITION");
+    // no management capability is even asked for a Maintafox list
+    expect(mockCaps).not.toHaveBeenCalledWith(3, null);
+    expect(mockCaps).not.toHaveBeenCalledWith(4, null);
+  });
+
+  it("hides the OT types and statuses tables, keeps article families, tax categories and OT priorities", async () => {
+    mockDomains.mockResolvedValueOnce([]);
+
+    await useReferenceManagerStore.getState().loadDomains();
+
+    const { domains } = useReferenceManagerStore.getState();
+    const ids = domains.map((d) => d.id);
+    expect(ids).not.toContain(WORK_ORDER_TYPES_DOMAIN_ID);
+    expect(ids).not.toContain(WORK_ORDER_STATUSES_DOMAIN_ID);
+    expect(ids).toEqual(expect.arrayContaining(VISIBLE_SYNTHETIC_DOMAIN_IDS));
+    expect(domains.every((d) => d.audience === "company")).toBe(true);
+  });
+
+  it("takes the module catalog classification from the backend, not from the page", async () => {
+    mockDomains.mockResolvedValueOnce([]);
+    mockCatalogs.mockResolvedValueOnce([
+      { code: "INVENTORY.ARTICLE_FAMILY", audience: "system" },
+      { code: "WO.WORK_ORDER_TYPES", audience: "company" },
+    ]);
+
+    await useReferenceManagerStore.getState().loadDomains();
+
+    const ids = useReferenceManagerStore.getState().domains.map((d) => d.id);
+    expect(ids).toEqual([WORK_ORDER_TYPES_DOMAIN_ID]);
+  });
+
+  it("surfaces an error when the module catalog classification cannot be read", async () => {
+    mockDomains.mockResolvedValueOnce([makeDomain()]);
+    mockCatalogs.mockRejectedValueOnce(new Error("catalogs failed"));
+
+    await useReferenceManagerStore.getState().loadDomains();
+
+    const s = useReferenceManagerStore.getState();
+    expect(s.error).toBe("catalogs failed");
+    expect(s.domains).toEqual([]);
   });
 });
 

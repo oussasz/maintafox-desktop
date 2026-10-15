@@ -687,8 +687,8 @@ async fn ensure_failure_reference_prerequisites(db: &DatabaseConnection) -> AppR
     } else {
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "INSERT INTO reference_domains (code, name, structure_type, governance_level, governance_category, is_extendable, created_at, updated_at) \
-             VALUES ('WORK.FAILURE_MODES', 'Modes de défaillance', 'hierarchical', 'system_seeded', 'controlled_catalog', 0, ?, ?)",
+            "INSERT INTO reference_domains (code, name, structure_type, governance_level, governance_category, audience, is_extendable, created_at, updated_at) \
+             VALUES ('WORK.FAILURE_MODES', 'Modes de défaillance', 'hierarchical', 'system_seeded', 'controlled_catalog', 'company', 0, ?, ?)",
             [now.clone().into(), now.clone().into()],
         ))
         .await?;
