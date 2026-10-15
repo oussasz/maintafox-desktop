@@ -246,6 +246,8 @@ mod tests {
                 planned_start: Some("2026-04-10T08:00:00Z".to_string()),
                 planned_end: Some("2026-04-10T16:00:00Z".to_string()),
                 shift: None,
+                shift_class_version_id: None,
+                clear_shift: false,
                 expected_duration_hours: Some(8.0),
                 planned_downtime_hours: None,
                 urgency_code: None,
@@ -700,6 +702,8 @@ mod tests {
                 planned_start: Some("2026-04-10T08:00:00Z".to_string()),
                 planned_end: Some("2026-04-10T16:00:00Z".to_string()),
                 shift: None,
+                shift_class_version_id: None,
+                clear_shift: false,
                 expected_duration_hours: Some(8.0),
                 planned_downtime_hours: None,
                 urgency_code: None,
@@ -871,8 +875,9 @@ mod tests {
         // Migration 198: the OT type CRUD (3) and the OT priority commands (2) gave way to the shared
         // urgency scale commands (`list_urgency_levels`, `update_urgency_level`) and the plant's
         // OT sub-types (`list_work_order_subtypes`). Personnel added labour for a person without a
-        // login (`add_personnel_labor`) and the people list (`list_wo_labor_people`).
-        assert_eq!(wo_lines.len(), 67, "invoke_handler must contain exactly 67 WO commands");
+        // login (`add_personnel_labor`) and the people list (`list_wo_labor_people`). Migration 202:
+        // the shift windows of the team's Classes horaires (`list_wo_shift_options`).
+        assert_eq!(wo_lines.len(), 68, "invoke_handler must contain exactly 68 WO commands");
 
         let mut seen = std::collections::HashSet::new();
         for line in &wo_lines {
@@ -971,8 +976,9 @@ mod tests {
         .await
         .expect("submit_wo");
 
-        // plan_wo with shift = "night" (one of the WO_SHIFTS codes)
-        let planned = execution::plan_wo(
+        // The old fixed codes are refused on a new plan (migration 202): the shift is a window
+        // of the team's Classe horaire (`wo::shifts`).
+        let refused = execution::plan_wo(
             &db,
             WoPlanInput {
                 wo_id: wo.id,
@@ -982,30 +988,21 @@ mod tests {
                 planned_start: Some("2026-04-10T08:00:00Z".to_string()),
                 planned_end: Some("2026-04-10T16:00:00Z".to_string()),
                 shift: Some("night".into()),
+                shift_class_version_id: None,
+                clear_shift: false,
                 expected_duration_hours: None,
                 planned_downtime_hours: None,
                 urgency_code: None,
             },
         )
         .await
-        .expect("plan_wo with shift");
-
-        assert_eq!(
-            planned.shift.as_deref(),
-            Some("night"),
-            "plan_wo response must carry shift = 'night'"
-        );
-
+        .expect_err("an old shift code is refused");
+        assert!(format!("{refused:?}").contains("GATE_WO_SHIFT_INVALID"));
         let reloaded = queries::get_work_order(&db, wo.id)
             .await
             .expect("get_work_order")
-            .expect("WO must exist after plan_wo");
-
-        assert_eq!(
-            reloaded.shift.as_deref(),
-            Some("night"),
-            "shift must survive a round-trip through the database"
-        );
+            .expect("WO must exist");
+        assert!(reloaded.shift.is_none() && reloaded.shift_class_version_id.is_none());
     }
 
     // ═══════════════════════════════════════════════════════════════════════

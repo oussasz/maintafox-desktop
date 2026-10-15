@@ -514,6 +514,8 @@ pub const ROW_SPECS: &[RowSpec] = &[
             r("assigned_team_id", "teams"),
             r("urgency_id", "reference_values"),
             r("source_di_id", "intervention_requests"),
+            // The Classe horaire version the work order is planned on (migration 202).
+            r("shift_class_version_id", "schedule_class_versions"),
             // Never written by any command yet: synchronised only while empty.
             unmapped("component_id"),
             unmapped("approver_id"),

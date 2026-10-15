@@ -64,7 +64,12 @@
   },
   "gateError": {
     "GATE_REF_SYSTEM_DOMAIN_READ_ONLY": "Change refused: this list is maintained by Maintafox and cannot be changed in Reference data. Its values stay available in the forms that use them.",
-    "GATE_WO_SHIFT_INVALID": "Planning refused: the shift must be morning, afternoon, night or full day.",
+    "GATE_WO_SHIFT_INVALID": "Planning refused: the old shift codes (morning, afternoon, night, full day) are no longer used. Choose a shift of the team's Classe horaire.",
+    "GATE_WO_SHIFT_NO_TEAM": "Planning refused: assign the team before choosing its shift.",
+    "GATE_WO_SHIFT_NO_DAY": "Planning refused: enter the planned start before choosing the shift.",
+    "GATE_WO_SHIFT_NOT_OFFERED": "Planning refused: the team does not work this shift on the planned day. Choose one of the team's shifts for that day, or no shift.",
+    "GATE_WO_SHIFT_LEGACY_REPLAN": "Planning refused: this work order still has an old shift code. Choose a shift of the team's Classe horaire, or no shift.",
+    "GATE_WO_SHIFT_TEAM_CHANGED": "Assignment refused: the new team does not work the chosen shift on the planned day. Choose one of the new team's shifts, or no shift.",
     "GATE_INV_PERIOD_CLOSED": "Posting refused: this date falls in a closed inventory period. Use a date after the closed period.",
     "GATE_PROC_SELF_APPROVAL": "Approval refused: you cannot approve a document you requested yourself. Another approver must approve it.",
     "GATE_PROC_APPROVAL_LIMIT": "Approval refused: the amount is above your approval limit. A user with a higher limit must approve it.",

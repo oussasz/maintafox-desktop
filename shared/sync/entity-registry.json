@@ -2240,7 +2240,8 @@
         "intervention_requests",
         "reference_values",
         "work_order_statuses",
-        "org_nodes"
+        "org_nodes",
+        "schedule_class_versions"
       ],
       "sync_status": "synced"
     },

@@ -231,6 +231,20 @@ export async function upsertScheduleClassVersion(
   return ScheduleClassVersionSchema.parse(raw);
 }
 
+const VersionWorkOrderImpactSchema = z.object({
+  work_orders: z.number(),
+  codes: z.array(z.string()),
+});
+export type VersionWorkOrderImpact = z.infer<typeof VersionWorkOrderImpactSchema>;
+
+/** Open work orders planned on a version (shown before editing it; they keep their window). */
+export async function getScheduleClassVersionImpact(
+  versionId: number,
+): Promise<VersionWorkOrderImpact> {
+  const raw = await invoke<unknown>("get_schedule_class_version_impact", { versionId });
+  return VersionWorkOrderImpactSchema.parse(raw);
+}
+
 export async function confirmScheduleClassReview(
   referenceValueId: number,
 ): Promise<ScheduleClassVersion[]> {

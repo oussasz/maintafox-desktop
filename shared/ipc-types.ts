@@ -4678,7 +4678,13 @@ export interface WorkOrder {
   // Timing
   planned_start: string | null;
   planned_end: string | null;
+  /** Old fixed shift code, readable on work orders planned before the Classe horaire shifts. */
   shift: WoShift | null;
+  /** Classe horaire version the work order is planned on, and the window it was planned with. */
+  shift_class_version_id: number | null;
+  shift_class_label: string | null;
+  shift_start: string | null;
+  shift_end: string | null;
   scheduled_at: string | null;
   actual_start: string | null;
   actual_end: string | null;
@@ -4917,7 +4923,30 @@ export interface WoCancelInput {
 
 // â”€â”€ WO File 02 â€” Planning, Labor, Completion types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+/** Old fixed shift codes: still shown on work orders planned with them, refused on new plans. */
 export type WoShift = "morning" | "afternoon" | "night" | "full_day";
+
+/** One shift window the assigned team works on the planned day (`list_wo_shift_options`). */
+export interface WoShiftOption {
+  class_version_id: number;
+  schedule_class_id: number;
+  class_label: string;
+  shift_start: string;
+  shift_end: string;
+  break_minutes: number;
+  net_hours: number;
+  /** Members on this window that day, and those not fully absent. */
+  members: number;
+  members_available: number;
+}
+
+export interface WoShiftOptions {
+  team_id: number | null;
+  day: string | null;
+  options: WoShiftOption[];
+  /** Why nothing is offered: `no_team` | `no_day` | `no_shift`. */
+  reason: string | null;
+}
 
 export interface WoPlanInput {
   wo_id: number;
@@ -4927,7 +4956,12 @@ export interface WoPlanInput {
   /** Optional; ignored when a schedule commitment exists (Planning SSOT). */
   planned_start?: string | null;
   planned_end?: string | null;
+  /** Old fixed codes are refused; choose `shift_class_version_id`. */
   shift?: WoShift | null;
+  /** A window of the team's Classe horaire on the planned day; omitted keeps the current one. */
+  shift_class_version_id?: number | null;
+  /** Removes the shift. */
+  clear_shift?: boolean;
   expected_duration_hours?: number | null;
   planned_downtime_hours?: number | null;
   urgency_code?: UrgencyCode | null;
@@ -4951,6 +4985,10 @@ export interface WoEmergencyReassignInput {
   assigned_team_id?: number | null;
   primary_responsible_id?: number | null;
   override_reason: string;
+  /** The new team's shift window; omitted keeps the current one, which the new team must work. */
+  shift_class_version_id?: number | null;
+  /** Removes the shift. */
+  clear_shift?: boolean;
 }
 
 export interface WoStartInput {

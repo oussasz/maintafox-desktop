@@ -423,6 +423,8 @@ mod workflow {
                 planned_start: Some("2026-10-13T08:00:00Z".into()),
                 planned_end: Some("2026-10-13T16:00:00Z".into()),
                 shift: None,
+                shift_class_version_id: None,
+                clear_shift: false,
                 expected_duration_hours: Some(8.0),
                 planned_downtime_hours: None,
                 urgency_code: None,

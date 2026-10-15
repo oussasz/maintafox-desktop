@@ -43,6 +43,8 @@ pub struct PersonDayCapacity {
     pub schedule_class_id: Option<i64>,
     pub schedule_class_label: Option<String>,
     pub schedule_source: Option<String>,
+    /// Version of the Classe horaire in force that day (`schedule_class_versions.id`).
+    pub schedule_version_id: Option<i64>,
     pub shift_start: Option<String>,
     pub shift_end: Option<String>,
     pub break_minutes: i64,
@@ -70,6 +72,18 @@ pub struct TeamMemberDay {
     pub allocation_percent: f64,
     pub schedule_class_label: Option<String>,
     pub schedule_source: Option<String>,
+    /// Classe horaire, its version in force and the shift window of the day (a work order is
+    /// planned on one of these windows).
+    #[serde(default)]
+    pub schedule_class_id: Option<i64>,
+    #[serde(default)]
+    pub schedule_version_id: Option<i64>,
+    #[serde(default)]
+    pub shift_start: Option<String>,
+    #[serde(default)]
+    pub shift_end: Option<String>,
+    #[serde(default)]
+    pub break_minutes: i64,
     pub available_hours: f64,
     pub reason: String,
 }
@@ -318,6 +332,7 @@ fn person_day(
         schedule_class_id: None,
         schedule_class_label: None,
         schedule_source: None,
+        schedule_version_id: None,
         shift_start: None,
         shift_end: None,
         break_minutes: 0,
@@ -357,6 +372,7 @@ fn person_day(
         return out;
     };
     out.schedule_class_label = Some(version.class_label.clone());
+    out.schedule_version_id = Some(version.id);
     out.utilisation_percent = Some(version.utilisation_percent);
     let Some(line) = ClassBook::line_on(version, day) else {
         out.reason = "timetable_not_set_up".to_string();
@@ -627,6 +643,11 @@ pub async fn team_capacity_range(
                 allocation_percent: percent,
                 schedule_class_label: d.schedule_class_label.clone(),
                 schedule_source: d.schedule_source.clone(),
+                schedule_class_id: d.schedule_class_id,
+                schedule_version_id: d.schedule_version_id,
+                shift_start: d.shift_start.clone(),
+                shift_end: d.shift_end.clone(),
+                break_minutes: d.break_minutes,
                 available_hours: round2(plannable),
                 reason: d.reason,
             });

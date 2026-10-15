@@ -513,6 +513,8 @@ async fn assigned_wo_requiring_permit(db: &DatabaseConnection, asset_id: i64) ->
             planned_start: Some("2026-04-10T08:00:00Z".into()),
             planned_end: Some("2026-04-10T16:00:00Z".into()),
             shift: None,
+            shift_class_version_id: None,
+            clear_shift: false,
             expected_duration_hours: Some(8.0),
             urgency_code: None,
             planned_downtime_hours: None,

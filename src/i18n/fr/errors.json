@@ -64,7 +64,12 @@
   },
   "gateError": {
     "GATE_REF_SYSTEM_DOMAIN_READ_ONLY": "Modification refusée : cette liste est gérée par Maintafox et ne peut pas être modifiée dans les Données de référence. Ses valeurs restent disponibles dans les formulaires qui les utilisent.",
-    "GATE_WO_SHIFT_INVALID": "Planification refusée : le poste doit être matin, après-midi, nuit ou journée complète.",
+    "GATE_WO_SHIFT_INVALID": "Planification refusée : les anciens postes (matin, après-midi, nuit, journée complète) ne sont plus utilisés. Choisissez un poste de la classe horaire de l'équipe.",
+    "GATE_WO_SHIFT_NO_TEAM": "Planification refusée : affectez l'équipe avant de choisir son poste.",
+    "GATE_WO_SHIFT_NO_DAY": "Planification refusée : saisissez le début prévu avant de choisir le poste.",
+    "GATE_WO_SHIFT_NOT_OFFERED": "Planification refusée : l'équipe ne travaille pas ce poste le jour prévu. Choisissez l'un de ses postes ce jour-là, ou aucun poste.",
+    "GATE_WO_SHIFT_LEGACY_REPLAN": "Planification refusée : cet OT porte encore un ancien poste. Choisissez un poste de la classe horaire de l'équipe, ou aucun poste.",
+    "GATE_WO_SHIFT_TEAM_CHANGED": "Affectation refusée : la nouvelle équipe ne travaille pas le poste choisi le jour prévu. Choisissez l'un des postes de la nouvelle équipe, ou aucun poste.",
     "GATE_INV_PERIOD_CLOSED": "Mouvement refusé : cette date tombe dans une période de stock clôturée. Utilisez une date postérieure à la période clôturée.",
     "GATE_PROC_SELF_APPROVAL": "Approbation refusée : vous ne pouvez pas approuver un document que vous avez vous-même demandé. Un autre approbateur doit l'approuver.",
     "GATE_PROC_APPROVAL_LIMIT": "Approbation refusée : le montant dépasse votre plafond d'approbation. Un utilisateur disposant d'un plafond supérieur doit l'approuver.",
