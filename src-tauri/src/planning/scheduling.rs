@@ -731,6 +731,10 @@ async fn maybe_sync_work_order(
 /// Whether the user holds plan.confirm or plan.windows through an assignment in force now: the
 /// same rule as the permission resolver (`rbac::resolver`) — started (`valid_from`), not ended
 /// (`valid_to`), and an emergency grant only until `emergency_expires_at`.
+///
+/// TODO(admin security): replace the three predicates below with the shared
+/// `crate::rbac::resolver::ASSIGNMENT_IN_FORCE_SQL` and `assignment_clock()` once that admin work
+/// is in the base; until then this mirrors the resolver's rule exactly.
 async fn user_has_plan_approval_scope(db: &impl ConnectionTrait, user_id: i64) -> AppResult<bool> {
     let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let has: i64 = db
