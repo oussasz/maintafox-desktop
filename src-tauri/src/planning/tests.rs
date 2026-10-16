@@ -3452,3 +3452,66 @@ async fn a_job_without_a_site_warns_that_site_windows_are_not_checked() {
     );
     assert_eq!(readiness_of(&db, candidate).await, "ready", "a warning, not a block");
 }
+
+#[tokio::test]
+async fn an_expired_emergency_grant_gives_no_planning_approval_right() {
+    let db = setup_db().await;
+    let team_id = get_any_team_id(&db).await;
+    let approver_person = ensure_personnel_with_rate(&db, "PLN-APPROVER-EMERG").await;
+    let approver = 57_i64;
+    ensure_approver_user(&db, approver, approver_person).await;
+    let candidate = insert_candidate(&db, "manual_test", 7801, "ready", 100.0).await;
+    let commitment = scheduling::create_schedule_commitment(
+        &db,
+        1,
+        commit_input(candidate, team_id, "2026-05-04T08:00", "2026-05-04T09:00"),
+    )
+    .await
+    .expect("committed");
+    let emergency_break_in = |commitment: &crate::planning::domain::ScheduleCommitment| {
+        let mut input = break_in_input(commitment, "2026-05-04T10:00", "2026-05-04T11:00", None);
+        input.break_in_reason = "emergency".to_string();
+        input.approved_by_user_id = Some(approver);
+        input
+    };
+
+    // The approver's plan.confirm comes from an emergency grant that has expired.
+    exec_sql(
+        &db,
+        &format!(
+            "UPDATE user_scope_assignments SET is_emergency = 1, emergency_reason = 'night callout',
+                    emergency_expires_at = '2000-01-01T00:00:00Z' WHERE user_id = {approver}"
+        ),
+    )
+    .await;
+    let expired = scheduling::create_schedule_break_in(&db, 1, emergency_break_in(&commitment))
+        .await
+        .expect_err("expired emergency grant");
+    assert!(format!("{expired:?}").contains("plan.confirm"), "{expired:?}");
+
+    // A grant that has not started yet gives nothing either.
+    exec_sql(
+        &db,
+        &format!(
+            "UPDATE user_scope_assignments SET is_emergency = 0, emergency_expires_at = NULL,
+                    valid_from = '2999-01-01T00:00:00Z' WHERE user_id = {approver}"
+        ),
+    )
+    .await;
+    scheduling::create_schedule_break_in(&db, 1, emergency_break_in(&commitment))
+        .await
+        .expect_err("grant not started yet");
+
+    // An emergency grant still in force counts.
+    exec_sql(
+        &db,
+        &format!(
+            "UPDATE user_scope_assignments SET valid_from = '2026-01-01T00:00:00Z', is_emergency = 1,
+                    emergency_expires_at = '2999-01-01T00:00:00Z' WHERE user_id = {approver}"
+        ),
+    )
+    .await;
+    scheduling::create_schedule_break_in(&db, 1, emergency_break_in(&commitment))
+        .await
+        .expect("emergency grant in force");
+}

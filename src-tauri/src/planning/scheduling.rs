@@ -728,7 +728,11 @@ async fn maybe_sync_work_order(
     Ok(Some(outcome))
 }
 
+/// Whether the user holds plan.confirm or plan.windows through an assignment in force now: the
+/// same rule as the permission resolver (`rbac::resolver`) — started (`valid_from`), not ended
+/// (`valid_to`), and an emergency grant only until `emergency_expires_at`.
 async fn user_has_plan_approval_scope(db: &impl ConnectionTrait, user_id: i64) -> AppResult<bool> {
+    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let has: i64 = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -738,10 +742,15 @@ async fn user_has_plan_approval_scope(db: &impl ConnectionTrait, user_id: i64) -
              JOIN permissions p ON p.id = rp.permission_id
              WHERE usa.user_id = ?
                AND usa.deleted_at IS NULL
-               AND (usa.valid_to IS NULL OR usa.valid_to >= strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+               AND (usa.valid_from IS NULL OR usa.valid_from <= ?)
+               AND (usa.valid_to   IS NULL OR usa.valid_to   >= ?)
+               AND (usa.is_emergency = 0 OR usa.emergency_expires_at > ?)
                AND p.name IN (?, ?)",
             [
                 user_id.into(),
+                now.clone().into(),
+                now.clone().into(),
+                now.into(),
                 crate::rbac::permissions::PLAN_CONFIRM.into(),
                 crate::rbac::permissions::PLAN_WINDOWS.into(),
             ],
