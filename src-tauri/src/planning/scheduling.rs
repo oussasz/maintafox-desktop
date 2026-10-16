@@ -450,9 +450,11 @@ async fn validate_capacity_overlap(
         .await?;
     let overlaps: i64 = row.and_then(|r| r.try_get("", "c").ok()).unwrap_or_default();
     if overlaps > 0 {
-        return Err(AppError::ValidationFailed(vec![
-            "Capacity rule overlaps an existing effective period for this team/entity.".to_string(),
-        ]));
+        return Err(crate::errors::org_validation_failed(
+            "PLANNING_CAPACITY_RULE_OVERLAP",
+            "This crew already has an overtime ceiling over part of this period: end it first, or change its dates.",
+            std::collections::HashMap::new(),
+        ));
     }
     Ok(())
 }
@@ -1042,10 +1044,12 @@ async fn run_commitment_gates(
     )
     .await?;
     if !capacity_ok {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "Capacity gate failed: team load exceeds capacity + overtime on {}.",
-            overloaded_day.unwrap_or_default()
-        )]));
+        let day = overloaded_day.unwrap_or_default();
+        return Err(crate::errors::org_validation_failed(
+            "PLANNING_CAPACITY_EXCEEDED",
+            format!("The crew's load would exceed its capacity plus its overtime ceiling on {day}."),
+            std::collections::HashMap::from([("day".to_string(), day.to_string())]),
+        ));
     }
     let nearest_feasible_window: Option<String> = None;
 
@@ -1076,9 +1080,11 @@ async fn run_commitment_gates(
             return Err(crate::errors::org_validation_failed_issues(issues));
         }
         if overlaps > 0 && !allow_double_booking_override {
-            return Err(AppError::ValidationFailed(vec![
-                "Double-booking detected. Provide explicit override reason.".to_string(),
-            ]));
+            return Err(crate::errors::org_validation_failed(
+                "PLANNING_DOUBLE_BOOKING",
+                "The technician already holds another job at this time: choose someone else, move the slot or override with a reason.",
+                std::collections::HashMap::new(),
+            ));
         }
         if (overlaps > 0 || !issues.is_empty()) && allow_double_booking_override {
             let reason = override_reason
@@ -1086,9 +1092,11 @@ async fn run_commitment_gates(
                 .map(|v| v.trim().to_string())
                 .filter(|v| !v.is_empty())
                 .ok_or_else(|| {
-                    AppError::ValidationFailed(vec![
-                        "Override reason is required when bypassing the assignee checks.".to_string()
-                    ])
+                    crate::errors::org_validation_failed(
+                        "PLANNING_OVERRIDE_REASON_REQUIRED",
+                        "Give the reason for overriding the checks on the technician.",
+                        std::collections::HashMap::new(),
+                    )
                 })?;
             let mut overridden: Vec<String> = issues.iter().map(|i| i.code.clone()).collect();
             if overlaps > 0 {
@@ -1169,19 +1177,39 @@ pub async fn list_capacity_rules(db: &DatabaseConnection, filter: CapacityRuleFi
     rows.iter().map(map_capacity_rule).collect()
 }
 
+/// Hours of a capacity rule are never negative.
+fn check_capacity_rule_hours(available: f64, overtime: f64) -> AppResult<()> {
+    if available < 0.0 || overtime < 0.0 || !available.is_finite() || !overtime.is_finite() {
+        return Err(crate::errors::org_validation_failed(
+            "PLANNING_CAPACITY_RULE_HOURS_NEGATIVE",
+            "The overtime ceiling is a number of hours, zero or more.",
+            std::collections::HashMap::new(),
+        ));
+    }
+    Ok(())
+}
+
+/// A capacity rule ends on or after the day it starts.
+fn check_capacity_rule_period(start: &str, end: Option<&str>) -> AppResult<()> {
+    if end.is_some_and(|end| end < start) {
+        return Err(crate::errors::org_validation_failed(
+            "PLANNING_CAPACITY_RULE_END_BEFORE_START",
+            "The rule cannot end before it starts.",
+            std::collections::HashMap::from([
+                ("start".to_string(), start.to_string()),
+                ("end".to_string(), end.unwrap_or_default().to_string()),
+            ]),
+        ));
+    }
+    Ok(())
+}
+
 pub async fn create_capacity_rule(db: &DatabaseConnection, input: CreateCapacityRuleInput) -> AppResult<CapacityRule> {
-    if input.available_hours_per_day.is_some_and(|h| h < 0.0) || input.max_overtime_hours_per_day < 0.0 {
-        return Err(AppError::ValidationFailed(vec![
-            "Capacity rule hours must be non-negative.".to_string(),
-        ]));
-    }
-    if let Some(end) = input.effective_end.as_deref() {
-        if end < input.effective_start.as_str() {
-            return Err(AppError::ValidationFailed(vec![
-                "effective_end must be >= effective_start.".to_string(),
-            ]));
-        }
-    }
+    check_capacity_rule_hours(
+        input.available_hours_per_day.unwrap_or(0.0),
+        input.max_overtime_hours_per_day,
+    )?;
+    check_capacity_rule_period(&input.effective_start, input.effective_end.as_deref())?;
     validate_capacity_overlap(
         db,
         input.team_id,
@@ -1250,16 +1278,17 @@ pub async fn update_capacity_rule(
         ]));
     }
     let effective_start = input.effective_start.unwrap_or_else(|| current.effective_start.clone());
-    let effective_end = input.effective_end.or(current.effective_end.clone());
+    let effective_end = if input.clear_effective_end {
+        None
+    } else {
+        input.effective_end.or(current.effective_end.clone())
+    };
     let available_hours = input.available_hours_per_day.unwrap_or(current.available_hours_per_day);
     let overtime_hours = input
         .max_overtime_hours_per_day
         .unwrap_or(current.max_overtime_hours_per_day);
-    if available_hours < 0.0 || overtime_hours < 0.0 {
-        return Err(AppError::ValidationFailed(vec![
-            "Capacity rule hours must be non-negative.".to_string(),
-        ]));
-    }
+    check_capacity_rule_hours(available_hours, overtime_hours)?;
+    check_capacity_rule_period(&effective_start, effective_end.as_deref())?;
     validate_capacity_overlap(
         db,
         current.team_id,
@@ -1269,22 +1298,29 @@ pub async fn update_capacity_rule(
         Some(rule_id),
     )
     .await?;
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "UPDATE capacity_rules
+    let updated = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE capacity_rules
          SET effective_start = ?, effective_end = ?, available_hours_per_day = ?, max_overtime_hours_per_day = ?,
              row_version = row_version + 1, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
          WHERE id = ? AND row_version = ?",
-        [
-            effective_start.into(),
-            effective_end.into(),
-            available_hours.into(),
-            overtime_hours.into(),
-            rule_id.into(),
-            expected_row_version.into(),
-        ],
-    ))
-    .await?;
+            [
+                effective_start.into(),
+                effective_end.into(),
+                available_hours.into(),
+                overtime_hours.into(),
+                rule_id.into(),
+                expected_row_version.into(),
+            ],
+        ))
+        .await?;
+    // Changed elsewhere between the read and the write: refused, never applied over it.
+    if updated.rows_affected() == 0 {
+        return Err(AppError::ValidationFailed(vec![
+            "Capacity rule was modified elsewhere (stale row_version).".to_string(),
+        ]));
+    }
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -1658,9 +1694,11 @@ pub async fn create_schedule_break_in(
         )
         .await?;
         if overlaps > 0 && override_reason.is_none() {
-            return Err(AppError::ValidationFailed(vec![
-                "Break-in creates double-booking; override_reason is required.".to_string(),
-            ]));
+            return Err(crate::errors::org_validation_failed(
+                "PLANNING_DOUBLE_BOOKING",
+                "The technician already holds another job at this time: give the override reason to break in anyway.",
+                std::collections::HashMap::new(),
+            ));
         }
         // The technician's own day: in the crew, working, enough hours left. Each refusal is
         // overridden only when acknowledged, with the break-in's reason, and logged.
@@ -1723,9 +1761,11 @@ pub async fn create_schedule_break_in(
     )
     .await?;
     if !capacity_ok && dangerous_override_reason.is_none() {
-        return Err(AppError::ValidationFailed(vec![
-            "Break-in exceeds team capacity; dangerous_override_reason is required.".to_string(),
-        ]));
+        return Err(crate::errors::org_validation_failed(
+            "PLANNING_BREAK_IN_CAPACITY_OVERRIDE_REQUIRED",
+            "This break-in exceeds the crew's capacity: give a dangerous-override reason to proceed.",
+            std::collections::HashMap::new(),
+        ));
     }
 
     let location = windows::job_location(&tx, &current.source_type, current.source_id).await?;

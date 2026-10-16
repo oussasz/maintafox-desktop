@@ -27,6 +27,12 @@ export interface AppErrorDescription {
   code: string | null;
 }
 
+/** One line for an inline error: the coded reasons when there are some, else the title. */
+export function appErrorText(err: unknown): string {
+  const { title, description } = describeAppError(err);
+  return description ?? title;
+}
+
 export function describeAppError(err: unknown): AppErrorDescription {
   if (err instanceof ZodError) {
     console.error("[describeAppError] response did not match its schema", err.issues);

@@ -600,7 +600,7 @@ async fn commitment_requires_all_three_gates() {
     )
     .await
     .expect_err("capacity gate must reject");
-    assert!(format!("{overloaded:?}").contains("Capacity gate failed"));
+    assert!(format!("{overloaded:?}").contains("PLANNING_CAPACITY_EXCEEDED"));
 }
 
 #[tokio::test]
@@ -689,7 +689,7 @@ async fn double_booking_requires_override_audit() {
     )
     .await
     .expect_err("double-booking should reject without override");
-    assert!(format!("{rejected:?}").contains("Double-booking detected"));
+    assert!(format!("{rejected:?}").contains("PLANNING_DOUBLE_BOOKING"));
 
     let overridden = scheduling::create_schedule_commitment(
         &db,

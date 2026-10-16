@@ -877,5 +877,22 @@
       "end": "End",
       "remove": "Remove"
     }
+  },
+  "overtimeCeiling": {
+    "title": "Overtime ceiling",
+    "hint": "Hours planning may add each day on top of the crew members' timetables. A rule applies from a day, until a day or with no end; periods never overlap.",
+    "none": "No ceiling: planning adds no overtime for this crew.",
+    "from": "From",
+    "to": "Until",
+    "toOptional": "Until (optional)",
+    "noEnd": "No end",
+    "hoursPerDay": "Overtime h / day",
+    "hours": "{{hours}} h",
+    "add": "Add",
+    "edit": "Edit",
+    "save": "Save",
+    "cancel": "Cancel",
+    "created": "Overtime ceiling added",
+    "saved": "Overtime ceiling saved"
   }
 }

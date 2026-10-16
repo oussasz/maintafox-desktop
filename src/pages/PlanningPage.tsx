@@ -54,6 +54,7 @@ import {
   type PlanningBoardScope,
   type PlanningPageView,
   isAssigneeOverridableError,
+  overridableCodes,
 } from "@/components/planning/planning-model";
 import { useAssigneeCapacity } from "@/components/planning/use-assignee-capacity";
 import { Badge } from "@/components/ui/badge";
@@ -76,13 +77,14 @@ import {
 } from "@/components/ui/select";
 import { mfLayout } from "@/design-system/tokens";
 import { usePermissions } from "@/hooks/use-permissions";
+import { appErrorText } from "@/lib/app-error";
 import { formatPersonLabel } from "@/lib/display";
 import { listActiveTeams, listPersonnel } from "@/services/personnel-service";
 import { cancelScheduleCommitment, releaseScheduleCommitment } from "@/services/planning-service";
 import { listUsers } from "@/services/rbac-service";
 import { useSessionStore } from "@/store/session-store";
 import { usePlanningStore } from "@/stores/planning-store";
-import { extractIpcValidationDetails, toErrorMessage } from "@/utils/errors";
+import { extractIpcValidationDetails } from "@/utils/errors";
 import type {
   CreateScheduleBreakInInput,
   CreateScheduleCommitmentInput,
@@ -294,7 +296,7 @@ export function PlanningPage() {
         setBoardScope({ kind: "all" });
         writeStoredBoardScope(userId, { kind: "all" });
       } catch (err) {
-        setPageError(toErrorMessage(err));
+        setPageError(appErrorText(err));
       }
     })();
   }, []);
@@ -472,7 +474,7 @@ export function PlanningPage() {
       await refreshBacklog();
       await reloadBoard();
     } catch (err) {
-      setPageError(toErrorMessage(err));
+      setPageError(appErrorText(err));
       throw err;
     }
   }
@@ -483,13 +485,13 @@ export function PlanningPage() {
       await rescheduleCommitment(input);
       await reloadBoard();
     } catch (err) {
-      const text = toErrorMessage(err);
+      const text = appErrorText(err);
       const codes = extractIpcValidationDetails(err).map((d) => d.code);
-      const assigneeCodes = codes.filter((c) => c.startsWith("PLANNING_ASSIGNEE_"));
+      const assigneeCodes = overridableCodes(codes);
       const acknowledged = input.acknowledged_assignee_issues ?? [];
       const unacknowledged = assigneeCodes.some((c) => !acknowledged.includes(c));
       if (
-        isAssigneeOverridableError(codes, text) &&
+        isAssigneeOverridableError(codes) &&
         (!input.allow_double_booking_override || unacknowledged)
       ) {
         const pending = { input, needsOverride: true, codes: assigneeCodes };
@@ -537,7 +539,7 @@ export function PlanningPage() {
       await createPlanningWindow(input);
       await reloadBoard();
     } catch (err) {
-      setPageError(toErrorMessage(err));
+      setPageError(appErrorText(err));
       throw err;
     }
   }
@@ -548,7 +550,7 @@ export function PlanningPage() {
       await createBreakIn(input);
       await reloadBoard();
     } catch (err) {
-      setPageError(toErrorMessage(err));
+      setPageError(appErrorText(err));
       throw err;
     }
   }
@@ -579,7 +581,7 @@ export function PlanningPage() {
       });
       await reloadBoard();
     } catch (err) {
-      setPageError(toErrorMessage(err));
+      setPageError(appErrorText(err));
       throw err;
     }
   }
@@ -594,7 +596,7 @@ export function PlanningPage() {
         include_break_ins: true,
       });
     } catch (err) {
-      setPageError(toErrorMessage(err));
+      setPageError(appErrorText(err));
     }
   }
 

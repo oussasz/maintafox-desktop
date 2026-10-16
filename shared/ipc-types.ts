@@ -8847,7 +8847,10 @@ export interface CreateCapacityRuleInput {
 
 export interface UpdateCapacityRuleInput {
   effective_start?: string | null;
+  /** A new end; omit to keep the current one. */
   effective_end?: string | null;
+  /** The rule applies with no end again. */
+  clear_effective_end?: boolean;
   available_hours_per_day?: number | null;
   max_overtime_hours_per_day?: number | null;
 }

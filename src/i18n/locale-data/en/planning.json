@@ -298,7 +298,8 @@
     "issues": {
       "PLANNING_ASSIGNEE_NOT_IN_CREW": "Not a member of this crew on the slot's days.",
       "PLANNING_ASSIGNEE_NOT_WORKING": "Does not work during this slot.",
-      "PLANNING_ASSIGNEE_OVERLOADED": "Not enough hours left for this job on one of the days."
+      "PLANNING_ASSIGNEE_OVERLOADED": "Not enough hours left for this job on one of the days.",
+      "PLANNING_DOUBLE_BOOKING": "The technician already holds another job at this time (double booking)."
     },
     "daysLabel": "The technician's days over the slot",
     "unknownHours_one": "{{count}} of their jobs has unknown hours (not counted).",

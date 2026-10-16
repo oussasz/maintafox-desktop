@@ -298,7 +298,8 @@
     "issues": {
       "PLANNING_ASSIGNEE_NOT_IN_CREW": "N'est pas membre de cette équipe sur les jours du créneau.",
       "PLANNING_ASSIGNEE_NOT_WORKING": "Ne travaille pas pendant ce créneau.",
-      "PLANNING_ASSIGNEE_OVERLOADED": "Pas assez d'heures restantes pour ce travail sur l'un des jours."
+      "PLANNING_ASSIGNEE_OVERLOADED": "Pas assez d'heures restantes pour ce travail sur l'un des jours.",
+      "PLANNING_DOUBLE_BOOKING": "Le technicien a déjà un autre travail sur ce créneau (double affectation)."
     },
     "daysLabel": "Les jours du technicien sur le créneau",
     "unknownHours_one": "{{count}} de ses travaux a des heures inconnues (non comptées).",

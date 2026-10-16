@@ -25,7 +25,8 @@ import {
   deriveCommitSlotLocals,
   fromDateTimeLocal,
   hoursBetweenLocals,
-  isCapacityGateErrorMessage,
+  isCapacityGateError,
+  overridableCodes,
   isAssigneeOverridableError,
   msToLocalIsoDate,
   parseLaborCostRange,
@@ -63,9 +64,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useFormatters } from "@/hooks/use-formatters";
+import { appErrorText } from "@/lib/app-error";
 import { formatOrDash, formatPersonLabel } from "@/lib/display";
 import { getActiveRateCard, listTeamMembers } from "@/services/personnel-service";
-import { extractIpcValidationDetails, toErrorMessage } from "@/utils/errors";
+import { extractIpcValidationDetails } from "@/utils/errors";
 import type {
   CandidateConflictSummary,
   CreateScheduleCommitmentInput,
@@ -189,7 +191,7 @@ export function CommitDialog({
       } catch (err) {
         if (cancelled) return;
         setRoster([]);
-        setRosterError(toErrorMessage(err));
+        setRosterError(appErrorText(err));
       } finally {
         if (!cancelled) setRosterLoading(false);
       }
@@ -577,8 +579,10 @@ export function CommitDialog({
       await onSubmit(input);
       onOpenChange(false);
     } catch (err) {
-      const message = toErrorMessage(err);
-      if (isCapacityGateErrorMessage(message)) {
+      const message = appErrorText(err);
+      const details = extractIpcValidationDetails(err);
+      const codes = details.map((d) => d.code);
+      if (isCapacityGateError(codes)) {
         const overloaded = slotCapacity?.overloaded;
         setFormError(
           overloaded
@@ -592,16 +596,14 @@ export function CommitDialog({
       } else {
         setFormError(message);
       }
-      const details = extractIpcValidationDetails(err);
-      const codes = details.map((d) => d.code);
       const frozen = details.find((d) => d.code === "PLANNING_WEEK_FROZEN");
       if (frozen && !input.frozen_week_break_in) {
         setFrozenWeekStart(frozen.params?.["week_start"] ?? null);
         setPendingFrozenInput(input);
       }
-      if (isAssigneeOverridableError(codes, message)) {
+      if (isAssigneeOverridableError(codes)) {
         setPendingOverrideInput(input);
-        setPendingOverrideCodes(codes.filter((c) => c.startsWith("PLANNING_ASSIGNEE_")));
+        setPendingOverrideCodes(overridableCodes(codes));
       }
     }
   }

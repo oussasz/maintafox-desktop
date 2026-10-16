@@ -352,7 +352,11 @@ pub struct CreateCapacityRuleInput {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateCapacityRuleInput {
     pub effective_start: Option<String>,
+    /// A new end; leave `None` to keep the current one (see `clear_effective_end`).
     pub effective_end: Option<String>,
+    /// The rule applies with no end again (an end date set by mistake is removed).
+    #[serde(default)]
+    pub clear_effective_end: bool,
     pub available_hours_per_day: Option<f64>,
     pub max_overtime_hours_per_day: Option<f64>,
 }
