@@ -39,7 +39,7 @@ const DEFAULT_KEYS = {
   groupRightTitleKey: "rightTitle",
   itemIdKey: "id",
   itemTitleKey: "title",
-  itemDivTitleKey: "title",
+  itemDivTitleKey: "hoverTitle",
   itemGroupKey: "group",
   itemTimeStartKey: "start_time",
   itemTimeEndKey: "end_time",
@@ -63,6 +63,8 @@ export type ResourceTimelineItem = TimelineItemBase<number> & {
   id: string | number;
   group: string | number;
   title?: ReactNode;
+  /** Hover text of the bar (e.g. why it is critical); defaults to a text title. */
+  tooltip?: string;
   start_time: number;
   end_time: number;
   /** Semantic color state — resolved via DS token classes */
@@ -202,6 +204,7 @@ export function ResourceTimeline({
       const itemCanMove = moveEnabled && item.canMove === true;
       return {
         ...item,
+        hoverTitle: item.tooltip ?? (typeof item.title === "string" ? item.title : undefined),
         canMove: itemCanMove,
         canResize: false,
         canChangeGroup: itemCanMove,

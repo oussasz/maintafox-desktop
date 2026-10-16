@@ -77,6 +77,19 @@ pub struct CandidateConflictSummary {
     pub blocker_dimensions: Vec<String>,
     pub readiness_status: String,
     pub readiness_score: f64,
+    /// Each open conflict with its reason and details: what the card explains.
+    #[serde(default)]
+    pub reasons: Vec<ConflictReason>,
+}
+
+/// Why a job cannot be committed (or why its bar is critical): the reason code and its details
+/// (`details_json`, a JSON object whose fields depend on the reason).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConflictReason {
+    pub conflict_type: String,
+    pub reason_code: String,
+    pub severity: String,
+    pub details_json: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -126,7 +139,11 @@ pub struct CapacityRule {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanningWindow {
     pub id: i64,
+    /// The site (org node) the window applies to, with its sub-nodes; none = plant-wide.
     pub entity_id: Option<i64>,
+    /// The one equipment of the site the window applies to; none = the whole site.
+    pub equipment_id: Option<i64>,
+    /// A code of the SYSTEM list `PLANNING.WINDOW_TYPES`.
     pub window_type: String,
     pub start_datetime: String,
     pub end_datetime: String,
@@ -135,6 +152,10 @@ pub struct PlanningWindow {
     pub row_version: i64,
     pub created_at: String,
     pub updated_at: String,
+    /// Names for display (read-only).
+    pub entity_name: Option<String>,
+    pub equipment_code: Option<String>,
+    pub equipment_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -154,7 +175,13 @@ pub struct ScheduleCommitment {
     pub estimated_labor_cost: Option<f64>,
     pub budget_threshold: Option<f64>,
     pub cost_variance_warning: i64,
+    /// 1 when the job has open conflicts now, or was forced over a capacity overload or a locked
+    /// window: the bar shows critical.
     pub has_blocking_conflict: i64,
+    /// The job's open conflicts (JSON array of `{conflict_type, reason_code, severity,
+    /// details_json}`): why the bar is critical. Read-only.
+    #[serde(default)]
+    pub conflict_reasons_json: Option<String>,
     pub nearest_feasible_window: Option<String>,
     /// Labour hours the commitment books (`planning::load`); `None` for a commitment from before
     /// migration 205 without an estimate (its slot length then counts).
@@ -323,6 +350,8 @@ pub struct UpdateCapacityRuleInput {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanningWindowFilter {
     pub entity_id: Option<i64>,
+    #[serde(default)]
+    pub equipment_id: Option<i64>,
     pub window_type: Option<String>,
     pub include_locked: Option<bool>,
 }
@@ -330,6 +359,8 @@ pub struct PlanningWindowFilter {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreatePlanningWindowInput {
     pub entity_id: Option<i64>,
+    #[serde(default)]
+    pub equipment_id: Option<i64>,
     pub window_type: String,
     pub start_datetime: String,
     pub end_datetime: String,
@@ -337,8 +368,23 @@ pub struct CreatePlanningWindowInput {
     pub lock_reason: Option<String>,
 }
 
+/// A field that is present (possibly `null`) deserialises to `Some(value)`; an absent one stays `None`.
+fn present<'de, D, T>(d: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(d).map(Some)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdatePlanningWindowInput {
+    /// Absent = unchanged; `null` = plant-wide.
+    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    pub entity_id: Option<Option<i64>>,
+    /// Absent = unchanged; `null` = the whole site.
+    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    pub equipment_id: Option<Option<i64>>,
     pub window_type: Option<String>,
     pub start_datetime: Option<String>,
     pub end_datetime: Option<String>,

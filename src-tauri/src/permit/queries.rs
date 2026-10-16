@@ -249,6 +249,26 @@ pub async fn get_work_permit_linked_to_work_order(
     }
 }
 
+/// Every permit linked to a work order that still protects (or will protect) work: all but
+/// closed, handed back, cancelled and expired ones. The start gate checks each of them.
+pub async fn list_live_permits_linked_to_work_order(
+    db: &impl ConnectionTrait,
+    work_order_id: i64,
+) -> AppResult<Vec<WorkPermit>> {
+    let sql = format!(
+        "{WORK_PERMIT_SELECT} WHERE wp.linked_work_order_id = ? AND wp.status NOT IN ('closed', 'handed_back', 'cancelled', 'expired') ORDER BY wp.id"
+    );
+    db.query_all(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        &sql,
+        [work_order_id.into()],
+    ))
+    .await?
+    .iter()
+    .map(map_work_permit)
+    .collect()
+}
+
 fn map_permit_suspension(row: &sea_orm::QueryResult) -> AppResult<PermitSuspension> {
     Ok(PermitSuspension {
         id: row.try_get("", "id").map_err(|e| decode_err("id", e))?,
@@ -415,30 +435,54 @@ fn draft_fields_complete(wp: &WorkPermit) -> bool {
 /// the permit must not be expired, LOTO permits need at least one isolation, every
 /// isolation must be verified (two-person) and no lock may already be removed.
 pub(crate) async fn activation_ready(db: &impl ConnectionTrait, wp: &WorkPermit) -> AppResult<()> {
+    let code_param = || std::collections::HashMap::from([("permit".to_string(), wp.code.clone())]);
     if is_expired(wp) {
-        return Err(AppError::ValidationFailed(vec![
-            "The permit has expired; it cannot be activated or used to start work.".into(),
-        ]));
+        return Err(crate::errors::org_validation_failed(
+            "PERMIT_EXPIRED",
+            format!(
+                "Permit {} has expired; it cannot be activated or used to start work.",
+                wp.code
+            ),
+            code_param(),
+        ));
     }
     let code = permit_type_code(db, wp.permit_type_id).await?;
     let n = count_isolations(db, wp.id).await?;
     if code == "loto" && n < 1 {
-        return Err(AppError::ValidationFailed(vec![
-            "LOTO permit types require at least one isolation before activation.".into(),
-        ]));
+        return Err(crate::errors::org_validation_failed(
+            "LOTO_NO_ISOLATION",
+            format!(
+                "LOTO permit {} has no isolation point: define and verify them first.",
+                wp.code
+            ),
+            code_param(),
+        ));
     }
     if n > 0 {
         let v = count_verified_isolations(db, wp.id).await?;
         if v != n {
-            return Err(AppError::ValidationFailed(vec![
-                "All isolation points must have verified_at set before activation.".into(),
-            ]));
+            let mut params = code_param();
+            params.insert("verified".to_string(), v.to_string());
+            params.insert("isolations".to_string(), n.to_string());
+            return Err(crate::errors::org_validation_failed(
+                "LOTO_NOT_VERIFIED",
+                format!(
+                    "Permit {}: {v} of {n} isolation points are verified; all must be verified.",
+                    wp.code
+                ),
+                params,
+            ));
         }
         let removed = count_isolations_where(db, wp.id, "removal_verified_at IS NOT NULL").await?;
         if removed > 0 {
-            return Err(AppError::ValidationFailed(vec![
-                "One or more isolations have already been removed; the permit cannot protect work.".into(),
-            ]));
+            return Err(crate::errors::org_validation_failed(
+                "LOTO_ISOLATION_REMOVED",
+                format!(
+                    "Permit {}: isolations have already been removed; it no longer protects work.",
+                    wp.code
+                ),
+                code_param(),
+            ));
         }
     }
     Ok(())

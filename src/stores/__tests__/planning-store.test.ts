@@ -99,6 +99,7 @@ function makeCommitment(overrides: Partial<ScheduleCommitment> = {}): ScheduleCo
     budget_threshold: null,
     cost_variance_warning: 0,
     has_blocking_conflict: 0,
+    conflict_reasons_json: null,
     nearest_feasible_window: null,
     planned_labor_hours: 2,
     planned_person_hours: 2,
@@ -133,6 +134,10 @@ function makeWindow(overrides: Partial<PlanningWindow> = {}): PlanningWindow {
   return {
     id: 4,
     entity_id: null,
+    equipment_id: null,
+    entity_name: null,
+    equipment_code: null,
+    equipment_name: null,
     window_type: "shutdown",
     start_datetime: "2026-10-10T00:00:00Z",
     end_datetime: "2026-10-12T00:00:00Z",

@@ -1284,8 +1284,8 @@ mod tests {
 
         let gate = crate::permit::wo_gate::assert_in_progress_permit_gate(&db, wo.id).await;
         assert!(
-            matches!(gate, Err(AppError::ValidationFailed(_))),
-            "start gate must refuse without an active permit"
+            format!("{gate:?}").contains("PERMIT_REQUIRED_TO_START"),
+            "start gate must refuse without an active permit: {gate:?}"
         );
 
         // A stale row version is refused (optimistic concurrency).
@@ -1317,6 +1317,110 @@ mod tests {
             matches!(frozen, Err(AppError::ValidationFailed(_))),
             "requirement is frozen once the WO is in progress"
         );
+    }
+
+    /// The start / resume gate (`permit::wo_gate`) is where permit and LOTO safety is
+    /// hard-enforced (planning only warns): every live permit of the OT must be active and every
+    /// isolation verified.
+    #[tokio::test]
+    async fn start_gate_refuses_until_every_live_permit_is_active_and_isolations_verified() {
+        use crate::wo::workflow::actions::{set_permit_requirement, WoPermitRequirementInput};
+
+        let db = setup().await;
+        seed_test_equipment(&db).await;
+        let actor = admin_id(&db).await;
+        let wo = queries::create_work_order(&db, corrective_input(actor, None))
+            .await
+            .expect("create WO");
+        let wo = submit_wo(
+            &db,
+            WoSubmitInput {
+                wo_id: wo.id,
+                actor_id: actor,
+                expected_row_version: wo.row_version,
+            },
+        )
+        .await
+        .expect("submit → planning");
+        let wo = set_permit_requirement(
+            &db,
+            WoPermitRequirementInput {
+                wo_id: wo.id,
+                expected_row_version: wo.row_version,
+                requires_permit: true,
+            },
+            actor,
+        )
+        .await
+        .expect("permit required");
+        let equipment = wo.equipment_id.expect("WO equipment");
+        let exec_sql = |sql: String| {
+            let db = db.clone();
+            async move {
+                db.execute(Statement::from_string(DbBackend::Sqlite, sql.clone()))
+                    .await
+                    .unwrap_or_else(|e| panic!("{sql}: {e}"));
+            }
+        };
+        let gate = || crate::permit::wo_gate::assert_in_progress_permit_gate(&db, wo.id);
+        let refused_with = |result: Result<(), AppError>, code: &str| {
+            let text = format!("{result:?}");
+            assert!(text.contains(code), "expected {code}: {text}");
+        };
+
+        // Issued, not active: refused.
+        exec_sql(format!(
+            "INSERT INTO work_permits (entity_sync_id, code, linked_work_order_id, permit_type_id, asset_id, entity_id, status, row_version)
+             SELECT 'gate-hot', 'PTW-HOT', {}, id, {equipment}, 1, 'issued', 1 FROM permit_types WHERE code = 'hot_work'",
+            wo.id
+        ))
+        .await;
+        refused_with(gate().await, "PERMIT_NOT_ACTIVE");
+        // Suspended: refused.
+        exec_sql("UPDATE work_permits SET status = 'suspended' WHERE code = 'PTW-HOT'".into()).await;
+        refused_with(gate().await, "PERMIT_SUSPENDED");
+        // Active: allowed.
+        exec_sql("UPDATE work_permits SET status = 'active' WHERE code = 'PTW-HOT'".into()).await;
+        gate().await.expect("active hot-work permit");
+
+        // A second live permit counts too: an active LOTO permit without isolation points.
+        exec_sql(format!(
+            "INSERT INTO work_permits (entity_sync_id, code, linked_work_order_id, permit_type_id, asset_id, entity_id, status, row_version)
+             SELECT 'gate-loto', 'PTW-LOTO', {}, id, {equipment}, 1, 'active', 1 FROM permit_types WHERE code = 'loto'",
+            wo.id
+        ))
+        .await;
+        refused_with(gate().await, "LOTO_NO_ISOLATION");
+        // An isolation applied but not verified: refused.
+        exec_sql(
+            "INSERT INTO permit_isolations (entity_sync_id, permit_id, isolation_point, energy_type, isolation_method)
+             SELECT 'gate-iso', id, 'Q12 disconnector', 'electrical', 'lock' FROM work_permits WHERE code = 'PTW-LOTO'"
+                .into(),
+        )
+        .await;
+        refused_with(gate().await, "LOTO_NOT_VERIFIED");
+        // Verified: allowed.
+        exec_sql(
+            "UPDATE permit_isolations SET verified_at = '2026-05-04T07:30:00Z' WHERE entity_sync_id = 'gate-iso'"
+                .into(),
+        )
+        .await;
+        gate().await.expect("every isolation verified");
+        // Removed before the work resumes: refused.
+        exec_sql(
+            "UPDATE permit_isolations SET removal_verified_at = '2026-05-04T12:00:00Z' WHERE entity_sync_id = 'gate-iso'"
+                .into(),
+        )
+        .await;
+        refused_with(gate().await, "LOTO_ISOLATION_REMOVED");
+        exec_sql("UPDATE permit_isolations SET removal_verified_at = NULL WHERE entity_sync_id = 'gate-iso'".into())
+            .await;
+        // Expired: refused.
+        exec_sql("UPDATE work_permits SET expires_at = '2000-01-01T00:00:00Z' WHERE code = 'PTW-HOT'".into()).await;
+        refused_with(gate().await, "PERMIT_EXPIRED");
+        // Closed permits no longer count: with none live, the work cannot start.
+        exec_sql("UPDATE work_permits SET status = 'closed'".into()).await;
+        refused_with(gate().await, "PERMIT_REQUIRED_TO_START");
     }
     // ═══════════════════════════════════════════════════════════════════════
     // Execution-added stock part — reserved and issued from stock at once

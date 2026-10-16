@@ -838,6 +838,7 @@ export function PlanningPage() {
               setSelectedCandidate(candidate);
               setCommitOpen(true);
             }}
+            onOpenWindows={() => setWindowOpen(true)}
           />
           <div className="flex min-h-0 min-w-0 flex-1 flex-col p-3">
             {pageView === "gantt" ? (
@@ -929,7 +930,6 @@ export function PlanningPage() {
       <ProductionWindowDialog
         open={windowOpen}
         onOpenChange={setWindowOpen}
-        teamId={teamId}
         windows={planningWindows}
         saving={saving}
         onSubmit={handleCreateWindow}

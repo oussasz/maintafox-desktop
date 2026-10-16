@@ -345,6 +345,12 @@
     "PLANNING_ASSIGNEE_NOT_IN_CREW": "The technician is not a member of the crew on {{day}}: choose a crew member or override with a reason.",
     "PLANNING_ASSIGNEE_NOT_WORKING": "The technician does not work during this slot ({{day}}): choose someone on shift or override with a reason.",
     "PLANNING_ASSIGNEE_OVERLOADED": "The technician has {{remaining}} h left on {{day}}; this job needs {{share}} h. Choose someone else, move the slot or override with a reason.",
+    "PLANNING_WINDOW_LOCKED": "A locked planning window covers this job's site or equipment ({{start}} → {{end}}): choose another slot.",
+    "PLANNING_NO_SHUTDOWN_WINDOW": "This job needs the equipment stopped: place it inside an open maintenance or shutdown window of its site or equipment.",
+    "PLANNING_WINDOW_TYPE_UNKNOWN": "Unknown window type: choose one from the list (Reference data, PLANNING.WINDOW_TYPES).",
+    "PLANNING_WINDOW_SITE_UNKNOWN": "The window's site no longer exists in the organisation.",
+    "PLANNING_WINDOW_EQUIPMENT_UNKNOWN": "The window's equipment does not exist.",
+    "PLANNING_WINDOW_EQUIPMENT_NOT_ON_SITE": "This equipment is not installed on the chosen site: choose its site or another equipment.",
     "LOTO_ROLE_PERSON_UNKNOWN": "This LOTO role requires qualifications: link your account to your personnel record first.",
     "TIMETABLE_DATE_INVALID": "Enter the date as YYYY-MM-DD.",
     "TIMETABLE_DATE_IN_PAST": "A timetable change applies from today ({{today}}) or later: past capacity is never rewritten.",
@@ -368,6 +374,14 @@
     "QUALIFICATION_PERSON_UNKNOWN": "This work order requires qualifications: link the account of {{name}} to a personnel record, or have an authorised supervisor record an override for it on this work order.",
     "QUALIFICATION_OVERRIDE_USE_PERSON": "The account of {{name}} is linked to a personnel record: check and override the person instead.",
     "QUALIFICATION_OVERRIDE_SELF": "You cannot override your own qualification gap: another authorised supervisor must do it.",
-    "LABOR_PERSON_INACTIVE": "This person is no longer active: labour cannot be booked to them."
+    "LABOR_PERSON_INACTIVE": "This person is no longer active: labour cannot be booked to them.",
+    "PERMIT_REQUIRED_TO_START": "This work order requires a work permit: link an active permit before starting or resuming it.",
+    "PERMIT_SUSPENDED": "Permit {{permit}} is suspended: revalidate it before starting or resuming the work.",
+    "PERMIT_NOT_ACTIVE": "Permit {{permit}} is not active yet ({{status}}): activate it before the work starts or resumes.",
+    "PERMIT_EXPIRED": "Permit {{permit}} has expired: it can no longer be activated or used to start work.",
+    "LOTO_NO_ISOLATION": "LOTO permit {{permit}} has no isolation point: define and verify them first.",
+    "LOTO_NOT_VERIFIED": "Permit {{permit}}: {{verified}} of {{isolations}} isolation points are verified; all must be verified.",
+    "LOTO_ISOLATION_REMOVED": "Permit {{permit}}: isolations have already been removed, it no longer protects the work.",
+    "PLANNING_CANDIDATE_BLOCKED": "This work cannot be committed yet: {{reasons}}. See why on its card."
   }
 }

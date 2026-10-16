@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 
+import { windowScopeLabel } from "@/components/planning/ProductionWindowDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -51,6 +52,14 @@ export function PlanningWindowDetailDialog({
                 {t("windows.type")}
               </div>
               <div className="text-text-primary">{typeLabel}</div>
+            </div>
+            <div>
+              <div className="text-[10px] uppercase tracking-wide text-text-muted">
+                {t("windows.site")}
+              </div>
+              <div className="text-text-primary">
+                {windowScopeLabel(planningWindow, t("windows.plantWide"))}
+              </div>
             </div>
             <div>
               <div className="text-[10px] uppercase tracking-wide text-text-muted">

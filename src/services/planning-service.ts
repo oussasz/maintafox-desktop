@@ -86,10 +86,18 @@ const SchedulingConflictSchema = z.object({
   created_at: z.string(),
 });
 
+const ConflictReasonSchema = z.object({
+  conflict_type: z.string(),
+  reason_code: z.string(),
+  severity: z.string(),
+  details_json: z.string().nullable(),
+});
+
 const CandidateConflictSummarySchema = z.object({
   candidate_id: z.number(),
   blocker_codes: z.array(z.string()),
   blocker_dimensions: z.array(z.string()),
+  reasons: z.array(ConflictReasonSchema),
   readiness_status: z.string(),
   readiness_score: z.number(),
 });
@@ -128,6 +136,7 @@ const CapacityRuleSchema = z.object({
 const PlanningWindowSchema = z.object({
   id: z.number(),
   entity_id: z.number().nullable(),
+  equipment_id: z.number().nullable(),
   window_type: z.string(),
   start_datetime: z.string(),
   end_datetime: z.string(),
@@ -136,6 +145,9 @@ const PlanningWindowSchema = z.object({
   row_version: z.number(),
   created_at: z.string(),
   updated_at: z.string(),
+  entity_name: z.string().nullable(),
+  equipment_code: z.string().nullable(),
+  equipment_name: z.string().nullable(),
 });
 
 const ScheduleCommitmentSchema = z.object({
@@ -155,6 +167,7 @@ const ScheduleCommitmentSchema = z.object({
   budget_threshold: z.number().nullable(),
   cost_variance_warning: z.number(),
   has_blocking_conflict: z.number(),
+  conflict_reasons_json: z.string().nullable(),
   nearest_feasible_window: z.string().nullable(),
   planned_labor_hours: z.number().nullable(),
   planned_person_hours: z.number().nullable(),

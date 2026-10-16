@@ -1319,9 +1319,10 @@
       "entity_type": "planning_windows",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 4,
+      "apply_priority": 5,
       "parents": [
-        "org_nodes"
+        "org_nodes",
+        "equipment"
       ],
       "sync_status": "synced"
     },

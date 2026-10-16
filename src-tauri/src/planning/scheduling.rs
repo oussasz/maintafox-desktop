@@ -18,12 +18,17 @@ use super::domain::{
 };
 use super::load;
 use super::person_load;
+use super::windows::{self, JobLocation, WINDOW_COLS};
 use super::wo_sync::{self, WoSyncOutcome};
 
 const CAPACITY_COLS: &str = "id,entity_id,team_id,effective_start,effective_end,available_hours_per_day,max_overtime_hours_per_day,row_version,created_at,updated_at";
-const WINDOW_COLS: &str =
-    "id,entity_id,window_type,start_datetime,end_datetime,is_locked,lock_reason,row_version,created_at,updated_at";
-const COMMITMENT_COLS: &str = "sc.id,sc.schedule_candidate_id,sc.source_type,sc.source_id,sc.schedule_period_start,sc.schedule_period_end,sc.committed_start,sc.committed_end,sc.assigned_team_id,sc.assigned_personnel_id,sc.committed_by_id,sc.frozen_at,sc.estimated_labor_cost,sc.budget_threshold,sc.cost_variance_warning,sc.has_blocking_conflict,sc.nearest_feasible_window,sc.planned_labor_hours,sc.planned_person_hours,sc.row_version,sc.created_at,sc.updated_at";
+const COMMITMENT_COLS: &str = "sc.id,sc.schedule_candidate_id,sc.source_type,sc.source_id,sc.schedule_period_start,sc.schedule_period_end,sc.committed_start,sc.committed_end,sc.assigned_team_id,sc.assigned_personnel_id,sc.committed_by_id,sc.frozen_at,sc.estimated_labor_cost,sc.budget_threshold,sc.cost_variance_warning,\
+CASE WHEN sc.has_blocking_conflict = 1 OR EXISTS (SELECT 1 FROM scheduling_conflicts c \
+     WHERE c.candidate_id = sc.schedule_candidate_id AND c.resolved_at IS NULL AND c.severity <> 'warning') THEN 1 ELSE 0 END AS has_blocking_conflict,\
+(SELECT json_group_array(json_object('conflict_type', c.conflict_type, 'reason_code', c.reason_code, \
+     'severity', c.severity, 'details_json', c.details_json)) \
+   FROM scheduling_conflicts c WHERE c.candidate_id = sc.schedule_candidate_id AND c.resolved_at IS NULL) AS conflict_reasons_json,\
+sc.nearest_feasible_window,sc.planned_labor_hours,sc.planned_person_hours,sc.row_version,sc.created_at,sc.updated_at";
 const COMMITMENT_JOIN_COLS: &str = "\
     CASE sc.source_type \
         WHEN 'work_order' THEN wo.code \
@@ -128,6 +133,9 @@ fn map_planning_window(row: &QueryResult) -> AppResult<PlanningWindow> {
     Ok(PlanningWindow {
         id: row.try_get("", "id").map_err(|e| decode_err("id", e))?,
         entity_id: row.try_get("", "entity_id").map_err(|e| decode_err("entity_id", e))?,
+        equipment_id: row
+            .try_get("", "equipment_id")
+            .map_err(|e| decode_err("equipment_id", e))?,
         window_type: row
             .try_get("", "window_type")
             .map_err(|e| decode_err("window_type", e))?,
@@ -146,6 +154,15 @@ fn map_planning_window(row: &QueryResult) -> AppResult<PlanningWindow> {
             .map_err(|e| decode_err("row_version", e))?,
         created_at: row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
         updated_at: row.try_get("", "updated_at").map_err(|e| decode_err("updated_at", e))?,
+        entity_name: row
+            .try_get("", "entity_name")
+            .map_err(|e| decode_err("entity_name", e))?,
+        equipment_code: row
+            .try_get("", "equipment_code")
+            .map_err(|e| decode_err("equipment_code", e))?,
+        equipment_name: row
+            .try_get("", "equipment_name")
+            .map_err(|e| decode_err("equipment_name", e))?,
     })
 }
 
@@ -193,6 +210,9 @@ fn map_commitment(row: &QueryResult) -> AppResult<ScheduleCommitment> {
         has_blocking_conflict: row
             .try_get("", "has_blocking_conflict")
             .map_err(|e| decode_err("has_blocking_conflict", e))?,
+        conflict_reasons_json: row
+            .try_get("", "conflict_reasons_json")
+            .map_err(|e| decode_err("conflict_reasons_json", e))?,
         nearest_feasible_window: row
             .try_get("", "nearest_feasible_window")
             .map_err(|e| decode_err("nearest_feasible_window", e))?,
@@ -398,23 +418,65 @@ async fn validate_capacity_overlap(
     Ok(())
 }
 
-async fn find_locked_window(db: &impl ConnectionTrait, start: &str, end: &str) -> AppResult<Option<PlanningWindow>> {
-    let row = db
+/// The first locked window over `[start, end)` that applies to the job (its site, a parent node,
+/// its equipment, or plant-wide).
+async fn find_locked_window(
+    db: &impl ConnectionTrait,
+    start: &str,
+    end: &str,
+    loc: JobLocation,
+) -> AppResult<Option<PlanningWindow>> {
+    let row = windows::find_locked_window_for(db, start, end, loc).await?;
+    row.as_ref().map(map_planning_window).transpose()
+}
+
+fn locked_window_error(window: &PlanningWindow) -> AppError {
+    crate::errors::org_validation_failed(
+        "PLANNING_WINDOW_LOCKED",
+        format!(
+            "A locked planning window ({}, {} → {}) covers this job's site or equipment over the slot.",
+            window.window_type, window.start_datetime, window.end_datetime
+        ),
+        std::collections::HashMap::from([
+            ("window_type".to_string(), window.window_type.clone()),
+            ("start".to_string(), window.start_datetime.clone()),
+            ("end".to_string(), window.end_datetime.clone()),
+            ("reason".to_string(), window.lock_reason.clone().unwrap_or_default()),
+        ]),
+    )
+}
+
+/// Work that needs the equipment stopped is committed only inside an open window of a
+/// shutdown-work type (maintenance window, planned shutdown) that applies to it.
+async fn enforce_shutdown_window(
+    db: &impl ConnectionTrait,
+    candidate_id: i64,
+    start: &str,
+    end: &str,
+    loc: JobLocation,
+) -> AppResult<()> {
+    let requirement: Option<String> = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            format!(
-                "SELECT {WINDOW_COLS}
-                 FROM planning_windows pw
-                 WHERE pw.is_locked = 1
-                   AND pw.start_datetime < ?
-                   AND pw.end_datetime > ?
-                 ORDER BY pw.start_datetime ASC
-                 LIMIT 1"
-            ),
-            [end.to_string().into(), start.to_string().into()],
+            "SELECT shutdown_requirement FROM schedule_candidates WHERE id = ?",
+            [candidate_id.into()],
         ))
-        .await?;
-    row.as_ref().map(map_planning_window).transpose()
+        .await?
+        .map(|r| r.try_get::<Option<String>>("", "shutdown_requirement"))
+        .transpose()
+        .map_err(|e| decode_err("shutdown_requirement", e))?
+        .flatten();
+    if !requirement.is_some_and(|r| r.eq_ignore_ascii_case("required")) {
+        return Ok(());
+    }
+    if windows::has_shutdown_window_for(db, start, end, loc).await? {
+        return Ok(());
+    }
+    Err(crate::errors::org_validation_failed(
+        "PLANNING_NO_SHUTDOWN_WINDOW",
+        "This job needs the equipment stopped: place it inside an open maintenance or shutdown window of its site or equipment.",
+        std::collections::HashMap::new(),
+    ))
 }
 
 async fn enforce_candidate_ready(
@@ -425,7 +487,7 @@ async fn enforce_candidate_ready(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT source_type, source_id, readiness_status, row_version
+            "SELECT source_type, source_id, row_version
              FROM schedule_candidates
              WHERE id = ?",
             [candidate_id.into()],
@@ -436,9 +498,6 @@ async fn enforce_candidate_ready(
             id: candidate_id.to_string(),
         })?;
 
-    let readiness_status: String = row
-        .try_get("", "readiness_status")
-        .map_err(|e| decode_err("readiness_status", e))?;
     let row_version: i64 = row
         .try_get("", "row_version")
         .map_err(|e| decode_err("row_version", e))?;
@@ -449,28 +508,41 @@ async fn enforce_candidate_ready(
             ]));
         }
     }
-    if readiness_status != "ready" {
-        return Err(AppError::ValidationFailed(vec![
-            "Readiness gate failed: candidate is not ready for commitment.".to_string(),
-        ]));
-    }
-
-    let unresolved: i64 = db
-        .query_one(Statement::from_sql_and_values(
+    // Judged on the current state: the conflicts are derived again from the sources now.
+    super::queries::evaluate_candidate(db, candidate_id).await?;
+    let blocking: Vec<String> = db
+        .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT COUNT(*) AS c
-             FROM scheduling_conflicts
-             WHERE candidate_id = ?
-               AND resolved_at IS NULL",
+            "SELECT reason_code, severity FROM scheduling_conflicts
+             WHERE candidate_id = ? AND resolved_at IS NULL
+             ORDER BY id",
             [candidate_id.into()],
         ))
         .await?
-        .and_then(|r| r.try_get("", "c").ok())
-        .unwrap_or_default();
-    if unresolved > 0 {
-        return Err(AppError::ValidationFailed(vec![
-            "Readiness gate failed: unresolved scheduling conflicts remain.".to_string(),
-        ]));
+        .iter()
+        .map(|r| {
+            Ok((
+                r.try_get::<String>("", "reason_code")
+                    .map_err(|e| decode_err("reason_code", e))?,
+                r.try_get::<String>("", "severity")
+                    .map_err(|e| decode_err("severity", e))?,
+            ))
+        })
+        .collect::<AppResult<Vec<(String, String)>>>()?
+        .into_iter()
+        // A missing estimate is refused right after with its own message (`candidate_hours`).
+        .filter(|(code, severity)| super::queries::is_blocking_severity(severity) && code != "NOT_ESTIMATED")
+        .map(|(code, _)| code)
+        .collect();
+    if !blocking.is_empty() {
+        return Err(crate::errors::org_validation_failed(
+            "PLANNING_CANDIDATE_BLOCKED",
+            format!(
+                "This work cannot be committed yet: {} (see why on its card).",
+                blocking.join(", ")
+            ),
+            std::collections::HashMap::from([("reasons".to_string(), blocking.join(", "))]),
+        ));
     }
 
     let source_type: String = row
@@ -680,17 +752,24 @@ async fn user_has_plan_approval_scope(db: &impl ConnectionTrait, user_id: i64) -
 /// The assignee of a work-order commitment must hold what the work order requires
 /// (`qualification::gate`); an authorised supervisor's override, recorded beforehand with
 /// `record_qualification_override`, lets them through. Other sources have no requirements.
+/// Refuses a named technician who lacks a qualification the job asks for — work order, PM
+/// occurrence or request (`planning::qualifications`) — valid on the slot's first day.
 pub(crate) async fn enforce_assignee_qualifications(
     db: &impl ConnectionTrait,
     source_type: &str,
     source_id: i64,
     personnel_id: i64,
+    slot_start: &str,
 ) -> AppResult<()> {
-    if source_type != "work_order" {
-        return Ok(());
+    let work_day = crate::wo::shifts::planned_instant(slot_start)
+        .map(|t| t.with_timezone(&chrono::Local).date_naive())
+        .ok_or_else(|| {
+            AppError::ValidationFailed(vec![format!("The slot start '{slot_start}' is not a date and time.")])
+        })?;
+    match super::qualifications::check_assignee(db, source_type, source_id, personnel_id, work_day).await? {
+        Some(check) if !check.qualified => Err(crate::qualification::gate::blocked_error(&check)),
+        _ => Ok(()),
     }
-    crate::qualification::gate::enforce_work_order_assignment(db, personnel_id, source_id, None).await?;
-    Ok(())
 }
 
 /// Hours a team can work on `day` and why (`personnel::capacity`): its members' Classes horaires
@@ -827,12 +906,11 @@ async fn run_commitment_gates(
     load::validate_slot_length(committed_start, committed_end)?;
     let (source_type, source_id) = enforce_candidate_ready(tx, candidate_id, expected_candidate_row_version).await?;
 
-    if let Some(window) = find_locked_window(tx, committed_start, committed_end).await? {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "Lock-window gate failed: planning window '{}' is locked for this range.",
-            window.window_type
-        )]));
+    let location = windows::job_location(tx, &source_type, source_id).await?;
+    if let Some(window) = find_locked_window(tx, committed_start, committed_end, location).await? {
+        return Err(locked_window_error(&window));
     }
+    enforce_shutdown_window(tx, candidate_id, committed_start, committed_end, location).await?;
 
     let (labour_hours, person_hours) = candidate_hours(tx, candidate_id).await?;
     // The OT behind the job: not counted twice against the crew or the technician.
@@ -857,7 +935,7 @@ async fn run_commitment_gates(
 
     if let Some(personnel_id) = assigned_personnel_id {
         enforce_assignee_availability(tx, personnel_id, committed_start, committed_end).await?;
-        enforce_assignee_qualifications(tx, &source_type, source_id, personnel_id).await?;
+        enforce_assignee_qualifications(tx, &source_type, source_id, personnel_id, committed_start).await?;
 
         // The technician's own day (`planning::person_load`): in the crew, working during the slot,
         // enough hours left each day net of all their committed work.
@@ -1112,15 +1190,19 @@ pub async fn list_planning_windows(
     let mut where_sql = vec!["1 = 1".to_string()];
     let mut values: Vec<sea_orm::Value> = Vec::new();
     if let Some(entity_id) = filter.entity_id {
-        where_sql.push("entity_id = ?".to_string());
+        where_sql.push("pw.entity_id = ?".to_string());
         values.push(entity_id.into());
     }
+    if let Some(equipment_id) = filter.equipment_id {
+        where_sql.push("pw.equipment_id = ?".to_string());
+        values.push(equipment_id.into());
+    }
     if let Some(window_type) = filter.window_type {
-        where_sql.push("window_type = ?".to_string());
+        where_sql.push("pw.window_type = ?".to_string());
         values.push(window_type.into());
     }
     if !filter.include_locked.unwrap_or(true) {
-        where_sql.push("is_locked = 0".to_string());
+        where_sql.push("pw.is_locked = 0".to_string());
     }
 
     let rows = db
@@ -1128,15 +1210,30 @@ pub async fn list_planning_windows(
             DbBackend::Sqlite,
             format!(
                 "SELECT {WINDOW_COLS}
-                 FROM planning_windows
+                 FROM planning_windows pw
                  WHERE {}
-                 ORDER BY start_datetime ASC, id ASC",
+                 ORDER BY pw.start_datetime ASC, pw.id ASC",
                 where_sql.join(" AND ")
             ),
             values,
         ))
         .await?;
     rows.iter().map(map_planning_window).collect()
+}
+
+async fn get_planning_window(db: &impl ConnectionTrait, window_id: i64) -> AppResult<PlanningWindow> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!("SELECT {WINDOW_COLS} FROM planning_windows pw WHERE pw.id = ?"),
+            [window_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "PlanningWindow".to_string(),
+            id: window_id.to_string(),
+        })?;
+    map_planning_window(&row)
 }
 
 pub async fn create_planning_window(
@@ -1149,15 +1246,19 @@ pub async fn create_planning_window(
         "start_datetime",
         "end_datetime",
     )?;
+    let window_type = input.window_type.trim().to_string();
+    windows::validate_window_type(db, &window_type).await?;
+    let entity_id = windows::validate_window_scope(db, input.entity_id, input.equipment_id).await?;
     let inserted = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO planning_windows
-            (entity_id, window_type, start_datetime, end_datetime, is_locked, lock_reason)
-         VALUES (?, ?, ?, ?, ?, ?)",
+            (entity_id, equipment_id, window_type, start_datetime, end_datetime, is_locked, lock_reason)
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
             [
-                input.entity_id.into(),
-                input.window_type.into(),
+                entity_id.into(),
+                input.equipment_id.into(),
+                window_type.into(),
                 input.start_datetime.into(),
                 input.end_datetime.into(),
                 i64::from(input.is_locked.unwrap_or(false)).into(),
@@ -1166,19 +1267,8 @@ pub async fn create_planning_window(
         ))
         .await?;
     let id = i64::try_from(inserted.last_insert_id())
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("schedule_commitments last_insert_id does not fit i64")))?;
-    let row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            format!("SELECT {WINDOW_COLS} FROM planning_windows WHERE id = ?"),
-            [id.into()],
-        ))
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            entity: "PlanningWindow".to_string(),
-            id: id.to_string(),
-        })?;
-    map_planning_window(&row)
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("planning_windows last_insert_id does not fit i64")))?;
+    get_planning_window(db, id).await
 }
 
 pub async fn update_planning_window(
@@ -1187,57 +1277,53 @@ pub async fn update_planning_window(
     expected_row_version: i64,
     input: UpdatePlanningWindowInput,
 ) -> AppResult<PlanningWindow> {
-    let current = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            format!("SELECT {WINDOW_COLS} FROM planning_windows WHERE id = ?"),
-            [window_id.into()],
-        ))
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            entity: "PlanningWindow".to_string(),
-            id: window_id.to_string(),
-        })?;
-    let current = map_planning_window(&current)?;
+    let current = get_planning_window(db, window_id).await?;
     if current.row_version != expected_row_version {
         return Err(AppError::ValidationFailed(vec![
             "Planning window was modified elsewhere (stale row_version).".to_string(),
         ]));
     }
-    let window_type = input.window_type.unwrap_or(current.window_type.clone());
+    let window_type = input
+        .window_type
+        .map(|t| t.trim().to_string())
+        .unwrap_or(current.window_type.clone());
+    if window_type != current.window_type {
+        windows::validate_window_type(db, &window_type).await?;
+    }
     let start_datetime = input.start_datetime.unwrap_or(current.start_datetime.clone());
     let end_datetime = input.end_datetime.unwrap_or(current.end_datetime.clone());
     validate_window(&start_datetime, &end_datetime, "start_datetime", "end_datetime")?;
+    let equipment_id = input.equipment_id.unwrap_or(current.equipment_id);
+    let entity_id =
+        windows::validate_window_scope(db, input.entity_id.unwrap_or(current.entity_id), equipment_id).await?;
 
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "UPDATE planning_windows
-         SET window_type = ?, start_datetime = ?, end_datetime = ?, is_locked = ?, lock_reason = ?,
+    let updated = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE planning_windows
+         SET entity_id = ?, equipment_id = ?, window_type = ?, start_datetime = ?, end_datetime = ?,
+             is_locked = ?, lock_reason = ?,
              row_version = row_version + 1, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
          WHERE id = ? AND row_version = ?",
-        [
-            window_type.into(),
-            start_datetime.into(),
-            end_datetime.into(),
-            i64::from(input.is_locked.unwrap_or(current.is_locked == 1)).into(),
-            input.lock_reason.or(current.lock_reason).into(),
-            window_id.into(),
-            expected_row_version.into(),
-        ],
-    ))
-    .await?;
-    let row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            format!("SELECT {WINDOW_COLS} FROM planning_windows WHERE id = ?"),
-            [window_id.into()],
+            [
+                entity_id.into(),
+                equipment_id.into(),
+                window_type.into(),
+                start_datetime.into(),
+                end_datetime.into(),
+                i64::from(input.is_locked.unwrap_or(current.is_locked == 1)).into(),
+                input.lock_reason.or(current.lock_reason).into(),
+                window_id.into(),
+                expected_row_version.into(),
+            ],
         ))
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            entity: "PlanningWindow".to_string(),
-            id: window_id.to_string(),
-        })?;
-    map_planning_window(&row)
+        .await?;
+    if updated.rows_affected() == 0 {
+        return Err(AppError::ValidationFailed(vec![
+            "Planning window was modified elsewhere (stale row_version).".to_string(),
+        ]));
+    }
+    get_planning_window(db, window_id).await
 }
 
 pub async fn list_schedule_commitments(
@@ -1434,7 +1520,14 @@ pub async fn create_schedule_break_in(
         }
         // Qualifications are not bypassed here: a supervisor override (trn.certify, step-up,
         // audited) is recorded first with `record_qualification_override`.
-        enforce_assignee_qualifications(&tx, &current.source_type, current.source_id, personnel_id).await?;
+        enforce_assignee_qualifications(
+            &tx,
+            &current.source_type,
+            current.source_id,
+            personnel_id,
+            &input.new_slot_start,
+        )
+        .await?;
         let overlaps = check_double_booking(
             &tx,
             personnel_id,
@@ -1514,7 +1607,8 @@ pub async fn create_schedule_break_in(
         ]));
     }
 
-    let locked_window = find_locked_window(&tx, &input.new_slot_start, &input.new_slot_end).await?;
+    let location = windows::job_location(&tx, &current.source_type, current.source_id).await?;
+    let locked_window = find_locked_window(&tx, &input.new_slot_start, &input.new_slot_end, location).await?;
     if locked_window.is_some() && dangerous_override_reason.is_none() {
         return Err(AppError::ValidationFailed(vec![
             "Break-in intersects a locked window and requires dangerous_override_reason.".to_string(),
@@ -1538,7 +1632,7 @@ pub async fn create_schedule_break_in(
              committed_start = ?, committed_end = ?,
              assigned_team_id = ?, assigned_personnel_id = ?,
              estimated_labor_cost = ?, nearest_feasible_window = ?,
-             has_blocking_conflict = 0,
+             has_blocking_conflict = ?,
              row_version = row_version + 1,
              updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
          WHERE id = ? AND row_version = ?",
@@ -1551,6 +1645,8 @@ pub async fn create_schedule_break_in(
             next_personnel_id.into(),
             next_cost.into(),
             None::<String>.into(),
+            // Forced over a capacity overload or a locked window: the bar stays critical.
+            i64::from(!capacity_ok || locked_window.is_some()).into(),
             current.id.into(),
             input.expected_commitment_row_version.into(),
         ],
@@ -2259,11 +2355,11 @@ pub async fn get_planning_gantt_snapshot(
             DbBackend::Sqlite,
             format!(
                 "SELECT {WINDOW_COLS}
-                 FROM planning_windows
-                 WHERE is_locked = 1
-                   AND start_datetime < ?
-                   AND end_datetime > ?
-                 ORDER BY start_datetime ASC"
+                 FROM planning_windows pw
+                 WHERE pw.is_locked = 1
+                   AND julianday(pw.start_datetime) < julianday(?)
+                   AND julianday(pw.end_datetime) > julianday(?)
+                 ORDER BY pw.start_datetime ASC"
             ),
             [filter.period_end.clone().into(), filter.period_start.clone().into()],
         ))

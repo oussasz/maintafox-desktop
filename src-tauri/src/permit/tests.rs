@@ -159,7 +159,12 @@ fn assert_validation(res: Result<impl std::fmt::Debug, AppError>, needle: &str) 
             msgs.iter().any(|m| m.contains(needle)),
             "expected message containing {needle:?}, got {msgs:?}"
         ),
-        other => panic!("expected ValidationFailed({needle:?}), got {other:?}"),
+        // Coded refusals (start gate, activation): the code or the message names the rule.
+        Err(AppError::OrgValidationFailed(issues)) => assert!(
+            issues.iter().any(|i| i.code == needle || i.message.contains(needle)),
+            "expected an issue {needle:?}, got {issues:?}"
+        ),
+        other => panic!("expected a refusal {needle:?}, got {other:?}"),
     }
 }
 
@@ -306,7 +311,7 @@ async fn loto_activation_requires_an_isolation() {
     let db = setup().await;
     let asset = insert_equipment(&db, "EQ-PTW-10").await;
     let wp = advance_to_issued(&db, create_permit(&db, "loto", asset).await).await;
-    assert_validation(set_status(&db, &wp, "active").await, "at least one isolation");
+    assert_validation(set_status(&db, &wp, "active").await, "LOTO_NO_ISOLATION");
 }
 
 #[tokio::test]
@@ -315,11 +320,11 @@ async fn activation_requires_every_isolation_verified() {
     let asset = insert_equipment(&db, "EQ-PTW-11").await;
     let wp = advance_to_issued(&db, create_permit(&db, "loto", asset).await).await;
     let iso = add_isolation(&db, wp.id, "Valve V-12").await;
-    assert_validation(set_status(&db, &wp, "active").await, "verified_at");
+    assert_validation(set_status(&db, &wp, "active").await, "LOTO_NOT_VERIFIED");
     let applied = queries::apply_permit_isolation(&db, action(&iso), APPLIER)
         .await
         .expect("apply");
-    assert_validation(set_status(&db, &wp, "active").await, "verified_at");
+    assert_validation(set_status(&db, &wp, "active").await, "LOTO_NOT_VERIFIED");
     queries::verify_permit_isolation(&db, action(&applied), VERIFIER)
         .await
         .expect("verify");
@@ -338,7 +343,7 @@ async fn activation_rejects_expired_permit() {
     ))
     .await
     .expect("expire");
-    assert_validation(set_status(&db, &wp, "active").await, "expired");
+    assert_validation(set_status(&db, &wp, "active").await, "PERMIT_EXPIRED");
 }
 
 #[tokio::test]
@@ -586,10 +591,7 @@ async fn wo_gate_unblocks_only_with_active_verified_permit() {
     let (wo_id, rv) = assigned_wo_requiring_permit(&db, asset).await;
 
     // No permit at all → blocked.
-    assert!(matches!(
-        start(&db, wo_id, rv).await,
-        Err(AppError::ValidationFailed(_))
-    ));
+    assert_validation(start(&db, wo_id, rv).await, "PERMIT_REQUIRED_TO_START");
 
     // Permit created from the WO: asset and entity derived from the WO.
     let wp = create_from_wo(&db, "loto", wo_id).await.expect("create from WO");
@@ -608,10 +610,7 @@ async fn wo_gate_unblocks_only_with_active_verified_permit() {
 
     // Issued but not active → still blocked.
     let wp = advance_to_issued(&db, wp).await;
-    assert!(matches!(
-        start(&db, wo_id, rv).await,
-        Err(AppError::ValidationFailed(_))
-    ));
+    assert_validation(start(&db, wo_id, rv).await, "PERMIT_NOT_ACTIVE");
 
     apply_and_verify(&db, &add_isolation(&db, wp.id, "MCC-7").await).await;
     set_status(&db, &wp, "active").await.expect("activate");
@@ -649,7 +648,7 @@ async fn wo_gate_blocks_suspended_permit() {
     )
     .await
     .expect("suspend");
-    assert_validation(start(&db, wo_id, rv).await, "suspendu");
+    assert_validation(start(&db, wo_id, rv).await, "PERMIT_SUSPENDED");
 }
 
 #[tokio::test]
@@ -663,7 +662,7 @@ async fn wo_gate_blocks_after_locks_removed() {
     queries::verify_permit_isolation_removal(&db, action(&iso), VERIFIER)
         .await
         .expect("remove");
-    assert_validation(start(&db, wo_id, rv).await, "already been removed");
+    assert_validation(start(&db, wo_id, rv).await, "LOTO_ISOLATION_REMOVED");
 }
 
 #[tokio::test]

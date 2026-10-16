@@ -2094,7 +2094,7 @@ async fn the_crew_size_is_bounded_whole_and_clearable() {
         let err = db
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                &format!("UPDATE work_orders SET planned_crew_size = {value} WHERE id = ?"),
+                format!("UPDATE work_orders SET planned_crew_size = {value} WHERE id = ?"),
                 [wo_id.into()],
             ))
             .await
@@ -2648,4 +2648,662 @@ async fn an_older_commitment_counts_labour_per_person_or_is_reported_unknown() {
         .find(|r| r.personnel_id == person)
         .expect("technician listed");
     assert_eq!(row.unknown_hours_jobs, 1, "{row:?}");
+}
+
+// ── Step C: planning windows per site / equipment, reasons, qualifications of every job ──────
+
+async fn exec_sql(db: &DatabaseConnection, sql: &str) {
+    db.execute(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
+        .await
+        .unwrap_or_else(|e| panic!("{sql}: {e}"));
+}
+
+async fn scalar(db: &DatabaseConnection, sql: &str) -> i64 {
+    db.query_one(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
+        .await
+        .expect("query")
+        .expect("row")
+        .try_get_by_index::<i64>(0)
+        .expect("value")
+}
+
+/// The site of the test equipment (its location) and a sub-node of it that holds nothing.
+async fn site_and_sub_node(db: &DatabaseConnection) -> (i64, i64) {
+    seed_equipment_for_wo(db).await;
+    let site = scalar(db, "SELECT installed_at_node_id FROM equipment WHERE id = 1").await;
+    exec_sql(
+        db,
+        &format!(
+            "INSERT OR IGNORE INTO org_nodes (entity_sync_id, code, name, node_type_id, parent_id, ancestor_path,
+                depth, status, created_at, updated_at, row_version, structure_model_id)
+             SELECT 'planning-sub-node', 'SUB-PLN', 'Atelier voisin', node_type_id, id, ancestor_path || id || '/',
+                    depth + 1, 'active', created_at, updated_at, 1, structure_model_id
+               FROM org_nodes WHERE id = {site}"
+        ),
+    )
+    .await;
+    let sub = scalar(
+        db,
+        "SELECT id FROM org_nodes WHERE entity_sync_id = 'planning-sub-node'",
+    )
+    .await;
+    (site, sub)
+}
+
+fn window_input(
+    entity_id: Option<i64>,
+    equipment_id: Option<i64>,
+    window_type: &str,
+    start: &str,
+    end: &str,
+    locked: bool,
+) -> crate::planning::domain::CreatePlanningWindowInput {
+    crate::planning::domain::CreatePlanningWindowInput {
+        entity_id,
+        equipment_id,
+        window_type: window_type.to_string(),
+        start_datetime: local(start),
+        end_datetime: local(end),
+        is_locked: Some(locked),
+        lock_reason: locked.then(|| "Production campaign".to_string()),
+    }
+}
+
+#[tokio::test]
+async fn a_window_belongs_to_a_site_or_one_equipment_and_has_a_governed_type() {
+    let db = setup_db().await;
+    let (site, sub) = site_and_sub_node(&db).await;
+
+    // The types are the SYSTEM list PLANNING.WINDOW_TYPES.
+    let types = crate::planning::windows::window_types(&db).await.expect("types");
+    for code in ["production", "maintenance", "shutdown", "freeze"] {
+        assert!(types.contains_key(code), "{code} is a window type");
+    }
+    let unknown = scheduling::create_planning_window(
+        &db,
+        window_input(Some(site), None, "party", "2026-05-04T06:00", "2026-05-04T18:00", false),
+    )
+    .await
+    .expect_err("not a window type");
+    assert!(
+        format!("{unknown:?}").contains("PLANNING_WINDOW_TYPE_UNKNOWN"),
+        "{unknown:?}"
+    );
+
+    // An equipment alone: the window's site is the equipment's location.
+    let on_equipment = scheduling::create_planning_window(
+        &db,
+        window_input(
+            None,
+            Some(1),
+            "maintenance",
+            "2026-05-04T06:00",
+            "2026-05-04T18:00",
+            false,
+        ),
+    )
+    .await
+    .expect("equipment window");
+    assert_eq!(on_equipment.entity_id, Some(site));
+    assert_eq!(on_equipment.equipment_id, Some(1));
+    assert_eq!(on_equipment.equipment_code.as_deref(), Some("EQ-PLN-001"));
+    assert!(on_equipment.entity_name.is_some());
+
+    // The equipment is not installed on the sub-node.
+    let elsewhere = scheduling::create_planning_window(
+        &db,
+        window_input(
+            Some(sub),
+            Some(1),
+            "maintenance",
+            "2026-05-04T06:00",
+            "2026-05-04T18:00",
+            false,
+        ),
+    )
+    .await
+    .expect_err("equipment not on that site");
+    assert!(
+        format!("{elsewhere:?}").contains("PLANNING_WINDOW_EQUIPMENT_NOT_ON_SITE"),
+        "{elsewhere:?}"
+    );
+
+    // The scope is editable: the whole site, then locked.
+    let widened = scheduling::update_planning_window(
+        &db,
+        on_equipment.id,
+        on_equipment.row_version,
+        crate::planning::domain::UpdatePlanningWindowInput {
+            entity_id: None,
+            equipment_id: Some(None),
+            window_type: None,
+            start_datetime: None,
+            end_datetime: None,
+            is_locked: Some(true),
+            lock_reason: Some("Line stop".to_string()),
+        },
+    )
+    .await
+    .expect("whole site");
+    assert_eq!(widened.entity_id, Some(site));
+    assert_eq!(widened.equipment_id, None);
+    assert_eq!(widened.is_locked, 1);
+    let stale = scheduling::update_planning_window(
+        &db,
+        on_equipment.id,
+        on_equipment.row_version,
+        crate::planning::domain::UpdatePlanningWindowInput {
+            entity_id: None,
+            equipment_id: None,
+            window_type: None,
+            start_datetime: None,
+            end_datetime: None,
+            is_locked: Some(false),
+            lock_reason: None,
+        },
+    )
+    .await
+    .expect_err("stale version");
+    assert!(format!("{stale:?}").contains("stale"), "{stale:?}");
+}
+
+#[tokio::test]
+async fn a_locked_window_refuses_only_the_jobs_of_its_site_or_equipment() {
+    let db = setup_db().await;
+    let team_id = get_any_team_id(&db).await;
+    let (site, sub) = site_and_sub_node(&db).await;
+    let (wo_id, actor_id) = create_planning_wo(&db, "Locked window WO").await;
+    let candidate_id = insert_candidate(&db, "work_order", wo_id, "ready", 100.0).await;
+
+    let window = scheduling::create_planning_window(
+        &db,
+        window_input(
+            Some(site),
+            None,
+            "production",
+            "2026-10-05T06:00",
+            "2026-10-05T18:00",
+            true,
+        ),
+    )
+    .await
+    .expect("locked window on the equipment's site");
+    let refused = scheduling::create_schedule_commitment(
+        &db,
+        actor_id,
+        commit_input(candidate_id, team_id, "2026-10-05T08:00", "2026-10-05T10:00"),
+    )
+    .await
+    .expect_err("the job's site is locked");
+    assert!(format!("{refused:?}").contains("PLANNING_WINDOW_LOCKED"), "{refused:?}");
+
+    // The same window on a neighbouring node no longer concerns this job.
+    scheduling::update_planning_window(
+        &db,
+        window.id,
+        window.row_version,
+        crate::planning::domain::UpdatePlanningWindowInput {
+            entity_id: Some(Some(sub)),
+            equipment_id: None,
+            window_type: None,
+            start_datetime: None,
+            end_datetime: None,
+            is_locked: None,
+            lock_reason: None,
+        },
+    )
+    .await
+    .expect("moved to the sub-node");
+    scheduling::create_schedule_commitment(
+        &db,
+        actor_id,
+        commit_input(candidate_id, team_id, "2026-10-05T08:00", "2026-10-05T10:00"),
+    )
+    .await
+    .expect("another node's window does not apply");
+}
+
+#[tokio::test]
+async fn work_needing_a_shutdown_is_committed_only_inside_an_open_shutdown_window() {
+    let db = setup_db().await;
+    let team_id = get_any_team_id(&db).await;
+    let candidate = insert_candidate(&db, "manual_test", 7501, "ready", 100.0).await;
+    exec_sql(
+        &db,
+        &format!("UPDATE schedule_candidates SET shutdown_requirement = 'required' WHERE id = {candidate}"),
+    )
+    .await;
+
+    let none = scheduling::create_schedule_commitment(
+        &db,
+        1,
+        commit_input(candidate, team_id, "2026-05-04T08:00", "2026-05-04T10:00"),
+    )
+    .await
+    .expect_err("no shutdown window");
+    // Seen by the backlog first: no open shutdown window at all over its due dates.
+    assert!(format!("{none:?}").contains("NO_FEASIBLE_WINDOW"), "{none:?}");
+
+    // A production window is not a shutdown.
+    scheduling::create_planning_window(
+        &db,
+        window_input(None, None, "production", "2026-05-04T06:00", "2026-05-04T18:00", false),
+    )
+    .await
+    .expect("production window");
+    scheduling::create_schedule_commitment(
+        &db,
+        1,
+        commit_input(candidate, team_id, "2026-05-04T08:00", "2026-05-04T10:00"),
+    )
+    .await
+    .expect_err("still no shutdown window");
+
+    scheduling::create_planning_window(
+        &db,
+        window_input(None, None, "maintenance", "2026-05-04T06:00", "2026-05-04T12:00", false),
+    )
+    .await
+    .expect("maintenance window");
+    // Partly outside the maintenance window: refused by the commit itself.
+    let outside = scheduling::create_schedule_commitment(
+        &db,
+        1,
+        commit_input(candidate, team_id, "2026-05-04T11:00", "2026-05-04T13:00"),
+    )
+    .await
+    .expect_err("the slot leaves the window");
+    assert!(
+        format!("{outside:?}").contains("PLANNING_NO_SHUTDOWN_WINDOW"),
+        "{outside:?}"
+    );
+    scheduling::create_schedule_commitment(
+        &db,
+        1,
+        commit_input(candidate, team_id, "2026-05-04T08:00", "2026-05-04T10:00"),
+    )
+    .await
+    .expect("inside the maintenance window");
+}
+
+#[tokio::test]
+async fn a_commitment_with_open_conflicts_is_critical_and_says_why() {
+    let db = setup_db().await;
+    let team_id = get_any_team_id(&db).await;
+    let candidate = insert_candidate(&db, "manual_test", 7601, "ready", 100.0).await;
+    let commitment = scheduling::create_schedule_commitment(
+        &db,
+        1,
+        commit_input(candidate, team_id, "2026-05-04T08:00", "2026-05-04T10:00"),
+    )
+    .await
+    .expect("committed");
+    assert_eq!(commitment.has_blocking_conflict, 0);
+    assert_eq!(commitment.conflict_reasons_json.as_deref(), Some("[]"));
+
+    // Parts no longer available after the commitment: the bar turns critical, with the reason.
+    insert_conflict(&db, candidate, "missing_critical_part", false).await;
+    insert_conflict(&db, candidate, "permit_not_ready", true).await;
+    let listed = scheduling::list_schedule_commitments(
+        &db,
+        ScheduleCommitmentFilter {
+            period_start: None,
+            period_end: None,
+            team_id: None,
+            personnel_id: None,
+        },
+    )
+    .await
+    .expect("list");
+    let row = listed.iter().find(|c| c.id == commitment.id).expect("commitment");
+    assert_eq!(row.has_blocking_conflict, 1);
+    let reasons: Vec<serde_json::Value> =
+        serde_json::from_str(row.conflict_reasons_json.as_deref().expect("reasons")).expect("json");
+    assert_eq!(reasons.len(), 1, "resolved conflicts are not reasons: {reasons:?}");
+    assert_eq!(reasons[0]["conflict_type"], "missing_critical_part");
+    assert_eq!(reasons[0]["reason_code"], "TEST_CONFLICT");
+
+    // A backlog card (work not committed yet) carries its reasons the same way.
+    let candidate = insert_candidate(&db, "manual_test", 7602, "ready", 100.0).await;
+    insert_conflict(&db, candidate, "missing_critical_part", false).await;
+    let snapshot = queries::get_schedule_backlog_snapshot(
+        &db,
+        ScheduleCandidateFilter {
+            source_type: Some("manual_test".to_string()),
+            readiness_status: None,
+            assigned_personnel_id: None,
+            include_resolved_conflicts: Some(true),
+            limit: Some(20),
+        },
+    )
+    .await
+    .expect("snapshot");
+    let summary = snapshot
+        .conflict_summary
+        .iter()
+        .find(|s| s.candidate_id == candidate)
+        .expect("summary");
+    assert_eq!(summary.reasons.len(), 1);
+    assert_eq!(summary.reasons[0].conflict_type, "missing_critical_part");
+}
+
+/// A PM plan whose version lists `skills`, with one occurrence on equipment 1.
+async fn pm_occurrence_with_skills(db: &DatabaseConnection, skills: &str) -> i64 {
+    seed_equipment_for_wo(db).await;
+    exec_sql(
+        db,
+        "INSERT INTO pm_plans (entity_sync_id, code, title, asset_scope_type, asset_scope_id, strategy_type,
+            lifecycle_status, requires_shutdown, requires_permit)
+         VALUES ('pln-qual-plan', 'PM-QUAL', 'Graissage pompe', 'equipment', 1, 'time_based', 'active', 0, 0)",
+    )
+    .await;
+    let plan = scalar(db, "SELECT id FROM pm_plans WHERE code = 'PM-QUAL'").await;
+    exec_sql(
+        db,
+        &format!(
+            "INSERT INTO pm_plan_versions (entity_sync_id, pm_plan_id, version_no, status, effective_from,
+                trigger_definition_json, required_skills_json)
+             VALUES ('pln-qual-version', {plan}, 1, 'published', '2026-01-01', '{{}}', '{skills}')"
+        ),
+    )
+    .await;
+    let version = scalar(
+        db,
+        "SELECT id FROM pm_plan_versions WHERE entity_sync_id = 'pln-qual-version'",
+    )
+    .await;
+    exec_sql(
+        db,
+        &format!(
+            "INSERT INTO pm_occurrences (entity_sync_id, pm_plan_id, plan_version_id, due_basis, due_at, status,
+                equipment_id)
+             VALUES ('pln-qual-occ', {plan}, {version}, 'test', '2026-05-04T00:00:00Z', 'planned', 1)"
+        ),
+    )
+    .await;
+    scalar(
+        db,
+        "SELECT id FROM pm_occurrences WHERE entity_sync_id = 'pln-qual-occ'",
+    )
+    .await
+}
+
+#[tokio::test]
+async fn a_pm_or_a_request_is_refused_to_a_technician_without_its_qualifications() {
+    let db = setup_db().await;
+    let team_id = get_any_team_id(&db).await;
+    let person = roster_person(&db, team_id).await;
+    let skill_code: String = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT rv.code FROM reference_values rv JOIN reference_sets rs ON rs.id = rv.set_id
+               JOIN reference_domains d ON d.id = rs.domain_id
+              WHERE d.code = 'PERSONNEL.SKILLS' AND rs.status = 'published' AND rv.is_active = 1
+              ORDER BY rv.id LIMIT 1"
+                .to_string(),
+        ))
+        .await
+        .expect("query")
+        .expect("a seeded skill")
+        .try_get("", "code")
+        .expect("code");
+
+    // PM: the skills its plan version lists.
+    let occurrence = pm_occurrence_with_skills(&db, &format!("[\"{skill_code}\"]")).await;
+    let pm_candidate = insert_candidate(&db, "pm_occurrence", occurrence, "ready", 100.0).await;
+    let mut input = commit_input(pm_candidate, team_id, "2026-05-04T08:00", "2026-05-04T10:00");
+    input.assigned_personnel_id = Some(person);
+    let refused = scheduling::create_schedule_commitment(&db, 1, input.clone())
+        .await
+        .expect_err("lacks the PM skill");
+    assert!(
+        format!("{refused:?}").contains("QUALIFICATION_GATE_BLOCKED"),
+        "{refused:?}"
+    );
+
+    // The backlog says so too, naming the skill.
+    exec_sql(
+        &db,
+        &format!("UPDATE schedule_candidates SET assigned_personnel_id = {person} WHERE id = {pm_candidate}"),
+    )
+    .await;
+    queries::refresh_schedule_candidates(
+        &db,
+        RefreshScheduleCandidatesInput {
+            include_work_orders: Some(false),
+            include_pm_occurrences: Some(false),
+            include_approved_di: Some(false),
+            limit_per_source: Some(50),
+        },
+    )
+    .await
+    .expect("refresh");
+    let gap = scalar(
+        &db,
+        &format!(
+            "SELECT COUNT(*) FROM scheduling_conflicts WHERE candidate_id = {pm_candidate}
+               AND reason_code = 'SKILL_GAP' AND resolved_at IS NULL"
+        ),
+    )
+    .await;
+    assert_eq!(gap, 1, "the backlog shows the qualification gap");
+
+    // Request: what the work-order type it becomes asks.
+    insert_approved_di(&db, "DI-QUAL-1").await;
+    let di = scalar(&db, "SELECT id FROM intervention_requests WHERE code = 'DI-QUAL-1'").await;
+    let request_type: String = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            format!("SELECT request_type FROM intervention_requests WHERE id = {di}"),
+        ))
+        .await
+        .expect("query")
+        .expect("row")
+        .try_get("", "request_type")
+        .expect("request type");
+    let nature = crate::di::conversion::conversion_nature(
+        &db,
+        &request_type,
+        crate::reference::urgency_scale::UrgencyCode::Normal,
+    )
+    .await
+    .expect("nature");
+    let wo_type = crate::wo::types::default_type_for_nature(&db, nature)
+        .await
+        .expect("type");
+    exec_sql(
+        &db,
+        &format!(
+            "INSERT INTO qualification_requirements (entity_sync_id, target_kind, work_order_type_id,
+                skill_reference_value_id, coverage, created_at, updated_at)
+             SELECT 'pln-qual-type-req', 'work_order_type', {}, rv.id, 'each', '2026-01-01T00:00:00Z',
+                    '2026-01-01T00:00:00Z'
+               FROM reference_values rv JOIN reference_sets rs ON rs.id = rv.set_id
+               JOIN reference_domains d ON d.id = rs.domain_id
+              WHERE d.code = 'PERSONNEL.SKILLS' AND rs.status = 'published' AND rv.is_active = 1
+                AND rv.code <> '{skill_code}'
+              ORDER BY rv.id LIMIT 1",
+            wo_type.id
+        ),
+    )
+    .await;
+    let check =
+        crate::planning::qualifications::check_assignee(&db, "inspection_follow_up", di, person, day("2026-05-04"))
+            .await
+            .expect("check")
+            .expect("a known request");
+    assert!(!check.qualified, "the request's work-order type asks another skill");
+    assert_eq!(check.gaps.len(), 1);
+}
+
+async fn re_evaluate(db: &DatabaseConnection) {
+    queries::refresh_schedule_candidates(
+        db,
+        RefreshScheduleCandidatesInput {
+            include_work_orders: Some(false),
+            include_pm_occurrences: Some(false),
+            include_approved_di: Some(false),
+            limit_per_source: Some(200),
+        },
+    )
+    .await
+    .expect("refresh");
+}
+
+/// The open conflicts of a candidate: (reason code, severity), in order.
+async fn open_conflicts(db: &DatabaseConnection, candidate: i64) -> Vec<(String, String)> {
+    db.query_all(Statement::from_string(
+        DbBackend::Sqlite,
+        format!(
+            "SELECT reason_code, severity FROM scheduling_conflicts
+              WHERE candidate_id = {candidate} AND resolved_at IS NULL ORDER BY id"
+        ),
+    ))
+    .await
+    .expect("conflicts")
+    .iter()
+    .map(|r| {
+        (
+            r.try_get::<String>("", "reason_code").expect("code"),
+            r.try_get::<String>("", "severity").expect("severity"),
+        )
+    })
+    .collect()
+}
+
+async fn readiness_of(db: &DatabaseConnection, candidate: i64) -> String {
+    db.query_one(Statement::from_string(
+        DbBackend::Sqlite,
+        format!("SELECT readiness_status FROM schedule_candidates WHERE id = {candidate}"),
+    ))
+    .await
+    .expect("query")
+    .expect("row")
+    .try_get("", "readiness_status")
+    .expect("status")
+}
+
+#[tokio::test]
+async fn short_parts_block_while_unreserved_parts_and_permits_only_warn() {
+    let db = setup_db().await;
+    let team_id = get_any_team_id(&db).await;
+    let (wo_id, actor_id) = create_planning_wo(&db, "Readiness WO").await;
+    let candidate = insert_candidate(&db, "work_order", wo_id, "ready", 100.0).await;
+
+    exec_sql(
+        &db,
+        "INSERT INTO articles (article_code, article_name, unit_value_id, is_active)
+         SELECT 'PLN-BRG', 'Roulement 6205', (SELECT v.id FROM reference_values v JOIN reference_sets s ON s.id = v.set_id
+                JOIN reference_domains d ON d.id = s.domain_id
+               WHERE d.code = 'MEASURE.UNITS' AND s.status = 'published' AND v.code = 'U'), 1",
+    )
+    .await;
+    let article = scalar(&db, "SELECT id FROM articles WHERE article_code = 'PLN-BRG'").await;
+    exec_sql(
+        &db,
+        "INSERT INTO warehouses (id, code, name) VALUES (950, 'MAG-PLN', 'Magasin planning')",
+    )
+    .await;
+    exec_sql(
+        &db,
+        "INSERT INTO stock_locations (id, warehouse_id, code, name) VALUES (960, 950, 'P1', 'Allée P1')",
+    )
+    .await;
+    exec_sql(
+        &db,
+        &format!(
+            "INSERT INTO stock_balances (article_id, warehouse_id, location_id, on_hand_qty, reserved_qty, available_qty)
+             VALUES ({article}, 950, 960, 5, 0, 5)"
+        ),
+    )
+    .await;
+    // Two bearings planned, none reserved; a free-text seal; a line declared not used.
+    exec_sql(
+        &db,
+        &format!(
+            "INSERT INTO work_order_parts (work_order_id, article_id, article_ref, quantity_planned)
+             VALUES ({wo_id}, {article}, NULL, 2), ({wo_id}, NULL, 'Joint spécial', 1)"
+        ),
+    )
+    .await;
+    exec_sql(
+        &db,
+        &format!(
+            "INSERT INTO work_order_parts (work_order_id, article_id, quantity_planned, consumption_status)
+             VALUES ({wo_id}, {article}, 40, 'not_used')"
+        ),
+    )
+    .await;
+
+    re_evaluate(&db).await;
+    let conflicts = open_conflicts(&db, candidate).await;
+    assert_eq!(
+        conflicts,
+        vec![
+            ("PARTS_NOT_RESERVED".to_string(), "warning".to_string()),
+            ("PART_NOT_IN_CATALOGUE".to_string(), "warning".to_string()),
+        ],
+        "the unused line is not counted"
+    );
+    assert_eq!(readiness_of(&db, candidate).await, "ready", "warnings never block");
+
+    // Only one bearing left in stock: short, the commitment is refused with the reason.
+    exec_sql(
+        &db,
+        &format!("UPDATE stock_balances SET available_qty = 1 WHERE article_id = {article}"),
+    )
+    .await;
+    re_evaluate(&db).await;
+    assert!(open_conflicts(&db, candidate)
+        .await
+        .contains(&("PARTS_SHORT".to_string(), "blocking".to_string())));
+    assert_eq!(readiness_of(&db, candidate).await, "blocked");
+    let refused = scheduling::create_schedule_commitment(
+        &db,
+        actor_id,
+        commit_input(candidate, team_id, "2026-10-05T08:00", "2026-10-05T10:00"),
+    )
+    .await
+    .expect_err("short parts block");
+    assert!(
+        format!("{refused:?}").contains("PLANNING_CANDIDATE_BLOCKED"),
+        "{refused:?}"
+    );
+    assert!(format!("{refused:?}").contains("PARTS_SHORT"), "{refused:?}");
+
+    // Stock back, but a permit is now required and none exists: planning warns, the commitment
+    // goes through, and the OT start gate refuses (the hard enforcement).
+    exec_sql(
+        &db,
+        &format!("UPDATE stock_balances SET available_qty = 5 WHERE article_id = {article}"),
+    )
+    .await;
+    exec_sql(
+        &db,
+        &format!("UPDATE work_orders SET requires_permit = 1 WHERE id = {wo_id}"),
+    )
+    .await;
+    re_evaluate(&db).await;
+    assert!(open_conflicts(&db, candidate)
+        .await
+        .contains(&("PERMIT_TO_REQUEST".to_string(), "warning".to_string())));
+    scheduling::create_schedule_commitment(
+        &db,
+        actor_id,
+        commit_input(candidate, team_id, "2026-10-05T08:00", "2026-10-05T10:00"),
+    )
+    .await
+    .expect("a permit to request warns only");
+    let start = crate::permit::wo_gate::assert_in_progress_permit_gate(&db, wo_id).await;
+    assert!(format!("{start:?}").contains("PERMIT_REQUIRED_TO_START"), "{start:?}");
+}
+
+#[test]
+fn only_warnings_let_a_commitment_through_and_unknown_severities_block() {
+    assert!(!queries::is_blocking_severity("warning"));
+    assert!(queries::is_blocking_severity("blocking"));
+    // Rows written before the split, and anything unknown, fail closed.
+    assert!(queries::is_blocking_severity("high"));
+    assert!(queries::is_blocking_severity("medium"));
+    assert!(queries::is_blocking_severity(""));
 }

@@ -7,6 +7,7 @@ import {
   AssigneeCapacityDetails,
   assigneeOptionSuffix,
 } from "@/components/planning/AssigneeCapacityDetails";
+import { ConflictReasonList } from "@/components/planning/ConflictReasonList";
 import { OverrideReasonDialog } from "@/components/planning/OverrideReasonDialog";
 import {
   PLANNING_PROPOSED_ITEM_ID,
@@ -19,6 +20,7 @@ import {
   candidateDisplayCode,
   candidateDisplayTitle,
   checkSlotCapacity,
+  commitmentTimelineState,
   deriveCommitSlotLocals,
   fromDateTimeLocal,
   hoursBetweenLocals,
@@ -32,6 +34,7 @@ import {
   slotCapacityRows,
   slotShiftHours,
   teamGroupId,
+  timelineItemTooltip,
 } from "@/components/planning/planning-model";
 import { useAssigneeCapacity } from "@/components/planning/use-assignee-capacity";
 import {
@@ -254,6 +257,7 @@ export function CommitDialog({
   const code = candidate ? candidateDisplayCode(candidate) : "";
   const title = candidate ? candidateDisplayTitle(candidate) : "";
   const blockers = conflictSummary?.blocker_codes ?? [];
+  const reasons = conflictSummary?.reasons ?? [];
 
   const durationHours = useMemo(() => hoursBetweenLocals(start, end), [start, end]);
 
@@ -411,7 +415,6 @@ export function CommitDialog({
         const startMs = parseMs(commitment.committed_start);
         const endMs = parseMs(commitment.committed_end);
         if (!startMs || !endMs || endMs <= startMs) continue;
-        const frozen = Boolean(commitment.frozen_at);
         const title =
           commitment.source_code?.trim() ||
           commitment.source_title?.trim() ||
@@ -422,7 +425,7 @@ export function CommitDialog({
           title,
           start_time: startMs,
           end_time: endMs,
-          state: frozen ? "blocked" : commitment.has_blocking_conflict ? "critical" : "commitment",
+          state: commitmentTimelineState(commitment),
           canMove: false,
         });
       }
@@ -439,6 +442,7 @@ export function CommitDialog({
         end_time: row.endMs,
         state: row.state,
         canMove: false,
+        tooltip: timelineItemTooltip(row, t),
       }));
     }
 
@@ -643,13 +647,14 @@ export function CommitDialog({
 
               {blockers.length > 0 ? (
                 <div className="flex flex-wrap gap-1">
-                  {blockers.slice(0, 8).map((codeKey) => (
+                  {[...new Set(blockers)].slice(0, 8).map((codeKey) => (
                     <Badge key={codeKey} variant="destructive" className="text-[10px] font-normal">
                       {t(`blockers.${codeKey}`, { defaultValue: codeKey })}
                     </Badge>
                   ))}
                 </div>
               ) : null}
+              <ConflictReasonList reasons={reasons} />
 
               <div className="flex flex-col gap-3">
                 <DateTimeLocalField

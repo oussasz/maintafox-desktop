@@ -25,6 +25,8 @@ const SYSTEM_CODES: &[&str] = &["DI.DISPOSITION", "EQUIPMENT.CRITICALITY", "EQUI
 const SYSTEM_CODES_198: &[&str] = &["WORK.MAINTENANCE_NATURES", "WORK.ORDER_TYPES", "WORK.URGENCY"];
 /// SYSTEM list added by migration 201 (physical dimensions of the units of measure).
 const SYSTEM_CODES_201: &[&str] = &["MEASURE.DIMENSIONS"];
+/// Planning window types (migration 211).
+const SYSTEM_CODES_211: &[&str] = &["PLANNING.WINDOW_TYPES"];
 
 fn assert_gate<T: std::fmt::Debug>(result: Result<T, AppError>, what: &str) {
     match result {
@@ -124,6 +126,7 @@ async fn backfill_marks_only_the_maintafox_lists_system() {
             .iter()
             .chain(SYSTEM_CODES_198)
             .chain(SYSTEM_CODES_201)
+            .chain(SYSTEM_CODES_211)
             .copied()
             .collect::<BTreeSet<_>>()
     );

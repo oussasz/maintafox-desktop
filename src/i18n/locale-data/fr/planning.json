@@ -76,14 +76,15 @@
     "openSource": "Ouvrir {{code}}",
     "estimate": "{{hours}} h × {{crew}} pers.",
     "noCrew": "{{hours}} h · effectif à saisir",
-    "notEstimated": "Non estimé"
+    "notEstimated": "Non estimé",
+    "why": "Pourquoi c'est bloqué"
   },
   "blockers": {
     "missing_critical_part": "Pièces critiques non réservées",
     "no_qualified_technician": "Aucun technicien qualifié",
     "permit_not_ready": "Permis non prêt",
     "prerequisite_incomplete": "Prérequis incomplets",
-    "locked_window": "Fenêtre verrouillée",
+    "locked_window": "Pas de fenêtre d'arrêt",
     "double_booking": "Double affectation",
     "not_estimated": "Non estimé"
   },
@@ -181,22 +182,30 @@
     "noCapacity": "pas de capacité"
   },
   "windows": {
-    "title": "Fenêtres de production",
+    "title": "Fenêtres de planification",
     "detailTitle": "Fenêtre verrouillée",
     "detailEmpty": "Détails de la fenêtre indisponibles.",
     "type": "Type de fenêtre",
     "start": "Début",
     "end": "Fin",
     "reason": "Motif de verrouillage",
-    "add": "Ajouter une fenêtre verrouillée",
+    "add": "Ajouter la fenêtre",
     "locked": "Verrouillée",
-    "empty": "Aucune fenêtre de production.",
+    "empty": "Aucune fenêtre de planification.",
     "types": {
       "production": "Production",
       "maintenance": "Maintenance",
       "shutdown": "Arrêt",
       "freeze": "Gel"
-    }
+    },
+    "typePlaceholder": "Choisissez un type",
+    "site": "Site",
+    "plantWide": "Toute l'usine",
+    "equipment": "Équipement (facultatif)",
+    "equipmentHint": "Laissez vide pour tout le site.",
+    "lock": "Fenêtre verrouillée",
+    "lockedHint": "Aucun travail ne peut être engagé sur ce site ou cet équipement pendant la fenêtre.",
+    "openHint": "Ouverte : les travaux qui exigent l'arrêt de l'équipement peuvent y être placés (fenêtre de maintenance, arrêt programmé)."
   },
   "breakIns": {
     "title": "Insertions d'urgence",
@@ -268,10 +277,6 @@
     "openWo": "Ouvrir l'ordre de travail",
     "dismiss": "Fermer"
   },
-  "notes": {
-    "PM_PARTS_TO_CHECK": "Pièces prévues au PM : vérifiez leur disponibilité avant les travaux.",
-    "PM_PERMIT_TO_OBTAIN": "Permis requis : à obtenir avant le début des travaux."
-  },
   "assignee": {
     "hoursLeft": "{{hours}} h restantes",
     "notWorking": "ne travaille pas ({{reason}})",
@@ -297,5 +302,35 @@
     "unreadableWorkOrders": "Dates planifiées illisibles (non comptées) : {{codes}}.",
     "othersUnnamed_one": "+ {{count}} équipier non nommé (compté dans la charge de l'équipe).",
     "othersUnnamed_other": "+ {{count}} équipiers non nommés (comptés dans la charge de l'équipe)."
+  },
+  "reasons": {
+    "NOT_ESTIMATED": "Non estimé : {{missing}} manquant(s).",
+    "PARTS_NOT_RESERVED": "En stock mais non réservées : {{articles}}.",
+    "SKILL_GAP": "{{person}} n'a pas une qualification exigée par ce travail : {{gaps}}.",
+    "ASSIGNMENT_REQUIRED": "Désignez un technicien qui possède les compétences requises ({{skills}}).",
+    "PERMIT_REQUIRED": "Un permis de travail est requis et n'est pas prêt.",
+    "PREREQUISITE_BLOCKED": "En attente d'un préalable (reporté, ou en attente d'un autre travail).",
+    "NO_FEASIBLE_WINDOW": "Exige l'arrêt de l'équipement : aucune fenêtre de maintenance ou d'arrêt ouverte de son site ou de son équipement sur ses échéances.",
+    "ASSIGNEE_UNAVAILABLE": "L'intervenant est absent ou pris sur d'autres travaux pendant les échéances ({{availability_conflict_count}}).",
+    "PARTS_SHORT": "Pièces en rupture de stock : {{articles}}. Commandez-les ou transférez-les avant d'engager.",
+    "PART_NOT_IN_CATALOGUE": "Pièces hors catalogue articles (stock non vérifiable) : {{articles}}.",
+    "PART_QUANTITY_MISSING": "Pièces sans quantité (stock non vérifiable) : {{articles}}.",
+    "PERMIT_TO_REQUEST": "Un permis de travail est requis et aucun n'est encore demandé.",
+    "PERMIT_IN_PREPARATION": "Le permis {{permit_code}} est en préparation ({{status}}) ; il doit être actif avant le démarrage.",
+    "PERMIT_ON_HOLD": "Le permis {{permit_code}} est suspendu ({{status}}) ; revalidez-le avant le démarrage.",
+    "PERMIT_EXPIRES_BEFORE_WORK": "Le permis {{permit_code}} expire avant la fin du travail ({{expires_at}}).",
+    "LOTO_NOT_VERIFIED": "LOTO du permis {{permit_code}} : {{verified}} points d'isolement vérifiés sur {{isolations}} ; tous doivent l'être avant le démarrage."
+  },
+  "reasonParts": {
+    "duration": "durée",
+    "crew_size": "effectif"
+  },
+  "reasonUi": {
+    "blocking": "Bloque l'engagement",
+    "warning": "Avertissement — contrôlé plus tard",
+    "openPermit": "Ouvrir le permis",
+    "requestPermit": "Demander un permis",
+    "openArticle": "Ouvrir l'article {{code}}",
+    "openWindows": "Fenêtres de planification"
   }
 }
