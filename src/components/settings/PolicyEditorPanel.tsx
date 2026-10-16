@@ -104,12 +104,10 @@ const POLICY_FIELDS: Record<string, PolicyField[]> = {
     { key: "max_age_days", type: "number" },
     { key: "history_count", type: "number" },
   ],
-  backup: [
-    { key: "schedule_cron", type: "string" },
-    { key: "retention_days", type: "number" },
-    { key: "include_photos", type: "boolean" },
-    { key: "compression_level", type: "number" },
-  ],
+  // Only the schedule is read (backup scheduler). `retention_days`, `include_photos` and
+  // `compression_level` stay in the stored policy but nothing uses them, so they are not shown;
+  // retention is the daily / weekly / monthly settings of the Backup section.
+  backup: [{ key: "schedule_cron", type: "string" }],
 };
 
 /** Domains that require step-up auth to activate. */
@@ -174,6 +172,10 @@ export function PolicyEditorPanel({
   );
 
   const fields = POLICY_FIELDS[domain] ?? [];
+  const shownKeys = useMemo(
+    () => new Set((POLICY_FIELDS[domain] ?? []).map((f) => f.key)),
+    [domain],
+  );
   const requiresStepUp = SECURITY_DOMAINS.has(domain);
 
   // ── Data loading ──────────────────────────────────────────────────────
@@ -419,21 +421,23 @@ export function PolicyEditorPanel({
           {hasActiveSnapshot ? (
             <div className="rounded-lg border border-border bg-card">
               <ul className="divide-y divide-border px-4">
-                {Object.entries(activeValues).map(([key, val]) => (
-                  <li
-                    key={key}
-                    className="flex items-center justify-between gap-4 py-3 first:pt-3 last:pb-3"
-                  >
-                    <span className="min-w-0 flex-1 text-sm font-medium leading-snug text-text-primary">
-                      {t(`policy.fields.${key}` as never, {
-                        defaultValue: key,
-                      })}
-                    </span>
-                    <span className="shrink-0 text-sm tabular-nums text-text-muted">
-                      {String(val)}
-                    </span>
-                  </li>
-                ))}
+                {Object.entries(activeValues)
+                  .filter(([key]) => shownKeys.has(key))
+                  .map(([key, val]) => (
+                    <li
+                      key={key}
+                      className="flex items-center justify-between gap-4 py-3 first:pt-3 last:pb-3"
+                    >
+                      <span className="min-w-0 flex-1 text-sm font-medium leading-snug text-text-primary">
+                        {t(`policy.fields.${key}` as never, {
+                          defaultValue: key,
+                        })}
+                      </span>
+                      <span className="shrink-0 text-sm tabular-nums text-text-muted">
+                        {String(val)}
+                      </span>
+                    </li>
+                  ))}
               </ul>
               {activeSnapshot && (
                 <p className="border-t border-border px-4 py-2 text-xs text-text-muted">
@@ -522,33 +526,35 @@ export function PolicyEditorPanel({
             /* Read-only draft diff */
             <div className="rounded-lg border border-amber-200 bg-card">
               <ul className="divide-y divide-border px-4">
-                {Object.entries(draftSnapshotValues).map(([key, val]) => {
-                  const changed = isValueChanged(key, val);
-                  return (
-                    <li
-                      key={key}
-                      className={`flex items-center justify-between gap-4 py-3 first:pt-3 last:pb-3 ${changed ? "bg-amber-50/80 dark:bg-amber-950/30" : ""}`}
-                    >
-                      <span className="min-w-0 flex-1 text-sm font-medium leading-snug text-text-primary">
-                        {t(`policy.fields.${key}` as never, {
-                          defaultValue: key,
-                        })}
-                      </span>
-                      <div className="flex shrink-0 flex-col items-end gap-0.5">
-                        <span
-                          className={`text-sm tabular-nums ${changed ? "font-semibold text-amber-900 dark:text-amber-200" : "text-text-muted"}`}
-                        >
-                          {String(val)}
+                {Object.entries(draftSnapshotValues)
+                  .filter(([key]) => shownKeys.has(key))
+                  .map(([key, val]) => {
+                    const changed = isValueChanged(key, val);
+                    return (
+                      <li
+                        key={key}
+                        className={`flex items-center justify-between gap-4 py-3 first:pt-3 last:pb-3 ${changed ? "bg-amber-50/80 dark:bg-amber-950/30" : ""}`}
+                      >
+                        <span className="min-w-0 flex-1 text-sm font-medium leading-snug text-text-primary">
+                          {t(`policy.fields.${key}` as never, {
+                            defaultValue: key,
+                          })}
                         </span>
-                        {changed ? (
-                          <span className="text-xs text-amber-600">
-                            {String(activeValues[key] ?? "—")}
+                        <div className="flex shrink-0 flex-col items-end gap-0.5">
+                          <span
+                            className={`text-sm tabular-nums ${changed ? "font-semibold text-amber-900 dark:text-amber-200" : "text-text-muted"}`}
+                          >
+                            {String(val)}
                           </span>
-                        ) : null}
-                      </div>
-                    </li>
-                  );
-                })}
+                          {changed ? (
+                            <span className="text-xs text-amber-600">
+                              {String(activeValues[key] ?? "—")}
+                            </span>
+                          ) : null}
+                        </div>
+                      </li>
+                    );
+                  })}
               </ul>
               <p className="border-t border-amber-200 px-4 py-2 text-xs text-text-muted">
                 {t("policy.version", {

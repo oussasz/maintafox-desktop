@@ -25,11 +25,6 @@ const SessionVisibilityPanel = lazy(() =>
     default: m.SessionVisibilityPanel,
   })),
 );
-const DelegationManagerPanel = lazy(() =>
-  import("../components/admin/DelegationManagerPanel").then((m) => ({
-    default: m.DelegationManagerPanel,
-  })),
-);
 const EmergencyElevationPanel = lazy(() =>
   import("../components/admin/EmergencyElevationPanel").then((m) => ({
     default: m.EmergencyElevationPanel,
@@ -47,6 +42,8 @@ const AdminAuditTimeline = lazy(() =>
 );
 
 // ── Tab configuration ─────────────────────────────────────────────────────
+// Delegated-administration policies (DelegationManagerPanel) are not offered: nothing in the
+// permission checks reads them yet, so a policy saved there would change nothing.
 
 interface AdminTab {
   key: string;
@@ -74,12 +71,6 @@ const ADMIN_TABS: AdminTab[] = [
     labelKey: "admin:tabs.sessions",
     permission: P.ADM_USERS,
     component: SessionVisibilityPanel,
-  },
-  {
-    key: "delegation",
-    labelKey: "admin:tabs.delegation",
-    permission: P.ADM_ROLES,
-    component: DelegationManagerPanel,
   },
   {
     key: "emergency",

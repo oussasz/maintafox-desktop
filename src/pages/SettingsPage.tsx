@@ -16,11 +16,14 @@ import { NotificationsSettingsPanel } from "@/components/settings/NotificationsS
 import { PolicyEditorPanel } from "@/components/settings/PolicyEditorPanel";
 import { ProfileSettingsPanel } from "@/components/settings/ProfileSettingsPanel";
 import {
+  SettingsCatalogSections,
+  formatSettingValue,
+} from "@/components/settings/SettingsCatalogSections";
+import {
   SETTINGS_TABS,
   SettingsCategorySidebar,
   type SettingsTabId,
 } from "@/components/settings/SettingsCategorySidebar";
-import { SettingsValueEditor } from "@/components/settings/SettingsValueEditor";
 import { SyncFeedbackPanel } from "@/components/sync/SyncFeedbackPanel";
 import { Timeline } from "@/components/timeline";
 import { Button } from "@/components/ui/button";
@@ -39,13 +42,14 @@ import { useToast } from "@/hooks/use-toast";
 import { i18n } from "@/i18n";
 import {
   ensureSettingsDefaults,
-  listAllSettings,
+  getSettingsOverview,
   listSettingChangeEvents,
 } from "@/services/settings-service";
-import type { AppSetting, SettingsChangeEvent } from "@shared/ipc-types";
+import type { SettingsChangeEvent, SettingsOverview } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
-const GENERAL_CATEGORIES = ["localization", "appearance", "system", "reliability"] as const;
+/** Sections of the General tab, in display order (settings come from the server catalog). */
+const GENERAL_CATEGORIES = ["localization", "work_orders", "reliability"] as const;
 const BACKUP_CATEGORIES = ["backup"] as const;
 const SETTINGS_TAB_IDS = new Set<SettingsTabId>(SETTINGS_TABS.map((tab) => tab.id));
 
@@ -60,13 +64,9 @@ function isAdmSettingsTab(tab: SettingsTabId): boolean {
   return SETTINGS_TABS.find((entry) => entry.id === tab)?.requiresAdmSettings === true;
 }
 
-function filterByCategories(settings: AppSetting[], categories: readonly string[]): AppSetting[] {
-  const allowed = new Set(categories);
-  return settings.filter((s) => allowed.has(s.category));
-}
-
 export function SettingsPage() {
   const { t } = useTranslation("settings");
+  const tAny = t as unknown as (key: string, options?: Record<string, unknown>) => string;
   const { toasts, toast, dismiss } = useToast();
   const { can, isLoading: permissionsLoading } = usePermissions();
   const canManageSettings = can(P.ADM_SETTINGS);
@@ -75,7 +75,7 @@ export function SettingsPage() {
   const [activeTab, setActiveTab] = useState<SettingsTabId>(() =>
     parseSettingsTab(searchParams.get("tab")),
   );
-  const [allSettings, setAllSettings] = useState<AppSetting[]>([]);
+  const [overview, setOverview] = useState<SettingsOverview | null>(null);
   const [auditLog, setAuditLog] = useState<SettingsChangeEvent[]>([]);
   const [initialLoading, setInitialLoading] = useState(true);
   const [contentRefreshing, setContentRefreshing] = useState(false);
@@ -148,30 +148,28 @@ export function SettingsPage() {
     [setSearchParams, canManageSettings],
   );
 
-  const generalSettings = useMemo(
-    () => filterByCategories(allSettings, GENERAL_CATEGORIES),
-    [allSettings],
-  );
-  const backupRetentionSettings = useMemo(
-    () => filterByCategories(allSettings, BACKUP_CATEGORIES),
-    [allSettings],
-  );
+  const definitions = overview?.definitions ?? [];
+  const hasStoredSettings = definitions.some((d) => d.current_value_json != null);
 
   const loadAll = useCallback(async (opts?: { silent?: boolean; allowEnsure?: boolean }) => {
     const silent = opts?.silent === true;
     const allowEnsure = opts?.allowEnsure !== false;
     if (!silent) setContentRefreshing(true);
     try {
-      let settings = await listAllSettings();
+      let next = await getSettingsOverview();
       const events = await listSettingChangeEvents(20).catch(() => [] as SettingsChangeEvent[]);
 
-      if (settings.length === 0 && allowEnsure && !didAutoEnsureRef.current) {
+      if (
+        !next.definitions.some((d) => d.current_value_json != null) &&
+        allowEnsure &&
+        !didAutoEnsureRef.current
+      ) {
         didAutoEnsureRef.current = true;
         await ensureSettingsDefaults();
-        settings = await listAllSettings();
+        next = await getSettingsOverview();
       }
 
-      setAllSettings(settings);
+      setOverview(next);
       setAuditLog(events);
       setError(null);
     } catch (err) {
@@ -193,7 +191,7 @@ export function SettingsPage() {
       setInitialLoading(false);
       setContentRefreshing(false);
       setError(null);
-      setAllSettings([]);
+      setOverview(null);
       setAuditLog([]);
       return;
     }
@@ -350,12 +348,13 @@ export function SettingsPage() {
                           onToast={onToast}
                           onSaved={() => void loadAll({ silent: true, allowEnsure: false })}
                         />
-                        {generalSettings.length > 0 ? (
-                          <SettingsValueEditor
-                            settings={generalSettings}
-                            onSettingSaved={() =>
-                              void loadAll({ silent: true, allowEnsure: false })
-                            }
+                        {hasStoredSettings ? (
+                          <SettingsCatalogSections
+                            categories={GENERAL_CATEGORIES}
+                            definitions={definitions}
+                            rolesAllowed={overview?.roles_allowed_to_change ?? []}
+                            canEdit={canManageSettings}
+                            onSaved={() => void loadAll({ silent: true, allowEnsure: false })}
                             onToast={onToast}
                           />
                         ) : (
@@ -379,12 +378,13 @@ export function SettingsPage() {
 
                     {activeTab === "backup" && canManageSettings ? (
                       <section className="space-y-6">
-                        {backupRetentionSettings.length > 0 ? (
-                          <SettingsValueEditor
-                            settings={backupRetentionSettings}
-                            onSettingSaved={() =>
-                              void loadAll({ silent: true, allowEnsure: false })
-                            }
+                        {hasStoredSettings ? (
+                          <SettingsCatalogSections
+                            categories={BACKUP_CATEGORIES}
+                            definitions={definitions}
+                            rolesAllowed={overview?.roles_allowed_to_change ?? []}
+                            canEdit={canManageSettings}
+                            onSaved={() => void loadAll({ silent: true, allowEnsure: false })}
                             onToast={onToast}
                           />
                         ) : (
@@ -424,17 +424,25 @@ export function SettingsPage() {
                   <Timeline
                     items={auditLog}
                     aria-label={t("auditLog.title")}
-                    getEntry={(evt) => ({
-                      id: String(evt.id),
-                      title: evt.setting_key_or_domain,
-                      description: evt.change_summary,
-                      timestamp: evt.changed_at,
-                      ...(evt.required_step_up
-                        ? {
-                            badges: [{ label: t("auditLog.stepUp"), tone: "info" as const }],
-                          }
-                        : {}),
-                    })}
+                    getEntry={(evt) => {
+                      const def = definitions.find((d) => d.key === evt.setting_key_or_domain);
+                      const valueChange =
+                        def && (evt.old_value_json != null || evt.new_value_json != null)
+                          ? `${formatSettingValue(def, evt.old_value_json, tAny)} → ${formatSettingValue(def, evt.new_value_json, tAny)}`
+                          : null;
+                      return {
+                        id: String(evt.id),
+                        title: def ? tAny(`keys.${def.key}`) : evt.setting_key_or_domain,
+                        description: valueChange ?? evt.change_summary,
+                        timestamp: evt.changed_at,
+                        ...(evt.changed_by_name ? { actor: evt.changed_by_name } : {}),
+                        ...(evt.required_step_up
+                          ? {
+                              badges: [{ label: t("auditLog.stepUp"), tone: "info" as const }],
+                            }
+                          : {}),
+                      };
+                    }}
                   />
                 </CardContent>
               </Card>

@@ -84,6 +84,18 @@ async fn load_header_json(db: &DatabaseConnection) -> AppResult<Value> {
     })
 }
 
+/// The logo of the header is set only by the upload / clear commands (which manage the file):
+/// a header saved from the editor keeps the stored `logo_relative_path`, whatever it carries.
+pub async fn keep_stored_logo(db: &DatabaseConnection, value_json: &str) -> AppResult<String> {
+    let mut incoming = parse_header_value(value_json);
+    let stored = load_header_json(db).await?;
+    let logo = stored.get("logo_relative_path").cloned().unwrap_or(Value::Null);
+    if let Some(obj) = incoming.as_object_mut() {
+        obj.insert("logo_relative_path".into(), logo);
+    }
+    Ok(serde_json::to_string(&incoming)?)
+}
+
 async fn persist_header_json(
     db: &DatabaseConnection,
     value: &Value,

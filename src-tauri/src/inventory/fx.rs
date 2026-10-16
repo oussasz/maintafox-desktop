@@ -35,6 +35,51 @@ pub fn normalize_optional_currency(value: Option<&str>) -> AppResult<Option<Stri
     }
 }
 
+/// Settings key of the tenant currency.
+pub const CURRENCY_SETTING: &str = "locale.currency_code";
+
+/// Amounts are already stored in the tenant currency: valued stock movements, goods receipts,
+/// closed valuation periods, posted settlements or budget actuals. Changing the currency then
+/// would relabel every one of them, so the setting is locked (same rule as the fiscal start).
+pub async fn tenant_currency_in_use<C: ConnectionTrait>(db: &C) -> AppResult<bool> {
+    Ok(db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT EXISTS (SELECT 1 FROM inventory_transactions
+                            WHERE unit_cost IS NOT NULL OR extended_cost IS NOT NULL)
+                 OR EXISTS (SELECT 1 FROM goods_receipts)
+                 OR EXISTS (SELECT 1 FROM inventory_valuation_periods)
+                 OR EXISTS (SELECT 1 FROM wo_cost_settlements WHERE status = 'posted')
+                 OR EXISTS (SELECT 1 FROM budget_actuals) AS in_use"
+                .to_string(),
+        ))
+        .await?
+        .and_then(|r| r.try_get::<i64>("", "in_use").ok())
+        .unwrap_or(0)
+        != 0)
+}
+
+/// Settings guard for `locale.currency_code` (called by `settings::set_setting`): an ISO 4217
+/// code, and no change once amounts are stored in the current one.
+pub async fn guard_currency_write<C: ConnectionTrait>(db: &C, key: &str, value_json: &str) -> AppResult<()> {
+    if key != CURRENCY_SETTING {
+        return Ok(());
+    }
+    let parsed: String = serde_json::from_str(value_json.trim()).unwrap_or_else(|_| value_json.trim().to_string());
+    let code = normalize_currency_code(&parsed)?;
+    if tenant_currency(db).await.ok().as_deref() == Some(code.as_str()) {
+        return Ok(());
+    }
+    if tenant_currency_in_use(db).await? {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_FIN_CURRENCY_LOCKED: stock, receipts or postings are already valued in the tenant currency; \
+             changing it would relabel every stored amount"
+                .to_string(),
+        ]));
+    }
+    Ok(())
+}
+
 /// Tenant currency from Settings (`locale.currency_code`, stored as a JSON string).
 pub async fn tenant_currency<C: ConnectionTrait>(db: &C) -> AppResult<String> {
     let row = db

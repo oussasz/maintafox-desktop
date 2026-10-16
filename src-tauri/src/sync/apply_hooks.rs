@@ -11,6 +11,8 @@
 //! - `work_order_delay_segments`: before the apply, `hold_kind` must be `pause` or `prerequisite`
 //!   (anything else is refused as a conflict) and present (a row from an older app version without
 //!   it is deferred, never written with a guessed kind: it decides the PRD lifecycle state);
+//! - `app_settings`: a tenant setting whose change is locked here (fiscal start month, currency
+//!   once postings exist) is refused as a conflict (`before_upsert_checked`);
 //! - `media_attachments`: the file is queued for download from object storage
 //!   (`sync_media_downloads`, worked by the sync worker); a deleted row drops a pending download.
 
@@ -39,6 +41,41 @@ pub(crate) fn before_upsert(
             }),
         },
         _ => None,
+    }
+}
+
+/// Checks of an inbound row that need the local database; `Some` stops the apply with that
+/// outcome (recorded like every other sync conflict, for a person to decide).
+/// - `app_settings`: the fiscal-year start month and the tenant currency cannot change once this
+///   device stores postings that depend on them (`finance::fiscal`, `inventory::fx`). A change
+///   made on a device where they were still free is refused here, as it is in Settings.
+pub(crate) async fn before_upsert_checked(
+    conn: &impl ConnectionTrait,
+    layout: &EntityLayout,
+    payload: &serde_json::Map<String, serde_json::Value>,
+) -> AppResult<Option<crate::sync::materialize::ApplyOutcome>> {
+    use crate::sync::materialize::ApplyOutcome;
+    if layout.def.entity_type != "app_settings" {
+        return Ok(None);
+    }
+    let text = |k: &str| payload.get(k).and_then(serde_json::Value::as_str);
+    let (Some(key), Some(value)) = (text("setting_key"), text("setting_value_json")) else {
+        return Ok(None);
+    };
+    if text("setting_scope") != Some("tenant") {
+        return Ok(None);
+    }
+    let guard = async {
+        crate::finance::fiscal::guard_fiscal_start_write(conn, key, value).await?;
+        crate::inventory::fx::guard_currency_write(conn, key, value).await
+    };
+    match guard.await {
+        Ok(()) => Ok(None),
+        Err(AppError::ValidationFailed(messages)) => Ok(Some(ApplyOutcome::Conflict {
+            code: "SETTING_LOCKED".into(),
+            message: format!("{key}: {}", messages.join("; ")),
+        })),
+        Err(other) => Err(other),
     }
 }
 
