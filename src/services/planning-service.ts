@@ -2,6 +2,8 @@ import { ZodError, z } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
 import type {
+  AssigneeCapacity,
+  AssigneeCapacityInput,
   CapacityRule,
   CapacityRuleFilter,
   CreateCapacityRuleInput,
@@ -155,6 +157,7 @@ const ScheduleCommitmentSchema = z.object({
   has_blocking_conflict: z.number(),
   nearest_feasible_window: z.string().nullable(),
   planned_labor_hours: z.number().nullable(),
+  planned_person_hours: z.number().nullable(),
   row_version: z.number(),
   created_at: z.string(),
   updated_at: z.string(),
@@ -395,6 +398,34 @@ export function createScheduleBreakIn(input: CreateScheduleBreakInInput): Promis
 
 export function freezeSchedulePeriod(input: FreezeSchedulePeriodInput): Promise<number> {
   return invokeParsed("freeze_schedule_period", { input }, z.number());
+}
+
+const AssigneeCapacitySchema = z.object({
+  personnel_id: z.number(),
+  full_name: z.string(),
+  employee_code: z.string().nullable(),
+  days: z.array(
+    z.object({
+      day: z.string(),
+      shift_start: z.string().nullable(),
+      shift_end: z.string().nullable(),
+      available_hours: z.number(),
+      committed_hours: z.number(),
+      remaining_hours: z.number(),
+      reason: z.string(),
+    }),
+  ),
+  slot_working_hours: z.number(),
+  issues: z.array(z.string()),
+  unknown_hours_jobs: z.number(),
+  unreadable_work_orders: z.array(z.object({ work_order_id: z.number(), code: z.string() })),
+});
+
+/** Each crew member over a slot: shift, hours left net of all their work, and what a commit would refuse. */
+export async function listAssigneeCapacity(
+  input: AssigneeCapacityInput,
+): Promise<AssigneeCapacity[]> {
+  return invokeParsed("list_assignee_capacity", { input }, z.array(AssigneeCapacitySchema));
 }
 
 export async function getPlanningGanttSnapshot(

@@ -101,6 +101,7 @@ function makeCommitment(overrides: Partial<ScheduleCommitment> = {}): ScheduleCo
     has_blocking_conflict: 0,
     nearest_feasible_window: null,
     planned_labor_hours: 2,
+    planned_person_hours: 2,
     row_version: 1,
     created_at: TS,
     updated_at: TS,
