@@ -2,15 +2,21 @@ import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 
+import { ConflictReasonList } from "@/components/planning/ConflictReasonList";
 import {
   candidateDisplayCode,
   candidateDisplayTitle,
   candidateSourcePath,
+  isBlockingSeverity,
 } from "@/components/planning/planning-model";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
-import type { CandidateConflictSummary, ScheduleCandidate } from "@shared/ipc-types";
+import type {
+  CandidateConflictSummary,
+  ConflictReason,
+  ScheduleCandidate,
+} from "@shared/ipc-types";
 
 type PlanningBacklogRailProps = {
   ready: ScheduleCandidate[];
@@ -18,6 +24,8 @@ type PlanningBacklogRailProps = {
   conflictSummary: CandidateConflictSummary[];
   selectedCandidateId: number | null;
   onSelectReady: (candidate: ScheduleCandidate) => void;
+  /** Opens the planning windows from a reason that needs one. */
+  onOpenWindows?: () => void;
   className?: string;
 };
 
@@ -27,6 +35,7 @@ export function PlanningBacklogRail({
   conflictSummary,
   selectedCandidateId,
   onSelectReady,
+  onOpenWindows,
   className,
 }: PlanningBacklogRailProps) {
   const { t } = useTranslation("planning");
@@ -73,21 +82,28 @@ export function PlanningBacklogRail({
           <div className="space-y-2">
             {ready.map((candidate) => {
               const selected = selectedCandidateId === candidate.id;
+              const summary = conflictByCandidate.get(candidate.id);
               return (
-                <button
+                <div
                   key={candidate.id}
-                  type="button"
                   className={cn(
-                    "w-full rounded-lg border p-3 text-left transition-colors hover:bg-surface-2",
+                    "rounded-lg border",
                     selected ? "border-primary bg-surface-2" : "border-surface-border bg-surface-0",
                   )}
-                  onClick={() => onSelectReady(candidate)}
                 >
-                  <CandidateCardBody
-                    candidate={candidate}
-                    blockers={conflictByCandidate.get(candidate.id)?.blocker_codes ?? []}
+                  <button
+                    type="button"
+                    className="w-full rounded-lg p-3 text-left transition-colors hover:bg-surface-2"
+                    onClick={() => onSelectReady(candidate)}
+                  >
+                    <CandidateCardBody candidate={candidate} summary={summary} />
+                  </button>
+                  <ConflictReasonList
+                    reasons={summary?.reasons ?? []}
+                    onOpenWindows={onOpenWindows}
+                    className="px-3 pb-3"
                   />
-                </button>
+                </div>
               );
             })}
             {ready.length === 0 && (
@@ -102,33 +118,34 @@ export function PlanningBacklogRail({
               <p className="text-[11px] leading-snug text-text-muted">{t("backlog.blockedHint")}</p>
             ) : null}
             {blocked.map((candidate) => {
-              const body = (
-                <CandidateCardBody
-                  candidate={candidate}
-                  blockers={conflictByCandidate.get(candidate.id)?.blocker_codes ?? []}
-                />
-              );
+              const summary = conflictByCandidate.get(candidate.id);
+              const body = <CandidateCardBody candidate={candidate} summary={summary} />;
               const path = candidateSourcePath(candidate);
-              if (!path) {
-                return (
-                  <div
-                    key={candidate.id}
-                    className="rounded-lg border border-surface-border bg-surface-0 p-3"
-                  >
-                    {body}
-                  </div>
-                );
-              }
               return (
-                <button
+                <div
                   key={candidate.id}
-                  type="button"
-                  className="w-full rounded-lg border border-surface-border bg-surface-0 p-3 text-left transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  aria-label={t("backlog.openSource", { code: candidateDisplayCode(candidate) })}
-                  onClick={() => void navigate(path)}
+                  className="rounded-lg border border-surface-border bg-surface-0"
                 >
-                  {body}
-                </button>
+                  {path ? (
+                    <button
+                      type="button"
+                      className="w-full rounded-lg p-3 text-left transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      aria-label={t("backlog.openSource", {
+                        code: candidateDisplayCode(candidate),
+                      })}
+                      onClick={() => void navigate(path)}
+                    >
+                      {body}
+                    </button>
+                  ) : (
+                    <div className="p-3">{body}</div>
+                  )}
+                  <ConflictReasonList
+                    reasons={summary?.reasons ?? []}
+                    onOpenWindows={onOpenWindows}
+                    className="px-3 pb-3"
+                  />
+                </div>
               );
             })}
             {blocked.length === 0 && (
@@ -143,15 +160,21 @@ export function PlanningBacklogRail({
 
 function CandidateCardBody({
   candidate,
-  blockers,
+  summary,
 }: {
   candidate: ScheduleCandidate;
-  blockers: string[];
+  summary: CandidateConflictSummary | undefined;
 }) {
   const { t } = useTranslation("planning");
   const code = candidateDisplayCode(candidate);
   const title = candidateDisplayTitle(candidate);
-  const notes = readinessNotes(candidate.risk_reason_codes_json);
+  // One badge per kind of conflict: red when one of its reasons blocks, amber when all warn.
+  const reasons: ConflictReason[] = summary?.reasons ?? [];
+  const kinds = [...new Set(summary?.blocker_codes ?? [])];
+  const kindBlocks = (kind: string) => {
+    const ofKind = reasons.filter((r) => r.conflict_type === kind);
+    return ofKind.length === 0 || ofKind.some((r) => isBlockingSeverity(r.severity));
+  };
   // Duration × crew size, or what is missing (no duration → not estimated; no crew → said so).
   const hours = candidate.estimated_duration_hours;
   const crew = candidate.planned_crew_size;
@@ -195,37 +218,25 @@ function CandidateCardBody({
         ) : null}
       </div>
 
-      {blockers.length > 0 && (
+      {kinds.length > 0 && (
         <div className="flex flex-wrap gap-1">
-          {blockers.slice(0, 6).map((codeKey) => (
-            <Badge key={codeKey} variant="destructive" className="text-[10px] font-normal">
-              {t(`blockers.${codeKey}`, { defaultValue: codeKey })}
-            </Badge>
-          ))}
+          {kinds.slice(0, 6).map((codeKey) =>
+            kindBlocks(codeKey) ? (
+              <Badge key={codeKey} variant="destructive" className="text-[10px] font-normal">
+                {t(`blockers.${codeKey}`, { defaultValue: codeKey })}
+              </Badge>
+            ) : (
+              <Badge
+                key={codeKey}
+                variant="outline"
+                className="border-amber-200 bg-amber-50 text-[10px] font-normal text-amber-800"
+              >
+                {t(`blockers.${codeKey}`, { defaultValue: codeKey })}
+              </Badge>
+            ),
+          )}
         </div>
-      )}
-      {notes.length > 0 && (
-        <ul className="space-y-0.5 text-[10px] text-text-secondary">
-          {notes.map((note) => (
-            <li key={note}>{t(`notes.${note}`)}</li>
-          ))}
-        </ul>
       )}
     </div>
   );
-}
-
-/** Readiness notes the planner should see (not blocking): parts to check, permit to obtain. */
-const READINESS_NOTES = new Set(["PM_PARTS_TO_CHECK", "PM_PERMIT_TO_OBTAIN"]);
-
-function readinessNotes(json: string | null | undefined): string[] {
-  if (!json) return [];
-  try {
-    const parsed: unknown = JSON.parse(json);
-    return Array.isArray(parsed)
-      ? parsed.filter((c): c is string => typeof c === "string" && READINESS_NOTES.has(c))
-      : [];
-  } catch {
-    return [];
-  }
 }

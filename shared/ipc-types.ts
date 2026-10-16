@@ -8550,6 +8550,17 @@ export interface CandidateConflictSummary {
   blocker_dimensions: string[];
   readiness_status: string;
   readiness_score: number;
+  /** Each open conflict with its reason and details: what the card explains. */
+  reasons: ConflictReason[];
+}
+
+/** Why a job cannot be committed (or why its bar is critical). */
+export interface ConflictReason {
+  conflict_type: string;
+  reason_code: string;
+  severity: string;
+  /** JSON object whose fields depend on the reason. */
+  details_json: string | null;
 }
 
 export interface ScheduleBacklogSnapshot {
@@ -8615,25 +8626,37 @@ export interface UpdateCapacityRuleInput {
 
 export interface PlanningWindow {
   id: number;
+  /** Site (org node) the window applies to, with its sub-nodes; null = plant-wide. */
   entity_id: number | null;
+  /** The one equipment of the site the window applies to; null = the whole site. */
+  equipment_id: number | null;
+  /** A code of the SYSTEM list PLANNING.WINDOW_TYPES. */
   window_type: string;
   start_datetime: string;
   end_datetime: string;
   is_locked: number;
   lock_reason: string | null;
+  /** 1 = the site must be re-entered (window from before migration 211): plant-wide until then. */
+  scope_review_required: number;
   row_version: number;
   created_at: string;
   updated_at: string;
+  /** Names for display. */
+  entity_name: string | null;
+  equipment_code: string | null;
+  equipment_name: string | null;
 }
 
 export interface PlanningWindowFilter {
   entity_id?: number | null;
+  equipment_id?: number | null;
   window_type?: string | null;
   include_locked?: boolean | null;
 }
 
 export interface CreatePlanningWindowInput {
   entity_id?: number | null;
+  equipment_id?: number | null;
   window_type: string;
   start_datetime: string;
   end_datetime: string;
@@ -8642,6 +8665,10 @@ export interface CreatePlanningWindowInput {
 }
 
 export interface UpdatePlanningWindowInput {
+  /** Absent = unchanged; null = plant-wide. */
+  entity_id?: number | null;
+  /** Absent = unchanged; null = the whole site. */
+  equipment_id?: number | null;
   window_type?: string | null;
   start_datetime?: string | null;
   end_datetime?: string | null;
@@ -8666,6 +8693,8 @@ export interface ScheduleCommitment {
   budget_threshold: number | null;
   cost_variance_warning: number;
   has_blocking_conflict: number;
+  /** The job's open conflicts (JSON array of ConflictReason): why the bar is critical. */
+  conflict_reasons_json: string | null;
   nearest_feasible_window: string | null;
   /** Labour hours the commitment books; null for one from before they were stored. */
   planned_labor_hours: number | null;

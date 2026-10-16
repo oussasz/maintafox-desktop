@@ -1592,6 +1592,11 @@ pub async fn reopen_wo(db: &DatabaseConnection, input: WoReopenInput) -> AppResu
         }
     }
 
+    // Work restarts: the same permit / LOTO gate as starting or resuming it.
+    if target == WoStatus::InProgress {
+        crate::permit::wo_gate::assert_in_progress_permit_gate(&txn, input.wo_id).await?;
+    }
+
     let target_status_id = resolve_status_id(&txn, target.as_str()).await?;
     let now = now_utc_z();
 

@@ -7,8 +7,11 @@ import {
   buildPlanningWindowHighlights,
   capacityByDate,
   commitmentItemId,
+  commitmentTimelineState,
   teamGroupId,
+  timelineItemTooltip,
   parseCommitmentItemId,
+  parseConflictReasons,
   parseTeamGroupId,
   PLANNING_UNASSIGNED_GROUP_ID,
   utilizationState,
@@ -147,8 +150,12 @@ export function PlanningBoard({
           title,
           start_time: start,
           end_time: end,
-          state: frozen ? "blocked" : commitment.has_blocking_conflict ? "critical" : "commitment",
+          state: commitmentTimelineState(commitment),
           canMove: canDrag && !frozen,
+          tooltip: timelineItemTooltip(
+            { title, conflictReasons: parseConflictReasons(commitment.conflict_reasons_json) },
+            t,
+          ),
         });
       }
       return next;
@@ -162,8 +169,9 @@ export function PlanningBoard({
       end_time: row.endMs,
       state: row.state,
       canMove: row.canMove,
+      tooltip: timelineItemTooltip(row, t),
     }));
-  }, [commitments, gantt, canDrag, laneMode]);
+  }, [commitments, gantt, canDrag, laneMode, t]);
 
   const highlights = useMemo<ResourceTimelineTimeRangeHighlight[]>(
     () => buildPlanningWindowHighlights(lockedWindows),
