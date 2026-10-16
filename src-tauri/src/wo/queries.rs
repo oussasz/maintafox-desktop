@@ -972,6 +972,8 @@ pub async fn cancel_work_order(db: &DatabaseConnection, input: super::domain::Wo
             entity: "WorkOrder".into(),
             id: input.id.to_string(),
         })?;
+    // Its schedule commitments are closed with it (`planning::lifecycle`).
+    crate::planning::lifecycle::close_commitments_of_work_order(&txn, input.id).await?;
     txn.commit().await?;
     Ok(wo)
 }

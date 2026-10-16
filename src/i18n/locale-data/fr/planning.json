@@ -4,7 +4,8 @@
   },
   "views": {
     "gantt": "Tableau Gantt",
-    "calendar": "Vue calendrier"
+    "calendar": "Vue calendrier",
+    "week": "Programme hebdomadaire"
   },
   "calendar": {
     "today": "Aujourd'hui",
@@ -224,14 +225,9 @@
     "dangerousOverrideReason": "Motif de dérogation dangereuse",
     "create": "Enregistrer le break-in",
     "empty": "Aucun break-in pour la période sélectionnée.",
-    "reasons": {
-      "emergency": "Urgence",
-      "safety": "Sécurité",
-      "production_loss": "Perte de production",
-      "regulatory": "Réglementaire",
-      "other": "Autre"
-    },
-    "acknowledgeRefusals": "Déroger à ces refus avec le motif ci-dessus"
+    "acknowledgeRefusals": "Déroger à ces refus avec le motif ci-dessus",
+    "urgentHint": "Motif urgent : indiquez un approbateur ou un motif de dérogation dangereuse.",
+    "inserted": "Ajouté en semaine gelée :"
   },
   "freeze": {
     "title": "Geler la période de planning",
@@ -260,7 +256,8 @@
     "auditTitle": "Journal des changements",
     "auditEmpty": "Aucune entrée d'audit pour cet engagement.",
     "openOnBoard": "Ouvrir sur le tableau",
-    "sourceWorkOrder": "Ordre de travail :"
+    "sourceWorkOrder": "Ordre de travail :",
+    "statusReason": "Motif"
   },
   "audit": {
     "actions": {
@@ -268,7 +265,11 @@
       "reschedule_commitment": "Replanifié",
       "override_double_booking": "Dérogation double-booking",
       "freeze_schedule_period": "Période gelée",
-      "create_break_in": "Break-in enregistré"
+      "create_break_in": "Break-in enregistré",
+      "release_commitment": "Créneau libéré",
+      "cancel_commitment": "Engagement annulé",
+      "close_commitment": "Clôturé (travail terminé)",
+      "break_in_insert": "Entrée en semaine gelée (break-in)"
     }
   },
   "dialogs": {
@@ -336,5 +337,84 @@
     "requestPermit": "Demander un permis",
     "openArticle": "Ouvrir l'article {{code}}",
     "openWindows": "Fenêtres de planification"
+  },
+  "commitmentStatus": {
+    "committed": "Engagé",
+    "released": "Créneau libéré",
+    "cancelled": "Annulé",
+    "closed": "Clôturé"
+  },
+  "lifecycle": {
+    "reason": "Motif (obligatoire)",
+    "released": {
+      "action": "Libérer le créneau",
+      "hint": "Le créneau est rendu : le travail revient dans le carnet de commandes pour être replanifié.",
+      "confirm": "Libérer"
+    },
+    "cancelled": {
+      "action": "Annuler l'engagement",
+      "hint": "L'engagement est annulé et son créneau rendu. Le travail lui-même n'est pas annulé.",
+      "confirm": "Annuler l'engagement"
+    }
+  },
+  "frozenWeek": {
+    "title": "Semaine gelée : entrée par break-in",
+    "hint": "La semaine du {{week}} est gelée. Ce travail n'y entre que comme break-in enregistré, avec son motif.",
+    "selectReason": "Choisir un motif",
+    "confirm": "Engager comme break-in"
+  },
+  "weekly": {
+    "title": "Programme hebdomadaire",
+    "site": "Site de planification",
+    "noSite": "Choisir un site",
+    "noPlanningSite": "Aucun site de planification : dans l'organisation, un nœud dont le type porte des travaux (« peut porter des travaux ») définit un site.",
+    "previous": "Semaine précédente",
+    "next": "Semaine suivante",
+    "range": "Du {{from}} au {{to}}",
+    "status": {
+      "draft": "Brouillon",
+      "approved": "Approuvé",
+      "frozen": "Gelé",
+      "published": "Publié"
+    },
+    "frozenWithoutApproval": "Gelé sans approbation",
+    "frozenWithoutApprovalHint": "Cette semaine a été gelée automatiquement sans approbation. Un détenteur du droit de confirmation du planning doit l'approuver ; l'approbation a posteriori ne modifie pas la référence gelée.",
+    "approve": "Approuver",
+    "approveAfterFreeze": "Approuver a posteriori",
+    "freeze": "Geler",
+    "publish": "Publier aux équipes",
+    "requestUnfreeze": "Demander le dégel",
+    "freezeDue": "Gel automatique le {{at}}",
+    "frozenAt": "Gelé le {{at}}",
+    "frozenAutomatically": "Gelé automatiquement le {{at}}",
+    "unfreezePending": "Dégel demandé le {{at}} : {{reason}}. Il doit être décidé par un autre planificateur.",
+    "approveUnfreeze": "Approuver le dégel",
+    "rejectUnfreeze": "Refuser le dégel",
+    "unfreezeHint": "Le dégel doit être approuvé par un autre détenteur du droit de confirmation du planning (quatre yeux).",
+    "unfreezeReason": "Motif du dégel",
+    "sendUnfreezeRequest": "Envoyer la demande",
+    "crew": "Équipe",
+    "dayOff": "repos",
+    "frozenJob": "Gelé",
+    "noCrews": "Aucune équipe active rattachée à ce site.",
+    "history": "Historique de la semaine",
+    "system": "Système",
+    "events": {
+      "approved": "Approuvé",
+      "frozen": "Gelé",
+      "auto_frozen": "Gelé automatiquement",
+      "unfreeze_requested": "Dégel demandé",
+      "unfreeze_rejected": "Dégel refusé",
+      "unfrozen": "Dégelé",
+      "published": "Publié aux équipes",
+      "approved_after_freeze": "Approuvé a posteriori"
+    }
+  },
+  "crewsWithoutSite": {
+    "title": "Équipe sans site de planification",
+    "hint": "Ces équipes n'apparaissent dans aucun programme hebdomadaire : leurs travaux ne sont ni approuvés, ni gelés, ni publiés. Rattachez chaque équipe à un nœud de l'organisation situé sous un site (type « peut porter des travaux »).",
+    "fixTeams": "Corriger les équipes",
+    "fixOrg": "Ouvrir l'organisation",
+    "loadFailed": "Impossible de vérifier les équipes sans site de planification : {{error}}"
   }
 }

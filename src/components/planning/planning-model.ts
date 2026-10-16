@@ -28,16 +28,6 @@ export const PLANNING_UTILIZATION_CRITICAL = 1;
 
 export const PLANNING_UNASSIGNED_GROUP_ID = "unassigned";
 
-export const PLANNING_BREAK_IN_REASONS = [
-  "emergency",
-  "safety",
-  "production_loss",
-  "regulatory",
-  "other",
-] as const;
-
-export type PlanningBreakInReason = (typeof PLANNING_BREAK_IN_REASONS)[number];
-
 export type SuggestedAssignee = {
   personnel_id: number;
   full_name: string;
@@ -150,7 +140,8 @@ export const PLANNING_PAGE_VIEW_STORAGE_PREFIX = "maintafox.planning.pageView";
 
 export type PlanningBoardScope = { kind: "all" } | { kind: "crew"; teamId: number };
 
-export type PlanningPageView = "gantt" | "calendar";
+/** "week": the site's weekly schedule (approve, freeze, publish). */
+export type PlanningPageView = "gantt" | "calendar" | "week";
 
 export type PlanningCalendarMode = "month" | "week" | "day";
 
@@ -283,7 +274,7 @@ export function planningPageViewStorageKey(userId: number | null | undefined): s
 export function readStoredPageView(userId: number | null | undefined): PlanningPageView {
   try {
     const raw = localStorage.getItem(planningPageViewStorageKey(userId));
-    if (raw === "calendar" || raw === "gantt") return raw;
+    if (raw === "calendar" || raw === "gantt" || raw === "week") return raw;
   } catch {
     /* ignore */
   }

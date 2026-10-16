@@ -8,6 +8,7 @@ import {
   assigneeOptionSuffix,
 } from "@/components/planning/AssigneeCapacityDetails";
 import { ConflictReasonList } from "@/components/planning/ConflictReasonList";
+import { FrozenWeekBreakInDialog } from "@/components/planning/FrozenWeekBreakInDialog";
 import { OverrideReasonDialog } from "@/components/planning/OverrideReasonDialog";
 import {
   PLANNING_PROPOSED_ITEM_ID,
@@ -96,6 +97,8 @@ type CommitDialogProps = {
   visibleEnd: number;
   saving: boolean;
   onSubmit: (input: CreateScheduleCommitmentInput) => Promise<void>;
+  /** Who may approve a break-in (frozen week); same list as the break-in dialog. */
+  approvers: { id: number; label: string }[];
 };
 
 export function CommitDialog({
@@ -115,6 +118,7 @@ export function CommitDialog({
   visibleEnd,
   saving,
   onSubmit,
+  approvers,
 }: CommitDialogProps) {
   const { t } = useTranslation("planning");
   const { formatCurrency } = useFormatters();
@@ -135,6 +139,10 @@ export function CommitDialog({
     useState<CreateScheduleCommitmentInput | null>(null);
   /** The assignee refusals the pending override would cover (shown before confirming). */
   const [pendingOverrideCodes, setPendingOverrideCodes] = useState<string[]>([]);
+  /** A commit refused because its week is frozen, waiting for its break-in reason. */
+  const [pendingFrozenInput, setPendingFrozenInput] =
+    useState<CreateScheduleCommitmentInput | null>(null);
+  const [frozenWeekStart, setFrozenWeekStart] = useState<string | null>(null);
 
   const requireTargetCrew = boardScope.kind === "all";
   const effectiveTeamId = requireTargetCrew ? targetCrewId : teamId;
@@ -584,7 +592,13 @@ export function CommitDialog({
       } else {
         setFormError(message);
       }
-      const codes = extractIpcValidationDetails(err).map((d) => d.code);
+      const details = extractIpcValidationDetails(err);
+      const codes = details.map((d) => d.code);
+      const frozen = details.find((d) => d.code === "PLANNING_WEEK_FROZEN");
+      if (frozen && !input.frozen_week_break_in) {
+        setFrozenWeekStart(frozen.params?.["week_start"] ?? null);
+        setPendingFrozenInput(input);
+      }
       if (isAssigneeOverridableError(codes, message)) {
         setPendingOverrideInput(input);
         setPendingOverrideCodes(codes.filter((c) => c.startsWith("PLANNING_ASSIGNEE_")));
@@ -954,6 +968,20 @@ export function CommitDialog({
         </DialogContent>
       </Dialog>
 
+      <FrozenWeekBreakInDialog
+        open={pendingFrozenInput != null}
+        onOpenChange={(next) => {
+          if (!next) setPendingFrozenInput(null);
+        }}
+        weekStart={frozenWeekStart}
+        approvers={approvers}
+        onConfirm={(breakIn) => {
+          const pending = pendingFrozenInput;
+          if (!pending) return;
+          setPendingFrozenInput(null);
+          void submit({ ...pending, frozen_week_break_in: breakIn });
+        }}
+      />
       <OverrideReasonDialog
         open={overrideOpen}
         onOpenChange={setOverrideOpen}

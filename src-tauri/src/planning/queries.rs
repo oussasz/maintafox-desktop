@@ -271,6 +271,12 @@ pub async fn list_schedule_candidates(
     let limit = filter.limit.unwrap_or(400).clamp(1, 2_000);
     // Blocked work (a blocking conflict; warnings do not hide a job) is listed only when the caller
     // asks (the planning board does, explicitly).
+    // A job holding a slot is on the schedule, not in the backlog (released or cancelled ones
+    // come back).
+    where_sql.push(
+        "NOT EXISTS (SELECT 1 FROM schedule_commitments scm WHERE scm.schedule_candidate_id = sc.id AND scm.status = 'committed')"
+            .to_string(),
+    );
     let include_resolved = filter.include_resolved_conflicts.unwrap_or(false);
     if !include_resolved {
         where_sql.push(

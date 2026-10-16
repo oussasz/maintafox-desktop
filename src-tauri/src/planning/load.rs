@@ -304,19 +304,42 @@ pub fn net_hours_in(start: &str, end: &str, days: &BTreeMap<NaiveDate, DayHours>
     Ok(hours)
 }
 
-/// SQL predicate: the commitment's work is still to do (alias `cmt`).
-pub const ACTIVE_COMMITMENT_SQL: &str = "NOT ( \
+/// SQL predicate: the commitment's work is still to do (alias `cmt`): the slot is held (not
+/// released, cancelled or closed — migration 212) and its source is not finished.
+pub const ACTIVE_COMMITMENT_SQL: &str = "(cmt.status = 'committed' AND NOT ( \
     (cmt.source_type = 'work_order' AND EXISTS (SELECT 1 FROM work_orders fw WHERE fw.id = cmt.source_id \
         AND (fw.mechanically_completed_at IS NOT NULL OR fw.closed_at IS NOT NULL OR fw.cancelled_at IS NOT NULL))) \
     OR (cmt.source_type = 'pm_occurrence' AND EXISTS (SELECT 1 FROM pm_occurrences fp WHERE fp.id = cmt.source_id \
         AND fp.status IN ('completed', 'cancelled', 'missed'))) \
     OR (cmt.source_type = 'inspection_follow_up' AND EXISTS (SELECT 1 FROM intervention_requests fr \
         WHERE fr.id = cmt.source_id AND (fr.converted_to_wo_id IS NOT NULL OR fr.closed_at IS NOT NULL \
-        OR fr.declined_at IS NOT NULL OR fr.archived_at IS NOT NULL))))";
+        OR fr.declined_at IS NOT NULL OR fr.archived_at IS NOT NULL)))))";
 
 /// [`ACTIVE_COMMITMENT_SQL`] for another alias of `schedule_commitments`.
 pub fn active_commitment_sql_as(alias: &str) -> String {
     ACTIVE_COMMITMENT_SQL.replace("cmt.", &format!("{alias}."))
+}
+
+/// SQL expression: when the work of a finished commitment (alias `alias` of
+/// `schedule_commitments`) ended — the work order's mechanical completion (else its cancellation,
+/// else its closure), the PM occurrence's last move to completed / cancelled / missed (else its
+/// last change), the request's conversion, decline, closure or archiving. `NULL` while the work is
+/// not finished. Every device computes the same value from the same synchronised rows.
+pub fn finished_at_sql(alias: &str) -> String {
+    format!(
+        "(CASE {a}.source_type \
+            WHEN 'work_order' THEN (SELECT COALESCE(fw.mechanically_completed_at, fw.cancelled_at, fw.closed_at) \
+                FROM work_orders fw WHERE fw.id = {a}.source_id) \
+            WHEN 'pm_occurrence' THEN (SELECT COALESCE((SELECT MAX(t.transitioned_at) FROM pm_occurrence_transitions t \
+                    WHERE t.pm_occurrence_id = fp.id AND t.to_status IN ('completed', 'cancelled', 'missed')), \
+                    fp.updated_at) \
+                FROM pm_occurrences fp WHERE fp.id = {a}.source_id \
+                 AND fp.status IN ('completed', 'cancelled', 'missed')) \
+            WHEN 'inspection_follow_up' THEN (SELECT COALESCE(fr.converted_at, fr.declined_at, fr.closed_at, fr.archived_at) \
+                FROM intervention_requests fr WHERE fr.id = {a}.source_id) \
+         END)",
+        a = alias
+    )
 }
 
 /// SQL predicate: no active planning commitment covers the work order (alias `wo`) — through itself,

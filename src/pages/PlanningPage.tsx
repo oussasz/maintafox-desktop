@@ -1,5 +1,6 @@
 import {
   Bell,
+  CalendarCheck,
   CalendarDays,
   CalendarRange,
   ChevronDown,
@@ -22,6 +23,7 @@ import { AssigneeCapacityDetails } from "@/components/planning/AssigneeCapacityD
 import { BreakInDialog } from "@/components/planning/BreakInDialog";
 import { CommitDialog } from "@/components/planning/CommitDialog";
 import { CommitmentInspectorDialog } from "@/components/planning/CommitmentInspectorDialog";
+import { CrewsWithoutSiteBanner } from "@/components/planning/CrewsWithoutSiteBanner";
 import { FreezeConfirmDialog } from "@/components/planning/FreezeConfirmDialog";
 import { OverrideReasonDialog } from "@/components/planning/OverrideReasonDialog";
 import { PlanningBacklogRail } from "@/components/planning/PlanningBacklogRail";
@@ -29,6 +31,7 @@ import { PlanningBoard } from "@/components/planning/PlanningBoard";
 import { PlanningCalendarView } from "@/components/planning/PlanningCalendarView";
 import { PlanningWindowDetailDialog } from "@/components/planning/PlanningWindowDetailDialog";
 import { ProductionWindowDialog } from "@/components/planning/ProductionWindowDialog";
+import { WeeklySchedulePanel } from "@/components/planning/WeeklySchedulePanel";
 import {
   addDaysIso,
   candidateDisplayCode,
@@ -75,6 +78,7 @@ import { mfLayout } from "@/design-system/tokens";
 import { usePermissions } from "@/hooks/use-permissions";
 import { formatPersonLabel } from "@/lib/display";
 import { listActiveTeams, listPersonnel } from "@/services/personnel-service";
+import { cancelScheduleCommitment, releaseScheduleCommitment } from "@/services/planning-service";
 import { listUsers } from "@/services/rbac-service";
 import { useSessionStore } from "@/store/session-store";
 import { usePlanningStore } from "@/stores/planning-store";
@@ -86,6 +90,7 @@ import type {
   PlanningWindow,
   RescheduleCommitmentInput,
   ScheduleCandidate,
+  ScheduleCommitment,
 } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -548,6 +553,22 @@ export function PlanningPage() {
     }
   }
 
+  /** Releases (gives the slot back, the job returns to the backlog) or cancels a committed slot. */
+  async function handleEndCommitment(
+    commitment: ScheduleCommitment,
+    to: "released" | "cancelled",
+    reason: string,
+  ) {
+    const input = {
+      commitment_id: commitment.id,
+      expected_row_version: commitment.row_version,
+      reason,
+    };
+    await (to === "released" ? releaseScheduleCommitment(input) : cancelScheduleCommitment(input));
+    setInspectorOpen(false);
+    await Promise.all([loadBacklog(), reloadBoard()]);
+  }
+
   async function handleFreeze(reason: string) {
     setPageError(null);
     try {
@@ -676,6 +697,15 @@ export function PlanningPage() {
               title={t("views.calendar")}
             >
               <CalendarDays className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              variant={pageView === "week" ? "default" : "ghost"}
+              size="sm"
+              className={mfLayout.viewToggleButton}
+              onClick={() => selectPageView("week")}
+              title={t("views.week")}
+            >
+              <CalendarCheck className="h-3.5 w-3.5" />
             </Button>
           </div>
 
@@ -821,6 +851,8 @@ export function PlanningPage() {
         </div>
       )}
 
+      <CrewsWithoutSiteBanner />
+
       {(pageError || storeError) && (
         <div className="border-b border-destructive/20 bg-destructive/5 px-6 py-2 text-sm text-destructive">
           {pageError ?? storeError}
@@ -881,6 +913,8 @@ export function PlanningPage() {
                 remountKey={`${dateFrom}_${dateTo}_${boardScope.kind === "all" ? "all" : boardScope.teamId}`}
                 maxZoom={PLANNING_TIMELINE_MAX_ZOOM_MS}
               />
+            ) : pageView === "week" ? (
+              <WeeklySchedulePanel />
             ) : (
               <PlanningCalendarView
                 key={`planning-calendar-${calendarSessionKey}`}
@@ -926,6 +960,7 @@ export function PlanningPage() {
         visibleEnd={visibleEnd}
         saving={saving}
         onSubmit={handleCreateCommitment}
+        approvers={approvers}
       />
       <ProductionWindowDialog
         open={windowOpen}
@@ -972,6 +1007,7 @@ export function PlanningPage() {
           setBreakInOpen(true);
         }}
         {...(pageView === "calendar" ? { onOpenOnBoard: handleOpenOnBoard } : {})}
+        {...(can(P.PLAN_CONFIRM) ? { onEndCommitment: handleEndCommitment } : {})}
       />
       <PlanningWindowDetailDialog
         open={windowDetailOpen}

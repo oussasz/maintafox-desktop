@@ -135,6 +135,9 @@ pub(crate) const PM_PLANNING_TYPES: &[&str] = &[
     "schedule_break_ins",
     "schedule_change_log",
     "schedule_details",
+    "weekly_schedules",
+    "weekly_schedule_events",
+    "weekly_schedule_baseline_items",
 ];
 
 /// Budgets, costs, forecasts and ERP exports.

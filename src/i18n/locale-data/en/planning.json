@@ -4,7 +4,8 @@
   },
   "views": {
     "gantt": "Gantt board",
-    "calendar": "Calendar view"
+    "calendar": "Calendar view",
+    "week": "Weekly schedule"
   },
   "calendar": {
     "today": "Today",
@@ -224,14 +225,9 @@
     "dangerousOverrideReason": "Dangerous override reason",
     "create": "Register break-in",
     "empty": "No break-ins for selected period.",
-    "reasons": {
-      "emergency": "Emergency",
-      "safety": "Safety",
-      "production_loss": "Production loss",
-      "regulatory": "Regulatory",
-      "other": "Other"
-    },
-    "acknowledgeRefusals": "Override these refusals with the reason above"
+    "acknowledgeRefusals": "Override these refusals with the reason above",
+    "urgentHint": "Urgent reason: name an approver or give a dangerous-override reason.",
+    "inserted": "Added to a frozen week:"
   },
   "freeze": {
     "title": "Freeze schedule period",
@@ -260,7 +256,8 @@
     "auditTitle": "Schedule change log",
     "auditEmpty": "No audit entries for this commitment.",
     "openOnBoard": "Open on board",
-    "sourceWorkOrder": "Work order:"
+    "sourceWorkOrder": "Work order:",
+    "statusReason": "Reason"
   },
   "audit": {
     "actions": {
@@ -268,7 +265,11 @@
       "reschedule_commitment": "Rescheduled",
       "override_double_booking": "Double-booking override",
       "freeze_schedule_period": "Period frozen",
-      "create_break_in": "Break-in registered"
+      "create_break_in": "Break-in registered",
+      "release_commitment": "Slot released",
+      "cancel_commitment": "Commitment cancelled",
+      "close_commitment": "Closed (work finished)",
+      "break_in_insert": "Entered a frozen week (break-in)"
     }
   },
   "dialogs": {
@@ -336,5 +337,84 @@
     "requestPermit": "Request a permit",
     "openArticle": "Open article {{code}}",
     "openWindows": "Planning windows"
+  },
+  "commitmentStatus": {
+    "committed": "Committed",
+    "released": "Slot released",
+    "cancelled": "Cancelled",
+    "closed": "Closed"
+  },
+  "lifecycle": {
+    "reason": "Reason (required)",
+    "released": {
+      "action": "Release slot",
+      "hint": "The slot is given back: the job returns to the backlog to be scheduled again.",
+      "confirm": "Release"
+    },
+    "cancelled": {
+      "action": "Cancel commitment",
+      "hint": "The commitment is cancelled and its slot given back. The work itself is not cancelled.",
+      "confirm": "Cancel commitment"
+    }
+  },
+  "frozenWeek": {
+    "title": "Frozen week: enter as a break-in",
+    "hint": "The week of {{week}} is frozen. This job enters it only as a recorded break-in, with its reason.",
+    "selectReason": "Choose a reason",
+    "confirm": "Commit as break-in"
+  },
+  "weekly": {
+    "title": "Weekly schedule",
+    "site": "Planning site",
+    "noSite": "Choose a site",
+    "noPlanningSite": "No planning site: in the organisation, a node whose type can own work defines a site.",
+    "previous": "Previous week",
+    "next": "Next week",
+    "range": "{{from}} to {{to}}",
+    "status": {
+      "draft": "Draft",
+      "approved": "Approved",
+      "frozen": "Frozen",
+      "published": "Published"
+    },
+    "frozenWithoutApproval": "Frozen without approval",
+    "frozenWithoutApprovalHint": "This week was frozen automatically without approval. A holder of the planning confirm right must approve it; approving after the fact does not change the frozen baseline.",
+    "approve": "Approve",
+    "approveAfterFreeze": "Approve after the fact",
+    "freeze": "Freeze",
+    "publish": "Publish to crews",
+    "requestUnfreeze": "Request unfreeze",
+    "freezeDue": "Freezes automatically on {{at}}",
+    "frozenAt": "Frozen on {{at}}",
+    "frozenAutomatically": "Frozen automatically on {{at}}",
+    "unfreezePending": "Unfreeze requested on {{at}}: {{reason}}. Another planner must decide it.",
+    "approveUnfreeze": "Approve unfreeze",
+    "rejectUnfreeze": "Reject unfreeze",
+    "unfreezeHint": "Another holder of the planning confirm right must approve the unfreeze (four-eyes).",
+    "unfreezeReason": "Reason for unfreezing",
+    "sendUnfreezeRequest": "Send request",
+    "crew": "Crew",
+    "dayOff": "rest day",
+    "frozenJob": "Frozen",
+    "noCrews": "No active crew belongs to this site.",
+    "history": "Week history",
+    "system": "System",
+    "events": {
+      "approved": "Approved",
+      "frozen": "Frozen",
+      "auto_frozen": "Frozen automatically",
+      "unfreeze_requested": "Unfreeze requested",
+      "unfreeze_rejected": "Unfreeze rejected",
+      "unfrozen": "Unfrozen",
+      "published": "Published to crews",
+      "approved_after_freeze": "Approved after the fact"
+    }
+  },
+  "crewsWithoutSite": {
+    "title": "Crew without a planning site",
+    "hint": "These crews appear on no weekly schedule: their work is never approved, frozen or published. Attach each crew to an organisation node under a site (a node type that can own work).",
+    "fixTeams": "Fix the crews",
+    "fixOrg": "Open the organisation",
+    "loadFailed": "Could not check for crews without a planning site: {{error}}"
   }
 }

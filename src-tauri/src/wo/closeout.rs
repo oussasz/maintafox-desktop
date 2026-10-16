@@ -1500,6 +1500,8 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
     // Cost settlement into the budget, once per close (pending with its reason when it cannot post).
     crate::finance::settlement::settle_closed_work_order(&txn, input.wo_id, input.actor_id).await?;
 
+    // Its schedule commitments are closed with it (`planning::lifecycle`).
+    crate::planning::lifecycle::close_commitments_of_work_order(&txn, input.wo_id).await?;
     txn.commit().await?;
 
     crate::pm::generation_control::on_work_order_closed_for_pm(db, input.wo_id, Some(input.actor_id)).await;
