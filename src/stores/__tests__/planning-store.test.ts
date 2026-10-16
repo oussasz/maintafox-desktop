@@ -135,6 +135,7 @@ function makeWindow(overrides: Partial<PlanningWindow> = {}): PlanningWindow {
     id: 4,
     entity_id: null,
     equipment_id: null,
+    scope_review_required: 0,
     entity_name: null,
     equipment_code: null,
     equipment_name: null,

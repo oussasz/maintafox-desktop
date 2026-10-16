@@ -86,7 +86,8 @@
     "prerequisite_incomplete": "Prerequisites incomplete",
     "locked_window": "No shutdown window",
     "double_booking": "Double booking",
-    "not_estimated": "Not estimated"
+    "not_estimated": "Not estimated",
+    "location_unknown": "Location unknown"
   },
   "board": {
     "unassignedLane": "Team — not yet assigned to a person",
@@ -205,7 +206,9 @@
     "equipmentHint": "Leave empty for the whole site.",
     "lock": "Locked window",
     "lockedHint": "No work can be committed on this site or equipment during the window.",
-    "openHint": "Open: work that needs the equipment stopped can be placed here (maintenance window, planned shutdown)."
+    "openHint": "Open: work that needs the equipment stopped can be placed here (maintenance window, planned shutdown).",
+    "scopeReview": "Site to re-enter",
+    "scopeReviewHint": "This window was created before sites were recorded correctly: it applies to the whole plant until its site is re-entered."
   },
   "breakIns": {
     "title": "Break-ins",
@@ -319,7 +322,8 @@
     "PERMIT_IN_PREPARATION": "Permit {{permit_code}} is being prepared ({{status}}); it must be active before the work starts.",
     "PERMIT_ON_HOLD": "Permit {{permit_code}} is suspended ({{status}}); revalidate it before the work starts.",
     "PERMIT_EXPIRES_BEFORE_WORK": "Permit {{permit_code}} expires before the end of the work ({{expires_at}}).",
-    "LOTO_NOT_VERIFIED": "LOTO on permit {{permit_code}}: {{verified}} of {{isolations}} isolation points verified; all must be before the work starts."
+    "LOTO_NOT_VERIFIED": "LOTO on permit {{permit_code}}: {{verified}} of {{isolations}} isolation points verified; all must be before the work starts.",
+    "LOCATION_UNKNOWN": "Location unknown: site windows not checked."
   },
   "reasonParts": {
     "duration": "duration",

@@ -1422,6 +1422,59 @@ mod tests {
         exec_sql("UPDATE work_permits SET status = 'closed'".into()).await;
         refused_with(gate().await, "PERMIT_REQUIRED_TO_START");
     }
+
+    /// A permit linked to an OT protects the work even when the OT is not flagged as requiring
+    /// one: a suspended permit or unverified LOTO refuses start / resume. No linked permit and no
+    /// requirement: the OT starts as before.
+    #[tokio::test]
+    async fn a_linked_permit_is_enforced_even_without_the_requirement_flag() {
+        let db = setup().await;
+        seed_test_equipment(&db).await;
+        let actor = admin_id(&db).await;
+        let wo = queries::create_work_order(&db, corrective_input(actor, None))
+            .await
+            .expect("create WO");
+        assert!(!wo.requires_permit);
+        let equipment = wo.equipment_id.expect("WO equipment");
+        let exec_sql = |sql: String| {
+            let db = db.clone();
+            async move {
+                db.execute(Statement::from_string(DbBackend::Sqlite, sql.clone()))
+                    .await
+                    .unwrap_or_else(|e| panic!("{sql}: {e}"));
+            }
+        };
+        let gate = || crate::permit::wo_gate::assert_in_progress_permit_gate(&db, wo.id);
+        gate().await.expect("no permit, none required");
+
+        exec_sql(format!(
+            "INSERT INTO work_permits (entity_sync_id, code, linked_work_order_id, permit_type_id, asset_id, entity_id, status, row_version)
+             SELECT 'flagless-loto', 'PTW-FLAGLESS', {}, id, {equipment}, 1, 'active', 1 FROM permit_types WHERE code = 'loto'",
+            wo.id
+        ))
+        .await;
+        exec_sql(
+            "INSERT INTO permit_isolations (entity_sync_id, permit_id, isolation_point, energy_type, isolation_method)
+             SELECT 'flagless-iso', id, 'Q7 breaker', 'electrical', 'lock' FROM work_permits WHERE code = 'PTW-FLAGLESS'"
+                .into(),
+        )
+        .await;
+        let unverified = gate().await;
+        assert!(
+            format!("{unverified:?}").contains("LOTO_NOT_VERIFIED"),
+            "{unverified:?}"
+        );
+        exec_sql("UPDATE work_permits SET status = 'suspended' WHERE code = 'PTW-FLAGLESS'".into()).await;
+        let suspended = gate().await;
+        assert!(format!("{suspended:?}").contains("PERMIT_SUSPENDED"), "{suspended:?}");
+        exec_sql("UPDATE work_permits SET status = 'active' WHERE code = 'PTW-FLAGLESS'".into()).await;
+        exec_sql(
+            "UPDATE permit_isolations SET verified_at = '2026-05-04T07:30:00Z' WHERE entity_sync_id = 'flagless-iso'"
+                .into(),
+        )
+        .await;
+        gate().await.expect("active permit, isolation verified");
+    }
     // ═══════════════════════════════════════════════════════════════════════
     // Execution-added stock part — reserved and issued from stock at once
     // ═══════════════════════════════════════════════════════════════════════

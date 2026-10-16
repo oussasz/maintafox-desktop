@@ -138,6 +138,7 @@ const PlanningWindowSchema = z.object({
   entity_id: z.number().nullable(),
   equipment_id: z.number().nullable(),
   window_type: z.string(),
+  scope_review_required: z.number(),
   start_datetime: z.string(),
   end_datetime: z.string(),
   is_locked: z.number(),

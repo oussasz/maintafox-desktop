@@ -86,7 +86,8 @@
     "prerequisite_incomplete": "Prérequis incomplets",
     "locked_window": "Pas de fenêtre d'arrêt",
     "double_booking": "Double affectation",
-    "not_estimated": "Non estimé"
+    "not_estimated": "Non estimé",
+    "location_unknown": "Lieu inconnu"
   },
   "board": {
     "unassignedLane": "Équipe — pas encore affecté à une personne",
@@ -205,7 +206,9 @@
     "equipmentHint": "Laissez vide pour tout le site.",
     "lock": "Fenêtre verrouillée",
     "lockedHint": "Aucun travail ne peut être engagé sur ce site ou cet équipement pendant la fenêtre.",
-    "openHint": "Ouverte : les travaux qui exigent l'arrêt de l'équipement peuvent y être placés (fenêtre de maintenance, arrêt programmé)."
+    "openHint": "Ouverte : les travaux qui exigent l'arrêt de l'équipement peuvent y être placés (fenêtre de maintenance, arrêt programmé).",
+    "scopeReview": "Site à ressaisir",
+    "scopeReviewHint": "Cette fenêtre a été créée avant que le site soit enregistré correctement : elle s'applique à toute l'usine jusqu'à ce que son site soit ressaisi."
   },
   "breakIns": {
     "title": "Insertions d'urgence",
@@ -319,7 +322,8 @@
     "PERMIT_IN_PREPARATION": "Le permis {{permit_code}} est en préparation ({{status}}) ; il doit être actif avant le démarrage.",
     "PERMIT_ON_HOLD": "Le permis {{permit_code}} est suspendu ({{status}}) ; revalidez-le avant le démarrage.",
     "PERMIT_EXPIRES_BEFORE_WORK": "Le permis {{permit_code}} expire avant la fin du travail ({{expires_at}}).",
-    "LOTO_NOT_VERIFIED": "LOTO du permis {{permit_code}} : {{verified}} points d'isolement vérifiés sur {{isolations}} ; tous doivent l'être avant le démarrage."
+    "LOTO_NOT_VERIFIED": "LOTO du permis {{permit_code}} : {{verified}} points d'isolement vérifiés sur {{isolations}} ; tous doivent l'être avant le démarrage.",
+    "LOCATION_UNKNOWN": "Lieu inconnu : fenêtres du site non vérifiées."
   },
   "reasonParts": {
     "duration": "durée",

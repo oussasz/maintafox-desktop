@@ -154,6 +154,9 @@ fn map_planning_window(row: &QueryResult) -> AppResult<PlanningWindow> {
             .map_err(|e| decode_err("row_version", e))?,
         created_at: row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
         updated_at: row.try_get("", "updated_at").map_err(|e| decode_err("updated_at", e))?,
+        scope_review_required: row
+            .try_get("", "scope_review_required")
+            .map_err(|e| decode_err("scope_review_required", e))?,
         entity_name: row
             .try_get("", "entity_name")
             .map_err(|e| decode_err("entity_name", e))?,
@@ -1293,6 +1296,12 @@ pub async fn update_planning_window(
     let start_datetime = input.start_datetime.unwrap_or(current.start_datetime.clone());
     let end_datetime = input.end_datetime.unwrap_or(current.end_datetime.clone());
     validate_window(&start_datetime, &end_datetime, "start_datetime", "end_datetime")?;
+    // Re-entering the site or the equipment settles a scope flagged for review.
+    let scope_review_required = if input.entity_id.is_some() || input.equipment_id.is_some() {
+        0
+    } else {
+        current.scope_review_required
+    };
     let equipment_id = input.equipment_id.unwrap_or(current.equipment_id);
     let entity_id =
         windows::validate_window_scope(db, input.entity_id.unwrap_or(current.entity_id), equipment_id).await?;
@@ -1302,7 +1311,7 @@ pub async fn update_planning_window(
             DbBackend::Sqlite,
             "UPDATE planning_windows
          SET entity_id = ?, equipment_id = ?, window_type = ?, start_datetime = ?, end_datetime = ?,
-             is_locked = ?, lock_reason = ?,
+             is_locked = ?, lock_reason = ?, scope_review_required = ?,
              row_version = row_version + 1, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
          WHERE id = ? AND row_version = ?",
             [
@@ -1313,6 +1322,7 @@ pub async fn update_planning_window(
                 end_datetime.into(),
                 i64::from(input.is_locked.unwrap_or(current.is_locked == 1)).into(),
                 input.lock_reason.or(current.lock_reason).into(),
+                scope_review_required.into(),
                 window_id.into(),
                 expected_row_version.into(),
             ],
@@ -1615,6 +1625,30 @@ pub async fn create_schedule_break_in(
         ]));
     }
 
+    // The same blocking checks as a commitment (the job's blocking conflicts, re-derived now, and
+    // the shutdown window over the new slot). A break-in passes them only with the recorded
+    // dangerous-override reason, and then stays critical on the board.
+    let mut forced_blocking = !capacity_ok || locked_window.is_some();
+    let readiness = enforce_candidate_ready(&tx, current.schedule_candidate_id, None)
+        .await
+        .map(|_| ());
+    let shutdown = enforce_shutdown_window(
+        &tx,
+        current.schedule_candidate_id,
+        &input.new_slot_start,
+        &input.new_slot_end,
+        location,
+    )
+    .await;
+    for check in [readiness, shutdown] {
+        if let Err(err) = check {
+            if dangerous_override_reason.is_none() {
+                return Err(err);
+            }
+            forced_blocking = true;
+        }
+    }
+
     let next_cost = estimate_labor_cost(&tx, next_personnel_id, labour_hours).await?;
     let old_cost = current.estimated_labor_cost.unwrap_or(0.0);
     let cost_delta = next_cost.map(|v| ((v - old_cost) * 100.0).round() / 100.0);
@@ -1645,8 +1679,9 @@ pub async fn create_schedule_break_in(
             next_personnel_id.into(),
             next_cost.into(),
             None::<String>.into(),
-            // Forced over a capacity overload or a locked window: the bar stays critical.
-            i64::from(!capacity_ok || locked_window.is_some()).into(),
+            // Forced over a blocking check (capacity, locked window, readiness, shutdown window):
+            // the bar stays critical.
+            i64::from(forced_blocking).into(),
             current.id.into(),
             input.expected_commitment_row_version.into(),
         ],
@@ -1707,6 +1742,9 @@ pub async fn create_schedule_break_in(
                 "approved_by_user_id": approved_by_user_id,
                 "approved_by_personnel_id": approved_by_personnel_id,
                 "dangerous_override": dangerous_override_reason.is_some(),
+                "dangerous_override_reason": dangerous_override_reason,
+                // A blocking check (capacity, locked window, readiness, shutdown) was forced.
+                "forced_blocking": forced_blocking,
                 "bypass_availability": bypass_availability,
                 "cost_impact_delta": cost_delta
             })

@@ -251,6 +251,14 @@ export function ProductionWindowDialog({
                     {t("windows.locked")}
                   </Badge>
                 )}
+                {window.scope_review_required === 1 && (
+                  <Badge
+                    className="ml-2 border-amber-200 bg-amber-50 text-amber-800"
+                    variant="outline"
+                  >
+                    {t("windows.scopeReview")}
+                  </Badge>
+                )}
                 {window.lock_reason ? (
                   <div className="text-text-muted">{formatOrDash(window.lock_reason)}</div>
                 ) : null}

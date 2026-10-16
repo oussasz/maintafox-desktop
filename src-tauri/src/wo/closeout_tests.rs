@@ -779,6 +779,38 @@ mod tests {
         ))
         .await
         .expect("recent closure");
+
+        // Reopening to execution restarts work: the permit gate applies. The OT requires a
+        // permit and its only permit is closed → refused.
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE work_orders SET requires_permit = 1 WHERE id = ?",
+            [wo_id.into()],
+        ))
+        .await
+        .expect("require a permit");
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO work_permits (entity_sync_id, code, linked_work_order_id, permit_type_id, asset_id, entity_id, status, row_version)
+             SELECT 'reopen-closed-permit', 'PTW-REOPEN', wo.id, pt.id, COALESCE(wo.equipment_id, (SELECT MIN(id) FROM equipment)), COALESCE(wo.entity_id, 1), 'closed', 1
+               FROM work_orders wo, permit_types pt WHERE wo.id = ? AND pt.code = 'hot_work'",
+            [wo_id.into()],
+        ))
+        .await
+        .expect("closed permit");
+        let refused = closeout::reopen_wo(&db, reopen(closed_wo.row_version)).await;
+        assert!(
+            format!("{refused:?}").contains("PERMIT_REQUIRED_TO_START"),
+            "reopen to execution without a live permit: {refused:?}"
+        );
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE work_orders SET requires_permit = 0 WHERE id = ?",
+            [wo_id.into()],
+        ))
+        .await
+        .expect("no permit required");
+
         let reopened = closeout::reopen_wo(&db, reopen(closed_wo.row_version))
             .await
             .expect("reopen within window");

@@ -46,6 +46,15 @@ const BACKEND_REASON_CODES = [
   "PREREQUISITE_BLOCKED",
   "NO_FEASIBLE_WINDOW",
   "ASSIGNEE_UNAVAILABLE",
+  "PARTS_SHORT",
+  "PART_NOT_IN_CATALOGUE",
+  "PART_QUANTITY_MISSING",
+  "PERMIT_TO_REQUEST",
+  "PERMIT_IN_PREPARATION",
+  "PERMIT_ON_HOLD",
+  "PERMIT_EXPIRES_BEFORE_WORK",
+  "LOTO_NOT_VERIFIED",
+  "LOCATION_UNKNOWN",
 ];
 
 const BACKEND_BLOCKER_CODES = [
@@ -55,6 +64,7 @@ const BACKEND_BLOCKER_CODES = [
   "prerequisite_incomplete",
   "locked_window",
   "double_booking",
+  "location_unknown",
 ];
 
 function candidate(overrides: Partial<ScheduleCandidate> = {}): ScheduleCandidate {

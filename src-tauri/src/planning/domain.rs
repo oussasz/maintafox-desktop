@@ -149,6 +149,9 @@ pub struct PlanningWindow {
     pub end_datetime: String,
     pub is_locked: i64,
     pub lock_reason: Option<String>,
+    /// 1 when the site must be re-entered (a window from before migration 211, whose site was a
+    /// team id): it applies plant-wide until then.
+    pub scope_review_required: i64,
     pub row_version: i64,
     pub created_at: String,
     pub updated_at: String,

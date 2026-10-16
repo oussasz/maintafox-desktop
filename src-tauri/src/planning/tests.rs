@@ -3307,3 +3307,148 @@ fn only_warnings_let_a_commitment_through_and_unknown_severities_block() {
     assert!(queries::is_blocking_severity("medium"));
     assert!(queries::is_blocking_severity(""));
 }
+
+fn break_in_input(
+    commitment: &crate::planning::domain::ScheduleCommitment,
+    start: &str,
+    end: &str,
+    dangerous_override_reason: Option<&str>,
+) -> CreateScheduleBreakInInput {
+    CreateScheduleBreakInInput {
+        schedule_commitment_id: commitment.id,
+        expected_commitment_row_version: commitment.row_version,
+        break_in_reason: "other".to_string(),
+        approved_by_user_id: None,
+        new_slot_start: local(start),
+        new_slot_end: local(end),
+        new_assigned_team_id: None,
+        new_assigned_personnel_id: None,
+        clear_assignee: None,
+        bypass_availability: Some(false),
+        override_reason: None,
+        acknowledged_assignee_issues: Vec::new(),
+        dangerous_override_reason: dangerous_override_reason.map(str::to_string),
+    }
+}
+
+#[tokio::test]
+async fn a_break_in_runs_the_blocking_checks_unless_forced_with_a_recorded_reason() {
+    let db = setup_db().await;
+    let team_id = get_any_team_id(&db).await;
+    let candidate = insert_candidate(&db, "manual_test", 7701, "ready", 100.0).await;
+    let commitment = scheduling::create_schedule_commitment(
+        &db,
+        1,
+        commit_input(candidate, team_id, "2026-05-04T08:00", "2026-05-04T09:00"),
+    )
+    .await
+    .expect("committed");
+
+    // After the commitment the job turns out to need a shutdown, and no shutdown window exists.
+    exec_sql(
+        &db,
+        &format!("UPDATE schedule_candidates SET shutdown_requirement = 'required' WHERE id = {candidate}"),
+    )
+    .await;
+    let refused = scheduling::create_schedule_break_in(
+        &db,
+        1,
+        break_in_input(&commitment, "2026-05-04T10:00", "2026-05-04T11:00", None),
+    )
+    .await
+    .expect_err("blocking conflict on a break-in");
+    assert!(format!("{refused:?}").contains("NO_FEASIBLE_WINDOW"), "{refused:?}");
+
+    // Forced with the dangerous-override reason: moved, recorded, and the bar stays critical.
+    scheduling::create_schedule_break_in(
+        &db,
+        1,
+        break_in_input(
+            &commitment,
+            "2026-05-04T10:00",
+            "2026-05-04T11:00",
+            Some("Line stopped by the breakdown itself"),
+        ),
+    )
+    .await
+    .expect("forced break-in");
+    let moved = scheduling::list_schedule_commitments(
+        &db,
+        ScheduleCommitmentFilter {
+            period_start: None,
+            period_end: None,
+            team_id: Some(team_id),
+            personnel_id: None,
+        },
+    )
+    .await
+    .expect("list")
+    .into_iter()
+    .find(|c| c.id == commitment.id)
+    .expect("commitment");
+    assert_eq!(moved.committed_start, local("2026-05-04T10:00"));
+    assert_eq!(moved.has_blocking_conflict, 1);
+    let recorded = scalar(
+        &db,
+        &format!(
+            "SELECT COUNT(*) FROM schedule_change_log WHERE commitment_id = {}
+               AND action_type = 'break_in_override'
+               AND json_extract(details_json, '$.forced_blocking') = 1
+               AND json_extract(details_json, '$.dangerous_override_reason') = 'Line stopped by the breakdown itself'",
+            commitment.id
+        ),
+    )
+    .await;
+    assert_eq!(recorded, 1, "the forced override is recorded with its reason");
+}
+
+#[tokio::test]
+async fn a_job_without_a_site_warns_that_site_windows_are_not_checked() {
+    let db = setup_db().await;
+    // A PM plan scoped to an equipment family: its occurrence has no single site.
+    exec_sql(
+        &db,
+        "INSERT INTO pm_plans (entity_sync_id, code, title, asset_scope_type, asset_scope_id, strategy_type,
+            lifecycle_status, requires_shutdown, requires_permit)
+         VALUES ('pln-family-plan', 'PM-FAMILY', 'Contrôle pompes', 'family', NULL, 'time_based', 'active', 0, 0)",
+    )
+    .await;
+    let plan = scalar(&db, "SELECT id FROM pm_plans WHERE code = 'PM-FAMILY'").await;
+    exec_sql(
+        &db,
+        &format!(
+            "INSERT INTO pm_plan_versions (entity_sync_id, pm_plan_id, version_no, status, effective_from,
+                trigger_definition_json)
+             VALUES ('pln-family-version', {plan}, 1, 'published', '2026-01-01', '{{}}')"
+        ),
+    )
+    .await;
+    let version = scalar(
+        &db,
+        "SELECT id FROM pm_plan_versions WHERE entity_sync_id = 'pln-family-version'",
+    )
+    .await;
+    exec_sql(
+        &db,
+        &format!(
+            "INSERT INTO pm_occurrences (entity_sync_id, pm_plan_id, plan_version_id, due_basis, due_at, status)
+             VALUES ('pln-family-occ', {plan}, {version}, 'test', '2026-05-04T00:00:00Z', 'planned')"
+        ),
+    )
+    .await;
+    let occurrence = scalar(
+        &db,
+        "SELECT id FROM pm_occurrences WHERE entity_sync_id = 'pln-family-occ'",
+    )
+    .await;
+    let candidate = insert_candidate(&db, "pm_occurrence", occurrence, "ready", 100.0).await;
+
+    re_evaluate(&db).await;
+    assert!(
+        open_conflicts(&db, candidate)
+            .await
+            .contains(&("LOCATION_UNKNOWN".to_string(), "warning".to_string())),
+        "the planner is told the site windows were not checked"
+    );
+    assert_eq!(readiness_of(&db, candidate).await, "ready", "a warning, not a block");
+}

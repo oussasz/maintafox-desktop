@@ -908,6 +908,27 @@ pub(crate) async fn evaluate_candidate(db: &impl ConnectionTrait, candidate_id: 
         }
     }
 
+    // A job whose site is unknown (no equipment location, no node; a PM scoped to a family or a
+    // criticality group) cannot be checked against its site's windows: said, never ignored.
+    if matches!(
+        candidate.source_type.as_str(),
+        "work_order" | "pm_occurrence" | "inspection_follow_up"
+    ) && super::windows::job_location(db, &candidate.source_type, candidate.source_id)
+        .await?
+        .node_id
+        .is_none()
+    {
+        conflicts.push(EvaluatedConflict {
+            conflict_type: "location_unknown".to_string(),
+            reference_type: Some(candidate.source_type.clone()),
+            reference_id: Some(candidate.source_id),
+            reason_code: "LOCATION_UNKNOWN".to_string(),
+            severity: SEVERITY_WARNING.to_string(),
+            details_json: None,
+            dimension: "windows",
+        });
+    }
+
     let mut availability_conflict_count = 0_i64;
     let mut next_available_window: Option<String> = None;
     let mut open_work_count: Option<i64> = None;
@@ -1250,7 +1271,7 @@ pub async fn get_schedule_backlog_snapshot(
                 "missing_critical_part" => "parts",
                 "no_qualified_technician" => "skills",
                 "permit_not_ready" => "permits",
-                "locked_window" | "double_booking" => "windows",
+                "locked_window" | "double_booking" | "location_unknown" => "windows",
                 _ => "prerequisites",
             })
             .collect::<BTreeSet<_>>()

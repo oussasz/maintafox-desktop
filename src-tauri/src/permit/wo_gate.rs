@@ -1,17 +1,19 @@
-//! Permit gate of work order execution: an OT that requires a permit starts or resumes only when
-//! every live permit linked to it is active and ready to protect the work (not expired, LOTO
-//! isolations all applied and verified, none removed). Planning only warns about permits; this
-//! gate is where the rule is hard-enforced.
+//! Permit gate of work order execution: an OT starts, resumes or is reopened to in-progress only
+//! when every live permit linked to it is active and ready to protect the work (not expired, LOTO
+//! isolations all applied and verified, none removed) — whether or not the OT is flagged as
+//! requiring a permit — and, when it requires one, at least one exists. Planning only warns about
+//! permits; this gate is where the rule is hard-enforced. Callers run it inside the transaction
+//! that changes the status.
 
 use std::collections::HashMap;
 
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
 use crate::errors::{org_validation_failed, AppError, AppResult};
 
 use super::queries::{activation_ready, list_live_permits_linked_to_work_order};
 
-pub async fn assert_in_progress_permit_gate(db: &DatabaseConnection, wo_id: i64) -> AppResult<()> {
+pub async fn assert_in_progress_permit_gate(db: &impl ConnectionTrait, wo_id: i64) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -26,16 +28,14 @@ pub async fn assert_in_progress_permit_gate(db: &DatabaseConnection, wo_id: i64)
     let requires: i64 = row
         .try_get("", "requires_permit")
         .map_err(|e| AppError::Internal(anyhow::anyhow!("requires_permit decode: {e}")))?;
-    if requires == 0 {
-        return Ok(());
-    }
-    assert_live_permits_ready(db, wo_id).await
+    assert_live_permits_ready(db, wo_id, requires == 1).await
 }
 
-/// Every live permit of the work order is active and ready; at least one exists.
-async fn assert_live_permits_ready(db: &impl ConnectionTrait, wo_id: i64) -> AppResult<()> {
+/// Every live permit linked to the work order is active and ready (a permit that exists protects
+/// the work, flag or not); when the OT requires a permit, at least one exists.
+async fn assert_live_permits_ready(db: &impl ConnectionTrait, wo_id: i64, required: bool) -> AppResult<()> {
     let permits = list_live_permits_linked_to_work_order(db, wo_id).await?;
-    if permits.is_empty() {
+    if permits.is_empty() && required {
         return Err(org_validation_failed(
             "PERMIT_REQUIRED_TO_START",
             "This work order requires a work permit: link an active permit before starting or resuming it.",

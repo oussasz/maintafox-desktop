@@ -60,6 +60,9 @@ export function PlanningWindowDetailDialog({
               <div className="text-text-primary">
                 {windowScopeLabel(planningWindow, t("windows.plantWide"))}
               </div>
+              {planningWindow.scope_review_required === 1 ? (
+                <p className="mt-1 text-xs text-amber-800">{t("windows.scopeReviewHint")}</p>
+              ) : null}
             </div>
             <div>
               <div className="text-[10px] uppercase tracking-wide text-text-muted">

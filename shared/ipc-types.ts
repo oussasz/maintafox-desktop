@@ -8613,6 +8613,8 @@ export interface PlanningWindow {
   end_datetime: string;
   is_locked: number;
   lock_reason: string | null;
+  /** 1 = the site must be re-entered (window from before migration 211): plant-wide until then. */
+  scope_review_required: number;
   row_version: number;
   created_at: string;
   updated_at: string;

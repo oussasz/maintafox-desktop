@@ -261,7 +261,7 @@ const APPLIES_SQL: &str = "(pw.entity_id IS NULL OR pw.entity_id IN ( \
 
 /// Columns of a window (alias `pw`), with the names of its site and equipment.
 pub const WINDOW_COLS: &str = "pw.id,pw.entity_id,pw.equipment_id,pw.window_type,pw.start_datetime,pw.end_datetime,\
-pw.is_locked,pw.lock_reason,pw.row_version,pw.created_at,pw.updated_at,\
+pw.is_locked,pw.lock_reason,pw.scope_review_required,pw.row_version,pw.created_at,pw.updated_at,\
 (SELECT n.name FROM org_nodes n WHERE n.id = pw.entity_id) AS entity_name,\
 (SELECT e.asset_id_code FROM equipment e WHERE e.id = pw.equipment_id) AS equipment_code,\
 (SELECT e.name FROM equipment e WHERE e.id = pw.equipment_id) AS equipment_name";
