@@ -3715,6 +3715,8 @@ export interface UpdatePmPlanVersionInput {
   required_tools_json?: string | null;
   estimated_duration_hours?: number | null;
   planned_crew_size?: number | null;
+  /** Removes the crew size (an omitted `planned_crew_size` keeps it). */
+  clear_planned_crew_size?: boolean;
   estimated_labor_cost?: number | null;
   estimated_parts_cost?: number | null;
   estimated_service_cost?: number | null;
@@ -4977,6 +4979,8 @@ export interface WoPlanInput {
   expected_duration_hours?: number | null;
   /** People the job takes; omitted keeps the current one. */
   planned_crew_size?: number | null;
+  /** Removes the crew size. */
+  clear_crew_size?: boolean;
   planned_downtime_hours?: number | null;
   urgency_code?: UrgencyCode | null;
 }
@@ -8598,6 +8602,17 @@ export interface TeamCapacityLoad {
   utilization_ratio: number | null;
   /** `roster` (the members' Classes horaires) | `rest_day` | `holiday` | `no_schedule` | `no_members`. */
   basis: string;
+  /** The members' shift windows that day (local time) and their hours: a slot is spread over them. */
+  work_windows: CapacityWindow[];
+  /** Hours of members whose shift window is not known (counted in full on the days a slot touches). */
+  unwindowed_hours: number;
+}
+
+/** One member's shift window (local `YYYY-MM-DDTHH:MM:SS`; a night shift ends the next day). */
+export interface CapacityWindow {
+  start: string;
+  end: string;
+  hours: number;
 }
 
 export interface PlanningAssigneeLane {

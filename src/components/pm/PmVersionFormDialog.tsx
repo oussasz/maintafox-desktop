@@ -119,10 +119,16 @@ function optionalNumber(raw: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/** Whole people; the backend refuses fewer than one. */
-function optionalCrewSize(raw: string): number | null {
-  const n = optionalNumber(raw);
-  return n == null ? null : Math.trunc(n);
+/** Largest crew on one job (`planning::load::MAX_CREW_SIZE`; also enforced by the database). */
+const MAX_CREW_SIZE = 50;
+
+/** The crew size typed: empty (none), a whole number of people from 1 to 50, or refused. */
+function readCrewSize(raw: string): { ok: true; value: number | null } | { ok: false } {
+  if (!raw.trim()) return { ok: true, value: null };
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 1 && n <= MAX_CREW_SIZE
+    ? { ok: true, value: n }
+    : { ok: false };
 }
 
 const NEW_OR_METER: PmMeterSpec = {
@@ -235,6 +241,11 @@ export function PmVersionFormDialog({
       setError(meterError);
       return;
     }
+    const crew = readCrewSize(crewSize);
+    if (!crew.ok) {
+      setError(t("fields.plannedCrewSizeInvalid", { max: MAX_CREW_SIZE }));
+      return;
+    }
     const payload = {
       effective_from: `${effectiveFrom}T00:00:00Z`,
       effective_to: effectiveTo ? `${effectiveTo}T23:59:59Z` : null,
@@ -244,7 +255,7 @@ export function PmVersionFormDialog({
       required_skills_json: skills.length > 0 ? JSON.stringify(skills) : null,
       required_tools_json: csvToJsonArray(toolsCsv),
       estimated_duration_hours: optionalNumber(duration),
-      planned_crew_size: optionalCrewSize(crewSize),
+      planned_crew_size: crew.value,
       estimated_labor_cost: optionalNumber(laborCost),
       estimated_parts_cost: optionalNumber(partsCost),
       estimated_service_cost: optionalNumber(serviceCost),
@@ -254,7 +265,11 @@ export function PmVersionFormDialog({
       if (mode === "create") {
         await onCreate(plan.id, payload);
       } else if (version) {
-        await onUpdate(version.id, version.row_version, payload);
+        // An emptied field removes the crew size from the draft version.
+        await onUpdate(version.id, version.row_version, {
+          ...payload,
+          clear_planned_crew_size: crew.value == null && version.planned_crew_size != null,
+        });
       }
       onClose();
     } catch (err) {

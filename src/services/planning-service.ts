@@ -213,6 +213,8 @@ const TeamCapacityLoadSchema = z.object({
   utilization_ratio: z.number().nullable(),
   /** Why the team has (no) hours that day: kept so the board says so instead of "100 %". */
   basis: z.string(),
+  work_windows: z.array(z.object({ start: z.string(), end: z.string(), hours: z.number() })),
+  unwindowed_hours: z.number(),
 });
 
 const PlanningAssigneeLaneSchema = z.object({

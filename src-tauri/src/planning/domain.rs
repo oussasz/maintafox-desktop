@@ -228,6 +228,21 @@ pub struct TeamCapacityLoad {
     /// (no Classe horaire) or `no_members`.
     #[serde(default)]
     pub basis: String,
+    /// The members' shift windows that day and the hours they bring: a slot is spread over the
+    /// working time it covers, exactly as the capacity gate does (`planning::load`).
+    #[serde(default)]
+    pub work_windows: Vec<CapacityWindow>,
+    /// Hours of members whose shift window is not known (counted in full on the days a slot touches).
+    #[serde(default)]
+    pub unwindowed_hours: f64,
+}
+
+/// One member's shift window (local time, `YYYY-MM-DDTHH:MM:SS`; a night shift ends the next day).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CapacityWindow {
+    pub start: String,
+    pub end: String,
+    pub hours: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

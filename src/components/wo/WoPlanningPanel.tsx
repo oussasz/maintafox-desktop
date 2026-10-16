@@ -133,10 +133,16 @@ function parseNumber(value: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/** Whole people; the backend refuses fewer than one. */
-function parseCrewSize(value: string): number | null {
-  const n = parseNumber(value);
-  return n == null ? null : Math.trunc(n);
+/** Largest crew on one job (`planning::load::MAX_CREW_SIZE`; also enforced by the database). */
+const MAX_CREW_SIZE = 50;
+
+/** The crew size typed: empty (none), a whole number of people from 1 to 50, or refused. */
+function readCrewSize(value: string): { ok: true; value: number | null } | { ok: false } {
+  if (!value.trim()) return { ok: true, value: null };
+  const n = Number(value);
+  return Number.isInteger(n) && n >= 1 && n <= MAX_CREW_SIZE
+    ? { ok: true, value: n }
+    : { ok: false };
 }
 
 function toTaskDraft(task: WoExecTask): TaskDraft {
@@ -580,6 +586,11 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
     /** Save job-prep without status change. Dates owned by Planning when committed. */
     const handleSavePlan = useCallback(async () => {
       if (!planReady || !requireActor) return;
+      const crew = readCrewSize(crewSize);
+      if (!crew.ok) {
+        setError(t("planning.plannedCrewSizeInvalid", { max: MAX_CREW_SIZE }));
+        return;
+      }
 
       setBusy(true);
       setError(null);
@@ -602,7 +613,9 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
           // The shift only when the planner changed it; the stored one is kept otherwise.
           ...shiftSaveFields(shiftTouched, shiftVersionId, wo),
           expected_duration_hours: parseNumber(expectedHours),
-          planned_crew_size: parseCrewSize(crewSize),
+          planned_crew_size: crew.value,
+          // An emptied field removes the crew size (the job is then not estimated for planning).
+          clear_crew_size: crew.value == null && wo.planned_crew_size != null,
           planned_downtime_hours: parseNumber(plannedDowntimeHours),
           urgency_code: urgencyId ? (urgencyId as UrgencyCode) : null,
         });
@@ -622,6 +635,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
     }, [
       planReady,
       requireActor,
+      t,
       wo,
       rowVersion,
       plannerId,

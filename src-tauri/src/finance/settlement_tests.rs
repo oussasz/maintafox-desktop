@@ -318,6 +318,7 @@ async fn wo_in_progress(db: &DatabaseConnection) -> i64 {
             clear_shift: false,
             expected_duration_hours: Some(2.0),
             planned_crew_size: None,
+            clear_crew_size: false,
             planned_downtime_hours: None,
             urgency_code: None,
         },
