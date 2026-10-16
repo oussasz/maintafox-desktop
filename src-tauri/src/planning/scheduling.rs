@@ -633,6 +633,7 @@ async fn maybe_sync_work_order(
     committed_end: &str,
     assigned_team_id: i64,
     assigned_personnel_id: Option<i64>,
+    clear_assignee: bool,
 ) -> AppResult<Option<WoSyncOutcome>> {
     if source_type != "work_order" {
         return Ok(None);
@@ -646,6 +647,7 @@ async fn maybe_sync_work_order(
         committed_end,
         assigned_team_id,
         assigned_personnel_id,
+        clear_assignee,
     )
     .await?;
     Ok(Some(outcome))
@@ -1627,6 +1629,8 @@ pub async fn create_schedule_break_in(
         &input.new_slot_end,
         next_team_id,
         next_personnel_id,
+        // Only the explicit "Unassigned" removes the OT's responsible.
+        input.clear_assignee.unwrap_or(false),
     )
     .await?;
 
@@ -1804,6 +1808,7 @@ pub async fn create_schedule_commitment(
         &input.committed_end,
         input.assigned_team_id,
         input.assigned_personnel_id,
+        false,
     )
     .await?;
 
@@ -1949,6 +1954,7 @@ pub async fn reschedule_schedule_commitment(
         &input.committed_end,
         input.assigned_team_id,
         input.assigned_personnel_id,
+        false,
     )
     .await?;
 

@@ -2456,19 +2456,25 @@ async fn a_commitment_without_a_technician_does_not_hide_the_work_order_from_its
     )
     .await
     .expect("crew commitment");
-    // The OT is then given a responsible technician outside planning (the commitment still names
-    // nobody): that technician carries it.
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "UPDATE work_orders SET primary_responsible_id = \
-             (SELECT id FROM user_accounts WHERE personnel_id = ? ORDER BY id LIMIT 1) WHERE id = ?",
-        [person.into(), wo_id.into()],
-    ))
-    .await
-    .expect("assigned outside planning");
+    // The write-back keeps the OT's responsible (only a named technician or an explicit
+    // "Unassigned" changes it) ...
+    let responsible: Option<i64> = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT ua.personnel_id AS p FROM work_orders wo \
+               LEFT JOIN user_accounts ua ON ua.id = wo.primary_responsible_id WHERE wo.id = ?",
+            [wo_id.into()],
+        ))
+        .await
+        .expect("query")
+        .expect("row")
+        .try_get("", "p")
+        .expect("responsible");
+    assert_eq!(responsible, Some(person), "the OT keeps its responsible");
+    // ... and that technician carries the job once (through the OT, the commitment names nobody).
     assert!(
         (person_hours_on(&db, person, "2026-05-04").await - 6.0).abs() < 0.01,
-        "the responsible technician still carries it"
+        "the responsible technician still carries it, once"
     );
 }
 
