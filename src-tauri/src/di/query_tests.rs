@@ -715,10 +715,198 @@ mod tests {
                 sla_response_deadline = strftime('%Y-%m-%dT%H:%M:%SZ', sla_response_deadline, ?), \
                 sla_resolution_deadline = strftime('%Y-%m-%dT%H:%M:%SZ', sla_resolution_deadline, ?) \
              WHERE id = ?",
-            [shift.clone().into(), shift.clone().into(), shift.into(), id.into()],
+            [
+                shift.clone().into(),
+                shift.clone().into(),
+                shift.clone().into(),
+                id.into(),
+            ],
         ))
         .await
         .expect("age request");
+        // The history moves with the request, so its pauses keep their place on the clock.
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE di_state_transition_log SET acted_at = strftime('%Y-%m-%dT%H:%M:%SZ', acted_at, ?) \
+             WHERE di_id = ?",
+            [shift.into(), id.into()],
+        ))
+        .await
+        .expect("age history");
+    }
+
+    /// Records a status change the way the review functions do (row + transition log entry).
+    async fn move_to(db: &sea_orm::DatabaseConnection, id: i64, from: &str, to: &str) {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE intervention_requests SET status = ?, row_version = row_version + 1 WHERE id = ?",
+            [to.into(), id.into()],
+        ))
+        .await
+        .expect("move status");
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO di_state_transition_log (di_id, from_status, to_status, action, actor_id, acted_at) \
+             VALUES (?, ?, ?, 'test', NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
+            [id.into(), from.into(), to.into()],
+        ))
+        .await
+        .expect("log transition");
+    }
+
+    async fn sla_of(db: &sea_orm::DatabaseConnection, id: i64) -> crate::di::sla::DiSlaStatus {
+        let di = get_intervention_request(db, id).await.expect("get").expect("row");
+        crate::di::sla::compute_sla_status(db, &di).await.expect("sla")
+    }
+
+    #[tokio::test]
+    async fn a_request_waiting_on_its_requester_does_not_breach_and_the_wait_extends_the_deadline() {
+        let db = setup().await;
+        let user_id = get_user_id(&db).await;
+        let di = create_intervention_request(&db, make_create_input(&db, user_id, "Waiting", "d").await)
+            .await
+            .expect("create");
+        move_to(&db, di.id, "submitted", "in_review").await;
+        move_to(&db, di.id, "in_review", "returned_for_clarification").await;
+        // Submitted, sent back at once, and still waiting a year later.
+        age_request(&db, di.id, 24 * 365).await;
+
+        let waiting = get_intervention_request(&db, di.id).await.expect("get").expect("row");
+        assert_eq!(waiting.sla_state.as_deref(), Some("paused"));
+        assert!(waiting.sla_paused_hours > 24.0 * 364.0, "{}", waiting.sla_paused_hours);
+        let status = sla_of(&db, di.id).await;
+        assert!(!status.is_response_breached && !status.is_resolution_breached);
+        let ids = |q: &'static str| {
+            let db = db.clone();
+            async move {
+                list_intervention_requests(&db, queue_filter(q))
+                    .await
+                    .expect("list")
+                    .items
+                    .iter()
+                    .map(|d| d.id)
+                    .collect::<Vec<_>>()
+            }
+        };
+        assert!(ids("sla_at_risk").await.is_empty(), "a paused request is not at risk");
+
+        // The requester answers: the clock runs again, the year of waiting is not counted.
+        move_to(&db, di.id, "returned_for_clarification", "in_review").await;
+        let back = get_intervention_request(&db, di.id).await.expect("get").expect("row");
+        assert_eq!(back.sla_state.as_deref(), Some("on_track"));
+        let status = sla_of(&db, di.id).await;
+        let frozen = chrono::NaiveDateTime::parse_from_str(
+            back.sla_response_deadline.as_deref().expect("frozen"),
+            "%Y-%m-%dT%H:%M:%SZ",
+        )
+        .expect("parse");
+        let extended = chrono::NaiveDateTime::parse_from_str(
+            status.sla_deadline.as_deref().expect("deadline"),
+            "%Y-%m-%dT%H:%M:%SZ",
+        )
+        .expect("parse");
+        assert!(
+            (extended - frozen).num_hours() >= 24 * 364,
+            "the wait extends the deadline: {frozen} → {extended}"
+        );
+        assert!(status.paused_hours > 24.0 * 364.0);
+    }
+
+    #[tokio::test]
+    async fn a_deferred_request_pauses_its_clock_too() {
+        let db = setup().await;
+        let user_id = get_user_id(&db).await;
+        let di = create_intervention_request(&db, make_create_input(&db, user_id, "Deferred", "d").await)
+            .await
+            .expect("create");
+        move_to(&db, di.id, "submitted", "in_review").await;
+        move_to(&db, di.id, "in_review", "deferred").await;
+        age_request(&db, di.id, 24 * 365).await;
+
+        let deferred = get_intervention_request(&db, di.id).await.expect("get").expect("row");
+        assert_eq!(deferred.sla_state.as_deref(), Some("paused"));
+        let stats = crate::di::stats::get_di_stats(
+            &db,
+            crate::di::stats::DiStatsFilter {
+                date_from: None,
+                date_to: None,
+                entity_id: None,
+            },
+        )
+        .await
+        .expect("stats");
+        assert_eq!(stats.sla_open.paused, 1);
+        assert_eq!(stats.sla_open.breached, 0);
+        assert_eq!(stats.overdue, 0);
+
+        move_to(&db, di.id, "deferred", "in_review").await;
+        let back = get_intervention_request(&db, di.id).await.expect("get").expect("row");
+        assert_eq!(back.sla_state.as_deref(), Some("on_track"));
+    }
+
+    #[tokio::test]
+    async fn a_request_closed_before_its_deadline_meets_the_sla_even_if_never_screened() {
+        let db = setup().await;
+        let user_id = get_user_id(&db).await;
+        let di = create_intervention_request(&db, make_create_input(&db, user_id, "Duplicate", "d").await)
+            .await
+            .expect("create");
+        // Closed as a duplicate one hour after submission, without screening; that was long ago.
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE intervention_requests SET status = 'closed', disposition_code = 'duplicate', \
+                closed_at = strftime('%Y-%m-%dT%H:%M:%SZ', submitted_at, '+1 hours') WHERE id = ?",
+            [di.id.into()],
+        ))
+        .await
+        .expect("close");
+        age_request(&db, di.id, 24 * 30).await;
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE intervention_requests SET closed_at = strftime('%Y-%m-%dT%H:%M:%SZ', submitted_at, '+1 hours') \
+             WHERE id = ?",
+            [di.id.into()],
+        ))
+        .await
+        .expect("closing time");
+
+        let stats = crate::di::stats::get_di_stats(
+            &db,
+            crate::di::stats::DiStatsFilter {
+                date_from: None,
+                date_to: None,
+                entity_id: None,
+            },
+        )
+        .await
+        .expect("stats");
+        assert_eq!(stats.sla_met_count, 1, "closed within the response target");
+        assert_eq!(stats.sla_breached_count, 0);
+        assert_eq!(stats.closed_in_period, 1);
+        assert_eq!(
+            sla_of(&db, di.id).await.status,
+            Some(crate::di::sla::DiSlaLifecycleStatus::Completed)
+        );
+    }
+
+    #[tokio::test]
+    async fn my_requests_list_and_count_agree() {
+        let db = setup().await;
+        let user_id = get_user_id(&db).await;
+        let open = create_intervention_request(&db, make_create_input(&db, user_id, "Open", "d").await)
+            .await
+            .expect("open");
+        let closed = create_intervention_request(&db, make_create_input(&db, user_id, "Closed", "d").await)
+            .await
+            .expect("closed");
+        set_status(&db, closed.id, "closed").await;
+
+        let mut filter = queue_filter("mine");
+        filter.submitter_id = Some(user_id);
+        let page = list_intervention_requests(&db, filter).await.expect("mine");
+        let counts = crate::di::queries::count_di_queues(&db, user_id).await.expect("counts");
+        assert_eq!(page.items.iter().map(|d| d.id).collect::<Vec<_>>(), vec![open.id]);
+        assert_eq!(page.total, counts.mine);
     }
 
     fn queue_filter(queue: &str) -> DiListFilter {

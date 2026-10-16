@@ -113,3 +113,12 @@ describe("diNextStep", () => {
     expect(diNextStep(di({ status: "closed" })).key).toBe("nextStep.closed");
   });
 });
+
+describe("slaPauseReasonKey", () => {
+  it("names why the SLA clock is paused", async () => {
+    const { slaPauseReasonKey } = await import("../DiSlaStatusBadge");
+    expect(slaPauseReasonKey("returned_for_clarification")).toBe("sla.pausedRequester");
+    expect(slaPauseReasonKey("deferred")).toBe("sla.pausedDeferred");
+    expect(slaPauseReasonKey("in_review")).toBeNull();
+  });
+});

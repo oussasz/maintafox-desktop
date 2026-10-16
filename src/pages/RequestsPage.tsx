@@ -125,7 +125,7 @@ export function RequestsPage() {
   const openRejection = useDiReviewStore((s) => s.openRejection);
   const openReturn = useDiReviewStore((s) => s.openReturn);
 
-  const { can } = usePermissions();
+  const { can, isLoading: permissionsLoading } = usePermissions();
   const visibleQueues = useVisibleDiQueues();
 
   const [view, setView] = useState<ViewMode>(readStoredView);
@@ -155,12 +155,15 @@ export function RequestsPage() {
     requestedQueue && visibleQueues.includes(requestedQueue) ? requestedQueue : defaultQueue;
 
   // The queue drives the list filter; status / urgency / disposition filters narrow it further.
+  // The default queue depends on the user's role: wait for the permissions so the page does not
+  // open on one queue and jump to another.
   useEffect(() => {
+    if (permissionsLoading) return;
     setFilter({ queue: queue === "all" ? null : (queue as DiQueue), offset: 0 });
     setSelected(new Set());
     setBulkMessage(null);
     void loadDis();
-  }, [queue, setFilter, loadDis]);
+  }, [queue, permissionsLoading, setFilter, loadDis]);
 
   useEffect(() => {
     const raw = searchParams.get("openDi");
@@ -478,7 +481,7 @@ export function RequestsPage() {
         header: t("list.columns.sla"),
         cell: ({ row }) =>
           row.original.sla_state && row.original.sla_state !== "completed" ? (
-            <DiSlaStatusBadge status={row.original.sla_state} />
+            <DiSlaStatusBadge status={row.original.sla_state} requestStatus={row.original.status} />
           ) : (
             <span className="text-xs text-text-muted">—</span>
           ),
@@ -600,7 +603,9 @@ export function RequestsPage() {
       }
       filterBar={
         <>
-          <DiQueueBar value={queue} counts={queueCounts} onChange={switchQueue} />
+          {permissionsLoading ? null : (
+            <DiQueueBar value={queue} counts={queueCounts} onChange={switchQueue} />
+          )}
           {showFilters && recordView && (
             <SmartFilterBar
               searchPlaceholder={t("search.placeholder")}

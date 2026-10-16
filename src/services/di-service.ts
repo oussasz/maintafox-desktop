@@ -91,7 +91,12 @@ export const InterventionRequestSchema = z.object({
   source_inspection_round_code: z.string().nullable().optional(),
   source_inspection_round_title: z.string().nullable().optional(),
   source_inspection_round_scheduled_at: z.string().nullable().optional(),
-  sla_state: z.enum(["on_track", "at_risk", "breached", "completed"]).nullable().optional(),
+  sla_state: z
+    .enum(["on_track", "at_risk", "breached", "completed", "paused"])
+    .nullable()
+    .optional(),
+  sla_paused_hours: z.number().optional(),
+  sla_paused_response_hours: z.number().optional(),
 });
 
 const DiTransitionRowSchema = z.object({

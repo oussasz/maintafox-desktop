@@ -71,7 +71,8 @@
       "slaResponseRemaining": "SLA response remaining",
       "slaResolutionRemaining": "SLA resolution remaining",
       "hoursValue": "{{hours}} h",
-      "reviewer": "Reviewer"
+      "reviewer": "Reviewer",
+      "slaPaused": "SLA clock paused"
     },
     "tabs": {
       "attachments": "Attachments",
@@ -282,8 +283,11 @@
       "at_risk": "At Risk",
       "breached": "Breached",
       "completed": "Completed",
-      "none": "—"
-    }
+      "none": "—",
+      "paused": "Paused"
+    },
+    "pausedRequester": "Paused — waiting for the requester",
+    "pausedDeferred": "Paused — deferred"
   },
   "reviewTimeline": {
     "empty": "No review events recorded.",
@@ -367,6 +371,9 @@
       "archived": "Archived",
       "blocked": "Blocked",
       "resubmitted": "Answered and resubmitted by the requester"
+    },
+    "summary": {
+      "resubmitted": "Answered by the requester and sent back to review."
     }
   },
   "attachments": {

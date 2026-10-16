@@ -4149,10 +4149,15 @@ export interface InterventionRequest {
   source_inspection_round_scheduled_at?: string | null;
   /** Where the request stands against its frozen SLA, computed on read; null without a target. */
   sla_state?: DiSlaState | null;
+  /** Hours the SLA clock was paused (waiting on the requester, deferred). */
+  sla_paused_hours?: number;
+  /** Paused hours before screening. */
+  sla_paused_response_hours?: number;
 }
 
 /** SLA state of a request (`di::sla::DiSlaLifecycleStatus`). */
-export type DiSlaState = "on_track" | "at_risk" | "breached" | "completed";
+/** `paused`: waiting on the requester or deferred — the clock is stopped. */
+export type DiSlaState = "on_track" | "at_risk" | "breached" | "completed" | "paused";
 
 /** Work queues of the requests screen (`di::queries::DI_QUEUES`). */
 export type DiQueue =
@@ -4471,7 +4476,9 @@ export interface DiSlaStatus {
   resolution_remaining_hours: number | null;
   is_response_breached: boolean;
   is_resolution_breached: boolean;
-  status: "on_track" | "at_risk" | "breached" | "completed" | null;
+  /** Hours the clock was paused; the deadlines above include them. */
+  paused_hours: number;
+  status: DiSlaState | null;
 }
 
 export interface SlaRuleUpdateInput {
@@ -4718,6 +4725,8 @@ export interface DiSlaOpenSplit {
   on_track: number;
   at_risk: number;
   breached: number;
+  /** Waiting on the requester or deferred: clock paused. */
+  paused: number;
   no_target: number;
 }
 
@@ -4749,6 +4758,8 @@ export interface DiStatsPayload {
   overdue_dis: DiOverdueDi[];
   backlog_by_status: DiBacklogStatus[];
   sla_open: DiSlaOpenSplit;
+  /** Requests closed in the period (with or without a work order). */
+  closed_in_period: number;
   converted_count: number;
   avg_response_hours: number | null;
   avg_conversion_hours: number | null;

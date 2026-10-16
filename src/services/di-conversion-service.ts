@@ -36,7 +36,8 @@ const DiSlaStatusSchema = z.object({
   resolution_remaining_hours: z.number().nullable(),
   is_response_breached: z.boolean(),
   is_resolution_breached: z.boolean(),
-  status: z.enum(["on_track", "at_risk", "breached", "completed"]).nullable(),
+  paused_hours: z.number().default(0),
+  status: z.enum(["on_track", "at_risk", "breached", "completed", "paused"]).nullable(),
 });
 
 const DiSlaRuleSchema = z.object({
