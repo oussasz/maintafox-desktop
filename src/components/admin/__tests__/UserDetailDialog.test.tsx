@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { UserDetailDialog } from "@/components/admin/UserDetailDialog";
 import type { UserDetail } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -49,7 +50,7 @@ function detail(overrides: Partial<UserDetail["user"]> = {}): UserDetail {
       ...overrides,
     },
     scope_assignments: [],
-    effective_permissions: ["ot.view"],
+    effective_permissions: [P.OT_VIEW],
   };
 }
 

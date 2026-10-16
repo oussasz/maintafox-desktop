@@ -24,6 +24,7 @@ import {
   listSettingChangeEvents,
   readDocumentBrandingLogoPreview,
 } from "@/services/settings-service";
+import { P } from "@shared/rbac/permissions.generated";
 
 const ipc = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@/lib/ipc-invoke", async (importOriginal) => ({
@@ -155,7 +156,7 @@ describe("roles", () => {
       permissions: [
         {
           id: 1,
-          name: "ot.view",
+          name: P.OT_VIEW,
           description: null,
           category: "ot",
           is_dangerous: false,
@@ -166,8 +167,8 @@ describe("roles", () => {
       dependencies: [
         {
           id: 1,
-          permission_name: "ot.edit",
-          required_permission_name: "ot.view",
+          permission_name: P.OT_EDIT,
+          required_permission_name: P.OT_VIEW,
           dependency_type: "hard",
         },
       ],
@@ -221,7 +222,7 @@ describe("settings", () => {
     differs_from_shipped: true,
     editor: "section",
     risk: "unexpected",
-    required_permission: "adm.settings",
+    required_permission: P.ADM_SETTINGS,
     locked_reason: null,
     last_modified_at: null,
     last_modified_by: null,
