@@ -119,6 +119,18 @@ function optionalNumber(raw: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/** Largest crew on one job (`planning::load::MAX_CREW_SIZE`; also enforced by the database). */
+const MAX_CREW_SIZE = 50;
+
+/** The crew size typed: empty (none), a whole number of people from 1 to 50, or refused. */
+function readCrewSize(raw: string): { ok: true; value: number | null } | { ok: false } {
+  if (!raw.trim()) return { ok: true, value: null };
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 1 && n <= MAX_CREW_SIZE
+    ? { ok: true, value: n }
+    : { ok: false };
+}
+
 const NEW_OR_METER: PmMeterSpec = {
   assetMeterId: null,
   meterType: null,
@@ -146,6 +158,7 @@ export function PmVersionFormDialog({
   const [skills, setSkills] = useState<string[]>([]);
   const [toolsCsv, setToolsCsv] = useState("");
   const [duration, setDuration] = useState("");
+  const [crewSize, setCrewSize] = useState("");
   const [laborCost, setLaborCost] = useState("");
   const [partsCost, setPartsCost] = useState("");
   const [serviceCost, setServiceCost] = useState("");
@@ -173,6 +186,7 @@ export function PmVersionFormDialog({
       setDuration(
         version.estimated_duration_hours != null ? String(version.estimated_duration_hours) : "",
       );
+      setCrewSize(version.planned_crew_size != null ? String(version.planned_crew_size) : "");
       setLaborCost(
         version.estimated_labor_cost != null ? String(version.estimated_labor_cost) : "",
       );
@@ -192,6 +206,7 @@ export function PmVersionFormDialog({
       setSkills([]);
       setToolsCsv("");
       setDuration("");
+      setCrewSize("");
       setLaborCost("");
       setPartsCost("");
       setServiceCost("");
@@ -226,6 +241,11 @@ export function PmVersionFormDialog({
       setError(meterError);
       return;
     }
+    const crew = readCrewSize(crewSize);
+    if (!crew.ok) {
+      setError(t("fields.plannedCrewSizeInvalid", { max: MAX_CREW_SIZE }));
+      return;
+    }
     const payload = {
       effective_from: `${effectiveFrom}T00:00:00Z`,
       effective_to: effectiveTo ? `${effectiveTo}T23:59:59Z` : null,
@@ -235,6 +255,7 @@ export function PmVersionFormDialog({
       required_skills_json: skills.length > 0 ? JSON.stringify(skills) : null,
       required_tools_json: csvToJsonArray(toolsCsv),
       estimated_duration_hours: optionalNumber(duration),
+      planned_crew_size: crew.value,
       estimated_labor_cost: optionalNumber(laborCost),
       estimated_parts_cost: optionalNumber(partsCost),
       estimated_service_cost: optionalNumber(serviceCost),
@@ -244,7 +265,11 @@ export function PmVersionFormDialog({
       if (mode === "create") {
         await onCreate(plan.id, payload);
       } else if (version) {
-        await onUpdate(version.id, version.row_version, payload);
+        // An emptied field removes the crew size from the draft version.
+        await onUpdate(version.id, version.row_version, {
+          ...payload,
+          clear_planned_crew_size: crew.value == null && version.planned_crew_size != null,
+        });
       }
       onClose();
     } catch (err) {
@@ -400,6 +425,18 @@ export function PmVersionFormDialog({
               value={duration}
               onChange={(e) => setDuration(e.target.value)}
             />
+          </div>
+          <div className="grid gap-1">
+            <Label htmlFor="pm-version-crew">{t("fields.plannedCrewSize")}</Label>
+            <Input
+              id="pm-version-crew"
+              type="number"
+              step="1"
+              min="1"
+              value={crewSize}
+              onChange={(e) => setCrewSize(e.target.value)}
+            />
+            <p className="text-xs text-text-muted">{t("fields.plannedCrewSizeHint")}</p>
           </div>
           <div className="grid gap-1">
             <Label htmlFor="pm-version-labor">{t("fields.estimatedLaborCost")}</Label>

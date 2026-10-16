@@ -3638,6 +3638,8 @@ export interface PmPlanVersion {
   required_skills_json: string | null;
   required_tools_json: string | null;
   estimated_duration_hours: number | null;
+  /** People the job takes; copied onto the OT the PM generates. */
+  planned_crew_size: number | null;
   estimated_labor_cost: number | null;
   estimated_parts_cost: number | null;
   estimated_service_cost: number | null;
@@ -3696,6 +3698,7 @@ export interface CreatePmPlanVersionInput {
   required_skills_json?: string | null;
   required_tools_json?: string | null;
   estimated_duration_hours?: number | null;
+  planned_crew_size?: number | null;
   estimated_labor_cost?: number | null;
   estimated_parts_cost?: number | null;
   estimated_service_cost?: number | null;
@@ -3711,6 +3714,9 @@ export interface UpdatePmPlanVersionInput {
   required_skills_json?: string | null;
   required_tools_json?: string | null;
   estimated_duration_hours?: number | null;
+  planned_crew_size?: number | null;
+  /** Removes the crew size (an omitted `planned_crew_size` keeps it). */
+  clear_planned_crew_size?: boolean;
   estimated_labor_cost?: number | null;
   estimated_parts_cost?: number | null;
   estimated_service_cost?: number | null;
@@ -4700,6 +4706,8 @@ export interface WorkOrder {
   cancelled_at: string | null;
   // Duration accumulators
   expected_duration_hours: number | null;
+  /** People the job takes; planning books duration × crew size. */
+  planned_crew_size: number | null;
   actual_duration_hours: number | null;
   active_labor_hours: number | null;
   total_waiting_hours: number | null;
@@ -4969,6 +4977,10 @@ export interface WoPlanInput {
   /** Removes the shift. */
   clear_shift?: boolean;
   expected_duration_hours?: number | null;
+  /** People the job takes; omitted keeps the current one. */
+  planned_crew_size?: number | null;
+  /** Removes the crew size. */
+  clear_crew_size?: boolean;
   planned_downtime_hours?: number | null;
   urgency_code?: UrgencyCode | null;
 }
@@ -8293,6 +8305,8 @@ export interface ScheduleCandidate {
   shutdown_requirement: string | null;
   prerequisite_status: string;
   estimated_duration_hours: number | null;
+  /** People the job takes; labour hours = duration × crew size. */
+  planned_crew_size: number | null;
   assigned_personnel_id: number | null;
   assigned_team_id: number | null;
   window_start: string | null;
@@ -8460,6 +8474,8 @@ export interface ScheduleCommitment {
   cost_variance_warning: number;
   has_blocking_conflict: number;
   nearest_feasible_window: string | null;
+  /** Labour hours the commitment books; null for one from before they were stored. */
+  planned_labor_hours: number | null;
   row_version: number;
   created_at: string;
   updated_at: string;
@@ -8562,6 +8578,8 @@ export interface CreateScheduleBreakInInput {
   new_slot_end: string;
   new_assigned_team_id?: number | null;
   new_assigned_personnel_id?: number | null;
+  /** "Unassigned" chosen explicitly: removes the technician. */
+  clear_assignee?: boolean | null;
   bypass_availability?: boolean | null;
   override_reason?: string | null;
   dangerous_override_reason?: string | null;
@@ -8572,10 +8590,23 @@ export interface TeamCapacityLoad {
   work_date: string;
   available_hours: number;
   overtime_hours: number;
+  /** Labour hours committed that day (spread over the slots' working days; finished work excluded). */
   committed_hours: number;
-  utilization_ratio: number;
-  /** `rule` (planner's capacity rule) | `roster` (shift calendars) | `holiday` | `no_schedule` | `no_members`. */
-  basis?: string;
+  /** committed ÷ (available + overtime); null when the team has no hours that day (see `basis`). */
+  utilization_ratio: number | null;
+  /** `roster` (the members' Classes horaires) | `rest_day` | `holiday` | `no_schedule` | `no_members`. */
+  basis: string;
+  /** The members' shift windows that day (local time) and their hours: a slot is spread over them. */
+  work_windows: CapacityWindow[];
+  /** Hours of members whose shift window is not known (counted in full on the days a slot touches). */
+  unwindowed_hours: number;
+}
+
+/** One member's shift window (local `YYYY-MM-DDTHH:MM:SS`; a night shift ends the next day). */
+export interface CapacityWindow {
+  start: string;
+  end: string;
+  hours: number;
 }
 
 export interface PlanningAssigneeLane {

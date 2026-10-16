@@ -47,6 +47,7 @@ const ScheduleCandidateSchema = z.object({
   shutdown_requirement: z.string().nullable(),
   prerequisite_status: z.string(),
   estimated_duration_hours: z.number().nullable(),
+  planned_crew_size: z.number().nullable(),
   assigned_personnel_id: z.number().nullable(),
   assigned_team_id: z.number().nullable(),
   window_start: z.string().nullable(),
@@ -153,6 +154,7 @@ const ScheduleCommitmentSchema = z.object({
   cost_variance_warning: z.number(),
   has_blocking_conflict: z.number(),
   nearest_feasible_window: z.string().nullable(),
+  planned_labor_hours: z.number().nullable(),
   row_version: z.number(),
   created_at: z.string(),
   updated_at: z.string(),
@@ -208,7 +210,11 @@ const TeamCapacityLoadSchema = z.object({
   available_hours: z.number(),
   overtime_hours: z.number(),
   committed_hours: z.number(),
-  utilization_ratio: z.number(),
+  utilization_ratio: z.number().nullable(),
+  /** Why the team has (no) hours that day: kept so the board says so instead of "100 %". */
+  basis: z.string(),
+  work_windows: z.array(z.object({ start: z.string(), end: z.string(), hours: z.number() })),
+  unwindowed_hours: z.number(),
 });
 
 const PlanningAssigneeLaneSchema = z.object({

@@ -10,7 +10,7 @@ use super::domain::{
     ScheduleCandidate, ScheduleCandidateFilter, SchedulingConflict,
 };
 
-const CANDIDATE_COLS: &str = "sc.id,sc.source_type,sc.source_id,sc.source_di_id,sc.readiness_status,sc.readiness_score,sc.priority_id,sc.required_skill_set_json,sc.required_parts_ready,sc.permit_status,sc.shutdown_requirement,sc.prerequisite_status,sc.estimated_duration_hours,sc.assigned_personnel_id,sc.assigned_team_id,sc.window_start,sc.window_end,sc.suggested_assignees_json,sc.availability_conflict_count,sc.skill_match_score,sc.estimated_labor_cost_range_json,sc.blocking_flags_json,sc.open_work_count,sc.next_available_window,sc.estimated_assignment_risk,sc.risk_reason_codes_json,sc.row_version,sc.created_at,sc.updated_at";
+const CANDIDATE_COLS: &str = "sc.id,sc.source_type,sc.source_id,sc.source_di_id,sc.readiness_status,sc.readiness_score,sc.priority_id,sc.required_skill_set_json,sc.required_parts_ready,sc.permit_status,sc.shutdown_requirement,sc.prerequisite_status,sc.estimated_duration_hours,sc.planned_crew_size,sc.assigned_personnel_id,sc.assigned_team_id,sc.window_start,sc.window_end,sc.suggested_assignees_json,sc.availability_conflict_count,sc.skill_match_score,sc.estimated_labor_cost_range_json,sc.blocking_flags_json,sc.open_work_count,sc.next_available_window,sc.estimated_assignment_risk,sc.risk_reason_codes_json,sc.row_version,sc.created_at,sc.updated_at";
 const CANDIDATE_JOIN_COLS: &str = "\
     CASE sc.source_type \
         WHEN 'work_order' THEN wo.code \
@@ -100,6 +100,9 @@ fn map_candidate(row: &QueryResult) -> AppResult<ScheduleCandidate> {
         estimated_duration_hours: row
             .try_get("", "estimated_duration_hours")
             .map_err(|e| decode_err("estimated_duration_hours", e))?,
+        planned_crew_size: row
+            .try_get("", "planned_crew_size")
+            .map_err(|e| decode_err("planned_crew_size", e))?,
         assigned_personnel_id: row
             .try_get("", "assigned_personnel_id")
             .map_err(|e| decode_err("assigned_personnel_id", e))?,
@@ -254,6 +257,7 @@ pub async fn list_schedule_candidates(
     }
 
     let limit = filter.limit.unwrap_or(400).clamp(1, 2_000);
+    // Blocked work is listed only when the caller asks (the planning board does, explicitly).
     let include_resolved = filter.include_resolved_conflicts.unwrap_or(false);
     if !include_resolved {
         where_sql.push(
@@ -334,6 +338,7 @@ async fn refresh_from_work_orders(db: &impl ConnectionTrait, limit: i64) -> AppR
                     wo.planned_start AS window_start,
                     wo.planned_end AS window_end,
                     wo.expected_duration_hours,
+                    wo.planned_crew_size,
                     wo.urgency_id,
                     wos.code AS status_code
                  FROM work_orders wo
@@ -366,6 +371,9 @@ async fn refresh_from_work_orders(db: &impl ConnectionTrait, limit: i64) -> AppR
         let estimated_duration_hours: Option<f64> = row
             .try_get("", "expected_duration_hours")
             .map_err(|e| decode_err("expected_duration_hours", e))?;
+        let planned_crew_size: Option<i64> = row
+            .try_get("", "planned_crew_size")
+            .map_err(|e| decode_err("planned_crew_size", e))?;
         let status_code: String = row
             .try_get("", "status_code")
             .map_err(|e| decode_err("status_code", e))?;
@@ -381,9 +389,9 @@ async fn refresh_from_work_orders(db: &impl ConnectionTrait, limit: i64) -> AppR
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "INSERT INTO schedule_candidates
-                    (entity_sync_id, source_type, source_id, source_di_id, assigned_personnel_id, assigned_team_id, window_start, window_end, estimated_duration_hours, prerequisite_status, permit_status, shutdown_requirement, priority_id)
+                    (entity_sync_id, source_type, source_id, source_di_id, assigned_personnel_id, assigned_team_id, window_start, window_end, estimated_duration_hours, prerequisite_status, permit_status, shutdown_requirement, priority_id, planned_crew_size)
                  VALUES
-                    (?, 'work_order', ?, ?, ?, ?, ?, ?, ?, ?, 'unknown', NULL, ?)
+                    (?, 'work_order', ?, ?, ?, ?, ?, ?, ?, ?, 'unknown', NULL, ?, ?)
                  ON CONFLICT(source_type, source_id) DO UPDATE SET
                     source_di_id = excluded.source_di_id,
                     priority_id = excluded.priority_id,
@@ -392,6 +400,7 @@ async fn refresh_from_work_orders(db: &impl ConnectionTrait, limit: i64) -> AppR
                     window_start = excluded.window_start,
                     window_end = excluded.window_end,
                     estimated_duration_hours = excluded.estimated_duration_hours,
+                    planned_crew_size = excluded.planned_crew_size,
                     prerequisite_status = excluded.prerequisite_status,
                     row_version = schedule_candidates.row_version + 1,
                     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')",
@@ -406,6 +415,7 @@ async fn refresh_from_work_orders(db: &impl ConnectionTrait, limit: i64) -> AppR
                     estimated_duration_hours.into(),
                     prerequisite_status.to_string().into(),
                     urgency_id.into(),
+                    planned_crew_size.into(),
                 ],
             ))
             .await?;
@@ -426,8 +436,10 @@ async fn refresh_from_pm_occurrences(db: &impl ConnectionTrait, limit: i64) -> A
             "SELECT
                 po.id AS source_id,
                 po.due_at AS window_start,
-                datetime(po.due_at, '+' || CAST(COALESCE(pv.estimated_duration_hours, 2) AS TEXT) || ' hours') AS window_end,
-                COALESCE(pv.estimated_duration_hours, 2) AS estimated_duration_hours,
+                -- No default duration: a PM version without an estimate is not estimated.
+                datetime(po.due_at, '+' || CAST(pv.estimated_duration_hours AS TEXT) || ' hours') AS window_end,
+                pv.estimated_duration_hours AS estimated_duration_hours,
+                pv.planned_crew_size AS planned_crew_size,
                 po.status AS occurrence_status,
                 pp.requires_permit,
                 pp.requires_shutdown,
@@ -481,6 +493,9 @@ async fn refresh_from_pm_occurrences(db: &impl ConnectionTrait, limit: i64) -> A
         let estimated_duration_hours: Option<f64> = row
             .try_get("", "estimated_duration_hours")
             .map_err(|e| decode_err("estimated_duration_hours", e))?;
+        let planned_crew_size: Option<i64> = row
+            .try_get("", "planned_crew_size")
+            .map_err(|e| decode_err("planned_crew_size", e))?;
         let occurrence_status: String = row
             .try_get("", "occurrence_status")
             .map_err(|e| decode_err("occurrence_status", e))?;
@@ -514,9 +529,9 @@ async fn refresh_from_pm_occurrences(db: &impl ConnectionTrait, limit: i64) -> A
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "INSERT INTO schedule_candidates
-                    (entity_sync_id, source_type, source_id, source_di_id, assigned_personnel_id, assigned_team_id, window_start, window_end, estimated_duration_hours, prerequisite_status, permit_status, shutdown_requirement, required_skill_set_json)
+                    (entity_sync_id, source_type, source_id, source_di_id, assigned_personnel_id, assigned_team_id, window_start, window_end, estimated_duration_hours, prerequisite_status, permit_status, shutdown_requirement, required_skill_set_json, planned_crew_size)
                  VALUES
-                    (?, 'pm_occurrence', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (?, 'pm_occurrence', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT(source_type, source_id) DO UPDATE SET
                     source_di_id = excluded.source_di_id,
                     assigned_personnel_id = excluded.assigned_personnel_id,
@@ -524,6 +539,7 @@ async fn refresh_from_pm_occurrences(db: &impl ConnectionTrait, limit: i64) -> A
                     window_start = excluded.window_start,
                     window_end = excluded.window_end,
                     estimated_duration_hours = excluded.estimated_duration_hours,
+                    planned_crew_size = excluded.planned_crew_size,
                     prerequisite_status = excluded.prerequisite_status,
                     permit_status = excluded.permit_status,
                     shutdown_requirement = excluded.shutdown_requirement,
@@ -543,6 +559,7 @@ async fn refresh_from_pm_occurrences(db: &impl ConnectionTrait, limit: i64) -> A
                     permit_status.to_string().into(),
                     shutdown_requirement.into(),
                     required_skills_json.into(),
+                    planned_crew_size.into(),
                 ],
             ))
             .await?;
@@ -564,7 +581,8 @@ async fn refresh_from_approved_di(db: &impl ConnectionTrait, limit: i64) -> AppR
                 ir.id AS source_id,
                 ir.submitted_at AS window_start,
                 COALESCE(ir.validated_urgency, ir.reported_urgency) AS urgency_code,
-                4.0 AS estimated_duration_hours,
+                -- A request carries no duration estimate: not estimated until it becomes a work order.
+                NULL AS estimated_duration_hours,
                 ir.deferred_until
              FROM intervention_requests ir
              WHERE ir.status = 'approved_for_planning'
@@ -650,13 +668,36 @@ async fn evaluate_candidate(db: &impl ConnectionTrait, candidate_id: i64) -> App
 
     let mut required_skills = parse_string_array(candidate.required_skill_set_json.as_deref());
     let mut required_parts_missing = false;
-    let mut permit_blocked = candidate.permit_status == "required_missing";
+    let permit_blocked = candidate.permit_status == "required_missing";
     let mut shutdown_required = candidate
         .shutdown_requirement
         .as_deref()
         .map(|value| value.eq_ignore_ascii_case("required"))
         .unwrap_or(false);
     let mut prerequisite_blocked = candidate.prerequisite_status == "blocked";
+    // Readiness notes the planner should see (not blocking).
+    let mut notes: Vec<String> = Vec::new();
+
+    // Not estimated (duration or crew size missing): the work cannot be committed — no default
+    // duration or crew is ever assumed.
+    let mut missing: Vec<&str> = Vec::new();
+    if candidate.estimated_duration_hours.is_none_or(|h| h <= 0.0) {
+        missing.push("duration");
+    }
+    if candidate.planned_crew_size.is_none_or(|n| n < 1) {
+        missing.push("crew_size");
+    }
+    if !missing.is_empty() {
+        conflicts.push(EvaluatedConflict {
+            conflict_type: "not_estimated".to_string(),
+            reference_type: Some(candidate.source_type.clone()),
+            reference_id: Some(candidate.source_id),
+            reason_code: "NOT_ESTIMATED".to_string(),
+            severity: "high".to_string(),
+            details_json: Some(json!({ "missing": missing }).to_string()),
+            dimension: "estimate",
+        });
+    }
 
     if candidate.source_type == "work_order" {
         let row = db
@@ -722,12 +763,17 @@ async fn evaluate_candidate(db: &impl ConnectionTrait, candidate_id: i64) -> App
                 prerequisite_blocked = true;
             }
             if !parse_string_array(required_parts_json.as_deref()).is_empty() {
-                required_parts_missing = true;
+                // Parts listed on the PM version: checked against stock in a later step; until
+                // then a note for the planner, never a permanent block.
+                notes.push("PM_PARTS_TO_CHECK".to_string());
             }
             if required_skills.is_empty() {
                 required_skills = parse_string_array(required_skills_json.as_deref());
             }
-            permit_blocked = requires_permit == 1 && candidate.permit_status != "approved";
+            // The permit is issued for the work order and enforced when it starts: a note here.
+            if requires_permit == 1 && candidate.permit_status != "approved" {
+                notes.push("PM_PERMIT_TO_OBTAIN".to_string());
+            }
             shutdown_required = requires_shutdown == 1;
         }
     }
@@ -842,8 +888,8 @@ async fn evaluate_candidate(db: &impl ConnectionTrait, candidate_id: i64) -> App
                 "SELECT 1 AS ok
                  FROM planning_windows pw
                  WHERE pw.is_locked = 0
-                   AND (? IS NULL OR pw.window_start <= ?)
-                   AND (? IS NULL OR pw.window_end >= ?)
+                   AND (? IS NULL OR pw.start_datetime <= ?)
+                   AND (? IS NULL OR pw.end_datetime >= ?)
                  LIMIT 1",
                 [
                     candidate.window_start.clone().into(),
@@ -876,7 +922,7 @@ async fn evaluate_candidate(db: &impl ConnectionTrait, candidate_id: i64) -> App
     let mut availability_conflict_count = 0_i64;
     let mut next_available_window: Option<String> = None;
     let mut open_work_count: Option<i64> = None;
-    let mut suggested_assignees_json: Option<String> = None;
+    let suggested_assignees_json: Option<String> = None;
     let mut labor_cost_range: Option<String> = None;
     let mut risk_reasons: Vec<String> = Vec::new();
     if let Some(personnel_id) = candidate.assigned_personnel_id {
@@ -977,49 +1023,25 @@ async fn evaluate_candidate(db: &impl ConnectionTrait, candidate_id: i64) -> App
             .and_then(|row| row.try_get("", "c").ok());
 
         let rate_pair = crate::personnel::queries::resolve_active_rate_pair(db, personnel_id).await?;
-        if let (Some(duration), Some((labor_rate, overtime_rate))) = (candidate.estimated_duration_hours, rate_pair) {
+        if let (Some(duration), Some(crew), Some((labor_rate, overtime_rate))) = (
+            candidate.estimated_duration_hours,
+            candidate.planned_crew_size,
+            rate_pair,
+        ) {
+            // Labour hours of the job (duration × crew) at the normal and overtime rates.
+            let labour = duration * crew as f64;
             labor_cost_range = Some(
                 json!({
-                    "min": duration * labor_rate,
-                    "max": duration * overtime_rate
+                    "min": labour * labor_rate,
+                    "max": labour * overtime_rate
                 })
                 .to_string(),
             );
         }
     }
 
-    if candidate.assigned_personnel_id.is_none() && !required_skills.is_empty() {
-        let rows = db
-            .query_all(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT
-                    p.id,
-                    p.full_name,
-                    COUNT(DISTINCT rv.code) AS matching_skills
-                 FROM personnel p
-                 JOIN personnel_skills ps ON ps.personnel_id = p.id
-                 JOIN reference_values rv ON rv.id = ps.reference_value_id
-                 WHERE p.availability_status <> 'inactive'
-                 GROUP BY p.id, p.full_name
-                 ORDER BY matching_skills DESC, p.full_name ASC
-                 LIMIT 5",
-                [],
-            ))
-            .await?;
-        let suggestions: Vec<Value> = rows
-            .into_iter()
-            .map(|row| {
-                json!({
-                    "personnel_id": row.try_get::<i64>("", "id").unwrap_or_default(),
-                    "full_name": row.try_get::<String>("", "full_name").unwrap_or_default(),
-                    "matching_skills": row.try_get::<i64>("", "matching_skills").unwrap_or_default()
-                })
-            })
-            .collect();
-        if !suggestions.is_empty() {
-            suggested_assignees_json = Some(Value::Array(suggestions).to_string());
-        }
-    }
+    // Suggested assignees used to rank all personnel by skill count, whatever the required skills,
+    // team or availability: removed — nothing rather than a misleading suggestion.
 
     let mut blocker_dimensions: BTreeSet<&'static str> = BTreeSet::new();
     let blocker_codes: Vec<String> = conflicts
@@ -1041,6 +1063,7 @@ async fn evaluate_candidate(db: &impl ConnectionTrait, candidate_id: i64) -> App
     if blocker_codes.iter().any(|code| code == "no_qualified_technician") {
         risk_reasons.push("SKILL_GAP".to_string());
     }
+    risk_reasons.extend(notes);
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -1096,12 +1119,8 @@ async fn evaluate_candidate(db: &impl ConnectionTrait, candidate_id: i64) -> App
             json!(blocker_codes).to_string().into(),
             open_work_count.into(),
             next_available_window.into(),
-            (if conflicts.is_empty() {
-                0.0
-            } else {
-                0.35 + (conflicts.len() as f64 * 0.1)
-            })
-            .into(),
+            // No computed assignment risk exists: nothing rather than a made-up number.
+            None::<f64>.into(),
             json!(risk_reasons).to_string().into(),
             candidate_id.into(),
         ],

@@ -147,6 +147,7 @@ function makeVersion(overrides: Partial<PmPlanVersion> = {}): PmPlanVersion {
     required_skills_json: null,
     required_tools_json: null,
     estimated_duration_hours: 2,
+    planned_crew_size: 1,
     estimated_labor_cost: null,
     estimated_parts_cost: null,
     estimated_service_cost: null,

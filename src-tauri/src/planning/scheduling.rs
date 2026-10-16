@@ -9,19 +9,20 @@ use crate::notifications::emitter::{emit_event, NotificationEventInput};
 use crate::{activity, notifications};
 
 use super::domain::{
-    CapacityRule, CapacityRuleFilter, CreateCapacityRuleInput, CreatePlanningWindowInput, CreateScheduleBreakInInput,
-    CreateScheduleCommitmentInput, ExportPlanningGanttPdfInput, ExportedBinaryDocument, FreezeSchedulePeriodInput,
-    NotifyTeamsInput, NotifyTeamsResult, PlanningAssigneeLane, PlanningCrewLane, PlanningGanttFilter,
-    PlanningGanttSnapshot, PlanningWindow, PlanningWindowFilter, RescheduleCommitmentInput, ScheduleBreakIn,
-    ScheduleBreakInFilter, ScheduleChangeLogEntry, ScheduleCommitment, ScheduleCommitmentFilter, TeamCapacityLoad,
-    UpdateCapacityRuleInput, UpdatePlanningWindowInput,
+    CapacityRule, CapacityRuleFilter, CapacityWindow, CreateCapacityRuleInput, CreatePlanningWindowInput,
+    CreateScheduleBreakInInput, CreateScheduleCommitmentInput, ExportPlanningGanttPdfInput, ExportedBinaryDocument,
+    FreezeSchedulePeriodInput, NotifyTeamsInput, NotifyTeamsResult, PlanningAssigneeLane, PlanningCrewLane,
+    PlanningGanttFilter, PlanningGanttSnapshot, PlanningWindow, PlanningWindowFilter, RescheduleCommitmentInput,
+    ScheduleBreakIn, ScheduleBreakInFilter, ScheduleChangeLogEntry, ScheduleCommitment, ScheduleCommitmentFilter,
+    TeamCapacityLoad, UpdateCapacityRuleInput, UpdatePlanningWindowInput,
 };
+use super::load;
 use super::wo_sync::{self, WoSyncOutcome};
 
 const CAPACITY_COLS: &str = "id,entity_id,team_id,effective_start,effective_end,available_hours_per_day,max_overtime_hours_per_day,row_version,created_at,updated_at";
 const WINDOW_COLS: &str =
     "id,entity_id,window_type,start_datetime,end_datetime,is_locked,lock_reason,row_version,created_at,updated_at";
-const COMMITMENT_COLS: &str = "sc.id,sc.schedule_candidate_id,sc.source_type,sc.source_id,sc.schedule_period_start,sc.schedule_period_end,sc.committed_start,sc.committed_end,sc.assigned_team_id,sc.assigned_personnel_id,sc.committed_by_id,sc.frozen_at,sc.estimated_labor_cost,sc.budget_threshold,sc.cost_variance_warning,sc.has_blocking_conflict,sc.nearest_feasible_window,sc.row_version,sc.created_at,sc.updated_at";
+const COMMITMENT_COLS: &str = "sc.id,sc.schedule_candidate_id,sc.source_type,sc.source_id,sc.schedule_period_start,sc.schedule_period_end,sc.committed_start,sc.committed_end,sc.assigned_team_id,sc.assigned_personnel_id,sc.committed_by_id,sc.frozen_at,sc.estimated_labor_cost,sc.budget_threshold,sc.cost_variance_warning,sc.has_blocking_conflict,sc.nearest_feasible_window,sc.planned_labor_hours,sc.row_version,sc.created_at,sc.updated_at";
 const COMMITMENT_JOIN_COLS: &str = "\
     CASE sc.source_type \
         WHEN 'work_order' THEN wo.code \
@@ -194,6 +195,9 @@ fn map_commitment(row: &QueryResult) -> AppResult<ScheduleCommitment> {
         nearest_feasible_window: row
             .try_get("", "nearest_feasible_window")
             .map_err(|e| decode_err("nearest_feasible_window", e))?,
+        planned_labor_hours: row
+            .try_get("", "planned_labor_hours")
+            .map_err(|e| decode_err("planned_labor_hours", e))?,
         row_version: row
             .try_get("", "row_version")
             .map_err(|e| decode_err("row_version", e))?,
@@ -472,50 +476,48 @@ async fn enforce_candidate_ready(
     Ok((source_type, source_id))
 }
 
+/// Capacity gate over every day of the slot (`planning::load`): the work's labour hours, spread over
+/// the slot's working days, plus the team's committed load that day, must fit the team's hours plus
+/// the planner's overtime ceiling. Returns the first overloaded day when it does not fit.
 async fn compute_capacity_gate(
     db: &impl ConnectionTrait,
     team_id: i64,
     start: &str,
     end: &str,
+    labour_hours: f64,
     exclude_commitment_id: Option<i64>,
 ) -> AppResult<(bool, Option<String>)> {
-    let start_dt = parse_rfc3339(start, "committed_start")?;
-    let work_date = start_dt.date_naive().to_string();
-
-    let hours = team_day_hours(db, team_id, start_dt.date_naive()).await?;
-    if hours.basis == "no_schedule" || hours.basis == "no_members" {
+    let days = load::slot_days(start, end)?;
+    let (Some(first), Some(last)) = (days.first().map(|d| d.0), days.last().map(|d| d.0)) else {
+        return Ok((true, None));
+    };
+    // From the day before: a night shift that started then may run into the slot.
+    let team = load::team_days(db, team_id, first - chrono::Duration::days(1), last).await?;
+    // A team with no timetable at all over the slot: say so rather than call it overloaded.
+    if team
+        .range(first..=last)
+        .all(|(_, d)| d.basis == "no_schedule" || d.basis == "no_members")
+    {
         return Err(crate::errors::org_validation_failed(
             "TEAM_NO_SCHEDULE",
             "The team has no working hours that day: link it to a Classe horaire (or give its members one).",
-            std::collections::HashMap::from([("day".to_string(), work_date.clone())]),
+            std::collections::HashMap::from([("day".to_string(), first.to_string())]),
         ));
     }
-    let available_hours = hours.available;
-    let max_overtime = hours.overtime;
-
-    let committed_hours: f64 = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT COALESCE(SUM((julianday(committed_end) - julianday(committed_start)) * 24.0), 0.0) AS h
-             FROM schedule_commitments
-             WHERE assigned_team_id = ?
-               AND schedule_period_start = ?
-               AND (? IS NULL OR id <> ?)",
-            [
-                team_id.into(),
-                work_date.into(),
-                exclude_commitment_id.into(),
-                exclude_commitment_id.into(),
-            ],
-        ))
-        .await?
-        .and_then(|r| r.try_get("", "h").ok())
-        .unwrap_or(0.0);
-    let requested_hours = hours_between(start, end)?;
-    let total = committed_hours + requested_hours;
-    let cap = available_hours + max_overtime;
-    if total > cap {
-        return Ok((false, Some(start_dt.to_rfc3339())));
+    let hours: BTreeMap<chrono::NaiveDate, load::DayHours> = team.iter().map(|(d, t)| (*d, t.hours.clone())).collect();
+    let spread = load::spread(labour_hours, start, end, &hours)?;
+    let (Some(spread_first), Some(spread_last)) = (spread.keys().next().copied(), spread.keys().last().copied()) else {
+        return Ok((true, None));
+    };
+    let committed =
+        load::team_day_loads(db, Some(&[team_id]), spread_first, spread_last, exclude_commitment_id).await?;
+    for (day, share) in spread {
+        let (cap, overtime) = team.get(&day).map(|t| (t.available, t.overtime)).unwrap_or((0.0, 0.0));
+        let already = committed.get(&(team_id, day)).copied().unwrap_or(0.0);
+        // A hundredth of an hour of tolerance for the spread's rounding.
+        if already + share > cap + overtime + 0.01 {
+            return Ok((false, Some(day.to_string())));
+        }
     }
     Ok((true, None))
 }
@@ -681,13 +683,13 @@ pub(crate) async fn enforce_assignee_qualifications(
 /// on the site's working days minus absences, × utilisation (`roster`), or none (`rest_day`,
 /// `holiday`, `no_schedule`, `no_members`). The planner's capacity rule only adds its overtime
 /// ceiling. No default hours.
-pub(crate) struct TeamDayHours {
+pub struct TeamDayHours {
     pub available: f64,
     pub overtime: f64,
     pub basis: String,
 }
 
-pub(crate) async fn team_day_hours(
+pub async fn team_day_hours(
     db: &impl ConnectionTrait,
     team_id: i64,
     day: chrono::NaiveDate,
@@ -734,11 +736,11 @@ async fn emit_planning_notification(
     .await;
 }
 
+/// Labour cost of the hours the work books (not of the slot's wall-clock length).
 async fn estimate_labor_cost(
     db: &impl ConnectionTrait,
     personnel_id: Option<i64>,
-    committed_start: &str,
-    committed_end: &str,
+    labour_hours: f64,
 ) -> AppResult<Option<f64>> {
     let Some(personnel_id) = personnel_id else {
         return Ok(None);
@@ -746,8 +748,38 @@ async fn estimate_labor_cost(
     let Some(rate) = crate::personnel::queries::resolve_active_labor_rate(db, personnel_id).await? else {
         return Ok(None);
     };
-    let duration = hours_between(committed_start, committed_end)?;
-    Ok(Some((duration * rate * 100.0).round() / 100.0))
+    Ok(Some((labour_hours * rate * 100.0).round() / 100.0))
+}
+
+/// Labour hours a candidate books: its estimated duration × its planned crew size. Work without
+/// both cannot be committed: no duration or crew is ever assumed.
+async fn candidate_labour_hours(db: &impl ConnectionTrait, candidate_id: i64) -> AppResult<f64> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT estimated_duration_hours, planned_crew_size FROM schedule_candidates WHERE id = ?",
+            [candidate_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "ScheduleCandidate".to_string(),
+            id: candidate_id.to_string(),
+        })?;
+    // A value that cannot be read is an error, never "not estimated".
+    let estimate: Option<f64> = row
+        .try_get("", "estimated_duration_hours")
+        .map_err(|e| decode_err("estimated_duration_hours", e))?;
+    let crew: Option<i64> = row
+        .try_get("", "planned_crew_size")
+        .map_err(|e| decode_err("planned_crew_size", e))?;
+    match (estimate, crew) {
+        (Some(hours), Some(people)) if hours > 0.0 && people >= 1 => Ok(hours * people as f64),
+        _ => Err(crate::errors::org_validation_failed(
+            "PLANNING_NOT_ESTIMATED",
+            "This work is not estimated: enter its duration and crew size before committing it to the schedule.",
+            std::collections::HashMap::new(),
+        )),
+    }
 }
 
 struct CommitmentGateResult {
@@ -756,6 +788,7 @@ struct CommitmentGateResult {
     nearest_feasible_window: Option<String>,
     estimated_labor_cost: Option<f64>,
     cost_variance_warning: i64,
+    labour_hours: f64,
 }
 
 async fn run_commitment_gates(
@@ -773,6 +806,7 @@ async fn run_commitment_gates(
     exclude_commitment_id: Option<i64>,
 ) -> AppResult<CommitmentGateResult> {
     validate_window(committed_start, committed_end, "committed_start", "committed_end")?;
+    load::validate_slot_length(committed_start, committed_end)?;
     let (source_type, source_id) = enforce_candidate_ready(tx, candidate_id, expected_candidate_row_version).await?;
 
     if let Some(window) = find_locked_window(tx, committed_start, committed_end).await? {
@@ -782,19 +816,23 @@ async fn run_commitment_gates(
         )]));
     }
 
-    let (capacity_ok, nearest_feasible_window) = compute_capacity_gate(
+    let labour_hours = candidate_labour_hours(tx, candidate_id).await?;
+    let (capacity_ok, overloaded_day) = compute_capacity_gate(
         tx,
         assigned_team_id,
         committed_start,
         committed_end,
+        labour_hours,
         exclude_commitment_id,
     )
     .await?;
     if !capacity_ok {
-        return Err(AppError::ValidationFailed(vec![
-            "Capacity gate failed: team load exceeds capacity + overtime for selected period.".to_string(),
-        ]));
+        return Err(AppError::ValidationFailed(vec![format!(
+            "Capacity gate failed: team load exceeds capacity + overtime on {}.",
+            overloaded_day.unwrap_or_default()
+        )]));
     }
+    let nearest_feasible_window: Option<String> = None;
 
     if let Some(personnel_id) = assigned_personnel_id {
         enforce_assignee_availability(tx, personnel_id, committed_start, committed_end).await?;
@@ -841,7 +879,7 @@ async fn run_commitment_gates(
         }
     }
 
-    let estimated_labor_cost = estimate_labor_cost(tx, assigned_personnel_id, committed_start, committed_end).await?;
+    let estimated_labor_cost = estimate_labor_cost(tx, assigned_personnel_id, labour_hours).await?;
     let cost_variance_warning = if let (Some(cost), Some(threshold)) = (estimated_labor_cost, budget_threshold) {
         i64::from(cost > threshold)
     } else {
@@ -854,6 +892,7 @@ async fn run_commitment_gates(
         nearest_feasible_window,
         estimated_labor_cost,
         cost_variance_warning,
+        labour_hours,
     })
 }
 
@@ -1265,6 +1304,7 @@ pub async fn create_schedule_break_in(
         "new_slot_start",
         "new_slot_end",
     )?;
+    load::validate_slot_length(&input.new_slot_start, &input.new_slot_end)?;
     let reason = input.break_in_reason.trim().to_ascii_lowercase();
     if !is_valid_break_in_reason(&reason) {
         return Err(AppError::ValidationFailed(vec![
@@ -1312,7 +1352,17 @@ pub async fn create_schedule_break_in(
     }
 
     let next_team_id = input.new_assigned_team_id.unwrap_or(current.assigned_team_id);
-    let next_personnel_id = input.new_assigned_personnel_id.or(current.assigned_personnel_id);
+    // "Unassigned" chosen explicitly clears the technician; otherwise the current one stays.
+    let next_personnel_id = if input.clear_assignee.unwrap_or(false) {
+        None
+    } else {
+        input.new_assigned_personnel_id.or(current.assigned_personnel_id)
+    };
+    // The hours this commitment books (its slot length for one from before migration 205).
+    let labour_hours = match current.planned_labor_hours {
+        Some(hours) => hours,
+        None => hours_between(&current.committed_start, &current.committed_end)?,
+    };
     let bypass_availability = input.bypass_availability.unwrap_or(false);
     let override_reason = input
         .override_reason
@@ -1346,11 +1396,13 @@ pub async fn create_schedule_break_in(
         }
     }
 
-    let (capacity_ok, nearest_window) = compute_capacity_gate(
+    // The first overloaded day is reported by the error; nothing is stored as a "feasible window".
+    let (capacity_ok, _overloaded_day) = compute_capacity_gate(
         &tx,
         next_team_id,
         &input.new_slot_start,
         &input.new_slot_end,
+        labour_hours,
         Some(current.id),
     )
     .await?;
@@ -1367,9 +1419,9 @@ pub async fn create_schedule_break_in(
         ]));
     }
 
-    let next_cost = estimate_labor_cost(&tx, next_personnel_id, &input.new_slot_start, &input.new_slot_end).await?;
+    let next_cost = estimate_labor_cost(&tx, next_personnel_id, labour_hours).await?;
     let old_cost = current.estimated_labor_cost.unwrap_or(0.0);
-    let cost_delta = next_cost.map(|v| (v - old_cost).round() * 100.0 / 100.0);
+    let cost_delta = next_cost.map(|v| ((v - old_cost) * 100.0).round() / 100.0);
     let next_period_start = parse_rfc3339(&input.new_slot_start, "new_slot_start")?
         .date_naive()
         .to_string();
@@ -1396,7 +1448,7 @@ pub async fn create_schedule_break_in(
             next_team_id.into(),
             next_personnel_id.into(),
             next_cost.into(),
-            nearest_window.into(),
+            None::<String>.into(),
             current.id.into(),
             input.expected_commitment_row_version.into(),
         ],
@@ -1593,8 +1645,8 @@ pub async fn create_schedule_commitment(
         "INSERT INTO schedule_commitments
             (schedule_candidate_id, source_type, source_id, schedule_period_start, schedule_period_end, committed_start, committed_end,
              assigned_team_id, assigned_personnel_id, committed_by_id, estimated_labor_cost, budget_threshold, cost_variance_warning,
-             has_blocking_conflict, nearest_feasible_window)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
+             has_blocking_conflict, nearest_feasible_window, planned_labor_hours)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)",
         [
             input.schedule_candidate_id.into(),
             gate.source_type.clone().into(),
@@ -1610,6 +1662,7 @@ pub async fn create_schedule_commitment(
             input.budget_threshold.into(),
             gate.cost_variance_warning.into(),
             gate.nearest_feasible_window.into(),
+            gate.labour_hours.into(),
         ],
     ))
         .await?;
@@ -1734,6 +1787,7 @@ pub async fn reschedule_schedule_commitment(
              SET schedule_period_start = ?, schedule_period_end = ?, committed_start = ?, committed_end = ?,
                  assigned_team_id = ?, assigned_personnel_id = ?, estimated_labor_cost = ?, budget_threshold = ?,
                  cost_variance_warning = ?, has_blocking_conflict = 0, nearest_feasible_window = ?,
+                 planned_labor_hours = ?,
                  row_version = row_version + 1, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
              WHERE id = ? AND row_version = ?",
             [
@@ -1747,6 +1801,7 @@ pub async fn reschedule_schedule_commitment(
                 input.budget_threshold.into(),
                 gate.cost_variance_warning.into(),
                 gate.nearest_feasible_window.into(),
+                gate.labour_hours.into(),
                 input.commitment_id.into(),
                 input.expected_row_version.into(),
             ],
@@ -1872,28 +1927,12 @@ pub async fn get_planning_gantt_snapshot(
     .await?;
 
     let mut capacity_by_team_day: BTreeMap<(i64, String), TeamCapacityLoad> = BTreeMap::new();
-    for commitment in &commitments {
-        let day = commitment.schedule_period_start.clone();
-        let hours = hours_between(&commitment.committed_start, &commitment.committed_end)?;
-        let row = capacity_by_team_day
-            .entry((commitment.assigned_team_id, day.clone()))
-            .or_insert(TeamCapacityLoad {
-                team_id: commitment.assigned_team_id,
-                work_date: day.clone(),
-                available_hours: 0.0,
-                overtime_hours: 0.0,
-                committed_hours: 0.0,
-                utilization_ratio: 0.0,
-                basis: String::new(),
-            });
-        row.committed_hours += hours;
-    }
     // Every team-day of the period gets its capacity, not only the days that already hold
     // commitments: the board must never assume hours a team does not have.
     let parse_day =
         |raw: &str| chrono::NaiveDate::parse_from_str(&raw.chars().take(10).collect::<String>(), "%Y-%m-%d");
     if let (Ok(first), Ok(last)) = (parse_day(&filter.period_start), parse_day(&filter.period_end)) {
-        if last >= first && (last - first).num_days() < crate::personnel::capacity::MAX_RANGE_DAYS {
+        if last >= first && (last - first).num_days() <= 366 {
             let team_ids: Vec<i64> = match filter.team_id {
                 Some(team_id) => vec![team_id],
                 None => db
@@ -1916,8 +1955,10 @@ pub async fn get_planning_gantt_snapshot(
                             available_hours: 0.0,
                             overtime_hours: 0.0,
                             committed_hours: 0.0,
-                            utilization_ratio: 0.0,
+                            utilization_ratio: None,
                             basis: String::new(),
+                            work_windows: Vec::new(),
+                            unwindowed_hours: 0.0,
                         });
                 }
             }
@@ -1931,15 +1972,10 @@ pub async fn get_planning_gantt_snapshot(
         span.0 = span.0.min(day);
         span.1 = span.1.max(day);
     }
-    let mut roster: BTreeMap<(i64, String), TeamDayHours> = BTreeMap::new();
+    let mut roster: BTreeMap<(i64, String), load::TeamDay> = BTreeMap::new();
     for (team_id, (from, to)) in days_by_team {
-        let mut cursor = from;
-        while cursor <= to {
-            let chunk_end = (cursor + chrono::Duration::days(crate::personnel::capacity::MAX_RANGE_DAYS - 1)).min(to);
-            for day in crate::personnel::capacity::team_capacity_range(db, team_id, cursor, chunk_end).await? {
-                roster.insert((team_id, day.day.clone()), team_hours_from(day));
-            }
-            cursor = chunk_end + chrono::Duration::days(1);
+        for (day, team_day) in load::team_days(db, team_id, from, to).await? {
+            roster.insert((team_id, day.to_string()), team_day);
         }
     }
     for ((team_id, day), row) in &mut capacity_by_team_day {
@@ -1950,8 +1986,37 @@ pub async fn get_planning_gantt_snapshot(
         row.available_hours = hours.available;
         row.overtime_hours = hours.overtime;
         row.basis = hours.basis;
+        row.work_windows = hours
+            .hours
+            .windows
+            .iter()
+            .map(|w| CapacityWindow {
+                start: w.start.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                end: w.end.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                hours: w.hours,
+            })
+            .collect();
+        row.unwindowed_hours = hours.hours.unwindowed;
+    }
+    // Committed load per team-day (`planning::load`): labour hours spread over the slots' working
+    // days, finished work excluded.
+    if let (Ok(first), Ok(last)) = (parse_day(&filter.period_start), parse_day(&filter.period_end)) {
+        let teams: Vec<i64> = capacity_by_team_day
+            .keys()
+            .map(|(t, _)| *t)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let loads = load::team_day_loads(db, Some(&teams), first, last, None).await?;
+        for ((team_id, day), row) in &mut capacity_by_team_day {
+            if let Ok(d) = parse_day(day) {
+                row.committed_hours = loads.get(&(*team_id, d)).copied().unwrap_or(0.0);
+            }
+        }
+    }
+    for row in capacity_by_team_day.values_mut() {
         let denom = row.available_hours + row.overtime_hours;
-        row.utilization_ratio = if denom <= 0.0 { 1.0 } else { row.committed_hours / denom };
+        row.utilization_ratio = (denom > 0.0).then(|| row.committed_hours / denom);
     }
 
     let mut personnel_ids = BTreeSet::new();

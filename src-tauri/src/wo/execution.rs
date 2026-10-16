@@ -34,6 +34,12 @@ pub struct WoPlanInput {
     #[serde(default)]
     pub clear_shift: bool,
     pub expected_duration_hours: Option<f64>,
+    /// People the job takes; `None` keeps the current one.
+    #[serde(default)]
+    pub planned_crew_size: Option<i64>,
+    /// Removes the crew size.
+    #[serde(default)]
+    pub clear_crew_size: bool,
     /// Level of the shared DI / OT urgency scale (`emergency` … `low`).
     #[serde(default)]
     pub urgency_code: Option<String>,
@@ -217,6 +223,8 @@ pub async fn plan_wo(db: &DatabaseConnection, input: WoPlanInput) -> AppResult<W
             shift_class_version_id: input.shift_class_version_id,
             clear_shift: input.clear_shift,
             expected_duration_hours: input.expected_duration_hours,
+            planned_crew_size: input.planned_crew_size,
+            clear_crew_size: input.clear_crew_size,
             urgency_code: input.urgency_code,
             planned_downtime_hours: input.planned_downtime_hours,
         },

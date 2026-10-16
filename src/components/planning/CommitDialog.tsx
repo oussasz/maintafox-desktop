@@ -5,15 +5,17 @@ import { Link } from "react-router-dom";
 import { PermissionGate } from "@/components/PermissionGate";
 import { OverrideReasonDialog } from "@/components/planning/OverrideReasonDialog";
 import {
+  PLANNING_PROPOSED_ITEM_ID,
+  PLANNING_TIMELINE_MAX_ZOOM_MS,
+  PLANNING_UNASSIGNED_GROUP_ID,
+  type PlanningBoardScope,
   buildPlanningTimelineItems,
   buildPlanningTimelineLanes,
   buildPlanningWindowHighlights,
   candidateDisplayCode,
   candidateDisplayTitle,
-  clampEndToRemainingCapacity,
-  teamGroupId,
+  checkSlotCapacity,
   deriveCommitSlotLocals,
-  exceedsTeamDayCapacity,
   fromDateTimeLocal,
   hoursBetweenLocals,
   isCapacityGateErrorMessage,
@@ -21,15 +23,11 @@ import {
   msToLocalIsoDate,
   parseLaborCostRange,
   parseMs,
-  parseSuggestedAssignees,
-  PLANNING_PROPOSED_ITEM_ID,
-  PLANNING_TIMELINE_MAX_ZOOM_MS,
-  PLANNING_UNASSIGNED_GROUP_ID,
   previewLaborCost,
-  resolveTeamDayCapacity,
   sanitizeBudgetThresholdInput,
-  workDateFromCommittedIso,
-  type PlanningBoardScope,
+  slotCapacityRows,
+  slotShiftHours,
+  teamGroupId,
 } from "@/components/planning/planning-model";
 import {
   ResourceTimeline,
@@ -57,7 +55,7 @@ import {
 } from "@/components/ui/select";
 import { useFormatters } from "@/hooks/use-formatters";
 import { formatOrDash, formatPersonLabel } from "@/lib/display";
-import { listTeamMembers, getActiveRateCard } from "@/services/personnel-service";
+import { getActiveRateCard, listTeamMembers } from "@/services/personnel-service";
 import { toErrorMessage } from "@/utils/errors";
 import type {
   CandidateConflictSummary,
@@ -208,40 +206,18 @@ export function CommitDialog({
     };
   }, [open, personnelId]);
 
-  const suggestions = useMemo(
-    () => parseSuggestedAssignees(candidate?.suggested_assignees_json),
-    [candidate?.suggested_assignees_json],
-  );
-
   const rosterIds = useMemo(() => new Set(roster.map((m) => m.personnel_id)), [roster]);
 
-  const assigneeOptions = useMemo(() => {
-    const byId = new Map(
-      roster.map((m) => [
-        m.personnel_id,
-        {
-          id: m.personnel_id,
-          label: m.employee_code
-            ? `${formatPersonLabel(m.full_name)} (${m.employee_code})`
-            : formatPersonLabel(m.full_name),
-        },
-      ]),
-    );
-    const ranked: Array<{ id: number; label: string }> = [];
-    for (const suggestion of suggestions) {
-      const existing = byId.get(suggestion.personnel_id);
-      if (!existing) continue;
-      ranked.push({
-        id: suggestion.personnel_id,
-        label: `${existing.label} · ${t("commitment.matchingSkills", {
-          count: suggestion.matching_skills,
-        })}`,
-      });
-      byId.delete(suggestion.personnel_id);
-    }
-    for (const rest of byId.values()) ranked.push(rest);
-    return ranked;
-  }, [roster, suggestions, t]);
+  const assigneeOptions = useMemo(
+    () =>
+      roster.map((m) => ({
+        id: m.personnel_id,
+        label: m.employee_code
+          ? `${formatPersonLabel(m.full_name)} (${m.employee_code})`
+          : formatPersonLabel(m.full_name),
+      })),
+    [roster],
+  );
 
   // Drop assignee if no longer on crew (e.g. crew changed while dialog open).
   useEffect(() => {
@@ -260,58 +236,56 @@ export function CommitDialog({
 
   const durationHours = useMemo(() => hoursBetweenLocals(start, end), [start, end]);
 
-  const dayCapacity = useMemo(() => {
-    if (effectiveTeamId == null || !start.trim()) return null;
-    const startIso = fromDateTimeLocal(start);
-    const workDate = workDateFromCommittedIso(startIso);
-    if (!workDate) return null;
-    return {
-      workDate,
-      ...resolveTeamDayCapacity(gantt?.capacity, effectiveTeamId, workDate),
-    };
-  }, [effectiveTeamId, start, gantt?.capacity]);
+  /** Labour hours the work books: duration × crew size (as the backend gate). None without both. */
+  const labourHours = useMemo(() => {
+    const h = candidate?.estimated_duration_hours;
+    const crew = candidate?.planned_crew_size;
+    return h != null && Number.isFinite(h) && h > 0 && crew != null && crew >= 1 ? h * crew : null;
+  }, [candidate?.estimated_duration_hours, candidate?.planned_crew_size]);
+  const notEstimated = candidate != null && labourHours == null;
 
-  const capacityBlocked = useMemo(() => {
-    if (effectiveTeamId == null || !start.trim() || !end.trim()) return false;
-    return exceedsTeamDayCapacity(
-      gantt?.capacity,
-      effectiveTeamId,
-      fromDateTimeLocal(start),
-      fromDateTimeLocal(end),
+  /** Every day of the slot: its share of the labour against the team's remaining hours. */
+  const slotCapacity = useMemo(() => {
+    if (effectiveTeamId == null || !start.trim() || !end.trim() || labourHours == null) return null;
+    return checkSlotCapacity({
+      capacity: gantt?.capacity,
+      teamId: effectiveTeamId,
+      startIso: fromDateTimeLocal(start),
+      endIso: fromDateTimeLocal(end),
+      labourHours,
+    });
+  }, [effectiveTeamId, start, end, labourHours, gantt?.capacity]);
+
+  const capacityBlocked = slotCapacity?.overloaded != null;
+
+  /**
+   * Each person works the whole duration: warn (not block) when the slot holds less shift time
+   * than that. Unknown when a day's shift windows are not known.
+   */
+  const shiftTimeShort = useMemo(() => {
+    const duration = candidate?.estimated_duration_hours;
+    if (effectiveTeamId == null || !start.trim() || !end.trim() || duration == null) return null;
+    const startIso = fromDateTimeLocal(start);
+    const endIso = fromDateTimeLocal(end);
+    const shiftHours = slotShiftHours(
+      startIso,
+      endIso,
+      slotCapacityRows(gantt?.capacity, effectiveTeamId, startIso, endIso),
     );
-  }, [effectiveTeamId, start, end, gantt?.capacity]);
+    return shiftHours != null && duration > shiftHours + 0.01 ? { duration, shiftHours } : null;
+  }, [candidate?.estimated_duration_hours, effectiveTeamId, start, end, gantt?.capacity]);
 
   const isLocalDateAtCapacity = useMemo(() => {
     if (effectiveTeamId == null) return () => false;
     const team = effectiveTeamId;
     const rows = gantt?.capacity;
+    // Only days known to be full from the load data (a working day with nothing left).
     return (localDate: string) => {
-      const noonIso = fromDateTimeLocal(`${localDate}T12:00`);
-      const workDate = workDateFromCommittedIso(noonIso);
-      if (!workDate) return false;
-      // Only disable days we know are full from load data (committed > 0 and remaining 0).
-      const row = (rows ?? []).find((c) => c.team_id === team && c.work_date === workDate);
-      if (!row) return false;
-      return resolveTeamDayCapacity(rows, team, workDate).remainingHours <= 0;
+      const row = (rows ?? []).find((c) => c.team_id === team && c.work_date === localDate);
+      if (!row || row.available_hours + row.overtime_hours <= 0) return false;
+      return row.available_hours + row.overtime_hours - row.committed_hours <= 0;
     };
   }, [effectiveTeamId, gantt?.capacity]);
-
-  // Keep end inside remaining daily capacity whenever start / crew / capacity change.
-  useEffect(() => {
-    if (!open || effectiveTeamId == null || !start.trim() || !end.trim()) return;
-    const startIso = fromDateTimeLocal(start);
-    const endIso = fromDateTimeLocal(end);
-    const clampedLocal = clampEndToRemainingCapacity({
-      startIso,
-      endIso,
-      teamId: effectiveTeamId,
-      capacity: gantt?.capacity,
-      ...(horizonEnd ? { hardMaxEndMs: horizonEnd } : {}),
-    });
-    if (clampedLocal && clampedLocal !== end) {
-      setEnd(clampedLocal);
-    }
-  }, [open, effectiveTeamId, start, end, gantt?.capacity, horizonEnd]);
 
   const slotOutsideHorizon = useMemo(() => {
     if (!start.trim() && !end.trim()) return false;
@@ -325,10 +299,10 @@ export function CommitDialog({
   }, [start, end, horizonStart, horizonEnd]);
 
   const estimateDisplay = useMemo(() => {
-    if (durationHours != null && personnelId != null && laborRate != null) {
+    if (labourHours != null && personnelId != null && laborRate != null) {
       return {
         kind: "computed" as const,
-        value: previewLaborCost(durationHours, laborRate),
+        value: previewLaborCost(labourHours, laborRate),
       };
     }
     if (personnelId != null && rateLoading) {
@@ -340,7 +314,7 @@ export function CommitDialog({
       }
       return { kind: "noRate" as const };
     }
-    if (personnelId != null && laborRate != null && durationHours == null) {
+    if (personnelId != null && laborRate != null && labourHours == null) {
       return { kind: "needSlot" as const };
     }
     if (costRange) {
@@ -350,7 +324,7 @@ export function CommitDialog({
       return { kind: "needAssignee" as const };
     }
     return { kind: "loading" as const };
-  }, [durationHours, personnelId, laborRate, costRange, rateLoading]);
+  }, [labourHours, personnelId, laborRate, costRange, rateLoading]);
 
   const assigneeDisabled = effectiveTeamId == null || rosterLoading || Boolean(rosterError);
   const assigneeHelper = (() => {
@@ -519,15 +493,23 @@ export function CommitDialog({
       setFieldError(t("commitment.errors.assigneeNotOnCrew"));
       return null;
     }
-    if (exceedsTeamDayCapacity(gantt?.capacity, effectiveTeamId, committedStart, committedEnd)) {
-      const workDate = workDateFromCommittedIso(committedStart);
-      const remaining =
-        workDate != null
-          ? resolveTeamDayCapacity(gantt?.capacity, effectiveTeamId, workDate).remainingHours
-          : 0;
+    if (labourHours == null) {
+      setFieldError(t("commitment.notEstimated"));
+      return null;
+    }
+    const check = checkSlotCapacity({
+      capacity: gantt?.capacity,
+      teamId: effectiveTeamId,
+      startIso: committedStart,
+      endIso: committedEnd,
+      labourHours,
+    });
+    if (check.overloaded) {
       setFieldError(
-        t("commitment.errors.capacityExceeded", {
-          remaining: remaining.toFixed(1),
+        t("commitment.errors.capacityExceededDay", {
+          day: check.overloaded.day,
+          share: check.overloaded.shareHours.toFixed(1),
+          remaining: check.overloaded.remainingHours.toFixed(1),
         }),
       );
       return null;
@@ -564,15 +546,15 @@ export function CommitDialog({
     } catch (err) {
       const message = toErrorMessage(err);
       if (isCapacityGateErrorMessage(message)) {
-        const workDate = workDateFromCommittedIso(input.committed_start);
-        const remaining =
-          workDate != null && effectiveTeamId != null
-            ? resolveTeamDayCapacity(gantt?.capacity, effectiveTeamId, workDate).remainingHours
-            : 0;
+        const overloaded = slotCapacity?.overloaded;
         setFormError(
-          t("commitment.errors.capacityExceeded", {
-            remaining: remaining.toFixed(1),
-          }),
+          overloaded
+            ? t("commitment.errors.capacityExceededDay", {
+                day: overloaded.day,
+                share: overloaded.shareHours.toFixed(1),
+                remaining: overloaded.remainingHours.toFixed(1),
+              })
+            : message,
         );
       } else {
         setFormError(message);
@@ -674,21 +656,44 @@ export function CommitDialog({
                   }}
                 />
                 <p className="text-[11px] text-text-muted">{t("commitment.horizonHint")}</p>
-                {dayCapacity ? (
+                {notEstimated ? (
+                  <p className="text-[11px] text-tone-attention-fg" role="alert">
+                    {t("commitment.notEstimated")}
+                  </p>
+                ) : labourHours != null ? (
                   <p className="text-[11px] text-text-muted">
-                    {t("commitment.capacityRemaining", {
-                      remaining: dayCapacity.remainingHours.toFixed(1),
-                      available: (dayCapacity.availableHours + dayCapacity.overtimeHours).toFixed(
-                        1,
-                      ),
+                    {t("commitment.labourHours", {
+                      hours: labourHours.toFixed(1),
+                      duration: candidate?.estimated_duration_hours?.toFixed(1),
+                      crew: candidate?.planned_crew_size,
                     })}
-                    {dayCapacity.basis
-                      ? ` · ${t(`commitment.capacityBasis.${dayCapacity.basis}`, { defaultValue: dayCapacity.basis })}`
-                      : null}
                   </p>
                 ) : null}
-                {dayCapacity &&
-                (dayCapacity.basis === "no_schedule" || dayCapacity.basis === "no_members") ? (
+                {slotCapacity && slotCapacity.days.length > 0 ? (
+                  <ul className="space-y-0.5 text-[11px] text-text-muted">
+                    {slotCapacity.days.map((d) => (
+                      <li
+                        key={d.day}
+                        className={
+                          slotCapacity.overloaded?.day === d.day
+                            ? "text-tone-attention-fg"
+                            : undefined
+                        }
+                      >
+                        {t("commitment.capacityByDay", {
+                          day: d.day,
+                          share: d.shareHours.toFixed(1),
+                          remaining: d.remainingHours.toFixed(1),
+                          available: (d.availableHours + d.overtimeHours).toFixed(1),
+                        })}
+                        {d.basis && d.basis !== "roster"
+                          ? ` · ${t(`commitment.capacityBasis.${d.basis}`, { defaultValue: d.basis })}`
+                          : null}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                {slotCapacity?.noSchedule ? (
                   <p className="text-[11px] text-tone-attention-fg" role="alert">
                     {t("commitment.noTeamCapacity")}{" "}
                     <Link
@@ -699,10 +704,20 @@ export function CommitDialog({
                     </Link>
                   </p>
                 ) : null}
-                {capacityBlocked ? (
-                  <p className="text-[11px] text-amber-700 dark:text-amber-400">
-                    {t("commitment.capacityBlockedHint", {
-                      remaining: (dayCapacity?.remainingHours ?? 0).toFixed(1),
+                {shiftTimeShort ? (
+                  <p className="text-[11px] text-tone-attention-fg" role="status">
+                    {t("commitment.shiftTimeShort", {
+                      duration: shiftTimeShort.duration.toFixed(1),
+                      shift: shiftTimeShort.shiftHours.toFixed(1),
+                    })}
+                  </p>
+                ) : null}
+                {capacityBlocked && slotCapacity?.overloaded ? (
+                  <p className="text-[11px] text-tone-attention-fg" role="alert">
+                    {t("commitment.errors.capacityExceededDay", {
+                      day: slotCapacity.overloaded.day,
+                      share: slotCapacity.overloaded.shareHours.toFixed(1),
+                      remaining: slotCapacity.overloaded.remainingHours.toFixed(1),
                     })}
                   </p>
                 ) : null}
@@ -893,6 +908,7 @@ export function CommitDialog({
                   effectiveTeamId == null ||
                   saving ||
                   rosterLoading ||
+                  notEstimated ||
                   capacityBlocked ||
                   slotOutsideHorizon
                 }

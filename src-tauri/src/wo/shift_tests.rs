@@ -258,6 +258,8 @@ async fn plan(
             shift_class_version_id: version,
             clear_shift: clear,
             expected_duration_hours: Some(4.0),
+            planned_crew_size: None,
+            clear_crew_size: false,
             planned_downtime_hours: None,
             urgency_code: None,
         },

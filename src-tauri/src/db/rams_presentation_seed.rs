@@ -440,6 +440,8 @@ async fn create_and_close_corrective_wo(db: &DatabaseConnection, ctx: CreateWoSe
             shift_class_version_id: None,
             clear_shift: false,
             expected_duration_hours: Some(ctx.repair_hours),
+            planned_crew_size: None,
+            clear_crew_size: false,
             urgency_code: None,
             planned_downtime_hours: None,
         },

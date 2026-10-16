@@ -133,6 +133,18 @@ function parseNumber(value: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/** Largest crew on one job (`planning::load::MAX_CREW_SIZE`; also enforced by the database). */
+const MAX_CREW_SIZE = 50;
+
+/** The crew size typed: empty (none), a whole number of people from 1 to 50, or refused. */
+function readCrewSize(value: string): { ok: true; value: number | null } | { ok: false } {
+  if (!value.trim()) return { ok: true, value: null };
+  const n = Number(value);
+  return Number.isInteger(n) && n >= 1 && n <= MAX_CREW_SIZE
+    ? { ok: true, value: n }
+    : { ok: false };
+}
+
 function toTaskDraft(task: WoExecTask): TaskDraft {
   return {
     localId: `task-${task.id}`,
@@ -194,6 +206,9 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
     const [expectedHours, setExpectedHours] = useState(
       wo.expected_duration_hours != null ? String(wo.expected_duration_hours) : "",
     );
+    const [crewSize, setCrewSize] = useState(
+      wo.planned_crew_size != null ? String(wo.planned_crew_size) : "",
+    );
     const [plannedDowntimeHours, setPlannedDowntimeHours] = useState(
       wo.planned_downtime_hours != null ? String(wo.planned_downtime_hours) : "",
     );
@@ -248,6 +263,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
       setExpectedHours(
         wo.expected_duration_hours != null ? String(wo.expected_duration_hours) : "",
       );
+      setCrewSize(wo.planned_crew_size != null ? String(wo.planned_crew_size) : "");
       setPlannedDowntimeHours(
         wo.planned_downtime_hours != null ? String(wo.planned_downtime_hours) : "",
       );
@@ -570,6 +586,11 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
     /** Save job-prep without status change. Dates owned by Planning when committed. */
     const handleSavePlan = useCallback(async () => {
       if (!planReady || !requireActor) return;
+      const crew = readCrewSize(crewSize);
+      if (!crew.ok) {
+        setError(t("planning.plannedCrewSizeInvalid", { max: MAX_CREW_SIZE }));
+        return;
+      }
 
       setBusy(true);
       setError(null);
@@ -592,6 +613,9 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
           // The shift only when the planner changed it; the stored one is kept otherwise.
           ...shiftSaveFields(shiftTouched, shiftVersionId, wo),
           expected_duration_hours: parseNumber(expectedHours),
+          planned_crew_size: crew.value,
+          // An emptied field removes the crew size (the job is then not estimated for planning).
+          clear_crew_size: crew.value == null && wo.planned_crew_size != null,
           planned_downtime_hours: parseNumber(plannedDowntimeHours),
           urgency_code: urgencyId ? (urgencyId as UrgencyCode) : null,
         });
@@ -611,6 +635,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
     }, [
       planReady,
       requireActor,
+      t,
       wo,
       rowVersion,
       plannerId,
@@ -620,6 +645,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
       shiftVersionId,
       shiftTouched,
       expectedHours,
+      crewSize,
       plannedDowntimeHours,
       urgencyId,
       refreshActiveWo,
@@ -1006,6 +1032,18 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                 onChange={(e) => setExpectedHours(e.target.value)}
                 disabled={allFieldsDisabled}
               />
+            </div>
+            <div className="space-y-1">
+              <Label>{t("planning.plannedCrewSize")}</Label>
+              <Input
+                type="number"
+                step="1"
+                min="1"
+                value={crewSize}
+                onChange={(e) => setCrewSize(e.target.value)}
+                disabled={allFieldsDisabled}
+              />
+              <p className="text-[11px] text-text-muted">{t("planning.plannedCrewSizeHint")}</p>
             </div>
             <div className="space-y-1">
               <Label>{t("planning.plannedDowntimeHours")}</Label>

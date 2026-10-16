@@ -3529,24 +3529,14 @@ pub async fn evaluate_budget_alerts(
         }
     }
 
-    let team_commit_rows = db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT assigned_team_id AS team_id,
-                    CAST(strftime('%m', committed_start) AS INTEGER) AS period_month,
-                    SUM((julianday(committed_end) - julianday(committed_start)) * 24.0) AS committed_hours
-             FROM schedule_commitments
-             WHERE assigned_team_id IS NOT NULL
-             GROUP BY assigned_team_id, CAST(strftime('%m', committed_start) AS INTEGER)",
-            [],
-        ))
-        .await?;
+    // Committed labour per team and month of the budget's fiscal year, counted as the planning
+    // board counts it (`planning::load`): duration x crew size spread over the working time of
+    // each slot, finished and cancelled work left out.
     let mut team_commit_map = std::collections::HashMap::<(i64, i64), f64>::new();
-    for row in team_commit_rows {
-        let team_id: i64 = row.try_get("", "team_id")?;
-        let month: i64 = row.try_get("", "period_month")?;
-        let committed_hours: f64 = row.try_get("", "committed_hours")?;
-        team_commit_map.insert((team_id, month), committed_hours);
+    if let Ok(year) = i32::try_from(version.fiscal_year) {
+        for ((team_id, month), hours) in crate::planning::load::team_month_loads(db, year).await? {
+            team_commit_map.insert((team_id, i64::from(month)), hours);
+        }
     }
     // Team capacity of each month with commitments: the same figure planning books against
     // (members' Classes horaires on working days, minus absences, x utilisation, plus the
@@ -3965,7 +3955,11 @@ pub async fn build_budget_report_pack(
     let reassignment_row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT COALESCE(SUM(has_blocking_conflict), 0) AS churn FROM schedule_commitments",
+            // Real churn: commitments moved after they were committed — reschedules and emergency
+            // reassignments (planning change log) and break-ins.
+            "SELECT (SELECT COUNT(*) FROM schedule_change_log \
+                      WHERE action_type IN ('reschedule_commitment', 'emergency_reassign')) \
+                  + (SELECT COUNT(*) FROM schedule_break_ins) AS churn",
             [],
         ))
         .await?;
