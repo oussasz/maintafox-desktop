@@ -439,7 +439,7 @@
     "loading": "Loading",
     "loadingHint": "{{baseline}} planned / {{available}} available (+ {{overtime}} overtime possible)",
     "compliance": "Schedule compliance",
-    "complianceHint": "{{done}} done of {{baseline}} planned",
+    "complianceHint": "{{done}} done of {{baseline}} planned · {{released}} later released or cancelled",
     "breakIns": "Break-ins",
     "displaced": "Displaced jobs",
     "awaitingApproval": "Frozen without approval",
@@ -449,6 +449,8 @@
     "baseline": "Baseline",
     "jobsHours": "{{jobs}} jobs · {{hours}}",
     "hours": "{{hours}} h",
-    "inProgress": "in progress"
+    "inProgress": "in progress",
+    "notMeasured": "not measured",
+    "noJudgedWeek": "no frozen week ended in the period"
   }
 }

@@ -99,19 +99,15 @@ function PlanningBody({ data }: { data: HomePlanning }) {
         }
         definitions={[
           { label: t("home.planning.week.load"), text: t("home.def.weekLoad") },
-          { label: t("home.planning.week.overloaded"), text: t("home.def.weekOverloaded") },
+          { label: t("home.planning.week.overtime"), text: t("home.def.weekOvertime") },
         ]}
         openLabel={t("home.open.planning")}
         openTo={homeLinks.planning}
       >
         {week == null ? (
           <HomeNote tone="warning">
-            {t(
-              `home.planning.week.unavailable.${data.week_unavailable ?? "WORK_WEEK_NOT_CONFIGURED"}`,
-            )}
+            {t(`home.planning.week.unavailable.${data.week_unavailable ?? "WEEK_NOT_FROZEN"}`)}
           </HomeNote>
-        ) : week.teams === 0 ? (
-          <HomeNote>{t("home.planning.week.noTeams")}</HomeNote>
         ) : (
           <>
             <div className="grid grid-cols-2 gap-2">
@@ -123,20 +119,27 @@ function PlanningBody({ data }: { data: HomePlanning }) {
                     : formatPercent(week.load_pct)
                 }
                 hint={t("home.planning.week.hoursOf", {
-                  committed: hours(week.committed_hours),
-                  capacity: hours(week.capacity_hours),
+                  baseline: hours(week.baseline_hours),
+                  available: hours(week.available_hours),
                 })}
-                tone={week.load_pct != null && week.load_pct > 100 ? "danger" : undefined}
+                tone={week.relies_on_overtime ? "warning" : undefined}
               />
               <HomeFigure
-                label={t("home.planning.week.overloaded")}
-                value={formatNumber(week.overloaded_team_days)}
-                tone={week.overloaded_team_days > 0 ? "warning" : undefined}
+                label={t("home.planning.week.overtime")}
+                value={hours(week.overtime_hours)}
               />
             </div>
-            {week.basis.scope === "own_site" ? (
+            {week.relies_on_overtime ? (
+              <HomeNote tone="warning">{t("home.planning.week.reliesOnOvertime")}</HomeNote>
+            ) : null}
+            {week.weeks_awaiting_approval > 0 ? (
+              <HomeNote tone="warning">
+                {t("home.planning.week.awaitingApproval", { count: week.weeks_awaiting_approval })}
+              </HomeNote>
+            ) : null}
+            {week.sites_not_frozen > 0 ? (
               <HomeNote tone="info">
-                {t("home.planning.week.ownSite", { site: week.basis.site_name ?? "" })}
+                {t("home.planning.week.sitesNotFrozen", { count: week.sites_not_frozen })}
               </HomeNote>
             ) : null}
           </>
@@ -150,17 +153,28 @@ function PlanningBody({ data }: { data: HomePlanning }) {
         ]}
       >
         {sc.value_pct == null ? (
-          <HomeNote>{t("home.planning.compliance.none", { count: sc.period_days })}</HomeNote>
-        ) : (
-          <HomeFigure
-            label={t("home.planning.compliance.value")}
-            value={formatPercent(sc.value_pct)}
-            hint={t("home.planning.compliance.hint", {
-              done: hours(sc.done_hours),
-              scheduled: hours(sc.scheduled_hours),
+          <HomeNote>
+            {t(`home.planning.compliance.unavailable.${sc.unavailable ?? "NO_FROZEN_BASELINE"}`, {
               count: sc.period_days,
             })}
-          />
+          </HomeNote>
+        ) : (
+          <>
+            <HomeFigure
+              label={t("home.planning.compliance.value")}
+              value={formatPercent(sc.value_pct)}
+              hint={t("home.planning.compliance.hint", {
+                done: hours(sc.done_hours),
+                scheduled: hours(sc.scheduled_hours),
+                count: sc.period_days,
+              })}
+            />
+            {sc.released_jobs > 0 ? (
+              <HomeNote tone="info">
+                {t("home.planning.compliance.released", { count: sc.released_jobs })}
+              </HomeNote>
+            ) : null}
+          </>
         )}
       </HomeSection>
     </div>

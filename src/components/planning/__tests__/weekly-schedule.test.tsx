@@ -116,6 +116,7 @@ const kpisFixture = {
       baseline_no: 1,
       baseline_jobs: 2,
       baseline_hours: 5,
+      baseline_released_jobs: 1,
       done_hours: 2,
       compliance_pct: 40,
       break_in_jobs: 1,
@@ -133,6 +134,7 @@ const kpisFixture = {
     weeks_awaiting_approval: 1,
     weeks_not_frozen: 2,
     baseline_hours: 5,
+    baseline_released_jobs: 1,
     judged_baseline_hours: 5,
     done_hours: 2,
     compliance_pct: 40,
@@ -329,6 +331,7 @@ describe("WeeklySchedulePanel", () => {
     expect(kpis).toHaveTextContent("20 %");
     expect(kpis).toHaveTextContent(enPlanning.kpis.notFrozen);
     expect(kpis).toHaveTextContent(enPlanning.weekly.frozenWithoutApproval);
+    expect(kpis).toHaveTextContent("1 later released or cancelled");
   });
 
   it("shows the crews' week and marks a week frozen without approval", async () => {

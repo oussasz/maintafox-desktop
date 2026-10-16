@@ -80,7 +80,9 @@ export function PlanningKpiSection({ siteId, weekStart }: { siteId: number; week
           <div className={cn(mfMetric.grid, "grid-cols-2 md:grid-cols-6")}>
             <Metric
               label={t("kpis.loading")}
-              value={percent(kpis.totals.loading_pct)}
+              value={
+                kpis.totals.weeks === 0 ? t("kpis.notMeasured") : percent(kpis.totals.loading_pct)
+              }
               hint={t("kpis.loadingHint", {
                 baseline: hours(kpis.totals.baseline_hours),
                 available: hours(kpis.totals.available_hours),
@@ -89,15 +91,26 @@ export function PlanningKpiSection({ siteId, weekStart }: { siteId: number; week
             />
             <Metric
               label={t("kpis.compliance")}
-              value={percent(kpis.totals.compliance_pct)}
-              hint={t("kpis.complianceHint", {
-                done: hours(kpis.totals.done_hours),
-                baseline: hours(kpis.totals.judged_baseline_hours),
-              })}
+              value={
+                kpis.totals.weeks_judged === 0
+                  ? t("kpis.notMeasured")
+                  : percent(kpis.totals.compliance_pct)
+              }
+              hint={
+                kpis.totals.weeks_judged === 0
+                  ? t("kpis.noJudgedWeek")
+                  : t("kpis.complianceHint", {
+                      done: hours(kpis.totals.done_hours),
+                      baseline: hours(kpis.totals.judged_baseline_hours),
+                      released: kpis.totals.baseline_released_jobs,
+                    })
+              }
             />
             <Metric
               label={t("kpis.breakIns")}
-              value={percent(kpis.totals.break_in_pct)}
+              value={
+                kpis.totals.weeks === 0 ? t("kpis.notMeasured") : percent(kpis.totals.break_in_pct)
+              }
               hint={hours(kpis.totals.break_in_hours)}
             />
             <Metric label={t("kpis.displaced")} value={String(kpis.totals.displaced_jobs)} />

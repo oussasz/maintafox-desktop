@@ -70,6 +70,8 @@ pub struct WeekKpi {
     pub baseline_no: i64,
     pub baseline_jobs: i64,
     pub baseline_hours: f64,
+    /// Baseline jobs whose slot was later released or cancelled: scheduled, counted as not done.
+    pub baseline_released_jobs: i64,
     /// `None` while the week is not over.
     pub done_hours: Option<f64>,
     pub compliance_pct: Option<f64>,
@@ -92,6 +94,7 @@ pub struct PlanningKpiTotals {
     /// Weeks whose freeze fell due and that were never frozen: no baseline, not measured.
     pub weeks_not_frozen: i64,
     pub baseline_hours: f64,
+    pub baseline_released_jobs: i64,
     /// Baseline hours of the weeks judged.
     pub judged_baseline_hours: f64,
     pub done_hours: f64,
@@ -138,6 +141,8 @@ struct Baseline {
     jobs: i64,
     hours: f64,
     done: f64,
+    /// Baseline jobs whose slot was later released or cancelled (counted as not done).
+    released: i64,
 }
 
 /// The week's current baseline: jobs, hours, and hours whose work was finished by `week_end_at`.
@@ -150,13 +155,15 @@ async fn baseline(db: &impl ConnectionTrait, schedule: &WeeklySchedule, week_end
                    SELECT COALESCE(bi.planned_labor_hours, \
                                    (julianday(bi.committed_end) - julianday(bi.committed_start)) * 24.0) AS hours, \
                           (SELECT COALESCE(w.mechanically_completed_at, w.actual_end, w.closed_at) \
-                             FROM work_orders w WHERE w.id = {BEHIND_WO_SQL} AND w.cancelled_at IS NULL) AS done_at \
+                             FROM work_orders w WHERE w.id = {BEHIND_WO_SQL} AND w.cancelled_at IS NULL) AS done_at, \
+                          sc.status IN ('released', 'cancelled') AS released \
                      FROM weekly_schedule_baseline_items bi \
                      JOIN schedule_commitments sc ON sc.id = bi.schedule_commitment_id \
                     WHERE bi.weekly_schedule_id = ? AND bi.baseline_no = ?) \
                  SELECT COUNT(*) AS jobs, COALESCE(SUM(hours), 0) AS hours, \
                         COALESCE(SUM(CASE WHEN done_at IS NOT NULL AND julianday(done_at) <= julianday(?) \
-                                          THEN hours ELSE 0 END), 0) AS done \
+                                          THEN hours ELSE 0 END), 0) AS done, \
+                        COALESCE(SUM(released), 0) AS released \
                    FROM b"
             ),
             [schedule.id.into(), schedule.baseline_no.into(), week_end_at.into()],
@@ -167,6 +174,7 @@ async fn baseline(db: &impl ConnectionTrait, schedule: &WeeklySchedule, week_end
         jobs: row.try_get("", "jobs").map_err(|e| decode_err("jobs", e))?,
         hours: row.try_get("", "hours").map_err(|e| decode_err("hours", e))?,
         done: row.try_get("", "done").map_err(|e| decode_err("done", e))?,
+        released: row.try_get("", "released").map_err(|e| decode_err("released", e))?,
     })
 }
 
@@ -279,6 +287,7 @@ async fn week_kpi(
         baseline_no: schedule.baseline_no,
         baseline_jobs: base.jobs,
         baseline_hours: round1(base.hours),
+        baseline_released_jobs: base.released,
         done_hours: over.then(|| round1(base.done)),
         compliance_pct: if over { pct(base.done, base.hours) } else { None },
         break_in_jobs,
@@ -408,6 +417,7 @@ pub async fn planning_kpis(
         t.weeks += 1;
         t.weeks_awaiting_approval += i64::from(w.awaiting_approval);
         t.baseline_hours += w.baseline_hours;
+        t.baseline_released_jobs += w.baseline_released_jobs;
         t.break_in_hours += w.break_in_hours;
         t.displaced_jobs += w.displaced_jobs;
         t.available_hours += w.available_hours;
@@ -434,16 +444,43 @@ pub async fn planning_kpis(
     Ok(PlanningKpis { weeks, totals: t })
 }
 
+/// The current week of every planning site that has one frozen (or published), measured, and how
+/// many planning sites there are: what "this week's load" reads.
+pub async fn current_weeks(db: &impl ConnectionTrait, now: DateTime<Utc>) -> AppResult<(Vec<WeekKpi>, usize)> {
+    let sites = sites_of(db, None).await?;
+    let today = now.with_timezone(&Local).date_naive();
+    let mut weeks = Vec::new();
+    for (schedule, site_name) in frozen_schedules(db, &sites, today - Duration::days(13), today).await? {
+        let start = parse_day(&schedule.week_start, "week_start")?;
+        let end = parse_day(&schedule.week_end, "week_end")?;
+        if start <= today && today <= end {
+            weeks.push(week_kpi(db, &schedule, &site_name, now).await?);
+        }
+    }
+    Ok((weeks, sites.len()))
+}
+
+/// Schedule compliance on the baseline basis, with what it was measured on.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct BaselineCompliance {
+    pub done_hours: f64,
+    pub baseline_hours: f64,
+    /// Baseline jobs later released or cancelled (counted as not done).
+    pub released_jobs: i64,
+    /// Frozen weeks measured.
+    pub weeks: i64,
+}
+
 /// SMRP schedule compliance (hours) on the baseline basis, for analytics, the home dashboard and
 /// the monthly report: the frozen weeks whose end falls in `[from, until)` and is past (`now`), of
-/// the sites at or under `org` (every site without one). Returns `(done hours, baseline hours)`.
+/// the sites at or under `org` (every site without one).
 pub async fn baseline_schedule_compliance(
     db: &impl ConnectionTrait,
     from: DateTime<Utc>,
     until: DateTime<Utc>,
     org: Option<i64>,
     now: DateTime<Utc>,
-) -> AppResult<(f64, f64)> {
+) -> AppResult<BaselineCompliance> {
     let mut sites = sites_of(db, None).await?;
     if let Some(org) = org {
         let under: BTreeSet<i64> = db
@@ -462,7 +499,7 @@ pub async fn baseline_schedule_compliance(
     // A week starts at most 13 days before it ends.
     let first = (from - Duration::days(14)).with_timezone(&Local).date_naive();
     let last = until.with_timezone(&Local).date_naive();
-    let (mut done, mut scheduled) = (0.0, 0.0);
+    let mut out = BaselineCompliance::default();
     for (schedule, _) in frozen_schedules(db, &sites, first, last).await? {
         let end = parse_day(&schedule.week_end, "week_end")?;
         let end_instant = local_midnight_utc(end + Duration::days(1))?;
@@ -470,8 +507,10 @@ pub async fn baseline_schedule_compliance(
             continue;
         }
         let base = baseline(db, &schedule, &rfc3339(end_instant)).await?;
-        done += base.done;
-        scheduled += base.hours;
+        out.done_hours += base.done;
+        out.baseline_hours += base.hours;
+        out.released_jobs += base.released;
+        out.weeks += 1;
     }
-    Ok((done, scheduled))
+    Ok(out)
 }

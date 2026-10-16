@@ -439,7 +439,7 @@
     "loading": "Chargement",
     "loadingHint": "{{baseline}} planifiées / {{available}} disponibles (+ {{overtime}} d'heures sup. possibles)",
     "compliance": "Respect du planning",
-    "complianceHint": "{{done}} réalisées sur {{baseline}} planifiées",
+    "complianceHint": "{{done}} réalisées sur {{baseline}} planifiées · {{released}} ensuite libérés ou annulés",
     "breakIns": "Break-ins",
     "displaced": "Travaux déplacés",
     "awaitingApproval": "Gelées sans approbation",
@@ -449,6 +449,8 @@
     "baseline": "Référence",
     "jobsHours": "{{jobs}} travaux · {{hours}}",
     "hours": "{{hours}} h",
-    "inProgress": "en cours"
+    "inProgress": "en cours",
+    "notMeasured": "non mesuré",
+    "noJudgedWeek": "aucune semaine gelée terminée sur la période"
   }
 }

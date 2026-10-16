@@ -96,31 +96,24 @@ const PlanningSchema = z.object({
     .object({
       week_start: z.string(),
       week_end: z.string(),
-      basis: z.object({
-        rest_days: z.array(z.number()),
-        scope: z.enum(["all_sites", "own_site"]),
-        site_name: nullableString,
-      }),
-      teams: z.number(),
-      capacity_hours: z.number(),
-      committed_hours: z.number(),
+      sites: z.number(),
+      sites_not_frozen: z.number(),
+      baseline_hours: z.number(),
+      available_hours: z.number(),
+      overtime_hours: z.number(),
       load_pct: z.number().nullable(),
-      overloaded_team_days: z.number(),
+      relies_on_overtime: z.boolean(),
+      weeks_awaiting_approval: z.number(),
     })
     .nullable(),
-  week_unavailable: z
-    .enum([
-      "WORK_WEEK_NOT_CONFIGURED",
-      "WORK_WEEK_SITE_AMBIGUOUS",
-      "WORK_WEEK_NO_REST_DAY",
-      "WORK_WEEK_SPLIT_REST",
-    ])
-    .nullable(),
+  week_unavailable: z.enum(["WEEK_NO_PLANNING_SITE", "WEEK_NOT_FROZEN"]).nullable(),
   schedule_compliance: z.object({
     period_days: z.number(),
     scheduled_hours: z.number(),
     done_hours: z.number(),
+    released_jobs: z.number(),
     value_pct: z.number().nullable(),
+    unavailable: z.enum(["NO_FROZEN_BASELINE"]).nullable(),
   }),
 });
 

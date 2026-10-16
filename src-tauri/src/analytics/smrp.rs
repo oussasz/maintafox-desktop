@@ -180,9 +180,9 @@ pub async fn schedule_compliance(
     now: DateTime<Utc>,
     org: Option<i64>,
 ) -> AppResult<SmrpRatio> {
-    let (done, scheduled) =
+    let measured =
         crate::planning::kpis::baseline_schedule_compliance(db, window.from, window.until(now), org, now).await?;
-    Ok(SmrpRatio::of(done, scheduled))
+    Ok(SmrpRatio::of(measured.done_hours, measured.baseline_hours))
 }
 
 // ── Planned / reactive / emergency work ────────────────────────────────────────────────────

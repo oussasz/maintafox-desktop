@@ -321,10 +321,27 @@ pub fn indicator_rows(locale: ReportLocale, d: &MonthlyData) -> (Vec<Vec<String>
 
     let mut smrp = Vec::new();
     if let Some(m) = &d.smrp.schedule_compliance {
+        // Measured against the frozen weekly baseline (`planning::kpis`): without a frozen week
+        // that ended in the month, the reason is given, never a number.
+        let (value, detail) = match m.current.value_pct {
+            Some(_) => (
+                pct(locale, m.current.value_pct),
+                ratio_detail(locale, &m.current, "h", "h"),
+            ),
+            None => (
+                locale.pick("non mesuré", "not measured").into(),
+                locale
+                    .pick(
+                        "aucune semaine gelée terminée sur la période",
+                        "no frozen week ended in the period",
+                    )
+                    .into(),
+            ),
+        };
         smrp.push(vec![
             locale.pick("Respect du planning", "Schedule compliance").into(),
-            pct(locale, m.current.value_pct),
-            ratio_detail(locale, &m.current, "h", "h"),
+            value,
+            detail,
         ]);
     }
     if let Some(mix) = &d.smrp.work_mix {

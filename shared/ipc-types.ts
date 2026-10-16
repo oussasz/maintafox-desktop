@@ -4717,45 +4717,41 @@ export interface HomePlanningBacklog {
   truncated: boolean;
 }
 
-/** The site work week used (`site_work_weeks`; starts the day after the rest days). */
-export interface HomeWorkWeekBasis {
-  /** ISO weekdays, 1 = Monday … 7 = Sunday. */
-  rest_days: number[];
-  /** `all_sites`: every configured site has this week; `own_site`: the user's own site. */
-  scope: "all_sites" | "own_site";
-  site_name: string | null;
-}
-
 /** Why the week figure cannot be given. */
-export type HomeWorkWeekUnavailable =
-  | "WORK_WEEK_NOT_CONFIGURED"
-  | "WORK_WEEK_SITE_AMBIGUOUS"
-  | "WORK_WEEK_NO_REST_DAY"
-  | "WORK_WEEK_SPLIT_REST";
+export type HomeWeekUnavailable = "WEEK_NO_PLANNING_SITE" | "WEEK_NOT_FROZEN";
 
+/** This week's load on the planning KPIs' definition (frozen weekly baseline). */
 export interface HomeWeekLoad {
   week_start: string;
   week_end: string;
-  basis: HomeWorkWeekBasis;
-  teams: number;
-  capacity_hours: number;
-  committed_hours: number;
+  /** Planning sites whose current week is frozen (measured) / not frozen (not measured). */
+  sites: number;
+  sites_not_frozen: number;
+  baseline_hours: number;
+  available_hours: number;
+  overtime_hours: number;
+  /** baseline ÷ available × 100, without the overtime ceiling. */
   load_pct: number | null;
-  overloaded_team_days: number;
+  relies_on_overtime: boolean;
+  weeks_awaiting_approval: number;
 }
 
 export interface HomeScheduleCompliance {
   period_days: number;
   scheduled_hours: number;
   done_hours: number;
+  /** Baseline jobs later released or cancelled (counted as not done). */
+  released_jobs: number;
   value_pct: number | null;
+  /** Why there is no value. */
+  unavailable: "NO_FROZEN_BASELINE" | null;
 }
 
 export interface HomePlanning {
   as_of: string;
   backlog: HomePlanningBacklog;
   week: HomeWeekLoad | null;
-  week_unavailable: HomeWorkWeekUnavailable | null;
+  week_unavailable: HomeWeekUnavailable | null;
   schedule_compliance: HomeScheduleCompliance;
 }
 
@@ -10850,6 +10846,8 @@ export interface WeekKpi {
   baseline_no: number;
   baseline_jobs: number;
   baseline_hours: number;
+  /** Baseline jobs later released or cancelled (counted as not done). */
+  baseline_released_jobs: number;
   /** null while the week is not over. */
   done_hours: number | null;
   compliance_pct: number | null;
@@ -10868,6 +10866,7 @@ export interface PlanningKpiTotals {
   weeks_awaiting_approval: number;
   weeks_not_frozen: number;
   baseline_hours: number;
+  baseline_released_jobs: number;
   judged_baseline_hours: number;
   done_hours: number;
   compliance_pct: number | null;
