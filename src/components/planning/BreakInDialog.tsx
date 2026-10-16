@@ -366,8 +366,9 @@ export function BreakInDialog({
                 </span>{" "}
                 {breakInReasonLabel(entry.break_in_reason, reasons, i18n.language)}
                 {" · "}
-                {new Date(entry.old_slot_start).toLocaleString()}
-                {" → "}
+                {entry.old_slot_start
+                  ? `${new Date(entry.old_slot_start).toLocaleString()} → `
+                  : `${t("breakIns.inserted")} `}
                 {new Date(entry.new_slot_start).toLocaleString()}
                 {entry.old_assignee_name || entry.new_assignee_name
                   ? ` · ${formatPersonLabel(entry.old_assignee_name)} → ${formatPersonLabel(entry.new_assignee_name)}`

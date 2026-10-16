@@ -13,6 +13,9 @@
 //!   it is deferred, never written with a guessed kind: it decides the PRD lifecycle state);
 //! - `app_settings`: a tenant setting whose change is locked here (fiscal start month, currency
 //!   once postings exist) is refused as a conflict (`before_upsert_checked`);
+//! - `weekly_schedules`: a received week that would go backwards in its lifecycle here (frozen
+//!   back to draft, a later baseline back to an earlier one) is refused as a conflict
+//!   (`planning::weekly_schedule::inbound_lifecycle_conflict`, `before_upsert_checked`);
 //! - `media_attachments`: the file is queued for download from object storage
 //!   (`sync_media_downloads`, worked by the sync worker); a deleted row drops a pending download.
 
@@ -49,12 +52,23 @@ pub(crate) fn before_upsert(
 /// - `app_settings`: the fiscal-year start month and the tenant currency cannot change once this
 ///   device stores postings that depend on them (`finance::fiscal`, `inventory::fx`). A change
 ///   made on a device where they were still free is refused here, as it is in Settings.
+/// - `weekly_schedules`: a week never moves backwards in its lifecycle by synchronisation.
 pub(crate) async fn before_upsert_checked(
     conn: &impl ConnectionTrait,
     layout: &EntityLayout,
     payload: &serde_json::Map<String, serde_json::Value>,
 ) -> AppResult<Option<crate::sync::materialize::ApplyOutcome>> {
     use crate::sync::materialize::ApplyOutcome;
+    if layout.def.entity_type == "weekly_schedules" {
+        return Ok(
+            crate::planning::weekly_schedule::inbound_lifecycle_conflict(conn, payload)
+                .await?
+                .map(|message| ApplyOutcome::Conflict {
+                    code: "WEEK_LIFECYCLE_BACKWARDS".into(),
+                    message,
+                }),
+        );
+    }
     if layout.def.entity_type != "app_settings" {
         return Ok(None);
     }

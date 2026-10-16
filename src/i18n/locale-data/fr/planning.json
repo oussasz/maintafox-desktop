@@ -226,7 +226,8 @@
     "create": "Enregistrer le break-in",
     "empty": "Aucun break-in pour la période sélectionnée.",
     "acknowledgeRefusals": "Déroger à ces refus avec le motif ci-dessus",
-    "urgentHint": "Motif urgent : indiquez un approbateur ou un motif de dérogation dangereuse."
+    "urgentHint": "Motif urgent : indiquez un approbateur ou un motif de dérogation dangereuse.",
+    "inserted": "Ajouté en semaine gelée :"
   },
   "freeze": {
     "title": "Geler la période de planning",

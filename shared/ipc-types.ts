@@ -8779,8 +8779,10 @@ export interface ScheduleBreakIn {
   approved_by_user_id: number | null;
   approved_by_personnel_id: number | null;
   override_reason: string | null;
-  old_slot_start: string;
-  old_slot_end: string;
+  /** `move`: a held slot moved; `insert`: new work entering a frozen week (no old slot). */
+  kind: string;
+  old_slot_start: string | null;
+  old_slot_end: string | null;
   new_slot_start: string;
   new_slot_end: string;
   old_assignee_id: number | null;

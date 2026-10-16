@@ -13,15 +13,22 @@
 //!   fact (which does not change the baseline).
 //! - Unfreezing is four-eyes: requested with a reason, then approved (or rejected) by another
 //!   holder of plan.confirm. A site with a single plan.confirm holder cannot unfreeze.
+//!
+//! Several devices: a schedule, its baseline items and its automatic-freeze event have identities
+//! built from the synchronised rows they come from (site + week, schedule + baseline + commitment),
+//! so two devices that create or freeze the same week offline produce the same rows instead of
+//! clashing on `UNIQUE (entity_id, week_start)`. A received schedule never moves a week backwards
+//! in its lifecycle (`inbound_lifecycle_conflict`, called by the sync apply): that change goes to
+//! the synchronisation conflicts for a person to decide.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
-use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone, Utc};
+use chrono::{DateTime, Duration, Local, LocalResult, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use crate::errors::{org_validation_failed, AppError, AppResult};
+use crate::sync::identity::{new_entity_sync_id, optional_entity_sync_id, seeded_entity_sync_id};
 
 use super::domain::{ScheduleCommitment, ScheduleCommitmentFilter};
 use super::weekly::{site_week, SiteWeek};
@@ -39,16 +46,25 @@ fn now_z() -> String {
     Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
-/// Local midnight at the start of `day`, as a UTC instant.
+/// The first instant of `day` in a time zone (`resolve` maps a local time to its instants):
+/// midnight, or — where the clock jumps over midnight (daylight saving) — the first valid local
+/// time after the gap; the earlier one where midnight happens twice.
+pub(crate) fn first_instant_of_day(
+    day: NaiveDate,
+    resolve: impl Fn(NaiveDateTime) -> LocalResult<DateTime<Utc>>,
+) -> Option<DateTime<Utc>> {
+    let midnight = day.and_hms_opt(0, 0, 0)?;
+    (0..=24 * 60)
+        .map(|minute| midnight + Duration::minutes(minute))
+        .find_map(|local| resolve(local).earliest())
+}
+
+/// The first instant of the local `day` (its midnight, or the end of a daylight-saving gap).
 fn local_midnight_utc(day: NaiveDate) -> AppResult<DateTime<Utc>> {
-    let naive = day
-        .and_hms_opt(0, 0, 0)
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("midnight of {day}")))?;
-    Local
-        .from_local_datetime(&naive)
-        .earliest()
-        .map(|t| t.with_timezone(&Utc))
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("local midnight of {day} does not exist")))
+    first_instant_of_day(day, |local| {
+        Local.from_local_datetime(&local).map(|t| t.with_timezone(&Utc))
+    })
+    .ok_or_else(|| AppError::Internal(anyhow::anyhow!("local day {day} has no valid instant")))
 }
 
 fn rfc3339(t: DateTime<Utc>) -> String {
@@ -262,15 +278,25 @@ async fn load_schedule(
     .transpose()
 }
 
+/// Identity of the schedule of a site and week: the same on every device (site sync id + week).
+async fn schedule_sync_id(db: &impl ConnectionTrait, week: &SiteWeek) -> AppResult<String> {
+    Ok(match optional_entity_sync_id(db, "org_nodes", week.entity_id).await? {
+        Some(site) => seeded_entity_sync_id("weekly_schedules", &format!("{site}|{}", week.week_start)),
+        // A database without sync capture (tools): nothing to converge with.
+        None => new_entity_sync_id(),
+    })
+}
+
 async fn ensure_schedule(db: &impl ConnectionTrait, week: &SiteWeek) -> AppResult<WeeklySchedule> {
     if let Some(found) = load_schedule(db, week.entity_id, week.week_start).await? {
         return Ok(found);
     }
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "INSERT INTO weekly_schedules (entity_sync_id, entity_id, week_start, week_end, status) VALUES (?, ?, ?, ?, 'draft')",
+        "INSERT INTO weekly_schedules (entity_sync_id, entity_id, week_start, week_end, status) VALUES (?, ?, ?, ?, 'draft') \
+         ON CONFLICT DO NOTHING",
         [
-            Uuid::new_v4().to_string().into(),
+            schedule_sync_id(db, week).await?.into(),
             week.entity_id.into(),
             week.week_start.to_string().into(),
             week.week_end.to_string().into(),
@@ -282,6 +308,9 @@ async fn ensure_schedule(db: &impl ConnectionTrait, week: &SiteWeek) -> AppResul
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("weekly schedule just created is missing")))
 }
 
+/// Records what a person (or the system, `actor_id` `None`) did to a schedule. An event that
+/// follows from the data alone (the automatic freeze of a baseline) gets an identity built from
+/// it, so the devices that do it produce one event; a person's action gets a new identity.
 async fn record_event(
     db: &impl ConnectionTrait,
     schedule_id: i64,
@@ -291,13 +320,22 @@ async fn record_event(
     reason: Option<&str>,
     baseline_no: Option<i64>,
 ) -> AppResult<()> {
+    let sync_id = match (actor_id, baseline_no) {
+        (None, Some(baseline)) => match optional_entity_sync_id(db, "weekly_schedules", schedule_id).await? {
+            Some(schedule) => {
+                seeded_entity_sync_id("weekly_schedule_events", &format!("{schedule}|{action}|{baseline}"))
+            }
+            None => new_entity_sync_id(),
+        },
+        _ => new_entity_sync_id(),
+    };
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO weekly_schedule_events \
             (entity_sync_id, weekly_schedule_id, action, actor_id, approver_id, reason, baseline_no) \
-         VALUES (?, ?, ?, ?, ?, ?, ?)",
+         VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
         [
-            Uuid::new_v4().to_string().into(),
+            sync_id.into(),
             schedule_id.into(),
             action.into(),
             actor_id.into(),
@@ -415,9 +453,7 @@ pub async fn get_weekly_schedule(db: &DatabaseConnection, site: i64, day: &str) 
     };
     Ok(WeeklyScheduleView {
         site_name: site_name(db, site).await?,
-        awaiting_approval: schedule
-            .as_ref()
-            .is_some_and(|s| s.frozen_without_approval == 1 && s.approved_at.is_none()),
+        awaiting_approval: schedule.as_ref().is_some_and(awaits_approval),
         freeze_due_at: rfc3339(freeze_due_at(db, &week).await?),
         schedule,
         crews,
@@ -425,6 +461,13 @@ pub async fn get_weekly_schedule(db: &DatabaseConnection, site: i64, day: &str) 
         events,
         week,
     })
+}
+
+/// Frozen (or published) without approval, and nobody approved it since.
+fn awaits_approval(s: &WeeklySchedule) -> bool {
+    matches!(s.status.as_str(), STATUS_FROZEN | STATUS_PUBLISHED)
+        && s.frozen_without_approval == 1
+        && s.approved_at.is_none()
 }
 
 // ── Transitions ──────────────────────────────────────────────────────────────────────────
@@ -499,6 +542,7 @@ async fn freeze_core(
 ) -> AppResult<i64> {
     let crews = site_crews(db, week.entity_id).await?;
     let baseline_no = schedule.baseline_no + 1;
+    let schedule_sid = optional_entity_sync_id(db, "weekly_schedules", schedule.id).await?;
     let start = rfc3339(local_midnight_utc(week.week_start)?);
     let end = rfc3339(local_midnight_utc(week.week_end + Duration::days(1))?);
     let now = now_z();
@@ -516,14 +560,25 @@ async fn freeze_core(
             .await?;
         for r in rows {
             let commitment_id: i64 = r.try_get("", "id").map_err(|e| decode_err("id", e))?;
+            // Same item on every device that freezes this baseline: schedule + baseline + commitment.
+            let item_sid = match (
+                &schedule_sid,
+                optional_entity_sync_id(db, "schedule_commitments", commitment_id).await?,
+            ) {
+                (Some(schedule), Some(commitment)) => seeded_entity_sync_id(
+                    "weekly_schedule_baseline_items",
+                    &format!("{schedule}|{baseline_no}|{commitment}"),
+                ),
+                _ => new_entity_sync_id(),
+            };
             db.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "INSERT INTO weekly_schedule_baseline_items \
                     (entity_sync_id, weekly_schedule_id, baseline_no, schedule_commitment_id, team_id, personnel_id, \
                      committed_start, committed_end, planned_labor_hours) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
                 [
-                    Uuid::new_v4().to_string().into(),
+                    item_sid.into(),
                     schedule.id.into(),
                     baseline_no.into(),
                     commitment_id.into(),
@@ -749,15 +804,7 @@ pub async fn decide_unfreeze(
         tx.commit().await?;
         return get_weekly_schedule(db, input.site_id, &input.day).await;
     }
-    // The commitments of the current baseline are no longer frozen.
-    tx.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "UPDATE schedule_commitments SET frozen_at = NULL, row_version = row_version + 1, updated_at = ? \
-          WHERE id IN (SELECT schedule_commitment_id FROM weekly_schedule_baseline_items \
-                        WHERE weekly_schedule_id = ? AND baseline_no = ?)",
-        [now.clone().into(), schedule.id.into(), schedule.baseline_no.into()],
-    ))
-    .await?;
+    unfreeze_week_commitments(&tx, &schedule, &week, &now).await?;
     let back_to = if schedule.approved_at.is_some() {
         STATUS_APPROVED
     } else {
@@ -783,6 +830,53 @@ pub async fn decide_unfreeze(
     .await?;
     tx.commit().await?;
     get_weekly_schedule(db, input.site_id, &input.day).await
+}
+
+/// The frozen commitments of the site's crews that touch the week are no longer frozen — those of
+/// its baseline and those that entered it as break-ins — except a commitment that also touches
+/// another week of the site still frozen or published (it stays frozen for that week).
+async fn unfreeze_week_commitments(
+    db: &impl ConnectionTrait,
+    schedule: &WeeklySchedule,
+    week: &SiteWeek,
+    now: &str,
+) -> AppResult<()> {
+    let start = rfc3339(local_midnight_utc(week.week_start)?);
+    let end = rfc3339(local_midnight_utc(week.week_end + Duration::days(1))?);
+    for crew in site_crews(db, week.entity_id).await? {
+        let rows = db
+            .query_all(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT id, committed_start, committed_end FROM schedule_commitments \
+                  WHERE status = 'committed' AND frozen_at IS NOT NULL AND assigned_team_id = ? \
+                    AND julianday(committed_start) < julianday(?) AND julianday(committed_end) > julianday(?)",
+                [crew.team_id.into(), end.clone().into(), start.clone().into()],
+            ))
+            .await?;
+        for r in rows {
+            let id: i64 = r.try_get("", "id").map_err(|e| decode_err("id", e))?;
+            let slot_start: String = r
+                .try_get("", "committed_start")
+                .map_err(|e| decode_err("committed_start", e))?;
+            let slot_end: String = r
+                .try_get("", "committed_end")
+                .map_err(|e| decode_err("committed_end", e))?;
+            if frozen_schedule_touching(db, week.entity_id, &slot_start, &slot_end, Some(schedule.id))
+                .await?
+                .is_some()
+            {
+                continue;
+            }
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "UPDATE schedule_commitments SET frozen_at = NULL, row_version = row_version + 1, updated_at = ? \
+                  WHERE id = ?",
+                [now.into(), id.into()],
+            ))
+            .await?;
+        }
+    }
+    Ok(())
 }
 
 /// Publishes a frozen week to its crews (plan.confirm, checked by the command): each crew is
@@ -840,79 +934,297 @@ pub async fn publish_weekly_schedule(
 /// over (`now`), and catches up the current week if no desktop ran when its own freeze fell due.
 /// Only a week that was never frozen (`baseline_no = 0`) freezes by itself: a week unfrozen
 /// through the four-eyes procedure stays open until a planner freezes it again. Returns the weeks
-/// frozen. A site whose calendar cannot give a week (no weekend) is skipped and reported in the
-/// log, never frozen on a guessed week.
+/// frozen. A site that fails (no weekend, a calendar it cannot read) is skipped and logged — never
+/// frozen on a guessed week, never stopping the other sites. "Frozen without approval" is told to
+/// the planners by [`remind_unapproved_weeks`].
 pub async fn auto_freeze_due(db: &DatabaseConnection, now: DateTime<Utc>) -> AppResult<Vec<(i64, NaiveDate)>> {
     let mut sites: Vec<i64> = crews_with_sites(db).await?.into_iter().filter_map(|(_, s)| s).collect();
     sites.sort_unstable();
     sites.dedup();
-    let today = now.with_timezone(&Local).date_naive();
     let mut frozen = Vec::new();
     for site in sites {
-        let current = match site_week(db, site, today).await {
-            Ok(w) => w,
-            Err(err) => {
-                tracing::warn!(site, error = %err, "planning auto-freeze: no planning week for the site");
-                continue;
-            }
-        };
-        // The current week's own freeze fell due at the end of the previous week: already past.
-        let mut due_weeks = vec![current.clone()];
-        let next_due = local_midnight_utc(current.last_working_day.unwrap_or(current.week_end) + Duration::days(1))?;
-        if now >= next_due {
-            due_weeks.push(site_week(db, site, current.week_end + Duration::days(1)).await?);
-        }
-        for week in due_weeks {
-            if auto_freeze_week(db, site, &week).await? {
-                frozen.push((site, week.week_start));
-            }
+        match auto_freeze_site(db, site, now).await {
+            Ok(weeks) => frozen.extend(weeks.into_iter().map(|w| (site, w))),
+            Err(err) => tracing::warn!(site, error = %err, "planning auto-freeze: site skipped"),
         }
     }
     Ok(frozen)
 }
 
-/// Freezes one due week if it was never frozen; tells the planners when it was not approved.
-async fn auto_freeze_week(db: &DatabaseConnection, site: i64, week: &SiteWeek) -> AppResult<bool> {
+async fn auto_freeze_site(db: &DatabaseConnection, site: i64, now: DateTime<Utc>) -> AppResult<Vec<NaiveDate>> {
+    let today = now.with_timezone(&Local).date_naive();
+    let current = site_week(db, site, today).await?;
+    // The current week's own freeze fell due at the end of the previous week: already past.
+    let mut due_weeks = vec![current.clone()];
+    let next_due = local_midnight_utc(current.last_working_day.unwrap_or(current.week_end) + Duration::days(1))?;
+    if now >= next_due {
+        due_weeks.push(site_week(db, site, current.week_end + Duration::days(1)).await?);
+    }
+    let mut frozen = Vec::new();
+    for week in due_weeks {
+        if auto_freeze_week(db, &week).await? {
+            frozen.push(week.week_start);
+        }
+    }
+    Ok(frozen)
+}
+
+/// Freezes one due week if it was never frozen.
+async fn auto_freeze_week(db: &DatabaseConnection, week: &SiteWeek) -> AppResult<bool> {
     let tx = db.begin().await?;
     let schedule = ensure_schedule(&tx, week).await?;
     if schedule.baseline_no != 0 || !matches!(schedule.status.as_str(), STATUS_DRAFT | STATUS_APPROVED) {
         tx.rollback().await?;
         return Ok(false);
     }
-    let approved = schedule.approved_at.is_some();
     freeze_core(&tx, &schedule, week, None).await?;
     tx.commit().await?;
-    if !approved {
-        super::scheduling::emit_planning_notification(
-            db,
-            "planning.week_frozen_without_approval",
-            "warning",
-            Some(format!("planning.week-frozen-unapproved.{}", schedule.id)),
-            schedule.id.to_string(),
-            serde_json::json!({
-                "weekly_schedule_id": schedule.id,
-                "site_id": site,
-                "week_start": week.week_start.to_string(),
-            }),
-            "Semaine gelée sans approbation / Week frozen without approval".to_string(),
-            format!(
-                "La semaine du {} a été gelée automatiquement sans approbation. / The week of {} was frozen automatically without approval.",
-                week.week_start, week.week_start
-            ),
-        )
-        .await;
-    }
     Ok(true)
 }
 
-/// The frozen (or published) week of the crew's planning site that `[start, end)` touches, if
-/// any: new work enters it only as a recorded break-in.
+// ── "Frozen without approval": recalled until approved ───────────────────────────────────
+
+/// Notification category of a week frozen without approval (migration 212).
+pub const WEEK_UNAPPROVED_CATEGORY: &str = "planning.week_unapproved";
+
+/// Tells the planning confirm holders of each site about its weeks frozen without approval, and
+/// recalls it: a notification someone read longer ago than the rule's window
+/// (`dedupe_window_minutes`) is made unread again while the week is still not approved. Once
+/// approved (here or on another device), the notifications are resolved. Each device does it from
+/// its own copy of the data, with identities built from the schedule's sync id (sync capture off),
+/// so a recipient's read / acknowledge applies everywhere. A week whose notification could not be
+/// raised is logged and tried again at the next tick. Returns the weeks notified or recalled.
+pub async fn remind_unapproved_weeks(db: &DatabaseConnection, now: DateTime<Utc>) -> AppResult<u64> {
+    resolve_approved_week_notifications(db).await?;
+    let rule = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT dedupe_window_minutes FROM notification_rules WHERE category_code = ? AND is_active = 1 LIMIT 1",
+            [WEEK_UNAPPROVED_CATEGORY.into()],
+        ))
+        .await?;
+    let Some(rule) = rule else {
+        return Ok(0);
+    };
+    let window: i64 = rule
+        .try_get::<Option<i64>>("", "dedupe_window_minutes")
+        .map_err(|e| decode_err("dedupe_window_minutes", e))?
+        .unwrap_or(1440)
+        .max(1);
+    let recall_before = (now - Duration::minutes(window))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    let weeks = db
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT ws.id, ws.entity_sync_id, ws.entity_id, ws.week_start, n.name AS site_name \
+               FROM weekly_schedules ws JOIN org_nodes n ON n.id = ws.entity_id \
+              WHERE ws.frozen_without_approval = 1 AND ws.approved_at IS NULL \
+                AND ws.status IN ('frozen', 'published')"
+                .to_string(),
+        ))
+        .await?;
+    let mut notified = 0;
+    for w in weeks {
+        let id: i64 = w.try_get("", "id").map_err(|e| decode_err("id", e))?;
+        let sid: String = w
+            .try_get("", "entity_sync_id")
+            .map_err(|e| decode_err("entity_sync_id", e))?;
+        let site: i64 = w.try_get("", "entity_id").map_err(|e| decode_err("entity_id", e))?;
+        let week_start: String = w.try_get("", "week_start").map_err(|e| decode_err("week_start", e))?;
+        let site_name: String = w.try_get("", "site_name").map_err(|e| decode_err("site_name", e))?;
+        let basis = format!("{WEEK_UNAPPROVED_CATEGORY}|{sid}");
+        let event = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT id, resolved_at FROM notification_events WHERE entity_sync_id = ?",
+                [seeded_entity_sync_id("notification_events", &basis).into()],
+            ))
+            .await?;
+        let due = match event {
+            None => true,
+            Some(e) => {
+                let event_id: i64 = e.try_get("", "id").map_err(|err| decode_err("id", err))?;
+                let resolved: Option<String> = e
+                    .try_get("", "resolved_at")
+                    .map_err(|err| decode_err("resolved_at", err))?;
+                resolved.is_some()
+                    || db
+                        .query_one(Statement::from_sql_and_values(
+                            DbBackend::Sqlite,
+                            "SELECT 1 AS x FROM notifications WHERE notification_event_id = ? \
+                               AND delivery_state = 'read' AND archived_at IS NULL AND read_at <= ?",
+                            [event_id.into(), recall_before.clone().into()],
+                        ))
+                        .await?
+                        .is_some()
+            }
+        };
+        if !due {
+            continue;
+        }
+        match notify_unapproved_week(db, id, site, &site_name, &week_start, &basis).await {
+            Ok(()) => notified += 1,
+            Err(err) => tracing::error!(
+                weekly_schedule_id = id,
+                error = %err,
+                "planning: week frozen without approval not notified; retried at the next tick"
+            ),
+        }
+    }
+    Ok(notified)
+}
+
+async fn notify_unapproved_week(
+    db: &DatabaseConnection,
+    schedule_id: i64,
+    site: i64,
+    site_name: &str,
+    week_start: &str,
+    basis: &str,
+) -> AppResult<()> {
+    let tx = db.begin().await?;
+    crate::sync::capture::begin_suppression(&tx).await?;
+    crate::notifications::emitter::emit_device_event(
+        &tx,
+        crate::notifications::emitter::NotificationEventInput {
+            source_module: "planning".to_string(),
+            source_record_id: Some(schedule_id.to_string()),
+            event_code: WEEK_UNAPPROVED_CATEGORY.to_string(),
+            category_code: WEEK_UNAPPROVED_CATEGORY.to_string(),
+            severity: "warning".to_string(),
+            dedupe_key: Some(format!("planning.week-unapproved.{schedule_id}")),
+            payload_json: Some(
+                serde_json::json!({
+                    "org_node_id": site,
+                    "weekly_schedule_id": schedule_id,
+                    "week_start": week_start,
+                })
+                .to_string(),
+            ),
+            title: format!("Semaine gelée sans approbation — {site_name} / Week frozen without approval — {site_name}"),
+            body: Some(format!(
+                "La semaine du {week_start} ({site_name}) a été gelée automatiquement sans approbation : approuvez-la. \
+                 / The week of {week_start} ({site_name}) was frozen automatically without approval: approve it."
+            )),
+            action_url: Some("/planning".to_string()),
+        },
+        Some(basis),
+    )
+    .await?;
+    crate::sync::capture::end_suppression(&tx).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Resolves the "frozen without approval" notifications of the weeks approved since (or no longer
+/// frozen): they stay in the inbox, marked resolved, and are no longer recalled.
+async fn resolve_approved_week_notifications(db: &DatabaseConnection) -> AppResult<()> {
+    let tx = db.begin().await?;
+    crate::sync::capture::begin_suppression(&tx).await?;
+    let resolved = tx
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE notification_events SET resolved_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') \
+              WHERE category_code = ? AND resolved_at IS NULL AND NOT EXISTS ( \
+                    SELECT 1 FROM weekly_schedules ws WHERE CAST(ws.id AS TEXT) = notification_events.source_record_id \
+                       AND ws.frozen_without_approval = 1 AND ws.approved_at IS NULL \
+                       AND ws.status IN ('frozen', 'published'))",
+            [WEEK_UNAPPROVED_CATEGORY.into()],
+        ))
+        .await?
+        .rows_affected();
+    if resolved > 0 {
+        crate::notifications::conditions::resolve_notifications_of_resolved_events(&tx).await?;
+    }
+    crate::sync::capture::end_suppression(&tx).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+// ── Sync: a received schedule never moves a week backwards ───────────────────────────────
+
+/// Position of a schedule in its lifecycle: draft < approved < frozen < published < reopened
+/// (draft / approved again after an unfreeze) < frozen again … Each freeze raises `baseline_no`,
+/// so a reopened week (status draft / approved with `baseline_no` ≥ 1) comes after its freeze.
+pub(crate) fn lifecycle_rank(status: &str, baseline_no: i64) -> i64 {
+    match status {
+        STATUS_FROZEN => 4 * baseline_no - 2,
+        STATUS_PUBLISHED => 4 * baseline_no - 1,
+        STATUS_APPROVED => 4 * baseline_no + 1,
+        _ => 4 * baseline_no,
+    }
+}
+
+/// A received weekly schedule (sync payload: `entity_id` the site's sync id, `week_start`,
+/// `status`, `baseline_no`) that would move the local week backwards in its lifecycle — frozen
+/// back to draft, or a later baseline back to an earlier one — is not applied silently: the reason
+/// is returned and the sync apply records it as a conflict for a person to decide.
+pub(crate) async fn inbound_lifecycle_conflict(
+    conn: &impl ConnectionTrait,
+    payload: &serde_json::Map<String, serde_json::Value>,
+) -> AppResult<Option<String>> {
+    let text = |k: &str| payload.get(k).and_then(serde_json::Value::as_str);
+    let (Some(status), Some(week_start)) = (text("status"), text("week_start")) else {
+        return Ok(None);
+    };
+    let Some(baseline_no) = payload.get("baseline_no").and_then(serde_json::Value::as_i64) else {
+        return Ok(None);
+    };
+    let site_filter = match payload.get("entity_id") {
+        Some(serde_json::Value::String(sync_id)) => (
+            "entity_id = (SELECT id FROM org_nodes WHERE entity_sync_id = ?)",
+            sea_orm::Value::from(sync_id.clone()),
+        ),
+        Some(serde_json::Value::Number(n)) if n.as_i64().is_some() => {
+            ("entity_id = ?", sea_orm::Value::from(n.as_i64()))
+        }
+        _ => return Ok(None),
+    };
+    let local = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT status, baseline_no FROM weekly_schedules WHERE {} AND week_start = ?",
+                site_filter.0
+            ),
+            [site_filter.1, week_start.into()],
+        ))
+        .await?;
+    let Some(local) = local else {
+        return Ok(None);
+    };
+    let local_status: String = local.try_get("", "status").map_err(|e| decode_err("status", e))?;
+    let local_baseline: i64 = local
+        .try_get("", "baseline_no")
+        .map_err(|e| decode_err("baseline_no", e))?;
+    if lifecycle_rank(status, baseline_no) < lifecycle_rank(&local_status, local_baseline) {
+        return Ok(Some(format!(
+            "week of {week_start}: received '{status}' (baseline {baseline_no}) would move it back from \
+             '{local_status}' (baseline {local_baseline}) here"
+        )));
+    }
+    Ok(None)
+}
+
+/// A week of a crew's planning site that new or moved work may enter only as a break-in.
+#[derive(Debug, Clone)]
+pub struct FrozenWeek {
+    pub week_start: String,
+}
+
+/// The week of the crew's planning site that `[start, end)` touches and that is frozen: frozen or
+/// published, or due to freeze (its freeze time passed, it was never frozen and it is not over)
+/// but not frozen yet — the automatic freeze has not run on this device (it waits for the first
+/// sync, or the tick has not come). `None`: the crew has no site, the site has no planning week,
+/// or every week the slot touches is open.
 pub async fn frozen_week_for_slot(
     db: &impl ConnectionTrait,
     team_id: i64,
     start: &str,
     end: &str,
-) -> AppResult<Option<WeeklySchedule>> {
+    now: DateTime<Utc>,
+) -> AppResult<Option<FrozenWeek>> {
     let node: Option<i64> = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -920,18 +1232,59 @@ pub async fn frozen_week_for_slot(
             [team_id.into()],
         ))
         .await?
-        .map(|r| {
-            r.try_get("", "primary_node_id")
-                .map_err(|e| decode_err("primary_node_id", e))
-        })
-        .transpose()?
-        .flatten();
-    let Some(site) = (match node {
-        Some(n) => planning_site_of_node(db, n).await?,
-        None => None,
-    }) else {
+        .and_then(|r| r.try_get::<Option<i64>>("", "primary_node_id").ok().flatten());
+    let Some(node) = node else {
         return Ok(None);
     };
+    let Some(site) = planning_site_of_node(db, node).await? else {
+        return Ok(None);
+    };
+    if let Some(schedule) = frozen_schedule_touching(db, site, start, end, None).await? {
+        return Ok(Some(FrozenWeek {
+            week_start: schedule.week_start,
+        }));
+    }
+    let (Some(slot_start), Some(slot_end)) = (
+        crate::wo::shifts::planned_instant(start),
+        crate::wo::shifts::planned_instant(end),
+    ) else {
+        return Ok(None);
+    };
+    let today = now.with_timezone(&Local).date_naive();
+    let first = slot_start.with_timezone(&Local).date_naive();
+    let last = (slot_end - Duration::seconds(1)).with_timezone(&Local).date_naive();
+    let mut seen = BTreeSet::new();
+    let mut day = first;
+    while day <= last {
+        let Ok(week) = site_week(db, site, day).await else {
+            // No planning week for this site (no weekend): no weekly schedule to respect.
+            return Ok(None);
+        };
+        day = week.week_end + Duration::days(1);
+        if !seen.insert(week.week_start) || week.week_end < today {
+            continue;
+        }
+        let never_frozen = load_schedule(db, site, week.week_start)
+            .await?
+            .is_none_or(|s| s.baseline_no == 0 && matches!(s.status.as_str(), STATUS_DRAFT | STATUS_APPROVED));
+        if never_frozen && freeze_due_at(db, &week).await? <= now {
+            return Ok(Some(FrozenWeek {
+                week_start: week.week_start.to_string(),
+            }));
+        }
+    }
+    Ok(None)
+}
+
+/// The frozen or published schedule of `site` (other than `except`) whose week `[start, end)`
+/// touches.
+async fn frozen_schedule_touching(
+    db: &impl ConnectionTrait,
+    site: i64,
+    start: &str,
+    end: &str,
+    except: Option<i64>,
+) -> AppResult<Option<WeeklySchedule>> {
     let (Some(slot_start), Some(slot_end)) = (
         crate::wo::shifts::planned_instant(start),
         crate::wo::shifts::planned_instant(end),
@@ -948,6 +1301,9 @@ pub async fn frozen_week_for_slot(
     // Week bounds are local days: each candidate week is compared as instants.
     for r in rows {
         let schedule = map_schedule(&r)?;
+        if Some(schedule.id) == except {
+            continue;
+        }
         let from = local_midnight_utc(parse_day(&schedule.week_start)?)?;
         let to = local_midnight_utc(parse_day(&schedule.week_end)? + Duration::days(1))?;
         if slot_start < to && slot_end > from {

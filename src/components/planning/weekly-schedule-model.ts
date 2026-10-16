@@ -29,6 +29,14 @@ export function addDays(day: string, n: number): string {
   return isoDay(date);
 }
 
+/** Every day from `start` to `end` (inclusive). A site week has 7 days, or 6 to 13 when it
+ * straddles a change of the site's weekend. */
+export function daysBetween(start: string, end: string): string[] {
+  const days: string[] = [];
+  for (let day = start; day <= end; day = addDays(day, 1)) days.push(day);
+  return days;
+}
+
 /** Commitments of one crew whose slot touches one local day; an end at midnight stays the day before. */
 export function commitmentsOnDay(
   commitments: ScheduleCommitment[],

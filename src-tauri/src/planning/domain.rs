@@ -232,8 +232,11 @@ pub struct ScheduleBreakIn {
     pub approved_by_user_id: Option<i64>,
     pub approved_by_personnel_id: Option<i64>,
     pub override_reason: Option<String>,
-    pub old_slot_start: String,
-    pub old_slot_end: String,
+    /// `move`: a held slot moved (its old slot recorded); `insert`: new work entering a frozen
+    /// week (no old slot).
+    pub kind: String,
+    pub old_slot_start: Option<String>,
+    pub old_slot_end: Option<String>,
     pub new_slot_start: String,
     pub new_slot_end: String,
     pub old_assignee_id: Option<i64>,

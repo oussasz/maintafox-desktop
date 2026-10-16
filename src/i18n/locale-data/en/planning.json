@@ -226,7 +226,8 @@
     "create": "Register break-in",
     "empty": "No break-ins for selected period.",
     "acknowledgeRefusals": "Override these refusals with the reason above",
-    "urgentHint": "Urgent reason: name an approver or give a dangerous-override reason."
+    "urgentHint": "Urgent reason: name an approver or give a dangerous-override reason.",
+    "inserted": "Added to a frozen week:"
   },
   "freeze": {
     "title": "Freeze schedule period",

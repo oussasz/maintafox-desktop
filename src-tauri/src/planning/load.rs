@@ -320,6 +320,28 @@ pub fn active_commitment_sql_as(alias: &str) -> String {
     ACTIVE_COMMITMENT_SQL.replace("cmt.", &format!("{alias}."))
 }
 
+/// SQL expression: when the work of a finished commitment (alias `alias` of
+/// `schedule_commitments`) ended — the work order's mechanical completion (else its cancellation,
+/// else its closure), the PM occurrence's last move to completed / cancelled / missed (else its
+/// last change), the request's conversion, decline, closure or archiving. `NULL` while the work is
+/// not finished. Every device computes the same value from the same synchronised rows.
+pub fn finished_at_sql(alias: &str) -> String {
+    format!(
+        "(CASE {a}.source_type \
+            WHEN 'work_order' THEN (SELECT COALESCE(fw.mechanically_completed_at, fw.cancelled_at, fw.closed_at) \
+                FROM work_orders fw WHERE fw.id = {a}.source_id) \
+            WHEN 'pm_occurrence' THEN (SELECT COALESCE((SELECT MAX(t.transitioned_at) FROM pm_occurrence_transitions t \
+                    WHERE t.pm_occurrence_id = fp.id AND t.to_status IN ('completed', 'cancelled', 'missed')), \
+                    fp.updated_at) \
+                FROM pm_occurrences fp WHERE fp.id = {a}.source_id \
+                 AND fp.status IN ('completed', 'cancelled', 'missed')) \
+            WHEN 'inspection_follow_up' THEN (SELECT COALESCE(fr.converted_at, fr.declined_at, fr.closed_at, fr.archived_at) \
+                FROM intervention_requests fr WHERE fr.id = {a}.source_id) \
+         END)",
+        a = alias
+    )
+}
+
 /// SQL predicate: no active planning commitment covers the work order (alias `wo`) — through itself,
 /// the PM occurrence it was generated for, or the request it was converted from. With
 /// `assigned_only`, only commitments that name a technician count (a person's view).

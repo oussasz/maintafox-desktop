@@ -177,6 +177,7 @@ function makeBreakIn(overrides: Partial<ScheduleBreakIn> = {}): ScheduleBreakIn 
     approved_by_user_id: 1,
     approved_by_personnel_id: null,
     override_reason: null,
+    kind: "move",
     old_slot_start: "2026-10-02T08:00:00Z",
     old_slot_end: "2026-10-02T12:00:00Z",
     new_slot_start: "2026-10-03T08:00:00Z",

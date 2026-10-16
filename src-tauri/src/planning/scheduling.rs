@@ -54,7 +54,7 @@ const COMMITMENT_JOINS: &str = "\
 const CHANGE_LOG_COLS: &str = "scl.id,scl.commitment_id,scl.action_type,scl.actor_id,scl.field_changed,scl.old_value,scl.new_value,scl.reason_code,scl.reason_note,scl.reason,scl.details_json,scl.created_at";
 const CHANGE_LOG_JOIN_COLS: &str = "COALESCE(ua.display_name, ua.username) AS actor_display_name";
 const CHANGE_LOG_JOINS: &str = "LEFT JOIN user_accounts ua ON ua.id = scl.actor_id";
-const BREAK_IN_COLS: &str = "sb.id,sb.schedule_commitment_id,sb.break_in_reason,sb.approved_by_user_id,sb.approved_by_personnel_id,sb.override_reason,sb.old_slot_start,sb.old_slot_end,sb.new_slot_start,sb.new_slot_end,sb.old_assignee_id,sb.new_assignee_id,sb.cost_impact_delta,sb.notification_dedupe_key,sb.row_version,sb.created_by_id,sb.created_at";
+const BREAK_IN_COLS: &str = "sb.id,sb.schedule_commitment_id,sb.break_in_reason,sb.kind,sb.approved_by_user_id,sb.approved_by_personnel_id,sb.override_reason,sb.old_slot_start,sb.old_slot_end,sb.new_slot_start,sb.new_slot_end,sb.old_assignee_id,sb.new_assignee_id,sb.cost_impact_delta,sb.notification_dedupe_key,sb.row_version,sb.created_by_id,sb.created_at";
 const BREAK_IN_JOIN_COLS: &str = "\
     CASE cmt.source_type \
         WHEN 'work_order' THEN wo.code \
@@ -294,6 +294,7 @@ fn map_schedule_break_in(row: &QueryResult) -> AppResult<ScheduleBreakIn> {
         override_reason: row
             .try_get("", "override_reason")
             .map_err(|e| decode_err("override_reason", e))?,
+        kind: row.try_get("", "kind").map_err(|e| decode_err("kind", e))?,
         old_slot_start: row
             .try_get("", "old_slot_start")
             .map_err(|e| decode_err("old_slot_start", e))?,
@@ -846,7 +847,7 @@ pub(crate) async fn emit_planning_notification(
     title: String,
     body: String,
 ) {
-    let _ = emit_event(
+    if let Err(err) = emit_event(
         db,
         NotificationEventInput {
             source_module: "planning".to_string(),
@@ -861,7 +862,79 @@ pub(crate) async fn emit_planning_notification(
             action_url: Some("/planning".to_string()),
         },
     )
+    .await
+    {
+        tracing::error!(event_code, error = %err, "planning notification not raised");
+    }
+}
+
+/// A slot can be moved or broken into only while it is held (`committed`): a released,
+/// cancelled or closed commitment is history.
+fn ensure_held(current: &ScheduleCommitment) -> AppResult<()> {
+    if current.status == super::lifecycle::STATUS_COMMITTED {
+        return Ok(());
+    }
+    Err(crate::errors::org_validation_failed(
+        "PLANNING_COMMITMENT_NOT_ACTIVE",
+        format!("This commitment is already {}.", current.status),
+        std::collections::HashMap::from([("status".to_string(), current.status.clone())]),
+    ))
+}
+
+/// Tells the crew and the activity feed about a break-in (a slot moved, or new work entering a
+/// frozen week) once its transaction is committed.
+#[allow(clippy::too_many_arguments)]
+async fn announce_break_in(
+    db: &DatabaseConnection,
+    actor_id: i64,
+    commitment_id: i64,
+    break_in_id: i64,
+    dedupe_key: String,
+    payload: Value,
+    dangerous: bool,
+    body: String,
+) -> AppResult<()> {
+    emit_planning_notification(
+        db,
+        "planning.break_in.created",
+        "high",
+        Some(dedupe_key),
+        commitment_id.to_string(),
+        payload.clone(),
+        "Break-in schedule override".to_string(),
+        body,
+    )
     .await;
+    // Correlates the events of one break-in on every device: by sync id, not the local id.
+    let correlation = crate::sync::identity::optional_entity_sync_id(db, "schedule_break_ins", break_in_id)
+        .await?
+        // Every row gets a sync id at insert; a row without one keeps a device-marked key.
+        .unwrap_or_else(|| format!("local-{break_in_id}"));
+    if let Err(err) = activity::emitter::emit_activity_event(
+        db,
+        activity::emitter::ActivityEventInput {
+            event_class: "operational".to_string(),
+            event_code: "planning.break_in".to_string(),
+            source_module: "planning".to_string(),
+            source_record_type: Some("schedule_commitment".to_string()),
+            source_record_id: Some(commitment_id.to_string()),
+            entity_scope_id: None,
+            actor_id: Some(actor_id),
+            severity: if dangerous {
+                "warning".to_string()
+            } else {
+                "info".to_string()
+            },
+            summary_json: Some(payload),
+            correlation_id: Some(format!("planning-breakin-{correlation}")),
+            visibility_scope: "entity".to_string(),
+        },
+    )
+    .await
+    {
+        tracing::error!(break_in_id, error = %err, "planning break-in activity not recorded");
+    }
+    Ok(())
 }
 
 /// Labour cost of the hours the work books (not of the slot's wall-clock length).
@@ -1509,6 +1582,7 @@ pub async fn create_schedule_break_in(
             "Schedule commitment was modified elsewhere (stale row_version).".to_string(),
         ]));
     }
+    ensure_held(&current)?;
 
     let mut approved_by_user_id = input.approved_by_user_id;
     let mut approved_by_personnel_id = None;
@@ -1733,10 +1807,10 @@ pub async fn create_schedule_break_in(
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO schedule_break_ins
-                (schedule_commitment_id, break_in_reason, approved_by_user_id, approved_by_personnel_id, override_reason,
+                (schedule_commitment_id, break_in_reason, kind, approved_by_user_id, approved_by_personnel_id, override_reason,
                  old_slot_start, old_slot_end, new_slot_start, new_slot_end, old_assignee_id, new_assignee_id,
                  cost_impact_delta, notification_dedupe_key, created_by_id)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, 'move', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 current.id.into(),
                 reason.clone().into(),
@@ -1825,47 +1899,22 @@ pub async fn create_schedule_break_in(
     if let Some(outcome) = wo_sync {
         wo_sync::record_wo_sync_audit(db, actor_id, outcome.wo_id, "break_in").await;
     }
-    emit_planning_notification(
+    let body = format!(
+        "Break-in moved commitment #{} (reason: {}).",
+        current.id,
+        payload.get("reason_code").and_then(Value::as_str).unwrap_or("other")
+    );
+    announce_break_in(
         db,
-        "planning.break_in.created",
-        "high",
-        Some(dedupe_key.clone()),
-        current.id.to_string(),
-        payload.clone(),
-        "Break-in schedule override".to_string(),
-        format!(
-            "Break-in moved commitment #{} (reason: {}).",
-            current.id,
-            payload.get("reason_code").and_then(Value::as_str).unwrap_or("other")
-        ),
+        actor_id,
+        current.id,
+        break_in_id,
+        dedupe_key.clone(),
+        payload,
+        dangerous_override_reason.is_some(),
+        body,
     )
-    .await;
-    // Correlates the events of one break-in on every device: by sync id, not the local id.
-    let correlation = crate::sync::identity::optional_entity_sync_id(db, "schedule_break_ins", break_in_id)
-        .await?
-        // Every row gets a sync id at insert; a row without one keeps a device-marked key.
-        .unwrap_or_else(|| format!("local-{break_in_id}"));
-    let _ = activity::emitter::emit_activity_event(
-        db,
-        activity::emitter::ActivityEventInput {
-            event_class: "operational".to_string(),
-            event_code: "planning.break_in".to_string(),
-            source_module: "planning".to_string(),
-            source_record_type: Some("schedule_commitment".to_string()),
-            source_record_id: Some(current.id.to_string()),
-            entity_scope_id: None,
-            actor_id: Some(actor_id),
-            severity: if dangerous_override_reason.is_some() {
-                "warning".to_string()
-            } else {
-                "info".to_string()
-            },
-            summary_json: Some(payload),
-            correlation_id: Some(format!("planning-breakin-{correlation}")),
-            visibility_scope: "entity".to_string(),
-        },
-    )
-    .await;
+    .await?;
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -1914,6 +1963,7 @@ pub async fn create_schedule_commitment(
         input.assigned_team_id,
         &input.committed_start,
         &input.committed_end,
+        chrono::Utc::now(),
     )
     .await?;
     let break_in = match (&frozen_week, &input.frozen_week_break_in) {
@@ -1992,9 +2042,11 @@ pub async fn create_schedule_commitment(
         .map_err(|_| AppError::Internal(anyhow::anyhow!("schedule_commitments last_insert_id does not fit i64")))?;
     // The candidate is derived on each device; the commitment depends on it, so it travels now.
     crate::sync::capture::capture_row_change(&tx, "schedule_candidates", input.schedule_candidate_id).await?;
+    let mut inserted_break_in = None;
     if let Some((reason, approver, dangerous)) = &break_in {
         // Part of the frozen week from now on (not of its baseline: unplanned work), recorded as a
-        // break-in that inserts the job (its slot is both the old and the new one).
+        // break-in of kind `insert`: no old slot, and the approver only when someone approved it
+        // (an urgent reason without one carries its dangerous-override reason instead).
         let approver_personnel = match approver {
             Some(user) => resolve_user_personnel_id(&tx, *user).await?,
             None => None,
@@ -2005,28 +2057,52 @@ pub async fn create_schedule_commitment(
             [id.into()],
         ))
         .await?;
-        tx.execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "INSERT INTO schedule_break_ins
-                (schedule_commitment_id, break_in_reason, approved_by_user_id, approved_by_personnel_id, override_reason,
-                 old_slot_start, old_slot_end, new_slot_start, new_slot_end, old_assignee_id, new_assignee_id,
-                 cost_impact_delta, notification_dedupe_key, created_by_id)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL, ?)",
-            [
-                id.into(),
-                reason.code.clone().into(),
-                approver.unwrap_or(actor_id).into(),
-                approver_personnel.into(),
-                dangerous.clone().into(),
-                input.committed_start.clone().into(),
-                input.committed_end.clone().into(),
-                input.committed_start.clone().into(),
-                input.committed_end.clone().into(),
-                input.assigned_personnel_id.into(),
-                Some(actor_id).into(),
-            ],
-        ))
-        .await?;
+        let dedupe_key = format!(
+            "planning.breakin.{id}.{}.{}",
+            input.committed_start, input.committed_end
+        );
+        let inserted = tx
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO schedule_break_ins
+                    (schedule_commitment_id, break_in_reason, kind, approved_by_user_id, approved_by_personnel_id,
+                     override_reason, old_slot_start, old_slot_end, new_slot_start, new_slot_end, old_assignee_id,
+                     new_assignee_id, cost_impact_delta, notification_dedupe_key, created_by_id)
+                 VALUES (?, ?, 'insert', ?, ?, ?, NULL, NULL, ?, ?, NULL, ?, NULL, ?, ?)",
+                [
+                    id.into(),
+                    reason.code.clone().into(),
+                    (*approver).into(),
+                    approver_personnel.into(),
+                    dangerous.clone().into(),
+                    input.committed_start.clone().into(),
+                    input.committed_end.clone().into(),
+                    input.assigned_personnel_id.into(),
+                    Some(dedupe_key.clone()).into(),
+                    Some(actor_id).into(),
+                ],
+            ))
+            .await?;
+        let break_in_id = i64::try_from(inserted.last_insert_id())
+            .map_err(|_| AppError::Internal(anyhow::anyhow!("schedule_break_ins last_insert_id does not fit i64")))?;
+        let payload = json!({
+            "break_in_id": break_in_id,
+            "kind": "insert",
+            "schedule_commitment_id": id,
+            "reason_code": reason.code,
+            "impacted_assignee_id": input.assigned_personnel_id,
+            "new_slot_start": input.committed_start,
+            "new_slot_end": input.committed_end,
+            "frozen_week": frozen_week.as_ref().map(|w| w.week_start.clone()),
+            "team_id": input.assigned_team_id
+        });
+        inserted_break_in = Some((
+            break_in_id,
+            dedupe_key,
+            payload,
+            dangerous.is_some(),
+            reason.code.clone(),
+        ));
         append_change_log(
             &tx,
             Some(id),
@@ -2089,6 +2165,10 @@ pub async fn create_schedule_commitment(
     if let Some(outcome) = wo_sync {
         wo_sync::record_wo_sync_audit(db, actor_id, outcome.wo_id, "create").await;
     }
+    if let Some((break_in_id, dedupe_key, payload, dangerous, reason)) = inserted_break_in {
+        let body = format!("Break-in added commitment #{id} to a frozen week (reason: {reason}).");
+        announce_break_in(db, actor_id, id, break_in_id, dedupe_key, payload, dangerous, body).await?;
+    }
     get_commitment(db, id).await
 }
 
@@ -2104,6 +2184,7 @@ pub async fn reschedule_schedule_commitment(
             "Schedule commitment was modified elsewhere (stale row_version).".to_string(),
         ]));
     }
+    ensure_held(&current)?;
     if current.frozen_at.is_some() {
         let period_key = format!(
             "{}:{}:{}",
@@ -2159,6 +2240,7 @@ pub async fn reschedule_schedule_commitment(
         input.assigned_team_id,
         &input.committed_start,
         &input.committed_end,
+        chrono::Utc::now(),
     )
     .await?
     {

@@ -9,7 +9,7 @@ import type { ReferenceValue, ScheduleCommitment, WeeklyScheduleView } from "@sh
 import { CrewsWithoutSiteBanner } from "../CrewsWithoutSiteBanner";
 import { FrozenWeekBreakInDialog } from "../FrozenWeekBreakInDialog";
 import { WeeklySchedulePanel } from "../WeeklySchedulePanel";
-import { addDays, commitmentsOnDay } from "../weekly-schedule-model";
+import { addDays, commitmentsOnDay, daysBetween } from "../weekly-schedule-model";
 
 function lookup(key: string): string | undefined {
   const value = key
@@ -200,6 +200,20 @@ describe("weekly schedule helpers", () => {
   it("adds days across a month end", () => {
     expect(addDays("2026-10-30", 3)).toBe("2026-11-02");
     expect(addDays("2026-11-02", -7)).toBe("2026-10-26");
+  });
+
+  it("lists the days of a week, including one stretched by a weekend change", () => {
+    expect(daysBetween("2026-10-18", "2026-10-24")).toHaveLength(7);
+    expect(daysBetween("2026-06-07", "2026-06-14")).toEqual([
+      "2026-06-07",
+      "2026-06-08",
+      "2026-06-09",
+      "2026-06-10",
+      "2026-06-11",
+      "2026-06-12",
+      "2026-06-13",
+      "2026-06-14",
+    ]);
   });
 
   it("puts a slot on every day it touches, and an end at midnight on the day before", () => {

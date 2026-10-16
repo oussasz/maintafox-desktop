@@ -13,6 +13,7 @@ import { PermissionGate } from "@/components/PermissionGate";
 import {
   addDays,
   commitmentsOnDay,
+  daysBetween,
   errorText,
   isoDay,
   parseDay,
@@ -112,7 +113,7 @@ export function WeeklySchedulePanel() {
   }
 
   const days = useMemo(
-    () => (view ? Array.from({ length: 7 }, (_, i) => addDays(view.week.week_start, i)) : []),
+    () => (view ? daysBetween(view.week.week_start, view.week.week_end) : []),
     [view],
   );
   const working = useMemo(() => new Set(view?.week.working_days ?? []), [view]);
@@ -123,7 +124,6 @@ export function WeeklySchedulePanel() {
   const schedule = view?.schedule ?? null;
   const status = schedule?.status ?? "draft";
   const pendingUnfreeze = schedule?.unfreeze_requested_at != null;
-  const weekStart = view?.week.week_start;
 
   let freezeLine: string | null = null;
   if (view && (status === "draft" || status === "approved")) {
@@ -165,7 +165,9 @@ export function WeeklySchedulePanel() {
             size="sm"
             variant="outline"
             aria-label={t("weekly.previous")}
-            onClick={() => setDay((d) => addDays(weekStart ?? d, -7))}
+            onClick={() =>
+              setDay((d) => (view ? addDays(view.week.week_start, -1) : addDays(d, -7)))
+            }
           >
             <ChevronLeft className="h-4 w-4" />
           </Button>
@@ -182,7 +184,7 @@ export function WeeklySchedulePanel() {
             size="sm"
             variant="outline"
             aria-label={t("weekly.next")}
-            onClick={() => setDay((d) => addDays(weekStart ?? d, 7))}
+            onClick={() => setDay((d) => (view ? addDays(view.week.week_end, 1) : addDays(d, 7)))}
           >
             <ChevronRight className="h-4 w-4" />
           </Button>
@@ -376,7 +378,7 @@ export function WeeklySchedulePanel() {
               ))}
               {view.crews.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="p-2 text-text-muted">
+                  <td colSpan={days.length + 1} className="p-2 text-text-muted">
                     {t("weekly.noCrews")}
                   </td>
                 </tr>

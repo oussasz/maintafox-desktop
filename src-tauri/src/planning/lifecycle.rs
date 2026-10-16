@@ -160,7 +160,8 @@ pub async fn end_commitment(
 
 /// Closes the `committed` commitments matching `filter` (a condition on `schedule_commitments`
 /// columns) and writes one `close_commitment` change-log row each, so the job's history says why
-/// its slot ended. No actor: the work's own end closes it.
+/// its slot ended. No actor: the work's own end closes it, at the moment the work ended
+/// (`load::finished_at_sql`), so every device records the same closing time.
 async fn close_where(db: &impl ConnectionTrait, filter: &str, values: Vec<sea_orm::Value>) -> AppResult<u64> {
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -171,13 +172,14 @@ async fn close_where(db: &impl ConnectionTrait, filter: &str, values: Vec<sea_or
     ))
     .await?;
     let now = now_z();
+    let finished_at = super::load::finished_at_sql("schedule_commitments");
     let mut update_values: Vec<sea_orm::Value> = vec![now.clone().into(), now.into()];
     update_values.extend(values);
     let result = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             format!(
-                "UPDATE schedule_commitments SET status = 'closed', status_changed_at = ?,                         row_version = row_version + 1, updated_at = ?                   WHERE status = 'committed' AND {filter}"
+                "UPDATE schedule_commitments SET status = 'closed', status_changed_at = COALESCE({finished_at}, ?),                         row_version = row_version + 1, updated_at = ?                   WHERE status = 'committed' AND {filter}"
             ),
             update_values,
         ))
