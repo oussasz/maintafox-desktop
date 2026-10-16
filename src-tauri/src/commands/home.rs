@@ -60,7 +60,14 @@ pub async fn get_home_planning(period_days: i64, state: State<'_, AppState>) -> 
     let user = require_session!(state);
     require_permission!(state, &user, p::PLAN_VIEW, PermissionScope::Global);
     let period = checked_period(period_days)?;
-    build_planning(&state.db, period, chrono::Utc::now(), chrono::Local::now().date_naive()).await
+    build_planning(
+        &state.db,
+        i64::from(user.user_id),
+        period,
+        chrono::Utc::now(),
+        chrono::Local::now().date_naive(),
+    )
+    .await
 }
 
 /// Supervisor / manager panel; compliance figures over `period_days` (7 or 30).

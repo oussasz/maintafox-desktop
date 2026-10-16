@@ -74,17 +74,17 @@ pub async fn get_wo_stats(db: &DatabaseConnection) -> AppResult<WoStatsPayload> 
     // ── Completed count (completed + closed) ──
     let completed = count_by_macro_state(db, &["completed", "closed"]).await?;
 
-    // ── Overdue count (planned_end < now AND status not terminal) ──────────
+    // ── Overdue count (`wo::backlog::WO_OVERDUE_SQL`: work still ahead, planned end past) ──
     let overdue = {
         let row = db
-            .query_one(Statement::from_string(
+            .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT COUNT(*) AS cnt FROM work_orders wo \
-                 JOIN work_order_statuses s ON s.id = wo.status_id \
-                 WHERE wo.planned_end IS NOT NULL \
-                   AND wo.planned_end < strftime('%Y-%m-%dT%H:%M:%SZ','now') \
-                   AND s.code NOT IN ('closed', 'cancelled')"
-                    .to_owned(),
+                format!(
+                    "SELECT COUNT(*) AS cnt FROM work_orders wo \
+                     JOIN work_order_statuses s ON s.id = wo.status_id WHERE {}",
+                    crate::wo::backlog::WO_OVERDUE_SQL
+                ),
+                [crate::analytics::as_of::instant(chrono::Utc::now()).into()],
             ))
             .await?
             .ok_or_else(|| crate::errors::AppError::Internal(anyhow::anyhow!("stats: overdue query failed")))?;

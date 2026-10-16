@@ -50,6 +50,7 @@ const MyWorkSchema = z.object({
       overdue: z.number(),
       today: z.number(),
       next_7_days: z.number(),
+      todo: z.number(),
       items: z.array(
         z.object({
           id: z.number(),
@@ -66,6 +67,7 @@ const MyWorkSchema = z.object({
     .object({
       overdue: z.number(),
       due_next_7_days: z.number(),
+      pending: z.number(),
       items: z.array(
         z.object({
           id: z.number(),
@@ -90,15 +92,30 @@ const PlanningSchema = z.object({
     blocked_by: z.array(z.object({ dimension: z.string(), count: z.number() })),
     truncated: z.boolean(),
   }),
-  week: z.object({
-    week_start: z.string(),
-    week_end: z.string(),
-    teams: z.number(),
-    capacity_hours: z.number(),
-    committed_hours: z.number(),
-    load_pct: z.number().nullable(),
-    overloaded_team_days: z.number(),
-  }),
+  week: z
+    .object({
+      week_start: z.string(),
+      week_end: z.string(),
+      basis: z.object({
+        rest_days: z.array(z.number()),
+        scope: z.enum(["all_sites", "own_site"]),
+        site_name: nullableString,
+      }),
+      teams: z.number(),
+      capacity_hours: z.number(),
+      committed_hours: z.number(),
+      load_pct: z.number().nullable(),
+      overloaded_team_days: z.number(),
+    })
+    .nullable(),
+  week_unavailable: z
+    .enum([
+      "WORK_WEEK_NOT_CONFIGURED",
+      "WORK_WEEK_SITE_AMBIGUOUS",
+      "WORK_WEEK_NO_REST_DAY",
+      "WORK_WEEK_SPLIT_REST",
+    ])
+    .nullable(),
   schedule_compliance: z.object({
     period_days: z.number(),
     scheduled_hours: z.number(),
@@ -113,6 +130,12 @@ const PermitItemSchema = z.object({
   permit_type: z.string(),
   asset_code: z.string(),
   expires_at: z.string(),
+});
+
+const PermitListSchema = z.object({
+  total: z.number(),
+  items: z.array(PermitItemSchema),
+  without_record: z.number(),
 });
 
 const SupervisionSchema = z.object({
@@ -177,9 +200,10 @@ const SupervisionSchema = z.object({
   safety: z
     .object({
       open_permits: z.number(),
+      expiring_rule: z.enum(["active", "disabled", "no_lead", "missing"]),
       expiring_lead_minutes: z.number().nullable(),
-      expiring: z.array(PermitItemSchema),
-      expired_open: z.array(PermitItemSchema),
+      expiring: PermitListSchema,
+      expired_open: PermitListSchema,
       locks_in_place: z.number(),
       permits_with_locks: z.number(),
     })

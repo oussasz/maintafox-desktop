@@ -58,7 +58,7 @@ function renderAt(node: React.ReactNode) {
 const myWork: HomeMyWork = {
   as_of: "2026-10-16T08:00:00Z",
   work_orders: {
-    open: 3,
+    open: 9,
     overdue: 1,
     today: 1,
     by_urgency: [{ urgency_code: "emergency", count: 1 }],
@@ -77,7 +77,7 @@ const myWork: HomeMyWork = {
     ],
   },
   requests: { open: 2, awaiting_my_answer: 1 },
-  rounds: { personnel_linked: false, overdue: 0, today: 0, next_7_days: 0, items: [] },
+  rounds: { personnel_linked: false, overdue: 0, today: 0, next_7_days: 0, todo: 0, items: [] },
   pm: null,
   notifications: { unread: 5, to_acknowledge: 2 },
 };
@@ -94,6 +94,8 @@ describe("HomeMyWorkPanel", () => {
     expect(await screen.findByText("OT-44 — Seal")).toBeTruthy();
     expect(screen.getByText("home.myWork.rounds.notLinked")).toBeTruthy();
     expect(screen.queryByText("home.myWork.pm.title")).toBeNull();
+    // 9 open, 1 listed: the rest is announced, never silently cut.
+    expect(screen.getByText("home.more:8")).toBeTruthy();
     fireEvent.click(screen.getByText("OT-44 — Seal"));
     expect(screen.getByTestId("where").textContent).toBe("/work-orders?openWo=44");
   });

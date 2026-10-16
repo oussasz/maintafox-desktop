@@ -20,6 +20,12 @@ use crate::errors::{AppError, AppResult};
 
 /// Statuses whose work is still ahead (not finished, not abandoned).
 pub const OPEN_STATUS_SQL: &str = "('draft', 'planning', 'ready', 'in_progress', 'on_hold')";
+
+/// SQL predicate (aliases `wo` and its status `s`, one bind: now, RFC 3339): an OT whose work is
+/// still ahead ([`OPEN_STATUS_SQL`]) and whose planned end is past — the one "overdue" rule (OT
+/// dashboard, home page, `analytics::as_of::wo_overdue_at` at now), so overdue is part of open.
+pub const WO_OVERDUE_SQL: &str = "(s.code IN ('draft', 'planning', 'ready', 'in_progress', 'on_hold') \
+     AND wo.planned_end IS NOT NULL AND datetime(wo.planned_end) < datetime(?))";
 pub const MAX_WEEKS: i64 = 12;
 
 #[derive(Debug, Clone, Deserialize)]

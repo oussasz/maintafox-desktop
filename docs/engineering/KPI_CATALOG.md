@@ -1459,16 +1459,18 @@ Required fields:
 
 Displayed:
 - Executive Dashboards (`/analytics/dashboards`) — closed WO `total_cost` on the fleet health strip and per-asset in the bad-actor table; org-scoped via WO `entity_id`
-- Vue d'ensemble Overview strip when semantic key `TOTAL_COST` is enabled (`fin.view`)
+- ~~Vue d'ensemble Overview strip (`TOTAL_COST`)~~ — **removed 2026-10**: it summed closed WO
+  `total_cost` instead of the finance settlement flow (`finance::settlement`); the home page shows
+  no cost figure until one reads the settled actuals.
 
 Semantic key:
-`TOTAL_COST`
+— (`TOTAL_COST` removed from the Overview strip)
 
 Permission:
-`fin.view`
+`fin.view` (Executive Dashboards)
 
 Default roles:
-Reliability, Storekeeper (when `fin.view`)
+—
 
 Trend sense:
 up-bad
@@ -1500,12 +1502,11 @@ Home Overview metric cards are driven by **semantic keys** persisted in `user_an
 | `DATA_QUALITY` | KPI-044 | `rep.view` | up-good | Reliability |
 | `STOCK_OUT` | KPI-045 | `inv.view` | up-bad | Storekeeper |
 | `REORDER_ALERT` | KPI-046 | `inv.view` | up-bad | Storekeeper |
-| `TOTAL_COST` | KPI-037 | `fin.view` | up-bad | Reliability, Storekeeper (when `fin.view`) |
 
 **Role default sets (first match):**
 
-1. **Reliability** (`ram.view` or `rep.view`): MTBF, AVAILABILITY, TOTAL_COST (if `fin.view`), DATA_QUALITY
-2. **Storekeeper** (`inv.view`, not supervisor/reliability): STOCK_OUT, REORDER_ALERT, OT_IN_PROGRESS, TOTAL_COST (if `fin.view`)
+1. **Reliability** (`ram.view` or `rep.view`): MTBF, AVAILABILITY, DATA_QUALITY
+2. **Storekeeper** (`inv.view`, not supervisor/reliability): STOCK_OUT, REORDER_ALERT, OT_IN_PROGRESS
 3. **Supervisor** (`di.review` or `ot.close`): DI_OPEN, OT_OVERDUE, PM_COMPLIANCE, AVAILABILITY
 4. **General** (else): DI_OPEN, OT_IN_PROGRESS, OT_OVERDUE, PM_DUE_TODAY (permission-filtered)
 

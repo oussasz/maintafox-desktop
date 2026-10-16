@@ -208,12 +208,20 @@
         "prerequisites": "Prérequis"
       },
       "week": {
-        "title": "Semaine du {{from}} au {{to}}",
+        "title": "Semaine de travail du {{from}} au {{to}}",
         "load": "Charge / capacité",
         "overloaded": "Jours-équipe surchargés",
         "hoursOf": "{{committed}} engagées sur {{capacity}}",
         "noCapacity": "Aucune heure",
-        "noTeams": "Aucune équipe active : la capacité ne peut pas être calculée."
+        "noTeams": "Aucune équipe active : la capacité ne peut pas être calculée.",
+        "titleNoWeek": "Semaine de travail",
+        "ownSite": "Les sites n'ont pas la même semaine de travail : celle de votre site ({{site}}) est utilisée.",
+        "unavailable": {
+          "WORK_WEEK_NOT_CONFIGURED": "Aucune semaine de travail n'est définie (Données de référence → Calendrier) : la charge de la semaine ne peut pas être calculée.",
+          "WORK_WEEK_SITE_AMBIGUOUS": "Les sites n'ont pas la même semaine de travail et votre compte n'est relié à aucun site qui en définit une : la charge de la semaine n'est pas calculée. Reliez votre compte à une fiche du personnel et à son site.",
+          "WORK_WEEK_NO_REST_DAY": "La semaine de travail n'a aucun jour de repos : aucun jour ne la commence. Corrigez-la dans Données de référence → Calendrier.",
+          "WORK_WEEK_SPLIT_REST": "Les jours de repos de la semaine ne se suivent pas : aucun jour unique ne la commence. Corrigez-la dans Données de référence → Calendrier."
+        }
       },
       "compliance": {
         "title": "Respect du planning",
@@ -281,12 +289,20 @@
         "expired": "Expirés encore ouverts",
         "locks": "Cadenas posés",
         "within": "dans les {{hours}} h",
-        "noLead": "Aucun délai d'alerte défini (Données de référence → Notifications)",
         "locksOn_one": "sur {{count}} permis",
         "locksOn_other": "sur {{count}} permis",
         "expiredBadge": "Expiré",
         "expiringBadge": "Expire bientôt",
-        "listAria": "Permis à traiter"
+        "rule": {
+          "disabled": "La règle « Permis bientôt expiré » est désactivée (Données de référence → Notifications)",
+          "no_lead": "Aucun délai d'alerte défini (Données de référence → Notifications)",
+          "missing": "Aucune règle « Permis bientôt expiré » (Données de référence → Notifications)",
+          "active": "Règle active"
+        },
+        "expiredListAria": "Permis expirés encore ouverts",
+        "expiringListAria": "Permis qui expirent bientôt",
+        "withoutRecord_one": "{{count}} permis trouvé n'a pas de fiche à ouvrir : vérifiez la synchronisation.",
+        "withoutRecord_other": "{{count}} permis trouvés n'ont pas de fiche à ouvrir : vérifiez la synchronisation."
       },
       "assets": {
         "title": "Équipements critiques à l'arrêt",
@@ -304,7 +320,7 @@
     },
     "def": {
       "myWoOpen": "OT dont vous êtes le responsable principal et dont le travail reste à faire (brouillon, planification, prêt, en cours, en attente).",
-      "woOverdue": "OT dont la fin planifiée est dépassée (même règle que le module OT).",
+      "woOverdue": "OT dont le travail reste à faire (brouillon à en attente) et dont la fin planifiée est dépassée — la règle unique du module OT.",
       "myWoToday": "OT dont la période planifiée comprend aujourd'hui (jour local) et qui ne sont pas en retard.",
       "myDiOpen": "Demandes que vous avez soumises, ni clôturées ni transformées en OT (file « Mes demandes »).",
       "myDiAwaiting": "Vos demandes renvoyées pour complément : elles attendent votre réponse.",
@@ -314,34 +330,36 @@
       "pmOverdue": "Occurrences de MP en attente dont la fin de la fenêtre de tolérance (ou l'échéance sans fenêtre) est dépassée (même règle que la page MP).",
       "pmNext7": "Occurrences de MP en attente dues dans les 7 prochains jours.",
       "pmToday": "Occurrences de MP en attente dues aujourd'hui.",
-      "pmCompliance": "Indicateur SMRP : occurrences réalisées dans leur fenêtre de tolérance ÷ occurrences dues sur la période dont le résultat est connu (annulées exclues) — le chiffre de la page MP.",
+      "pmCompliance": "Indicateur SMRP : occurrences réalisées dans leur fenêtre de tolérance ÷ occurrences dues sur la période dont le résultat est connu (annulées exclues) — le chiffre de la page MP. Période : les N derniers jours, aujourd'hui compris.",
       "toAck": "Notifications dont la règle demande un acquittement, non résolues et non encore acquittées.",
       "unread": "Notifications de votre boîte non lues (le chiffre de la cloche).",
       "backlogReady": "Travaux du tableau de planification sans blocage.",
       "backlogBlocked": "Travaux du tableau de planification ayant au moins un blocage (pièces, compétences, permis, créneaux, prérequis).",
-      "weekLoad": "Heures de main-d'œuvre engagées cette semaine (lundi–dimanche) ÷ heures disponibles + heures supplémentaires des équipes actives, sur la semaine entière (jamais une moyenne de ratios journaliers).",
+      "weekLoad": "Heures de main-d'œuvre engagées sur la semaine de travail du site (du lendemain des jours de repos, Données de référence → Calendrier) ÷ heures disponibles + heures supplémentaires des équipes actives, sur la semaine entière (jamais une moyenne de ratios journaliers).",
       "weekOverloaded": "Jours-équipe de la semaine dont les heures engagées dépassent les heures disponibles (y compris les jours sans aucune heure).",
-      "scheduleCompliance": "Indicateur SMRP : heures engagées dont l'OT a été réalisé au plus tard le jour engagé ÷ heures engagées, pour les engagements finissant dans la période.",
+      "scheduleCompliance": "Indicateur SMRP : heures engagées dont l'OT a été réalisé au plus tard le jour engagé ÷ heures engagées, pour les engagements finissant dans la période. Période : les N derniers jours, aujourd'hui compris.",
       "slaBreached": "Demandes ouvertes dont un délai (réponse ou résolution) est dépassé, temps en pause exclu (même règle que les listes DI).",
       "slaAtRisk": "Demandes ouvertes ayant atteint le seuil d'escalade sans avoir dépassé le délai.",
       "slaPaused": "Demandes ouvertes en attente du demandeur ou reportées : le délai est suspendu.",
-      "slaClosing": "Demandes clôturées sur la période (avec ou sans OT) dont aucun délai n'a été dépassé, pauses exclues ÷ demandes clôturées ayant un objectif.",
+      "slaClosing": "Demandes clôturées sur la période (avec ou sans OT) dont aucun délai n'a été dépassé, pauses exclues ÷ demandes clôturées ayant un objectif. Période : les N derniers jours, aujourd'hui compris.",
       "backlogOpen": "OT dont le travail reste à faire (brouillon à en attente), par nature EN 13306 du type d'OT et par niveau d'urgence.",
-      "woOverdueAll": "OT dont la fin planifiée est dépassée et qui ne sont ni clôturés ni annulés (le chiffre du tableau de bord OT ; un OT terminé non clôturé compte).",
+      "woOverdueAll": "Parmi les OT à réaliser, ceux dont la fin planifiée est dépassée — la règle unique du module OT (un OT terminé n'est plus en retard).",
       "planned": "OT de nature préventive ou d'amélioration (travail planifié au sens SMRP).",
       "reactive": "OT de nature corrective (immédiate ou différée).",
       "emergency": "OT de maintenance corrective immédiate (sous-ensemble du réactif).",
       "stockReorder": "Lignes article × magasin dont le disponible est au plus le point de commande (ou sous le stock minimum) — la règle de réapprovisionnement du module Stock.",
       "stockOut": "Parmi ces lignes, celles sans aucun disponible.",
-      "permitsOpen": "Permis délivrés, actifs ou suspendus et non expirés.",
-      "permitsExpiring": "Permis ouverts dont l'expiration tombe dans le délai d'alerte de la règle « Permis bientôt expiré » (Données de référence → Notifications).",
-      "permitsExpired": "Permis dont l'expiration est passée mais qui ne sont ni clôturés ni rendus.",
+      "permitsOpen": "Permis délivrés, actifs, suspendus ou à revalider, et non expirés.",
+      "permitsExpiring": "Permis ouverts dont l'expiration tombe dans le délai d'alerte de la règle « Permis bientôt expiré » (Données de référence → Notifications) ; aucun lorsque la règle est désactivée.",
+      "permitsExpired": "Permis ouverts (délivrés, actifs, suspendus ou à revalider) dont l'expiration est passée.",
       "locks": "Points d'isolement posés dont la dépose n'est pas encore vérifiée, quel que soit le statut du permis.",
       "criticalDown": "Équipements du niveau de criticité le plus élevé de la liste de référence ({{level}}) dont le statut est marqué « à l'arrêt » ({{statuses}}).",
       "diOpenByStatus": "Demandes ni clôturées ni transformées en OT, par statut, avec leur âge moyen depuis la soumission (le chiffre de la page DI).",
       "chartDi": "Demandes soumises ce jour-là.",
       "chartWo": "OT clôturés ce jour-là.",
       "chartPm": "Occurrences de MP dues ce jour-là, annulées exclues."
-    }
+    },
+    "more_one": "+{{count}} autre — liste complète dans le module",
+    "more_other": "+{{count}} autres — liste complète dans le module"
   }
 }

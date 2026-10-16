@@ -377,8 +377,9 @@ pub async fn candidates(
                                 e.asset_id_code \
                          FROM work_permits wp LEFT JOIN permit_types pt ON pt.id = wp.permit_type_id \
                          LEFT JOIN equipment e ON e.id = wp.asset_id \
-                         WHERE wp.status IN ('issued', 'active', 'suspended', 'revalidation_required') \
-                           AND wp.expires_at IS NOT NULL AND {cond}"
+                         WHERE wp.status IN {open} \
+                           AND wp.expires_at IS NOT NULL AND {cond}",
+                        open = crate::permit::queries::OPEN_PERMIT_STATUSES_SQL
                     ),
                     values,
                 ))

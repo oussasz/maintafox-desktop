@@ -208,12 +208,20 @@
         "prerequisites": "Prerequisites"
       },
       "week": {
-        "title": "Week of {{from}} to {{to}}",
+        "title": "Work week {{from}} to {{to}}",
         "load": "Load / capacity",
         "overloaded": "Overloaded crew-days",
         "hoursOf": "{{committed}} committed of {{capacity}}",
         "noCapacity": "No hours",
-        "noTeams": "No active crew: capacity cannot be computed."
+        "noTeams": "No active crew: capacity cannot be computed.",
+        "titleNoWeek": "Work week",
+        "ownSite": "Sites have different work weeks: your site's ({{site}}) is used.",
+        "unavailable": {
+          "WORK_WEEK_NOT_CONFIGURED": "No work week is set (Reference data → Calendar): this week's load cannot be computed.",
+          "WORK_WEEK_SITE_AMBIGUOUS": "Sites have different work weeks and your account is linked to no site that sets one: this week's load is not computed. Link your account to a personnel record and its site.",
+          "WORK_WEEK_NO_REST_DAY": "The work week has no rest day, so no day starts it. Fix it in Reference data → Calendar.",
+          "WORK_WEEK_SPLIT_REST": "The week's rest days are not consecutive, so no single day starts it. Fix it in Reference data → Calendar."
+        }
       },
       "compliance": {
         "title": "Schedule compliance",
@@ -281,12 +289,20 @@
         "expired": "Expired, still open",
         "locks": "Locks in place",
         "within": "within {{hours}} h",
-        "noLead": "No alert lead time set (Reference data → Notifications)",
         "locksOn_one": "on {{count}} permit",
         "locksOn_other": "on {{count}} permits",
         "expiredBadge": "Expired",
         "expiringBadge": "Expiring",
-        "listAria": "Permits to deal with"
+        "rule": {
+          "disabled": "The “Permit expiring” rule is switched off (Reference data → Notifications)",
+          "no_lead": "No alert lead time set (Reference data → Notifications)",
+          "missing": "No “Permit expiring” rule (Reference data → Notifications)",
+          "active": "Rule active"
+        },
+        "expiredListAria": "Expired permits still open",
+        "expiringListAria": "Permits expiring soon",
+        "withoutRecord_one": "{{count}} permit found has no record to open: check synchronisation.",
+        "withoutRecord_other": "{{count}} permits found have no record to open: check synchronisation."
       },
       "assets": {
         "title": "Critical assets down",
@@ -304,7 +320,7 @@
     },
     "def": {
       "myWoOpen": "Work orders you are primary responsible for whose work is still ahead (draft, planning, ready, in progress, on hold).",
-      "woOverdue": "Work orders past their planned end (same rule as the work order module).",
+      "woOverdue": "Work orders whose work is still ahead (draft to on hold) and whose planned end is past — the work order module's one rule.",
       "myWoToday": "Work orders whose planned period includes today (local day) and that are not overdue.",
       "myDiOpen": "Requests you submitted, neither closed nor turned into a work order (queue “My requests”).",
       "myDiAwaiting": "Your requests returned for clarification: they are waiting for your answer.",
@@ -314,34 +330,36 @@
       "pmOverdue": "Pending PM occurrences past the end of their tolerance window (or their due date when they have none) — same rule as the PM page.",
       "pmNext7": "Pending PM occurrences due in the next 7 days.",
       "pmToday": "Pending PM occurrences due today.",
-      "pmCompliance": "SMRP indicator: occurrences done inside their tolerance window ÷ occurrences due in the period whose outcome is known (cancelled excluded) — the PM page's figure.",
+      "pmCompliance": "SMRP indicator: occurrences done inside their tolerance window ÷ occurrences due in the period whose outcome is known (cancelled excluded) — the PM page's figure. Period: the last N days, today included.",
       "toAck": "Notifications whose rule asks for an acknowledgement, not resolved and not acknowledged yet.",
       "unread": "Unread notifications in your inbox (the bell's figure).",
       "backlogReady": "Planning board jobs with no blocker.",
       "backlogBlocked": "Planning board jobs with at least one blocker (parts, skills, permits, windows, prerequisites).",
-      "weekLoad": "Labour hours committed this week (Monday–Sunday) ÷ available + overtime hours of the active crews, over the whole week (never a mean of daily ratios).",
+      "weekLoad": "Labour hours committed over the site's work week (from the day after its rest days, Reference data → Calendar) ÷ available + overtime hours of the active crews, over the whole week (never a mean of daily ratios).",
       "weekOverloaded": "Crew-days of the week whose committed hours exceed their available hours (days with no hours at all included).",
-      "scheduleCompliance": "SMRP indicator: committed hours whose work order was done by the end of the committed day ÷ committed hours, for commitments ending in the period.",
+      "scheduleCompliance": "SMRP indicator: committed hours whose work order was done by the end of the committed day ÷ committed hours, for commitments ending in the period. Period: the last N days, today included.",
       "slaBreached": "Open requests past a target (response or resolution), paused time excluded (same rule as the request lists).",
       "slaAtRisk": "Open requests past the escalation threshold, not yet past their target.",
       "slaPaused": "Open requests waiting for the requester or deferred: the clock is paused.",
-      "slaClosing": "Requests closed in the period (with or without a work order) with no target missed, pauses excluded ÷ closed requests that had a target.",
+      "slaClosing": "Requests closed in the period (with or without a work order) with no target missed, pauses excluded ÷ closed requests that had a target. Period: the last N days, today included.",
       "backlogOpen": "Work orders whose work is still ahead (draft to on hold), by the EN 13306 nature of their type and by urgency level.",
-      "woOverdueAll": "Work orders past their planned end, neither closed nor cancelled (the work order dashboard's figure; a completed but not closed work order counts).",
+      "woOverdueAll": "Of the work orders to do, those past their planned end — the work order module's one rule (a completed work order is no longer overdue).",
       "planned": "Work orders of a preventive or improvement nature (SMRP planned work).",
       "reactive": "Work orders of a corrective nature (immediate or deferred).",
       "emergency": "Immediate corrective maintenance work orders (part of reactive).",
       "stockReorder": "Article × warehouse lines whose available quantity is at or below the reorder point (or under minimum stock) — the Inventory replenishment rule.",
       "stockOut": "Of those lines, the ones with nothing available.",
-      "permitsOpen": "Permits issued, active or suspended and not expired.",
-      "permitsExpiring": "Open permits expiring within the lead time of the “Permit expiring” rule (Reference data → Notifications).",
-      "permitsExpired": "Permits past their expiry that are neither closed nor handed back.",
+      "permitsOpen": "Permits issued, active, suspended or awaiting revalidation, and not expired.",
+      "permitsExpiring": "Open permits expiring within the lead time of the “Permit expiring” rule (Reference data → Notifications); none when the rule is switched off.",
+      "permitsExpired": "Open permits (issued, active, suspended or awaiting revalidation) past their expiry.",
       "locks": "Isolation points applied whose lock removal is not verified yet, whatever the permit's status.",
       "criticalDown": "Equipment at the highest criticality level of the reference list ({{level}}) whose status is marked “down” ({{statuses}}).",
       "diOpenByStatus": "Requests neither closed nor turned into a work order, by status, with their average age since submission (the request page's figure).",
       "chartDi": "Requests submitted that day.",
       "chartWo": "Work orders closed that day.",
       "chartPm": "PM occurrences due that day, cancelled excluded."
-    }
+    },
+    "more_one": "+{{count}} more — full list in the module",
+    "more_other": "+{{count}} more — full list in the module"
   }
 }

@@ -37,7 +37,7 @@ pub struct MyWorkOrderItem {
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct MyWorkOrders {
     pub open: i64,
-    /// Planned end passed (the OT module's overdue rule, on work still ahead).
+    /// Planned end passed (`wo::backlog::WO_OVERDUE_SQL`, the OT module's one overdue rule).
     pub overdue: i64,
     /// Planned window includes today (local day) and not overdue.
     pub today: i64,
@@ -78,6 +78,8 @@ pub struct MyRounds {
     pub today: i64,
     /// Planned in the next 7 days, after today.
     pub next_7_days: i64,
+    /// Every round still to do (the list shows the first ones).
+    pub todo: i64,
     pub items: Vec<MyRoundItem>,
 }
 
@@ -98,6 +100,8 @@ pub struct MyPm {
     pub overdue: i64,
     /// Due within the next 7 days (`pm::queries::PM_DUE_NEXT_7D_SQL`).
     pub due_next_7_days: i64,
+    /// Every pending occurrence (`pm::queries::PM_PENDING_SQL`; the list shows the first ones).
+    pub pending: i64,
     pub items: Vec<MyPmItem>,
 }
 
@@ -118,8 +122,8 @@ pub struct HomeMyWork {
     pub notifications: MyNotifications,
 }
 
-/// Overdue: planned end passed (`analytics::as_of::wo_overdue_at`, same rule as the OT module).
-const WO_OVERDUE: &str = "(wo.planned_end IS NOT NULL AND datetime(wo.planned_end) < datetime(?))";
+/// Overdue: the one OT rule (`wo::backlog::WO_OVERDUE_SQL`: work still ahead, planned end past).
+const WO_OVERDUE: &str = crate::wo::backlog::WO_OVERDUE_SQL;
 /// Today: the planned window includes the local day of `?`.
 const WO_TODAY: &str = "(COALESCE(wo.planned_start, wo.planned_end) IS NOT NULL \
      AND date(COALESCE(wo.planned_start, wo.planned_end), 'localtime') <= date(?, 'localtime') \
@@ -229,6 +233,7 @@ pub async fn my_rounds(db: &DatabaseConnection, user_id: i64, now: DateTime<Utc>
             overdue: 0,
             today: 0,
             next_7_days: 0,
+            todo: 0,
             items: Vec::new(),
         });
     };
@@ -241,9 +246,10 @@ pub async fn my_rounds(db: &DatabaseConnection, user_id: i64, now: DateTime<Utc>
                         COALESCE(SUM(CASE WHEN NOT ({ROUND_OVERDUE_SQL}) \
                              AND date(ir.scheduled_at, 'localtime') = date(?, 'localtime') THEN 1 ELSE 0 END), 0) AS today, \
                         COALESCE(SUM(CASE WHEN date(ir.scheduled_at, 'localtime') > date(?, 'localtime') \
-                             AND julianday(ir.scheduled_at) <= julianday(?) + 7 THEN 1 ELSE 0 END), 0) AS next_7_days \
+                             AND julianday(ir.scheduled_at) <= julianday(?) + 7 THEN 1 ELSE 0 END), 0) AS next_7_days, \
+                        COUNT(*) AS todo \
                  FROM inspection_rounds ir \
-                 WHERE ir.assigned_to_id = ? AND {ROUND_TODO_SQL} AND ir.scheduled_at IS NOT NULL"
+                 WHERE ir.assigned_to_id = ? AND {ROUND_TODO_SQL}"
             ),
             vec![
                 at.clone().into(),
@@ -288,6 +294,7 @@ pub async fn my_rounds(db: &DatabaseConnection, user_id: i64, now: DateTime<Utc>
         overdue: decode(&row, "overdue")?,
         today: decode(&row, "today")?,
         next_7_days: decode(&row, "next_7_days")?,
+        todo: decode(&row, "todo")?,
         items,
     })
 }
@@ -308,7 +315,8 @@ pub async fn my_pm(db: &DatabaseConnection, user_id: i64, now: DateTime<Utc>) ->
             DbBackend::Sqlite,
             format!(
                 "SELECT COALESCE(SUM(CASE WHEN {PM_OVERDUE_SQL} THEN 1 ELSE 0 END), 0) AS overdue, \
-                        COALESCE(SUM(CASE WHEN {PM_DUE_NEXT_7D_SQL} THEN 1 ELSE 0 END), 0) AS due_next_7_days \
+                        COALESCE(SUM(CASE WHEN {PM_DUE_NEXT_7D_SQL} THEN 1 ELSE 0 END), 0) AS due_next_7_days, \
+                        COALESCE(SUM(CASE WHEN {PM_PENDING_SQL} THEN 1 ELSE 0 END), 0) AS pending \
                  {from}"
             ),
             binds(vec![at.clone().into(), at.clone().into(), at.clone().into()]),
@@ -345,6 +353,7 @@ pub async fn my_pm(db: &DatabaseConnection, user_id: i64, now: DateTime<Utc>) ->
     Ok(MyPm {
         overdue: decode(&row, "overdue")?,
         due_next_7_days: decode(&row, "due_next_7_days")?,
+        pending: decode(&row, "pending")?,
         items,
     })
 }

@@ -5,14 +5,14 @@ use chrono::{DateTime, Utc};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use serde::Serialize;
 
-use super::{decode, one_row, urgency_rank_sql, ITEM_LIMIT};
-use crate::analytics::as_of::{self, instant};
-use crate::analytics::smrp::{self, SmrpWindow};
+use super::{decode, one_row, period_first_day, period_window, urgency_rank_sql, ITEM_LIMIT};
+use crate::analytics::as_of::instant;
+use crate::analytics::smrp;
 use crate::assets::taxonomy_reference::{CRITICAL_DOWN_SQL, DOMAIN_CRITICALITY, DOMAIN_STATUS, STATUS_TAG_DOWN};
 use crate::di::queries::DiQueueCounts;
 use crate::di::stats::{DiSlaClosingOutcome, DiSlaOpenSplit, DiStatsFilter};
 use crate::errors::AppResult;
-use crate::wo::backlog::OPEN_STATUS_SQL;
+use crate::wo::backlog::{OPEN_STATUS_SQL, WO_OVERDUE_SQL};
 use crate::wo::types::MaintenanceNature;
 
 /// Open requests against their SLA (`di::stats::sla_open_split`), SLA compliance of the requests
@@ -39,8 +39,8 @@ pub struct WoBacklogCell {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct SupervisionWorkOrders {
     pub open: i64,
-    /// OTs past their planned end and not closed or cancelled (`analytics::as_of::wo_overdue_at`,
-    /// the OT dashboard's figure).
+    /// Of `open`, the OTs past their planned end (`wo::backlog::WO_OVERDUE_SQL`, the OT
+    /// dashboard's one overdue rule).
     pub overdue: i64,
     pub planned: i64,
     pub reactive: i64,
@@ -97,18 +97,39 @@ pub struct PermitItem {
     pub expires_at: String,
 }
 
-/// Permits and lockout (PTW / LOTO).
+/// Permits found by a check: how many, the first [`ITEM_LIMIT`] to open, and how many the check
+/// found without a record to open (counted, never dropped).
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct PermitList {
+    pub total: i64,
+    pub items: Vec<PermitItem>,
+    pub without_record: i64,
+}
+
+/// State of the "permit expiring" rule (Données de référence → Notifications).
+pub const EXPIRING_RULE_ACTIVE: &str = "active";
+/// The rule exists but is switched off: nothing is "expiring soon".
+pub const EXPIRING_RULE_DISABLED: &str = "disabled";
+/// The rule is on but has no lead time: nothing is "expiring soon".
+pub const EXPIRING_RULE_NO_LEAD: &str = "no_lead";
+/// No such rule.
+pub const EXPIRING_RULE_MISSING: &str = "missing";
+
+/// Permits and lockout (PTW / LOTO). Open, expiring and expired permits share one status set
+/// (`permit::queries::OPEN_PERMIT_STATUSES_SQL`).
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct SupervisionSafety {
-    /// Issued, active or suspended and not expired (`permit::queries::list_open_permits_report`).
+    /// Open and not expired (`permit::queries::list_open_permits_report`).
     pub open_permits: i64,
-    /// Lead time of the "permit expiring" rule (Données de référence → Notifications); `None` when
-    /// the rule has none, and then nothing is "expiring soon".
+    /// One of the `EXPIRING_RULE_*` states.
+    pub expiring_rule: String,
+    /// Lead time of the rule when it is active.
     pub expiring_lead_minutes: Option<i64>,
-    /// Permits expiring within the lead time (`notifications::watchers`, rule `ptw_expiring`).
-    pub expiring: Vec<PermitItem>,
-    /// Permits past their expiry still open (rule `ptw_critical`).
-    pub expired_open: Vec<PermitItem>,
+    /// Open permits expiring within the lead time (`notifications::watchers`, rule
+    /// `ptw_expiring`); empty unless the rule is active.
+    pub expiring: PermitList,
+    /// Open permits past their expiry (rule `ptw_critical`'s condition).
+    pub expired_open: PermitList,
     /// Lockout points still fitted and the permits they belong to
     /// (`permit::queries::isolation_locks_in_place`).
     pub locks_in_place: i64,
@@ -163,8 +184,8 @@ pub async fn requests(
     period_days: i64,
     now: DateTime<Utc>,
 ) -> AppResult<SupervisionRequests> {
-    // The period's days, today included (7 days = today and the 6 before).
-    let from = (now - chrono::Duration::days(period_days - 1)).date_naive().to_string();
+    // The panel's period convention (`home::period_first_day`): the last N days, today included.
+    let from = period_first_day(now, period_days).to_string();
     let to = now.date_naive().to_string();
     Ok(SupervisionRequests {
         sla_open: crate::di::stats::sla_open_split(db, None).await?,
@@ -200,7 +221,21 @@ pub async fn work_orders(db: &DatabaseConnection, now: DateTime<Utc>) -> AppResu
         .await?;
     let mut out = SupervisionWorkOrders {
         open: 0,
-        overdue: as_of::wo_overdue_at(db, now, None).await?,
+        overdue: decode(
+            &one_row(
+                db.query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    format!(
+                        "SELECT COUNT(*) AS cnt FROM work_orders wo \
+                         JOIN work_order_statuses s ON s.id = wo.status_id WHERE {WO_OVERDUE_SQL}"
+                    ),
+                    [instant(now).into()],
+                ))
+                .await?,
+                "overdue work orders",
+            )?,
+            "cnt",
+        )?,
         planned: 0,
         reactive: 0,
         emergency: 0,
@@ -236,7 +271,7 @@ pub async fn work_orders(db: &DatabaseConnection, now: DateTime<Utc>) -> AppResu
 
 pub async fn pm(db: &DatabaseConnection, period_days: i64, now: DateTime<Utc>) -> AppResult<SupervisionPm> {
     let due = crate::pm::queries::get_pm_due_metrics(db).await?;
-    let compliance = smrp::pm_compliance(db, SmrpWindow::last_days(now, period_days), now, None).await?;
+    let compliance = smrp::pm_compliance(db, period_window(now, period_days), now, None).await?;
     Ok(SupervisionPm {
         overdue: due.overdue_count,
         due_today: due.due_today_count,
@@ -294,9 +329,11 @@ pub async fn stock(db: &DatabaseConnection) -> AppResult<SupervisionStock> {
     })
 }
 
-fn permit_items(candidates: Vec<crate::notifications::watchers::Candidate>) -> Vec<PermitItem> {
+pub fn permit_list(candidates: Vec<crate::notifications::watchers::Candidate>) -> PermitList {
     let text = |v: &serde_json::Value, k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or_default().to_string();
-    candidates
+    let total = candidates.len() as i64;
+    let without_record = candidates.iter().filter(|c| c.record_id.is_none()).count() as i64;
+    let items = candidates
         .into_iter()
         .filter_map(|c| {
             c.record_id.map(|permit_id| PermitItem {
@@ -307,24 +344,39 @@ fn permit_items(candidates: Vec<crate::notifications::watchers::Candidate>) -> V
                 expires_at: text(&c.params, "expires_at"),
             })
         })
-        .collect()
+        .take(ITEM_LIMIT as usize)
+        .collect();
+    PermitList {
+        total,
+        items,
+        without_record,
+    }
 }
 
 pub async fn safety(db: &DatabaseConnection, now: DateTime<Utc>) -> AppResult<SupervisionSafety> {
     use crate::notifications::watchers;
     let open_permits = crate::permit::queries::list_open_permits_report(db).await?.len() as i64;
-    let lead = watchers::rule_of(db, "ptw_expiring")
-        .await?
-        .and_then(|(_, lead)| lead)
-        .filter(|m| *m > 0);
-    let expiring = match lead {
-        Some(minutes) => permit_items(watchers::candidates(db, "ptw_expiring", now, Some(minutes), false).await?),
-        None => Vec::new(),
+    let (expiring_rule, lead) = match watchers::rule_of(db, "ptw_expiring").await? {
+        None => (EXPIRING_RULE_MISSING, None),
+        Some((false, _)) => (EXPIRING_RULE_DISABLED, None),
+        Some((true, lead)) => match lead.filter(|m| *m > 0) {
+            Some(minutes) => (EXPIRING_RULE_ACTIVE, Some(minutes)),
+            None => (EXPIRING_RULE_NO_LEAD, None),
+        },
     };
-    let expired_open = permit_items(watchers::candidates(db, "ptw_critical", now, None, false).await?);
+    let expiring = match lead {
+        Some(minutes) => permit_list(watchers::candidates(db, "ptw_expiring", now, Some(minutes), false).await?),
+        None => PermitList {
+            total: 0,
+            items: Vec::new(),
+            without_record: 0,
+        },
+    };
+    let expired_open = permit_list(watchers::candidates(db, "ptw_critical", now, None, false).await?);
     let (permits_with_locks, locks_in_place) = crate::permit::queries::isolation_locks_in_place(db).await?;
     Ok(SupervisionSafety {
         open_permits,
+        expiring_rule: expiring_rule.to_string(),
         expiring_lead_minutes: lead,
         expiring,
         expired_open,

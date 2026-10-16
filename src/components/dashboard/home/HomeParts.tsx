@@ -270,9 +270,19 @@ export interface RecordRow {
   to: string;
 }
 
-/** The first records behind a figure; each row opens the record. */
-export function HomeRecordList(props: { rows: RecordRow[]; emptyText: string; ariaLabel: string }) {
+/**
+ * The first records behind a figure; each row opens the record. With `total`, says how many more
+ * there are (never a silent cap).
+ */
+export function HomeRecordList(props: {
+  rows: RecordRow[];
+  emptyText: string;
+  ariaLabel: string;
+  total?: number;
+}) {
+  const { t } = useTranslation("dashboard");
   const navigate = useNavigate();
+  const more = props.total != null ? props.total - props.rows.length : 0;
   if (props.rows.length === 0) {
     return (
       <p className="rounded-md border border-dashed border-surface-border px-3 py-4 text-center text-xs text-text-muted">
@@ -281,39 +291,44 @@ export function HomeRecordList(props: { rows: RecordRow[]; emptyText: string; ar
     );
   }
   return (
-    <ul
-      className="divide-y divide-surface-border rounded-md border border-surface-border"
-      aria-label={props.ariaLabel}
-    >
-      {props.rows.map((r) => (
-        <li key={r.key}>
-          <button
-            type="button"
-            onClick={() => void navigate(r.to)}
-            className="flex min-h-[44px] w-full items-center gap-3 px-3 py-2 text-start text-sm hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-          >
-            <span className="min-w-0 flex-1">
-              <span className="block truncate font-medium text-text-primary">{r.primary}</span>
-              {r.secondary ? (
-                <span className="block truncate text-xs text-text-muted">{r.secondary}</span>
-              ) : null}
-            </span>
-            {r.badge ? (
-              <span
-                className={cn(
-                  "shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium",
-                  mfTone[r.tone ?? "neutral"].chip,
-                )}
-              >
-                {r.badge}
+    <div className="space-y-1.5">
+      <ul
+        className="divide-y divide-surface-border rounded-md border border-surface-border"
+        aria-label={props.ariaLabel}
+      >
+        {props.rows.map((r) => (
+          <li key={r.key}>
+            <button
+              type="button"
+              onClick={() => void navigate(r.to)}
+              className="flex min-h-[44px] w-full items-center gap-3 px-3 py-2 text-start text-sm hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+            >
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-medium text-text-primary">{r.primary}</span>
+                {r.secondary ? (
+                  <span className="block truncate text-xs text-text-muted">{r.secondary}</span>
+                ) : null}
               </span>
-            ) : null}
-            {r.meta ? <span className="shrink-0 text-xs text-text-muted">{r.meta}</span> : null}
-            <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-muted" aria-hidden />
-          </button>
-        </li>
-      ))}
-    </ul>
+              {r.badge ? (
+                <span
+                  className={cn(
+                    "shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium",
+                    mfTone[r.tone ?? "neutral"].chip,
+                  )}
+                >
+                  {r.badge}
+                </span>
+              ) : null}
+              {r.meta ? <span className="shrink-0 text-xs text-text-muted">{r.meta}</span> : null}
+              <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-muted" aria-hidden />
+            </button>
+          </li>
+        ))}
+      </ul>
+      {more > 0 ? (
+        <p className="px-1 text-xs text-text-muted">{t("home.more", { count: more })}</p>
+      ) : null}
+    </div>
   );
 }
 

@@ -31,11 +31,16 @@ pub fn days_before(at: DateTime<Utc>, days: i64) -> DateTime<Utc> {
 
 /// SQL expression: when the DI stopped being open (NULL while open). Open is the DI module's
 /// definition (`di::stats::OPEN_SQL`: not closed and not turned into a work order), so at `now`
-/// the count is the DI page's. The legacy terminal codes (`rejected`, …) were migrated to `closed`
-/// (migration 139); they are still read as closed for rows restored from older backups.
-const DI_END: &str = "CASE WHEN ir.status IN ('closed','rejected','converted_to_work_order',\
-'closed_as_non_executable','archived') THEN COALESCE(ir.closed_at, ir.converted_at, ir.declined_at, \
-ir.archived_at, ir.updated_at) WHEN ir.converted_at IS NOT NULL THEN ir.converted_at END";
+/// the count is the DI page's: it ends at the earlier of the conversion and the closing. The legacy
+/// terminal codes (`rejected`, …) were migrated to `closed` (migration 139); they are still read as
+/// closed for rows restored from older backups.
+const DI_END: &str = "CASE \
+WHEN ir.status IN ('closed','rejected','converted_to_work_order','closed_as_non_executable','archived') \
+ AND ir.converted_at IS NOT NULL THEN MIN(datetime(ir.converted_at), \
+ datetime(COALESCE(ir.closed_at, ir.declined_at, ir.archived_at, ir.updated_at))) \
+WHEN ir.status IN ('closed','rejected','converted_to_work_order','closed_as_non_executable','archived') \
+ THEN COALESCE(ir.closed_at, ir.declined_at, ir.archived_at, ir.updated_at) \
+WHEN ir.converted_at IS NOT NULL THEN ir.converted_at END";
 
 /// SQL expression: when the WO stopped being open (closed / cancelled).
 const WO_END_OPEN: &str = "CASE WHEN s.code IN ('closed','cancelled') \
@@ -108,14 +113,16 @@ pub async fn wo_open_at(db: &DatabaseConnection, at: DateTime<Utc>, org: Option<
     count(db, &sql, vec![at_s.clone().into(), at_s.into(), org.into(), org.into()]).await
 }
 
-/// Work orders not done at `at` whose planned end was already past.
+/// Work orders whose work was not done at `at` (not yet completed, closed or cancelled) and whose
+/// planned end was already past — at now, `wo::backlog::WO_OVERDUE_SQL` (overdue is part of the
+/// work still ahead).
 pub async fn wo_overdue_at(db: &DatabaseConnection, at: DateTime<Utc>, org: Option<i64>) -> AppResult<i64> {
     let at_s = instant(at);
     let sql = format!(
         "SELECT COUNT(*) AS cnt FROM work_orders wo JOIN work_order_statuses s ON s.id = wo.status_id \
          WHERE wo.planned_end IS NOT NULL AND datetime(wo.planned_end) < datetime(?) \
            AND datetime(wo.created_at) <= datetime(?) \
-           AND ({WO_END_OPEN} IS NULL OR datetime({WO_END_OPEN}) > datetime(?)) \
+           AND ({WO_END_WORK} IS NULL OR datetime({WO_END_WORK}) > datetime(?)) \
            AND (? IS NULL OR wo.entity_id = ?)"
     );
     count(

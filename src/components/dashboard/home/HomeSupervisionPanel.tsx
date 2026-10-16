@@ -187,6 +187,7 @@ function SupervisionBody({ data }: { data: HomeSupervision }) {
           <HomeRecordList
             ariaLabel={t("home.supervision.stock.listAria")}
             emptyText={t("home.supervision.stock.empty")}
+            total={stock.lines_to_reorder}
             rows={stock.items.map((s) => ({
               key: `${s.article_id}-${s.warehouse_code}`,
               primary: `${s.article_code} — ${s.article_name}`,
@@ -222,22 +223,20 @@ function SupervisionBody({ data }: { data: HomeSupervision }) {
             <HomeFigure label={t("home.supervision.safety.open")} value={n(safety.open_permits)} />
             <HomeFigure
               label={t("home.supervision.safety.expiring")}
-              value={
-                safety.expiring_lead_minutes == null ? t("home.none") : n(safety.expiring.length)
-              }
+              value={safety.expiring_rule === "active" ? n(safety.expiring.total) : t("home.none")}
               hint={
-                safety.expiring_lead_minutes == null
-                  ? t("home.supervision.safety.noLead")
-                  : t("home.supervision.safety.within", {
+                safety.expiring_rule === "active" && safety.expiring_lead_minutes != null
+                  ? t("home.supervision.safety.within", {
                       hours: formatDecimal(safety.expiring_lead_minutes / 60, 1),
                     })
+                  : t(`home.supervision.safety.rule.${safety.expiring_rule}`)
               }
-              tone={safety.expiring.length > 0 ? "warning" : undefined}
+              tone={safety.expiring.total > 0 ? "warning" : undefined}
             />
             <HomeFigure
               label={t("home.supervision.safety.expired")}
-              value={n(safety.expired_open.length)}
-              tone={safety.expired_open.length > 0 ? "danger" : undefined}
+              value={n(safety.expired_open.total)}
+              tone={safety.expired_open.total > 0 ? "danger" : undefined}
             />
             <HomeFigure
               label={t("home.supervision.safety.locks")}
@@ -245,28 +244,46 @@ function SupervisionBody({ data }: { data: HomeSupervision }) {
               hint={t("home.supervision.safety.locksOn", { count: safety.permits_with_locks })}
             />
           </div>
-          {safety.expired_open.length + safety.expiring.length > 0 ? (
-            <HomeRecordList
-              ariaLabel={t("home.supervision.safety.listAria")}
-              emptyText=""
-              rows={[
-                ...safety.expired_open.map((p) => ({ p, expired: true })),
-                ...safety.expiring.map((p) => ({ p, expired: false })),
-              ]
-                .slice(0, 6)
-                .map(({ p, expired }) => ({
-                  key: `${expired ? "x" : "e"}-${p.permit_id}`,
-                  primary: `${p.code} — ${p.permit_type}`,
-                  secondary: p.asset_code || undefined,
-                  meta: formatDateTime(p.expires_at),
-                  badge: expired
-                    ? t("home.supervision.safety.expiredBadge")
-                    : t("home.supervision.safety.expiringBadge"),
-                  tone: expired ? "danger" : "warning",
-                  to: homeLinks.permit(p.permit_id),
-                }))}
-            />
-          ) : null}
+          {[
+            { list: safety.expired_open, expired: true },
+            { list: safety.expiring, expired: false },
+          ].map(({ list, expired }) =>
+            list.total > 0 ? (
+              <div key={expired ? "expired" : "expiring"} className="space-y-1.5">
+                <HomeRecordList
+                  ariaLabel={
+                    expired
+                      ? t("home.supervision.safety.expiredListAria")
+                      : t("home.supervision.safety.expiringListAria")
+                  }
+                  emptyText=""
+                  rows={list.items.map((p) => ({
+                    key: p.permit_id,
+                    primary: `${p.code} — ${p.permit_type}`,
+                    secondary: p.asset_code || undefined,
+                    meta: formatDateTime(p.expires_at),
+                    badge: expired
+                      ? t("home.supervision.safety.expiredBadge")
+                      : t("home.supervision.safety.expiringBadge"),
+                    tone: expired ? "danger" : "warning",
+                    to: homeLinks.permit(p.permit_id),
+                  }))}
+                />
+                {list.total - list.without_record > list.items.length ? (
+                  <HomeNote>
+                    {t("home.more", {
+                      count: list.total - list.without_record - list.items.length,
+                    })}
+                  </HomeNote>
+                ) : null}
+                {list.without_record > 0 ? (
+                  <HomeNote tone="warning">
+                    {t("home.supervision.safety.withoutRecord", { count: list.without_record })}
+                  </HomeNote>
+                ) : null}
+              </div>
+            ) : null,
+          )}
         </HomeSection>
       ) : null}
 
@@ -296,6 +313,7 @@ function SupervisionBody({ data }: { data: HomeSupervision }) {
           <HomeRecordList
             ariaLabel={t("home.supervision.assets.listAria")}
             emptyText={t("home.supervision.assets.empty")}
+            total={assets.critical_down}
             rows={assets.items.map((a) => ({
               key: a.id,
               primary: `${a.asset_code} — ${a.name}`,

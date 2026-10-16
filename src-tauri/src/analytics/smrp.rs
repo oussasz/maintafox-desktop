@@ -17,7 +17,7 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TryGeta
 use serde::Serialize;
 
 use crate::analytics::as_of::{self, instant};
-use crate::errors::AppResult;
+use crate::errors::{AppError, AppResult};
 
 // Work mix by the EN 13306 nature of the OT type (`wo::types::MaintenanceNature`): planned work
 // = preventive natures and improvement; reactive work = corrective natures; emergency work (a
@@ -139,20 +139,19 @@ pub struct SmrpKpis {
     pub cost_to_rav: Option<SmrpCostToRav>,
 }
 
-async fn one_row(db: &DatabaseConnection, sql: &str, binds: Vec<Value>) -> AppResult<Option<sea_orm::QueryResult>> {
-    Ok(db
-        .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, sql, binds))
-        .await?)
+/// The single row of an aggregate query; its absence is an error, never a 0.
+async fn one_row(db: &DatabaseConnection, sql: &str, binds: Vec<Value>) -> AppResult<sea_orm::QueryResult> {
+    db.query_one(Statement::from_sql_and_values(DbBackend::Sqlite, sql, binds))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("smrp aggregate returned no row")))
 }
 
-fn f(row: &Option<sea_orm::QueryResult>, col: &str) -> f64 {
-    row.as_ref()
-        .and_then(|r| {
-            f64::try_get(r, "", col)
-                .ok()
-                .or_else(|| i64::try_get(r, "", col).ok().map(|v| v as f64))
-        })
-        .unwrap_or(0.0)
+/// A number of an aggregate row (SQLite types a sum `INTEGER` or `REAL`); an unreadable value is
+/// an error, never a 0 — aggregates that can be empty are written `COALESCE(…, 0)`.
+fn f(row: &sea_orm::QueryResult, col: &str) -> AppResult<f64> {
+    f64::try_get(row, "", col)
+        .or_else(|_| i64::try_get(row, "", col).map(|v| v as f64))
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("smrp decode '{col}': {e:?}")))
 }
 
 /// Whether `table.column` exists (columns added by newer migrations are optional here).
@@ -217,7 +216,7 @@ pub async fn schedule_compliance(
         ],
     )
     .await?;
-    Ok(SmrpRatio::of(f(&row, "done"), f(&row, "scheduled")))
+    Ok(SmrpRatio::of(f(&row, "done")?, f(&row, "scheduled")?))
 }
 
 // ── Planned / reactive / emergency work ────────────────────────────────────────────────────
@@ -263,12 +262,11 @@ async fn work_mix_totals(db: &DatabaseConnection, window: SmrpWindow, org: Optio
     for r in rows {
         let nature = r
             .try_get::<Option<String>>("", "nature_code")
-            .ok()
-            .flatten()
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("smrp decode 'nature_code': {e:?}")))?
             .as_deref()
             .and_then(crate::wo::types::MaintenanceNature::parse);
-        let n = i64::try_get(&r, "", "n").unwrap_or(0) as f64;
-        let h = f64::try_get(&r, "", "hours").unwrap_or(0.0);
+        let n = f(&r, "n")?;
+        let h = f(&r, "hours")?;
         m.total_hours += h;
         m.total_count += n;
         if nature.is_some_and(|n| n.is_planned()) {
@@ -387,8 +385,10 @@ pub async fn weekly_capacity(db: &DatabaseConnection, org: Option<i64>) -> AppRe
         ))
         .await?
         .iter()
-        .map(|r| i64::try_get(r, "", "pid").unwrap_or(0))
-        .collect();
+        .map(|r| {
+            i64::try_get(r, "", "pid").map_err(|e| AppError::Internal(anyhow::anyhow!("smrp decode 'pid': {e:?}")))
+        })
+        .collect::<AppResult<Vec<_>>>()?;
     let today = chrono::Utc::now().date_naive();
     let week_end = today + chrono::Duration::days(6);
     let mut total = 0.0;
@@ -419,7 +419,7 @@ pub async fn backlog(
     let row = one_row(
         db,
         "SELECT COUNT(*) AS n, \
-                SUM(CASE WHEN COALESCE(wo.expected_duration_hours, 0) <= 0 THEN 1 ELSE 0 END) AS no_estimate, \
+                COALESCE(SUM(CASE WHEN COALESCE(wo.expected_duration_hours, 0) <= 0 THEN 1 ELSE 0 END), 0) AS no_estimate, \
                 COALESCE(SUM(CASE WHEN s.code = 'ready' THEN COALESCE(wo.expected_duration_hours, 0) END), 0) AS ready \
          FROM work_orders wo JOIN work_order_statuses s ON s.id = wo.status_id \
          WHERE s.code NOT IN ('completed','closed','cancelled','mechanically_complete','technically_verified') \
@@ -429,13 +429,13 @@ pub async fn backlog(
     .await?;
     let (capacity, counted, without) = weekly_capacity(db, org).await?;
     let weeks = |h: f64| (capacity > 0.0).then(|| h / capacity);
-    let ready = f(&row, "ready");
+    let ready = f(&row, "ready")?;
     Ok(SmrpBacklog {
         backlog_hours,
         previous_backlog_hours,
         ready_backlog_hours: ready,
-        open_work_orders: f(&row, "n") as i64,
-        work_orders_without_estimate: f(&row, "no_estimate") as i64,
+        open_work_orders: f(&row, "n")? as i64,
+        work_orders_without_estimate: f(&row, "no_estimate")? as i64,
         weekly_capacity_hours: capacity,
         people_counted: counted,
         people_without_schedule: without,
@@ -463,7 +463,7 @@ async fn cost_on_valued_assets(db: &DatabaseConnection, window: SmrpWindow, org:
         ],
     )
     .await?;
-    Ok(f(&row, "total"))
+    f(&row, "total")
 }
 
 pub async fn cost_to_rav(db: &DatabaseConnection, window: SmrpWindow, org: Option<i64>) -> AppResult<SmrpCostToRav> {
@@ -476,7 +476,7 @@ pub async fn cost_to_rav(db: &DatabaseConnection, window: SmrpWindow, org: Optio
         vec![org.into(), org.into()],
     )
     .await?;
-    let rav = f(&assets, "rav");
+    let rav = f(&assets, "rav")?;
     let period_cost = cost_on_valued_assets(db, window, org).await?;
     let previous_cost = cost_on_valued_assets(db, window.previous(), org).await?;
     let annual = |cost: f64| cost * 365.0 / window.days().max(1.0);
@@ -485,8 +485,8 @@ pub async fn cost_to_rav(db: &DatabaseConnection, window: SmrpWindow, org: Optio
         period_cost,
         annualized_cost: annual(period_cost),
         replacement_value_total: rav,
-        assets_with_value: f(&assets, "valued") as i64,
-        assets_total: f(&assets, "total") as i64,
+        assets_with_value: f(&assets, "valued")? as i64,
+        assets_total: f(&assets, "total")? as i64,
         value_pct: pct(period_cost),
         previous_value_pct: pct(previous_cost),
     })

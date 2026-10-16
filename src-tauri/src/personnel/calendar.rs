@@ -436,13 +436,18 @@ impl SiteWeekBook {
         Ok(Self { rows: out })
     }
 
-    /// Whether `day` is a weekly rest day of the site.
-    pub fn is_rest_day(&self, day: NaiveDate) -> bool {
-        let weekday = i64::from(chrono::Datelike::weekday(&day).number_from_monday());
+    /// The weekly rest days (ISO weekdays) in force on `day`; `None` when no row applies yet.
+    pub fn rest_days_on(&self, day: NaiveDate) -> Option<&[i64]> {
         self.rows
             .iter()
             .rev()
             .find(|(from, _)| *from <= day)
-            .is_some_and(|(_, days)| days.contains(&weekday))
+            .map(|(_, days)| days.as_slice())
+    }
+
+    /// Whether `day` is a weekly rest day of the site.
+    pub fn is_rest_day(&self, day: NaiveDate) -> bool {
+        let weekday = i64::from(chrono::Datelike::weekday(&day).number_from_monday());
+        self.rest_days_on(day).is_some_and(|days| days.contains(&weekday))
     }
 }

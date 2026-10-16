@@ -4668,6 +4668,8 @@ export interface HomeMyRounds {
   overdue: number;
   today: number;
   next_7_days: number;
+  /** Every round still to do (the list shows the first ones). */
+  todo: number;
   items: HomeMyRoundItem[];
 }
 
@@ -4683,6 +4685,8 @@ export interface HomeMyPmItem {
 export interface HomeMyPm {
   overdue: number;
   due_next_7_days: number;
+  /** Every pending occurrence (the list shows the first ones). */
+  pending: number;
   items: HomeMyPmItem[];
 }
 
@@ -4714,9 +4718,26 @@ export interface HomePlanningBacklog {
   truncated: boolean;
 }
 
+/** The site work week used (`site_work_weeks`; starts the day after the rest days). */
+export interface HomeWorkWeekBasis {
+  /** ISO weekdays, 1 = Monday … 7 = Sunday. */
+  rest_days: number[];
+  /** `all_sites`: every configured site has this week; `own_site`: the user's own site. */
+  scope: "all_sites" | "own_site";
+  site_name: string | null;
+}
+
+/** Why the week figure cannot be given. */
+export type HomeWorkWeekUnavailable =
+  | "WORK_WEEK_NOT_CONFIGURED"
+  | "WORK_WEEK_SITE_AMBIGUOUS"
+  | "WORK_WEEK_NO_REST_DAY"
+  | "WORK_WEEK_SPLIT_REST";
+
 export interface HomeWeekLoad {
   week_start: string;
   week_end: string;
+  basis: HomeWorkWeekBasis;
   teams: number;
   capacity_hours: number;
   committed_hours: number;
@@ -4734,7 +4755,8 @@ export interface HomeScheduleCompliance {
 export interface HomePlanning {
   as_of: string;
   backlog: HomePlanningBacklog;
-  week: HomeWeekLoad;
+  week: HomeWeekLoad | null;
+  week_unavailable: HomeWorkWeekUnavailable | null;
   schedule_compliance: HomeScheduleCompliance;
 }
 
@@ -4811,11 +4833,21 @@ export interface HomePermitItem {
   expires_at: string;
 }
 
+/** Permits found by a check: all counted, the first ones listed. */
+export interface HomePermitList {
+  total: number;
+  items: HomePermitItem[];
+  /** Found without a record to open (counted, never dropped). */
+  without_record: number;
+}
+
 export interface HomeSupervisionSafety {
   open_permits: number;
+  /** State of the "permit expiring" notification rule. */
+  expiring_rule: "active" | "disabled" | "no_lead" | "missing";
   expiring_lead_minutes: number | null;
-  expiring: HomePermitItem[];
-  expired_open: HomePermitItem[];
+  expiring: HomePermitList;
+  expired_open: HomePermitList;
   locks_in_place: number;
   permits_with_locks: number;
 }

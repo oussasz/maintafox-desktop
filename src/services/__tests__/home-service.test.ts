@@ -66,6 +66,7 @@ const myWork = {
     overdue: 1,
     today: 0,
     next_7_days: 2,
+    todo: 3,
     items: [
       {
         id: 9,
@@ -80,6 +81,7 @@ const myWork = {
   pm: {
     overdue: 0,
     due_next_7_days: 1,
+    pending: 1,
     items: [
       {
         id: 12,
@@ -106,12 +108,14 @@ const planning = {
   week: {
     week_start: "2026-10-12",
     week_end: "2026-10-18",
+    basis: { rest_days: [6, 7], scope: "all_sites", site_name: null },
     teams: 2,
     capacity_hours: 160,
     committed_hours: 120,
     load_pct: 75,
     overloaded_team_days: 1,
   },
+  week_unavailable: null,
   schedule_compliance: { period_days: 7, scheduled_hours: 0, done_hours: 0, value_pct: null },
 };
 
@@ -160,17 +164,22 @@ const supervision = {
   },
   safety: {
     open_permits: 2,
+    expiring_rule: "disabled",
     expiring_lead_minutes: null,
-    expiring: [],
-    expired_open: [
-      {
-        permit_id: 3,
-        code: "PTW-3",
-        permit_type: "Hot work",
-        asset_code: "P-101",
-        expires_at: "2026-10-15T18:00:00Z",
-      },
-    ],
+    expiring: { total: 0, items: [], without_record: 0 },
+    expired_open: {
+      total: 1,
+      items: [
+        {
+          permit_id: 3,
+          code: "PTW-3",
+          permit_type: "Hot work",
+          asset_code: "P-101",
+          expires_at: "2026-10-15T18:00:00Z",
+        },
+      ],
+      without_record: 0,
+    },
     locks_in_place: 4,
     permits_with_locks: 1,
   },
@@ -212,6 +221,14 @@ describe("home service", () => {
   it("refuses a malformed my-work answer instead of showing 0", async () => {
     mockInvoke.mockResolvedValueOnce({ ...myWork, notifications: { unread: "4" } });
     await expect(getHomeMyWork()).rejects.toThrow();
+  });
+
+  it("keeps a missing work week as its coded reason, never a guessed week", async () => {
+    const noWeek = { ...planning, week: null, week_unavailable: "WORK_WEEK_NOT_CONFIGURED" };
+    mockInvoke.mockResolvedValueOnce(noWeek);
+    await expect(getHomePlanning(7)).resolves.toEqual(noWeek);
+    mockInvoke.mockResolvedValueOnce({ ...planning, week: null, week_unavailable: "MONDAY" });
+    await expect(getHomePlanning(7)).rejects.toThrow();
   });
 
   it("reads the planner panel for the chosen period", async () => {

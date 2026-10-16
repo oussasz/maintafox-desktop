@@ -89,10 +89,14 @@ function PlanningBody({ data }: { data: HomePlanning }) {
       </HomeSection>
 
       <HomeSection
-        title={t("home.planning.week.title", {
-          from: formatDate(week.week_start),
-          to: formatDate(week.week_end),
-        })}
+        title={
+          week
+            ? t("home.planning.week.title", {
+                from: formatDate(week.week_start),
+                to: formatDate(week.week_end),
+              })
+            : t("home.planning.week.titleNoWeek")
+        }
         definitions={[
           { label: t("home.planning.week.load"), text: t("home.def.weekLoad") },
           { label: t("home.planning.week.overloaded"), text: t("home.def.weekOverloaded") },
@@ -100,7 +104,13 @@ function PlanningBody({ data }: { data: HomePlanning }) {
         openLabel={t("home.open.planning")}
         openTo={homeLinks.planning}
       >
-        {week.teams === 0 ? (
+        {week == null ? (
+          <HomeNote tone="warning">
+            {t(
+              `home.planning.week.unavailable.${data.week_unavailable ?? "WORK_WEEK_NOT_CONFIGURED"}`,
+            )}
+          </HomeNote>
+        ) : week.teams === 0 ? (
           <HomeNote>{t("home.planning.week.noTeams")}</HomeNote>
         ) : (
           <>
@@ -124,6 +134,11 @@ function PlanningBody({ data }: { data: HomePlanning }) {
                 tone={week.overloaded_team_days > 0 ? "warning" : undefined}
               />
             </div>
+            {week.basis.scope === "own_site" ? (
+              <HomeNote tone="info">
+                {t("home.planning.week.ownSite", { site: week.basis.site_name ?? "" })}
+              </HomeNote>
+            ) : null}
           </>
         )}
       </HomeSection>

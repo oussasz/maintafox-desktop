@@ -25,6 +25,11 @@ const WP_STATUSES: &[&str] = &[
     "expired",
 ];
 
+/// SQL list of the statuses of a permit still open: issued and not yet closed, handed back,
+/// cancelled or expired (a suspended permit, or one waiting for revalidation, is still open). The
+/// open-permits report and the "permit expiring / expired" notification checks share it.
+pub const OPEN_PERMIT_STATUSES_SQL: &str = "('issued', 'active', 'suspended', 'revalidation_required')";
+
 /// Statuses after which a permit no longer protects work (no further lifecycle edits).
 const WP_TERMINAL_STATUSES: &[&str] = &["closed", "handed_back", "cancelled", "expired"];
 
@@ -1709,7 +1714,7 @@ pub async fn list_open_permits_report(db: &impl ConnectionTrait) -> AppResult<Ve
             DbBackend::Sqlite,
             format!(
                 "{WORK_PERMIT_SELECT} \
-                 WHERE wp.status IN ('issued', 'active', 'suspended') \
+                 WHERE wp.status IN {OPEN_PERMIT_STATUSES_SQL} \
                  AND (wp.expires_at IS NULL OR wp.expires_at > ?) \
                  ORDER BY wp.id DESC"
             ),

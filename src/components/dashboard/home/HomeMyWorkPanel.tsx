@@ -92,6 +92,7 @@ function MyWorkBody({ data }: { data: HomeMyWork }) {
           <HomeRecordList
             ariaLabel={t("home.myWork.wo.listAria")}
             emptyText={t("home.myWork.wo.empty")}
+            total={wo.open}
             rows={wo.items.map((i) => ({
               key: i.id,
               primary: `${i.code} — ${i.title}`,
@@ -161,6 +162,7 @@ function MyWorkBody({ data }: { data: HomeMyWork }) {
                 <HomeRecordList
                   ariaLabel={t("home.myWork.rounds.listAria")}
                   emptyText={t("home.myWork.rounds.empty")}
+                  total={rounds.todo}
                   rows={rounds.items.map((r) => ({
                     key: r.id,
                     primary: `${r.template_code} — ${r.template_name}`,
@@ -199,6 +201,7 @@ function MyWorkBody({ data }: { data: HomeMyWork }) {
             <HomeRecordList
               ariaLabel={t("home.myWork.pm.listAria")}
               emptyText={t("home.myWork.pm.empty")}
+              total={pm.pending}
               rows={pm.items.map((o) => ({
                 key: o.id,
                 primary: `${o.plan_code} — ${o.plan_title}`,
