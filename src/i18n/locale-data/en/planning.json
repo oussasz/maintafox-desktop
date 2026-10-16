@@ -76,16 +76,18 @@
     "openSource": "Open {{code}}",
     "estimate": "{{hours}} h × {{crew}} people",
     "noCrew": "{{hours}} h · crew size missing",
-    "notEstimated": "Not estimated"
+    "notEstimated": "Not estimated",
+    "why": "Why it is blocked"
   },
   "blockers": {
     "missing_critical_part": "Critical parts not reserved",
     "no_qualified_technician": "No qualified technician",
     "permit_not_ready": "Permit not ready",
     "prerequisite_incomplete": "Prerequisites incomplete",
-    "locked_window": "Locked window",
+    "locked_window": "No shutdown window",
     "double_booking": "Double booking",
-    "not_estimated": "Not estimated"
+    "not_estimated": "Not estimated",
+    "location_unknown": "Location unknown"
   },
   "board": {
     "unassignedLane": "Team — not yet assigned to a person",
@@ -181,22 +183,32 @@
     "noCapacity": "no capacity"
   },
   "windows": {
-    "title": "Production windows",
+    "title": "Planning windows",
     "detailTitle": "Locked window",
     "detailEmpty": "Window details are unavailable.",
     "type": "Window type",
     "start": "Start",
     "end": "End",
     "reason": "Lock reason",
-    "add": "Add locked window",
+    "add": "Add window",
     "locked": "Locked",
-    "empty": "No production windows yet.",
+    "empty": "No planning windows yet.",
     "types": {
       "production": "Production",
       "maintenance": "Maintenance",
       "shutdown": "Shutdown",
       "freeze": "Freeze"
-    }
+    },
+    "typePlaceholder": "Choose a type",
+    "site": "Site",
+    "plantWide": "Whole plant",
+    "equipment": "Equipment (optional)",
+    "equipmentHint": "Leave empty for the whole site.",
+    "lock": "Locked window",
+    "lockedHint": "No work can be committed on this site or equipment during the window.",
+    "openHint": "Open: work that needs the equipment stopped can be placed here (maintenance window, planned shutdown).",
+    "scopeReview": "Site to re-enter",
+    "scopeReviewHint": "This window was created before sites were recorded correctly: it applies to the whole plant until its site is re-entered."
   },
   "breakIns": {
     "title": "Break-ins",
@@ -268,10 +280,6 @@
     "openWo": "Open the work order",
     "dismiss": "Dismiss"
   },
-  "notes": {
-    "PM_PARTS_TO_CHECK": "Parts listed on the PM: check they are available before the work.",
-    "PM_PERMIT_TO_OBTAIN": "Permit required: to obtain before the work starts."
-  },
   "assignee": {
     "hoursLeft": "{{hours}} h left",
     "notWorking": "not working ({{reason}})",
@@ -297,5 +305,36 @@
     "unreadableWorkOrders": "Planned dates that cannot be read (not counted): {{codes}}.",
     "othersUnnamed_one": "+ {{count}} other crew member not named (counted in the crew's load).",
     "othersUnnamed_other": "+ {{count}} other crew members not named (counted in the crew's load)."
+  },
+  "reasons": {
+    "NOT_ESTIMATED": "Not estimated: {{missing}} missing.",
+    "PARTS_NOT_RESERVED": "In stock but not reserved: {{articles}}.",
+    "SKILL_GAP": "{{person}} lacks a qualification this job asks for: {{gaps}}.",
+    "ASSIGNMENT_REQUIRED": "Name a technician holding the required skills ({{skills}}).",
+    "PERMIT_REQUIRED": "A work permit is required and not ready.",
+    "PREREQUISITE_BLOCKED": "Waiting for a prerequisite (deferred, or waiting on another job).",
+    "NO_FEASIBLE_WINDOW": "Needs the equipment stopped: no open maintenance or shutdown window of its site or equipment over its due dates.",
+    "ASSIGNEE_UNAVAILABLE": "The assignee is absent or booked on other work over the due dates ({{availability_conflict_count}}).",
+    "PARTS_SHORT": "Parts short in stock: {{articles}}. Order or transfer them before committing.",
+    "PART_NOT_IN_CATALOGUE": "Parts not in the article catalogue (stock cannot be checked): {{articles}}.",
+    "PART_QUANTITY_MISSING": "Parts without a quantity (stock cannot be checked): {{articles}}.",
+    "PERMIT_TO_REQUEST": "A work permit is required and none is requested yet.",
+    "PERMIT_IN_PREPARATION": "Permit {{permit_code}} is being prepared ({{status}}); it must be active before the work starts.",
+    "PERMIT_ON_HOLD": "Permit {{permit_code}} is suspended ({{status}}); revalidate it before the work starts.",
+    "PERMIT_EXPIRES_BEFORE_WORK": "Permit {{permit_code}} expires before the end of the work ({{expires_at}}).",
+    "LOTO_NOT_VERIFIED": "LOTO on permit {{permit_code}}: {{verified}} of {{isolations}} isolation points verified; all must be before the work starts.",
+    "LOCATION_UNKNOWN": "Location unknown: site windows not checked."
+  },
+  "reasonParts": {
+    "duration": "duration",
+    "crew_size": "crew size"
+  },
+  "reasonUi": {
+    "blocking": "Blocks the commitment",
+    "warning": "Warning — enforced later",
+    "openPermit": "Open permit",
+    "requestPermit": "Request a permit",
+    "openArticle": "Open article {{code}}",
+    "openWindows": "Planning windows"
   }
 }

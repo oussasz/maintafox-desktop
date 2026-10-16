@@ -495,6 +495,93 @@ pub async fn work_order_requirements(db: &impl ConnectionTrait, wo_id: i64) -> A
     Ok(merge_requirements(rows))
 }
 
+/// Requirements of a work-order type, for a job that is not a work order yet (a PM occurrence or
+/// a request in planning): what the work order it becomes will ask.
+pub async fn work_order_type_requirements(db: &impl ConnectionTrait, type_id: i64) -> AppResult<Vec<JobRequirement>> {
+    let sql = format!(
+        "{REQUIREMENT_SELECT} AND qr.target_kind = 'work_order_type' AND qr.work_order_type_id = ? ORDER BY qr.id"
+    );
+    let rows: Vec<JobRequirement> = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            &sql,
+            [type_id.into()],
+        ))
+        .await?
+        .iter()
+        .map(map_requirement)
+        .collect::<AppResult<_>>()?;
+    Ok(merge_requirements(rows))
+}
+
+/// Skills a job lists by code (`PERSONNEL.SKILLS`, e.g. a PM version's required skills): every
+/// person doing it must hold each one. A code no longer in the list stays a requirement nobody
+/// meets (it fails closed).
+pub async fn skill_code_requirements(
+    db: &impl ConnectionTrait,
+    source_kind: &str,
+    source_code: Option<&str>,
+    codes: &[String],
+) -> AppResult<Vec<JobRequirement>> {
+    let mut out = Vec::with_capacity(codes.len());
+    for code in codes {
+        let row = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT rv.id, rv.label FROM reference_values rv \
+                   JOIN reference_sets rs ON rs.id = rv.set_id AND rs.status = 'published' \
+                   JOIN reference_domains rd ON rd.id = rs.domain_id \
+                  WHERE rd.code = 'PERSONNEL.SKILLS' AND rv.code = ? \
+                  ORDER BY rs.version_no DESC LIMIT 1",
+                [code.clone().into()],
+            ))
+            .await?;
+        let (id, label) = match row {
+            Some(r) => (
+                Some(r.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?),
+                r.try_get::<String>("", "label").map_err(|e| decode_err("label", e))?,
+            ),
+            None => (None, code.clone()),
+        };
+        out.push(JobRequirement {
+            requirement_id: None,
+            source_kind: source_kind.to_string(),
+            source_code: source_code.map(str::to_string),
+            certification_type_id: None,
+            skill_reference_value_id: id,
+            code: Some(code.clone()),
+            label,
+            min_proficiency_level: None,
+            coverage: "each".to_string(),
+        });
+    }
+    Ok(out)
+}
+
+/// One person against the requirements of a job that is not a work order (valid through
+/// `work_day`). Overrides are recorded on work orders and permit roles only: none applies here.
+pub async fn check_person_for_requirements(
+    db: &impl ConnectionTrait,
+    personnel_id: i64,
+    requirements: Vec<JobRequirement>,
+    work_day: NaiveDate,
+) -> AppResult<PersonQualificationCheck> {
+    let requirements = merge_requirements(requirements);
+    let (full_name, employee_code) = person_identity(db, personnel_id).await?;
+    let held = load_holdings(db, personnel_id).await?;
+    let (gaps, warnings) = person_gaps(&requirements, &held, work_day.max(today()));
+    Ok(PersonQualificationCheck {
+        personnel_id,
+        full_name,
+        employee_code,
+        roles: vec!["candidate".to_string()],
+        qualified: gaps.is_empty(),
+        override_info: None,
+        gaps,
+        warnings,
+    })
+}
+
 /// Requirements of a LOTO role (every person acting in that role must hold them).
 pub async fn loto_role_requirements(db: &impl ConnectionTrait, role: &str) -> AppResult<Vec<JobRequirement>> {
     let rows: Vec<JobRequirement> = db

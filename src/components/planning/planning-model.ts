@@ -2,12 +2,16 @@
  * Planning board presentation helpers — adapters only; no IPC.
  */
 
+import type { TFunction } from "i18next";
+
+import { PERMIT_QUERY_CREATE_FOR_WO, PERMIT_QUERY_SELECT } from "@/components/permits/permit-rules";
 import type { ResourceTimelineState } from "@/design-system/resource-timeline-tokens";
 import {
   RESOURCE_TIMELINE_HORIZON_PRESETS,
   blockTypeToTimelineState,
 } from "@/design-system/resource-timeline-tokens";
 import type {
+  ConflictReason,
   PlanningGanttSnapshot,
   PlanningWindow,
   ScheduleCandidate,
@@ -33,10 +37,6 @@ export const PLANNING_BREAK_IN_REASONS = [
 ] as const;
 
 export type PlanningBreakInReason = (typeof PLANNING_BREAK_IN_REASONS)[number];
-
-export const PLANNING_WINDOW_TYPES = ["production", "maintenance", "shutdown", "freeze"] as const;
-
-export type PlanningWindowType = (typeof PLANNING_WINDOW_TYPES)[number];
 
 export type SuggestedAssignee = {
   personnel_id: number;
@@ -562,6 +562,8 @@ export type PlanningTimelineItemData = {
   endMs: number;
   state: ResourceTimelineState;
   canMove: boolean;
+  /** Why the bar is critical: its open conflicts, one per line. */
+  conflictReasons?: ConflictReason[];
 };
 
 export type PlanningWindowHighlightData = {
@@ -616,8 +618,9 @@ export function buildPlanningTimelineItems(input: {
       title,
       startMs: start,
       endMs: end,
-      state: frozen ? "blocked" : commitment.has_blocking_conflict ? "critical" : "commitment",
+      state: commitmentTimelineState(commitment),
       canMove: canDrag && !frozen,
+      conflictReasons: parseConflictReasons(commitment.conflict_reasons_json),
     });
   }
 
@@ -960,4 +963,130 @@ export function candidateSourcePath(
     return `/requests?openDi=${candidate.source_di_id}`;
   }
   return null;
+}
+
+/** The open conflicts of a commitment (`conflict_reasons_json`); unreadable JSON gives none. */
+export function parseConflictReasons(json: string | null | undefined): ConflictReason[] {
+  if (!json) return [];
+  try {
+    const parsed: unknown = JSON.parse(json);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (r): r is ConflictReason =>
+        typeof r === "object" &&
+        r !== null &&
+        typeof (r as ConflictReason).conflict_type === "string" &&
+        typeof (r as ConflictReason).reason_code === "string",
+    );
+  } catch {
+    return [];
+  }
+}
+
+function reasonDetails(reason: ConflictReason): Record<string, unknown> {
+  if (!reason.details_json) return {};
+  try {
+    const parsed: unknown = JSON.parse(reason.details_json);
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
+}
+
+/**
+ * A conflict explained in the planner's words: the reason (`reasons.<REASON_CODE>`) with its
+ * details, else the conflict type's label.
+ */
+export function conflictReasonText(reason: ConflictReason, t: TFunction<"planning">): string {
+  const details = reasonDetails(reason);
+  // Lists read as "a, b"; the parts of an estimate are translated.
+  const params: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(details)) {
+    params[key] = Array.isArray(value) ? stringList(value).join(", ") : value;
+  }
+  const skills = stringList(details["required_skills"]);
+  const missing = stringList(details["missing"]).map((m) =>
+    t(`reasonParts.${m}`, { defaultValue: m }),
+  );
+  const fallback = t(`blockers.${reason.conflict_type}`, { defaultValue: reason.conflict_type });
+  return t(`reasons.${reason.reason_code}`, {
+    defaultValue: fallback,
+    ...params,
+    missing: missing.join(", "),
+    skills: skills.join(", "),
+    required: skills.length,
+  });
+}
+
+/** Hover text of a bar: its title, then why it is critical. */
+export function timelineItemTooltip(
+  item: Pick<PlanningTimelineItemData, "title" | "conflictReasons">,
+  t: TFunction<"planning">,
+): string {
+  const reasons = (item.conflictReasons ?? []).map((r) => `• ${conflictReasonText(r, t)}`);
+  return [item.title, ...reasons].join("\n");
+}
+
+/** Blocking refuses the commitment; any other severity than `warning` blocks (fails closed). */
+export function isBlockingSeverity(severity: string): boolean {
+  return severity !== "warning";
+}
+
+/** Where a reason leads: the permit, a stock article, or the planning windows. */
+export type ConflictReasonLink =
+  | { kind: "permit"; path: string }
+  | { kind: "requestPermit"; path: string }
+  | { kind: "article"; path: string; code: string }
+  | { kind: "windows" };
+
+export function conflictReasonLinks(reason: ConflictReason): ConflictReasonLink[] {
+  const details = reasonDetails(reason);
+  const permitId = details["permit_id"];
+  const workOrderId = details["work_order_id"];
+  if (typeof permitId === "number") {
+    return [{ kind: "permit", path: `/permits?${PERMIT_QUERY_SELECT}=${permitId}` }];
+  }
+  if (reason.reason_code === "PERMIT_TO_REQUEST" && typeof workOrderId === "number") {
+    return [
+      { kind: "requestPermit", path: `/permits?${PERMIT_QUERY_CREATE_FOR_WO}=${workOrderId}` },
+    ];
+  }
+  if (reason.reason_code === "NO_FEASIBLE_WINDOW") return [{ kind: "windows" }];
+  const lines = Array.isArray(details["lines"]) ? (details["lines"] as unknown[]) : [];
+  return lines.flatMap((line): ConflictReasonLink[] => {
+    if (typeof line !== "object" || line === null) return [];
+    const { article_id: articleId, article } = line as Record<string, unknown>;
+    return typeof articleId === "number"
+      ? [
+          {
+            kind: "article",
+            path: `/inventory?articleId=${articleId}`,
+            code: typeof article === "string" ? article : String(articleId),
+          },
+        ]
+      : [];
+  });
+}
+
+/**
+ * Colour of a commitment's bar: frozen, critical (a blocking conflict now, or forced over one),
+ * amber (warnings only — enforced later, e.g. the permit at OT start), or plain.
+ */
+export function commitmentTimelineState(
+  commitment: Pick<
+    ScheduleCommitment,
+    "frozen_at" | "has_blocking_conflict" | "conflict_reasons_json"
+  >,
+): ResourceTimelineState {
+  if (commitment.frozen_at) return "blocked";
+  if (commitment.has_blocking_conflict) return "critical";
+  return parseConflictReasons(commitment.conflict_reasons_json).length > 0
+    ? "partial"
+    : "commitment";
 }

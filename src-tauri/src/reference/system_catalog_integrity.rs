@@ -34,6 +34,8 @@ pub async fn ensure_system_reference_catalog_integrity(db: &DatabaseConnection) 
     crate::finance::reference_catalog::ensure_finance_reference_catalogs(db).await?;
     // Certification / authorisation types and skills in the tenant's language.
     crate::qualification::catalog::ensure_qualification_catalog(db).await?;
+    // Planning window types (production, maintenance, shutdown, freeze).
+    crate::planning::windows::ensure_window_type_catalog(db).await?;
     Ok(())
 }
 

@@ -289,16 +289,17 @@ async fn planning_assignee_is_gated_and_capacity_has_no_default_hours() {
     let wo = work_order(&db).await;
     require_on_wo(&db, wo.id, cert(&db, "HAB-T").await).await;
 
-    let refused = crate::planning::scheduling::enforce_assignee_qualifications(&db, "work_order", wo.id, tech)
+    let slot = "2026-05-04T08:00:00Z";
+    let refused = crate::planning::scheduling::enforce_assignee_qualifications(&db, "work_order", wo.id, tech, slot)
         .await
         .expect_err("unqualified assignee");
     assert_eq!(codes(refused)[0], "QUALIFICATION_MISSING");
-    // Other sources carry no qualification requirement.
-    crate::planning::scheduling::enforce_assignee_qualifications(&db, "pm_occurrence", wo.id, tech)
+    // An unknown PM occurrence asks nothing (PM and request requirements: planning tests).
+    crate::planning::scheduling::enforce_assignee_qualifications(&db, "pm_occurrence", -1, tech, slot)
         .await
-        .expect("no requirement");
+        .expect("no such job");
     override_on_wo(&db, tech, wo.id).await;
-    crate::planning::scheduling::enforce_assignee_qualifications(&db, "work_order", wo.id, tech)
+    crate::planning::scheduling::enforce_assignee_qualifications(&db, "work_order", wo.id, tech, slot)
         .await
         .expect("allowed under override");
     assert_eq!(audit_overrides(&db).await, 1);

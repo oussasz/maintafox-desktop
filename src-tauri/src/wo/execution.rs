@@ -274,11 +274,10 @@ pub async fn emergency_reassign_wo(db: &DatabaseConnection, input: WoEmergencyRe
 // ═══════════════════════════════════════════════════════════════════════════════
 
 pub async fn start_wo(db: &DatabaseConnection, input: WoStartInput) -> AppResult<WorkOrder> {
-    crate::permit::wo_gate::assert_in_progress_permit_gate(db, input.wo_id).await?;
-    // Read before the transaction: the single pooled connection is held by `txn` afterwards.
-    let linked_permit = crate::permit::queries::get_work_permit_linked_to_work_order(db, input.wo_id).await?;
-
     let txn = db.begin().await?;
+    // Permit gate in the same transaction as the status change (no window in between).
+    crate::permit::wo_gate::assert_in_progress_permit_gate(&txn, input.wo_id).await?;
+    let linked_permit = crate::permit::queries::get_work_permit_linked_to_work_order(&txn, input.wo_id).await?;
 
     let (from_code, current_status, _rv) = load_wo_status(&txn, input.wo_id).await?;
     assert_action_allowed(&current_status, WoAction::Start).map_err(|e| AppError::ValidationFailed(vec![e]))?;
@@ -490,11 +489,10 @@ async fn hold_wo(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 pub async fn resume_wo(db: &DatabaseConnection, input: WoResumeInput) -> AppResult<WorkOrder> {
-    crate::permit::wo_gate::assert_in_progress_permit_gate(db, input.wo_id).await?;
-    // Read before the transaction: the single pooled connection is held by `txn` afterwards.
-    let linked_permit = crate::permit::queries::get_work_permit_linked_to_work_order(db, input.wo_id).await?;
-
     let txn = db.begin().await?;
+    // Permit gate in the same transaction as the status change (no window in between).
+    crate::permit::wo_gate::assert_in_progress_permit_gate(&txn, input.wo_id).await?;
+    let linked_permit = crate::permit::queries::get_work_permit_linked_to_work_order(&txn, input.wo_id).await?;
 
     let (from_code, current_status, _rv) = load_wo_status(&txn, input.wo_id).await?;
     assert_action_allowed(&current_status, WoAction::Resume).map_err(|e| AppError::ValidationFailed(vec![e]))?;

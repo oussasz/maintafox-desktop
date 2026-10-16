@@ -1,13 +1,20 @@
-import { useState } from "react";
+/**
+ * Planning windows: when and where work may (not) be scheduled. A window belongs to a site of the
+ * organisation (with its sub-nodes) or to the whole plant, and optionally to one equipment of the
+ * site. Its type is a value of the SYSTEM list PLANNING.WINDOW_TYPES (production, maintenance
+ * window, planned shutdown, schedule freeze); the frontend keeps no list of its own.
+ *
+ * - A locked window refuses commitments on the jobs it applies to.
+ * - An open maintenance / shutdown window is where work needing the equipment stopped goes.
+ */
+
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
-import {
-  fromDateTimeLocal,
-  PLANNING_WINDOW_TYPES,
-  toDateTimeLocal,
-  type PlanningWindowType,
-} from "@/components/planning/planning-model";
+import { AssetPicker } from "@/components/assets/AssetPicker";
+import { natureValueLabel } from "@/components/lookups/MaintenanceNaturePicker";
+import { fromDateTimeLocal, toDateTimeLocal } from "@/components/planning/planning-model";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,45 +33,112 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { formatOrDash } from "@/lib/display";
-import type { CreatePlanningWindowInput, PlanningWindow } from "@shared/ipc-types";
+import { listOrgTree } from "@/services/org-node-service";
+import { listPublishedReferenceValuesByDomainCode } from "@/services/reference-service";
+import type {
+  AssetSearchResult,
+  CreatePlanningWindowInput,
+  OrgTreeRow,
+  PlanningWindow,
+  ReferenceValue,
+} from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
+
+export const PLANNING_WINDOW_TYPES_DOMAIN = "PLANNING.WINDOW_TYPES";
+
+const PLANT_WIDE = "__plant__";
 
 type ProductionWindowDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  teamId: number | null;
   windows: PlanningWindow[];
   saving: boolean;
   onSubmit: (input: CreatePlanningWindowInput) => Promise<void>;
 };
 
+/** Where a window applies, in words: its equipment, its site, or the whole plant. */
+export function windowScopeLabel(
+  window: Pick<PlanningWindow, "entity_name" | "equipment_code" | "equipment_name">,
+  plantWide: string,
+): string {
+  const equipment = [window.equipment_code, window.equipment_name].filter(Boolean).join(" — ");
+  const site = window.entity_name ?? plantWide;
+  return equipment ? `${site} · ${equipment}` : site;
+}
+
 export function ProductionWindowDialog({
   open,
   onOpenChange,
-  teamId,
   windows,
   saving,
   onSubmit,
 }: ProductionWindowDialogProps) {
-  const { t } = useTranslation("planning");
-  const [windowType, setWindowType] = useState<PlanningWindowType>("production");
+  const { t, i18n } = useTranslation("planning");
+  const [types, setTypes] = useState<ReferenceValue[]>([]);
+  const [sites, setSites] = useState<OrgTreeRow[]>([]);
+  const [windowType, setWindowType] = useState<string>("");
+  const [siteId, setSiteId] = useState<number | null>(null);
+  const [equipment, setEquipment] = useState<AssetSearchResult | null>(null);
+  const [locked, setLocked] = useState(false);
   const [start, setStart] = useState(toDateTimeLocal(new Date().toISOString()));
   const [end, setEnd] = useState(
     toDateTimeLocal(new Date(Date.now() + 24 * 3600_000).toISOString()),
   );
   const [reason, setReason] = useState("");
 
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void Promise.all([
+      listPublishedReferenceValuesByDomainCode(PLANNING_WINDOW_TYPES_DOMAIN),
+      listOrgTree(),
+    ])
+      .then(([typeRows, orgRows]) => {
+        if (cancelled) return;
+        const active = typeRows.filter((v) => v.is_active);
+        setTypes(active);
+        setWindowType((current) => current || (active[0]?.code ?? ""));
+        setSites(orgRows.filter((r) => r.node.status === "active"));
+      })
+      .catch(() => {
+        // The global toast reports the failure; the dialog then offers no choice.
+        if (!cancelled) {
+          setTypes([]);
+          setSites([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
+  const typeLabel = (code: string) => {
+    const value = types.find((v) => v.code === code);
+    return value
+      ? natureValueLabel(value, i18n.language)
+      : t(`windows.types.${code}`, { defaultValue: code });
+  };
+
+  function pickEquipment(asset: AssetSearchResult | null) {
+    setEquipment(asset);
+    // The equipment's location is the window's site unless a site is already chosen.
+    if (asset?.org_node_id != null && siteId == null) setSiteId(asset.org_node_id);
+  }
+
   async function handleSubmit() {
     await onSubmit({
-      entity_id: teamId,
+      entity_id: siteId,
+      equipment_id: equipment?.id ?? null,
       window_type: windowType,
       start_datetime: fromDateTimeLocal(start),
       end_datetime: fromDateTimeLocal(end),
-      is_locked: true,
+      is_locked: locked,
       lock_reason: reason.trim() || null,
     });
     setReason("");
+    setEquipment(null);
     onOpenChange(false);
   }
 
@@ -78,21 +152,44 @@ export function ProductionWindowDialog({
         <div className="grid gap-3 py-2">
           <div>
             <Label>{t("windows.type")}</Label>
-            <Select
-              value={windowType}
-              onValueChange={(v) => setWindowType(v as PlanningWindowType)}
-            >
-              <SelectTrigger className="h-8 text-sm">
-                <SelectValue />
+            <Select value={windowType} onValueChange={setWindowType}>
+              <SelectTrigger className="h-8 text-sm" aria-label={t("windows.type")}>
+                <SelectValue placeholder={t("windows.typePlaceholder")} />
               </SelectTrigger>
               <SelectContent>
-                {PLANNING_WINDOW_TYPES.map((type) => (
-                  <SelectItem key={type} value={type}>
-                    {t(`windows.types.${type}`, { defaultValue: type })}
+                {types.map((type) => (
+                  <SelectItem key={type.code} value={type.code}>
+                    {natureValueLabel(type, i18n.language)}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <Label>{t("windows.site")}</Label>
+              <Select
+                value={siteId == null ? PLANT_WIDE : String(siteId)}
+                onValueChange={(v) => setSiteId(v === PLANT_WIDE ? null : Number(v))}
+              >
+                <SelectTrigger className="h-8 text-sm" aria-label={t("windows.site")}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={PLANT_WIDE}>{t("windows.plantWide")}</SelectItem>
+                  {sites.map((row) => (
+                    <SelectItem key={row.node.id} value={String(row.node.id)}>
+                      {`${"  ".repeat(Math.max(0, row.node.depth))}${row.node.name}`}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>{t("windows.equipment")}</Label>
+              <AssetPicker value={equipment} onChange={pickEquipment} />
+              <p className="mt-1 text-xs text-text-muted">{t("windows.equipmentHint")}</p>
+            </div>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
@@ -114,6 +211,20 @@ export function ProductionWindowDialog({
               />
             </div>
           </div>
+          <div className="flex items-start gap-2">
+            <Switch
+              id="planning-window-locked"
+              checked={locked}
+              onCheckedChange={setLocked}
+              aria-label={t("windows.lock")}
+            />
+            <div>
+              <Label htmlFor="planning-window-locked">{t("windows.lock")}</Label>
+              <p className="text-xs text-text-muted">
+                {locked ? t("windows.lockedHint") : t("windows.openHint")}
+              </p>
+            </div>
+          </div>
           <div>
             <Label>{t("windows.reason")}</Label>
             <Input
@@ -130,15 +241,22 @@ export function ProductionWindowDialog({
                 className="rounded-lg border border-surface-border p-2 text-text-secondary"
               >
                 <span className="font-medium text-text-primary">
-                  {t(`windows.types.${window.window_type}`, {
-                    defaultValue: window.window_type,
-                  })}
+                  {typeLabel(window.window_type)}
                 </span>{" "}
+                · {windowScopeLabel(window, t("windows.plantWide"))} ·{" "}
                 {new Date(window.start_datetime).toLocaleString()} –{" "}
                 {new Date(window.end_datetime).toLocaleString()}
                 {window.is_locked === 1 && (
                   <Badge className="ml-2" variant="secondary">
                     {t("windows.locked")}
+                  </Badge>
+                )}
+                {window.scope_review_required === 1 && (
+                  <Badge
+                    className="ml-2 border-amber-200 bg-amber-50 text-amber-800"
+                    variant="outline"
+                  >
+                    {t("windows.scopeReview")}
                   </Badge>
                 )}
                 {window.lock_reason ? (
@@ -159,7 +277,7 @@ export function ProductionWindowDialog({
               type="button"
               size="sm"
               variant="outline"
-              disabled={saving}
+              disabled={saving || windowType === ""}
               onClick={() => void handleSubmit()}
             >
               {t("windows.add")}

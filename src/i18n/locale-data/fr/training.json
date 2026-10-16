@@ -345,6 +345,12 @@
     "PLANNING_ASSIGNEE_NOT_IN_CREW": "Le technicien n'est pas membre de l'équipe le {{day}} : choisissez un membre de l'équipe ou forcez avec un motif.",
     "PLANNING_ASSIGNEE_NOT_WORKING": "Le technicien ne travaille pas pendant ce créneau ({{day}}) : choisissez une personne de poste ou forcez avec un motif.",
     "PLANNING_ASSIGNEE_OVERLOADED": "Le technicien n'a plus que {{remaining}} h le {{day}} ; ce travail demande {{share}} h. Choisissez quelqu'un d'autre, déplacez le créneau ou forcez avec un motif.",
+    "PLANNING_WINDOW_LOCKED": "Une fenêtre de planification verrouillée couvre le site ou l'équipement de ce travail ({{start}} → {{end}}) : choisissez un autre créneau.",
+    "PLANNING_NO_SHUTDOWN_WINDOW": "Ce travail exige l'arrêt de l'équipement : placez-le dans une fenêtre de maintenance ou d'arrêt ouverte de son site ou de son équipement.",
+    "PLANNING_WINDOW_TYPE_UNKNOWN": "Type de fenêtre inconnu : choisissez-le dans la liste (Données de référence, PLANNING.WINDOW_TYPES).",
+    "PLANNING_WINDOW_SITE_UNKNOWN": "Le site de la fenêtre n'existe plus dans l'organisation.",
+    "PLANNING_WINDOW_EQUIPMENT_UNKNOWN": "L'équipement de la fenêtre n'existe pas.",
+    "PLANNING_WINDOW_EQUIPMENT_NOT_ON_SITE": "Cet équipement n'est pas installé sur le site choisi : choisissez son site ou un autre équipement.",
     "LOTO_ROLE_PERSON_UNKNOWN": "Ce rôle de consignation exige des habilitations : reliez d'abord votre compte à votre fiche personnel.",
     "TIMETABLE_DATE_INVALID": "Saisissez la date au format AAAA-MM-JJ.",
     "TIMETABLE_DATE_IN_PAST": "Une modification d'horaire s'applique à partir d'aujourd'hui ({{today}}) ou plus tard : la capacité passée n'est jamais réécrite.",
@@ -368,6 +374,14 @@
     "QUALIFICATION_PERSON_UNKNOWN": "Cet OT exige des habilitations : reliez le compte de {{name}} à une fiche du personnel, ou faites enregistrer une dérogation pour ce compte sur cet OT par un responsable autorisé.",
     "QUALIFICATION_OVERRIDE_USE_PERSON": "Le compte de {{name}} est relié à une fiche du personnel : vérifiez et dérogez sur la personne.",
     "QUALIFICATION_OVERRIDE_SELF": "Vous ne pouvez pas lever votre propre écart d'habilitation : un autre responsable autorisé doit le faire.",
-    "LABOR_PERSON_INACTIVE": "Cette personne n’est plus active : la main-d’œuvre ne peut pas lui être imputée."
+    "LABOR_PERSON_INACTIVE": "Cette personne n’est plus active : la main-d’œuvre ne peut pas lui être imputée.",
+    "PERMIT_REQUIRED_TO_START": "Cet OT exige un permis de travail : liez un permis actif avant de le démarrer ou de le reprendre.",
+    "PERMIT_SUSPENDED": "Le permis {{permit}} est suspendu : revalidez-le avant de démarrer ou de reprendre le travail.",
+    "PERMIT_NOT_ACTIVE": "Le permis {{permit}} n'est pas encore actif ({{status}}) : activez-le avant de démarrer ou de reprendre le travail.",
+    "PERMIT_EXPIRED": "Le permis {{permit}} a expiré : il ne peut plus être activé ni servir à démarrer un travail.",
+    "LOTO_NO_ISOLATION": "Le permis LOTO {{permit}} n'a aucun point d'isolement : définissez-les et vérifiez-les d'abord.",
+    "LOTO_NOT_VERIFIED": "Permis {{permit}} : {{verified}} points d'isolement vérifiés sur {{isolations}} ; tous doivent l'être.",
+    "LOTO_ISOLATION_REMOVED": "Permis {{permit}} : des isolements ont déjà été retirés, il ne protège plus le travail.",
+    "PLANNING_CANDIDATE_BLOCKED": "Ce travail ne peut pas encore être engagé : {{reasons}}. Voir le détail sur sa carte."
   }
 }
