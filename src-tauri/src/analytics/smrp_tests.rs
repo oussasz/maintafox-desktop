@@ -363,6 +363,19 @@ async fn schedule_compliance_counts_hours_completed_on_their_day() {
         )
         .await;
     }
+    // A slot the planner gave back (released) is not a schedule obligation: S3 had one before.
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO schedule_commitments (schedule_candidate_id, source_type, source_id, \
+             schedule_period_start, schedule_period_end, committed_start, committed_end, assigned_team_id, status) \
+             VALUES (9, 'work_order', {wo}, date({start}), date({end}), {start}, {end}, 1, 'released')",
+            wo = cases[2].0,
+            start = day(-2, 1),
+            end = day(-2, 4)
+        ),
+    )
+    .await;
     let r = smrp::schedule_compliance(&db, SmrpWindow::last_days(now, 30), now, None)
         .await
         .unwrap();

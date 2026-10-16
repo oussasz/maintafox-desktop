@@ -173,7 +173,9 @@ pub async fn has_column(db: &DatabaseConnection, table: &str, column: &str) -> A
 /// labour hours scheduled, for commitments ending in the window. A commitment weighs its planned
 /// labour hours (duration × crew size, `planning::load`); one from before those were recorded weighs
 /// its slot. Cancelled work (work order or PM occurrence cancelled, request declined or archived)
-/// left the schedule and does not count.
+/// left the schedule and does not count, nor does a slot given back or cancelled by the planner
+/// (`schedule_commitments.status` released / cancelled, migration 212): the job is planned again
+/// elsewhere or not at all.
 pub async fn schedule_compliance(
     db: &DatabaseConnection,
     window: SmrpWindow,
@@ -193,6 +195,7 @@ pub async fn schedule_compliance(
                   END AS wo_id \
            FROM schedule_commitments sc \
            WHERE datetime(sc.committed_end) >= datetime(?) AND datetime(sc.committed_end) < datetime(?) \
+             AND sc.status IN ('committed', 'closed') \
              AND julianday(sc.committed_end) > julianday(sc.committed_start) \
              AND NOT ( \
                (sc.source_type = 'work_order' AND EXISTS (SELECT 1 FROM work_orders cw \
