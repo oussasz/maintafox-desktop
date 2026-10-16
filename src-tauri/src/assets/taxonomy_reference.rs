@@ -14,16 +14,43 @@ pub const DOMAIN_SUBFAMILY: &str = "EQUIPMENT.SUBFAMILY";
 
 const SYSTEM_META: &str = r#"{"origin":"system"}"#;
 
-/// Canonical rows: (code, label, sort_order, color_hex)
-const REQUIRED_STATUS: &[(&str, &str, i64, &str)] = &[
-    ("ACTIVE_IN_SERVICE", "En service", 1, "#198754"),
-    ("IN_STOCK", "En stock", 2, "#0dcaf0"),
-    ("OUT_OF_SERVICE", "Hors service", 3, "#6c757d"),
-    ("UNDER_MAINTENANCE", "En maintenance", 4, "#ffc107"),
-    ("DECOMMISSIONED", "Mis hors service", 5, "#6c757d"),
-    ("SCRAPPED", "Mis au rebut", 6, "#dc3545"),
-    ("SPARE", "Pièce de rechange", 7, "#6c757d"),
+/// Availability state a status puts the equipment in (`reference_values.semantic_tag` of the
+/// system `EQUIPMENT.STATUS` rows, EN 13306 § 6): in service (`up`), unable to perform its function
+/// (`down`: out of service or under maintenance), not installed (stock, spare) or retired. Readers
+/// (home page "critical assets down") test the tag, never a status code.
+pub const STATUS_TAG_UP: &str = "up";
+pub const STATUS_TAG_DOWN: &str = "down";
+pub const STATUS_TAG_NOT_INSTALLED: &str = "not_installed";
+pub const STATUS_TAG_RETIRED: &str = "retired";
+
+/// Canonical rows: (code, label, sort_order, color_hex, availability tag)
+const REQUIRED_STATUS: &[(&str, &str, i64, &str, &str)] = &[
+    ("ACTIVE_IN_SERVICE", "En service", 1, "#198754", STATUS_TAG_UP),
+    ("IN_STOCK", "En stock", 2, "#0dcaf0", STATUS_TAG_NOT_INSTALLED),
+    ("OUT_OF_SERVICE", "Hors service", 3, "#6c757d", STATUS_TAG_DOWN),
+    ("UNDER_MAINTENANCE", "En maintenance", 4, "#ffc107", STATUS_TAG_DOWN),
+    ("DECOMMISSIONED", "Mis hors service", 5, "#6c757d", STATUS_TAG_RETIRED),
+    ("SCRAPPED", "Mis au rebut", 6, "#dc3545", STATUS_TAG_RETIRED),
+    ("SPARE", "Pièce de rechange", 7, "#6c757d", STATUS_TAG_NOT_INSTALLED),
 ];
+
+/// SQL predicate (alias `e`, no bind): equipment at the most critical level of the published
+/// `EQUIPMENT.CRITICALITY` list (lowest `sort_order`) whose status carries the `down`
+/// availability tag in the published `EQUIPMENT.STATUS` list. Both are read from Données de
+/// référence by code, so a republished set keeps working; no criticality or status code is
+/// written here.
+pub const CRITICAL_DOWN_SQL: &str = "e.deleted_at IS NULL \
+     AND (SELECT c.code FROM reference_values c WHERE c.id = e.equipment_criticality_ref_id) = ( \
+         SELECT rv.code FROM reference_values rv \
+           JOIN reference_sets rs ON rs.id = rv.set_id AND rs.status = 'published' \
+           JOIN reference_domains d ON d.id = rs.domain_id \
+          WHERE d.code = 'EQUIPMENT.CRITICALITY' AND rv.is_active = 1 \
+          ORDER BY rv.sort_order ASC, rv.id ASC LIMIT 1) \
+     AND (SELECT st.code FROM reference_values st WHERE st.id = e.equipment_status_ref_id) IN ( \
+         SELECT rv.code FROM reference_values rv \
+           JOIN reference_sets rs ON rs.id = rv.set_id AND rs.status = 'published' \
+           JOIN reference_domains d ON d.id = rs.domain_id \
+          WHERE d.code = 'EQUIPMENT.STATUS' AND rv.is_active = 1 AND rv.semantic_tag = 'down')";
 
 const REQUIRED_CRITICALITY: &[(&str, &str, i64, &str)] = &[
     ("A", "Criticité A", 1, "#dc3545"),
@@ -191,15 +218,16 @@ async fn list_domain_options(db: &DatabaseConnection, domain_code: &str) -> AppR
 /// Idempotent upsert of system status rows in the published `EQUIPMENT.STATUS` set.
 pub async fn ensure_required_equipment_status_values(db: &DatabaseConnection) -> AppResult<()> {
     let set_id = published_set_id(db, DOMAIN_STATUS).await?;
-    for &(code, label, sort, color) in REQUIRED_STATUS {
+    for &(code, label, sort, color, tag) in REQUIRED_STATUS {
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO reference_values (entity_sync_id, set_id, parent_id, code, label, description, sort_order, color_hex, icon_name, semantic_tag, external_code, is_active, metadata_json) \
-             VALUES (?, ?, NULL, ?, ?, NULL, ?, ?, NULL, NULL, NULL, 1, ?) \
+             VALUES (?, ?, NULL, ?, ?, NULL, ?, ?, NULL, ?, NULL, 1, ?) \
              ON CONFLICT(set_id, code) DO UPDATE SET \
                 label = excluded.label, \
                 sort_order = excluded.sort_order, \
                 color_hex = excluded.color_hex, \
+                semantic_tag = excluded.semantic_tag, \
                 metadata_json = excluded.metadata_json",
             [
                 seeded_reference_value_sync_id(DOMAIN_STATUS, code).into(),
@@ -208,12 +236,13 @@ pub async fn ensure_required_equipment_status_values(db: &DatabaseConnection) ->
                 label.into(),
                 sort.into(),
                 color.into(),
+                tag.into(),
                 SYSTEM_META.into(),
             ],
         ))
         .await?;
     }
-    let codes: Vec<&str> = REQUIRED_STATUS.iter().map(|(c, _, _, _)| *c).collect();
+    let codes: Vec<&str> = REQUIRED_STATUS.iter().map(|(c, _, _, _, _)| *c).collect();
     verify_required_codes(db, DOMAIN_STATUS, &codes).await?;
     Ok(())
 }

@@ -570,7 +570,7 @@ async fn get_layout_falls_back_to_default_when_stored_row_is_corrupt() {
 async fn overview_kpis_count_the_seeded_dataset() {
     let db = setup().await;
     seed_dataset(&db).await;
-    let p = build_overview_kpis(&db, true, true, true, true, true, true, true)
+    let p = build_overview_kpis(&db, true, true, true, true, true, true)
         .await
         .expect("overview");
     assert_eq!(p.horizon_days, 30);
@@ -592,7 +592,6 @@ async fn overview_kpis_count_the_seeded_dataset() {
             k::CRITICAL_DOWN,
             k::STOCK_OUT,
             k::REORDER_ALERT,
-            k::TOTAL_COST,
         ]
     );
     assert!(p.cells.iter().all(|c| c.available), "every permission granted");
@@ -605,8 +604,6 @@ async fn overview_kpis_count_the_seeded_dataset() {
     assert_eq!(di.quality_badge, None);
     assert_eq!(di.value_kind, "count");
     assert_eq!(di.trend_sense, "up-bad");
-    // Created today: DI1, DI3, DI4; 10 days ago: DI2 (DI5 is outside 30 days).
-    assert_eq!(di.series, Some(vec![1.0, 3.0]));
 
     let ip = cell(&p, k::OT_IN_PROGRESS);
     assert_eq!((ip.value, ip.previous_value), (1.0, 0.0));
@@ -614,7 +611,6 @@ async fn overview_kpis_count_the_seeded_dataset() {
         ip.quality_badge.as_deref(),
         Some(kpi_definitions::quality_badge::INSUFFICIENT_BASELINE)
     );
-    assert_eq!(ip.series, Some(vec![1.0]));
 
     // WO1 is past its planned end; WO3 (closed) and WO5 (cancelled) do not count.
     let od = cell(&p, k::OT_OVERDUE);
@@ -634,7 +630,6 @@ async fn overview_kpis_count_the_seeded_dataset() {
     let bl = cell(&p, k::MAINT_BACKLOG);
     assert_eq!((bl.value, bl.previous_value), (10.0, 0.0));
     assert_eq!(bl.value_kind, "hours");
-    assert_eq!(bl.series, Some(vec![6.0, 4.0]));
 
     // Fleet RAMS over the latest snapshot per asset: T = 1000 + 500, F = 4 + 1.
     let mtbf = cell(&p, k::MTBF);
@@ -643,11 +638,6 @@ async fn overview_kpis_count_the_seeded_dataset() {
     assert_eq!(
         mtbf.quality_badge.as_deref(),
         Some(kpi_definitions::quality_badge::INSUFFICIENT_BASELINE)
-    );
-    assert_eq!(
-        mtbf.series,
-        Some(vec![9.0, 500.0, 250.0]),
-        "daily mean MTBF by snapshot date"
     );
     assert!(close(cell(&p, k::MTTR).value, 2.0));
     let av = cell(&p, k::AVAILABILITY);
@@ -661,34 +651,27 @@ async fn overview_kpis_count_the_seeded_dataset() {
     }
     assert_eq!(cell(&p, k::STOCK_OUT).value, 0.0);
     assert_eq!(cell(&p, k::REORDER_ALERT).value, 0.0);
-
-    // Cost: WO3 closed 5 days ago (100); WO4 closed 45 days ago (40) is the previous window.
-    let cost = cell(&p, k::TOTAL_COST);
-    assert_eq!((cost.value, cost.previous_value), (100.0, 40.0));
-    assert_eq!(cost.value_kind, "currency");
-    assert_eq!(cost.series, Some(vec![100.0]));
 }
 
 #[tokio::test]
 async fn overview_kpis_without_permissions_are_unavailable_and_empty() {
     let db = setup().await;
     seed_dataset(&db).await;
-    let p = build_overview_kpis(&db, false, false, false, false, false, false, false)
+    let p = build_overview_kpis(&db, false, false, false, false, false, false)
         .await
         .expect("overview");
-    assert_eq!(p.cells.len(), 14);
+    assert_eq!(p.cells.len(), 13);
     for c in &p.cells {
         assert!(!c.available, "{}", c.semantic_key);
         assert_eq!((c.value, c.previous_value), (0.0, 0.0), "{}", c.semantic_key);
         assert_eq!(c.quality_badge, None, "{}", c.semantic_key);
-        assert_eq!(c.series, None, "{}", c.semantic_key);
     }
 }
 
 #[tokio::test]
 async fn overview_reliability_cells_unavailable_without_snapshots() {
     let db = setup().await;
-    let p = build_overview_kpis(&db, false, false, false, false, true, false, false)
+    let p = build_overview_kpis(&db, false, false, false, false, true, false)
         .await
         .expect("overview");
     for key in [

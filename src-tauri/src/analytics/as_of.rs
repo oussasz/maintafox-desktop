@@ -17,7 +17,7 @@
 use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TryGetable, Value};
 
-use crate::errors::AppResult;
+use crate::errors::{AppError, AppResult};
 
 /// RFC 3339 UTC with a `Z` suffix — the format SQLite `datetime()` parses.
 pub fn instant(at: DateTime<Utc>) -> String {
@@ -29,11 +29,18 @@ pub fn days_before(at: DateTime<Utc>, days: i64) -> DateTime<Utc> {
     at - Duration::days(days)
 }
 
-/// SQL expression: when the DI stopped being open (NULL while open). Terminal statuses are the
-/// current `closed` plus the legacy terminal codes still present on old rows.
-const DI_END: &str = "CASE WHEN ir.status IN ('closed','rejected','converted_to_work_order',\
-'closed_as_non_executable','archived') THEN COALESCE(ir.closed_at, ir.converted_at, ir.declined_at, \
-ir.archived_at, ir.updated_at) END";
+/// SQL expression: when the DI stopped being open (NULL while open). Open is the DI module's
+/// definition (`di::stats::OPEN_SQL`: not closed and not turned into a work order), so at `now`
+/// the count is the DI page's: it ends at the earlier of the conversion and the closing. The legacy
+/// terminal codes (`rejected`, …) were migrated to `closed` (migration 139); they are still read as
+/// closed for rows restored from older backups.
+const DI_END: &str = "CASE \
+WHEN ir.status IN ('closed','rejected','converted_to_work_order','closed_as_non_executable','archived') \
+ AND ir.converted_at IS NOT NULL THEN MIN(datetime(ir.converted_at), \
+ datetime(COALESCE(ir.closed_at, ir.declined_at, ir.archived_at, ir.updated_at))) \
+WHEN ir.status IN ('closed','rejected','converted_to_work_order','closed_as_non_executable','archived') \
+ THEN COALESCE(ir.closed_at, ir.declined_at, ir.archived_at, ir.updated_at) \
+WHEN ir.converted_at IS NOT NULL THEN ir.converted_at END";
 
 /// SQL expression: when the WO stopped being open (closed / cancelled).
 const WO_END_OPEN: &str = "CASE WHEN s.code IN ('closed','cancelled') \
@@ -49,18 +56,25 @@ const PM_END: &str = "CASE WHEN po.status IN ('completed','cancelled','missed') 
 (SELECT MAX(t.transitioned_at) FROM pm_occurrence_transitions t \
  WHERE t.pm_occurrence_id = po.id AND t.to_status = po.status), po.updated_at) END";
 
+/// `COUNT(*) AS cnt` — a missing row or an unreadable count is an error, never 0.
 async fn count(db: &DatabaseConnection, sql: &str, binds: Vec<Value>) -> AppResult<i64> {
     let row = db
         .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, sql, binds))
-        .await?;
-    Ok(row.and_then(|r| i64::try_get(&r, "", "cnt").ok()).unwrap_or(0))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("as-of count returned no row")))?;
+    i64::try_get(&row, "", "cnt").map_err(|e| AppError::Internal(anyhow::anyhow!("as-of count decode: {e:?}")))
 }
 
+/// `COALESCE(SUM(…), 0) AS total` — a missing row or an unreadable total is an error, never 0.
+/// SQLite types the sum `INTEGER` when every term (or the `0` fallback) is an integer.
 async fn total(db: &DatabaseConnection, sql: &str, binds: Vec<Value>) -> AppResult<f64> {
     let row = db
         .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, sql, binds))
-        .await?;
-    Ok(row.and_then(|r| f64::try_get(&r, "", "total").ok()).unwrap_or(0.0))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("as-of total returned no row")))?;
+    f64::try_get(&row, "", "total")
+        .or_else(|_| i64::try_get(&row, "", "total").map(|v| v as f64))
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("as-of total decode: {e:?}")))
 }
 
 /// Intervention requests open at `at`. With `waiting_days`, only those submitted at least that many
@@ -99,14 +113,16 @@ pub async fn wo_open_at(db: &DatabaseConnection, at: DateTime<Utc>, org: Option<
     count(db, &sql, vec![at_s.clone().into(), at_s.into(), org.into(), org.into()]).await
 }
 
-/// Work orders not done at `at` whose planned end was already past.
+/// Work orders whose work was not done at `at` (not yet completed, closed or cancelled) and whose
+/// planned end was already past — at now, `wo::backlog::WO_OVERDUE_SQL` (overdue is part of the
+/// work still ahead).
 pub async fn wo_overdue_at(db: &DatabaseConnection, at: DateTime<Utc>, org: Option<i64>) -> AppResult<i64> {
     let at_s = instant(at);
     let sql = format!(
         "SELECT COUNT(*) AS cnt FROM work_orders wo JOIN work_order_statuses s ON s.id = wo.status_id \
          WHERE wo.planned_end IS NOT NULL AND datetime(wo.planned_end) < datetime(?) \
            AND datetime(wo.created_at) <= datetime(?) \
-           AND ({WO_END_OPEN} IS NULL OR datetime({WO_END_OPEN}) > datetime(?)) \
+           AND ({WO_END_WORK} IS NULL OR datetime({WO_END_WORK}) > datetime(?)) \
            AND (? IS NULL OR wo.entity_id = ?)"
     );
     count(

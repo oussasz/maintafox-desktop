@@ -940,15 +940,24 @@ pub async fn list_pm_occurrences(db: &DatabaseConnection, filter: PmOccurrenceFi
     rows.iter().map(decode_pm_occurrence_row).collect()
 }
 
+/// SQL predicate (alias `po`): an occurrence still to do (not completed, cancelled or missed).
+pub const PM_PENDING_SQL: &str = "po.status NOT IN ('completed','cancelled','missed')";
+
+/// SQL predicate (alias `po`, one bind: now, RFC 3339): pending and past the end of its tolerance
+/// window (the due date when it has none) — the PM page's "overdue".
+pub const PM_OVERDUE_SQL: &str = "po.status NOT IN ('completed','cancelled','missed') \
+     AND po.due_at IS NOT NULL AND COALESCE(po.window_end_at, po.due_at) < ?";
+
+/// SQL predicate (alias `po`, two binds: now, now): pending and due within the next 7 days.
+pub const PM_DUE_NEXT_7D_SQL: &str = "po.status NOT IN ('completed','cancelled','missed') \
+     AND po.due_at IS NOT NULL AND po.due_at >= ? AND po.due_at <= datetime(?, '+7 days')";
+
 pub async fn get_pm_due_metrics(db: &DatabaseConnection) -> AppResult<PmDueMetrics> {
     let as_of = now_rfc3339();
     let overdue_row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT COUNT(*) AS cnt FROM pm_occurrences
-             WHERE status NOT IN ('completed','cancelled','missed')
-               AND due_at IS NOT NULL
-               AND COALESCE(window_end_at, due_at) < ?",
+            format!("SELECT COUNT(*) AS cnt FROM pm_occurrences po WHERE {PM_OVERDUE_SQL}"),
             [as_of.clone().into()],
         ))
         .await?
@@ -971,11 +980,7 @@ pub async fn get_pm_due_metrics(db: &DatabaseConnection) -> AppResult<PmDueMetri
     let due_next_row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT COUNT(*) AS cnt FROM pm_occurrences
-             WHERE status NOT IN ('completed','cancelled','missed')
-               AND due_at IS NOT NULL
-               AND due_at >= ?
-               AND due_at <= datetime(?, '+7 days')",
+            format!("SELECT COUNT(*) AS cnt FROM pm_occurrences po WHERE {PM_DUE_NEXT_7D_SQL}"),
             [as_of.clone().into(), as_of.clone().into()],
         ))
         .await?

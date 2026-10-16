@@ -746,6 +746,15 @@ fn capability_from_permission(permission: &str) -> Option<&'static str> {
     }
 }
 
+/// Whether the entitlement allows the capability behind `permission` (same rule as
+/// [`enforce_capability_for_permission`], as a yes/no for screens that hide what is not licensed).
+pub async fn capability_allowed_for_permission(db: &DatabaseConnection, permission: &str) -> AppResult<bool> {
+    let Some(capability) = capability_from_permission(permission) else {
+        return Ok(true);
+    };
+    Ok(check_entitlement_capability(db, capability.to_string()).await?.allowed)
+}
+
 pub async fn enforce_capability_for_permission(db: &DatabaseConnection, permission: &str) -> AppResult<()> {
     let Some(capability) = capability_from_permission(permission) else {
         return Ok(());

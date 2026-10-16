@@ -126,15 +126,15 @@ pub struct DiStatsPayload {
 }
 
 /// Open requests: not closed and not yet turned into a work order.
-const OPEN_SQL: &str = "(ir.status <> 'closed' AND ir.converted_at IS NULL)";
+pub const OPEN_SQL: &str = "(ir.status <> 'closed' AND ir.converted_at IS NULL)";
 
 /// Site scope only (the open backlog is a current state, the period does not apply).
 fn entity_scope_sql() -> &'static str {
     " (? IS NULL OR ir.org_node_id = ?) "
 }
 
-fn entity_binds(filter: &DiStatsFilter) -> [sea_orm::Value; 2] {
-    [filter.entity_id.into(), filter.entity_id.into()]
+fn entity_binds(entity_id: Option<i64>) -> Vec<sea_orm::Value> {
+    vec![entity_id.into(), entity_id.into()]
 }
 
 fn base_scope_sql() -> &'static str {
@@ -536,106 +536,14 @@ pub async fn get_di_stats(db: &DatabaseConnection, filter: DiStatsFilter) -> App
             .collect::<AppResult<Vec<_>>>()?
     };
 
-    // SLA compliance over the requests finished in the period (closed — with or without a work
-    // order): met when no clock went past its target. Each clock stops when the request is
-    // screened / converted, or when it is closed without them; paused time is not counted.
+    let closing = sla_closing_outcome(db, &filter).await?;
+    let (sla_met_count, sla_breached_count, sla_total) = (closing.met, closing.breached, closing.total);
+
+    let backlog_by_status = open_backlog_by_status(db, filter.entity_id).await?;
+
+    let sla_open = sla_open_split(db, filter.entity_id).await?;
+
     let finished = event_scope_sql("ir.closed_at");
-    let (sla_met_count, sla_breached_count, sla_total) = {
-        let row = db
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                format!(
-                    "SELECT
-                       COALESCE(SUM(CASE WHEN {late} THEN 1 ELSE 0 END), 0) AS breached,
-                       COALESCE(SUM(CASE WHEN {late} THEN 0 ELSE 1 END), 0) AS met
-                     FROM intervention_requests ir
-                     WHERE {finished}
-                       AND ir.status = 'closed' AND ir.closed_at IS NOT NULL
-                       AND ir.sla_target_response_hours IS NOT NULL
-                       AND ir.sla_response_deadline IS NOT NULL",
-                    late = super::sla::SLA_LATE_SQL,
-                ),
-                binds.to_vec(),
-            ))
-            .await?;
-        let (breached, met) = match row {
-            Some(r) => (row_i64(&r, "breached")?, row_i64(&r, "met")?),
-            None => (0, 0),
-        };
-        (met, breached, met + breached)
-    };
-
-    let entity = entity_scope_sql();
-    let backlog_by_status = {
-        let rows = db
-            .query_all(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                format!(
-                    "SELECT ir.status AS status, COUNT(*) AS count,
-                            AVG(julianday('now') - julianday(ir.submitted_at)) AS avg_age_days,
-                            MAX(julianday('now') - julianday(ir.submitted_at)) AS max_age_days
-                       FROM intervention_requests ir
-                      WHERE {entity} AND {OPEN_SQL}
-                      GROUP BY ir.status
-                      ORDER BY count DESC"
-                ),
-                entity_binds(&filter).to_vec(),
-            ))
-            .await?;
-        rows.into_iter()
-            .map(|row| {
-                Ok(DiBacklogStatus {
-                    status: row.try_get("", "status")?,
-                    count: row_i64(&row, "count")?,
-                    avg_age_days: row_f64(&row, "avg_age_days")?,
-                    max_age_days: row_f64(&row, "max_age_days")?,
-                })
-            })
-            .collect::<AppResult<Vec<_>>>()?
-    };
-
-    let sla_open = {
-        let row = db
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                format!(
-                    "SELECT
-                       COALESCE(SUM(CASE WHEN {breached} THEN 1 ELSE 0 END), 0) AS breached,
-                       COALESCE(SUM(CASE WHEN {risk} AND NOT {breached} THEN 1 ELSE 0 END), 0) AS at_risk,
-                       COALESCE(SUM(CASE WHEN ir.sla_target_response_hours IS NULL
-                                          OR ir.sla_response_deadline IS NULL THEN 1 ELSE 0 END), 0) AS no_target,
-                       COALESCE(SUM(CASE WHEN ir.sla_target_response_hours IS NOT NULL
-                                          AND ir.sla_response_deadline IS NOT NULL
-                                          AND ir.status IN ('returned_for_clarification', 'deferred')
-                                         THEN 1 ELSE 0 END), 0) AS paused,
-                       COUNT(*) AS open_total
-                     FROM intervention_requests ir
-                     WHERE {entity} AND {OPEN_SQL}",
-                    breached = super::sla::SLA_BREACHED_SQL,
-                    risk = super::sla::SLA_AT_RISK_OR_BREACHED_SQL,
-                ),
-                entity_binds(&filter).to_vec(),
-            ))
-            .await?;
-        match row {
-            Some(row) => {
-                let breached = row_i64(&row, "breached")?;
-                let at_risk = row_i64(&row, "at_risk")?;
-                let no_target = row_i64(&row, "no_target")?;
-                let paused = row_i64(&row, "paused")?;
-                let open_total = row_i64(&row, "open_total")?;
-                DiSlaOpenSplit {
-                    on_track: (open_total - breached - at_risk - no_target - paused).max(0),
-                    at_risk,
-                    breached,
-                    paused,
-                    no_target,
-                }
-            }
-            None => DiSlaOpenSplit::default(),
-        }
-    };
-
     let (closed_in_period, converted_count) = {
         let row = db
             .query_one(Statement::from_sql_and_values(
@@ -710,6 +618,128 @@ pub async fn get_di_stats(db: &DatabaseConnection, filter: DiStatsFilter) -> App
         converted_count,
         avg_response_hours,
         avg_conversion_hours,
+    })
+}
+
+/// SLA outcome of the requests finished in a period.
+#[derive(Debug, Clone, Copy, Serialize, Default, PartialEq, Eq)]
+pub struct DiSlaClosingOutcome {
+    pub met: i64,
+    pub breached: i64,
+    pub total: i64,
+}
+
+/// SLA compliance over the requests finished in the period of `filter` (`closed_at` in the period,
+/// with or without a work order): met when no clock went past its target. Each clock stops when
+/// the request is screened / converted, or when it is closed without them; paused time is not
+/// counted. Requests without a frozen target are left out.
+pub async fn sla_closing_outcome(db: &DatabaseConnection, filter: &DiStatsFilter) -> AppResult<DiSlaClosingOutcome> {
+    let finished = event_scope_sql("ir.closed_at");
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT
+                   COALESCE(SUM(CASE WHEN {late} THEN 1 ELSE 0 END), 0) AS breached,
+                   COALESCE(SUM(CASE WHEN {late} THEN 0 ELSE 1 END), 0) AS met
+                 FROM intervention_requests ir
+                 WHERE {finished}
+                   AND ir.status = 'closed' AND ir.closed_at IS NOT NULL
+                   AND ir.sla_target_response_hours IS NOT NULL
+                   AND ir.sla_response_deadline IS NOT NULL",
+                late = super::sla::SLA_LATE_SQL,
+            ),
+            scope_binds(filter).to_vec(),
+        ))
+        .await?;
+    let (breached, met) = match row {
+        Some(r) => (row_i64(&r, "breached")?, row_i64(&r, "met")?),
+        None => (0, 0),
+    };
+    Ok(DiSlaClosingOutcome {
+        met,
+        breached,
+        total: met + breached,
+    })
+}
+
+/// Open backlog by status ([`OPEN_SQL`]): how many and how old (days since submission). Current
+/// state; only the site scope applies.
+pub async fn open_backlog_by_status(
+    db: &DatabaseConnection,
+    entity_id: Option<i64>,
+) -> AppResult<Vec<DiBacklogStatus>> {
+    let entity = entity_scope_sql();
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT ir.status AS status, COUNT(*) AS count,
+                        AVG(julianday('now') - julianday(ir.submitted_at)) AS avg_age_days,
+                        MAX(julianday('now') - julianday(ir.submitted_at)) AS max_age_days
+                   FROM intervention_requests ir
+                  WHERE {entity} AND {OPEN_SQL}
+                  GROUP BY ir.status
+                  ORDER BY count DESC"
+            ),
+            entity_binds(entity_id),
+        ))
+        .await?;
+    rows.into_iter()
+        .map(|row| {
+            Ok(DiBacklogStatus {
+                status: row.try_get("", "status")?,
+                count: row_i64(&row, "count")?,
+                avg_age_days: row_f64(&row, "avg_age_days")?,
+                max_age_days: row_f64(&row, "max_age_days")?,
+            })
+        })
+        .collect()
+}
+
+/// Open requests ([`OPEN_SQL`]) split by where they stand against their frozen SLA — the same
+/// rule as the lists (`sla::SLA_BREACHED_SQL`, `sla::SLA_AT_RISK_OR_BREACHED_SQL`; a paused
+/// request is never at risk or breached). Current state; only the site scope applies.
+pub async fn sla_open_split(db: &DatabaseConnection, entity_id: Option<i64>) -> AppResult<DiSlaOpenSplit> {
+    let entity = entity_scope_sql();
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT
+                   COALESCE(SUM(CASE WHEN {breached} THEN 1 ELSE 0 END), 0) AS breached,
+                   COALESCE(SUM(CASE WHEN {risk} AND NOT {breached} THEN 1 ELSE 0 END), 0) AS at_risk,
+                   COALESCE(SUM(CASE WHEN ir.sla_target_response_hours IS NULL
+                                      OR ir.sla_response_deadline IS NULL THEN 1 ELSE 0 END), 0) AS no_target,
+                   COALESCE(SUM(CASE WHEN ir.sla_target_response_hours IS NOT NULL
+                                      AND ir.sla_response_deadline IS NOT NULL
+                                      AND ir.status IN ('returned_for_clarification', 'deferred')
+                                     THEN 1 ELSE 0 END), 0) AS paused,
+                   COUNT(*) AS open_total
+                 FROM intervention_requests ir
+                 WHERE {entity} AND {OPEN_SQL}",
+                breached = super::sla::SLA_BREACHED_SQL,
+                risk = super::sla::SLA_AT_RISK_OR_BREACHED_SQL,
+            ),
+            entity_binds(entity_id),
+        ))
+        .await?;
+    Ok(match row {
+        Some(row) => {
+            let breached = row_i64(&row, "breached")?;
+            let at_risk = row_i64(&row, "at_risk")?;
+            let no_target = row_i64(&row, "no_target")?;
+            let paused = row_i64(&row, "paused")?;
+            let open_total = row_i64(&row, "open_total")?;
+            DiSlaOpenSplit {
+                on_track: (open_total - breached - at_risk - no_target - paused).max(0),
+                at_risk,
+                breached,
+                paused,
+                no_target,
+            }
+        }
+        None => DiSlaOpenSplit::default(),
     })
 }
 

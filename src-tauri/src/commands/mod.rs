@@ -23,6 +23,7 @@ pub mod diagnostics;
 pub mod entitlements;
 pub mod finance;
 pub mod fta_rbd_eta;
+pub mod home;
 pub mod inspection;
 pub mod inventory;
 pub mod library_documents;

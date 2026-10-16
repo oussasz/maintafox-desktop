@@ -6,7 +6,6 @@ import {
   VisualMetricCard,
   type VisualMetricTrendSense,
 } from "@/components/metrics/VisualMetricCard";
-import { seriesUsableForViz } from "@/components/metrics/visual-metric-viz";
 import { Button } from "@/components/ui/button";
 import { useFormatters } from "@/hooks/use-formatters";
 import type { OverviewKpiCell, OverviewKpisPayload } from "@shared/ipc-types";
@@ -52,7 +51,7 @@ function formatCellValue(
 }
 
 export function OverviewMetricCards(props: {
-  overviewKpis: OverviewKpisPayload | null;
+  overviewKpis: OverviewKpisPayload;
   layout: OverviewKpiLayoutEntry[];
 }) {
   const { t } = useTranslation("dashboard");
@@ -62,11 +61,11 @@ export function OverviewMetricCards(props: {
 
   const cellByKey = useMemo(() => {
     const map = new Map<string, OverviewKpiCell>();
-    for (const c of props.overviewKpis?.cells ?? []) {
+    for (const c of props.overviewKpis.cells) {
       map.set(c.semantic_key, c);
     }
     return map;
-  }, [props.overviewKpis?.cells]);
+  }, [props.overviewKpis.cells]);
 
   const visibleCards = useMemo(
     () =>
@@ -120,11 +119,6 @@ export function OverviewMetricCards(props: {
                 ? t(reg.unitKey as never)
                 : undefined;
 
-          const series =
-            reg.vizKind === "areaWave" || reg.vizKind === "waterfall" || reg.vizKind === "histogram"
-              ? seriesUsableForViz(cell.series)
-              : undefined;
-
           return (
             <VisualMetricCard
               key={entry.id}
@@ -138,7 +132,6 @@ export function OverviewMetricCards(props: {
               {...(isOverviewKpiAccent(entry.accent) ? { accent: entry.accent } : {})}
               {...(unit ? { unit } : {})}
               {...(trend ? { trendLabel: trend.label, trendSense: trend.sense } : {})}
-              {...(series ? { series } : {})}
               {...(reg.vizKind === "gauge" ? { gaugeValue: cell.value } : {})}
               {...(reg.vizKind === "alert"
                 ? {

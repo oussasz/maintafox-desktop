@@ -4576,21 +4576,6 @@ export interface DecommissionAssetPayload {
 
 // â”€â”€â”€ Dashboard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-export interface KpiValue {
-  key: string;
-  value: number;
-  previous_value: number;
-  available: boolean;
-  quality_badge?: string | null | undefined;
-}
-
-export interface DashboardKpis {
-  open_dis: KpiValue;
-  open_wos: KpiValue;
-  total_assets: KpiValue;
-  overdue_items: KpiValue;
-}
-
 export type OverviewKpiValueKind = "count" | "percent" | "hours" | "currency";
 export type OverviewKpiTrendSense = "up-good" | "up-bad" | "neutral";
 
@@ -4605,7 +4590,6 @@ export interface OverviewKpiCell {
   quality_badge?: string | null | undefined;
   value_kind: OverviewKpiValueKind;
   trend_sense: OverviewKpiTrendSense;
-  series?: number[] | undefined;
 }
 
 export interface OverviewKpisPayload {
@@ -4621,29 +4605,275 @@ export interface SaveOverviewKpiLayoutInput {
   overview_kpis_json: string;
 }
 
-export interface KpiSqlSample {
-  key: string;
-  value: number;
-  sql: string;
-  sample_ids: number[];
-}
-
-export interface DashboardKpiValidation {
-  samples: KpiSqlSample[];
-  overdue_items_total: number;
-}
-
+/** One day of the home activity chart; a series the user may not see is `null` (never 0). */
 export interface WorkloadDay {
   date: string;
-  di_created: number;
-  wo_completed: number;
-  pm_due: number;
+  /** Requests submitted that day. */
+  di_created: number | null;
+  /** Work orders closed that day. */
+  wo_completed: number | null;
+  /** PM occurrences due that day (cancelled excluded). */
+  pm_due: number | null;
 }
 
 export interface DashboardWorkloadChart {
   days: WorkloadDay[];
   period_days: number;
   quality_badge?: string | null | undefined;
+}
+
+// ─── Home page (start centre, `commands::home`) ───────────────────────────────
+
+export interface HomeUrgencyCount {
+  urgency_code: string | null;
+  count: number;
+}
+
+export interface HomeMyWorkOrderItem {
+  id: number;
+  code: string;
+  title: string;
+  status_code: string;
+  urgency_code: string | null;
+  planned_start: string | null;
+  planned_end: string | null;
+  asset_label: string | null;
+  overdue: boolean;
+}
+
+export interface HomeMyWorkOrders {
+  open: number;
+  overdue: number;
+  today: number;
+  by_urgency: HomeUrgencyCount[];
+  items: HomeMyWorkOrderItem[];
+}
+
+export interface HomeMyRequests {
+  open: number;
+  awaiting_my_answer: number;
+}
+
+export interface HomeMyRoundItem {
+  id: number;
+  template_code: string;
+  template_name: string;
+  status: string;
+  scheduled_at: string | null;
+  overdue: boolean;
+}
+
+export interface HomeMyRounds {
+  personnel_linked: boolean;
+  overdue: number;
+  today: number;
+  next_7_days: number;
+  /** Every round still to do (the list shows the first ones). */
+  todo: number;
+  items: HomeMyRoundItem[];
+}
+
+export interface HomeMyPmItem {
+  id: number;
+  plan_code: string;
+  plan_title: string;
+  due_at: string | null;
+  work_order_code: string;
+  overdue: boolean;
+}
+
+export interface HomeMyPm {
+  overdue: number;
+  due_next_7_days: number;
+  /** Every pending occurrence (the list shows the first ones). */
+  pending: number;
+  items: HomeMyPmItem[];
+}
+
+export interface HomeMyNotifications {
+  unread: number;
+  to_acknowledge: number;
+}
+
+/** A `null` section: the user may not open that module (no panel, no count). */
+export interface HomeMyWork {
+  as_of: string;
+  work_orders: HomeMyWorkOrders | null;
+  requests: HomeMyRequests | null;
+  rounds: HomeMyRounds | null;
+  pm: HomeMyPm | null;
+  notifications: HomeMyNotifications;
+}
+
+export interface HomeBlockerCount {
+  dimension: string;
+  count: number;
+}
+
+export interface HomePlanningBacklog {
+  candidates: number;
+  ready: number;
+  blocked: number;
+  blocked_by: HomeBlockerCount[];
+  truncated: boolean;
+}
+
+/** The site work week used (`site_work_weeks`; starts the day after the rest days). */
+export interface HomeWorkWeekBasis {
+  /** ISO weekdays, 1 = Monday … 7 = Sunday. */
+  rest_days: number[];
+  /** `all_sites`: every configured site has this week; `own_site`: the user's own site. */
+  scope: "all_sites" | "own_site";
+  site_name: string | null;
+}
+
+/** Why the week figure cannot be given. */
+export type HomeWorkWeekUnavailable =
+  | "WORK_WEEK_NOT_CONFIGURED"
+  | "WORK_WEEK_SITE_AMBIGUOUS"
+  | "WORK_WEEK_NO_REST_DAY"
+  | "WORK_WEEK_SPLIT_REST";
+
+export interface HomeWeekLoad {
+  week_start: string;
+  week_end: string;
+  basis: HomeWorkWeekBasis;
+  teams: number;
+  capacity_hours: number;
+  committed_hours: number;
+  load_pct: number | null;
+  overloaded_team_days: number;
+}
+
+export interface HomeScheduleCompliance {
+  period_days: number;
+  scheduled_hours: number;
+  done_hours: number;
+  value_pct: number | null;
+}
+
+export interface HomePlanning {
+  as_of: string;
+  backlog: HomePlanningBacklog;
+  week: HomeWeekLoad | null;
+  week_unavailable: HomeWorkWeekUnavailable | null;
+  schedule_compliance: HomeScheduleCompliance;
+}
+
+export interface HomeSlaOpenSplit {
+  on_track: number;
+  at_risk: number;
+  breached: number;
+  paused: number;
+  no_target: number;
+}
+
+export interface HomeSlaClosingOutcome {
+  met: number;
+  breached: number;
+  total: number;
+}
+
+export interface HomeSupervisionRequests {
+  sla_open: HomeSlaOpenSplit;
+  period_days: number;
+  sla_closing: HomeSlaClosingOutcome;
+  queues: DiQueueCounts;
+}
+
+export interface HomeWoBacklogCell {
+  nature_code: string | null;
+  urgency_code: string | null;
+  count: number;
+}
+
+export interface HomeSupervisionWorkOrders {
+  open: number;
+  overdue: number;
+  planned: number;
+  reactive: number;
+  emergency: number;
+  without_nature: number;
+  cells: HomeWoBacklogCell[];
+}
+
+export interface HomeSupervisionPm {
+  overdue: number;
+  due_today: number;
+  due_next_7_days: number;
+  period_days: number;
+  compliance_done_on_time: number;
+  compliance_due: number;
+  compliance_pct: number | null;
+}
+
+export interface HomeStockItem {
+  article_id: number;
+  article_code: string;
+  article_name: string;
+  warehouse_code: string;
+  available_qty: number;
+  reorder_point: number;
+  min_stock: number;
+  trigger_type: string;
+}
+
+export interface HomeSupervisionStock {
+  lines_to_reorder: number;
+  articles_to_reorder: number;
+  lines_out_of_stock: number;
+  items: HomeStockItem[];
+}
+
+export interface HomePermitItem {
+  permit_id: number;
+  code: string;
+  permit_type: string;
+  asset_code: string;
+  expires_at: string;
+}
+
+/** Permits found by a check: all counted, the first ones listed. */
+export interface HomePermitList {
+  total: number;
+  items: HomePermitItem[];
+  /** Found without a record to open (counted, never dropped). */
+  without_record: number;
+}
+
+export interface HomeSupervisionSafety {
+  open_permits: number;
+  /** State of the "permit expiring" notification rule. */
+  expiring_rule: "active" | "disabled" | "no_lead" | "missing";
+  expiring_lead_minutes: number | null;
+  expiring: HomePermitList;
+  expired_open: HomePermitList;
+  locks_in_place: number;
+  permits_with_locks: number;
+}
+
+export interface HomeAssetItem {
+  id: number;
+  asset_code: string;
+  name: string;
+  status_label: string | null;
+}
+
+export interface HomeSupervisionAssets {
+  critical_down: number;
+  criticality_label: string | null;
+  down_status_labels: string[];
+  items: HomeAssetItem[];
+}
+
+export interface HomeSupervision {
+  as_of: string;
+  requests: HomeSupervisionRequests | null;
+  work_orders: HomeSupervisionWorkOrders | null;
+  pm: HomeSupervisionPm | null;
+  stock: HomeSupervisionStock | null;
+  safety: HomeSupervisionSafety | null;
+  assets: HomeSupervisionAssets | null;
 }
 
 // â”€â”€â”€ DI Statistics (File 04) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -4667,17 +4897,16 @@ export interface SaveDashboardLayoutInput {
   layout_json: string;
 }
 
-export interface DashboardDiStatusChart {
-  segments: DiStatusCount[];
-  available: boolean;
+/** Open requests of one status (the DI module's open backlog). */
+export interface DashboardDiStatusSegment {
+  status: string;
+  count: number;
+  avg_age_days: number;
 }
 
-export interface DashboardReliabilitySnapshotSummary {
+export interface DashboardDiStatusChart {
+  segments: DashboardDiStatusSegment[];
   available: boolean;
-  snapshot_count: number;
-  avg_data_quality_score?: number | null | undefined;
-  avg_mtbf_hours?: number | null | undefined;
-  total_failure_events: number;
 }
 
 export interface DiPriorityCount {

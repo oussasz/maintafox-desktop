@@ -24,6 +24,14 @@ pub const MAX_KPI_PERIOD_DAYS: i64 = 366;
 pub const MAX_ANOMALY_PAGE: i64 = 500;
 const DEFAULT_ANOMALY_PAGE: i64 = 200;
 
+/// SQL predicate (alias `ir`): a round still to do (scheduled, released or under way).
+pub const ROUND_TODO_SQL: &str = "ir.status IN ('scheduled', 'released', 'in_progress')";
+
+/// SQL predicate (alias `ir`): a round still to do whose planned time is past — the "overdue"
+/// KPI, the round list's overdue filter and the home page use this one rule.
+pub const ROUND_OVERDUE_SQL: &str = "ir.status IN ('scheduled', 'released', 'in_progress') \
+     AND ir.scheduled_at IS NOT NULL AND julianday(ir.scheduled_at) < julianday('now')";
+
 /// Round statuses that count as done for the KPIs.
 pub const DONE_STATUSES: &[&str] = &["completed", "completed_with_findings", "reviewed"];
 
@@ -93,9 +101,7 @@ pub async fn get_inspection_kpis(db: &impl ConnectionTrait, input: InspectionKpi
     .await?;
     let overdue_count = count(
         db,
-        "SELECT COUNT(*) AS c FROM inspection_rounds ir \
-         WHERE ir.status IN ('scheduled', 'released', 'in_progress') AND ir.scheduled_at IS NOT NULL \
-         AND julianday(ir.scheduled_at) < julianday('now')",
+        &format!("SELECT COUNT(*) AS c FROM inspection_rounds ir WHERE {ROUND_OVERDUE_SQL}"),
         vec![],
     )
     .await?;
