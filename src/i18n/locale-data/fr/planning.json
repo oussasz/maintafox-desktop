@@ -218,7 +218,8 @@
       "production_loss": "Perte de production",
       "regulatory": "Réglementaire",
       "other": "Autre"
-    }
+    },
+    "acknowledgeRefusals": "Déroger à ces refus avec le motif ci-dessus"
   },
   "freeze": {
     "title": "Geler la période de planning",
@@ -230,7 +231,9 @@
     "title": "Déroger au double-booking",
     "description": "Ce déplacement entre en conflit avec une affectation existante. Indiquez un motif d'audit pour continuer.",
     "reason": "Motif de dérogation",
-    "confirm": "Confirmer la dérogation"
+    "confirm": "Confirmer la dérogation",
+    "assigneeTitle": "Déroger aux contrôles de l'intervenant",
+    "assigneeDescription": "Vous dérogez à ces refus pour ce technicien. Indiquez le motif ; il est journalisé."
   },
   "inspector": {
     "title": "Détail de l'engagement",
@@ -287,6 +290,12 @@
       "PLANNING_ASSIGNEE_NOT_IN_CREW": "N'est pas membre de cette équipe sur les jours du créneau.",
       "PLANNING_ASSIGNEE_NOT_WORKING": "Ne travaille pas pendant ce créneau.",
       "PLANNING_ASSIGNEE_OVERLOADED": "Pas assez d'heures restantes pour ce travail sur l'un des jours."
-    }
+    },
+    "daysLabel": "Les jours du technicien sur le créneau",
+    "unknownHours_one": "{{count}} de ses travaux a des heures inconnues (non comptées).",
+    "unknownHours_other": "{{count}} de ses travaux ont des heures inconnues (non comptées).",
+    "unreadableWorkOrders": "Dates planifiées illisibles (non comptées) : {{codes}}.",
+    "othersUnnamed_one": "+ {{count}} équipier non nommé (compté dans la charge de l'équipe).",
+    "othersUnnamed_other": "+ {{count}} équipiers non nommés (comptés dans la charge de l'équipe)."
   }
 }

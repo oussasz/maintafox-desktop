@@ -77,6 +77,14 @@ pub fn is_refusal(err: &AppError, code: &str) -> bool {
     matches!(err, AppError::ValidationFailed(m) if m.iter().any(|s| s.starts_with(code)))
 }
 
+/// Local wall-clock formats a planned date may be typed in (no offset: the computer's time zone).
+pub const LOCAL_FORMATS: [&str; 4] = [
+    "%Y-%m-%dT%H:%M:%S",
+    "%Y-%m-%dT%H:%M",
+    "%Y-%m-%d %H:%M:%S",
+    "%Y-%m-%d %H:%M",
+];
+
 /// Local day and time of a planned start: an RFC 3339 instant (as stored, UTC) read in the
 /// computer's time zone like the rest of the application; a local `YYYY-MM-DDTHH:MM` as typed in
 /// a form; or a bare day.
@@ -89,12 +97,7 @@ pub fn planned_local(planned_start: Option<&str>) -> Option<(NaiveDate, Option<N
         let local = instant.with_timezone(&chrono::Local).naive_local();
         return Some((local.date(), Some(local.time())));
     }
-    for format in [
-        "%Y-%m-%dT%H:%M:%S",
-        "%Y-%m-%dT%H:%M",
-        "%Y-%m-%d %H:%M:%S",
-        "%Y-%m-%d %H:%M",
-    ] {
+    for format in LOCAL_FORMATS {
         if let Ok(local) = NaiveDateTime::parse_from_str(s, format) {
             return Some((local.date(), Some(local.time())));
         }
@@ -102,6 +105,24 @@ pub fn planned_local(planned_start: Option<&str>) -> Option<(NaiveDate, Option<N
     NaiveDate::parse_from_str(s.get(..10)?, "%Y-%m-%d")
         .ok()
         .map(|d| (d, None))
+}
+
+/// A planned date as an instant, read like [`planned_local`]: RFC 3339 as stored, a local typed
+/// date-time, or a bare day (its local midnight). `None` when it cannot be read.
+pub fn planned_instant(raw: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    if let Ok(instant) = chrono::DateTime::parse_from_rfc3339(raw.trim()) {
+        return Some(instant.with_timezone(&chrono::Utc));
+    }
+    let (day, time) = planned_local(Some(raw))?;
+    let naive = day.and_time(time.unwrap_or(NaiveTime::MIN));
+    chrono::TimeZone::from_local_datetime(&chrono::Local, &naive)
+        .earliest()
+        .map(|d| d.with_timezone(&chrono::Utc))
+}
+
+/// [`planned_instant`] as the RFC 3339 text planning computes with.
+pub fn planned_rfc3339(raw: &str) -> Option<String> {
+    planned_instant(raw).map(|d| d.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
 }
 
 fn parse_hhmm(s: &str) -> Option<NaiveTime> {

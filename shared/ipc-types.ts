@@ -8504,6 +8504,8 @@ export interface CreateScheduleCommitmentInput {
   allow_double_booking_override?: boolean | null;
   override_reason?: string | null;
   budget_threshold?: number | null;
+  /** Assignee refusals (`PLANNING_ASSIGNEE_*`) the planner saw and overrides with the reason. */
+  acknowledged_assignee_issues?: string[];
 }
 
 export interface RescheduleCommitmentInput {
@@ -8516,6 +8518,8 @@ export interface RescheduleCommitmentInput {
   allow_double_booking_override?: boolean | null;
   override_reason?: string | null;
   budget_threshold?: number | null;
+  /** Assignee refusals (`PLANNING_ASSIGNEE_*`) the planner saw and overrides with the reason. */
+  acknowledged_assignee_issues?: string[];
 }
 
 export interface FreezeSchedulePeriodInput {
@@ -8585,6 +8589,8 @@ export interface CreateScheduleBreakInInput {
   bypass_availability?: boolean | null;
   override_reason?: string | null;
   dangerous_override_reason?: string | null;
+  /** Assignee refusals (`PLANNING_ASSIGNEE_*`) the planner saw and overrides with the reason. */
+  acknowledged_assignee_issues?: string[];
 }
 
 export interface TeamCapacityLoad {
@@ -8634,6 +8640,10 @@ export interface AssigneeCapacity {
   slot_working_hours: number;
   /** What the commit would refuse for this job (`PLANNING_ASSIGNEE_*`), overridable with a reason. */
   issues: string[];
+  /** Commitments of the person whose hours are unknown (not counted in the figures). */
+  unknown_hours_jobs: number;
+  /** OTs of the person whose planned dates cannot be read (skipped). */
+  unreadable_work_orders: { work_order_id: number; code: string }[];
 }
 
 /** One member's shift window (local `YYYY-MM-DDTHH:MM:SS`; a night shift ends the next day). */

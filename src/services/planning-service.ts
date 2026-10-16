@@ -417,6 +417,8 @@ const AssigneeCapacitySchema = z.object({
   ),
   slot_working_hours: z.number(),
   issues: z.array(z.string()),
+  unknown_hours_jobs: z.number(),
+  unreadable_work_orders: z.array(z.object({ work_order_id: z.number(), code: z.string() })),
 });
 
 /** Each crew member over a slot: shift, hours left net of all their work, and what a commit would refuse. */

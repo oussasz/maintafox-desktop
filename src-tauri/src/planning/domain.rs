@@ -365,6 +365,10 @@ pub struct CreateScheduleCommitmentInput {
     pub allow_double_booking_override: Option<bool>,
     pub override_reason: Option<String>,
     pub budget_threshold: Option<f64>,
+    /// The assignee refusals (`PLANNING_ASSIGNEE_*`) the planner saw and overrides with the reason:
+    /// each refusal must be listed, so a reason given for one never covers another.
+    #[serde(default)]
+    pub acknowledged_assignee_issues: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -378,6 +382,10 @@ pub struct RescheduleCommitmentInput {
     pub allow_double_booking_override: Option<bool>,
     pub override_reason: Option<String>,
     pub budget_threshold: Option<f64>,
+    /// The assignee refusals (`PLANNING_ASSIGNEE_*`) the planner saw and overrides with the reason:
+    /// each refusal must be listed, so a reason given for one never covers another.
+    #[serde(default)]
+    pub acknowledged_assignee_issues: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -411,6 +419,10 @@ pub struct CreateScheduleBreakInInput {
     pub bypass_availability: Option<bool>,
     pub override_reason: Option<String>,
     pub dangerous_override_reason: Option<String>,
+    /// The assignee refusals (`PLANNING_ASSIGNEE_*`) the planner saw and overrides with the reason:
+    /// each refusal must be listed, so a reason given for one never covers another.
+    #[serde(default)]
+    pub acknowledged_assignee_issues: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

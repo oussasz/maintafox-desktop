@@ -277,6 +277,33 @@ pub fn working_hours_in(start: &str, end: &str, days: &BTreeMap<NaiveDate, DayHo
     Ok(hours)
 }
 
+/// Net working hours a slot covers: each shift window's hours (net of break and utilisation) in
+/// proportion to the part of it inside the slot, plus the hours of members without a known window
+/// on the days it touches — what an OT without a duration books.
+pub fn net_hours_in(start: &str, end: &str, days: &BTreeMap<NaiveDate, DayHours>) -> AppResult<f64> {
+    let calendar = slot_days(start, end)?;
+    if calendar.is_empty() {
+        return Ok(0.0);
+    }
+    let slot = (
+        local_naive(parse_instant(start, "start")?),
+        local_naive(parse_instant(end, "end")?),
+    );
+    let mut hours = 0.0;
+    for (day, day_hours) in days {
+        for window in &day_hours.windows {
+            let length = (window.end - window.start).num_seconds() as f64;
+            if length > 0.0 {
+                hours += window.hours * overlap_seconds(slot, (window.start, window.end)) / length;
+            }
+        }
+        if day_hours.unwindowed > 0.0 && calendar.iter().any(|(d, _)| d == day) {
+            hours += day_hours.unwindowed;
+        }
+    }
+    Ok(hours)
+}
+
 /// SQL predicate: the commitment's work is still to do (alias `cmt`).
 pub const ACTIVE_COMMITMENT_SQL: &str = "NOT ( \
     (cmt.source_type = 'work_order' AND EXISTS (SELECT 1 FROM work_orders fw WHERE fw.id = cmt.source_id \
@@ -287,25 +314,76 @@ pub const ACTIVE_COMMITMENT_SQL: &str = "NOT ( \
         WHERE fr.id = cmt.source_id AND (fr.converted_to_wo_id IS NOT NULL OR fr.closed_at IS NOT NULL \
         OR fr.declined_at IS NOT NULL OR fr.archived_at IS NOT NULL))))";
 
+/// [`ACTIVE_COMMITMENT_SQL`] for another alias of `schedule_commitments`.
+pub fn active_commitment_sql_as(alias: &str) -> String {
+    ACTIVE_COMMITMENT_SQL.replace("cmt.", &format!("{alias}."))
+}
+
+/// SQL predicate: no active planning commitment covers the work order (alias `wo`) — through itself,
+/// the PM occurrence it was generated for, or the request it was converted from. With
+/// `assigned_only`, only commitments that name a technician count (a person's view).
+pub fn wo_not_committed_sql(assigned_only: bool) -> String {
+    format!(
+        "NOT EXISTS (SELECT 1 FROM schedule_commitments c2 WHERE ( \
+            (c2.source_type = 'work_order' AND c2.source_id = wo.id) \
+            OR (c2.source_type = 'pm_occurrence' AND c2.source_id IN \
+                (SELECT po.id FROM pm_occurrences po WHERE po.linked_work_order_id = wo.id)) \
+            OR (c2.source_type = 'inspection_follow_up' AND c2.source_id IN \
+                (SELECT ir.id FROM intervention_requests ir WHERE ir.converted_to_wo_id = wo.id))) \
+            {assigned} AND {active})",
+        assigned = if assigned_only {
+            "AND c2.assigned_personnel_id IS NOT NULL"
+        } else {
+            ""
+        },
+        active = active_commitment_sql_as("c2"),
+    )
+}
+
+/// SQL predicate: the work order (alias `wo`) is still to do.
+pub const WO_OPEN_SQL: &str =
+    "wo.mechanically_completed_at IS NULL AND wo.closed_at IS NULL AND wo.cancelled_at IS NULL";
+
+/// SQL predicate: the work order's planned dates (alias `wo`) may touch `[?, ?]` (end, start bounds,
+/// a day of margin for typed local dates) — or cannot be read by SQLite, so the caller reads them.
+pub const WO_PLANNED_IN_RANGE_SQL: &str = "wo.planned_start IS NOT NULL AND wo.planned_end IS NOT NULL \
+    AND (julianday(wo.planned_start) IS NULL OR julianday(wo.planned_end) IS NULL \
+         OR (julianday(wo.planned_start) < julianday(?) + 1 AND julianday(wo.planned_end) > julianday(?) - 1))";
+
+/// The hours a slot of the team books.
+enum Booked {
+    Fixed(f64),
+    /// An OT without a duration: its responsible technician's net working time in the slot.
+    PersonWorkingTime(i64),
+}
+
 struct LoadRow {
     team_id: i64,
     start: String,
     end: String,
-    labour_hours: f64,
+    booked: Booked,
 }
 
 fn load_decode_err(field: &str, err: impl std::fmt::Display) -> AppError {
     AppError::Internal(anyhow::anyhow!("load decode '{field}': {err}"))
 }
 
-/// Committed labour hours per (team, day) over `[from, to]`, from the active commitments that touch
-/// those days (`teams`: these teams only; `exclude`: a commitment being moved).
+/// Committed labour hours per (team, day) over `[from, to]`: the active commitments that touch those
+/// days, and the OTs the team carries outside planning (planned dates, open, not committed) — the
+/// same work the technicians' own figures count (`planning::person_load`). `teams`: these teams
+/// only; `exclude`: a commitment being moved; `exclude_work_order`: the OT being committed.
+///
+/// An OT outside planning books its duration × planned crew size; without a crew size, its named
+/// responsible technician's duration (the others are not known); without a duration, that
+/// technician's net working time in its slot. An OT with neither is not counted (hours unknown);
+/// one whose planned dates cannot be read is skipped.
 pub async fn team_day_loads(
     db: &impl ConnectionTrait,
     teams: Option<&[i64]>,
     from: NaiveDate,
     to: NaiveDate,
     exclude: Option<i64>,
+    exclude_work_order: Option<i64>,
 ) -> AppResult<BTreeMap<(i64, NaiveDate), f64>> {
     let mut out = BTreeMap::new();
     if to < from {
@@ -323,18 +401,25 @@ pub async fn team_day_loads(
             AND cmt.assigned_team_id IS NOT NULL \
             AND (? IS NULL OR cmt.id <> ?) AND {ACTIVE_COMMITMENT_SQL}"
     );
-    let mut values: Vec<sea_orm::Value> = vec![range_end.into(), range_start.into(), exclude.into(), exclude.into()];
-    if let Some(teams) = teams {
-        if teams.is_empty() {
-            return Ok(out);
-        }
-        sql.push_str(&format!(
-            " AND cmt.assigned_team_id IN ({})",
+    let mut values: Vec<sea_orm::Value> = vec![
+        range_end.clone().into(),
+        range_start.clone().into(),
+        exclude.into(),
+        exclude.into(),
+    ];
+    let team_filter = match teams {
+        Some([]) => return Ok(out),
+        Some(teams) => format!(
+            " AND {{alias}}.assigned_team_id IN ({})",
             vec!["?"; teams.len()].join(", ")
-        ));
+        ),
+        None => String::new(),
+    };
+    sql.push_str(&team_filter.replace("{alias}", "cmt"));
+    if let Some(teams) = teams {
         values.extend(teams.iter().map(|t| sea_orm::Value::from(*t)));
     }
-    let rows: Vec<LoadRow> = db
+    let mut rows: Vec<LoadRow> = db
         .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
         .await?
         .iter()
@@ -349,13 +434,80 @@ pub async fn team_day_loads(
                 end: r
                     .try_get("", "committed_end")
                     .map_err(|e| load_decode_err("committed_end", e))?,
-                labour_hours: r
-                    .try_get::<f64>("", "labour_hours")
-                    .map_err(|e| load_decode_err("labour_hours", e))?
-                    .max(0.0),
+                booked: Booked::Fixed(
+                    r.try_get::<f64>("", "labour_hours")
+                        .map_err(|e| load_decode_err("labour_hours", e))?
+                        .max(0.0),
+                ),
             })
         })
         .collect::<AppResult<_>>()?;
+
+    // OTs the team carries outside planning.
+    let wo_sql = format!(
+        "SELECT wo.assigned_team_id, wo.planned_start, wo.planned_end, wo.expected_duration_hours, \
+                wo.planned_crew_size, ua.personnel_id AS responsible_personnel_id \
+           FROM work_orders wo LEFT JOIN user_accounts ua ON ua.id = wo.primary_responsible_id \
+          WHERE wo.assigned_team_id IS NOT NULL AND {WO_PLANNED_IN_RANGE_SQL} \
+            AND (? IS NULL OR wo.id <> ?) AND {WO_OPEN_SQL} AND {not_committed}{teams}",
+        not_committed = wo_not_committed_sql(false),
+        teams = team_filter.replace("{alias}", "wo"),
+    );
+    let mut values: Vec<sea_orm::Value> = vec![
+        range_end.into(),
+        range_start.into(),
+        exclude_work_order.into(),
+        exclude_work_order.into(),
+    ];
+    if let Some(teams) = teams {
+        values.extend(teams.iter().map(|t| sea_orm::Value::from(*t)));
+    }
+    for r in db
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, &wo_sql, values))
+        .await?
+    {
+        let start: String = r
+            .try_get("", "planned_start")
+            .map_err(|e| load_decode_err("planned_start", e))?;
+        let end: String = r
+            .try_get("", "planned_end")
+            .map_err(|e| load_decode_err("planned_end", e))?;
+        // Typed local dates are read like the shift code reads them; unreadable ones are skipped.
+        let (Some(start), Some(end)) = (
+            crate::wo::shifts::planned_rfc3339(&start),
+            crate::wo::shifts::planned_rfc3339(&end),
+        ) else {
+            continue;
+        };
+        if end <= start {
+            continue;
+        }
+        let duration: Option<f64> = r
+            .try_get::<Option<f64>>("", "expected_duration_hours")
+            .map_err(|e| load_decode_err("expected_duration_hours", e))?
+            .filter(|h| *h > 0.0);
+        let crew: Option<i64> = r
+            .try_get::<Option<i64>>("", "planned_crew_size")
+            .map_err(|e| load_decode_err("planned_crew_size", e))?
+            .filter(|n| *n >= 1);
+        let responsible: Option<i64> = r
+            .try_get("", "responsible_personnel_id")
+            .map_err(|e| load_decode_err("responsible_personnel_id", e))?;
+        let booked = match (duration, crew, responsible) {
+            (Some(d), Some(c), _) => Booked::Fixed(d * c as f64),
+            (Some(d), None, Some(_)) => Booked::Fixed(d),
+            (None, _, Some(person)) => Booked::PersonWorkingTime(person),
+            _ => continue,
+        };
+        rows.push(LoadRow {
+            team_id: r
+                .try_get("", "assigned_team_id")
+                .map_err(|e| load_decode_err("assigned_team_id", e))?,
+            start,
+            end,
+            booked,
+        });
+    }
 
     // Each team's working time over every day its commitments can use (they may reach outside
     // [from, to]).
@@ -376,7 +528,22 @@ pub async fn team_day_loads(
     let empty = BTreeMap::new();
     for row in rows {
         let team_hours = hours.get(&row.team_id).unwrap_or(&empty);
-        for (day, share) in spread(row.labour_hours, &row.start, &row.end, team_hours)? {
+        let labour = match row.booked {
+            Booked::Fixed(h) => h,
+            Booked::PersonWorkingTime(person) => {
+                let Some((first, last)) = capacity_span(&row.start, &row.end)? else {
+                    continue;
+                };
+                let person_hours: BTreeMap<NaiveDate, DayHours> =
+                    crate::planning::person_load::person_days(db, person, first, last)
+                        .await?
+                        .into_iter()
+                        .map(|(d, p)| (d, p.hours))
+                        .collect();
+                net_hours_in(&row.start, &row.end, &person_hours)?
+            }
+        };
+        for (day, share) in spread(labour, &row.start, &row.end, team_hours)? {
             if day >= from && day <= to {
                 *out.entry((row.team_id, day)).or_insert(0.0) += share;
             }
@@ -395,7 +562,7 @@ pub async fn team_month_loads(db: &impl ConnectionTrait, year: i32) -> AppResult
     ) else {
         return Ok(out);
     };
-    for ((team_id, day), hours) in team_day_loads(db, None, first, last, None).await? {
+    for ((team_id, day), hours) in team_day_loads(db, None, first, last, None, None).await? {
         *out.entry((team_id, chrono::Datelike::month(&day))).or_insert(0.0) += hours;
     }
     Ok(out)

@@ -558,6 +558,7 @@ async fn commitment_requires_all_three_gates() {
             assigned_personnel_id: None,
             allow_double_booking_override: Some(false),
             override_reason: None,
+            acknowledged_assignee_issues: Vec::new(),
             budget_threshold: None,
         },
     )
@@ -591,6 +592,7 @@ async fn commitment_requires_all_three_gates() {
             assigned_personnel_id: None,
             allow_double_booking_override: Some(false),
             override_reason: None,
+            acknowledged_assignee_issues: Vec::new(),
             budget_threshold: None,
         },
     )
@@ -626,6 +628,7 @@ async fn assignee_unavailable_is_hard_rejected() {
             assigned_personnel_id: Some(personnel_id),
             allow_double_booking_override: Some(true),
             override_reason: Some("Force it".to_string()),
+            acknowledged_assignee_issues: Vec::new(),
             budget_threshold: None,
         },
     )
@@ -656,6 +659,7 @@ async fn double_booking_requires_override_audit() {
             assigned_personnel_id: Some(personnel_id),
             allow_double_booking_override: Some(false),
             override_reason: None,
+            acknowledged_assignee_issues: Vec::new(),
             budget_threshold: Some(50.0),
         },
     )
@@ -674,6 +678,7 @@ async fn double_booking_requires_override_audit() {
             assigned_personnel_id: Some(personnel_id),
             allow_double_booking_override: Some(false),
             override_reason: None,
+            acknowledged_assignee_issues: Vec::new(),
             budget_threshold: Some(50.0),
         },
     )
@@ -693,6 +698,7 @@ async fn double_booking_requires_override_audit() {
             assigned_personnel_id: Some(personnel_id),
             allow_double_booking_override: Some(true),
             override_reason: Some("Emergency overlap approved".to_string()),
+            acknowledged_assignee_issues: Vec::new(),
             budget_threshold: Some(50.0),
         },
     )
@@ -723,6 +729,7 @@ async fn freeze_blocks_reschedule_and_preserves_integrity() {
             assigned_personnel_id: None,
             allow_double_booking_override: Some(false),
             override_reason: None,
+            acknowledged_assignee_issues: Vec::new(),
             budget_threshold: None,
         },
     )
@@ -754,6 +761,7 @@ async fn freeze_blocks_reschedule_and_preserves_integrity() {
             assigned_personnel_id: None,
             allow_double_booking_override: Some(false),
             override_reason: None,
+            acknowledged_assignee_issues: Vec::new(),
             budget_threshold: None,
         },
     )
@@ -773,6 +781,7 @@ async fn freeze_blocks_reschedule_and_preserves_integrity() {
             assigned_personnel_id: None,
             allow_double_booking_override: Some(false),
             override_reason: None,
+            acknowledged_assignee_issues: Vec::new(),
             budget_threshold: None,
         },
     )
@@ -802,6 +811,7 @@ async fn break_in_requires_approval_or_dangerous_override() {
             assigned_personnel_id: Some(assignee_id),
             allow_double_booking_override: Some(false),
             override_reason: None,
+            acknowledged_assignee_issues: Vec::new(),
             budget_threshold: None,
         },
     )
@@ -823,6 +833,7 @@ async fn break_in_requires_approval_or_dangerous_override() {
             clear_assignee: None,
             bypass_availability: Some(false),
             override_reason: None,
+            acknowledged_assignee_issues: Vec::new(),
             dangerous_override_reason: None,
         },
     )
@@ -845,6 +856,7 @@ async fn break_in_requires_approval_or_dangerous_override() {
             clear_assignee: None,
             bypass_availability: Some(false),
             override_reason: Some("line stop".to_string()),
+            acknowledged_assignee_issues: Vec::new(),
             dangerous_override_reason: None,
         },
     )
@@ -886,6 +898,7 @@ async fn freeze_breach_notifications_are_deduped_and_notify_teams_emits_payloads
             assigned_personnel_id: Some(assignee_id),
             allow_double_booking_override: Some(false),
             override_reason: None,
+            acknowledged_assignee_issues: Vec::new(),
             budget_threshold: None,
         },
     )
@@ -931,6 +944,7 @@ async fn freeze_breach_notifications_are_deduped_and_notify_teams_emits_payloads
                 assigned_personnel_id: Some(assignee_id),
                 allow_double_booking_override: Some(false),
                 override_reason: None,
+                acknowledged_assignee_issues: Vec::new(),
                 budget_threshold: None,
             },
         )
@@ -995,6 +1009,7 @@ async fn gantt_snapshot_and_pdf_export_use_real_commitments() {
             assigned_personnel_id: None,
             allow_double_booking_override: Some(false),
             override_reason: None,
+            acknowledged_assignee_issues: Vec::new(),
             budget_threshold: None,
         },
     )
@@ -1196,6 +1211,7 @@ async fn commitment_write_back_updates_work_order_fields() {
             assigned_personnel_id: Some(personnel_id),
             allow_double_booking_override: Some(false),
             override_reason: None,
+            acknowledged_assignee_issues: Vec::new(),
             budget_threshold: None,
         },
     )
@@ -1273,6 +1289,7 @@ async fn commitment_write_back_updates_work_order_fields() {
             assigned_personnel_id: Some(personnel_id),
             allow_double_booking_override: Some(false),
             override_reason: None,
+            acknowledged_assignee_issues: Vec::new(),
             budget_threshold: None,
         },
     )
@@ -1309,6 +1326,7 @@ async fn break_in_write_back_updates_work_order_slot() {
             assigned_personnel_id: Some(personnel_id),
             allow_double_booking_override: Some(false),
             override_reason: None,
+            acknowledged_assignee_issues: Vec::new(),
             budget_threshold: None,
         },
     )
@@ -1329,6 +1347,7 @@ async fn break_in_write_back_updates_work_order_slot() {
             clear_assignee: None,
             approved_by_user_id: Some(66),
             override_reason: Some("Emergency move".to_string()),
+            acknowledged_assignee_issues: Vec::new(),
             dangerous_override_reason: None,
             bypass_availability: Some(true),
         },
@@ -1360,6 +1379,7 @@ async fn frozen_reschedule_leaves_work_order_unchanged() {
             assigned_personnel_id: None,
             allow_double_booking_override: Some(false),
             override_reason: None,
+            acknowledged_assignee_issues: Vec::new(),
             budget_threshold: None,
         },
     )
@@ -1390,6 +1410,7 @@ async fn frozen_reschedule_leaves_work_order_unchanged() {
             assigned_personnel_id: None,
             allow_double_booking_override: Some(false),
             override_reason: None,
+            acknowledged_assignee_issues: Vec::new(),
             budget_threshold: None,
         },
     )
@@ -1434,6 +1455,7 @@ async fn commitment_rejects_when_work_order_not_planning_or_ready() {
             assigned_personnel_id: None,
             allow_double_booking_override: Some(false),
             override_reason: None,
+            acknowledged_assignee_issues: Vec::new(),
             budget_threshold: None,
         },
     )
@@ -1482,6 +1504,7 @@ fn commit_input(candidate_id: i64, team_id: i64, start: &str, end: &str) -> Crea
         assigned_personnel_id: None,
         allow_double_booking_override: Some(false),
         override_reason: None,
+        acknowledged_assignee_issues: Vec::new(),
         budget_threshold: None,
     }
 }
@@ -1776,6 +1799,7 @@ async fn a_break_in_can_unassign_the_technician() {
             clear_assignee: Some(true),
             bypass_availability: Some(false),
             override_reason: None,
+            acknowledged_assignee_issues: Vec::new(),
             dangerous_override_reason: None,
         },
     )
@@ -2260,9 +2284,10 @@ async fn a_technician_carries_work_orders_assigned_outside_planning() {
         "{row:?}"
     );
 
-    // Overridden with a reason: committed and logged.
+    // Overridden with a reason, the refusal acknowledged: committed and logged.
     input.allow_double_booking_override = Some(true);
     input.override_reason = Some("Short job, overtime agreed with the shift lead".to_string());
+    input.acknowledged_assignee_issues = vec!["PLANNING_ASSIGNEE_OVERLOADED".to_string()];
     scheduling::create_schedule_commitment(&db, 1, input)
         .await
         .expect("overridden");
@@ -2317,8 +2342,22 @@ async fn an_assignee_off_shift_or_outside_the_crew_is_refused_unless_overridden(
         "{refused:?}"
     );
 
-    // An override without a reason is refused; with one, the commitment is made and logged.
+    // A reason alone does not cover refusals the planner did not see.
     input.allow_double_booking_override = Some(true);
+    input.override_reason = Some("Borrowed from the electrical crew for the day".to_string());
+    let refused = scheduling::create_schedule_commitment(&db, 1, input.clone())
+        .await
+        .expect_err("refusals not acknowledged");
+    assert!(
+        format!("{refused:?}").contains("PLANNING_ASSIGNEE_NOT_IN_CREW"),
+        "{refused:?}"
+    );
+    // Acknowledged but without a reason: refused; with both, the commitment is made and logged.
+    input.acknowledged_assignee_issues = vec![
+        "PLANNING_ASSIGNEE_NOT_IN_CREW".to_string(),
+        "PLANNING_ASSIGNEE_NOT_WORKING".to_string(),
+    ];
+    input.override_reason = None;
     scheduling::create_schedule_commitment(&db, 1, input.clone())
         .await
         .expect_err("a reason is required");
@@ -2327,4 +2366,280 @@ async fn an_assignee_off_shift_or_outside_the_crew_is_refused_unless_overridden(
         .await
         .expect("overridden with a reason");
     assert_eq!(assignee_overrides(&db).await, 1);
+}
+
+async fn set_wo_dates(db: &DatabaseConnection, wo_id: i64, start: &str, end: &str) {
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE work_orders SET planned_start = ?, planned_end = ? WHERE id = ?",
+        [start.into(), end.into(), wo_id.into()],
+    ))
+    .await
+    .expect("set work order dates");
+}
+
+async fn wo_code(db: &DatabaseConnection, wo_id: i64) -> String {
+    db.query_one(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "SELECT code FROM work_orders WHERE id = ?",
+        [wo_id.into()],
+    ))
+    .await
+    .expect("query")
+    .expect("row")
+    .try_get("", "code")
+    .expect("code")
+}
+
+async fn person_hours_on(db: &DatabaseConnection, person: i64, on: &str) -> f64 {
+    crate::planning::person_load::person_day_loads(db, &[person], day(on), day(on), None, None)
+        .await
+        .expect("person loads")
+        .get(&(person, day(on)))
+        .copied()
+        .unwrap_or(0.0)
+}
+
+#[tokio::test]
+async fn typed_and_unreadable_work_order_dates_never_break_the_checks() {
+    let db = setup_db().await;
+    let team_id = get_any_team_id(&db).await;
+    let person = roster_person(&db, team_id).await;
+    // Dates typed in a form (local, no offset) are read like the shift code reads them.
+    let typed = wo_outside_planning(&db, person, "2026-05-04T08:00", "2026-05-04T11:00", 3.0).await;
+    set_wo_dates(&db, typed, "2026-05-04T08:00", "2026-05-04T11:00").await;
+    // Dates that cannot be read: skipped and reported, never an error.
+    let broken = wo_outside_planning(&db, person, "2026-05-04T12:00", "2026-05-04T13:00", 1.0).await;
+    set_wo_dates(&db, broken, "next tuesday", "soon").await;
+    assert!((person_hours_on(&db, person, "2026-05-04").await - 3.0).abs() < 0.01);
+
+    let job = insert_candidate(&db, "pm_occurrence", 8101, "ready", 100.0).await;
+    let picker = scheduling::list_assignee_capacity(
+        &db,
+        crate::planning::domain::AssigneeCapacityInput {
+            team_id,
+            start: local("2026-05-04T13:00"),
+            end: local("2026-05-04T14:00"),
+            candidate_id: Some(job),
+            commitment_id: None,
+        },
+    )
+    .await
+    .expect("the picker still works");
+    let row = picker
+        .iter()
+        .find(|r| r.personnel_id == person)
+        .expect("technician listed");
+    let code = wo_code(&db, broken).await;
+    assert!(row.unreadable_work_orders.iter().any(|w| w.code == code), "{row:?}");
+
+    let mut input = commit_input(job, team_id, "2026-05-04T13:00", "2026-05-04T14:00");
+    input.assigned_personnel_id = Some(person);
+    scheduling::create_schedule_commitment(&db, 1, input)
+        .await
+        .expect("the gate still works");
+}
+
+#[tokio::test]
+async fn a_commitment_without_a_technician_does_not_hide_the_work_order_from_its_responsible() {
+    let db = setup_db().await;
+    let team_id = get_any_team_id(&db).await;
+    let person = roster_person(&db, team_id).await;
+    let wo_id = wo_outside_planning(&db, person, "2026-05-04T08:00", "2026-05-04T16:00", 6.0).await;
+    let candidate = insert_candidate(&db, "work_order", wo_id, "ready", 100.0).await;
+    set_estimate(&db, candidate, Some(6.0)).await;
+    // Planning commits the work order to the crew without naming a technician.
+    scheduling::create_schedule_commitment(
+        &db,
+        1,
+        commit_input(candidate, team_id, "2026-05-04T08:00", "2026-05-04T14:00"),
+    )
+    .await
+    .expect("crew commitment");
+    // The OT is then given a responsible technician outside planning (the commitment still names
+    // nobody): that technician carries it.
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE work_orders SET primary_responsible_id = \
+             (SELECT id FROM user_accounts WHERE personnel_id = ? ORDER BY id LIMIT 1) WHERE id = ?",
+        [person.into(), wo_id.into()],
+    ))
+    .await
+    .expect("assigned outside planning");
+    assert!(
+        (person_hours_on(&db, person, "2026-05-04").await - 6.0).abs() < 0.01,
+        "the responsible technician still carries it"
+    );
+}
+
+#[tokio::test]
+async fn the_crew_load_counts_its_work_orders_outside_planning_once() {
+    let db = setup_db().await;
+    let team_id = get_any_team_id(&db).await;
+    let (wo_id, _) = create_planning_wo(&db, "Crew job outside planning").await;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE work_orders SET assigned_team_id = ?, planned_start = ?, planned_end = ?, \
+             expected_duration_hours = 2.0, planned_crew_size = 3 WHERE id = ?",
+        [
+            team_id.into(),
+            local("2026-05-04T08:00").into(),
+            local("2026-05-04T12:00").into(),
+            wo_id.into(),
+        ],
+    ))
+    .await
+    .expect("crew OT outside planning");
+    let loads = team_loads(&db, team_id, "2026-05-04", "2026-05-04").await;
+    assert!((loads["2026-05-04"].0 - 6.0).abs() < 0.01, "2 h × 3 people: {loads:?}");
+
+    // Committed by planning: counted once, as the commitment.
+    let candidate = insert_candidate(&db, "work_order", wo_id, "ready", 100.0).await;
+    set_estimate(&db, candidate, Some(2.0)).await;
+    set_crew(&db, candidate, Some(3)).await;
+    scheduling::create_schedule_commitment(
+        &db,
+        1,
+        commit_input(candidate, team_id, "2026-05-04T08:00", "2026-05-04T12:00"),
+    )
+    .await
+    .expect("its own OT is not counted against it");
+    let loads = team_loads(&db, team_id, "2026-05-04", "2026-05-04").await;
+    assert!((loads["2026-05-04"].0 - 6.0).abs() < 0.01, "counted once: {loads:?}");
+}
+
+#[test]
+fn a_slot_books_net_working_hours_not_the_raw_overlap() {
+    use crate::planning::load::{net_hours_in, working_hours_in};
+    // An 8 h window worth 6 net hours (break and utilisation): half the window is 3 net hours.
+    let days =
+        std::collections::BTreeMap::from([(day("2026-05-04"), shift_hours("2026-05-04", "08:00", "16:00", 6.0))]);
+    let net = net_hours_in(&local("2026-05-04T08:00"), &local("2026-05-04T12:00"), &days).expect("net");
+    assert!((net - 3.0).abs() < 1e-6, "{net}");
+    let raw = working_hours_in(&local("2026-05-04T08:00"), &local("2026-05-04T12:00"), &days).expect("raw");
+    assert!((raw - 4.0).abs() < 1e-6, "{raw}");
+}
+
+#[tokio::test]
+async fn a_work_order_without_a_duration_books_the_working_time_of_its_slot() {
+    let db = setup_db().await;
+    let team_id = get_any_team_id(&db).await; // 08:00–16:00, 8 h net
+    let person = roster_person(&db, team_id).await;
+    let wo_id = wo_outside_planning(&db, person, "2026-05-04T08:00", "2026-05-04T12:00", 1.0).await;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE work_orders SET expected_duration_hours = NULL WHERE id = ?",
+        [wo_id.into()],
+    ))
+    .await
+    .expect("no duration");
+    assert!((person_hours_on(&db, person, "2026-05-04").await - 4.0).abs() < 0.01);
+}
+
+#[tokio::test]
+async fn a_break_in_overrides_only_acknowledged_refusals_and_logs_them() {
+    let db = setup_db().await;
+    let team_id = get_any_team_id(&db).await;
+    let person = roster_person(&db, team_id).await;
+    let candidate = insert_candidate(&db, "pm_occurrence", 8201, "ready", 100.0).await;
+    let mut input = commit_input(candidate, team_id, "2026-05-04T09:00", "2026-05-04T10:00");
+    input.assigned_personnel_id = Some(person);
+    let commitment = scheduling::create_schedule_commitment(&db, 1, input)
+        .await
+        .expect("commitment");
+
+    // Moved to 18:00–20:00, after the technician's shift.
+    let break_in = |reason: Option<&str>, acknowledged: Vec<String>| CreateScheduleBreakInInput {
+        schedule_commitment_id: commitment.id,
+        expected_commitment_row_version: commitment.row_version,
+        break_in_reason: "emergency".to_string(),
+        approved_by_user_id: None,
+        new_slot_start: local("2026-05-04T18:00"),
+        new_slot_end: local("2026-05-04T20:00"),
+        new_assigned_team_id: Some(team_id),
+        new_assigned_personnel_id: Some(person),
+        clear_assignee: None,
+        bypass_availability: Some(false),
+        override_reason: reason.map(str::to_string),
+        acknowledged_assignee_issues: acknowledged,
+        dangerous_override_reason: Some("Pump failure, line stopped".to_string()),
+    };
+    let refused = scheduling::create_schedule_break_in(&db, 1, break_in(Some("Night callout"), Vec::new()))
+        .await
+        .expect_err("not acknowledged");
+    assert!(
+        format!("{refused:?}").contains("PLANNING_ASSIGNEE_NOT_WORKING"),
+        "{refused:?}"
+    );
+
+    scheduling::create_schedule_break_in(
+        &db,
+        1,
+        break_in(Some("Night callout"), vec!["PLANNING_ASSIGNEE_NOT_WORKING".to_string()]),
+    )
+    .await
+    .expect("acknowledged, with a reason");
+    let logged = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS c FROM schedule_change_log WHERE action_type = 'override_assignee' \
+               AND commitment_id = ? AND actor_id = 1 AND reason = 'Night callout' \
+               AND reason_code LIKE '%PLANNING_ASSIGNEE_NOT_WORKING%'",
+            [commitment.id.into()],
+        ))
+        .await
+        .expect("query")
+        .expect("row")
+        .try_get::<i64>("", "c")
+        .expect("count");
+    assert_eq!(logged, 1, "logged with actor, reason and the overridden codes");
+}
+
+#[tokio::test]
+async fn an_older_commitment_counts_labour_per_person_or_is_reported_unknown() {
+    let db = setup_db().await;
+    let team_id = get_any_team_id(&db).await;
+    ensure_personnel_with_rate(&db, "PLN-SECOND-OLD").await;
+    let person = roster_person(&db, team_id).await;
+    let candidate = insert_candidate(&db, "pm_occurrence", 8301, "ready", 100.0).await;
+    set_estimate(&db, candidate, Some(4.0)).await;
+    set_crew(&db, candidate, Some(2)).await;
+    let mut input = commit_input(candidate, team_id, "2026-05-04T08:00", "2026-05-04T12:00");
+    input.assigned_personnel_id = Some(person);
+    let commitment = scheduling::create_schedule_commitment(&db, 1, input)
+        .await
+        .expect("commitment");
+    // As before migration 210: no hours per person recorded; 8 h of labour ÷ 2 people.
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE schedule_commitments SET planned_person_hours = NULL WHERE id = ?",
+        [commitment.id.into()],
+    ))
+    .await
+    .expect("older commitment");
+    assert!((person_hours_on(&db, person, "2026-05-04").await - 4.0).abs() < 0.01);
+
+    // Without a crew size the hours are unknown: not counted, and reported.
+    set_crew(&db, candidate, None).await;
+    assert!(
+        person_hours_on(&db, person, "2026-05-04").await.abs() < 0.01,
+        "never the slot's length"
+    );
+    let picker = scheduling::list_assignee_capacity(
+        &db,
+        crate::planning::domain::AssigneeCapacityInput {
+            team_id,
+            start: local("2026-05-04T13:00"),
+            end: local("2026-05-04T14:00"),
+            candidate_id: None,
+            commitment_id: None,
+        },
+    )
+    .await
+    .expect("picker");
+    let row = picker
+        .iter()
+        .find(|r| r.personnel_id == person)
+        .expect("technician listed");
+    assert_eq!(row.unknown_hours_jobs, 1, "{row:?}");
 }

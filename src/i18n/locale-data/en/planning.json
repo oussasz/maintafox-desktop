@@ -218,7 +218,8 @@
       "production_loss": "Production loss",
       "regulatory": "Regulatory",
       "other": "Other"
-    }
+    },
+    "acknowledgeRefusals": "Override these refusals with the reason above"
   },
   "freeze": {
     "title": "Freeze schedule period",
@@ -230,7 +231,9 @@
     "title": "Override double-booking",
     "description": "This move conflicts with an existing assignment. Provide an audit reason to continue.",
     "reason": "Override reason",
-    "confirm": "Confirm override"
+    "confirm": "Confirm override",
+    "assigneeTitle": "Override the assignee checks",
+    "assigneeDescription": "You are overriding these refusals for this technician. Give the reason; it is logged."
   },
   "inspector": {
     "title": "Commitment detail",
@@ -287,6 +290,12 @@
       "PLANNING_ASSIGNEE_NOT_IN_CREW": "Not a member of this crew on the slot's days.",
       "PLANNING_ASSIGNEE_NOT_WORKING": "Does not work during this slot.",
       "PLANNING_ASSIGNEE_OVERLOADED": "Not enough hours left for this job on one of the days."
-    }
+    },
+    "daysLabel": "The technician's days over the slot",
+    "unknownHours_one": "{{count}} of their jobs has unknown hours (not counted).",
+    "unknownHours_other": "{{count}} of their jobs have unknown hours (not counted).",
+    "unreadableWorkOrders": "Planned dates that cannot be read (not counted): {{codes}}.",
+    "othersUnnamed_one": "+ {{count}} other crew member not named (counted in the crew's load).",
+    "othersUnnamed_other": "+ {{count}} other crew members not named (counted in the crew's load)."
   }
 }

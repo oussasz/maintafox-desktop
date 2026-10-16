@@ -1,9 +1,12 @@
-import type { TFunction } from "i18next";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
+import {
+  AssigneeCapacityDetails,
+  assigneeOptionSuffix,
+} from "@/components/planning/AssigneeCapacityDetails";
 import { OverrideReasonDialog } from "@/components/planning/OverrideReasonDialog";
 import {
   PLANNING_PROPOSED_ITEM_ID,
@@ -30,6 +33,7 @@ import {
   slotShiftHours,
   teamGroupId,
 } from "@/components/planning/planning-model";
+import { useAssigneeCapacity } from "@/components/planning/use-assignee-capacity";
 import {
   ResourceTimeline,
   type ResourceTimelineGroup,
@@ -57,10 +61,8 @@ import {
 import { useFormatters } from "@/hooks/use-formatters";
 import { formatOrDash, formatPersonLabel } from "@/lib/display";
 import { getActiveRateCard, listTeamMembers } from "@/services/personnel-service";
-import { listAssigneeCapacity } from "@/services/planning-service";
 import { extractIpcValidationDetails, toErrorMessage } from "@/utils/errors";
 import type {
-  AssigneeCapacity,
   CandidateConflictSummary,
   CreateScheduleCommitmentInput,
   PlanningGanttSnapshot,
@@ -128,6 +130,8 @@ export function CommitDialog({
   const [overrideOpen, setOverrideOpen] = useState(false);
   const [pendingOverrideInput, setPendingOverrideInput] =
     useState<CreateScheduleCommitmentInput | null>(null);
+  /** The assignee refusals the pending override would cover (shown before confirming). */
+  const [pendingOverrideCodes, setPendingOverrideCodes] = useState<string[]>([]);
 
   const requireTargetCrew = boardScope.kind === "all";
   const effectiveTeamId = requireTargetCrew ? targetCrewId : teamId;
@@ -211,35 +215,14 @@ export function CommitDialog({
 
   const rosterIds = useMemo(() => new Set(roster.map((m) => m.personnel_id)), [roster]);
 
-  /** Each crew member over the chosen slot: shift, hours left net of all their work, refusals. */
-  const [assigneeCapacity, setAssigneeCapacity] = useState<Map<number, AssigneeCapacity>>(
-    new Map(),
-  );
-  useEffect(() => {
-    const startIso = start.trim() ? fromDateTimeLocal(start) : "";
-    const endIso = end.trim() ? fromDateTimeLocal(end) : "";
-    if (!open || effectiveTeamId == null || !startIso || !endIso || endIso <= startIso) {
-      setAssigneeCapacity(new Map());
-      return;
-    }
-    let cancelled = false;
-    listAssigneeCapacity({
-      team_id: effectiveTeamId,
-      start: startIso,
-      end: endIso,
-      candidate_id: candidate?.id ?? null,
-    })
-      .then((rows) => {
-        if (!cancelled) setAssigneeCapacity(new Map(rows.map((r) => [r.personnel_id, r])));
-      })
-      .catch(() => {
-        // The picker still lists the crew; the commit gate checks the hours anyway.
-        if (!cancelled) setAssigneeCapacity(new Map());
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [open, effectiveTeamId, start, end, candidate?.id]);
+  /** Each crew member over the chosen slot: shift and hours left per day, refusals. */
+  const assigneeCapacity = useAssigneeCapacity({
+    enabled: open,
+    teamId: effectiveTeamId,
+    startIso: start.trim() ? fromDateTimeLocal(start) : "",
+    endIso: end.trim() ? fromDateTimeLocal(end) : "",
+    candidateId: candidate?.id ?? null,
+  });
 
   const assigneeOptions = useMemo(
     () =>
@@ -248,7 +231,10 @@ export function CommitDialog({
           ? `${formatPersonLabel(m.full_name)} (${m.employee_code})`
           : formatPersonLabel(m.full_name);
         const cap = assigneeCapacity.get(m.personnel_id);
-        return { id: m.personnel_id, label: cap ? `${name} — ${assigneeSummary(cap, t)}` : name };
+        return {
+          id: m.personnel_id,
+          label: cap ? `${name} — ${assigneeOptionSuffix(cap, t)}` : name,
+        };
       }),
     [roster, assigneeCapacity, t],
   );
@@ -597,6 +583,7 @@ export function CommitDialog({
       const codes = extractIpcValidationDetails(err).map((d) => d.code);
       if (isAssigneeOverridableError(codes, message)) {
         setPendingOverrideInput(input);
+        setPendingOverrideCodes(codes.filter((c) => c.startsWith("PLANNING_ASSIGNEE_")));
       }
     }
   }
@@ -817,13 +804,11 @@ export function CommitDialog({
                     ))}
                   </SelectContent>
                 </Select>
-                {selectedCapacity && selectedCapacity.issues.length > 0 ? (
-                  <ul className="mt-1 space-y-0.5 text-[11px] text-tone-attention-fg" role="status">
-                    {selectedCapacity.issues.map((code) => (
-                      <li key={code}>{t(`assignee.issues.${code}`)}</li>
-                    ))}
-                  </ul>
-                ) : null}
+                <AssigneeCapacityDetails
+                  capacity={selectedCapacity}
+                  crewSize={candidate?.planned_crew_size ?? null}
+                  assigned={personnelId != null}
+                />
                 {assigneeHelper ? (
                   <p className={cnHelper(rosterError != null)}>{assigneeHelper}</p>
                 ) : (
@@ -967,6 +952,7 @@ export function CommitDialog({
       <OverrideReasonDialog
         open={overrideOpen}
         onOpenChange={setOverrideOpen}
+        issues={pendingOverrideCodes}
         onConfirm={(reason) => {
           const pending = pendingOverrideInput;
           if (!pending) return;
@@ -975,27 +961,21 @@ export function CommitDialog({
             ...pending,
             allow_double_booking_override: true,
             override_reason: reason,
+            // Only the refusals shown in the dialog are overridden.
+            acknowledged_assignee_issues: pendingOverrideCodes,
           });
         }}
-      />
+      >
+        <AssigneeCapacityDetails
+          capacity={selectedCapacity}
+          crewSize={candidate?.planned_crew_size ?? null}
+          assigned={personnelId != null}
+        />
+      </OverrideReasonDialog>
     </>
   );
 }
 
 function cnHelper(isError: boolean): string {
   return isError ? "mt-1 text-[11px] text-destructive" : "mt-1 text-[11px] text-text-muted";
-}
-
-/** "5.5 h left · 08:00–16:00", or why the person does not work during the slot. */
-function assigneeSummary(cap: AssigneeCapacity, t: TFunction<"planning">): string {
-  if (cap.issues.includes("PLANNING_ASSIGNEE_NOT_WORKING") || cap.slot_working_hours <= 0) {
-    const off = cap.days.find((d) => d.reason !== "working");
-    return t("assignee.notWorking", {
-      reason: t(`assignee.reasons.${off?.reason ?? "outside_shift"}`),
-    });
-  }
-  const left = cap.days.reduce((sum, d) => sum + d.remaining_hours, 0);
-  const shift = cap.days.find((d) => d.shift_start && d.shift_end);
-  const hours = t("assignee.hoursLeft", { hours: left.toFixed(1) });
-  return shift ? `${hours} · ${shift.shift_start}–${shift.shift_end}` : hours;
 }
