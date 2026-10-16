@@ -160,6 +160,10 @@ pub struct ScheduleCommitment {
     /// migration 205 without an estimate (its slot length then counts).
     #[serde(default)]
     pub planned_labor_hours: Option<f64>,
+    /// Hours the assigned technician works on it (the job's duration, migration 210); `None` for a
+    /// commitment from before (its slot then counts for the technician).
+    #[serde(default)]
+    pub planned_person_hours: Option<f64>,
     pub row_version: i64,
     pub created_at: String,
     pub updated_at: String,
@@ -235,6 +239,20 @@ pub struct TeamCapacityLoad {
     /// Hours of members whose shift window is not known (counted in full on the days a slot touches).
     #[serde(default)]
     pub unwindowed_hours: f64,
+}
+
+/// The assignee picker's question: who in the crew can take this slot, and with how many hours
+/// left. `candidate_id` (a job to commit) or `commitment_id` (a commitment being moved) gives the
+/// job's hours per person, so each member's refusals can be shown before committing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssigneeCapacityInput {
+    pub team_id: i64,
+    pub start: String,
+    pub end: String,
+    #[serde(default)]
+    pub candidate_id: Option<i64>,
+    #[serde(default)]
+    pub commitment_id: Option<i64>,
 }
 
 /// One member's shift window (local time, `YYYY-MM-DDTHH:MM:SS`; a night shift ends the next day).
@@ -347,6 +365,10 @@ pub struct CreateScheduleCommitmentInput {
     pub allow_double_booking_override: Option<bool>,
     pub override_reason: Option<String>,
     pub budget_threshold: Option<f64>,
+    /// The assignee refusals (`PLANNING_ASSIGNEE_*`) the planner saw and overrides with the reason:
+    /// each refusal must be listed, so a reason given for one never covers another.
+    #[serde(default)]
+    pub acknowledged_assignee_issues: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -360,6 +382,10 @@ pub struct RescheduleCommitmentInput {
     pub allow_double_booking_override: Option<bool>,
     pub override_reason: Option<String>,
     pub budget_threshold: Option<f64>,
+    /// The assignee refusals (`PLANNING_ASSIGNEE_*`) the planner saw and overrides with the reason:
+    /// each refusal must be listed, so a reason given for one never covers another.
+    #[serde(default)]
+    pub acknowledged_assignee_issues: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -393,6 +419,10 @@ pub struct CreateScheduleBreakInInput {
     pub bypass_availability: Option<bool>,
     pub override_reason: Option<String>,
     pub dangerous_override_reason: Option<String>,
+    /// The assignee refusals (`PLANNING_ASSIGNEE_*`) the planner saw and overrides with the reason:
+    /// each refusal must be listed, so a reason given for one never covers another.
+    #[serde(default)]
+    pub acknowledged_assignee_issues: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

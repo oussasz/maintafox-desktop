@@ -1,13 +1,18 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
+import {
+  AssigneeCapacityDetails,
+  assigneeOptionSuffix,
+} from "@/components/planning/AssigneeCapacityDetails";
 import {
   fromDateTimeLocal,
   PLANNING_BREAK_IN_REASONS,
   toDateTimeLocal,
   type PlanningBreakInReason,
 } from "@/components/planning/planning-model";
+import { useAssigneeCapacity } from "@/components/planning/use-assignee-capacity";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -28,6 +33,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { formatOrDash, formatPersonLabel } from "@/lib/display";
 import { listTeamMembers } from "@/services/personnel-service";
+import { extractIpcValidationDetails } from "@/utils/errors";
 import type {
   CreateScheduleBreakInInput,
   ScheduleBreakIn,
@@ -75,6 +81,9 @@ export function BreakInDialog({
   const [dangerousOverrideReason, setDangerousOverrideReason] = useState("");
   const [slotError, setSlotError] = useState<string | null>(null);
   const [crew, setCrew] = useState<PersonnelOption[] | null>(null);
+  /** Assignee refusals returned for this break-in, and whether the planner overrides them. */
+  const [refusals, setRefusals] = useState<string[]>([]);
+  const [acknowledged, setAcknowledged] = useState(false);
 
   // Opened on a commitment (inspector): that one is selected.
   useEffect(() => {
@@ -111,7 +120,28 @@ export function BreakInDialog({
       cancelled = true;
     };
   }, [open, targetTeamId]);
-  const assigneeOptions = crew ?? personnel;
+  const capacity = useAssigneeCapacity({
+    enabled: open && selected != null,
+    teamId: targetTeamId,
+    startIso: newStart.trim() ? fromDateTimeLocal(newStart) : "",
+    endIso: newEnd.trim() ? fromDateTimeLocal(newEnd) : "",
+    commitmentId: selected?.id ?? null,
+  });
+  const assigneeOptions = useMemo(
+    () =>
+      (crew ?? personnel).map((person) => {
+        const cap = capacity.get(person.id);
+        return cap
+          ? { ...person, label: `${person.label} — ${assigneeOptionSuffix(cap, t)}` }
+          : person;
+      }),
+    [crew, personnel, capacity, t],
+  );
+  // A new slot or technician: earlier refusals no longer apply.
+  useEffect(() => {
+    setRefusals([]);
+    setAcknowledged(false);
+  }, [newStart, newEnd, newPersonnelId, commitmentId]);
 
   useEffect(() => {
     if (!selected || !open) return;
@@ -129,21 +159,34 @@ export function BreakInDialog({
       return;
     }
     setSlotError(null);
-    await onSubmit({
-      schedule_commitment_id: selected.id,
-      expected_commitment_row_version: selected.row_version,
-      break_in_reason: reason,
-      approved_by_user_id: approverUserId,
-      new_slot_start: startIso,
-      new_slot_end: endIso,
-      new_assigned_team_id: targetTeamId,
-      new_assigned_personnel_id: newPersonnelId,
-      // "Unassigned" chosen on a commitment that has a technician removes them.
-      clear_assignee: newPersonnelId == null && selected.assigned_personnel_id != null,
-      bypass_availability: false,
-      override_reason: overrideReason.trim() || null,
-      dangerous_override_reason: dangerousOverrideReason.trim() || null,
-    });
+    try {
+      await onSubmit({
+        schedule_commitment_id: selected.id,
+        expected_commitment_row_version: selected.row_version,
+        break_in_reason: reason,
+        approved_by_user_id: approverUserId,
+        new_slot_start: startIso,
+        new_slot_end: endIso,
+        new_assigned_team_id: targetTeamId,
+        new_assigned_personnel_id: newPersonnelId,
+        // "Unassigned" chosen on a commitment that has a technician removes them.
+        clear_assignee: newPersonnelId == null && selected.assigned_personnel_id != null,
+        bypass_availability: false,
+        override_reason: overrideReason.trim() || null,
+        dangerous_override_reason: dangerousOverrideReason.trim() || null,
+        // Only refusals the planner saw and ticked are overridden, with the reason above.
+        acknowledged_assignee_issues: acknowledged ? refusals : [],
+      });
+    } catch (err) {
+      const codes = extractIpcValidationDetails(err)
+        .map((d) => d.code)
+        .filter((c) => c.startsWith("PLANNING_ASSIGNEE_"));
+      if (codes.length > 0) {
+        setRefusals(codes);
+        setAcknowledged(false);
+      }
+      return;
+    }
     setOverrideReason("");
     setDangerousOverrideReason("");
     onOpenChange(false);
@@ -254,6 +297,9 @@ export function BreakInDialog({
                   ))}
                 </SelectContent>
               </Select>
+              {newPersonnelId != null ? (
+                <AssigneeCapacityDetails capacity={capacity.get(newPersonnelId)} assigned />
+              ) : null}
             </div>
           </div>
 
@@ -269,6 +315,27 @@ export function BreakInDialog({
               value={overrideReason}
               onChange={(e) => setOverrideReason(e.target.value)}
             />
+            {refusals.length > 0 ? (
+              <div className="mt-2 space-y-1 rounded border border-surface-border bg-surface-1 px-2 py-1.5">
+                <p className="text-xs text-text-primary">{t("override.assigneeDescription")}</p>
+                <ul
+                  className="list-disc space-y-0.5 pl-5 text-xs text-tone-attention-fg"
+                  role="status"
+                >
+                  {refusals.map((code) => (
+                    <li key={code}>{t(`assignee.issues.${code}`)}</li>
+                  ))}
+                </ul>
+                <label className="flex items-center gap-2 text-xs text-text-primary">
+                  <input
+                    type="checkbox"
+                    checked={acknowledged}
+                    onChange={(e) => setAcknowledged(e.target.checked)}
+                  />
+                  {t("breakIns.acknowledgeRefusals")}
+                </label>
+              </div>
+            ) : null}
           </div>
           <div>
             <Label>{t("breakIns.dangerousOverrideReason")}</Label>

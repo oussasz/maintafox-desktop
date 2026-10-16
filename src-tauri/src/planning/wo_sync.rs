@@ -18,6 +18,10 @@ pub struct WoSyncOutcome {
 
 /// Write committed slot/crew onto the linked WO and mirror candidate window fields.
 ///
+/// Only what the planner set is written: a technician named on the commitment becomes the OT's
+/// responsible; none named keeps the OT's current responsible; `clear_assignee` (the explicit
+/// "Unassigned" of a break-in) removes it.
+///
 /// Call only when `source_type == "work_order"`, after the commitment row is written,
 /// on the open planning transaction.
 pub async fn sync_work_order_from_commitment(
@@ -29,6 +33,7 @@ pub async fn sync_work_order_from_commitment(
     committed_end: &str,
     assigned_team_id: i64,
     assigned_personnel_id: Option<i64>,
+    clear_assignee: bool,
 ) -> AppResult<WoSyncOutcome> {
     let (from_code, status, row_version) = load_wo_status(tx, wo_id).await?;
 
@@ -59,7 +64,7 @@ pub async fn sync_work_order_from_commitment(
                 planned_start = ?,
                 planned_end = ?,
                 assigned_team_id = ?,
-                primary_responsible_id = ?,
+                primary_responsible_id = CASE WHEN ? = 1 THEN NULL ELSE COALESCE(?, primary_responsible_id) END,
                 scheduled_at = ?,
                 planner_id = COALESCE(planner_id, ?),
                 row_version = row_version + 1,
@@ -69,6 +74,7 @@ pub async fn sync_work_order_from_commitment(
                 committed_start.to_string().into(),
                 committed_end.to_string().into(),
                 assigned_team_id.into(),
+                i64::from(clear_assignee).into(),
                 primary_responsible_id.into(),
                 now.clone().into(),
                 actor_id.into(),
@@ -118,7 +124,7 @@ pub async fn sync_work_order_from_commitment(
          SET window_start = ?,
              window_end = ?,
              assigned_team_id = ?,
-             assigned_personnel_id = ?,
+             assigned_personnel_id = CASE WHEN ? = 1 THEN NULL ELSE COALESCE(?, assigned_personnel_id) END,
              row_version = row_version + 1,
              updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
          WHERE id = ?",
@@ -126,6 +132,7 @@ pub async fn sync_work_order_from_commitment(
             committed_start.to_string().into(),
             committed_end.to_string().into(),
             assigned_team_id.into(),
+            i64::from(clear_assignee).into(),
             assigned_personnel_id.into(),
             schedule_candidate_id.into(),
         ],

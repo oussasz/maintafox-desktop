@@ -9,20 +9,21 @@ use crate::notifications::emitter::{emit_event, NotificationEventInput};
 use crate::{activity, notifications};
 
 use super::domain::{
-    CapacityRule, CapacityRuleFilter, CapacityWindow, CreateCapacityRuleInput, CreatePlanningWindowInput,
-    CreateScheduleBreakInInput, CreateScheduleCommitmentInput, ExportPlanningGanttPdfInput, ExportedBinaryDocument,
-    FreezeSchedulePeriodInput, NotifyTeamsInput, NotifyTeamsResult, PlanningAssigneeLane, PlanningCrewLane,
-    PlanningGanttFilter, PlanningGanttSnapshot, PlanningWindow, PlanningWindowFilter, RescheduleCommitmentInput,
-    ScheduleBreakIn, ScheduleBreakInFilter, ScheduleChangeLogEntry, ScheduleCommitment, ScheduleCommitmentFilter,
-    TeamCapacityLoad, UpdateCapacityRuleInput, UpdatePlanningWindowInput,
+    AssigneeCapacityInput, CapacityRule, CapacityRuleFilter, CapacityWindow, CreateCapacityRuleInput,
+    CreatePlanningWindowInput, CreateScheduleBreakInInput, CreateScheduleCommitmentInput, ExportPlanningGanttPdfInput,
+    ExportedBinaryDocument, FreezeSchedulePeriodInput, NotifyTeamsInput, NotifyTeamsResult, PlanningAssigneeLane,
+    PlanningCrewLane, PlanningGanttFilter, PlanningGanttSnapshot, PlanningWindow, PlanningWindowFilter,
+    RescheduleCommitmentInput, ScheduleBreakIn, ScheduleBreakInFilter, ScheduleChangeLogEntry, ScheduleCommitment,
+    ScheduleCommitmentFilter, TeamCapacityLoad, UpdateCapacityRuleInput, UpdatePlanningWindowInput,
 };
 use super::load;
+use super::person_load;
 use super::wo_sync::{self, WoSyncOutcome};
 
 const CAPACITY_COLS: &str = "id,entity_id,team_id,effective_start,effective_end,available_hours_per_day,max_overtime_hours_per_day,row_version,created_at,updated_at";
 const WINDOW_COLS: &str =
     "id,entity_id,window_type,start_datetime,end_datetime,is_locked,lock_reason,row_version,created_at,updated_at";
-const COMMITMENT_COLS: &str = "sc.id,sc.schedule_candidate_id,sc.source_type,sc.source_id,sc.schedule_period_start,sc.schedule_period_end,sc.committed_start,sc.committed_end,sc.assigned_team_id,sc.assigned_personnel_id,sc.committed_by_id,sc.frozen_at,sc.estimated_labor_cost,sc.budget_threshold,sc.cost_variance_warning,sc.has_blocking_conflict,sc.nearest_feasible_window,sc.planned_labor_hours,sc.row_version,sc.created_at,sc.updated_at";
+const COMMITMENT_COLS: &str = "sc.id,sc.schedule_candidate_id,sc.source_type,sc.source_id,sc.schedule_period_start,sc.schedule_period_end,sc.committed_start,sc.committed_end,sc.assigned_team_id,sc.assigned_personnel_id,sc.committed_by_id,sc.frozen_at,sc.estimated_labor_cost,sc.budget_threshold,sc.cost_variance_warning,sc.has_blocking_conflict,sc.nearest_feasible_window,sc.planned_labor_hours,sc.planned_person_hours,sc.row_version,sc.created_at,sc.updated_at";
 const COMMITMENT_JOIN_COLS: &str = "\
     CASE sc.source_type \
         WHEN 'work_order' THEN wo.code \
@@ -198,6 +199,9 @@ fn map_commitment(row: &QueryResult) -> AppResult<ScheduleCommitment> {
         planned_labor_hours: row
             .try_get("", "planned_labor_hours")
             .map_err(|e| decode_err("planned_labor_hours", e))?,
+        planned_person_hours: row
+            .try_get("", "planned_person_hours")
+            .map_err(|e| decode_err("planned_person_hours", e))?,
         row_version: row
             .try_get("", "row_version")
             .map_err(|e| decode_err("row_version", e))?,
@@ -486,6 +490,7 @@ async fn compute_capacity_gate(
     end: &str,
     labour_hours: f64,
     exclude_commitment_id: Option<i64>,
+    exclude_work_order: Option<i64>,
 ) -> AppResult<(bool, Option<String>)> {
     let days = load::slot_days(start, end)?;
     let (Some(first), Some(last)) = (days.first().map(|d| d.0), days.last().map(|d| d.0)) else {
@@ -509,8 +514,15 @@ async fn compute_capacity_gate(
     let (Some(spread_first), Some(spread_last)) = (spread.keys().next().copied(), spread.keys().last().copied()) else {
         return Ok((true, None));
     };
-    let committed =
-        load::team_day_loads(db, Some(&[team_id]), spread_first, spread_last, exclude_commitment_id).await?;
+    let committed = load::team_day_loads(
+        db,
+        Some(&[team_id]),
+        spread_first,
+        spread_last,
+        exclude_commitment_id,
+        exclude_work_order,
+    )
+    .await?;
     for (day, share) in spread {
         let (cap, overtime) = team.get(&day).map(|t| (t.available, t.overtime)).unwrap_or((0.0, 0.0));
         let already = committed.get(&(team_id, day)).copied().unwrap_or(0.0);
@@ -621,6 +633,7 @@ async fn maybe_sync_work_order(
     committed_end: &str,
     assigned_team_id: i64,
     assigned_personnel_id: Option<i64>,
+    clear_assignee: bool,
 ) -> AppResult<Option<WoSyncOutcome>> {
     if source_type != "work_order" {
         return Ok(None);
@@ -634,6 +647,7 @@ async fn maybe_sync_work_order(
         committed_end,
         assigned_team_id,
         assigned_personnel_id,
+        clear_assignee,
     )
     .await?;
     Ok(Some(outcome))
@@ -751,9 +765,10 @@ async fn estimate_labor_cost(
     Ok(Some((labour_hours * rate * 100.0).round() / 100.0))
 }
 
-/// Labour hours a candidate books: its estimated duration × its planned crew size. Work without
-/// both cannot be committed: no duration or crew is ever assumed.
-async fn candidate_labour_hours(db: &impl ConnectionTrait, candidate_id: i64) -> AppResult<f64> {
+/// Hours a candidate books: the crew's labour (estimated duration × planned crew size) and each
+/// person's hours (the duration). Work without both cannot be committed: no duration or crew is
+/// ever assumed.
+async fn candidate_hours(db: &impl ConnectionTrait, candidate_id: i64) -> AppResult<(f64, f64)> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -773,7 +788,7 @@ async fn candidate_labour_hours(db: &impl ConnectionTrait, candidate_id: i64) ->
         .try_get("", "planned_crew_size")
         .map_err(|e| decode_err("planned_crew_size", e))?;
     match (estimate, crew) {
-        (Some(hours), Some(people)) if hours > 0.0 && people >= 1 => Ok(hours * people as f64),
+        (Some(hours), Some(people)) if hours > 0.0 && people >= 1 => Ok((hours * people as f64, hours)),
         _ => Err(crate::errors::org_validation_failed(
             "PLANNING_NOT_ESTIMATED",
             "This work is not estimated: enter its duration and crew size before committing it to the schedule.",
@@ -789,6 +804,8 @@ struct CommitmentGateResult {
     estimated_labor_cost: Option<f64>,
     cost_variance_warning: i64,
     labour_hours: f64,
+    /// Hours the assigned technician works on the job (its duration).
+    person_hours: f64,
 }
 
 async fn run_commitment_gates(
@@ -801,6 +818,7 @@ async fn run_commitment_gates(
     assigned_personnel_id: Option<i64>,
     allow_double_booking_override: bool,
     override_reason: Option<String>,
+    acknowledged_assignee_issues: &[String],
     budget_threshold: Option<f64>,
     actor_id: i64,
     exclude_commitment_id: Option<i64>,
@@ -816,7 +834,9 @@ async fn run_commitment_gates(
         )]));
     }
 
-    let labour_hours = candidate_labour_hours(tx, candidate_id).await?;
+    let (labour_hours, person_hours) = candidate_hours(tx, candidate_id).await?;
+    // The OT behind the job: not counted twice against the crew or the technician.
+    let own_work_order = person_load::source_work_order(tx, &source_type, source_id).await?;
     let (capacity_ok, overloaded_day) = compute_capacity_gate(
         tx,
         assigned_team_id,
@@ -824,6 +844,7 @@ async fn run_commitment_gates(
         committed_end,
         labour_hours,
         exclude_commitment_id,
+        own_work_order,
     )
     .await?;
     if !capacity_ok {
@@ -838,39 +859,69 @@ async fn run_commitment_gates(
         enforce_assignee_availability(tx, personnel_id, committed_start, committed_end).await?;
         enforce_assignee_qualifications(tx, &source_type, source_id, personnel_id).await?;
 
+        // The technician's own day (`planning::person_load`): in the crew, working during the slot,
+        // enough hours left each day net of all their committed work.
+        let issues = person_load::assignee_issues(
+            tx,
+            assigned_team_id,
+            personnel_id,
+            committed_start,
+            committed_end,
+            Some(person_hours),
+            exclude_commitment_id,
+            own_work_order,
+        )
+        .await?;
         let overlaps =
             check_double_booking(tx, personnel_id, committed_start, committed_end, exclude_commitment_id).await?;
+        // A refusal is overridden only when the planner saw it: each code must be acknowledged.
+        let all_acknowledged = issues
+            .iter()
+            .all(|i| acknowledged_assignee_issues.iter().any(|a| a == &i.code));
+        if !issues.is_empty() && (!allow_double_booking_override || !all_acknowledged) {
+            return Err(crate::errors::org_validation_failed_issues(issues));
+        }
         if overlaps > 0 && !allow_double_booking_override {
             return Err(AppError::ValidationFailed(vec![
                 "Double-booking detected. Provide explicit override reason.".to_string(),
             ]));
         }
-        if overlaps > 0 && allow_double_booking_override {
+        if (overlaps > 0 || !issues.is_empty()) && allow_double_booking_override {
             let reason = override_reason
                 .as_ref()
                 .map(|v| v.trim().to_string())
                 .filter(|v| !v.is_empty())
                 .ok_or_else(|| {
                     AppError::ValidationFailed(vec![
-                        "Override reason is required when bypassing double-booking prevention.".to_string(),
+                        "Override reason is required when bypassing the assignee checks.".to_string()
                     ])
                 })?;
+            let mut overridden: Vec<String> = issues.iter().map(|i| i.code.clone()).collect();
+            if overlaps > 0 {
+                overridden.push("DOUBLE_BOOKING".to_string());
+            }
             append_change_log(
                 tx,
                 exclude_commitment_id,
-                "override_double_booking",
+                if issues.is_empty() {
+                    "override_double_booking"
+                } else {
+                    "override_assignee"
+                },
                 Some(actor_id),
                 Some("assignment_window".to_string()),
                 None,
                 Some(format!("{committed_start} -> {committed_end}")),
-                Some("double_booking".to_string()),
+                Some(overridden.join(",")),
                 Some(reason.clone()),
                 Some(reason),
                 Some(
                     json!({
                         "personnel_id": personnel_id,
                         "committed_start": committed_start,
-                        "committed_end": committed_end
+                        "committed_end": committed_end,
+                        "overridden": overridden,
+                        "issues": issues,
                     })
                     .to_string(),
                 ),
@@ -893,6 +944,7 @@ async fn run_commitment_gates(
         estimated_labor_cost,
         cost_variance_warning,
         labour_hours,
+        person_hours,
     })
 }
 
@@ -1369,6 +1421,8 @@ pub async fn create_schedule_break_in(
         .as_ref()
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty());
+    // The OT behind the job: not counted twice against the crew or the technician.
+    let own_work_order = person_load::source_work_order(&tx, &current.source_type, current.source_id).await?;
 
     if let Some(personnel_id) = next_personnel_id {
         if let Err(err) =
@@ -1394,6 +1448,53 @@ pub async fn create_schedule_break_in(
                 "Break-in creates double-booking; override_reason is required.".to_string(),
             ]));
         }
+        // The technician's own day: in the crew, working, enough hours left. Each refusal is
+        // overridden only when acknowledged, with the break-in's reason, and logged.
+        let person_hours = commitment_person_hours(&tx, &current).await?;
+        let issues = person_load::assignee_issues(
+            &tx,
+            next_team_id,
+            personnel_id,
+            &input.new_slot_start,
+            &input.new_slot_end,
+            person_hours,
+            Some(current.id),
+            own_work_order,
+        )
+        .await?;
+        if !issues.is_empty() {
+            let all_acknowledged = issues
+                .iter()
+                .all(|i| input.acknowledged_assignee_issues.iter().any(|a| a == &i.code));
+            let Some(reason) = override_reason.clone().filter(|_| all_acknowledged) else {
+                return Err(crate::errors::org_validation_failed_issues(issues));
+            };
+            let overridden: Vec<String> = issues.iter().map(|i| i.code.clone()).collect();
+            append_change_log(
+                &tx,
+                Some(current.id),
+                "override_assignee",
+                Some(actor_id),
+                Some("assignment_window".to_string()),
+                None,
+                Some(format!("{} -> {}", input.new_slot_start, input.new_slot_end)),
+                Some(overridden.join(",")),
+                Some(reason.clone()),
+                Some(reason),
+                Some(
+                    json!({
+                        "personnel_id": personnel_id,
+                        "committed_start": input.new_slot_start,
+                        "committed_end": input.new_slot_end,
+                        "overridden": overridden,
+                        "issues": issues,
+                        "break_in": true,
+                    })
+                    .to_string(),
+                ),
+            )
+            .await?;
+        }
     }
 
     // The first overloaded day is reported by the error; nothing is stored as a "feasible window".
@@ -1404,6 +1505,7 @@ pub async fn create_schedule_break_in(
         &input.new_slot_end,
         labour_hours,
         Some(current.id),
+        own_work_order,
     )
     .await?;
     if !capacity_ok && dangerous_override_reason.is_none() {
@@ -1527,6 +1629,8 @@ pub async fn create_schedule_break_in(
         &input.new_slot_end,
         next_team_id,
         next_personnel_id,
+        // Only the explicit "Unassigned" removes the OT's responsible.
+        input.clear_assignee.unwrap_or(false),
     )
     .await?;
 
@@ -1626,6 +1730,7 @@ pub async fn create_schedule_commitment(
         input.assigned_personnel_id,
         input.allow_double_booking_override.unwrap_or(false),
         input.override_reason.clone(),
+        &input.acknowledged_assignee_issues,
         input.budget_threshold,
         actor_id,
         None,
@@ -1645,8 +1750,8 @@ pub async fn create_schedule_commitment(
         "INSERT INTO schedule_commitments
             (schedule_candidate_id, source_type, source_id, schedule_period_start, schedule_period_end, committed_start, committed_end,
              assigned_team_id, assigned_personnel_id, committed_by_id, estimated_labor_cost, budget_threshold, cost_variance_warning,
-             has_blocking_conflict, nearest_feasible_window, planned_labor_hours)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)",
+             has_blocking_conflict, nearest_feasible_window, planned_labor_hours, planned_person_hours)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)",
         [
             input.schedule_candidate_id.into(),
             gate.source_type.clone().into(),
@@ -1663,6 +1768,7 @@ pub async fn create_schedule_commitment(
             gate.cost_variance_warning.into(),
             gate.nearest_feasible_window.into(),
             gate.labour_hours.into(),
+            gate.person_hours.into(),
         ],
     ))
         .await?;
@@ -1702,6 +1808,7 @@ pub async fn create_schedule_commitment(
         &input.committed_end,
         input.assigned_team_id,
         input.assigned_personnel_id,
+        false,
     )
     .await?;
 
@@ -1767,6 +1874,7 @@ pub async fn reschedule_schedule_commitment(
         input.assigned_personnel_id,
         input.allow_double_booking_override.unwrap_or(false),
         input.override_reason.clone(),
+        &input.acknowledged_assignee_issues,
         input.budget_threshold,
         actor_id,
         Some(input.commitment_id),
@@ -1787,7 +1895,7 @@ pub async fn reschedule_schedule_commitment(
              SET schedule_period_start = ?, schedule_period_end = ?, committed_start = ?, committed_end = ?,
                  assigned_team_id = ?, assigned_personnel_id = ?, estimated_labor_cost = ?, budget_threshold = ?,
                  cost_variance_warning = ?, has_blocking_conflict = 0, nearest_feasible_window = ?,
-                 planned_labor_hours = ?,
+                 planned_labor_hours = ?, planned_person_hours = ?,
                  row_version = row_version + 1, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
              WHERE id = ? AND row_version = ?",
             [
@@ -1802,6 +1910,7 @@ pub async fn reschedule_schedule_commitment(
                 gate.cost_variance_warning.into(),
                 gate.nearest_feasible_window.into(),
                 gate.labour_hours.into(),
+                gate.person_hours.into(),
                 input.commitment_id.into(),
                 input.expected_row_version.into(),
             ],
@@ -1845,6 +1954,7 @@ pub async fn reschedule_schedule_commitment(
         &input.committed_end,
         input.assigned_team_id,
         input.assigned_personnel_id,
+        false,
     )
     .await?;
 
@@ -2007,7 +2117,7 @@ pub async fn get_planning_gantt_snapshot(
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
-        let loads = load::team_day_loads(db, Some(&teams), first, last, None).await?;
+        let loads = load::team_day_loads(db, Some(&teams), first, last, None, None).await?;
         for ((team_id, day), row) in &mut capacity_by_team_day {
             if let Ok(d) = parse_day(day) {
                 row.committed_hours = loads.get(&(*team_id, d)).copied().unwrap_or(0.0);
@@ -2223,6 +2333,88 @@ pub async fn export_planning_gantt_pdf(
         mime_type: "application/pdf".to_string(),
         bytes,
     })
+}
+
+/// Hours the assigned technician works on a commitment: recorded at commit time (migration 210),
+/// or for an older commitment the crew's labour ÷ its crew size; `None` when neither is known (the
+/// hours are then reported as unknown — the slot's length is never assumed).
+async fn commitment_person_hours(db: &impl ConnectionTrait, commitment: &ScheduleCommitment) -> AppResult<Option<f64>> {
+    if let Some(hours) = commitment.planned_person_hours {
+        return Ok(Some(hours));
+    }
+    let Some(labour) = commitment.planned_labor_hours else {
+        return Ok(None);
+    };
+    let crew: Option<i64> = match db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT planned_crew_size FROM schedule_candidates WHERE id = ?",
+            [commitment.schedule_candidate_id.into()],
+        ))
+        .await?
+    {
+        Some(row) => row
+            .try_get("", "planned_crew_size")
+            .map_err(|e| decode_err("planned_crew_size", e))?,
+        None => None,
+    };
+    Ok(crew.filter(|n| *n >= 1).map(|n| labour / n as f64))
+}
+
+/// Each crew member over a slot: shift, hours left each day net of all their committed work, and
+/// what the commit gate would refuse for the job (`planning::person_load`).
+pub async fn list_assignee_capacity(
+    db: &DatabaseConnection,
+    input: AssigneeCapacityInput,
+) -> AppResult<Vec<person_load::AssigneeCapacity>> {
+    validate_window(&input.start, &input.end, "start", "end")?;
+    load::validate_slot_length(&input.start, &input.end)?;
+    // The job's hours per person and the work order behind it (not counted twice).
+    let (person_hours, own_work_order) = match (input.commitment_id, input.candidate_id) {
+        (Some(commitment_id), _) => {
+            let current = get_commitment(db, commitment_id).await?;
+            (
+                commitment_person_hours(db, &current).await?,
+                person_load::source_work_order(db, &current.source_type, current.source_id).await?,
+            )
+        }
+        (None, Some(candidate_id)) => {
+            let row = db
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "SELECT source_type, source_id, estimated_duration_hours FROM schedule_candidates WHERE id = ?",
+                    [candidate_id.into()],
+                ))
+                .await?
+                .ok_or_else(|| AppError::NotFound {
+                    entity: "ScheduleCandidate".to_string(),
+                    id: candidate_id.to_string(),
+                })?;
+            let source_type: String = row
+                .try_get("", "source_type")
+                .map_err(|e| decode_err("source_type", e))?;
+            let source_id: i64 = row.try_get("", "source_id").map_err(|e| decode_err("source_id", e))?;
+            // A job without a duration shows the hours left, without refusals (it cannot be committed).
+            let duration: Option<f64> = row
+                .try_get("", "estimated_duration_hours")
+                .map_err(|e| decode_err("estimated_duration_hours", e))?;
+            (
+                duration.filter(|h| *h > 0.0),
+                person_load::source_work_order(db, &source_type, source_id).await?,
+            )
+        }
+        (None, None) => (None, None),
+    };
+    person_load::crew_assignee_capacity(
+        db,
+        input.team_id,
+        &input.start,
+        &input.end,
+        person_hours,
+        input.commitment_id,
+        own_work_order,
+    )
+    .await
 }
 
 pub async fn list_team_capacity_load(
