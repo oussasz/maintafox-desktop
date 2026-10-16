@@ -38,7 +38,11 @@ pub(crate) const USER_ACTIONS: &[&str] = &[
     "account_locked",
     "account_unlocked",
     "password_reset_by_admin",
+    EXPORT_ACTION,
 ];
+
+/// Ledger action of an export of the ledger itself (visible to every ledger reader).
+pub(crate) const EXPORT_ACTION: &str = "admin_events_exported";
 
 /// Actions visible to holders of `adm.roles` (role-governance events).
 pub(crate) const ROLE_ACTIONS: &[&str] = &[
@@ -53,6 +57,7 @@ pub(crate) const ROLE_ACTIONS: &[&str] = &[
     "delegation_policy_created",
     "delegation_policy_updated",
     "delegation_policy_deleted",
+    EXPORT_ACTION,
 ];
 
 /// Most rows one export returns (the screen lists 500 at a time).
@@ -299,6 +304,16 @@ fn map_csv_err(err: csv::Error) -> AppError {
     AppError::Internal(anyhow::anyhow!("CSV export error: {err}"))
 }
 
+/// A cell a spreadsheet would read as a formula (`= + - @`, or a leading tab / carriage return)
+/// is prefixed with `'`, so an exported summary cannot run anything when opened.
+fn csv_cell(value: String) -> String {
+    if value.starts_with(['=', '+', '-', '@', '\t', '\r']) {
+        format!("'{value}")
+    } else {
+        value
+    }
+}
+
 /// CSV of the events (one row per event, the diff as its JSON text).
 pub(crate) fn events_to_csv(events: &[AdminChangeEventDetail]) -> AppResult<String> {
     let mut writer = csv::Writer::from_writer(vec![]);
@@ -325,24 +340,27 @@ pub(crate) fn events_to_csv(events: &[AdminChangeEventDetail]) -> AppResult<Stri
     let opt_i = |v: Option<i64>| v.map(|n| n.to_string()).unwrap_or_default();
     for e in events {
         writer
-            .write_record([
-                e.id.to_string(),
-                e.acted_at.clone(),
-                e.action.clone(),
-                e.apply_result.clone(),
-                opt_i(e.actor_id),
-                e.actor_username.clone().unwrap_or_default(),
-                opt_i(e.target_user_id),
-                e.target_username.clone().unwrap_or_default(),
-                opt_i(e.target_role_id),
-                e.target_role_name.clone().unwrap_or_default(),
-                e.scope_type.clone().unwrap_or_default(),
-                e.scope_reference.clone().unwrap_or_default(),
-                e.step_up_used.to_string(),
-                e.summary.clone().unwrap_or_default(),
-                e.diff_json.clone().unwrap_or_default(),
-                e.from_other_device.to_string(),
-            ])
+            .write_record(
+                [
+                    e.id.to_string(),
+                    e.acted_at.clone(),
+                    e.action.clone(),
+                    e.apply_result.clone(),
+                    opt_i(e.actor_id),
+                    e.actor_username.clone().unwrap_or_default(),
+                    opt_i(e.target_user_id),
+                    e.target_username.clone().unwrap_or_default(),
+                    opt_i(e.target_role_id),
+                    e.target_role_name.clone().unwrap_or_default(),
+                    e.scope_type.clone().unwrap_or_default(),
+                    e.scope_reference.clone().unwrap_or_default(),
+                    e.step_up_used.to_string(),
+                    e.summary.clone().unwrap_or_default(),
+                    e.diff_json.clone().unwrap_or_default(),
+                    e.from_other_device.to_string(),
+                ]
+                .map(csv_cell),
+            )
             .map_err(map_csv_err)?;
     }
     let data = writer
@@ -469,7 +487,41 @@ pub async fn export_admin_events_csv(state: State<'_, AppState>, filter: AdminEv
     let caller = require_session!(state);
     let allowed = visible_actions(&state, caller.user_id).await?;
     let events = query_admin_events(&state.db, allowed.as_deref(), &filter, EXPORT_MAX_ROWS, 0).await?;
-    events_to_csv(&events)
+    let csv = events_to_csv(&events)?;
+    record_export(&state.db, i64::from(caller.user_id), &filter, events.len()).await?;
+    Ok(csv)
+}
+
+/// Ledger an export of the ledger: who, with which filter, how many rows.
+pub(crate) async fn record_export(
+    db: &sea_orm::DatabaseConnection,
+    actor_id: i64,
+    filter: &AdminEventFilter,
+    rows: usize,
+) -> AppResult<()> {
+    crate::commands::admin_governance::write_admin_event(
+        db,
+        actor_id,
+        &crate::commands::admin_governance::AdminEventRecord {
+            action: EXPORT_ACTION,
+            summary: Some(format!("Admin change log exported to CSV ({rows} rows)")),
+            diff: Some(serde_json::json!({
+                "rows": rows,
+                "filter": {
+                    "action": filter.action,
+                    "actor_id": filter.actor_id,
+                    "target_user_id": filter.target_user_id,
+                    "target_role_id": filter.target_role_id,
+                    "date_from": filter.date_from,
+                    "date_to": filter.date_to,
+                    "apply_result": filter.apply_result,
+                },
+            })),
+            ..Default::default()
+        },
+        crate::commands::admin_governance::APPLY_RESULT_APPLIED,
+    )
+    .await
 }
 
 /// Get a single admin change event by ID with full diff_json.
@@ -597,5 +649,36 @@ mod tests {
         let mut lines = csv.lines();
         assert!(lines.next().unwrap().starts_with("id,acted_at,action"));
         assert!(lines.next().unwrap().contains("\"test, with comma\""));
+
+        record_export(&db, actor, &AdminEventFilter::default(), 1)
+            .await
+            .unwrap();
+        let exported = query_admin_events(
+            &db,
+            Some(USER_ACTIONS),
+            &AdminEventFilter {
+                action: Some(EXPORT_ACTION.into()),
+                ..Default::default()
+            },
+            10,
+            0,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            exported.len(),
+            1,
+            "the export itself is ledgered and visible to user admins"
+        );
+    }
+
+    #[test]
+    fn exported_cells_cannot_start_a_formula() {
+        assert_eq!(csv_cell("=HYPERLINK(\"x\")".into()), "'=HYPERLINK(\"x\")");
+        assert_eq!(csv_cell("+1".into()), "'+1");
+        assert_eq!(csv_cell("-2".into()), "'-2");
+        assert_eq!(csv_cell("@SUM(A1)".into()), "'@SUM(A1)");
+        assert_eq!(csv_cell("\tx".into()), "'\tx");
+        assert_eq!(csv_cell("Role created".into()), "Role created");
     }
 }

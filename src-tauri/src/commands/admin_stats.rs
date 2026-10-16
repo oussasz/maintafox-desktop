@@ -56,7 +56,7 @@ pub async fn get_admin_stats(state: State<'_, AppState>) -> AppResult<AdminStats
             SELECT COUNT(*) AS active_sessions
             FROM app_sessions
             WHERE is_revoked = 0
-              AND expires_at > datetime('now')
+              AND julianday(expires_at) > julianday('now')
         ),
         unassigned AS (
             SELECT COUNT(*) AS unassigned_users

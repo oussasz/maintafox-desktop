@@ -699,7 +699,8 @@
       "permission_revoked": "Permission withdrawn",
       "delegation_policy_created": "Delegation created",
       "delegation_policy_updated": "Delegation changed",
-      "delegation_policy_deleted": "Delegation deleted"
+      "delegation_policy_deleted": "Delegation deleted",
+      "admin_events_exported": "Administration log exported"
     },
     "audit": {
       "all": "All",

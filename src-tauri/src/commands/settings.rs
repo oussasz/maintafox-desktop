@@ -60,7 +60,21 @@ pub async fn get_setting(
 ) -> AppResult<Option<AppSetting>> {
     let _user = require_session!(state);
     let resolved_scope = scope.unwrap_or_else(|| "tenant".to_string());
+    ensure_readable_by_any_session(&key)?;
     settings::get_setting(&state.db, &key, &resolved_scope).await
+}
+
+/// Any session may read the plant parameters it needs to display (currency, language, header,
+/// reopen window). Licence onboarding (activation token, machine fingerprint), bootstrap state
+/// and module-managed rows are read only through their own commands.
+fn ensure_readable_by_any_session(key: &str) -> AppResult<()> {
+    if settings::catalog::is_plant_parameter(key) {
+        Ok(())
+    } else {
+        Err(AppError::PermissionDenied(format!(
+            "Setting '{key}' is not readable through the generic settings command."
+        )))
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -113,7 +127,16 @@ pub async fn set_setting(payload: SetSettingPayload, state: State<'_, AppState>)
         .change_summary
         .unwrap_or_else(|| format!("Setting '{}' updated via IPC", payload.key));
 
-    settings::set_setting(&state.db, def.key, &scope, &value_json, Some(user.user_id), &summary).await
+    settings::set_setting_recorded(
+        &state.db,
+        def.key,
+        &scope,
+        &value_json,
+        Some(user.user_id),
+        &summary,
+        high_risk,
+    )
+    .await
 }
 
 /// Settings in use with their shipped and current values, lock state, last change and the roles
@@ -274,6 +297,20 @@ pub async fn ensure_settings_defaults(state: State<'_, AppState>) -> AppResult<(
     crate::db::seeder::seed_default_settings(&state.db).await?;
     settings::ensure_default_policies(&state.db).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ensure_readable_by_any_session;
+
+    #[test]
+    fn only_plant_parameters_are_readable_by_any_session() {
+        assert!(ensure_readable_by_any_session("locale.currency_code").is_ok());
+        assert!(ensure_readable_by_any_session("documents.default_header").is_ok());
+        assert!(ensure_readable_by_any_session("wo.reopen_window_days").is_ok());
+        assert!(ensure_readable_by_any_session("product.license_onboarding").is_err());
+        assert!(ensure_readable_by_any_session("tenant.bootstrap_state").is_err());
+    }
 }
 
 /// Upload / replace the tenant document branding logo. Requires `adm.settings`.

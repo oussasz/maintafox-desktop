@@ -4,6 +4,8 @@
 //! which proves a change happened but cannot show what it was. Settings values are plant
 //! parameters, not secrets, so each new event also carries the old and new value text; the Settings
 //! screen shows "from → to" per setting. Older events keep only their hashes (NULL values).
+//! Only plant parameters keep values (`settings::catalog::keeps_value_history`): device and
+//! module state such as the licence onboarding (activation token) stays hash-only.
 //! Additive and nullable: devices on an older version ignore the columns.
 
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
@@ -45,6 +47,12 @@ impl MigrationTrait for Migration {
              ON settings_change_events(setting_key_or_domain, changed_at)",
         )
         .await?;
+        // Values are kept for plant parameters only: licence onboarding (activation token,
+        // machine fingerprint), bootstrap and module state stay hash-only. Clears any value a
+        // development build of this migration may have let through.
+        crate::settings::scrub_hash_only_history(db)
+            .await
+            .map_err(|e| DbErr::Custom(e.to_string()))?;
         Ok(())
     }
 

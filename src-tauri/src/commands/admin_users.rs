@@ -334,7 +334,9 @@ fn notify_rbac_global_change(app: &AppHandle, state: &AppState, action: &str) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Columns read for every user row (list and detail).
-const USER_ROW_COLUMNS: &str = "ua.id, ua.username, ua.display_name, ua.personnel_id, ua.email, ua.phone,      ua.identity_mode, ua.is_active, ua.force_password_change, ua.last_seen_at, ua.last_login_at,      ua.locked_until";
+const USER_ROW_COLUMNS: &str = "ua.id, ua.username, ua.display_name, ua.personnel_id, ua.email, ua.phone, \
+     ua.identity_mode, ua.is_active, ua.force_password_change, ua.last_seen_at, ua.last_login_at, \
+     ua.locked_until";
 
 fn now_utc_text() -> String {
     chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
@@ -421,19 +423,33 @@ pub(crate) async fn list_users_impl(
     }
     if let Some(role_id) = filter.role_id {
         conditions.push(
-            "EXISTS (SELECT 1 FROM user_scope_assignments f WHERE f.user_id = ua.id AND f.role_id = ?                AND f.deleted_at IS NULL                AND (f.valid_to IS NULL OR f.valid_to >= ?)                AND (f.is_emergency = 0 OR f.emergency_expires_at > ?))"
+            "EXISTS (SELECT 1 FROM user_scope_assignments f WHERE f.user_id = ua.id AND f.role_id = ? \
+             AND f.deleted_at IS NULL \
+             AND (f.valid_from IS NULL OR f.valid_from <= ?) \
+             AND (f.valid_to IS NULL OR f.valid_to >= ?) \
+             AND (f.is_emergency = 0 OR f.emergency_expires_at > ?))"
                 .to_owned(),
         );
         values.push(role_id.into());
         values.push(now.clone().into());
         values.push(now.clone().into());
+        values.push(now.clone().into());
     }
     if let Some(node_id) = filter.org_node_id {
         conditions.push(
-            "EXISTS (WITH RECURSIVE sub(id) AS (                  SELECT id FROM org_nodes WHERE id = ? AND deleted_at IS NULL                  UNION SELECT n.id FROM org_nodes n JOIN sub ON n.parent_id = sub.id WHERE n.deleted_at IS NULL)                SELECT 1 FROM user_scope_assignments f                WHERE f.user_id = ua.id AND f.deleted_at IS NULL AND f.scope_type <> 'tenant'                  AND f.scope_reference IN (SELECT CAST(id AS TEXT) FROM sub)                  AND (f.valid_to IS NULL OR f.valid_to >= ?)                  AND (f.is_emergency = 0 OR f.emergency_expires_at > ?))"
+            "EXISTS (WITH RECURSIVE sub(id) AS ( \
+             SELECT id FROM org_nodes WHERE id = ? AND deleted_at IS NULL \
+             UNION SELECT n.id FROM org_nodes n JOIN sub ON n.parent_id = sub.id WHERE n.deleted_at IS NULL) \
+             SELECT 1 FROM user_scope_assignments f \
+             WHERE f.user_id = ua.id AND f.deleted_at IS NULL AND f.scope_type <> 'tenant' \
+             AND f.scope_reference IN (SELECT CAST(id AS TEXT) FROM sub) \
+             AND (f.valid_from IS NULL OR f.valid_from <= ?) \
+             AND (f.valid_to IS NULL OR f.valid_to >= ?) \
+             AND (f.is_emergency = 0 OR f.emergency_expires_at > ?))"
                 .to_owned(),
         );
         values.push(node_id.into());
+        values.push(now.clone().into());
         values.push(now.clone().into());
         values.push(now.into());
     }
@@ -618,17 +634,64 @@ where
     Ok(())
 }
 
+/// A username: trimmed, 3 to 64 characters, letters (any alphabet), digits and `. _ - @` only
+/// (no spaces or control characters: it is typed at sign-in and compared case-insensitively).
+pub(crate) fn normalize_username(raw: &str) -> AppResult<String> {
+    let username = raw.trim();
+    let count = username.chars().count();
+    if !(3..=64).contains(&count) {
+        return Err(AppError::ValidationFailed(vec![
+            "The username must be 3 to 64 characters long.".into(),
+        ]));
+    }
+    if !username
+        .chars()
+        .all(|c| c.is_alphanumeric() || matches!(c, '.' | '_' | '-' | '@'))
+    {
+        return Err(AppError::ValidationFailed(vec![
+            "The username may contain letters, digits and . _ - @ only.".into(),
+        ]));
+    }
+    Ok(username.to_string())
+}
+
 /// Create a new user account.
 #[tauri::command]
 pub async fn create_user(input: CreateUserInput, app: AppHandle, state: State<'_, AppState>) -> AppResult<IdPayload> {
     let caller = require_session!(state);
-    require_permission!(
-        state,
-        &caller,
-        crate::rbac::permissions::ADM_USERS,
-        PermissionScope::Global
-    );
-    // TODO: re-enable require_step_up!(state) once StepUpDialog UI is built (SP06-F03)
+    let role_id = input.role_id;
+    let result = async {
+        require_permission!(
+            state,
+            &caller,
+            crate::rbac::permissions::ADM_USERS,
+            PermissionScope::Global
+        );
+        // TODO: re-enable require_step_up!(state) once StepUpDialog UI is built (SP06-F03)
+        create_user_impl(&state, &caller, input).await
+    }
+    .await;
+    crate::commands::admin_governance::record_blocked_admin_action(
+        &state.db,
+        i64::from(caller.user_id),
+        "user_created",
+        None,
+        Some(role_id),
+        &result,
+    )
+    .await;
+    if let Ok(created) = &result {
+        notify_rbac_user_change(&app, &state, created.id, "user_created");
+    }
+    result
+}
+
+pub(crate) async fn create_user_impl(
+    state: &AppState,
+    caller: &AuthenticatedUser,
+    input: CreateUserInput,
+) -> AppResult<IdPayload> {
+    let username = normalize_username(&input.username)?;
 
     // Validate identity_mode
     if !["local", "sso", "hybrid"].contains(&input.identity_mode.as_str()) {
@@ -666,23 +729,6 @@ pub async fn create_user(input: CreateUserInput, app: AppHandle, state: State<'_
 
     let force_pw = input.force_password_change.unwrap_or(password_hash.is_some());
 
-    // Check username uniqueness
-    let exists = state
-        .db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT id FROM user_accounts WHERE LOWER(username) = LOWER(?) AND deleted_at IS NULL",
-            [input.username.clone().into()],
-        ))
-        .await?;
-
-    if exists.is_some() {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "Username '{}' is already taken",
-            input.username
-        )]));
-    }
-
     if let Some(pid) = input.personnel_id {
         let p_exists = state
             .db
@@ -713,14 +759,27 @@ pub async fn create_user(input: CreateUserInput, app: AppHandle, state: State<'_
     let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let entity_sync_id = crate::sync::identity::new_entity_sync_id();
     let assignment_sync_id = Uuid::new_v4().to_string();
-    // Capture before move into SQL params
-    let username_for_audit = input.username.clone();
-    let identity_mode_for_audit = input.identity_mode.clone();
+    let identity_mode = input.identity_mode.clone();
     let role_id = input.role_id;
 
     let activated_tenant_id = crate::commands::product_license::get_activation_claim_tenant_id(&state.db).await?;
 
     let tx = state.db.begin().await?;
+
+    // Unique regardless of case and of surrounding spaces (stored trimmed), checked in the
+    // transaction that inserts.
+    let exists = tx
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id FROM user_accounts WHERE LOWER(TRIM(username)) = LOWER(?) AND deleted_at IS NULL",
+            [username.clone().into()],
+        ))
+        .await?;
+    if exists.is_some() {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "Username '{username}' is already taken"
+        )]));
+    }
 
     ensure_assignable_role_id(&tx, role_id).await?;
 
@@ -732,12 +791,10 @@ pub async fn create_user(input: CreateUserInput, app: AppHandle, state: State<'_
              VALUES (?, ?, ?, ?, ?, 1, 0, ?, 0, ?, ?, 1)",
         vec![
             entity_sync_id.into(),
-            input.username.into(),
-            input.identity_mode.into(),
+            username.clone().into(),
+            identity_mode.clone().into(),
             password_hash.map_or(sea_orm::Value::String(None), |h| h.into()),
-            input
-                .personnel_id
-                .map_or(sea_orm::Value::Int(None), |pid| (pid as i32).into()),
+            input.personnel_id.into(),
             i32::from(force_pw).into(),
             now.clone().into(),
             now.clone().into(),
@@ -787,10 +844,10 @@ pub async fn create_user(input: CreateUserInput, app: AppHandle, state: State<'_
             target_user_id: Some(new_id),
             target_role_id: Some(role_id),
             scope_type: Some("tenant"),
-            summary: Some(format!("User account '{username_for_audit}' created")),
+            summary: Some(format!("User account '{username}' created")),
             diff: Some(serde_json::json!({
-                "username": username_for_audit,
-                "identity_mode": identity_mode_for_audit,
+                "username": username,
+                "identity_mode": identity_mode,
                 "role_id": role_id,
                 "force_password_change": force_pw,
             })),
@@ -802,17 +859,15 @@ pub async fn create_user(input: CreateUserInput, app: AppHandle, state: State<'_
 
     tx.commit().await?;
 
-    notify_rbac_user_change(&app, &state, new_id, "user_created");
-
     {
         let new_id_str = new_id.to_string();
-        let detail = format!(
-            r#"{{"username":"{}","identity_mode":"{}","tenant_id":"{}","role_id":{}}}"#,
-            username_for_audit,
-            identity_mode_for_audit,
-            activated_tenant_id.unwrap_or_default(),
-            role_id
-        );
+        let detail = serde_json::json!({
+            "username": username,
+            "identity_mode": identity_mode,
+            "tenant_id": activated_tenant_id.unwrap_or_default(),
+            "role_id": role_id,
+        })
+        .to_string();
         crate::audit::emit(
             &state.db,
             crate::audit::AuditEvent {
@@ -914,23 +969,39 @@ pub async fn backfill_users_missing_tenant_scope(state: State<'_, AppState>) -> 
 #[tauri::command]
 pub async fn update_user(input: UpdateUserInput, state: State<'_, AppState>) -> AppResult<()> {
     let caller = require_session!(state);
-    require_permission!(
-        state,
-        &caller,
-        crate::rbac::permissions::ADM_USERS,
-        PermissionScope::Global
-    );
+    let target = input.user_id;
+    let result = async {
+        require_permission!(
+            state,
+            &caller,
+            crate::rbac::permissions::ADM_USERS,
+            PermissionScope::Global
+        );
+        update_user_impl(&state, &caller, input).await
+    }
+    .await;
+    crate::commands::admin_governance::record_blocked_admin_action(
+        &state.db,
+        i64::from(caller.user_id),
+        "user_updated",
+        Some(target),
+        None,
+        &result,
+    )
+    .await;
+    result
+}
 
+pub(crate) async fn update_user_impl(
+    state: &AppState,
+    caller: &AuthenticatedUser,
+    input: UpdateUserInput,
+) -> AppResult<()> {
     // Guard: cannot deactivate self
     if input.is_active == Some(false) && i64::from(caller.user_id) == input.user_id {
         return Err(AppError::ValidationFailed(vec![
             "Cannot deactivate your own account".into()
         ]));
-    }
-
-    // Guard: cannot deactivate last active superadmin
-    if input.is_active == Some(false) {
-        guard_last_superadmin(&state.db, input.user_id).await?;
     }
 
     let old_row = state
@@ -956,32 +1027,17 @@ pub async fn update_user(input: UpdateUserInput, state: State<'_, AppState>) -> 
     let mut sets = Vec::new();
     let mut values: Vec<sea_orm::Value> = Vec::new();
 
+    let mut new_username: Option<String> = None;
     if let Some(ref username) = input.username {
-        // Check uniqueness
-        let dup = state
-            .db
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT id FROM user_accounts WHERE LOWER(username) = LOWER(?) AND id != ? AND deleted_at IS NULL",
-                [username.clone().into(), input.user_id.into()],
-            ))
-            .await?;
-        if dup.is_some() {
-            return Err(AppError::ValidationFailed(vec![format!(
-                "Username '{username}' is already taken"
-            )]));
-        }
-        let trimmed = username.trim();
-        if trimmed.is_empty() {
-            return Err(AppError::ValidationFailed(vec!["The username cannot be empty.".into()]));
-        }
+        let normalized = normalize_username(username)?;
         note_change(
             "username",
             serde_json::json!(old_row.try_get::<String>("", "username")?),
-            serde_json::json!(trimmed),
+            serde_json::json!(normalized),
         );
         sets.push("username = ?");
-        values.push(trimmed.to_string().into());
+        values.push(normalized.clone().into());
+        new_username = Some(normalized);
     }
     if let Some(ref display_name) = input.display_name {
         let normalized = display_name.trim();
@@ -1076,8 +1132,26 @@ pub async fn update_user(input: UpdateUserInput, state: State<'_, AppState>) -> 
 
     let changed: Vec<String> = diff.keys().cloned().collect();
     let tx = state.db.begin().await?;
+    if let Some(ref username) = new_username {
+        // Unique regardless of case and surrounding spaces, checked where the rename is written.
+        let dup = tx
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT id FROM user_accounts \
+                 WHERE LOWER(TRIM(username)) = LOWER(?) AND id != ? AND deleted_at IS NULL",
+                [username.clone().into(), input.user_id.into()],
+            ))
+            .await?;
+        if dup.is_some() {
+            return Err(AppError::ValidationFailed(vec![format!(
+                "Username '{username}' is already taken"
+            )]));
+        }
+    }
+    let admins_before = active_admin_holders(&tx).await?;
     tx.execute(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
         .await?;
+    ensure_an_admin_remains(&tx, admins_before).await?;
     crate::commands::admin_governance::write_admin_event(
         &tx,
         i64::from(caller.user_id),
@@ -1224,17 +1298,18 @@ pub(crate) async fn set_user_active_impl(
                 "Cannot deactivate your own account".into()
             ]));
         }
-        guard_last_superadmin(&state.db, user_id).await?;
     }
 
     let now = now_utc_text();
     let tx = state.db.begin().await?;
+    let admins_before = active_admin_holders(&tx).await?;
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE user_accounts SET is_active = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL",
         [i32::from(active).into(), now.into(), user_id.into()],
     ))
     .await?;
+    ensure_an_admin_remains(&tx, admins_before).await?;
     let action = if active { "user_reactivated" } else { "user_deactivated" };
     crate::commands::admin_governance::write_admin_event(
         &tx,
@@ -1436,67 +1511,78 @@ pub(crate) async fn assign_role_scope_impl(
     let scope_type_for_audit = input.scope_type.clone();
     let scope_reference_for_audit = scope_reference_input.clone();
 
-    // Replace-at-scope: at most one assignment per (user_id, scope_type,
-    // scope_reference) before insert. Supersedes prior rows including
-    // emergency elevations so admins can assign without duplicate-key errors.
+    // Replace-at-scope: at most one assignment per (user_id, scope_type, scope_reference).
+    // The superseded rows (emergency elevations included), the new row, the last-administrator
+    // check and the ledger entries are one transaction.
     let scope_ref_key = scope_reference_input.as_deref().unwrap_or("");
-    state
-        .db
-        .execute(Statement::from_sql_and_values(
+    let tx = state.db.begin().await?;
+    let admins_before = active_admin_holders(&tx).await?;
+    let replaced = tx
+        .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "UPDATE user_scope_assignments \
-             SET deleted_at = ?, updated_at = ? \
-             WHERE user_id = ? \
-               AND scope_type = ? \
-               AND COALESCE(scope_reference, '') = ? \
-               AND deleted_at IS NULL",
+            "SELECT usa.id, usa.role_id, r.name AS role_name FROM user_scope_assignments usa \
+             INNER JOIN roles r ON r.id = usa.role_id \
+             WHERE usa.user_id = ? AND usa.scope_type = ? \
+               AND COALESCE(usa.scope_reference, '') = ? AND usa.deleted_at IS NULL",
             vec![
-                now.clone().into(),
-                now.clone().into(),
                 input.user_id.into(),
                 input.scope_type.clone().into(),
                 scope_ref_key.into(),
             ],
         ))
         .await?;
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE user_scope_assignments \
+         SET deleted_at = ?, updated_at = ? \
+         WHERE user_id = ? \
+           AND scope_type = ? \
+           AND COALESCE(scope_reference, '') = ? \
+           AND deleted_at IS NULL",
+        vec![
+            now.clone().into(),
+            now.clone().into(),
+            input.user_id.into(),
+            input.scope_type.clone().into(),
+            scope_ref_key.into(),
+        ],
+    ))
+    .await?;
 
     // INSERT — partial unique index `uidx_usa_user_role_scope` (deleted_at IS NULL)
     // prevents duplicate *active* rows for the same role + scope.
-    state
-        .db
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "INSERT INTO user_scope_assignments \
-                (entity_sync_id, user_id, role_id, scope_type, scope_reference, \
-                 valid_from, valid_to, assigned_by_id, \
-                 created_at, updated_at, row_version) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
-            vec![
-                entity_sync_id.into(),
-                input.user_id.into(),
-                input.role_id.into(),
-                input.scope_type.into(),
-                scope_reference_for_audit
-                    .clone()
-                    .map_or(sea_orm::Value::String(None), |s| s.into()),
-                valid_from.clone().map_or(sea_orm::Value::String(None), |s| s.into()),
-                valid_to.clone().map_or(sea_orm::Value::String(None), |s| s.into()),
-                i64::from(caller.user_id).into(),
-                now.clone().into(),
-                now.into(),
-            ],
-        ))
-        .await
-        .map_err(|e| {
-            if e.to_string().contains("UNIQUE constraint failed") {
-                AppError::ValidationFailed(vec!["This user already has this role assigned at the same scope".into()])
-            } else {
-                AppError::Database(e)
-            }
-        })?;
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO user_scope_assignments \
+            (entity_sync_id, user_id, role_id, scope_type, scope_reference, \
+             valid_from, valid_to, assigned_by_id, \
+             created_at, updated_at, row_version) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
+        vec![
+            entity_sync_id.into(),
+            input.user_id.into(),
+            input.role_id.into(),
+            input.scope_type.into(),
+            scope_reference_for_audit
+                .clone()
+                .map_or(sea_orm::Value::String(None), |s| s.into()),
+            valid_from.clone().map_or(sea_orm::Value::String(None), |s| s.into()),
+            valid_to.clone().map_or(sea_orm::Value::String(None), |s| s.into()),
+            i64::from(caller.user_id).into(),
+            now.clone().into(),
+            now.into(),
+        ],
+    ))
+    .await
+    .map_err(|e| {
+        if e.to_string().contains("UNIQUE constraint failed") {
+            AppError::ValidationFailed(vec!["This user already has this role assigned at the same scope".into()])
+        } else {
+            AppError::Database(e)
+        }
+    })?;
 
-    let id_row = state
-        .db
+    let id_row = tx
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT last_insert_rowid() as id",
@@ -1507,12 +1593,31 @@ pub(crate) async fn assign_role_scope_impl(
 
     let new_id: i64 = id_row.try_get("", "id")?;
 
-    if emit_frontend {
-        if let Some(app) = app {
-            notify_rbac_user_change(app, state, user_id_for_audit, "role_assigned");
-        }
-    } else if let Ok(mut cache) = state.permission_cache.try_write() {
-        cache.invalidate_user(user_id_for_audit);
+    ensure_an_admin_remains(&tx, admins_before).await?;
+
+    for old in &replaced {
+        let old_id: i64 = old.try_get("", "id")?;
+        let old_role_id: i64 = old.try_get("", "role_id")?;
+        let old_role_name: String = old.try_get("", "role_name")?;
+        crate::commands::admin_governance::write_admin_event(
+            &tx,
+            i64::from(caller.user_id),
+            &crate::commands::admin_governance::AdminEventRecord {
+                action: "role_revoked",
+                target_user_id: Some(user_id_for_audit),
+                target_role_id: Some(old_role_id),
+                scope_type: Some(scope_type_for_audit.as_str()),
+                scope_reference: scope_reference_for_audit.as_deref(),
+                summary: Some(format!("Role '{old_role_name}' replaced at this scope")),
+                diff: Some(serde_json::json!({
+                    "assignment_id": old_id,
+                    "replaced_by_assignment_id": new_id,
+                })),
+                step_up_used: true,
+            },
+            crate::commands::admin_governance::APPLY_RESULT_APPLIED,
+        )
+        .await?;
     }
 
     let detail_json = serde_json::json!({
@@ -1524,19 +1629,31 @@ pub(crate) async fn assign_role_scope_impl(
     });
     let detail_str = detail_json.to_string();
 
-    crate::commands::admin_governance::record_admin_event(
-        &state.db,
-        "role_assigned",
+    crate::commands::admin_governance::write_admin_event(
+        &tx,
         i64::from(caller.user_id),
-        Some(user_id_for_audit),
-        Some(role_id_for_audit),
-        Some(scope_type_for_audit.as_str()),
-        scope_reference_for_audit.as_deref(),
-        Some("Role scope assignment created"),
-        Some(detail_str.as_str()),
-        true,
+        &crate::commands::admin_governance::AdminEventRecord {
+            action: "role_assigned",
+            target_user_id: Some(user_id_for_audit),
+            target_role_id: Some(role_id_for_audit),
+            scope_type: Some(scope_type_for_audit.as_str()),
+            scope_reference: scope_reference_for_audit.as_deref(),
+            summary: Some("Role scope assignment created".into()),
+            diff: Some(detail_json.clone()),
+            step_up_used: true,
+        },
+        crate::commands::admin_governance::APPLY_RESULT_APPLIED,
     )
     .await?;
+    tx.commit().await?;
+
+    if emit_frontend {
+        if let Some(app) = app {
+            notify_rbac_user_change(app, state, user_id_for_audit, "role_assigned");
+        }
+    } else if let Ok(mut cache) = state.permission_cache.try_write() {
+        cache.invalidate_user(user_id_for_audit);
+    }
 
     {
         let target_str = user_id_for_audit.to_string();
@@ -1675,6 +1792,7 @@ pub(crate) async fn revoke_assignment_impl(
 
     let now = now_utc_text();
     let tx = state.db.begin().await?;
+    let admins_before = active_admin_holders(&tx).await?;
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE user_scope_assignments SET deleted_at = ?, updated_at = ? \
@@ -1682,6 +1800,7 @@ pub(crate) async fn revoke_assignment_impl(
         [now.clone().into(), now.into(), assignment_id.into()],
     ))
     .await?;
+    ensure_an_admin_remains(&tx, admins_before).await?;
     let action = if is_emergency {
         "emergency_grant_revoked"
     } else {
@@ -2636,14 +2755,30 @@ pub async fn revoke_emergency_elevation(
 #[tauri::command]
 pub async fn unlock_user_account(user_id: i64, state: State<'_, AppState>) -> AppResult<()> {
     let admin = require_session!(state);
-    require_permission!(
-        state,
-        &admin,
-        crate::rbac::permissions::ADM_USERS,
-        PermissionScope::Global
-    );
-    require_step_up!(state);
+    let result = async {
+        require_permission!(
+            state,
+            &admin,
+            crate::rbac::permissions::ADM_USERS,
+            PermissionScope::Global
+        );
+        require_step_up!(state);
+        unlock_user_account_impl(&state, &admin, user_id).await
+    }
+    .await;
+    crate::commands::admin_governance::record_blocked_admin_action(
+        &state.db,
+        i64::from(admin.user_id),
+        "account_unlocked",
+        Some(user_id),
+        None,
+        &result,
+    )
+    .await;
+    result
+}
 
+async fn unlock_user_account_impl(state: &AppState, admin: &AuthenticatedUser, user_id: i64) -> AppResult<()> {
     // Verify user exists
     let exists = state
         .db
@@ -2747,14 +2882,35 @@ pub async fn admin_set_user_password(
     state: State<'_, AppState>,
 ) -> AppResult<AdminSetUserPasswordResult> {
     let admin = require_session!(state);
-    require_permission!(
-        state,
-        &admin,
-        crate::rbac::permissions::ADM_USERS,
-        PermissionScope::Global
-    );
-    require_step_up!(state);
+    let target = input.user_id;
+    let result = async {
+        require_permission!(
+            state,
+            &admin,
+            crate::rbac::permissions::ADM_USERS,
+            PermissionScope::Global
+        );
+        require_step_up!(state);
+        admin_set_user_password_impl(&state, &admin, input).await
+    }
+    .await;
+    crate::commands::admin_governance::record_blocked_admin_action(
+        &state.db,
+        i64::from(admin.user_id),
+        "password_reset_by_admin",
+        Some(target),
+        None,
+        &result,
+    )
+    .await;
+    result
+}
 
+async fn admin_set_user_password_impl(
+    state: &AppState,
+    admin: &AuthenticatedUser,
+    input: AdminSetUserPasswordInput,
+) -> AppResult<AdminSetUserPasswordResult> {
     let row = state
         .db
         .query_one(Statement::from_sql_and_values(
@@ -2953,7 +3109,18 @@ async fn load_role_assignments(
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT usa.id as assignment_id, usa.role_id, r.name as role_name,                     usa.scope_type, usa.scope_reference,                     usa.valid_from, usa.valid_to, usa.is_emergency, usa.emergency_expires_at,                     CASE WHEN usa.scope_type = 'team' THEN tm.name                          WHEN usa.scope_type <> 'tenant' THEN onode.name END AS scope_label              FROM user_scope_assignments usa              INNER JOIN roles r ON r.id = usa.role_id              LEFT JOIN org_nodes onode ON usa.scope_type <> 'team' AND usa.scope_type <> 'tenant'                                        AND CAST(onode.id AS TEXT) = usa.scope_reference              LEFT JOIN teams tm ON usa.scope_type = 'team' AND CAST(tm.id AS TEXT) = usa.scope_reference              WHERE usa.user_id = ? AND usa.deleted_at IS NULL              ORDER BY r.name ASC",
+            "SELECT usa.id as assignment_id, usa.role_id, r.name as role_name, \
+             usa.scope_type, usa.scope_reference, \
+             usa.valid_from, usa.valid_to, usa.is_emergency, usa.emergency_expires_at, \
+             CASE WHEN usa.scope_type = 'team' THEN tm.name \
+             WHEN usa.scope_type <> 'tenant' THEN onode.name END AS scope_label \
+             FROM user_scope_assignments usa \
+             INNER JOIN roles r ON r.id = usa.role_id \
+             LEFT JOIN org_nodes onode ON usa.scope_type <> 'team' AND usa.scope_type <> 'tenant' \
+             AND CAST(onode.id AS TEXT) = usa.scope_reference \
+             LEFT JOIN teams tm ON usa.scope_type = 'team' AND CAST(tm.id AS TEXT) = usa.scope_reference \
+             WHERE usa.user_id = ? AND usa.deleted_at IS NULL \
+             ORDER BY r.name ASC",
             [user_id.into()],
         ))
         .await?;
@@ -3150,33 +3317,42 @@ async fn validate_permission_names_exist(db: &impl ConnectionTrait, names: &Hash
     Ok(())
 }
 
-/// Guard: prevent deactivating the last active user holding the Superadmin role.
-async fn guard_last_superadmin(db: &sea_orm::DatabaseConnection, target_user_id: i64) -> AppResult<()> {
-    // Count active users who hold the Superadmin role (or Administrator - Phase 1 name)
-    let count = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT COUNT(DISTINCT ua.id) as cnt \
-             FROM user_accounts ua \
-             INNER JOIN user_scope_assignments usa ON usa.user_id = ua.id \
-             INNER JOIN roles r ON r.id = usa.role_id \
-             WHERE ua.is_active = 1 \
-               AND ua.deleted_at IS NULL \
-               AND usa.deleted_at IS NULL \
-               AND (r.name = 'Superadmin' OR r.name = 'Administrator') \
-               AND ua.id != ?",
-            [target_user_id.into()],
-        ))
+/// Role names that make an account a plant administrator (Phase 1 name `Administrator`).
+const ADMIN_ROLE_NAMES: &[&str] = &["Superadmin", "Administrator"];
+
+/// Active accounts holding an administrator role through an assignment valid now and not an
+/// emergency grant (a grant expires by itself, so it does not keep the plant administrable).
+async fn active_admin_holders<C: ConnectionTrait>(conn: &C) -> AppResult<i64> {
+    let now = now_utc_text();
+    let placeholders = vec!["?"; ADMIN_ROLE_NAMES.len()].join(",");
+    let sql = format!(
+        "SELECT COUNT(DISTINCT ua.id) AS cnt \
+         FROM user_accounts ua \
+         INNER JOIN user_scope_assignments usa ON usa.user_id = ua.id \
+         INNER JOIN roles r ON r.id = usa.role_id \
+         WHERE ua.is_active = 1 AND ua.deleted_at IS NULL \
+           AND usa.deleted_at IS NULL AND usa.is_emergency = 0 \
+           AND (usa.valid_from IS NULL OR usa.valid_from <= ?) \
+           AND (usa.valid_to IS NULL OR usa.valid_to >= ?) \
+           AND r.deleted_at IS NULL AND r.name IN ({placeholders})"
+    );
+    let mut values: Vec<sea_orm::Value> = vec![now.clone().into(), now.into()];
+    values.extend(ADMIN_ROLE_NAMES.iter().map(|n| (*n).into()));
+    Ok(conn
+        .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
         .await?
         .and_then(|r| r.try_get::<i64>("", "cnt").ok())
-        .unwrap_or(0);
+        .unwrap_or(0))
+}
 
-    if count == 0 {
+/// Run inside the transaction of a change, after it: refuses (the caller's transaction is then
+/// dropped, i.e. rolled back) when the change took away the last plant administrator.
+async fn ensure_an_admin_remains<C: ConnectionTrait>(conn: &C, before: i64) -> AppResult<()> {
+    if before > 0 && active_admin_holders(conn).await? == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Cannot deactivate the last active superadmin user".into(),
+            "This change would leave the plant without an active administrator.".into(),
         ]));
     }
-
     Ok(())
 }
 

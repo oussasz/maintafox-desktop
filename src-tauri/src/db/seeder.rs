@@ -2290,6 +2290,12 @@ pub async fn seed_default_settings(db: &DatabaseConnection) -> AppResult<()> {
         .await?;
     }
 
+    // Values in the settings history are kept for plant parameters only (no-op once clean).
+    let scrubbed = crate::settings::scrub_hash_only_history(db).await?;
+    if scrubbed > 0 {
+        tracing::warn!(rows = scrubbed, "settings history: cleared values of hash-only keys");
+    }
+
     // Keep runtime locale resolution aligned with Settings SSOT.
     // Seed system_config tenant default only when missing (do not overwrite admin overrides).
     let existing_default = crate::locale::read_locale_config(db, "locale.default_language").await?;

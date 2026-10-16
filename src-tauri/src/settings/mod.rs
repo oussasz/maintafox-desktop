@@ -4,12 +4,14 @@
 //! `settings_change_events`. All writes through this module emit an audit event.
 
 use crate::errors::{AppError, AppResult};
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 pub mod branding;
 pub mod catalog;
+#[cfg(test)]
+mod sync_tests;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSetting {
@@ -86,7 +88,7 @@ pub fn sha256_hex(value: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-pub async fn get_setting(db: &DatabaseConnection, key: &str, scope: &str) -> AppResult<Option<AppSetting>> {
+pub async fn get_setting<C: ConnectionTrait>(db: &C, key: &str, scope: &str) -> AppResult<Option<AppSetting>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -229,6 +231,21 @@ pub async fn set_setting(
     changed_by_id: Option<i32>,
     change_summary: &str,
 ) -> AppResult<()> {
+    set_setting_recorded(db, key, scope, value_json, changed_by_id, change_summary, false).await
+}
+
+/// [`set_setting`], recording whether a fresh step-up was required for the change. The lock
+/// checks (fiscal start month, tenant currency), the write and its history row are one
+/// transaction, so a posting cannot slip in between the check and the change.
+pub async fn set_setting_recorded(
+    db: &DatabaseConnection,
+    key: &str,
+    scope: &str,
+    value_json: &str,
+    changed_by_id: Option<i32>,
+    change_summary: &str,
+    required_step_up: bool,
+) -> AppResult<()> {
     if value_json.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![format!(
             "setting_value_json for '{}' must not be empty",
@@ -238,19 +255,20 @@ pub async fn set_setting(
 
     let _: serde_json::Value = serde_json::from_str(value_json)
         .map_err(|_| AppError::ValidationFailed(vec![format!("setting_value_json for '{}' is not valid JSON", key)]))?;
+    let tx = db.begin().await?;
     // Per-key checks: the fiscal-year start month and the tenant currency (stored postings
     // depend on them).
-    crate::finance::fiscal::guard_fiscal_start_write(db, key, value_json).await?;
-    crate::inventory::fx::guard_currency_write(db, key, value_json).await?;
+    crate::finance::fiscal::guard_fiscal_start_write(&tx, key, value_json).await?;
+    crate::inventory::fx::guard_currency_write(&tx, key, value_json).await?;
 
-    let old_value = get_setting(db, key, scope).await?.map(|s| s.setting_value_json);
+    let old_value = get_setting(&tx, key, scope).await?.map(|s| s.setting_value_json);
     let old_hash = old_value.as_deref().map(sha256_hex);
 
     let new_hash = sha256_hex(value_json);
     let now = chrono::Utc::now().to_rfc3339();
     let (category, risk) = catalog::definition(key).map_or(("general", "low"), |d| (d.category, d.risk));
 
-    db.execute(Statement::from_sql_and_values(
+    tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO app_settings
                (setting_key, setting_scope, setting_value_json, category,
@@ -274,7 +292,7 @@ pub async fn set_setting(
     .await?;
 
     insert_change_event(
-        db,
+        &tx,
         key,
         change_summary,
         old_value.as_deref(),
@@ -283,9 +301,10 @@ pub async fn set_setting(
         Some(new_hash),
         changed_by_id.map(i64::from),
         &now,
-        false,
+        required_step_up,
     )
     .await?;
+    tx.commit().await?;
 
     tracing::info!(
         setting_key = key,
@@ -344,6 +363,9 @@ pub async fn delete_setting(
 }
 
 /// Append one row to the settings change history (hashes and, from migration 213, values).
+/// Values are kept only for plant parameters (`catalog::keeps_value_history`): module and device
+/// state (licence onboarding with its activation token, bootstrap, rating scales, notification
+/// state) is recorded by hash only, because the history is synced and readable in Settings.
 pub(crate) async fn insert_change_event<C: ConnectionTrait>(
     db: &C,
     key_or_domain: &str,
@@ -356,6 +378,11 @@ pub(crate) async fn insert_change_event<C: ConnectionTrait>(
     changed_at: &str,
     required_step_up: bool,
 ) -> AppResult<()> {
+    let (old_value, new_value) = if catalog::keeps_value_history(key_or_domain) {
+        (old_value, new_value)
+    } else {
+        (None, None)
+    };
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO settings_change_events
@@ -377,6 +404,29 @@ pub(crate) async fn insert_change_event<C: ConnectionTrait>(
     ))
     .await?;
     Ok(())
+}
+
+/// Clear the values recorded for keys whose history must stay hash-only (see
+/// [`catalog::keeps_value_history`]). Run by migration 213 and at every startup (a database that
+/// applied an earlier build of 213 may hold some); a no-op once clean. Returns the rows cleared.
+pub async fn scrub_hash_only_history<C: ConnectionTrait>(db: &C) -> AppResult<u64> {
+    let mut allowed: Vec<&str> = catalog::SETTINGS_CATALOG
+        .iter()
+        .map(|d| d.key)
+        .filter(|k| catalog::is_plant_parameter(k))
+        .collect();
+    allowed.extend_from_slice(catalog::POLICY_DOMAINS_WITH_VALUE_HISTORY);
+    let placeholders = vec!["?"; allowed.len()].join(",");
+    let sql = format!(
+        "UPDATE settings_change_events SET old_value_json = NULL, new_value_json = NULL \
+         WHERE (old_value_json IS NOT NULL OR new_value_json IS NOT NULL) \
+           AND setting_key_or_domain NOT IN ({placeholders})"
+    );
+    let values: Vec<sea_orm::Value> = allowed.iter().map(|k| (*k).into()).collect();
+    let result = db
+        .execute(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
+        .await?;
+    Ok(result.rows_affected())
 }
 
 /// Most recent settings changes, optionally for one key or policy domain only.
@@ -416,7 +466,18 @@ pub async fn list_change_events(
         ))
         .await?;
 
-    rows.into_iter().map(map_settings_change_event).collect()
+    rows.into_iter()
+        .map(|row| {
+            let mut event = map_settings_change_event(row)?;
+            // Rows recorded by an older build (or received from one) may carry values of keys
+            // whose history must stay hash-only.
+            if !catalog::keeps_value_history(&event.setting_key_or_domain) {
+                event.old_value_json = None;
+                event.new_value_json = None;
+            }
+            Ok(event)
+        })
+        .collect()
 }
 
 fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
@@ -1095,6 +1156,66 @@ mod tests {
         assert_eq!(reopen[0].old_value_json.as_deref(), Some("30"), "shipped value before");
         assert_eq!(reopen[0].new_value_json.as_deref(), Some("45"));
         assert!(list_change_events(&db, 50, None).await.expect("all").len() >= 2);
+    }
+
+    #[tokio::test]
+    async fn licence_state_changes_record_no_value() {
+        let db = crate::db::test_db::seeded().await;
+        set_setting(
+            &db,
+            "product.license_onboarding",
+            "device",
+            r#"{"activation_claim":{"activation_token":"tok-123"}}"#,
+            Some(1),
+            "licence",
+        )
+        .await
+        .expect("set");
+        let stored: Option<String> = db
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT COALESCE(old_value_json, new_value_json) AS v FROM settings_change_events \
+                 WHERE setting_key_or_domain = 'product.license_onboarding'"
+                    .to_string(),
+            ))
+            .await
+            .unwrap()
+            .expect("history row")
+            .try_get("", "v")
+            .unwrap();
+        assert_eq!(
+            stored, None,
+            "the activation token is not copied into the synced history"
+        );
+
+        // A row written by an earlier build is cleared at startup and blanked on read.
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            "INSERT INTO settings_change_events \
+             (setting_key_or_domain, change_summary, changed_at, required_step_up, apply_result, new_value_json) \
+             VALUES ('product.license_onboarding', 'old build', '2026-10-16T00:00:00Z', 0, 'applied', '{\"t\":1}')"
+                .to_string(),
+        ))
+        .await
+        .unwrap();
+        let listed = list_change_events(&db, 50, Some("product.license_onboarding"))
+            .await
+            .unwrap();
+        assert!(listed
+            .iter()
+            .all(|e| e.new_value_json.is_none() && e.old_value_json.is_none()));
+        assert_eq!(scrub_hash_only_history(&db).await.unwrap(), 1);
+        assert_eq!(scrub_hash_only_history(&db).await.unwrap(), 0, "idempotent");
+    }
+
+    #[tokio::test]
+    async fn step_up_is_recorded_when_it_was_required() {
+        let db = crate::db::test_db::seeded().await;
+        set_setting_recorded(&db, "wo.reopen_window_days", "tenant", "40", Some(1), "x", true)
+            .await
+            .unwrap();
+        let events = list_change_events(&db, 1, Some("wo.reopen_window_days")).await.unwrap();
+        assert!(events[0].required_step_up);
     }
 
     #[tokio::test]

@@ -451,10 +451,11 @@ pub(crate) async fn role_editor_catalog(db: &sea_orm::DatabaseConnection) -> App
              FROM user_scope_assignments usa \
              INNER JOIN user_accounts ua ON ua.id = usa.user_id AND ua.is_active = 1 AND ua.deleted_at IS NULL \
              WHERE usa.deleted_at IS NULL \
+               AND (usa.valid_from IS NULL OR usa.valid_from <= ?) \
                AND (usa.valid_to IS NULL OR usa.valid_to >= ?) \
                AND (usa.is_emergency = 0 OR usa.emergency_expires_at > ?) \
              GROUP BY usa.role_id",
-            [now.clone().into(), now.into()],
+            [now.clone().into(), now.clone().into(), now.into()],
         ))
         .await?;
     let mut role_holders = Vec::with_capacity(holder_rows.len());

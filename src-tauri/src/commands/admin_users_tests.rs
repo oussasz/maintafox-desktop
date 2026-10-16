@@ -487,3 +487,176 @@ async fn roles_are_cloned_updated_and_retired_with_a_diff() {
         "system roles cannot be retired"
     );
 }
+
+async fn admin_assignment(db: &DatabaseConnection) -> i64 {
+    scalar_i64(
+        db,
+        "SELECT usa.id AS v FROM user_scope_assignments usa \
+         JOIN user_accounts ua ON ua.id = usa.user_id JOIN roles r ON r.id = usa.role_id \
+         WHERE ua.username = 'admin' AND r.name = 'Administrator' AND usa.deleted_at IS NULL",
+        vec![],
+    )
+    .await
+}
+
+#[tokio::test]
+async fn the_last_administrator_cannot_be_removed_by_any_path() {
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let caller = admin_caller(&db).await;
+    let admin_role = role_id(&db, "Administrator").await;
+    let readonly = role_id(&db, "Readonly").await;
+    let only = admin_assignment(&db).await;
+
+    // Withdrawing the only administrator assignment is refused and rolled back.
+    let revoked = revoke_assignment_impl(&state, &caller, only, None, false).await;
+    assert!(matches!(revoked, Err(AppError::ValidationFailed(_))), "{revoked:?}");
+    assert_eq!(admin_assignment(&db).await, only, "nothing was withdrawn");
+
+    // Replacing it at the same scope with a lesser role is refused too.
+    let replaced = assign_role_scope_impl(
+        &state,
+        &caller,
+        assign(i64::from(caller.user_id), readonly, "tenant", None),
+        false,
+        None,
+    )
+    .await;
+    assert!(replaced.is_err(), "{replaced:?}");
+    assert_eq!(admin_assignment(&db).await, only);
+
+    // An emergency administrator does not count as a remaining administrator.
+    let helper = insert_user(&db, "emergency_admin").await;
+    grant_emergency_elevation_impl(
+        &state,
+        &caller,
+        GrantEmergencyElevationInput {
+            user_id: helper,
+            role_id: admin_role,
+            scope_type: "tenant".into(),
+            scope_reference: None,
+            reason: "Night shift cover".into(),
+            expires_at: (chrono::Utc::now() + chrono::Duration::hours(2)).to_rfc3339(),
+        },
+    )
+    .await
+    .expect("grant");
+    assert!(revoke_assignment_impl(&state, &caller, only, None, false)
+        .await
+        .is_err());
+
+    // With a second regular administrator the first one can be withdrawn.
+    assign_role_scope_impl(&state, &caller, assign(helper, admin_role, "tenant", None), false, None)
+        .await
+        .expect("second administrator");
+    revoke_assignment_impl(&state, &caller, only, Some("Handover"), false)
+        .await
+        .expect("no longer the last one");
+}
+
+#[tokio::test]
+async fn replacing_a_role_at_the_same_scope_ledgers_the_replaced_one() {
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let caller = admin_caller(&db).await;
+    let user = insert_user(&db, "replace_user").await;
+    let readonly = role_id(&db, "Readonly").await;
+    let other = scalar_i64(
+        &db,
+        "SELECT id AS v FROM roles WHERE name NOT IN ('Readonly', 'Administrator') \
+         AND deleted_at IS NULL AND status != 'retired' ORDER BY id LIMIT 1",
+        vec![],
+    )
+    .await;
+    assign_role_scope_impl(&state, &caller, assign(user, readonly, "tenant", None), false, None)
+        .await
+        .unwrap();
+    assign_role_scope_impl(&state, &caller, assign(user, other, "tenant", None), false, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT COUNT(*) AS v FROM admin_change_events \
+             WHERE action = 'role_revoked' AND target_user_id = ? AND target_role_id = ?",
+            vec![user.into(), readonly.into()],
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT COUNT(*) AS v FROM user_scope_assignments WHERE user_id = ? AND deleted_at IS NULL",
+            vec![user.into()],
+        )
+        .await,
+        1
+    );
+}
+
+#[test]
+fn usernames_are_trimmed_and_restricted() {
+    assert_eq!(normalize_username("  j.doe ").unwrap(), "j.doe");
+    assert_eq!(normalize_username("élodie-m").unwrap(), "élodie-m");
+    assert!(normalize_username("ab").is_err());
+    assert!(normalize_username("john doe").is_err());
+    assert!(normalize_username("x<script>").is_err());
+    assert!(normalize_username(&"a".repeat(65)).is_err());
+}
+
+#[tokio::test]
+async fn usernames_are_unique_regardless_of_case_and_spaces() {
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let caller = admin_caller(&db).await;
+    let readonly = role_id(&db, "Readonly").await;
+    let input = |name: &str| CreateUserInput {
+        username: name.into(),
+        identity_mode: "local".into(),
+        role_id: readonly,
+        personnel_id: None,
+        initial_password: Some("ValidPass1".into()),
+        force_password_change: None,
+    };
+    create_user_impl(&state, &caller, input(" New.User "))
+        .await
+        .expect("created trimmed");
+    assert!(create_user_impl(&state, &caller, input("NEW.USER")).await.is_err());
+    assert!(create_user_impl(&state, &caller, input("ADMIN")).await.is_err());
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT COUNT(*) AS v FROM user_accounts WHERE username = 'New.User'",
+            vec![],
+        )
+        .await,
+        1
+    );
+}
+
+#[tokio::test]
+async fn refusals_of_non_administrators_go_to_the_security_journal() {
+    let db = crate::db::test_db::seeded().await;
+    let outsider = insert_user(&db, "no_admin_rights").await;
+    let result: AppResult<()> = Err(AppError::PermissionDenied("adm.users".into()));
+    crate::commands::admin_governance::record_blocked_admin_action(
+        &db,
+        outsider,
+        "user_deactivated",
+        None,
+        None,
+        &result,
+    )
+    .await;
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT COUNT(*) AS v FROM admin_change_events WHERE actor_id = ?",
+            vec![outsider.into()],
+        )
+        .await,
+        0,
+        "no ledger row for someone without administration rights"
+    );
+}

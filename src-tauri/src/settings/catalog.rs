@@ -256,6 +256,104 @@ pub fn definition(key: &str) -> Option<&'static SettingDefinition> {
     SETTINGS_CATALOG.iter().find(|d| d.key == key)
 }
 
+/// Plant policy domains (`policy_snapshots`) whose change history keeps the snapshot values.
+pub const POLICY_DOMAINS_WITH_VALUE_HISTORY: &[&str] = &["session", "backup"];
+
+/// The change history may keep the old / new value of this key: plant parameters edited in
+/// Settings and the plant policies. Everything else (licence onboarding with its activation
+/// token and machine fingerprint, bootstrap state, module-managed rows, unused rows) is recorded
+/// by hash only — the history is synced to every device and readable by settings administrators.
+pub fn keeps_value_history(key_or_domain: &str) -> bool {
+    POLICY_DOMAINS_WITH_VALUE_HISTORY.contains(&key_or_domain) || is_plant_parameter(key_or_domain)
+}
+
+/// A catalog key edited in Settings (a section or the document header panel).
+pub fn is_plant_parameter(key: &str) -> bool {
+    definition(key).is_some_and(|d| d.kind != SettingKind::ModuleManaged && d.editor != SettingEditor::NotInUse)
+}
+
+/// Tags the printed document header may contain (same list as the editor's sanitizer,
+/// `src/lib/document-header-sanitize.ts`).
+const HEADER_TAGS: &[&str] = &[
+    "p", "br", "strong", "b", "em", "i", "u", "s", "h1", "h2", "h3", "ul", "ol", "li", "span", "div", "img", "table",
+    "thead", "tbody", "tr", "th", "td",
+];
+const HEADER_ATTRIBUTES: &[&str] = &[
+    "class", "style", "src", "alt", "width", "height", "align", "colspan", "rowspan",
+];
+
+/// Check the header HTML against the editor's allowlist: only listed tags and attributes, no
+/// comments, no script URLs or CSS expressions. The editor sanitizes before saving, so a header
+/// that fails here did not come from it.
+pub fn validate_header_html(html: &str) -> Result<(), String> {
+    let lower = html.to_ascii_lowercase();
+    for forbidden in ["<!--", "javascript:", "vbscript:", "expression(", "<![cdata["] {
+        if lower.contains(forbidden) {
+            return Err(format!("the header contains '{forbidden}', which is not allowed"));
+        }
+    }
+    let bytes = lower.as_bytes();
+    let mut i = 0;
+    while let Some(offset) = lower[i..].find('<') {
+        let start = i + offset + 1;
+        let mut j = start;
+        if bytes.get(j) == Some(&b'/') {
+            j += 1;
+        }
+        let name_start = j;
+        while j < bytes.len() && bytes[j].is_ascii_alphanumeric() {
+            j += 1;
+        }
+        let name = &lower[name_start..j];
+        if name.is_empty() || !HEADER_TAGS.contains(&name) {
+            return Err(format!("the tag <{name}> is not allowed in the header"));
+        }
+        // Attributes until the closing '>'.
+        loop {
+            while j < bytes.len() && (bytes[j].is_ascii_whitespace() || bytes[j] == b'/') {
+                j += 1;
+            }
+            match bytes.get(j) {
+                None => return Err("the header has an unclosed tag".into()),
+                Some(b'>') => break,
+                _ => {}
+            }
+            let attr_start = j;
+            while j < bytes.len() && !bytes[j].is_ascii_whitespace() && !matches!(bytes[j], b'=' | b'>' | b'/') {
+                j += 1;
+            }
+            let attr = &lower[attr_start..j];
+            if !HEADER_ATTRIBUTES.contains(&attr) {
+                return Err(format!("the attribute '{attr}' is not allowed in the header"));
+            }
+            while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+                j += 1;
+            }
+            if bytes.get(j) == Some(&b'=') {
+                j += 1;
+                while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+                    j += 1;
+                }
+                match bytes.get(j) {
+                    Some(&q) if q == b'"' || q == b'\'' => {
+                        let Some(end) = lower[j + 1..].find(q as char) else {
+                            return Err("the header has an unclosed attribute value".into());
+                        };
+                        j += end + 2;
+                    }
+                    _ => {
+                        while j < bytes.len() && !bytes[j].is_ascii_whitespace() && bytes[j] != b'>' {
+                            j += 1;
+                        }
+                    }
+                }
+            }
+        }
+        i = j + 1;
+    }
+    Ok(())
+}
+
 fn invalid(key: &str, message: impl Into<String>) -> AppError {
     AppError::ValidationFailed(vec![format!("{key}: {}", message.into())])
 }
@@ -306,6 +404,7 @@ pub fn validate_value(def: &SettingDefinition, value_json: &str) -> AppResult<St
             if html.len() > 200_000 {
                 return Err(invalid(def.key, "the header is too large (200 KB maximum)"));
             }
+            validate_header_html(html).map_err(|m| invalid(def.key, m))?;
             Ok(serde_json::to_string(&value)?)
         }
         SettingKind::ModuleManaged => Err(invalid(
@@ -529,6 +628,35 @@ mod tests {
             validate_value(unused, "\"compact\"").is_err(),
             "unused settings are not writable"
         );
+    }
+
+    #[test]
+    fn value_history_is_kept_for_plant_parameters_only() {
+        assert!(keeps_value_history("wo.reopen_window_days"));
+        assert!(keeps_value_history("documents.default_header"));
+        assert!(keeps_value_history("session"));
+        assert!(!keeps_value_history("product.license_onboarding"));
+        assert!(!keeps_value_history("appearance.density"), "not in use");
+        assert!(!keeps_value_history(crate::reliability::study::scales::SETTING_KEY));
+    }
+
+    #[test]
+    fn header_html_follows_the_editor_allowlist() {
+        assert!(validate_header_html(
+            r#"<p class="x">ACME <strong>Oran</strong></p><img src="data:image/png;base64,AA" alt="logo">"#
+        )
+        .is_ok());
+        assert!(validate_header_html("<table><tbody><tr><td colspan='2'>x</td></tr></tbody></table><br/>").is_ok());
+        assert!(validate_header_html("<script>alert(1)</script>").is_err());
+        assert!(validate_header_html(r#"<img src=x onerror="alert(1)">"#).is_err());
+        assert!(validate_header_html(r#"<a href="javascript:alert(1)">x</a>"#).is_err());
+        assert!(validate_header_html(r#"<p style="background:url(javascript:x)">x</p>"#).is_err());
+        assert!(validate_header_html("<iframe src='x'></iframe>").is_err());
+        assert!(
+            validate_header_html("plain text, 3 < 4 is fine?").is_err(),
+            "a bare '<' is refused"
+        );
+        assert!(validate_header_html("").is_ok());
     }
 
     #[test]
