@@ -291,6 +291,7 @@ mod tests {
                 actor_id: user_id,
                 expected_row_version: 2,
                 reviewer_note: "".to_string(),
+                reason_code: Some("unclear_description".into()),
             },
         )
         .await;
@@ -322,6 +323,7 @@ mod tests {
                 actor_id: user_id,
                 expected_row_version: 2,
                 reviewer_note: "   ".to_string(),
+                reason_code: Some("unclear_description".into()),
             },
         )
         .await;
@@ -346,6 +348,7 @@ mod tests {
                 actor_id: user_id,
                 expected_row_version: 2,
                 reviewer_note: "Please add sensor readings.".to_string(),
+                reason_code: Some("unclear_description".into()),
             },
         )
         .await
@@ -668,7 +671,7 @@ mod tests {
                 actor_id: user_id,
                 expected_row_version: approved.row_version,
                 deferred_until: "2099-06-15".to_string(),
-                reason_code: "budget_constraint".to_string(),
+                reason_code: "budget".to_string(),
                 notes: Some("Deferred until budget approval Q3".to_string()),
             },
         )

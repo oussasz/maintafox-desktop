@@ -283,6 +283,16 @@ pub struct InterventionRequest {
     pub source_inspection_round_code: Option<String>,
     pub source_inspection_round_title: Option<String>,
     pub source_inspection_round_scheduled_at: Option<String>,
+    /// Where the request stands against its frozen SLA (`on_track` | `at_risk` | `breached` |
+    /// `completed`), computed on read from the frozen targets; `None` when no target applies.
+    #[serde(default)]
+    pub sla_state: Option<String>,
+    /// Hours the SLA clock was paused (waiting on the requester, deferred), from the history.
+    #[serde(default)]
+    pub sla_paused_hours: f64,
+    /// Paused hours before screening (they extend the response deadline).
+    #[serde(default)]
+    pub sla_paused_response_hours: f64,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -306,8 +316,69 @@ pub struct DiTransitionInput {
 /// All columns of `intervention_requests` read by [`map_intervention_request`].
 pub(crate) const IR_COLS: &str = "    ir.id, ir.code, ir.equipment_id, ir.sub_asset_ref, ir.org_node_id,     ir.status, ir.title, ir.description, ir.origin_type, ir.request_type, ir.symptom_code_id,     ir.impact_level, ir.production_impact, ir.safety_flag, ir.environmental_flag,     ir.quality_flag, ir.reported_urgency, ir.validated_urgency,     ir.observed_at, ir.submitted_at,     ir.reviewer_id, ir.screened_at, ir.approved_at,     ir.deferred_until, ir.declined_at, ir.closed_at, ir.archived_at,     ir.converted_to_wo_id, ir.converted_at,     ir.sla_rule_id, ir.sla_target_response_hours, ir.sla_target_resolution_hours,     ir.sla_escalation_threshold_hours, ir.sla_response_deadline, ir.sla_resolution_deadline,     ir.sla_response_breach_notified_at, ir.sla_resolution_breach_notified_at,     ir.reviewer_note, ir.classification_code_id,     ir.is_recurrence_flag, ir.recurrence_di_id,     ir.source_inspection_anomaly_id,     ir.disposition_code, ir.disposition_notes, ir.related_di_id, ir.closed_by_id, ir.deferred_from_status,     ir.row_version, ir.submitter_id, ir.created_at, ir.updated_at";
 
-/// Display enrichment columns (must be paired with [`IR_JOINS`]).
-pub(crate) const IR_JOIN_COLS: &str = "    eq.asset_id_code AS asset_code, eq.name AS asset_label,     org.code AS org_node_code, org.name AS org_node_label,     COALESCE(us.display_name, us.username) AS submitter_display_name,     COALESCE(urv.display_name, urv.username) AS reviewer_display_name,     wo.code AS converted_to_wo_code, wo.title AS converted_to_wo_title,     related_di.code AS related_di_code,     src_round.id AS source_inspection_round_id, src_tpl.code AS source_inspection_round_code,     src_tpl.name AS source_inspection_round_title, src_round.scheduled_at AS source_inspection_round_scheduled_at";
+/// End (julianday) of the pause that starts at transition `p`: the next transition of the request,
+/// else now while the request is still in that status. Transitions are ordered by time, then id.
+macro_rules! di_pause_end_sql {
+    () => {
+        "julianday(COALESCE( \
+           (SELECT n.acted_at FROM di_state_transition_log n \
+             WHERE n.di_id = p.di_id \
+               AND (julianday(n.acted_at) > julianday(p.acted_at) \
+                    OR (julianday(n.acted_at) = julianday(p.acted_at) AND n.id > p.id)) \
+             ORDER BY julianday(n.acted_at), n.id LIMIT 1), \
+           CASE WHEN ir.status = p.to_status THEN strftime('%Y-%m-%dT%H:%M:%SZ','now') ELSE p.acted_at END))"
+    };
+}
+
+/// Pauses of the SLA clock: the transitions into a status where the request waits on someone else
+/// than maintenance — the requester (`returned_for_clarification`) or a later date (`deferred`).
+macro_rules! di_pause_from_sql {
+    () => {
+        "FROM di_state_transition_log p \
+          WHERE p.di_id = ir.id AND p.from_status <> p.to_status \
+            AND p.to_status IN ('returned_for_clarification', 'deferred')"
+    };
+}
+
+/// Hours the SLA clock of request `ir` was paused, from its state-transition history (ITIL
+/// "pending"): every stay in `returned_for_clarification` or `deferred`, up to now for the current
+/// stay. Extends the completion deadline; `sla` and `stats` build their clocks on it.
+macro_rules! di_paused_hours_sql {
+    () => {
+        concat!(
+            "(SELECT COALESCE(SUM(MAX(0.0, ",
+            di_pause_end_sql!(),
+            " - julianday(p.acted_at))), 0.0) * 24.0 ",
+            di_pause_from_sql!(),
+            ")"
+        )
+    };
+}
+
+/// Paused hours before the request was screened (the response clock stops at screening).
+macro_rules! di_paused_response_hours_sql {
+    () => {
+        concat!(
+            "(SELECT COALESCE(SUM(MAX(0.0, MIN(",
+            di_pause_end_sql!(),
+            ", COALESCE(julianday(ir.screened_at), ",
+            di_pause_end_sql!(),
+            ")) - julianday(p.acted_at))), 0.0) * 24.0 ",
+            di_pause_from_sql!(),
+            ")"
+        )
+    };
+}
+
+/// Display enrichment columns (must be paired with [`IR_JOINS`]), plus the paused SLA hours.
+pub(crate) const IR_JOIN_COLS: &str = concat!(
+    "    eq.asset_id_code AS asset_code, eq.name AS asset_label,     org.code AS org_node_code, org.name AS org_node_label,     COALESCE(us.display_name, us.username) AS submitter_display_name,     COALESCE(urv.display_name, urv.username) AS reviewer_display_name,     wo.code AS converted_to_wo_code, wo.title AS converted_to_wo_title,     related_di.code AS related_di_code,     src_round.id AS source_inspection_round_id, src_tpl.code AS source_inspection_round_code,     src_tpl.name AS source_inspection_round_title, src_round.scheduled_at AS source_inspection_round_scheduled_at",
+    ", ",
+    di_paused_hours_sql!(),
+    " AS sla_paused_hours, ",
+    di_paused_response_hours_sql!(),
+    " AS sla_paused_response_hours"
+);
 
 pub(crate) const IR_JOINS: &str = "    LEFT JOIN equipment eq ON eq.id = ir.equipment_id     LEFT JOIN org_nodes org ON org.id = ir.org_node_id     LEFT JOIN user_accounts us ON us.id = ir.submitter_id     LEFT JOIN user_accounts urv ON urv.id = ir.reviewer_id     LEFT JOIN work_orders wo ON wo.id = ir.converted_to_wo_id     LEFT JOIN intervention_requests related_di ON related_di.id = ir.related_di_id     LEFT JOIN inspection_anomalies src_anomaly ON src_anomaly.id = ir.source_inspection_anomaly_id     LEFT JOIN inspection_rounds src_round ON src_round.id = src_anomaly.round_id     LEFT JOIN inspection_templates src_tpl ON src_tpl.id = src_round.template_id";
 
@@ -327,6 +398,12 @@ fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
 
 /// Map a sea-orm `QueryResult` row to an `InterventionRequest`.
 pub fn map_intervention_request(row: &QueryResult) -> AppResult<InterventionRequest> {
+    let mut di = map_columns(row)?;
+    di.sla_state = super::sla::frozen_sla_state(&di).map(|s| s.as_str().to_string());
+    Ok(di)
+}
+
+fn map_columns(row: &QueryResult) -> AppResult<InterventionRequest> {
     Ok(InterventionRequest {
         id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
         code: row.try_get::<String>("", "code").map_err(|e| decode_err("code", e))?,
@@ -508,6 +585,17 @@ pub fn map_intervention_request(row: &QueryResult) -> AppResult<InterventionRequ
         source_inspection_round_scheduled_at: row
             .try_get::<Option<String>>("", "source_inspection_round_scheduled_at")
             .map_err(|e| decode_err("source_inspection_round_scheduled_at", e))?,
+        sla_state: None,
+        sla_paused_hours: row
+            .try_get::<Option<f64>>("", "sla_paused_hours")
+            .ok()
+            .flatten()
+            .unwrap_or(0.0),
+        sla_paused_response_hours: row
+            .try_get::<Option<f64>>("", "sla_paused_response_hours")
+            .ok()
+            .flatten()
+            .unwrap_or(0.0),
     })
 }
 

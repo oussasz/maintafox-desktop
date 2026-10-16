@@ -14,13 +14,19 @@ import type {
   DiGetResponse,
   DiListFilter,
   DiListPage,
+  DiQueueCounts,
+  DiResubmitInput,
   DiTriageSubmittedInput,
   InterventionRequest,
 } from "@shared/ipc-types";
 
 // â”€â”€ Zod schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-const InterventionRequestSchema = z.object({
+/**
+ * One request as the backend sends it (`di::domain::InterventionRequest`). Shared by every DI
+ * service so no field is silently dropped by a local copy of the schema.
+ */
+export const InterventionRequestSchema = z.object({
   id: z.number(),
   code: z.string(),
   equipment_id: z.number(),
@@ -30,7 +36,7 @@ const InterventionRequestSchema = z.object({
   title: z.string(),
   description: z.string(),
   origin_type: z.string(),
-  request_type: z.string().default("repair"),
+  request_type: z.string(),
   symptom_code_id: z.number().nullable(),
   impact_level: z.string(),
   production_impact: z.boolean(),
@@ -62,7 +68,6 @@ const InterventionRequestSchema = z.object({
   classification_code_id: z.number().nullable(),
   is_recurrence_flag: z.boolean(),
   recurrence_di_id: z.number().nullable(),
-  is_modified: z.boolean().default(false),
   row_version: z.number(),
   submitter_id: z.number(),
   created_at: z.string(),
@@ -81,6 +86,17 @@ const InterventionRequestSchema = z.object({
   closed_by_id: z.number().nullable().optional(),
   deferred_from_status: z.string().nullable().optional(),
   related_di_code: z.string().nullable().optional(),
+  source_inspection_anomaly_id: z.number().nullable().optional(),
+  source_inspection_round_id: z.number().nullable().optional(),
+  source_inspection_round_code: z.string().nullable().optional(),
+  source_inspection_round_title: z.string().nullable().optional(),
+  source_inspection_round_scheduled_at: z.string().nullable().optional(),
+  sla_state: z
+    .enum(["on_track", "at_risk", "breached", "completed", "paused"])
+    .nullable()
+    .optional(),
+  sla_paused_hours: z.number().optional(),
+  sla_paused_response_hours: z.number().optional(),
 });
 
 const DiTransitionRowSchema = z.object({
@@ -174,4 +190,72 @@ export async function triageSubmittedDi(
   } catch (err) {
     rethrowIfVersionConflict(err);
   }
+}
+
+const DiQueueCountsSchema = z.object({
+  to_screen: z.number(),
+  to_review: z.number(),
+  awaiting_info: z.number(),
+  to_approve: z.number(),
+  approved_not_converted: z.number(),
+  deferred_due: z.number(),
+  sla_at_risk: z.number(),
+  mine: z.number(),
+  mine_awaiting_info: z.number(),
+});
+
+/** Size of every work queue of the requests screen (`mine` = the signed-in user's). */
+export async function getDiQueueCounts(): Promise<DiQueueCounts> {
+  const raw = await invoke<unknown>("get_di_queue_counts");
+  return DiQueueCountsSchema.parse(raw) as DiQueueCounts;
+}
+
+/** The requester answers the reviewer's question; the request goes back to review. */
+export async function resubmitDi(input: DiResubmitInput): Promise<InterventionRequest> {
+  try {
+    const raw = await invoke<unknown>("resubmit_di", { input });
+    return InterventionRequestSchema.parse(raw) as InterventionRequest;
+  } catch (err) {
+    rethrowIfVersionConflict(err);
+  }
+}
+
+/** Statuses of a request still being handled (not closed). */
+export const DI_OPEN_STATUSES = [
+  "submitted",
+  "in_review",
+  "returned_for_clarification",
+  "awaiting_approval",
+  "approved",
+  "deferred",
+] as const;
+
+export interface PossibleDuplicate {
+  di: InterventionRequest;
+  /** Same failure symptom as the request being written. */
+  sameSymptom: boolean;
+}
+
+/**
+ * Open requests already raised on the same asset (local database, works offline), those with the
+ * same symptom first. `excludeId` leaves out the request being edited.
+ */
+export async function findPossibleDuplicateDis(params: {
+  equipmentId: number;
+  symptomCodeId: number | null;
+  excludeId?: number | null;
+}): Promise<PossibleDuplicate[]> {
+  const page = await listDis({
+    equipment_id: params.equipmentId,
+    status: [...DI_OPEN_STATUSES],
+    limit: 20,
+    offset: 0,
+  });
+  return page.items
+    .filter((di) => di.id !== params.excludeId)
+    .map((di) => ({
+      di,
+      sameSymptom: params.symptomCodeId != null && di.symptom_code_id === params.symptomCodeId,
+    }))
+    .sort((a, b) => Number(b.sameSymptom) - Number(a.sameSymptom));
 }

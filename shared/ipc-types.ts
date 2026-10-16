@@ -4115,7 +4115,6 @@ export interface InterventionRequest {
   classification_code_id: number | null;
   is_recurrence_flag: boolean;
   recurrence_di_id: number | null;
-  is_modified: boolean;
   row_version: number;
   submitter_id: number;
   created_at: string;
@@ -4137,6 +4136,50 @@ export interface InterventionRequest {
   source_inspection_round_code?: string | null;
   source_inspection_round_title?: string | null;
   source_inspection_round_scheduled_at?: string | null;
+  /** Where the request stands against its frozen SLA, computed on read; null without a target. */
+  sla_state?: DiSlaState | null;
+  /** Hours the SLA clock was paused (waiting on the requester, deferred). */
+  sla_paused_hours?: number;
+  /** Paused hours before screening. */
+  sla_paused_response_hours?: number;
+}
+
+/** SLA state of a request (`di::sla::DiSlaLifecycleStatus`). */
+/** `paused`: waiting on the requester or deferred — the clock is stopped. */
+export type DiSlaState = "on_track" | "at_risk" | "breached" | "completed" | "paused";
+
+/** Work queues of the requests screen (`di::queries::DI_QUEUES`). */
+export type DiQueue =
+  | "to_screen"
+  | "to_review"
+  | "awaiting_info"
+  | "to_approve"
+  | "approved_not_converted"
+  | "deferred_due"
+  | "sla_at_risk"
+  | "mine";
+
+/** Size of every work queue (`get_di_queue_counts`). */
+export interface DiQueueCounts {
+  to_screen: number;
+  to_review: number;
+  awaiting_info: number;
+  to_approve: number;
+  approved_not_converted: number;
+  deferred_due: number;
+  sla_at_risk: number;
+  /** Open requests of the signed-in user. */
+  mine: number;
+  /** Requests of the signed-in user waiting for their answer. */
+  mine_awaiting_info: number;
+}
+
+/** The requester answers the reviewer's question and resubmits (`resubmit_di`). */
+export interface DiResubmitInput {
+  di_id: number;
+  actor_id: number;
+  expected_row_version: number;
+  response_note: string;
 }
 
 export interface DiListFilter {
@@ -4149,6 +4192,8 @@ export interface DiListFilter {
   urgency?: string | null;
   search?: string | null;
   disposition_code?: string | null;
+  /** Work queue; `mine` is always the signed-in user's requests. */
+  queue?: DiQueue | null;
   limit: number;
   offset: number;
 }
@@ -4184,8 +4229,8 @@ export interface DiCreateInput {
   title: string;
   description: string;
   origin_type: string;
-  /** Category A DI.REQUEST_TYPE code. Defaults to repair when omitted. */
-  request_type?: string;
+  /** Code of the plant's request type list (`DI.REQUEST_TYPE`). */
+  request_type: string;
   symptom_code_id?: number | null;
   impact_level: string;
   production_impact: boolean;
@@ -4242,6 +4287,8 @@ export interface DiReturnInput {
   actor_id: number;
   expected_row_version: number;
   reviewer_note: string;
+  /** Code of the plant's `DI.RETURN_REASON` list. */
+  reason_code: string;
 }
 
 export interface DiRejectInput {
@@ -4418,7 +4465,9 @@ export interface DiSlaStatus {
   resolution_remaining_hours: number | null;
   is_response_breached: boolean;
   is_resolution_breached: boolean;
-  status: "on_track" | "at_risk" | "breached" | "completed" | null;
+  /** Hours the clock was paused; the deadlines above include them. */
+  paused_hours: number;
+  status: DiSlaState | null;
 }
 
 export interface SlaRuleUpdateInput {
@@ -4648,7 +4697,26 @@ export interface DiOverdueDi {
   code: string;
   title: string;
   priority: string;
-  days_overdue: number;
+  /** Hours since the first missed SLA target. */
+  hours_overdue: number;
+}
+
+/** Open requests of one status: how many and how old (days since submission). */
+export interface DiBacklogStatus {
+  status: string;
+  count: number;
+  avg_age_days: number;
+  max_age_days: number;
+}
+
+/** Open requests split by where they stand against their SLA. */
+export interface DiSlaOpenSplit {
+  on_track: number;
+  at_risk: number;
+  breached: number;
+  /** Waiting on the requester or deferred: clock paused. */
+  paused: number;
+  no_target: number;
 }
 
 export interface DiDispositionCount {
@@ -4677,6 +4745,13 @@ export interface DiStatsPayload {
   max_age_days: number;
   top_equipment: DiEquipmentCount[];
   overdue_dis: DiOverdueDi[];
+  backlog_by_status: DiBacklogStatus[];
+  sla_open: DiSlaOpenSplit;
+  /** Requests closed in the period (with or without a work order). */
+  closed_in_period: number;
+  converted_count: number;
+  avg_response_hours: number | null;
+  avg_conversion_hours: number | null;
 }
 
 // â”€â”€â”€ Work Orders (OT) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

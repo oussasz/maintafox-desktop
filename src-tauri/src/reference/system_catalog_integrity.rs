@@ -133,7 +133,7 @@ fn seeded_value_sync_id(domain_code: &str, value_code: &str) -> String {
 ///
 /// Existing rows are left untouched (same `(set_id, code)`), and so is a seeded row that already
 /// lives in an older set of the domain (same `entity_sync_id`).
-async fn insert_seed_values(db: &DatabaseConnection, domain_code: &str, rows: &[SeedValue]) -> AppResult<()> {
+async fn insert_seed_values(db: &impl ConnectionTrait, domain_code: &str, rows: &[SeedValue]) -> AppResult<()> {
     for row in rows {
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -262,6 +262,89 @@ async fn ensure_di_reference_catalog(db: &DatabaseConnection) -> AppResult<()> {
     insert_seed_values(db, "DI.IMPACT_LEVEL", DI_IMPACT_LEVELS).await?;
     insert_seed_values(db, "DI.REQUEST_TYPE", DI_REQUEST_TYPES).await?;
 
+    ensure_di_decision_reason_catalogs(db).await?;
+    Ok(())
+}
+
+/// Reasons a reviewer gives when sending a request back to its requester for information
+/// (COMPANY list: each plant words its own questions; the starter set covers the usual gaps).
+const DI_RETURN_REASONS: &[SeedValue] = &[
+    SeedValue {
+        description: Some("La description ne permet pas de comprendre le problème."),
+        ..seed("unclear_description", "Description imprécise", 1, "di_return_reason")
+    },
+    SeedValue {
+        description: Some("L'équipement ou l'emplacement indiqué n'est pas le bon ou manque."),
+        ..seed(
+            "asset_or_location",
+            "Équipement / emplacement à préciser",
+            2,
+            "di_return_reason",
+        )
+    },
+    SeedValue {
+        description: Some("Une photo ou un document est nécessaire pour juger la demande."),
+        ..seed(
+            "missing_evidence",
+            "Photo / pièce jointe manquante",
+            3,
+            "di_return_reason",
+        )
+    },
+    SeedValue {
+        description: Some("L'urgence ou l'impact déclaré doit être justifié."),
+        ..seed(
+            "urgency_to_justify",
+            "Urgence / impact à justifier",
+            4,
+            "di_return_reason",
+        )
+    },
+    SeedValue {
+        description: Some("Autre question au demandeur (précisée dans la note)."),
+        ..seed("other", "Autre (voir note)", 5, "di_return_reason")
+    },
+];
+
+/// Reasons a request is deferred to a later date (COMPANY list).
+const DI_DEFERRAL_REASONS: &[SeedValue] = &[
+    seed("planned_shutdown", "Arrêt planifié", 1, "di_deferral_reason"),
+    seed("awaiting_parts", "Attente de pièces", 2, "di_deferral_reason"),
+    seed(
+        "awaiting_contractor",
+        "Attente d'un sous-traitant",
+        3,
+        "di_deferral_reason",
+    ),
+    seed(
+        "production_constraint",
+        "Contrainte de production",
+        4,
+        "di_deferral_reason",
+    ),
+    seed("budget", "Budget", 5, "di_deferral_reason"),
+    seed("other", "Autre (voir note)", 6, "di_deferral_reason"),
+];
+
+/// Reason lists of the request review decisions (return for information, deferral). Run by the
+/// integrity pass and by migration 217 for existing databases.
+pub(crate) async fn ensure_di_decision_reason_catalogs(db: &impl ConnectionTrait) -> AppResult<()> {
+    for (code, name, rows) in [
+        (
+            crate::di::reference_catalog::DOMAIN_RETURN_REASON,
+            "Motifs de retour DI (demande d'information)",
+            DI_RETURN_REASONS,
+        ),
+        (
+            crate::di::reference_catalog::DOMAIN_DEFERRAL_REASON,
+            "Motifs de report DI",
+            DI_DEFERRAL_REASONS,
+        ),
+    ] {
+        ensure_domain(db, code, name, "flat", "tenant_managed", 1, DomainAudience::Company).await?;
+        ensure_published_set(db, code).await?;
+        insert_seed_values(db, code, rows).await?;
+    }
     Ok(())
 }
 

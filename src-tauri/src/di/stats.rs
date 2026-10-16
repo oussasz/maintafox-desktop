@@ -47,13 +47,36 @@ pub struct DiEquipmentCount {
     pub percentage: f64,
 }
 
+/// An open request past an SLA target it has not met.
 #[derive(Debug, Clone, Serialize)]
 pub struct DiOverdueDi {
     pub id: i64,
     pub code: String,
     pub title: String,
     pub priority: String,
-    pub days_overdue: i64,
+    /// Hours since the first missed target (response if not screened in time, else completion).
+    pub hours_overdue: f64,
+}
+
+/// Open requests of one status: how many and how old (days since submission).
+#[derive(Debug, Clone, Serialize)]
+pub struct DiBacklogStatus {
+    pub status: String,
+    pub count: i64,
+    pub avg_age_days: f64,
+    pub max_age_days: f64,
+}
+
+/// Open requests split by where they stand against their frozen SLA (same rule as the lists).
+#[derive(Debug, Clone, Serialize, Default, PartialEq, Eq)]
+pub struct DiSlaOpenSplit {
+    pub on_track: i64,
+    pub at_risk: i64,
+    pub breached: i64,
+    /// Waiting on the requester or deferred: the clock is paused.
+    pub paused: i64,
+    /// Open requests without an SLA target (urgency level without target times).
+    pub no_target: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -70,6 +93,8 @@ pub struct DiStatsPayload {
     pub closed: i64,
     pub closed_this_month: i64,
     pub overdue: i64,
+    /// SLA outcome of the requests closed in the period (`closed_at` in the period, with or without
+    /// a work order): met = no clock past its target, pauses excluded.
     pub sla_met_count: i64,
     pub sla_breached_count: i64,
     pub sla_total: i64,
@@ -84,12 +109,48 @@ pub struct DiStatsPayload {
     pub max_age_days: f64,
     pub top_equipment: Vec<DiEquipmentCount>,
     pub overdue_dis: Vec<DiOverdueDi>,
+    /// Open backlog by status (current state; only the site scope applies, not the period).
+    pub backlog_by_status: Vec<DiBacklogStatus>,
+    /// Open backlog against its SLA (current state; site scope only).
+    pub sla_open: DiSlaOpenSplit,
+    /// Requests closed in the period (`closed_at` in the period), with or without a work order.
+    pub closed_in_period: i64,
+    /// Of those, the ones that became a work order (`converted_to_wo`).
+    pub converted_count: i64,
+    /// Average hours from submission to screening, over the requests screened in the period
+    /// (`screened_at` in the period), time waiting on the requester or deferred excluded.
+    pub avg_response_hours: Option<f64>,
+    /// Average hours from submission to the work order, over the requests converted in the period
+    /// (`converted_at` in the period), paused time excluded.
+    pub avg_conversion_hours: Option<f64>,
+}
+
+/// Open requests: not closed and not yet turned into a work order.
+const OPEN_SQL: &str = "(ir.status <> 'closed' AND ir.converted_at IS NULL)";
+
+/// Site scope only (the open backlog is a current state, the period does not apply).
+fn entity_scope_sql() -> &'static str {
+    " (? IS NULL OR ir.org_node_id = ?) "
+}
+
+fn entity_binds(filter: &DiStatsFilter) -> [sea_orm::Value; 2] {
+    [filter.entity_id.into(), filter.entity_id.into()]
 }
 
 fn base_scope_sql() -> &'static str {
     " (? IS NULL OR date(ir.submitted_at) >= date(?))
       AND (? IS NULL OR date(ir.submitted_at) <= date(?))
       AND (? IS NULL OR ir.org_node_id = ?) "
+}
+
+/// Period on the date of an event of the request (`column`, alias `ir`) instead of its submission;
+/// takes the same binds as [`base_scope_sql`].
+fn event_scope_sql(column: &str) -> String {
+    format!(
+        " (? IS NULL OR date({column}) >= date(?)) \
+          AND (? IS NULL OR date({column}) <= date(?)) \
+          AND (? IS NULL OR ir.org_node_id = ?) "
+    )
 }
 
 fn scope_binds(filter: &DiStatsFilter) -> [sea_orm::Value; 6] {
@@ -127,7 +188,7 @@ pub async fn get_di_stats(db: &DatabaseConnection, filter: DiStatsFilter) -> App
         &format!(
             "SELECT COUNT(*) AS value
              FROM intervention_requests ir
-             WHERE {base_where} AND ir.status = 'in_review'"
+             WHERE {base_where} AND ir.status IN ('submitted', 'in_review', 'awaiting_approval')"
         ),
         binds.to_vec(),
     )
@@ -142,7 +203,7 @@ pub async fn get_di_stats(db: &DatabaseConnection, filter: DiStatsFilter) -> App
              AND ir.status IN (
                'submitted',
                'in_review',
-               'in_review',
+               'returned_for_clarification',
                'awaiting_approval',
                'approved',
                'deferred'
@@ -188,14 +249,15 @@ pub async fn get_di_stats(db: &DatabaseConnection, filter: DiStatsFilter) -> App
     )
     .await?;
 
+    // Overdue = open and past an SLA target it has not met (the frozen targets of each request).
     let overdue = scalar_i64(
         db,
         &format!(
             "SELECT COUNT(*) AS value
              FROM intervention_requests ir
              WHERE {base_where}
-             AND ir.status IN ('submitted', 'in_review', 'awaiting_approval', 'approved', 'deferred', 'returned_for_clarification')
-             AND (julianday('now') - julianday(ir.submitted_at)) > 7"
+             AND {breached}",
+            breached = super::sla::SLA_BREACHED_SQL
         ),
         binds.to_vec(),
     )
@@ -379,14 +441,14 @@ pub async fn get_di_stats(db: &DatabaseConnection, filter: DiStatsFilter) -> App
                 DbBackend::Sqlite,
                 format!(
                     "SELECT
-                       COALESCE(AVG(julianday('now') - julianday(ir.submitted_at)), 0) AS avg_age_days,
-                       COALESCE(MAX(julianday('now') - julianday(ir.submitted_at)), 0) AS max_age_days
+                       COALESCE(AVG(julianday('now') - julianday(ir.submitted_at)), 0.0) AS avg_age_days,
+                       COALESCE(MAX(julianday('now') - julianday(ir.submitted_at)), 0.0) AS max_age_days
                      FROM intervention_requests ir
                      WHERE {base_where}
                      AND ir.status IN (
                        'submitted',
                        'in_review',
-                       'in_review',
+                       'returned_for_clarification',
                        'awaiting_approval',
                        'approved',
                        'deferred'
@@ -409,7 +471,7 @@ pub async fn get_di_stats(db: &DatabaseConnection, filter: DiStatsFilter) -> App
                 format!(
                     "SELECT
                        ir.equipment_id AS equipment_id,
-                       COALESCE(e.name, ('Asset #' || ir.equipment_id)) AS asset_label,
+                       COALESCE(e.name, e.asset_id_code, CAST(ir.equipment_id AS TEXT)) AS asset_label,
                        COUNT(*) AS count
                      FROM intervention_requests ir
                      LEFT JOIN equipment e ON e.id = ir.equipment_id
@@ -448,14 +510,15 @@ pub async fn get_di_stats(db: &DatabaseConnection, filter: DiStatsFilter) -> App
                        ir.id,
                        ir.code,
                        ir.title,
-                       ir.reported_urgency AS priority,
-                       CAST(julianday('now') - julianday(ir.submitted_at) AS INTEGER) AS days_overdue
+                       COALESCE(ir.validated_urgency, ir.reported_urgency) AS priority,
+                       {overdue} AS hours_overdue
                      FROM intervention_requests ir
                      WHERE {base_where}
-                     AND ir.status IN ('submitted', 'in_review', 'awaiting_approval', 'approved', 'deferred', 'returned_for_clarification')
-                     AND (julianday('now') - julianday(ir.submitted_at)) > 7
-                     ORDER BY days_overdue DESC, ir.id DESC
-                     LIMIT 10"
+                     AND {breached}
+                     ORDER BY hours_overdue DESC, ir.id DESC
+                     LIMIT 10",
+                    breached = super::sla::SLA_BREACHED_SQL,
+                    overdue = super::sla::SLA_HOURS_OVERDUE_SQL,
                 ),
                 binds.to_vec(),
             ))
@@ -467,76 +530,158 @@ pub async fn get_di_stats(db: &DatabaseConnection, filter: DiStatsFilter) -> App
                     code: row.try_get("", "code")?,
                     title: row.try_get("", "title")?,
                     priority: row.try_get("", "priority")?,
-                    days_overdue: row_i64(&row, "days_overdue")?,
+                    hours_overdue: row_f64(&row, "hours_overdue")?.max(0.0),
                 })
             })
             .collect::<AppResult<Vec<_>>>()?
     };
 
+    // SLA compliance over the requests finished in the period (closed — with or without a work
+    // order): met when no clock went past its target. Each clock stops when the request is
+    // screened / converted, or when it is closed without them; paused time is not counted.
+    let finished = event_scope_sql("ir.closed_at");
     let (sla_met_count, sla_breached_count, sla_total) = {
-        // Breached: response late OR resolution late (using frozen deadlines).
-        let breached = scalar_i64(
-            db,
-            &format!(
-                "SELECT COUNT(*) AS value
-                 FROM intervention_requests ir
-                 WHERE {base_where}
-                   AND ir.sla_response_deadline IS NOT NULL
-                   AND (
-                     (ir.screened_at IS NULL AND julianday('now') > julianday(ir.sla_response_deadline))
-                     OR (ir.screened_at IS NOT NULL AND julianday(ir.screened_at) > julianday(ir.sla_response_deadline))
-                     OR (
-                       ir.status NOT IN ('closed', 'closed')
-                       AND ir.sla_resolution_deadline IS NOT NULL
-                       AND (
-                         (ir.converted_at IS NULL AND julianday('now') > julianday(ir.sla_resolution_deadline))
-                         OR (ir.converted_at IS NOT NULL AND julianday(ir.converted_at) > julianday(ir.sla_resolution_deadline))
-                       )
-                     )
-                     OR (
-                       ir.status IN ('closed', 'closed')
-                       AND ir.sla_resolution_deadline IS NOT NULL
-                       AND ir.converted_at IS NOT NULL
-                       AND julianday(ir.converted_at) > julianday(ir.sla_resolution_deadline)
-                     )
-                   )"
-            ),
-            binds.to_vec(),
-        )
-        .await?;
-
-        // Met: has SLA, terminal/completed clocks, and not breached.
-        let met = scalar_i64(
-            db,
-            &format!(
-                "SELECT COUNT(*) AS value
-                 FROM intervention_requests ir
-                 WHERE {base_where}
-                   AND ir.sla_response_deadline IS NOT NULL
-                   AND (
-                     ir.converted_at IS NOT NULL
-                     OR ir.status IN ('closed', 'closed')
-                   )
-                   AND NOT (
-                     (ir.screened_at IS NULL AND julianday('now') > julianday(ir.sla_response_deadline))
-                     OR (ir.screened_at IS NOT NULL AND julianday(ir.screened_at) > julianday(ir.sla_response_deadline))
-                     OR (
-                       ir.converted_at IS NOT NULL
-                       AND ir.sla_resolution_deadline IS NOT NULL
-                       AND julianday(ir.converted_at) > julianday(ir.sla_resolution_deadline)
-                     )
-                   )
-                   AND (
-                     ir.screened_at IS NULL
-                     OR julianday(ir.screened_at) <= julianday(ir.sla_response_deadline)
-                   )"
-            ),
-            binds.to_vec(),
-        )
-        .await?;
-
+        let row = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                format!(
+                    "SELECT
+                       COALESCE(SUM(CASE WHEN {late} THEN 1 ELSE 0 END), 0) AS breached,
+                       COALESCE(SUM(CASE WHEN {late} THEN 0 ELSE 1 END), 0) AS met
+                     FROM intervention_requests ir
+                     WHERE {finished}
+                       AND ir.status = 'closed' AND ir.closed_at IS NOT NULL
+                       AND ir.sla_target_response_hours IS NOT NULL
+                       AND ir.sla_response_deadline IS NOT NULL",
+                    late = super::sla::SLA_LATE_SQL,
+                ),
+                binds.to_vec(),
+            ))
+            .await?;
+        let (breached, met) = match row {
+            Some(r) => (row_i64(&r, "breached")?, row_i64(&r, "met")?),
+            None => (0, 0),
+        };
         (met, breached, met + breached)
     };
+
+    let entity = entity_scope_sql();
+    let backlog_by_status = {
+        let rows = db
+            .query_all(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                format!(
+                    "SELECT ir.status AS status, COUNT(*) AS count,
+                            AVG(julianday('now') - julianday(ir.submitted_at)) AS avg_age_days,
+                            MAX(julianday('now') - julianday(ir.submitted_at)) AS max_age_days
+                       FROM intervention_requests ir
+                      WHERE {entity} AND {OPEN_SQL}
+                      GROUP BY ir.status
+                      ORDER BY count DESC"
+                ),
+                entity_binds(&filter).to_vec(),
+            ))
+            .await?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(DiBacklogStatus {
+                    status: row.try_get("", "status")?,
+                    count: row_i64(&row, "count")?,
+                    avg_age_days: row_f64(&row, "avg_age_days")?,
+                    max_age_days: row_f64(&row, "max_age_days")?,
+                })
+            })
+            .collect::<AppResult<Vec<_>>>()?
+    };
+
+    let sla_open = {
+        let row = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                format!(
+                    "SELECT
+                       COALESCE(SUM(CASE WHEN {breached} THEN 1 ELSE 0 END), 0) AS breached,
+                       COALESCE(SUM(CASE WHEN {risk} AND NOT {breached} THEN 1 ELSE 0 END), 0) AS at_risk,
+                       COALESCE(SUM(CASE WHEN ir.sla_target_response_hours IS NULL
+                                          OR ir.sla_response_deadline IS NULL THEN 1 ELSE 0 END), 0) AS no_target,
+                       COALESCE(SUM(CASE WHEN ir.sla_target_response_hours IS NOT NULL
+                                          AND ir.sla_response_deadline IS NOT NULL
+                                          AND ir.status IN ('returned_for_clarification', 'deferred')
+                                         THEN 1 ELSE 0 END), 0) AS paused,
+                       COUNT(*) AS open_total
+                     FROM intervention_requests ir
+                     WHERE {entity} AND {OPEN_SQL}",
+                    breached = super::sla::SLA_BREACHED_SQL,
+                    risk = super::sla::SLA_AT_RISK_OR_BREACHED_SQL,
+                ),
+                entity_binds(&filter).to_vec(),
+            ))
+            .await?;
+        match row {
+            Some(row) => {
+                let breached = row_i64(&row, "breached")?;
+                let at_risk = row_i64(&row, "at_risk")?;
+                let no_target = row_i64(&row, "no_target")?;
+                let paused = row_i64(&row, "paused")?;
+                let open_total = row_i64(&row, "open_total")?;
+                DiSlaOpenSplit {
+                    on_track: (open_total - breached - at_risk - no_target - paused).max(0),
+                    at_risk,
+                    breached,
+                    paused,
+                    no_target,
+                }
+            }
+            None => DiSlaOpenSplit::default(),
+        }
+    };
+
+    let (closed_in_period, converted_count) = {
+        let row = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                format!(
+                    "SELECT COUNT(*) AS closed_count,
+                            COALESCE(SUM(CASE WHEN ir.disposition_code = '{converted}' THEN 1 ELSE 0 END), 0)
+                              AS converted_count
+                     FROM intervention_requests ir
+                     WHERE {finished} AND ir.status = 'closed' AND ir.closed_at IS NOT NULL",
+                    converted = super::disposition::DISPOSITION_CONVERTED_TO_WO
+                ),
+                binds.to_vec(),
+            ))
+            .await?;
+        match row {
+            Some(r) => (row_i64(&r, "closed_count")?, row_i64(&r, "converted_count")?),
+            None => (0, 0),
+        }
+    };
+
+    let avg_response_hours = scalar_opt_f64(
+        db,
+        &format!(
+            "SELECT AVG(MAX(0.0, {elapsed})) AS value
+             FROM intervention_requests ir
+             WHERE {screened} AND ir.screened_at IS NOT NULL",
+            elapsed = super::sla::SLA_RESPONSE_ELAPSED_SQL,
+            screened = event_scope_sql("ir.screened_at"),
+        ),
+        binds.to_vec(),
+    )
+    .await?;
+
+    let avg_conversion_hours = scalar_opt_f64(
+        db,
+        &format!(
+            "SELECT AVG(MAX(0.0, {elapsed})) AS value
+             FROM intervention_requests ir
+             WHERE {converted} AND ir.converted_at IS NOT NULL",
+            elapsed = super::sla::SLA_RESOLUTION_ELAPSED_SQL,
+            converted = event_scope_sql("ir.converted_at"),
+        ),
+        binds.to_vec(),
+    )
+    .await?;
 
     Ok(DiStatsPayload {
         total,
@@ -559,7 +704,27 @@ pub async fn get_di_stats(db: &DatabaseConnection, filter: DiStatsFilter) -> App
         max_age_days,
         top_equipment,
         overdue_dis,
+        backlog_by_status,
+        sla_open,
+        closed_in_period,
+        converted_count,
+        avg_response_hours,
+        avg_conversion_hours,
     })
+}
+
+async fn scalar_opt_f64(db: &DatabaseConnection, sql: &str, binds: Vec<sea_orm::Value>) -> AppResult<Option<f64>> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            sql.to_string(),
+            binds,
+        ))
+        .await?;
+    match row {
+        Some(row) => Ok(row.try_get::<Option<f64>>("", "value")?),
+        None => Ok(None),
+    }
 }
 
 async fn scalar_i64(db: &DatabaseConnection, sql: &str, binds: Vec<sea_orm::Value>) -> AppResult<i64> {

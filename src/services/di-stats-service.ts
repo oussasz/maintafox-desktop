@@ -45,7 +45,22 @@ const DiOverdueDiSchema = z.object({
   code: z.string(),
   title: z.string(),
   priority: z.string(),
-  days_overdue: z.number(),
+  hours_overdue: z.number(),
+});
+
+const DiBacklogStatusSchema = z.object({
+  status: z.string(),
+  count: z.number(),
+  avg_age_days: z.number(),
+  max_age_days: z.number(),
+});
+
+const DiSlaOpenSplitSchema = z.object({
+  on_track: z.number(),
+  at_risk: z.number(),
+  breached: z.number(),
+  paused: z.number(),
+  no_target: z.number(),
 });
 
 const DiDispositionCountSchema = z.object({
@@ -74,6 +89,12 @@ const DiStatsPayloadSchema = z.object({
   max_age_days: z.number(),
   top_equipment: z.array(DiEquipmentCountSchema),
   overdue_dis: z.array(DiOverdueDiSchema),
+  backlog_by_status: z.array(DiBacklogStatusSchema),
+  sla_open: DiSlaOpenSplitSchema,
+  closed_in_period: z.number(),
+  converted_count: z.number(),
+  avg_response_hours: z.number().nullable(),
+  avg_conversion_hours: z.number().nullable(),
 });
 
 // â”€â”€ Command â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

@@ -98,6 +98,9 @@ fn category_for_known_code(code: &str) -> Option<GovernanceCategory> {
         | "EQUIPMENT.SUBFAMILY"
         | "DI.ORIGIN"
         | "DI.DISPOSITION"
+        // Reasons of the request review decisions (return for information, deferral).
+        | "DI.RETURN_REASON"
+        | "DI.DEFERRAL_REASON"
         | "PERSONNEL.SKILLS"
         | "ORG.SCHEDULE_CLASS"
         | "WORK.DELAY_REASONS"

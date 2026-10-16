@@ -21,6 +21,8 @@ export type ReferenceTypeId =
   | "di.impact"
   | "di.request_type"
   | "di.disposition"
+  | "di.return_reason"
+  | "di.deferral_reason"
   | "personnel.skills"
   | "org.schedule_class"
   | "work.symptom"
@@ -153,6 +155,24 @@ export const REFERENCE_TYPE_REGISTRY: Record<ReferenceTypeId, ReferenceTypeConfi
     gender: "f",
     emptyMessageFr: "Aucune disposition disponible",
     emptyMessageEn: "No disposition available",
+  },
+  "di.return_reason": {
+    id: "di.return_reason",
+    domainCode: "DI.RETURN_REASON",
+    entityLabelFr: "motif de retour",
+    entityLabelEn: "return reason",
+    gender: "m",
+    emptyMessageFr: "Aucun motif de retour disponible",
+    emptyMessageEn: "No return reason available",
+  },
+  "di.deferral_reason": {
+    id: "di.deferral_reason",
+    domainCode: "DI.DEFERRAL_REASON",
+    entityLabelFr: "motif de report",
+    entityLabelEn: "deferral reason",
+    gender: "m",
+    emptyMessageFr: "Aucun motif de report disponible",
+    emptyMessageEn: "No deferral reason available",
   },
   "personnel.skills": {
     id: "personnel.skills",

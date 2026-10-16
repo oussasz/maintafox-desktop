@@ -44,6 +44,8 @@ pub enum DiSlaLifecycleStatus {
     AtRisk,
     Breached,
     Completed,
+    /// Waiting on the requester or deferred: the clock is stopped.
+    Paused,
 }
 
 impl DiSlaLifecycleStatus {
@@ -53,6 +55,7 @@ impl DiSlaLifecycleStatus {
             Self::AtRisk => "at_risk",
             Self::Breached => "breached",
             Self::Completed => "completed",
+            Self::Paused => "paused",
         }
     }
 }
@@ -73,7 +76,9 @@ pub struct DiSlaStatus {
     pub resolution_remaining_hours: Option<f64>,
     pub is_response_breached: bool,
     pub is_resolution_breached: bool,
-    /// `on_track` | `at_risk` | `breached` | `completed`, or null when no rule.
+    /// Hours the clock was paused (waiting on the requester, deferred); deadlines include them.
+    pub paused_hours: f64,
+    /// `on_track` | `at_risk` | `breached` | `completed` | `paused`, or null when no rule.
     pub status: Option<DiSlaLifecycleStatus>,
 }
 
@@ -156,6 +161,7 @@ fn empty_status() -> DiSlaStatus {
         resolution_remaining_hours: None,
         is_response_breached: false,
         is_resolution_breached: false,
+        paused_hours: 0.0,
         status: None,
     }
 }
@@ -208,29 +214,104 @@ fn is_sla_terminal(di: &InterventionRequest) -> bool {
     matches!(di.status.as_str(), "closed")
 }
 
-fn derive_lifecycle_status(
-    di: &InterventionRequest,
-    escalation_threshold_hours: i64,
-    response_elapsed: f64,
-    resolution_elapsed: f64,
-    is_response_breached: bool,
-    is_resolution_breached: bool,
-) -> DiSlaLifecycleStatus {
-    if is_sla_terminal(di) {
-        return DiSlaLifecycleStatus::Completed;
-    }
-    if is_response_breached || is_resolution_breached {
-        return DiSlaLifecycleStatus::Breached;
-    }
+/// Statuses where the request waits on someone else than maintenance: the requester
+/// (`returned_for_clarification`) or a later date (`deferred`). The SLA clock is paused there
+/// (ITIL "pending"); the time spent extends the deadlines (`di_paused_hours_sql!` in `domain`).
+pub const SLA_PAUSED_STATUSES: &[&str] = &["returned_for_clarification", "deferred"];
 
-    let escalation = escalation_threshold_hours as f64;
-    let response_at_risk = di.screened_at.is_none() && response_elapsed >= escalation;
-    let resolution_at_risk = di.converted_at.is_none() && resolution_elapsed >= escalation;
-    if response_at_risk || resolution_at_risk {
-        return DiSlaLifecycleStatus::AtRisk;
-    }
+fn is_sla_paused(di: &InterventionRequest) -> bool {
+    SLA_PAUSED_STATUSES.contains(&di.status.as_str())
+}
 
-    DiSlaLifecycleStatus::OnTrack
+fn format_iso(dt: NaiveDateTime) -> String {
+    dt.format("%Y-%m-%dT%H:%M:%SZ").to_string()
+}
+
+fn shift_hours(iso: &str, hours: f64) -> AppResult<String> {
+    let dt = parse_iso(iso)?;
+    Ok(format_iso(dt + Duration::seconds((hours * 3600.0).round() as i64)))
+}
+
+/// Targets of one request (frozen on the request, or resolved from the rules for legacy rows).
+struct ClockTargets {
+    rule_id: Option<i64>,
+    response_hours: i64,
+    resolution_hours: i64,
+    escalation_hours: i64,
+    /// Deadlines before any pause.
+    response_deadline: String,
+    resolution_deadline: String,
+}
+
+/// The SLA clock of a request. Elapsed time runs from submission to screening (response) and to
+/// the work order (resolution); a request closed without them stops its clocks at `closed_at`.
+/// Time spent paused is not counted and extends the deadlines. A paused request is `Paused`,
+/// never at risk or breached.
+fn evaluate_clock(di: &InterventionRequest, t: &ClockTargets) -> AppResult<DiSlaStatus> {
+    let submitted_at = parse_iso(&di.submitted_at)?;
+    let now = Utc::now().naive_utc();
+    let closed_at = match (&di.closed_at, di.status.as_str()) {
+        (Some(c), "closed") => Some(parse_iso(c)?),
+        _ => None,
+    };
+    let response_end = match &di.screened_at {
+        Some(s) => parse_iso(s)?,
+        None => closed_at.unwrap_or(now),
+    };
+    let resolution_end = match &di.converted_at {
+        Some(s) => parse_iso(s)?,
+        None => closed_at.unwrap_or(now),
+    };
+    let paused_response = di.sla_paused_response_hours.max(0.0);
+    let paused_total = di.sla_paused_hours.max(0.0);
+    let response_elapsed = (hours_between(&submitted_at, &response_end) - paused_response).max(0.0);
+    let resolution_elapsed = (hours_between(&submitted_at, &resolution_end) - paused_total).max(0.0);
+
+    let terminal = is_sla_terminal(di);
+    let paused = !terminal && is_sla_paused(di);
+    let response_running = di.screened_at.is_none() && !terminal;
+    let resolution_running = di.converted_at.is_none() && !terminal;
+
+    // Late = the clock went past its target; for a finished request, at the time it finished.
+    let response_late = response_elapsed > t.response_hours as f64;
+    let resolution_late = resolution_elapsed > t.resolution_hours as f64;
+    // Breach flags drive the breach notifications: only while the clock runs.
+    let is_response_breached = response_running && !paused && response_late;
+    let is_resolution_breached = resolution_running && !paused && resolution_late;
+
+    let status = if terminal {
+        DiSlaLifecycleStatus::Completed
+    } else if paused {
+        DiSlaLifecycleStatus::Paused
+    } else if is_response_breached || is_resolution_breached {
+        DiSlaLifecycleStatus::Breached
+    } else {
+        let escalation = t.escalation_hours as f64;
+        let at_risk = (response_running && response_elapsed >= escalation)
+            || (resolution_running && resolution_elapsed >= escalation);
+        if at_risk {
+            DiSlaLifecycleStatus::AtRisk
+        } else {
+            DiSlaLifecycleStatus::OnTrack
+        }
+    };
+
+    Ok(DiSlaStatus {
+        rule_id: t.rule_id,
+        target_response_hours: Some(t.response_hours),
+        target_resolution_hours: Some(t.resolution_hours),
+        sla_deadline: Some(shift_hours(&t.response_deadline, paused_response)?),
+        resolution_deadline: Some(shift_hours(&t.resolution_deadline, paused_total)?),
+        response_elapsed_hours: Some(response_elapsed),
+        resolution_elapsed_hours: Some(resolution_elapsed),
+        response_remaining_hours: response_running.then(|| (t.response_hours as f64 - response_elapsed).max(0.0)),
+        resolution_remaining_hours: resolution_running
+            .then(|| (t.resolution_hours as f64 - resolution_elapsed).max(0.0)),
+        is_response_breached,
+        is_resolution_breached,
+        paused_hours: paused_total,
+        status: Some(status),
+    })
 }
 
 /// Full review-event SLA snapshot (response + resolution).
@@ -247,127 +328,157 @@ fn di_has_frozen_sla(di: &InterventionRequest) -> bool {
 }
 
 fn status_from_frozen(di: &InterventionRequest) -> AppResult<DiSlaStatus> {
-    let target_response = di.sla_target_response_hours.unwrap();
-    let target_resolution = di.sla_target_resolution_hours.unwrap_or(target_response);
-    let escalation = di.sla_escalation_threshold_hours.unwrap_or(target_response);
-    let sla_deadline = di.sla_response_deadline.clone().unwrap();
-    let resolution_deadline = di
-        .sla_resolution_deadline
-        .clone()
-        .unwrap_or_else(|| sla_deadline.clone());
-
-    let submitted_at = parse_iso(&di.submitted_at)?;
-    let now = Utc::now().naive_utc();
-
-    let response_end = match &di.screened_at {
-        Some(s) => parse_iso(s)?,
-        None => now,
-    };
-    let response_elapsed = hours_between(&submitted_at, &response_end);
-
-    let resolution_end = match &di.converted_at {
-        Some(s) => parse_iso(s)?,
-        None => now,
-    };
-    let resolution_elapsed = hours_between(&submitted_at, &resolution_end);
-
-    let is_response_breached = di.screened_at.is_none() && response_elapsed > target_response as f64;
-    let is_resolution_breached = di.converted_at.is_none() && resolution_elapsed > target_resolution as f64;
-
-    let response_remaining_hours = if di.screened_at.is_none() {
-        Some((target_response as f64 - response_elapsed).max(0.0))
-    } else {
-        None
-    };
-    let resolution_remaining_hours = if di.converted_at.is_none() && !is_sla_terminal(di) {
-        Some((target_resolution as f64 - resolution_elapsed).max(0.0))
-    } else {
-        None
-    };
-
-    let status = Some(derive_lifecycle_status(
+    let response_hours = di.sla_target_response_hours.unwrap_or_default();
+    let response_deadline = di.sla_response_deadline.clone().unwrap_or_default();
+    evaluate_clock(
         di,
-        escalation,
-        response_elapsed,
-        resolution_elapsed,
-        is_response_breached,
-        is_resolution_breached,
-    ));
-
-    Ok(DiSlaStatus {
-        rule_id: di.sla_rule_id,
-        target_response_hours: Some(target_response),
-        target_resolution_hours: Some(target_resolution),
-        sla_deadline: Some(sla_deadline),
-        resolution_deadline: Some(resolution_deadline),
-        response_elapsed_hours: Some(response_elapsed),
-        resolution_elapsed_hours: Some(resolution_elapsed),
-        response_remaining_hours,
-        resolution_remaining_hours,
-        is_response_breached,
-        is_resolution_breached,
-        status,
-    })
+        &ClockTargets {
+            rule_id: di.sla_rule_id,
+            response_hours,
+            resolution_hours: di.sla_target_resolution_hours.unwrap_or(response_hours),
+            escalation_hours: di.sla_escalation_threshold_hours.unwrap_or(response_hours),
+            resolution_deadline: di
+                .sla_resolution_deadline
+                .clone()
+                .unwrap_or_else(|| response_deadline.clone()),
+            response_deadline,
+        },
+    )
 }
+
+/// SLA state of a request from its frozen targets and pause history (no extra database read), as
+/// shown in lists and work queues. `None` when no target was frozen or a stored date does not parse.
+pub fn frozen_sla_state(di: &InterventionRequest) -> Option<DiSlaLifecycleStatus> {
+    if !di_has_frozen_sla(di) {
+        return None;
+    }
+    status_from_frozen(di).ok().and_then(|s| s.status)
+}
+
+/// Hours of the response clock of request `ir` (SQL): submission → screening, else → closing,
+/// else → now, minus the paused hours before screening.
+macro_rules! di_response_elapsed_sql {
+    () => {
+        "((julianday(COALESCE(ir.screened_at, CASE WHEN ir.status = 'closed' THEN ir.closed_at END, \
+            strftime('%Y-%m-%dT%H:%M:%SZ','now'))) - julianday(ir.submitted_at)) * 24.0 - "
+    };
+}
+
+/// Hours of the resolution clock (SQL): submission → work order, else → closing, else → now,
+/// minus every paused hour.
+macro_rules! di_resolution_elapsed_sql {
+    () => {
+        "((julianday(COALESCE(ir.converted_at, CASE WHEN ir.status = 'closed' THEN ir.closed_at END, \
+            strftime('%Y-%m-%dT%H:%M:%SZ','now'))) - julianday(ir.submitted_at)) * 24.0 - "
+    };
+}
+
+/// SQL (alias `ir`): elapsed response hours, pauses excluded.
+pub const SLA_RESPONSE_ELAPSED_SQL: &str = concat!(di_response_elapsed_sql!(), di_paused_response_hours_sql!(), ")");
+/// SQL (alias `ir`): elapsed resolution hours, pauses excluded.
+pub const SLA_RESOLUTION_ELAPSED_SQL: &str = concat!(di_resolution_elapsed_sql!(), di_paused_hours_sql!(), ")");
+
+/// Open requests whose clock runs: not closed, no work order, not paused, with a frozen target.
+macro_rules! di_sla_running_sql {
+    () => {
+        "ir.status NOT IN ('closed', 'returned_for_clarification', 'deferred') \
+         AND ir.converted_at IS NULL \
+         AND ir.sla_target_response_hours IS NOT NULL AND ir.sla_response_deadline IS NOT NULL"
+    };
+}
+
+/// SQL (alias `ir`): the response clock went past its target (not screened in time).
+macro_rules! di_response_late_sql {
+    () => {
+        concat!(
+            "(ir.screened_at IS NULL AND ",
+            di_response_elapsed_sql!(),
+            di_paused_response_hours_sql!(),
+            ") > ir.sla_target_response_hours)"
+        )
+    };
+}
+
+/// SQL (alias `ir`): the resolution clock went past its target (no work order in time).
+macro_rules! di_resolution_late_sql {
+    () => {
+        concat!(
+            "(ir.converted_at IS NULL AND ",
+            di_resolution_elapsed_sql!(),
+            di_paused_hours_sql!(),
+            ") > COALESCE(ir.sla_target_resolution_hours, ir.sla_target_response_hours))"
+        )
+    };
+}
+
+/// SQL (alias `ir`): the request went past a target — response measured at screening (or closing,
+/// or now), resolution at the work order (or closing, or now), pauses excluded. Used for finished
+/// requests (SLA compliance) and, with [`SLA_BREACHED_SQL`], for open ones.
+pub const SLA_LATE_SQL: &str = concat!(
+    "(",
+    di_response_elapsed_sql!(),
+    di_paused_response_hours_sql!(),
+    ") > ir.sla_target_response_hours OR ",
+    di_resolution_elapsed_sql!(),
+    di_paused_hours_sql!(),
+    ") > COALESCE(ir.sla_target_resolution_hours, ir.sla_target_response_hours))"
+);
+
+/// SQL (alias `ir`): hours past the first missed target of an open request (response while not
+/// screened, else completion), pauses excluded.
+pub const SLA_HOURS_OVERDUE_SQL: &str = concat!(
+    "MAX(CASE WHEN ir.screened_at IS NULL THEN ",
+    di_response_elapsed_sql!(),
+    di_paused_response_hours_sql!(),
+    ") - ir.sla_target_response_hours ELSE 0.0 END, ",
+    di_resolution_elapsed_sql!(),
+    di_paused_hours_sql!(),
+    ") - COALESCE(ir.sla_target_resolution_hours, ir.sla_target_response_hours))"
+);
+
+/// SQL predicate (alias `ir`): open requests whose running SLA is breached — the same rule as
+/// [`evaluate_clock`] (pauses excluded; a paused request is never breached).
+pub const SLA_BREACHED_SQL: &str = concat!(
+    "(",
+    di_sla_running_sql!(),
+    " AND (",
+    di_response_late_sql!(),
+    " OR ",
+    di_resolution_late_sql!(),
+    "))"
+);
+
+/// SQL predicate (alias `ir`): open requests whose running SLA is at risk or breached — past the
+/// escalation threshold on a running clock, or late (same rule as [`evaluate_clock`]).
+pub const SLA_AT_RISK_OR_BREACHED_SQL: &str = concat!(
+    "(",
+    di_sla_running_sql!(),
+    " AND (",
+    di_response_late_sql!(),
+    " OR ",
+    di_resolution_late_sql!(),
+    " OR (ir.screened_at IS NULL AND ",
+    di_response_elapsed_sql!(),
+    di_paused_response_hours_sql!(),
+    ") >= COALESCE(ir.sla_escalation_threshold_hours, ir.sla_target_response_hours)) OR ",
+    di_resolution_elapsed_sql!(),
+    di_paused_hours_sql!(),
+    ") >= COALESCE(ir.sla_escalation_threshold_hours, ir.sla_target_response_hours)))"
+);
 
 fn status_from_rule(di: &InterventionRequest, rule: &SlaTargets) -> AppResult<DiSlaStatus> {
     let submitted_at = parse_iso(&di.submitted_at)?;
-    let now = Utc::now().naive_utc();
-
-    let response_deadline_dt = submitted_at + Duration::hours(rule.target_response_hours);
-    let resolution_deadline_dt = submitted_at + Duration::hours(rule.target_resolution_hours);
-    let sla_deadline = response_deadline_dt.format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let resolution_deadline = resolution_deadline_dt.format("%Y-%m-%dT%H:%M:%SZ").to_string();
-
-    let response_end = match &di.screened_at {
-        Some(s) => parse_iso(s)?,
-        None => now,
-    };
-    let response_elapsed = hours_between(&submitted_at, &response_end);
-
-    let resolution_end = match &di.converted_at {
-        Some(s) => parse_iso(s)?,
-        None => now,
-    };
-    let resolution_elapsed = hours_between(&submitted_at, &resolution_end);
-
-    let is_response_breached = di.screened_at.is_none() && response_elapsed > rule.target_response_hours as f64;
-    let is_resolution_breached = di.converted_at.is_none() && resolution_elapsed > rule.target_resolution_hours as f64;
-
-    let response_remaining_hours = if di.screened_at.is_none() {
-        Some((rule.target_response_hours as f64 - response_elapsed).max(0.0))
-    } else {
-        None
-    };
-    let resolution_remaining_hours = if di.converted_at.is_none() && !is_sla_terminal(di) {
-        Some((rule.target_resolution_hours as f64 - resolution_elapsed).max(0.0))
-    } else {
-        None
-    };
-
-    let status = Some(derive_lifecycle_status(
+    evaluate_clock(
         di,
-        rule.escalation_threshold_hours,
-        response_elapsed,
-        resolution_elapsed,
-        is_response_breached,
-        is_resolution_breached,
-    ));
-
-    Ok(DiSlaStatus {
-        rule_id: rule.rule_id,
-        target_response_hours: Some(rule.target_response_hours),
-        target_resolution_hours: Some(rule.target_resolution_hours),
-        sla_deadline: Some(sla_deadline),
-        resolution_deadline: Some(resolution_deadline),
-        response_elapsed_hours: Some(response_elapsed),
-        resolution_elapsed_hours: Some(resolution_elapsed),
-        response_remaining_hours,
-        resolution_remaining_hours,
-        is_response_breached,
-        is_resolution_breached,
-        status,
-    })
+        &ClockTargets {
+            rule_id: rule.rule_id,
+            response_hours: rule.target_response_hours,
+            resolution_hours: rule.target_resolution_hours,
+            escalation_hours: rule.escalation_threshold_hours,
+            response_deadline: format_iso(submitted_at + Duration::hours(rule.target_response_hours)),
+            resolution_deadline: format_iso(submitted_at + Duration::hours(rule.target_resolution_hours)),
+        },
+    )
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -577,26 +688,11 @@ pub async fn evaluate_historical_outcome(
         return Ok(SlaHistoricalOutcome::None);
     }
 
-    let submitted_at = parse_iso(&di.submitted_at)?;
-    let now = Utc::now().naive_utc();
-    let target_response = status.target_response_hours.unwrap() as f64;
-    let target_resolution = status.target_resolution_hours.unwrap_or(0) as f64;
-
-    let response_late = match &di.screened_at {
-        Some(s) => hours_between(&submitted_at, &parse_iso(s)?) > target_response,
-        None => hours_between(&submitted_at, &now) > target_response,
-    };
-
-    let resolution_late = match &di.converted_at {
-        Some(s) => hours_between(&submitted_at, &parse_iso(s)?) > target_resolution,
-        None => {
-            if is_sla_terminal(di) {
-                false
-            } else {
-                hours_between(&submitted_at, &now) > target_resolution
-            }
-        }
-    };
+    // Same clock as the lists: pauses excluded, a finished request measured when it finished.
+    let target_response = status.target_response_hours.unwrap_or_default() as f64;
+    let target_resolution = status.target_resolution_hours.unwrap_or_default() as f64;
+    let response_late = status.response_elapsed_hours.unwrap_or_default() > target_response;
+    let resolution_late = status.resolution_elapsed_hours.unwrap_or_default() > target_resolution;
 
     if is_sla_terminal(di) {
         if response_late || resolution_late {
@@ -604,8 +700,7 @@ pub async fn evaluate_historical_outcome(
         }
         return Ok(SlaHistoricalOutcome::Met);
     }
-
-    if response_late || resolution_late {
+    if status.status == Some(DiSlaLifecycleStatus::Breached) {
         return Ok(SlaHistoricalOutcome::Breached);
     }
 

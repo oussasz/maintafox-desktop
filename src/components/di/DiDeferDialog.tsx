@@ -9,6 +9,7 @@ import { CalendarClock, Loader2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { ReferenceCombobox } from "@/components/reference/ReferenceCombobox";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -20,31 +21,9 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { useSession } from "@/hooks/use-session";
 import { useDiReviewStore } from "@/stores/di-review-store";
 import type { InterventionRequest } from "@shared/ipc-types";
-
-/**
- * Deferral reasons. No reference domain exists for them, so they are a closed,
- * translated vocabulary stored as `reason_code` on the review event.
- */
-export const DI_DEFER_REASON_CODES = [
-  "planned_shutdown",
-  "awaiting_parts",
-  "awaiting_contractor",
-  "production_constraint",
-  "budget",
-  "other",
-] as const;
-export type DiDeferReasonCode = (typeof DI_DEFER_REASON_CODES)[number];
 
 /** Local calendar date `YYYY-MM-DD`, `offsetDays` from today. */
 export function localIsoDate(offsetDays = 0, from: Date = new Date()): string {
@@ -63,11 +42,11 @@ interface DiDeferDialogProps {
 
 export function DiDeferDialog({ di, open, onOpenChange, onDeferred }: DiDeferDialogProps) {
   const { t } = useTranslation("di");
-  const { info } = useSession();
   const defer = useDiReviewStore((s) => s.defer);
   const minDate = useMemo(() => localIsoDate(1), []);
   const [until, setUntil] = useState("");
-  const [reason, setReason] = useState<DiDeferReasonCode | "">("");
+  /** Code of the plant's deferral reason list (`DI.DEFERRAL_REASON`). */
+  const [reason, setReason] = useState<string | null>(null);
   const [notes, setNotes] = useState("");
   const [touched, setTouched] = useState(false);
   const [pending, setPending] = useState(false);
@@ -75,7 +54,7 @@ export function DiDeferDialog({ di, open, onOpenChange, onDeferred }: DiDeferDia
   useEffect(() => {
     if (!open) return;
     setUntil("");
-    setReason("");
+    setReason(null);
     setNotes("");
     setTouched(false);
   }, [open]);
@@ -94,15 +73,15 @@ export function DiDeferDialog({ di, open, onOpenChange, onDeferred }: DiDeferDia
 
   const handleSubmit = async () => {
     setTouched(true);
-    if (!valid || info?.user_id == null) return;
+    if (!valid) return;
     setPending(true);
     try {
       await defer({
         di_id: di.id,
-        actor_id: info.user_id,
+        actor_id: 0, // the backend uses the session user
         expected_row_version: di.row_version,
         deferred_until: `${until}T00:00:00Z`,
-        reason_code: reason,
+        reason_code: reason ?? "",
         notes: notes.trim() || null,
       });
       onOpenChange(false);
@@ -144,22 +123,16 @@ export function DiDeferDialog({ di, open, onOpenChange, onDeferred }: DiDeferDia
 
           <div className="space-y-1.5">
             <Label htmlFor="di-defer-reason">{t("deferral.reason")}</Label>
-            <Select value={reason} onValueChange={(v) => setReason(v as DiDeferReasonCode)}>
-              <SelectTrigger
-                id="di-defer-reason"
-                className="h-11"
-                aria-invalid={touched && reasonError != null}
-              >
-                <SelectValue placeholder={t("deferral.reasonPlaceholder")} />
-              </SelectTrigger>
-              <SelectContent>
-                {DI_DEFER_REASON_CODES.map((code) => (
-                  <SelectItem key={code} value={code}>
-                    {t(`deferral.reasons.${code}`)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <ReferenceCombobox
+              id="di-defer-reason"
+              referenceType="di.deferral_reason"
+              value={reason}
+              onChange={setReason}
+              allowClear={false}
+              allowCreate={false}
+              placeholder={t("deferral.reasonPlaceholder")}
+              aria-invalid={touched && reasonError != null}
+            />
             {touched && reasonError ? (
               <p className="text-xs text-status-danger">{reasonError}</p>
             ) : null}
