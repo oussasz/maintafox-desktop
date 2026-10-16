@@ -41,7 +41,12 @@ function makeStats(overrides: Partial<DiStatsPayload> = {}): DiStatsPayload {
     avg_age_days: 4.5,
     max_age_days: 30,
     top_equipment: [{ equipment_id: 10, asset_label: "P-101", count: 4, percentage: 33.3 }],
-    overdue_dis: [{ id: 7, code: "DI-0007", title: "Fuite", priority: "high", days_overdue: 3 }],
+    overdue_dis: [{ id: 7, code: "DI-0007", title: "Fuite", priority: "high", hours_overdue: 72 }],
+    backlog_by_status: [{ status: "submitted", count: 3, avg_age_days: 2, max_age_days: 6 }],
+    sla_open: { on_track: 2, at_risk: 1, breached: 1, no_target: 0 },
+    converted_count: 3,
+    avg_response_hours: 5.5,
+    avg_conversion_hours: 40,
     ...overrides,
   };
 }

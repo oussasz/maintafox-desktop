@@ -7,7 +7,7 @@
  * Active operational stages only. Closed DIs live in DiArchivePanel.
  */
 
-import { AlertTriangle, Calendar as CalendarIcon } from "lucide-react";
+import { AlertTriangle, Calendar as CalendarIcon, Clock } from "lucide-react";
 import { useCallback, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -96,8 +96,12 @@ export function DiKanbanBoard({ items, onCardClick }: DiKanbanBoardProps) {
 
       const urgencyTone = urgencyKanbanTone(di.validated_urgency ?? di.reported_urgency);
       const badges: KanbanBadge[] = [];
-      if (di.is_modified) {
-        badges.push({ label: t("review.modified"), tone: "warning" });
+      if (di.sla_state === "breached" || di.sla_state === "at_risk") {
+        badges.push({
+          label: t(`sla.status.${di.sla_state}`),
+          tone: di.sla_state === "breached" ? "danger" : "warning",
+          icon: Clock,
+        });
       }
       if (urgencyTone) {
         badges.push({

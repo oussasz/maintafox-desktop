@@ -283,6 +283,10 @@ pub struct InterventionRequest {
     pub source_inspection_round_code: Option<String>,
     pub source_inspection_round_title: Option<String>,
     pub source_inspection_round_scheduled_at: Option<String>,
+    /// Where the request stands against its frozen SLA (`on_track` | `at_risk` | `breached` |
+    /// `completed`), computed on read from the frozen targets; `None` when no target applies.
+    #[serde(default)]
+    pub sla_state: Option<String>,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -327,6 +331,12 @@ fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
 
 /// Map a sea-orm `QueryResult` row to an `InterventionRequest`.
 pub fn map_intervention_request(row: &QueryResult) -> AppResult<InterventionRequest> {
+    let mut di = map_columns(row)?;
+    di.sla_state = super::sla::frozen_sla_state(&di).map(|s| s.as_str().to_string());
+    Ok(di)
+}
+
+fn map_columns(row: &QueryResult) -> AppResult<InterventionRequest> {
     Ok(InterventionRequest {
         id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
         code: row.try_get::<String>("", "code").map_err(|e| decode_err("code", e))?,
@@ -508,6 +518,7 @@ pub fn map_intervention_request(row: &QueryResult) -> AppResult<InterventionRequ
         source_inspection_round_scheduled_at: row
             .try_get::<Option<String>>("", "source_inspection_round_scheduled_at")
             .map_err(|e| decode_err("source_inspection_round_scheduled_at", e))?,
+        sla_state: None,
     })
 }
 

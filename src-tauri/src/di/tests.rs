@@ -898,6 +898,7 @@ mod tests {
                 actor_id: user_id,
                 expected_row_version: rv,
                 reviewer_note: "Need more details on vibration frequency".into(),
+                reason_code: Some("unclear_description".into()),
             },
         )
         .await

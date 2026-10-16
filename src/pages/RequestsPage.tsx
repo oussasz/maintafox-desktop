@@ -1,15 +1,24 @@
 /**
  * RequestsPage.tsx
  *
- * Multi-view intervention-request (DI) workspace inspired by the web version.
- * Views: List (DataTable) and Kanban board, toggled via header buttons.
- * Detail: floating dialog (DiDetailDialog) — the underlying view stays fully
- * visible and usable when the dialog is closed.
+ * Intervention requests (DI) workspace. A bar of work queues (to screen, to review, waiting for
+ * information, to approve, approved without a work order, deferral due, SLA at risk, my requests)
+ * sits above the list, kanban and calendar views; the dashboard view holds the KPIs.
+ * Detail: floating dialog (DiDetailDialog) over the view.
  */
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { BarChart3, CalendarDays, ClipboardList, Columns3, List, Plus } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
+import {
+  BarChart3,
+  CalendarDays,
+  ClipboardCheck,
+  ClipboardList,
+  Columns3,
+  List,
+  MoreHorizontal,
+  Plus,
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router-dom";
 
@@ -22,13 +31,17 @@ import { DiApprovalDialog } from "@/components/di/DiApprovalDialog";
 import { DiArchivePanel } from "@/components/di/DiArchivePanel";
 import { DiCalendarView } from "@/components/di/DiCalendarView";
 import { DiCloseDialog } from "@/components/di/DiCloseDialog";
+import { DiContextMenu } from "@/components/di/DiContextMenu";
 import { DiDashboardView } from "@/components/di/DiDashboardView";
 import { DiDetailDialog } from "@/components/di/DiDetailDialog";
 import { DiFormDialog } from "@/components/di/DiFormDialog";
 import { DiKanbanBoard } from "@/components/di/DiKanbanBoard";
+import { DiNextStepLabel } from "@/components/di/DiNextStepLabel";
+import { printDiFiche } from "@/components/di/DiPrintFiche";
+import { DiQueueBar, type DiQueueSelection, useVisibleDiQueues } from "@/components/di/DiQueueBar";
 import { DiReturnDialog } from "@/components/di/DiReturnDialog";
-import { DiReviewPanel } from "@/components/di/DiReviewPanel";
 import { DiSlaRulesPanel } from "@/components/di/DiSlaRulesPanel";
+import { DiSlaStatusBadge } from "@/components/di/DiSlaStatusBadge";
 import { DI_DISPOSITION_FILTER_CODES } from "@/components/di/disposition-meta";
 import { diStatusToI18nKey } from "@/components/di/status-meta";
 import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
@@ -41,27 +54,52 @@ import {
 } from "@/components/layout/ModuleHeaderControls";
 import { ModulePageShell } from "@/components/layout/ModulePageShell";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { ErrorState, TruncationNotice } from "@/components/ui/data-state";
+import { EmptyState } from "@/components/ui/empty-state";
 import { StatusChip } from "@/components/ui/status-chip";
 import { mfLayout } from "@/design-system/tokens";
 import { DI_STATUS_TONE, toneOf } from "@/design-system/tone";
 import { usePermissions } from "@/hooks/use-permissions";
+import { formatPersonLabel } from "@/lib/display";
+import { triageSubmittedDi } from "@/services/di-service";
+import { useDiReviewStore } from "@/stores/di-review-store";
 import { useDiStore } from "@/stores/di-store";
+import { toErrorMessage } from "@/utils/errors";
 import { formatDate as formatDiDate, intlLocaleForLanguage } from "@/utils/format-date";
-import type { InterventionRequest } from "@shared/ipc-types";
+import type { DiQueue, InterventionRequest } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
 type ViewMode = "list" | "kanban" | "calendar" | "dashboard";
 
-/** Same cohort as `loadReviewQueue` in `di-review-store` (pending triage + approval). */
-const DI_REVIEW_QUEUE_STATUSES = [
-  "in_review",
-  "returned_for_clarification",
-  "awaiting_approval",
-] as const;
+const QUEUE_PARAM = "queue";
 
-const STATUS_FILTER_REVIEW_QUEUE = "__review_queue__";
-const STATUS_FILTER_TRIAGE_INBOX = "__triage_inbox__";
+/** Older links: `?triage=1` (entry queue) and `?review=1` (review queue). */
+function queueFromParams(params: URLSearchParams): DiQueueSelection | null {
+  const raw = params.get(QUEUE_PARAM);
+  if (raw) return raw as DiQueueSelection;
+  if (params.get("triage") === "1") return "to_screen";
+  if (params.get("review") === "1") return "to_review";
+  return null;
+}
+
+function readStoredView(): ViewMode {
+  try {
+    const v = localStorage.getItem("di-view-mode");
+    if (v === "list" || v === "kanban" || v === "calendar" || v === "dashboard") return v;
+  } catch {
+    // Storage unavailable: default view.
+  }
+  return "list";
+}
+
+function storeView(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Storage unavailable: the choice lasts for this session only.
+  }
+}
 
 // ── Component ───────────────────────────────────────────────────────────────
 
@@ -75,91 +113,110 @@ export function RequestsPage() {
   const loadingMore = useDiStore((s) => s.loadingMore);
   const listError = useDiStore((s) => s.listError);
   const activeDi = useDiStore((s) => s.activeDi);
+  const queueCounts = useDiStore((s) => s.queueCounts);
   const loadDis = useDiStore((s) => s.loadDis);
   const loadMoreDis = useDiStore((s) => s.loadMoreDis);
+  const loadQueueCounts = useDiStore((s) => s.loadQueueCounts);
   const openDi = useDiStore((s) => s.openDi);
   const closeDi = useDiStore((s) => s.closeDi);
   const openCreateForm = useDiStore((s) => s.openCreateForm);
   const setFilter = useDiStore((s) => s.setFilter);
+  const openApproval = useDiReviewStore((s) => s.openApproval);
+  const openRejection = useDiReviewStore((s) => s.openRejection);
+  const openReturn = useDiReviewStore((s) => s.openReturn);
 
-  const [view, setView] = useState<ViewMode>(
-    () => (localStorage.getItem("di-view-mode") as ViewMode) || "kanban",
-  );
-  const [showFilters, setShowFilters] = useState(
-    () => localStorage.getItem("di-show-filters") !== "0",
-  );
+  const { can } = usePermissions();
+  const visibleQueues = useVisibleDiQueues();
+
+  const [view, setView] = useState<ViewMode>(readStoredView);
+  const [showFilters, setShowFilters] = useState(() => {
+    try {
+      return localStorage.getItem("di-show-filters") !== "0";
+    } catch {
+      return true;
+    }
+  });
   const [searchInput, setSearchInput] = useState("");
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [priorityFilter, setPriorityFilter] = useState<string | null>(null);
   const [dispositionFilter, setDispositionFilter] = useState<string | null>(null);
   const [archiveRefreshKey, setArchiveRefreshKey] = useState(0);
-
-  const { can } = usePermissions();
   const [slaOpen, setSlaOpen] = useState(false);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkMessage, setBulkMessage] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  useLayoutEffect(() => {
-    if (searchParams.get("review") !== "1") {
-      return;
-    }
-    setView("list");
-    localStorage.setItem("di-view-mode", "list");
-    setStatusFilter(STATUS_FILTER_REVIEW_QUEUE);
-    setFilter({
-      status: [...DI_REVIEW_QUEUE_STATUSES],
-      submitter_id: null,
-      limit: 200,
-      offset: 0,
-    });
-  }, [searchParams, setFilter, setView]);
+  // A requester without a review role lands on their own requests.
+  const defaultQueue: DiQueueSelection =
+    visibleQueues.length <= 2 && visibleQueues.includes("mine") ? "mine" : "all";
+  const requestedQueue = queueFromParams(searchParams);
+  const queue: DiQueueSelection =
+    requestedQueue && visibleQueues.includes(requestedQueue) ? requestedQueue : defaultQueue;
 
-  useLayoutEffect(() => {
-    if (searchParams.get("triage") !== "1") {
-      return;
-    }
-    setView("list");
-    localStorage.setItem("di-view-mode", "list");
-    setStatusFilter(STATUS_FILTER_TRIAGE_INBOX);
-    setFilter({
-      status: ["submitted"],
-      submitter_id: null,
-      limit: 200,
-      offset: 0,
-    });
-  }, [searchParams, setFilter, setView]);
+  // The queue drives the list filter; status / urgency / disposition filters narrow it further.
+  useEffect(() => {
+    setFilter({ queue: queue === "all" ? null : (queue as DiQueue), offset: 0 });
+    setSelected(new Set());
+    setBulkMessage(null);
+    void loadDis();
+  }, [queue, setFilter, loadDis]);
 
   useEffect(() => {
     const raw = searchParams.get("openDi");
-    if (raw) {
-      const id = Number.parseInt(raw, 10);
-      if (!Number.isNaN(id)) {
-        void openDi(id);
-        setSearchParams(
-          (prev) => {
-            const p = new URLSearchParams(prev);
-            p.delete("openDi");
-            return p;
-          },
-          { replace: true },
-        );
-      }
-    }
+    if (!raw) return;
+    const id = Number.parseInt(raw, 10);
+    if (!Number.isNaN(id)) void openDi(id);
+    setSearchParams(
+      (prev) => {
+        const p = new URLSearchParams(prev);
+        p.delete("openDi");
+        return p;
+      },
+      { replace: true },
+    );
   }, [searchParams, openDi, setSearchParams]);
 
-  useEffect(() => {
-    void loadDis();
-  }, [loadDis, searchParams]);
-
+  // Queue sizes follow every list reload (any decision reloads the list).
   useEffect(() => {
     if (loading) return;
+    void loadQueueCounts();
     setArchiveRefreshKey((k) => k + 1);
-  }, [loading]);
+  }, [loading, loadQueueCounts]);
+
+  useEffect(() => {
+    const onRefresh = () => {
+      void loadDis();
+    };
+    window.addEventListener("mf:di-triage-refresh", onRefresh);
+    return () => window.removeEventListener("mf:di-triage-refresh", onRefresh);
+  }, [loadDis]);
+
+  const switchQueue = useCallback(
+    (next: DiQueueSelection) => {
+      setSearchParams(
+        (prev) => {
+          const p = new URLSearchParams(prev);
+          p.delete("triage");
+          p.delete("review");
+          if (next === defaultQueue) p.delete(QUEUE_PARAM);
+          else p.set(QUEUE_PARAM, next);
+          return p;
+        },
+        { replace: true },
+      );
+      if (view === "dashboard") {
+        setView("list");
+        storeView("di-view-mode", "list");
+      }
+    },
+    [defaultQueue, setSearchParams, view],
+  );
 
   const switchView = useCallback((v: ViewMode) => {
     setView(v);
-    localStorage.setItem("di-view-mode", v);
+    storeView("di-view-mode", v);
   }, []);
-
-  const handleCardClick = useCallback((di: InterventionRequest) => void openDi(di.id), [openDi]);
 
   const STATUS_OPTIONS = useMemo(
     () =>
@@ -172,142 +229,9 @@ export function RequestsPage() {
 
   const { levels: urgencyLevels, labelOf: urgencyLabel } = useUrgencyScale();
   const PRIORITY_OPTIONS = useMemo(
-    () =>
-      urgencyLevels.map((level) => ({
-        value: level.code,
-        label: urgencyLabel(level.code),
-      })),
+    () => urgencyLevels.map((level) => ({ value: level.code, label: urgencyLabel(level.code) })),
     [urgencyLevels, urgencyLabel],
   );
-
-  const onSearchChange = useCallback(
-    (val: string) => {
-      setFilter({ search: val.trim() || null });
-      void loadDis();
-    },
-    [loadDis, setFilter],
-  );
-
-  const handleStatusFilter = useCallback(
-    (val: string | null) => {
-      setStatusFilter(val);
-      if (val === STATUS_FILTER_REVIEW_QUEUE) {
-        setFilter({
-          status: [...DI_REVIEW_QUEUE_STATUSES],
-          submitter_id: null,
-          limit: 200,
-          offset: 0,
-        });
-        setSearchParams(
-          (prev) => {
-            const p = new URLSearchParams(prev);
-            p.set("review", "1");
-            p.delete("triage");
-            return p;
-          },
-          { replace: true },
-        );
-      } else if (val === STATUS_FILTER_TRIAGE_INBOX) {
-        setFilter({
-          status: ["submitted"],
-          submitter_id: null,
-          limit: 200,
-          offset: 0,
-        });
-        setSearchParams(
-          (prev) => {
-            const p = new URLSearchParams(prev);
-            p.delete("review");
-            p.set("triage", "1");
-            return p;
-          },
-          { replace: true },
-        );
-      } else {
-        if (searchParams.get("review")) {
-          setSearchParams(
-            (prev) => {
-              const p = new URLSearchParams(prev);
-              p.delete("review");
-              return p;
-            },
-            { replace: true },
-          );
-        }
-        if (searchParams.get("triage")) {
-          setSearchParams(
-            (prev) => {
-              const p = new URLSearchParams(prev);
-              p.delete("triage");
-              return p;
-            },
-            { replace: true },
-          );
-        }
-        if (val == null) {
-          setFilter({ status: null, submitter_id: null, limit: 50, offset: 0 });
-        } else {
-          setFilter({ status: [val], submitter_id: null, limit: 50, offset: 0 });
-        }
-      }
-      void loadDis();
-    },
-    [loadDis, setFilter, searchParams, setSearchParams],
-  );
-
-  const handlePriorityFilter = useCallback(
-    (val: string | null) => {
-      setPriorityFilter(val);
-      setFilter({ urgency: val });
-      void loadDis();
-    },
-    [loadDis, setFilter],
-  );
-
-  const handleDispositionFilter = useCallback(
-    (val: string | null) => {
-      setDispositionFilter(val);
-      setFilter({ disposition_code: val });
-      void loadDis();
-    },
-    [loadDis, setFilter],
-  );
-
-  const resetFilters = useCallback(() => {
-    setSearchInput("");
-    setStatusFilter(null);
-    setPriorityFilter(null);
-    setDispositionFilter(null);
-    setSearchParams(
-      (prev) => {
-        const p = new URLSearchParams(prev);
-        p.delete("review");
-        p.delete("triage");
-        return p;
-      },
-      { replace: true },
-    );
-    setFilter({
-      search: null,
-      status: null,
-      urgency: null,
-      disposition_code: null,
-      submitter_id: null,
-      limit: 50,
-      offset: 0,
-    });
-    void loadDis();
-  }, [loadDis, setFilter, setSearchParams]);
-
-  const statusFilterOptions = useMemo(() => {
-    return [
-      { value: STATUS_FILTER_REVIEW_QUEUE, label: t("list.filters.reviewQueue") },
-      ...(can(P.DI_SCREEN) || can(P.DI_REVIEW)
-        ? [{ value: STATUS_FILTER_TRIAGE_INBOX, label: t("list.filters.triageInbox") }]
-        : []),
-      ...STATUS_OPTIONS,
-    ];
-  }, [STATUS_OPTIONS, can, t]);
 
   const DISPOSITION_OPTIONS = useMemo(
     () =>
@@ -318,13 +242,57 @@ export function RequestsPage() {
     [t],
   );
 
+  const onSearchChange = useCallback(
+    (val: string) => {
+      setFilter({ search: val.trim() || null, offset: 0 });
+      void loadDis();
+    },
+    [loadDis, setFilter],
+  );
+
+  const handleStatusFilter = useCallback(
+    (val: string | null) => {
+      setStatusFilter(val);
+      setFilter({ status: val == null ? null : [val], offset: 0 });
+      void loadDis();
+    },
+    [loadDis, setFilter],
+  );
+
+  const handlePriorityFilter = useCallback(
+    (val: string | null) => {
+      setPriorityFilter(val);
+      setFilter({ urgency: val, offset: 0 });
+      void loadDis();
+    },
+    [loadDis, setFilter],
+  );
+
+  const handleDispositionFilter = useCallback(
+    (val: string | null) => {
+      setDispositionFilter(val);
+      setFilter({ disposition_code: val, offset: 0 });
+      void loadDis();
+    },
+    [loadDis, setFilter],
+  );
+
+  const resetFilters = useCallback(() => {
+    setSearchInput("");
+    setStatusFilter(null);
+    setPriorityFilter(null);
+    setDispositionFilter(null);
+    setFilter({ search: null, status: null, urgency: null, disposition_code: null, offset: 0 });
+    void loadDis();
+  }, [loadDis, setFilter]);
+
   const filterDefs = useMemo<SmartFilterDef[]>(
     () => [
       {
         id: "status",
         kind: "select",
         label: t("list.filters.status"),
-        options: statusFilterOptions,
+        options: STATUS_OPTIONS,
         value: statusFilter,
         onChange: handleStatusFilter,
       },
@@ -347,7 +315,7 @@ export function RequestsPage() {
     ],
     [
       t,
-      statusFilterOptions,
+      STATUS_OPTIONS,
       PRIORITY_OPTIONS,
       DISPOSITION_OPTIONS,
       statusFilter,
@@ -362,20 +330,100 @@ export function RequestsPage() {
   const toggleFilters = useCallback(() => {
     setShowFilters((prev) => {
       const next = !prev;
-      localStorage.setItem("di-show-filters", next ? "1" : "0");
+      storeView("di-show-filters", next ? "1" : "0");
       return next;
     });
   }, []);
 
-  const columns: ColumnDef<InterventionRequest>[] = useMemo(
-    () => [
+  // ── Bulk admission to review (the one safe bulk decision: nothing is lost or closed) ──
+
+  const canBulkTriage = queue === "to_screen" && (can(P.DI_SCREEN) || can(P.DI_REVIEW));
+  const triageable = useMemo(
+    () => items.filter((di) => di.status === "submitted").map((di) => di.id),
+    [items],
+  );
+
+  const toggleRow = useCallback((id: number, on: boolean) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }, []);
+
+  const runBulkTriage = useCallback(async () => {
+    const targets = items.filter((di) => selected.has(di.id) && di.status === "submitted");
+    if (targets.length === 0) return;
+    setBulkBusy(true);
+    setBulkMessage(null);
+    let failed = 0;
+    for (const di of targets) {
+      try {
+        await triageSubmittedDi({ di_id: di.id, expected_row_version: di.row_version });
+      } catch {
+        failed += 1;
+      }
+    }
+    setBulkBusy(false);
+    setSelected(new Set());
+    setBulkMessage(
+      t("bulk.triageResult", { done: targets.length - failed, failed, total: targets.length }),
+    );
+    void loadDis();
+  }, [items, selected, loadDis, t]);
+
+  const triageOne = useCallback(
+    async (di: InterventionRequest) => {
+      setActionError(null);
+      try {
+        await triageSubmittedDi({ di_id: di.id, expected_row_version: di.row_version });
+        void loadDis();
+      } catch (err) {
+        setActionError(toErrorMessage(err));
+      }
+    },
+    [loadDis],
+  );
+
+  const printOne = useCallback((di: InterventionRequest) => {
+    setActionError(null);
+    printDiFiche(di).catch((err: unknown) => setActionError(toErrorMessage(err)));
+  }, []);
+
+  // ── Columns ─────────────────────────────────────────────────────────────
+
+  const columns: ColumnDef<InterventionRequest>[] = useMemo(() => {
+    const cols: ColumnDef<InterventionRequest>[] = [];
+    if (canBulkTriage) {
+      cols.push({
+        id: "select",
+        header: () => (
+          <Checkbox
+            aria-label={t("bulk.selectAll")}
+            checked={triageable.length > 0 && triageable.every((id) => selected.has(id))}
+            onCheckedChange={(v) => setSelected(v === true ? new Set(triageable) : new Set())}
+          />
+        ),
+        cell: ({ row }) => (
+          <div onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+            <Checkbox
+              aria-label={t("bulk.selectOne", { code: row.original.code })}
+              checked={selected.has(row.original.id)}
+              disabled={row.original.status !== "submitted"}
+              onCheckedChange={(v) => toggleRow(row.original.id, v === true)}
+            />
+          </div>
+        ),
+      });
+    }
+    cols.push(
       {
         accessorKey: "code",
         header: t("list.columns.number"),
         cell: ({ row }) => (
           <span className="font-mono text-xs inline-flex items-center gap-1.5 flex-wrap">
             {row.original.code}
-            {row.original.is_modified && <StatusChip label={t("review.modified")} tone="warning" />}
             <LinkedEntityBadge
               entity="work_order"
               code={row.original.converted_to_wo_code}
@@ -390,7 +438,9 @@ export function RequestsPage() {
         accessorKey: "title",
         header: t("list.columns.subject"),
         cell: ({ row }) => (
-          <span className="max-w-[200px] truncate block">{row.original.title}</span>
+          <span className="max-w-[220px] truncate block" title={row.original.title}>
+            {row.original.title}
+          </span>
         ),
       },
       {
@@ -406,44 +456,105 @@ export function RequestsPage() {
       {
         accessorKey: "status",
         header: t("list.columns.status"),
-        cell: ({ row }) => {
-          const s = row.original.status;
-          return (
-            <StatusChip
-              label={t(`status.${diStatusToI18nKey(s)}` as const)}
-              tone={toneOf(DI_STATUS_TONE, s)}
-              dot
-            />
-          );
-        },
+        cell: ({ row }) => (
+          <StatusChip
+            label={t(`status.${diStatusToI18nKey(row.original.status)}` as const)}
+            tone={toneOf(DI_STATUS_TONE, row.original.status)}
+            dot
+          />
+        ),
       },
       {
-        accessorKey: "reported_urgency",
+        id: "urgency",
+        accessorFn: (di) => di.validated_urgency ?? di.reported_urgency,
         header: t("list.columns.priority"),
-        cell: ({ row }) => {
-          const u = row.original.reported_urgency;
-          return <UrgencyBadge code={u} />;
-        },
+        cell: ({ row }) => (
+          <UrgencyBadge code={row.original.validated_urgency ?? row.original.reported_urgency} />
+        ),
+      },
+      {
+        id: "sla",
+        accessorFn: (di) => di.sla_state ?? "",
+        header: t("list.columns.sla"),
+        cell: ({ row }) =>
+          row.original.sla_state && row.original.sla_state !== "completed" ? (
+            <DiSlaStatusBadge status={row.original.sla_state} />
+          ) : (
+            <span className="text-xs text-text-muted">—</span>
+          ),
+      },
+      {
+        id: "nextStep",
+        header: t("list.columns.nextStep"),
+        cell: ({ row }) => <DiNextStepLabel di={row.original} />,
+      },
+      {
+        id: "requester",
+        accessorFn: (di) => di.submitter_display_name ?? "",
+        header: t("list.columns.reportedBy"),
+        cell: ({ row }) => (
+          <span className="text-xs text-text-muted">
+            {formatPersonLabel(row.original.submitter_display_name)}
+          </span>
+        ),
       },
       {
         accessorKey: "submitted_at",
         header: t("list.columns.reportedAt"),
-        cell: ({ row }) => {
-          const d = row.original.submitted_at;
-          return (
-            <span className="text-xs text-text-muted">
-              {formatDiDate(d, dateLocale, {
-                day: "2-digit",
-                month: "2-digit",
-                year: "numeric",
-              })}
-            </span>
-          );
-        },
+        cell: ({ row }) => (
+          <span className="text-xs text-text-muted">
+            {formatDiDate(row.original.submitted_at, dateLocale, {
+              day: "2-digit",
+              month: "2-digit",
+              year: "numeric",
+            })}
+          </span>
+        ),
       },
-    ],
-    [t, dateLocale],
-  );
+      {
+        id: "actions",
+        header: "",
+        cell: ({ row }) => (
+          <div onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+            <DiContextMenu
+              di={row.original}
+              onViewDetail={(di) => void openDi(di.id)}
+              onEdit={(di) => openCreateForm(di)}
+              onTriage={(di) => void triageOne(di)}
+              onApprove={openApproval}
+              onReturn={openReturn}
+              onClose={openRejection}
+              onPrint={printOne}
+            >
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-10 w-10 p-0"
+                aria-label={t("contextMenu.actionsFor", { code: row.original.code })}
+              >
+                <MoreHorizontal className="h-4 w-4" aria-hidden />
+              </Button>
+            </DiContextMenu>
+          </div>
+        ),
+      },
+    );
+    return cols;
+  }, [
+    canBulkTriage,
+    triageable,
+    selected,
+    toggleRow,
+    t,
+    dateLocale,
+    openDi,
+    openCreateForm,
+    triageOne,
+    openApproval,
+    openReturn,
+    openRejection,
+    printOne,
+  ]);
 
   const viewOptions: ViewOption<ViewMode>[] = [
     { value: "list", label: t("page.viewList"), icon: List },
@@ -456,6 +567,8 @@ export function RequestsPage() {
   ).length;
   const showListError = listError != null && items.length === 0;
   const recordView = view === "list" || view === "kanban" || view === "calendar";
+  const showEmpty = recordView && !loading && !showListError && items.length === 0;
+  const selectedCount = [...selected].filter((id) => triageable.includes(id)).length;
 
   return (
     <ModulePageShell
@@ -465,7 +578,7 @@ export function RequestsPage() {
       bodyClassName={null}
       actions={
         <>
-          <PermissionGate permission={P.DI_CREATE}>
+          <PermissionGate anyOf={[P.DI_CREATE, P.DI_CREATE_OWN]}>
             <Button onClick={() => openCreateForm()} className={mfLayout.primaryAction}>
               <Plus className="h-4 w-4" aria-hidden />
               {t("action.create")}
@@ -487,7 +600,8 @@ export function RequestsPage() {
       }
       filterBar={
         <>
-          {showFilters && (
+          <DiQueueBar value={queue} counts={queueCounts} onChange={switchQueue} />
+          {showFilters && recordView && (
             <SmartFilterBar
               searchPlaceholder={t("search.placeholder")}
               searchValue={searchInput}
@@ -498,16 +612,52 @@ export function RequestsPage() {
               onReset={resetFilters}
             />
           )}
-          {/* Review queue (approvers only) */}
-          <PermissionGate anyOf={[P.DI_SCREEN, P.DI_REVIEW]}>
-            <DiReviewPanel />
-          </PermissionGate>
         </>
       }
     >
       {recordView && showListError ? (
         <div className="p-4">
           <ErrorState error={listError} onRetry={() => void loadDis()} retrying={loading} />
+        </div>
+      ) : null}
+      {actionError ? (
+        <div className="px-4 pt-3">
+          <p role="alert" className="text-sm text-status-danger">
+            {actionError}
+          </p>
+        </div>
+      ) : null}
+      {recordView && canBulkTriage && (selectedCount > 0 || bulkMessage) ? (
+        <div className="mx-4 mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-surface-border bg-surface-1 px-4 py-2.5">
+          {selectedCount > 0 ? (
+            <>
+              <span className="text-sm text-text-primary">
+                {t("bulk.selected", { count: selectedCount })}
+              </span>
+              <Button
+                size="sm"
+                className="gap-1.5"
+                disabled={bulkBusy}
+                onClick={() => void runBulkTriage()}
+              >
+                <ClipboardCheck className="h-3.5 w-3.5" aria-hidden />
+                {t("bulk.triage", { count: selectedCount })}
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={bulkBusy}
+                onClick={() => setSelected(new Set())}
+              >
+                {t("bulk.clear")}
+              </Button>
+            </>
+          ) : null}
+          {bulkMessage ? (
+            <span role="status" className="text-sm text-text-secondary">
+              {bulkMessage}
+            </span>
+          ) : null}
         </div>
       ) : null}
       {recordView && !showListError && items.length < total ? (
@@ -520,7 +670,15 @@ export function RequestsPage() {
           />
         </div>
       ) : null}
-      {view === "list" && !showListError && (
+      {showEmpty ? (
+        <div className="p-4">
+          <EmptyState
+            title={t(`queues.empty.${queue}`)}
+            description={activeFilterCount > 0 ? t("empty.listHint") : t("queues.emptyHint")}
+          />
+        </div>
+      ) : null}
+      {view === "list" && !showListError && !showEmpty && (
         <div className="p-4">
           <DataTable
             columns={columns}
@@ -532,21 +690,24 @@ export function RequestsPage() {
           />
         </div>
       )}
-      {view === "kanban" && !showListError && (
-        <DiKanbanBoard items={items} onCardClick={handleCardClick} />
+      {view === "kanban" && !showListError && !showEmpty && (
+        <DiKanbanBoard items={items} onCardClick={(di) => void openDi(di.id)} />
       )}
-      {view === "calendar" && !showListError && (
+      {view === "calendar" && !showListError && !showEmpty && (
         <DiCalendarView items={items} onChipClick={(di) => void openDi(di.id)} />
       )}
-      {view === "dashboard" && <DiDashboardView />}
+      {view === "dashboard" && <DiDashboardView onOpenQueue={switchQueue} />}
 
       {/* ── Archive section (collapsible) ─────────────────────────────── */}
-      <DiArchivePanel refreshKey={archiveRefreshKey} onRowClick={(di) => void openDi(di.id)} />
+      {recordView && queue === "all" ? (
+        <DiArchivePanel refreshKey={archiveRefreshKey} onRowClick={(di) => void openDi(di.id)} />
+      ) : null}
 
       {/* ── Floating detail dialog ───────────────────────────────────── */}
       <DiDetailDialog
         di={activeDi?.di ?? null}
         transitions={activeDi?.transitions ?? []}
+        similar={activeDi?.similar ?? []}
         open={activeDi !== null}
         onClose={closeDi}
       />

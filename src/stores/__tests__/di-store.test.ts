@@ -49,7 +49,6 @@ function makeDi(overrides: Partial<InterventionRequest> = {}): InterventionReque
     classification_code_id: null,
     is_recurrence_flag: false,
     recurrence_di_id: null,
-    is_modified: false,
     row_version: 1,
     submitter_id: 42,
     created_at: "2026-04-01T10:00:00Z",
@@ -221,6 +220,7 @@ describe("di-store — Supervisor Verification S3", () => {
       title: "New DI",
       description: "Desc",
       origin_type: "operator",
+      request_type: "repair",
       impact_level: "minor",
       production_impact: false,
       safety_flag: false,
@@ -287,5 +287,90 @@ describe("di-store — paging and load errors", () => {
     await older;
 
     expect(useDiStore.getState().items.map((d) => d.id)).toEqual([7]);
+  });
+});
+
+describe("di-store — work queues and the requester's answer", () => {
+  const counts = {
+    to_screen: 2,
+    to_review: 1,
+    awaiting_info: 1,
+    to_approve: 0,
+    approved_not_converted: 1,
+    deferred_due: 0,
+    sla_at_risk: 3,
+    mine: 4,
+    mine_awaiting_info: 1,
+  };
+
+  it("loads the queue sizes", async () => {
+    mockInvoke.mockResolvedValueOnce(counts);
+    await useDiStore.getState().loadQueueCounts();
+    expect(useDiStore.getState().queueCounts).toEqual(counts);
+    expect(useDiStore.getState().queueCountsError).toBeNull();
+  });
+
+  it("keeps the last sizes and the failure when the count cannot be read", async () => {
+    useDiStore.setState({ queueCounts: counts, queueCountsError: null });
+    mockInvoke.mockRejectedValueOnce({ code: "DATABASE_ERROR", message: "locked" });
+    await useDiStore.getState().loadQueueCounts();
+    expect(useDiStore.getState().queueCounts).toEqual(counts);
+    expect(useDiStore.getState().queueCountsError).toEqual({
+      code: "DATABASE_ERROR",
+      message: "locked",
+    });
+  });
+
+  it("resubmits, then refreshes the list, the detail and the queue sizes", async () => {
+    const back = makeDi({ status: "in_review", row_version: 3 });
+    mockInvoke.mockImplementation((cmd: string) => {
+      switch (cmd) {
+        case "resubmit_di":
+          return Promise.resolve(back);
+        case "list_di":
+          return Promise.resolve({ items: [back], total: 1 });
+        case "get_di":
+          return Promise.resolve({ di: back, transitions: [], similar: [] });
+        case "get_di_queue_counts":
+          return Promise.resolve(counts);
+        default:
+          return Promise.reject(new Error(`unexpected ${cmd}`));
+      }
+    });
+
+    const di = await useDiStore.getState().resubmit({
+      di_id: 1,
+      actor_id: 0,
+      expected_row_version: 2,
+      response_note: "Leak is on the outlet flange",
+    });
+
+    expect(di.status).toBe("in_review");
+    const s = useDiStore.getState();
+    expect(s.items[0]?.status).toBe("in_review");
+    expect(s.activeDi?.di.row_version).toBe(3);
+    expect(s.saving).toBe(false);
+    expect(mockInvoke).toHaveBeenCalledWith("resubmit_di", {
+      input: {
+        di_id: 1,
+        actor_id: 0,
+        expected_row_version: 2,
+        response_note: "Leak is on the outlet flange",
+      },
+    });
+  });
+
+  it("reports a refused resubmission and rethrows it", async () => {
+    mockInvoke.mockRejectedValueOnce({ code: "VALIDATION_FAILED", message: "answer required" });
+    await expect(
+      useDiStore.getState().resubmit({
+        di_id: 1,
+        actor_id: 0,
+        expected_row_version: 2,
+        response_note: " ",
+      }),
+    ).rejects.toBeTruthy();
+    expect(useDiStore.getState().error).toBeTruthy();
+    expect(useDiStore.getState().saving).toBe(false);
   });
 });

@@ -127,6 +127,14 @@ export const DI_STATUS_TONE: Record<string, Tone> = {
   closed: "neutral",
 };
 
+/** Where a request stands against its SLA (`di::sla::DiSlaLifecycleStatus`) → tone. */
+export const DI_SLA_TONE: Record<string, Tone> = {
+  on_track: "success",
+  at_risk: "attention",
+  breached: "danger",
+  completed: "neutral",
+};
+
 /**
  * Level of the urgency scale shared by requests and work orders (`WORK.URGENCY`) → tone.
  * Codes are fixed by Maintafox; labels and target times come from the backend.

@@ -20,7 +20,8 @@
       "reportedBy": "Déclarant",
       "reportedAt": "Date déclaration",
       "assignedTo": "Assigné à",
-      "sla": "SLA"
+      "sla": "SLA",
+      "nextStep": "Prochaine étape"
     },
     "filters": {
       "status": "Statut",
@@ -69,14 +70,20 @@
       "slaResolutionElapsed": "Temps résolution écoulé",
       "slaResponseRemaining": "Temps réponse restant",
       "slaResolutionRemaining": "Temps résolution restant",
-      "hoursValue": "{{hours}} h"
+      "hoursValue": "{{hours}} h",
+      "reviewer": "Réviseur"
     },
     "tabs": {
       "attachments": "Pièces jointes",
       "stateLog": "Historique des statuts",
       "review": "Revue",
       "activity": "Journal d'activité"
-    }
+    },
+    "nextStep": "Prochaine étape",
+    "reviewerQuestion": "Question de la maintenance — votre réponse est attendue",
+    "requesterAnswer": "Réponse du demandeur ({{name}}, {{date}})",
+    "possibleDuplicates_one": "{{count}} autre demande ouverte sur cet équipement avec le même symptôme",
+    "possibleDuplicates_other": "{{count}} autres demandes ouvertes sur cet équipement avec le même symptôme"
   },
   "form": {
     "section": {
@@ -100,7 +107,10 @@
     "equipmentSearch": "Rechercher un équipement...",
     "priority": {
       "label": "Priorité",
-      "placeholder": "Sélectionnez une priorité"
+      "placeholder": "Sélectionnez une priorité",
+      "targetHint": "{{level}} : prise en charge sous {{response}} h, traitement sous {{completion}} h.",
+      "noTarget": "Aucun délai cible n'est défini pour ce niveau.",
+      "chooseHint": "Chaque niveau indique le délai sur lequel la maintenance s'engage pour prendre en charge et traiter la demande."
     },
     "observedAt": {
       "label": "Date de constatation"
@@ -182,7 +192,19 @@
     },
     "cancel": "Annuler",
     "submit": "Créer la demande",
-    "update": "Enregistrer les modifications"
+    "update": "Enregistrer les modifications",
+    "location": {
+      "label": "Emplacement :",
+      "none": "aucun emplacement enregistré pour cet équipement",
+      "parent": "fait partie de {{parent}}"
+    },
+    "duplicates": {
+      "sameSymptom_one": "{{count}} demande ouverte signale déjà ce symptôme sur cet équipement",
+      "sameSymptom_other": "{{count}} demandes ouvertes signalent déjà ce symptôme sur cet équipement",
+      "sameAsset_one": "{{count}} demande est déjà ouverte sur cet équipement",
+      "sameAsset_other": "{{count}} demandes sont déjà ouvertes sur cet équipement",
+      "hint": "Vérifiez que votre problème n'est pas déjà signalé avant d'envoyer une nouvelle demande."
+    }
   },
   "status": {
     "new": "Nouvelle",
@@ -211,7 +233,8 @@
     "closeRequest": "Clôturer la demande",
     "cancelOwn": "Annuler ma demande",
     "defer": "Reporter",
-    "archive": "Archiver"
+    "archive": "Archiver",
+    "reactivate": "Réactiver"
   },
   "empty": {
     "list": "Aucune demande d'intervention.",
@@ -284,7 +307,8 @@
       "converted": "Converti",
       "closed_non_executable": "Clôturé non exécutable",
       "closed": "Clôturé",
-      "archived": "Archivé"
+      "archived": "Archivé",
+      "resubmitted": "Complétée et renvoyée"
     }
   },
   "stateLog": {
@@ -341,7 +365,8 @@
       "re_submitted": "Re-soumise",
       "closed_non_executable": "Clôturée non exécutable",
       "archived": "Archivée",
-      "blocked": "Bloqué"
+      "blocked": "Bloqué",
+      "resubmitted": "Complétée et renvoyée par le demandeur"
     }
   },
   "attachments": {
@@ -453,9 +478,6 @@
     "diScreen": "Trier les demandes d'intervention en entrée (soumission → file de revue)"
   },
   "review": {
-    "panelTitle": "DI en attente de validation",
-    "seeAllInList": "Voir la liste complète ({{more}} de plus)",
-    "modified": "Modifiée",
     "view": "Voir le détail",
     "returnAction": "Renvoyer",
     "approvalTitle": "Approuver & Convertir en OT",
@@ -488,18 +510,15 @@
     "returnInfo": "La DI sera renvoyée au déclarant.",
     "screenAction": "Valider le tri",
     "retryConversion": "Réessayer la conversion",
-    "conversionMissingWoId": "La conversion a réussi mais l'ordre de travail n'a pas été retrouvé. Ouvrez la liste des ordres de travail."
+    "conversionMissingWoId": "La conversion a réussi mais l'ordre de travail n'a pas été retrouvé. Ouvrez la liste des ordres de travail.",
+    "returnReason": "Motif",
+    "returnReasonPlaceholder": "Choisissez pourquoi une information est nécessaire",
+    "returnReasonRequired": "Choisissez un motif."
   },
   "dashboard": {
-    "total": "Total",
-    "pending": "En attente",
-    "inProgress": "En cours",
+    "pending": "En attente de décision",
     "slaCompliance": "SLA respecté",
-    "slaBreached": "SLA dépassé",
-    "slaMet": "SLA respectés",
-    "closedThisMonth": "Clôturées (mois)",
-    "overdue": "En retard",
-    "safetyIssues": "Enjeux sécurité",
+    "overdue": "SLA dépassé",
     "avgAge": "Âge moyen",
     "statusDistribution": "Répartition par statut",
     "priorityDistribution": "Répartition par priorité",
@@ -508,8 +527,39 @@
     "created": "Créées",
     "closed": "Clôturées",
     "topEquipment": "Top 10 Équipements",
-    "overdueDis": "DI en retard",
-    "daysOverdue": "Jours de retard"
+    "overdueDis": "Demandes au-delà de leur objectif SLA",
+    "loading": "Chargement des indicateurs…",
+    "title": "Indicateurs des demandes",
+    "period": "Période",
+    "periodAll": "Depuis la première demande",
+    "periodMonths": "{{months}} derniers mois",
+    "now": "Maintenant",
+    "openBacklog": "Demandes ouvertes",
+    "slaAtRisk": "SLA à risque",
+    "overdueHint": "Ouvertes, objectif dépassé",
+    "slaComplianceHint": "{{met}} respectés · {{breached}} dépassés",
+    "conversionRate": "Converties en OT",
+    "conversionHint": "{{converted}} sur {{closed}} demandes clôturées",
+    "avgResponse": "Délai moyen de tri",
+    "avgResponseHint": "Soumission → tri",
+    "avgConversion": "Délai moyen jusqu'à l'OT",
+    "avgConversionHint": "Soumission → OT",
+    "hoursUnit": "h",
+    "backlogByStatus": "Demandes ouvertes par statut et ancienneté",
+    "noBacklog": "Aucune demande ouverte.",
+    "count": "Demandes",
+    "oldest": "Plus ancienne",
+    "daysValue": "{{days}} j",
+    "slaOpen": "Demandes ouvertes face à leur SLA",
+    "noTarget": "Sans objectif",
+    "closureReasons": "Motifs de clôture",
+    "noClosed": "Aucune demande clôturée sur la période.",
+    "noDisposition": "Non renseigné",
+    "noOverdue": "Aucune demande ouverte n'a dépassé son objectif SLA.",
+    "overdueDays": "{{days}} j de retard",
+    "overdueHours": "{{hours}} h de retard",
+    "safetyIssuesLine_one": "{{count}} demande de la période signale un risque sécurité.",
+    "safetyIssuesLine_other": "{{count}} demandes de la période signalent un risque sécurité."
   },
   "calendar": {
     "today": "Aujourd'hui",
@@ -534,7 +584,8 @@
     "approve": "Approuver",
     "reject": "Rejeter",
     "closeRequest": "Clôturer la demande",
-    "return": "Renvoyer pour clarification"
+    "return": "Renvoyer pour clarification",
+    "actionsFor": "Actions pour {{code}}"
   },
   "close": {
     "title": "Clôturer la demande",
@@ -589,14 +640,6 @@
     "reason": "Motif du report",
     "reasonPlaceholder": "Choisir un motif",
     "reasonRequired": "Choisissez un motif.",
-    "reasons": {
-      "planned_shutdown": "En attente d'un arrêt programmé",
-      "awaiting_parts": "En attente de pièces",
-      "awaiting_contractor": "En attente d'un prestataire",
-      "production_constraint": "Contrainte de production",
-      "budget": "Budget non disponible",
-      "other": "Autre (préciser)"
-    },
     "notes": "Commentaire",
     "notesPlaceholder": "Précisions utiles pour la reprise de la demande…",
     "notesRequiredForOther": "Précisez le motif dans le commentaire.",
@@ -608,6 +651,73 @@
     "archiveTitle": "Archiver la demande {{code}} ?",
     "archiveDescription": "La demande clôturée quitte les listes actives. Elle reste consultable dans les archives.",
     "cancelOwnTitle": "Annuler la demande {{code}} ?",
-    "cancelOwnDescription": "Votre demande sera clôturée comme annulée par le demandeur. Cette action est définitive."
+    "cancelOwnDescription": "Votre demande sera clôturée comme annulée par le demandeur. Cette action est définitive.",
+    "reactivateTitle": "Réactiver la demande {{code}} ?",
+    "reactivateDescription": "La demande revient à l'étape d'où elle avait été reportée."
+  },
+  "queues": {
+    "label": "Files de travail",
+    "all": "Toutes",
+    "mine": "Mes demandes",
+    "to_screen": "À trier",
+    "to_review": "À examiner",
+    "awaiting_info": "En attente d'information",
+    "to_approve": "À approuver",
+    "approved_not_converted": "Approuvées sans OT",
+    "deferred_due": "Report échu",
+    "sla_at_risk": "SLA à risque",
+    "hint": {
+      "all": "Toutes les demandes, les plus récentes d'abord",
+      "mine": "Les demandes que vous avez émises, avec leur statut et la prochaine étape",
+      "to_screen": "Demandes soumises en attente d'admission en revue",
+      "to_review": "Demandes en revue en attente de la décision de tri",
+      "awaiting_info": "Demandes renvoyées au demandeur pour information",
+      "to_approve": "Demandes triées en attente d'approbation",
+      "approved_not_converted": "Demandes approuvées qui n'ont pas encore d'OT",
+      "deferred_due": "Demandes reportées dont la date de report est arrivée",
+      "sla_at_risk": "Demandes ouvertes qui risquent de dépasser, ou ont dépassé, leur objectif SLA"
+    },
+    "empty": {
+      "all": "Aucune demande d'intervention trouvée.",
+      "mine": "Vous n'avez encore émis aucune demande.",
+      "to_screen": "Aucune demande à trier.",
+      "to_review": "Aucune demande à examiner.",
+      "awaiting_info": "Aucune demande en attente d'information.",
+      "to_approve": "Aucune demande à approuver.",
+      "approved_not_converted": "Toutes les demandes approuvées ont leur OT.",
+      "deferred_due": "Aucun report n'est arrivé à échéance.",
+      "sla_at_risk": "Aucune demande ouverte ne risque de dépasser son SLA."
+    },
+    "emptyHint": "La file se remplit à mesure que les demandes arrivent à cette étape."
+  },
+  "bulk": {
+    "selectAll": "Sélectionner toutes les demandes de la page",
+    "selectOne": "Sélectionner {{code}}",
+    "selected_one": "{{count}} demande sélectionnée",
+    "selected_other": "{{count}} demandes sélectionnées",
+    "triage_one": "Admettre {{count}} demande en revue",
+    "triage_other": "Admettre {{count}} demandes en revue",
+    "clear": "Effacer la sélection",
+    "triageResult": "{{done}} sur {{total}} admises en revue ; {{failed}} n'ont pas pu l'être (modifiées entre-temps ou plus au statut soumis)."
+  },
+  "nextStep": {
+    "screening": "En attente de tri par la maintenance",
+    "review": "En cours d'examen par la maintenance",
+    "answer": "Information demandée au demandeur",
+    "approval": "En attente d'approbation",
+    "workOrder": "Approuvée — un OT est à créer",
+    "deferred": "Reportée jusqu'au {{date}}",
+    "converted": "Prise en charge par l'OT {{wo}}",
+    "closed": "Clôturée — {{disposition}}"
+  },
+  "resubmit": {
+    "title": "Répondre et renvoyer {{code}}",
+    "description": "Votre réponse est conservée dans l'historique de la demande, qui retourne en file de revue.",
+    "question": "Question de la maintenance",
+    "answer": "Votre réponse",
+    "answerPlaceholder": "Donnez l'information demandée (emplacement, ce que vous avez constaté, quand…)",
+    "answerRequired": "Saisissez votre réponse.",
+    "editHint": "Pour corriger la demande elle-même (objet, symptôme, urgence, photos), utilisez d'abord Modifier.",
+    "submit": "Renvoyer en revue"
   }
 }

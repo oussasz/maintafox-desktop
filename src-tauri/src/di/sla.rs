@@ -310,6 +310,39 @@ fn status_from_frozen(di: &InterventionRequest) -> AppResult<DiSlaStatus> {
     })
 }
 
+/// SLA state of a request from its frozen targets alone (no database read), as shown in lists and
+/// work queues. `None` when no target was frozen on the request or a stored date does not parse.
+pub fn frozen_sla_state(di: &InterventionRequest) -> Option<DiSlaLifecycleStatus> {
+    if !di_has_frozen_sla(di) {
+        return None;
+    }
+    status_from_frozen(di).ok().and_then(|s| s.status)
+}
+
+/// SQL predicate (alias `ir`) matching the open requests whose frozen SLA is at risk or breached:
+/// the same rule as [`derive_lifecycle_status`] — past the escalation threshold, past the response
+/// target while not yet screened, or past the completion target.
+pub const SLA_AT_RISK_OR_BREACHED_SQL: &str = "(ir.status <> 'closed' AND ir.converted_at IS NULL \
+     AND ir.sla_target_response_hours IS NOT NULL AND ir.sla_response_deadline IS NOT NULL \
+     AND ( \
+       (julianday('now') - julianday(ir.submitted_at)) * 24.0 \
+           >= COALESCE(ir.sla_escalation_threshold_hours, ir.sla_target_response_hours) \
+       OR (ir.screened_at IS NULL \
+           AND (julianday('now') - julianday(ir.submitted_at)) * 24.0 > ir.sla_target_response_hours) \
+       OR (julianday('now') - julianday(ir.submitted_at)) * 24.0 \
+           > COALESCE(ir.sla_target_resolution_hours, ir.sla_target_response_hours) \
+     ))";
+
+/// SQL predicate (alias `ir`) matching the open requests whose frozen SLA is breached.
+pub const SLA_BREACHED_SQL: &str = "(ir.status <> 'closed' AND ir.converted_at IS NULL \
+     AND ir.sla_target_response_hours IS NOT NULL AND ir.sla_response_deadline IS NOT NULL \
+     AND ( \
+       (ir.screened_at IS NULL \
+           AND (julianday('now') - julianday(ir.submitted_at)) * 24.0 > ir.sla_target_response_hours) \
+       OR (julianday('now') - julianday(ir.submitted_at)) * 24.0 \
+           > COALESCE(ir.sla_target_resolution_hours, ir.sla_target_response_hours) \
+     ))";
+
 fn status_from_rule(di: &InterventionRequest, rule: &SlaTargets) -> AppResult<DiSlaStatus> {
     let submitted_at = parse_iso(&di.submitted_at)?;
     let now = Utc::now().naive_utc();

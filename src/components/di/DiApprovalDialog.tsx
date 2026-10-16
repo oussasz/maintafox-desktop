@@ -112,7 +112,7 @@ function printApprovalSheet(
   <table>
     <tr><th>${t("approvalPrint.thCode")}</th><td>${esc(di.code)}</td></tr>
     <tr><th>${t("approvalPrint.thTitle")}</th><td>${esc(di.title)}</td></tr>
-    <tr><th>${t("approvalPrint.thStatus")}</th><td>${esc(di.status)}</td></tr>
+    <tr><th>${t("approvalPrint.thStatus")}</th><td>${esc(t(`status.${diStatusToI18nKey(di.status)}`))}</td></tr>
     <tr><th>${t("approvalPrint.thPriority")}</th><td>${esc(urgencyLabel)}</td></tr>
     <tr><th>${t("approvalPrint.thOrigin")}</th><td>${esc(originLabel)}</td></tr>
     ${
@@ -120,7 +120,7 @@ function printApprovalSheet(
         ? `<tr><th>${t("detail.fields.symptom")}</th><td>${esc(symptomLabel)}</td></tr>`
         : ""
     }
-    <tr><th>${t("approvalPrint.thImpact")}</th><td>${esc(di.impact_level)}</td></tr>
+    <tr><th>${t("approvalPrint.thImpact")}</th><td>${esc(t(`form.impact.${di.impact_level}` as "form.impact.unknown", { defaultValue: di.impact_level }))}</td></tr>
     <tr><th>${t("approvalPrint.thAsset")}</th><td>${esc(formatAssetLabel(di.asset_code, di.asset_label))}</td></tr>
     <tr><th>${t("approvalPrint.thOrg")}</th><td>${esc(formatOrgNodeLabel(di.org_node_code, di.org_node_label))}</td></tr>
     <tr><th>${t("approvalPrint.thSubmitted")}</th><td>${esc(fmt(di.submitted_at))}</td></tr>

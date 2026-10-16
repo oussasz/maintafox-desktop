@@ -31,8 +31,118 @@ pub struct DiListFilter {
     pub urgency: Option<String>,
     pub disposition_code: Option<String>,
     pub search: Option<String>,
+    /// Work queue of the requests screen ([`DI_QUEUES`]); `None` lists every request.
+    #[serde(default)]
+    pub queue: Option<String>,
     pub limit: i64,
     pub offset: i64,
+}
+
+/// Work queues of the requests screen, in the order of the request lifecycle.
+///
+/// - `to_screen` — submitted, waiting to be admitted for review;
+/// - `to_review` — in review, waiting for the screening decision;
+/// - `awaiting_info` — sent back to the requester for information;
+/// - `to_approve` — screened, waiting for approval;
+/// - `approved_not_converted` — approved, no work order yet;
+/// - `deferred_due` — deferred and the deferral date has come;
+/// - `sla_at_risk` — open with the SLA at risk or breached;
+/// - `mine` — the requests of the signed-in user (the command sets the submitter).
+pub const DI_QUEUES: &[&str] = &[
+    "to_screen",
+    "to_review",
+    "awaiting_info",
+    "to_approve",
+    "approved_not_converted",
+    "deferred_due",
+    "sla_at_risk",
+    "mine",
+];
+
+/// SQL predicate (alias `ir`) of a work queue; `mine` has none of its own (submitter filter).
+fn queue_predicate(queue: &str) -> AppResult<Option<String>> {
+    let sql = match queue {
+        "to_screen" => "ir.status = 'submitted'".to_string(),
+        "to_review" => "ir.status = 'in_review'".to_string(),
+        "awaiting_info" => "ir.status = 'returned_for_clarification'".to_string(),
+        "to_approve" => "ir.status = 'awaiting_approval'".to_string(),
+        "approved_not_converted" => "(ir.status = 'approved' AND ir.converted_to_wo_id IS NULL)".to_string(),
+        "deferred_due" => "(ir.status = 'deferred' AND ir.deferred_until IS NOT NULL \
+             AND date(ir.deferred_until) <= date('now'))"
+            .to_string(),
+        "sla_at_risk" => super::sla::SLA_AT_RISK_OR_BREACHED_SQL.to_string(),
+        "mine" => return Ok(None),
+        other => {
+            return Err(AppError::ValidationFailed(vec![format!(
+                "File de travail inconnue : '{other}'."
+            )]))
+        }
+    };
+    Ok(Some(sql))
+}
+
+/// Most urgent first on the shared scale (validated urgency, else reported), from the scale's ranks.
+fn urgency_rank_sql() -> String {
+    let arms: String = crate::reference::urgency_scale::UrgencyCode::ALL
+        .iter()
+        .map(|c| format!(" WHEN '{}' THEN {}", c.as_str(), c.rank()))
+        .collect();
+    format!("CASE COALESCE(ir.validated_urgency, ir.reported_urgency){arms} ELSE 99 END")
+}
+
+/// Size of every work queue (the badges of the queue bar). `mine` counts the requests of `user_id`.
+#[derive(Debug, Clone, Serialize, Default, PartialEq, Eq)]
+pub struct DiQueueCounts {
+    pub to_screen: i64,
+    pub to_review: i64,
+    pub awaiting_info: i64,
+    pub to_approve: i64,
+    pub approved_not_converted: i64,
+    pub deferred_due: i64,
+    pub sla_at_risk: i64,
+    /// Open requests of the signed-in user.
+    pub mine: i64,
+    /// Requests of the signed-in user waiting for their answer.
+    pub mine_awaiting_info: i64,
+}
+
+pub async fn count_di_queues(db: &impl ConnectionTrait, user_id: i64) -> AppResult<DiQueueCounts> {
+    let mut arms: Vec<String> = Vec::new();
+    for queue in DI_QUEUES {
+        if let Some(pred) = queue_predicate(queue)? {
+            arms.push(format!(
+                "COALESCE(SUM(CASE WHEN {pred} THEN 1 ELSE 0 END), 0) AS {queue}"
+            ));
+        }
+    }
+    let sql = format!(
+        "SELECT {}, \
+                COALESCE(SUM(CASE WHEN ir.submitter_id = ? AND ir.status <> 'closed' THEN 1 ELSE 0 END), 0) AS mine, \
+                COALESCE(SUM(CASE WHEN ir.submitter_id = ? AND ir.status = 'returned_for_clarification' \
+                                  THEN 1 ELSE 0 END), 0) AS mine_awaiting_info \
+           FROM intervention_requests ir",
+        arms.join(", ")
+    );
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            &sql,
+            [user_id.into(), user_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("DI queue count returned no row")))?;
+    let get = |col: &str| row.try_get::<i64>("", col).map_err(|e| decode_err(col, e));
+    Ok(DiQueueCounts {
+        to_screen: get("to_screen")?,
+        to_review: get("to_review")?,
+        awaiting_info: get("awaiting_info")?,
+        to_approve: get("to_approve")?,
+        approved_not_converted: get("approved_not_converted")?,
+        deferred_due: get("deferred_due")?,
+        sla_at_risk: get("sla_at_risk")?,
+        mine: get("mine")?,
+        mine_awaiting_info: get("mine_awaiting_info")?,
+    })
 }
 
 /// Paginated list result.
@@ -229,6 +339,14 @@ pub async fn list_intervention_requests(db: &DatabaseConnection, filter: DiListF
     }
 
     // ── Free-text search (title + description + code) ─────────────────────
+    // Work queue
+    let queue = filter.queue.as_deref().map(str::trim).filter(|q| !q.is_empty());
+    if let Some(q) = queue {
+        if let Some(pred) = queue_predicate(q)? {
+            where_clauses.push(pred);
+        }
+    }
+
     if let Some(ref search) = filter.search {
         let trimmed = search.trim();
         if !trimmed.is_empty() {
@@ -261,12 +379,18 @@ pub async fn list_intervention_requests(db: &DatabaseConnection, filter: DiListF
     let row_limit = filter.limit.clamp(1, 200);
     let offset = filter.offset.max(0);
 
+    // A work queue is worked most urgent first, then oldest first (first in, first out); the
+    // other lists show the latest requests first.
+    let order_sql = match queue {
+        Some(q) if q != "mine" => format!("{} ASC, ir.submitted_at ASC, ir.id ASC", urgency_rank_sql()),
+        _ => "ir.submitted_at DESC, ir.id DESC".to_string(),
+    };
     let data_sql = format!(
         "SELECT {IR_COLS}, {IR_JOIN_COLS} \
          FROM intervention_requests ir \
          {IR_JOINS} \
          WHERE {where_sql} \
-         ORDER BY ir.submitted_at DESC \
+         ORDER BY {order_sql} \
          LIMIT {row_limit} OFFSET {offset}"
     );
     let rows = db

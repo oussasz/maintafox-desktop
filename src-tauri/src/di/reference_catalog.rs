@@ -13,6 +13,10 @@ const DOMAIN_ORIGIN: &str = "DI.ORIGIN";
 const DOMAIN_SYMPTOM: &str = crate::wo::closeout_reference_catalog::DOMAIN_SYMPTOMS;
 const DOMAIN_REQUEST_TYPE: &str = "DI.REQUEST_TYPE";
 const DOMAIN_DISPOSITION: &str = "DI.DISPOSITION";
+/// Reasons for sending a request back to its requester for information (COMPANY list).
+pub const DOMAIN_RETURN_REASON: &str = "DI.RETURN_REASON";
+/// Reasons for deferring a request (COMPANY list).
+pub const DOMAIN_DEFERRAL_REASON: &str = "DI.DEFERRAL_REASON";
 
 /// Default request type when callers omit one (seeded Category A code).
 pub const DEFAULT_DI_REQUEST_TYPE: &str = "repair";
@@ -124,6 +128,36 @@ pub async fn validate_di_disposition(db: &impl ConnectionTrait, disposition_code
         )]));
     }
 
+    Ok(code)
+}
+
+/// Normalize and validate a review-decision reason (`DI.RETURN_REASON`, `DI.DEFERRAL_REASON`)
+/// against the published active values of its list. Returns the trimmed code.
+pub async fn validate_di_decision_reason(
+    db: &impl ConnectionTrait,
+    domain_code: &str,
+    reason_code: &str,
+) -> AppResult<String> {
+    let code = reason_code.trim().to_string();
+    if code.is_empty() {
+        return Err(AppError::ValidationFailed(vec!["Le motif est obligatoire.".into()]));
+    }
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT rv.id FROM reference_values rv \
+             INNER JOIN reference_sets rs ON rs.id = rv.set_id \
+             INNER JOIN reference_domains d ON d.id = rs.domain_id \
+             WHERE d.code = ? AND rs.status = 'published' \
+               AND UPPER(TRIM(rv.code)) = UPPER(TRIM(?)) AND rv.is_active = 1",
+            [domain_code.into(), code.clone().into()],
+        ))
+        .await?;
+    if row.is_none() {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "Motif '{code}' introuvable dans le référentiel {domain_code} (valeur publiée active requise)."
+        )]));
+    }
     Ok(code)
 }
 
@@ -247,6 +281,49 @@ mod tests {
         let db = setup().await;
         let err = require_di_symptom_id(&db, None).await.expect_err("must fail");
         assert!(matches!(err, AppError::ValidationFailed(_)));
+    }
+
+    #[tokio::test]
+    async fn decision_reasons_are_seeded_and_validated() {
+        let db = setup().await;
+        for (domain, code) in [
+            (DOMAIN_RETURN_REASON, "unclear_description"),
+            (DOMAIN_DEFERRAL_REASON, "awaiting_parts"),
+        ] {
+            let ok = validate_di_decision_reason(&db, domain, &format!(" {code} "))
+                .await
+                .expect("seeded reason accepted");
+            assert_eq!(ok, code);
+            let err = validate_di_decision_reason(&db, domain, "not-a-reason")
+                .await
+                .expect_err("unknown reason refused");
+            assert!(matches!(err, AppError::ValidationFailed(_)));
+            let err = validate_di_decision_reason(&db, domain, "  ")
+                .await
+                .expect_err("empty reason refused");
+            assert!(matches!(err, AppError::ValidationFailed(_)));
+        }
+        // Both lists are the company's: listed and editable in Données de référence.
+        let rows = db
+            .query_all(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT code, audience FROM reference_domains \
+                  WHERE code IN ('DI.RETURN_REASON', 'DI.DEFERRAL_REASON') ORDER BY code"
+                    .to_string(),
+            ))
+            .await
+            .expect("domains");
+        let audiences: Vec<(String, String)> = rows
+            .iter()
+            .map(|r| (r.try_get("", "code").unwrap(), r.try_get("", "audience").unwrap()))
+            .collect();
+        assert_eq!(
+            audiences,
+            vec![
+                ("DI.DEFERRAL_REASON".to_string(), "company".to_string()),
+                ("DI.RETURN_REASON".to_string(), "company".to_string()),
+            ]
+        );
     }
 
     #[tokio::test]

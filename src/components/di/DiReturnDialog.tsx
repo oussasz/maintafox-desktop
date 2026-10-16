@@ -1,16 +1,15 @@
 /**
  * DiReturnDialog.tsx
  *
- * Return-for-clarification dialog with required note.
- * Small dialog (max-w-lg).
- *
- * Phase 2 – Sub-phase 04 – File 02 – Sprint S4.
+ * Sends a request back to its requester for information: a reason from the plant's list
+ * (`DI.RETURN_REASON`, Données de référence) and the question to answer, both required.
  */
 
 import { Info, Loader2 } from "lucide-react";
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { ReferenceCombobox } from "@/components/reference/ReferenceCombobox";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -37,34 +36,42 @@ export function DiReturnDialog() {
   const { info } = useSession();
 
   const [note, setNote] = useState("");
+  const [reason, setReason] = useState<string | null>(null);
   const [touched, setTouched] = useState(false);
 
   const open = di !== null;
   const noteError = touched && !note.trim();
+  const reasonError = touched && !reason;
+
+  const reset = useCallback(() => {
+    setNote("");
+    setReason(null);
+    setTouched(false);
+  }, []);
 
   const handleReturn = useCallback(async () => {
     setTouched(true);
-    if (!di || !note.trim()) return;
+    if (!di || !note.trim() || !reason) return;
     try {
       await returnForClarification({
         di_id: di.id,
         actor_id: info?.user_id ?? 0,
         expected_row_version: di.row_version,
         reviewer_note: note.trim(),
+        reason_code: reason,
       });
-      setNote("");
-      setTouched(false);
+      reset();
       closeReturn();
+      window.dispatchEvent(new Event("mf:di-triage-refresh"));
     } catch {
       // error handled by store
     }
-  }, [di, returnForClarification, info, note, closeReturn]);
+  }, [di, returnForClarification, info, note, reason, closeReturn, reset]);
 
   const handleClose = useCallback(() => {
-    setNote("");
-    setTouched(false);
+    reset();
     closeReturn();
-  }, [closeReturn]);
+  }, [closeReturn, reset]);
 
   if (!di) return null;
 
@@ -89,10 +96,30 @@ export function DiReturnDialog() {
             </div>
           </div>
 
+          {/* Reason (required, plant's list) */}
+          <div className="space-y-1.5">
+            <Label htmlFor="return-reason">
+              {t("review.returnReason")} <span aria-hidden>*</span>
+            </Label>
+            <ReferenceCombobox
+              id="return-reason"
+              referenceType="di.return_reason"
+              value={reason}
+              onChange={setReason}
+              allowClear={false}
+              allowCreate={false}
+              placeholder={t("review.returnReasonPlaceholder")}
+              aria-invalid={reasonError}
+            />
+            {reasonError && (
+              <p className="text-xs text-status-danger">{t("review.returnReasonRequired")}</p>
+            )}
+          </div>
+
           {/* Clarification note (required) */}
           <div className="space-y-1.5">
             <Label htmlFor="return-note">
-              {t("review.clarificationNote")} <span className="text-red-500">*</span>
+              {t("review.clarificationNote")} <span aria-hidden>*</span>
             </Label>
             <Textarea
               id="return-note"
@@ -102,16 +129,16 @@ export function DiReturnDialog() {
               maxLength={2000}
               placeholder={t("review.clarificationNotePlaceholder")}
               rows={4}
-              className={noteError ? "border-red-500" : ""}
+              aria-invalid={noteError}
             />
             {noteError && (
-              <p className="text-[11px] text-red-600">{t("review.clarificationRequired")}</p>
+              <p className="text-xs text-status-danger">{t("review.clarificationRequired")}</p>
             )}
             <p className="text-[10px] text-muted-foreground text-right">{note.length}/2000</p>
           </div>
 
           {/* Info banner */}
-          <div className="flex items-center gap-2 rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-700">
+          <div className="flex items-center gap-2 rounded-md border border-surface-border bg-surface-2 px-3 py-2 text-xs text-text-secondary">
             <Info className="h-4 w-4 shrink-0" />
             <span>{t("review.returnInfo")}</span>
           </div>
@@ -123,12 +150,7 @@ export function DiReturnDialog() {
           <Button variant="outline" size="sm" onClick={handleClose}>
             {t("form.cancel")}
           </Button>
-          <Button
-            size="sm"
-            onClick={handleReturn}
-            disabled={saving || (!note.trim() && touched)}
-            className="gap-1.5 bg-amber-600 hover:bg-amber-700 text-white"
-          >
+          <Button size="sm" onClick={handleReturn} disabled={saving} className="gap-1.5">
             {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
             {t("review.returnAction")}
           </Button>

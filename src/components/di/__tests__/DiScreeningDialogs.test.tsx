@@ -40,6 +40,23 @@ vi.mock("@/stores/di-review-store", () => ({
 const ref = vi.hoisted(() => ({ listPublishedReferenceValuesByDomainCode: vi.fn() }));
 vi.mock("@/services/reference-service", () => ref);
 
+/** The plant's reason lists are reference data: the picker hands back a code of the list. */
+vi.mock("@/components/reference/ReferenceCombobox", () => ({
+  ReferenceCombobox: ({
+    id,
+    referenceType,
+    onChange,
+  }: {
+    id?: string;
+    referenceType: string;
+    onChange: (code: string) => void;
+  }) => (
+    <button type="button" id={id} onClick={() => onChange("awaiting_parts")}>
+      {`pick ${referenceType}`}
+    </button>
+  ),
+}));
+
 /** The shared DI / OT urgency scale as the backend serves it (labels set by the plant). */
 const LEVELS: UrgencyLevel[] = [
   ["emergency", 1, "Urgence", "Emergency"],
@@ -136,6 +153,25 @@ describe("DiDeferDialog", () => {
     expect(await screen.findByText(enDi.deferral.dateRequired)).toBeInTheDocument();
     expect(screen.getByText(enDi.deferral.reasonRequired)).toBeInTheDocument();
     expect(store.defer).not.toHaveBeenCalled();
+  });
+
+  it("sends the reason picked from the plant's deferral reasons", async () => {
+    const onDeferred = vi.fn();
+    render(<DiDeferDialog di={DI} open onOpenChange={vi.fn()} onDeferred={onDeferred} />);
+    fireEvent.change(screen.getByLabelText(enDi.deferral.until), {
+      target: { value: localIsoDate(3) },
+    });
+    fireEvent.click(screen.getByText("pick di.deferral_reason"));
+    fireEvent.click(screen.getByRole("button", { name: enDi.deferral.submit }));
+    await waitFor(() =>
+      expect(store.defer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          reason_code: "awaiting_parts",
+          deferred_until: `${localIsoDate(3)}T00:00:00Z`,
+        }),
+      ),
+    );
+    expect(onDeferred).toHaveBeenCalled();
   });
 
   it("refuses a past date", async () => {

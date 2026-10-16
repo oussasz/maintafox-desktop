@@ -5,7 +5,8 @@
 //! Permission gates:
 //!   di.view         — list, get, review events, SLA status, list attachments
 //!   di.create       — create any DI
-//!   di.create.own   — create DI as self, upload attachment on own DI, cancel own DI
+//!   di.create.own   — create DI as self, upload attachment on own DI, cancel own DI,
+//!                     answer and resubmit own DI returned for information
 //!   di.screen       — triage submitted DIs (submitted → in_review)
 //!   di.review       — update draft, return, close from in_review, upload attachment on any DI
 //!   di.approve      — approve, defer, reactivate, close from awaiting_approval/approved
@@ -46,10 +47,25 @@ pub struct DiGetResponse {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
-pub async fn list_di(filter: queries::DiListFilter, state: State<'_, AppState>) -> AppResult<queries::DiListPage> {
+pub async fn list_di(mut filter: queries::DiListFilter, state: State<'_, AppState>) -> AppResult<queries::DiListPage> {
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::DI_VIEW, PermissionScope::Global);
+    // "My requests" is always the signed-in user's, whatever submitter the caller sent.
+    if filter.queue.as_deref().map(str::trim) == Some("mine") {
+        filter.submitter_id = Some(i64::from(user.user_id));
+    }
     queries::list_intervention_requests(&state.db, filter).await
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// A2) get_di_queue_counts — requires di.view
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[tauri::command]
+pub async fn get_di_queue_counts(state: State<'_, AppState>) -> AppResult<queries::DiQueueCounts> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::DI_VIEW, PermissionScope::Global);
+    queries::count_di_queues(&state.db, i64::from(user.user_id)).await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -351,6 +367,41 @@ pub async fn return_di(
             action: "returned".into(),
             actor_id: Some(i64::from(user.user_id)),
             summary: Some("DI returned for clarification".into()),
+            details_json: None,
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
+    Ok(di)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// F2) resubmit_di — requires di.create.own; actor must be the requester (enforced in domain)
+//     returned_for_clarification → in_review, with the requester's answer
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[tauri::command]
+pub async fn resubmit_di(
+    mut input: review::DiResubmitInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::di::domain::InterventionRequest> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::DI_CREATE_OWN,
+        PermissionScope::Global
+    );
+    input.actor_id = i64::from(user.user_id);
+    let di = review::resubmit_returned_di(&state.db, input).await?;
+    audit::record_di_change_event(
+        &state.db,
+        audit::DiAuditInput {
+            di_id: Some(di.id),
+            action: "resubmitted".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some("Demande complétée par le demandeur et renvoyée en revue.".into()),
             details_json: None,
             requires_step_up: false,
             apply_result: "applied".into(),
@@ -1277,13 +1328,15 @@ mod tests {
             "list_di_change_events",
             "list_all_di_change_events",
             "get_di_stats",
+            "get_di_queue_counts",
+            "resubmit_di",
         ];
         let unique: std::collections::HashSet<&str> = fns.iter().copied().collect();
         assert_eq!(fns.len(), unique.len(), "All DI command names must be unique");
         assert_eq!(
             fns.len(),
-            28,
-            "Expected exactly 28 DI commands (incl. close/reject compat paths)"
+            30,
+            "Expected exactly 30 DI commands (incl. close/reject compat paths)"
         );
     }
 

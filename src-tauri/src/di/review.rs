@@ -43,6 +43,19 @@ pub struct DiReturnInput {
     pub actor_id: i64,
     pub expected_row_version: i64,
     pub reviewer_note: String,
+    /// Reason from the plant's `DI.RETURN_REASON` list (required).
+    #[serde(default)]
+    pub reason_code: Option<String>,
+}
+
+/// The requester answers the reviewer's question and sends the request back to review.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DiResubmitInput {
+    pub di_id: i64,
+    pub actor_id: i64,
+    pub expected_row_version: i64,
+    /// The requester's answer to the reviewer (required).
+    pub response_note: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -476,6 +489,12 @@ pub async fn return_di_for_clarification(
             "La note du réviseur est obligatoire pour retourner une DI.".into(),
         ]));
     }
+    let reason = super::reference_catalog::validate_di_decision_reason(
+        db,
+        super::reference_catalog::DOMAIN_RETURN_REASON,
+        input.reason_code.as_deref().unwrap_or(""),
+    )
+    .await?;
 
     let txn = db.begin().await?;
     let (di, current_status) = load_di_with_status(&txn, input.di_id).await?;
@@ -519,7 +538,7 @@ pub async fn return_di_for_clarification(
         &now,
         from_str,
         to_str,
-        None,
+        Some(&reason),
         Some(&input.reviewer_note),
         snap.response_target_hours,
         snap.response_deadline.as_deref(),
@@ -537,7 +556,7 @@ pub async fn return_di_for_clarification(
         "return_for_clarification",
         input.actor_id,
         &now,
-        None,
+        Some(&reason),
         Some(&input.reviewer_note),
     )
     .await?;
@@ -545,6 +564,98 @@ pub async fn return_di_for_clarification(
     let updated = refetch_di(&txn, input.di_id).await?;
     txn.commit().await?;
     super::notifications::notify_returned(db, &updated).await;
+    Ok(updated)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// B2) resubmit_returned_di — ReturnedForClarification → InReview (by the requester)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// The requester answers the reviewer's question and the request goes back to the review queue.
+/// Only the requester may do it; the answer is kept on the request's timeline (review event and
+/// transition log), next to the reviewer's question.
+pub async fn resubmit_returned_di(db: &DatabaseConnection, input: DiResubmitInput) -> AppResult<InterventionRequest> {
+    let answer = input.response_note.trim().to_string();
+    if answer.is_empty() {
+        return Err(AppError::ValidationFailed(vec![
+            "La réponse au réviseur est obligatoire pour renvoyer la demande.".into(),
+        ]));
+    }
+
+    let txn = db.begin().await?;
+    let (di, current_status) = load_di_with_status(&txn, input.di_id).await?;
+
+    if di.submitter_id != input.actor_id {
+        return Err(AppError::ValidationFailed(vec![
+            "Seul le demandeur peut répondre et renvoyer sa demande.".into(),
+        ]));
+    }
+    if current_status != DiStatus::ReturnedForClarification {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "Seule une demande retournée pour information peut être renvoyée. Statut actuel : '{}'.",
+            current_status.as_str()
+        )]));
+    }
+    guard_transition(&current_status, &DiStatus::InReview).map_err(|e| AppError::ValidationFailed(vec![e]))?;
+
+    let di = super::sla::freeze_sla_on_di(&txn, &di).await?;
+    let snap = super::sla::snapshot_sla_for_review_event(&di);
+    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+
+    let result = txn
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE intervention_requests SET \
+                status = 'in_review', \
+                row_version = row_version + 1, \
+                updated_at = ? \
+             WHERE id = ? AND row_version = ?",
+            [
+                now.clone().into(),
+                input.di_id.into(),
+                input.expected_row_version.into(),
+            ],
+        ))
+        .await?;
+    check_concurrency(result.rows_affected())?;
+
+    let from_str = current_status.as_str();
+    let to_str = DiStatus::InReview.as_str();
+
+    insert_review_event(
+        &txn,
+        input.di_id,
+        "resubmitted",
+        input.actor_id,
+        &now,
+        from_str,
+        to_str,
+        None,
+        Some(&answer),
+        snap.response_target_hours,
+        snap.response_deadline.as_deref(),
+        snap.resolution_target_hours,
+        snap.resolution_deadline.as_deref(),
+        false,
+    )
+    .await?;
+
+    insert_transition_log(
+        &txn,
+        input.di_id,
+        from_str,
+        to_str,
+        "re_submitted",
+        input.actor_id,
+        &now,
+        None,
+        Some(&answer),
+    )
+    .await?;
+
+    let updated = refetch_di(&txn, input.di_id).await?;
+    txn.commit().await?;
+    super::notifications::notify_entered_in_review(db, &updated).await;
     Ok(updated)
 }
 
@@ -908,6 +1019,12 @@ pub async fn defer_di(db: &DatabaseConnection, input: DiDeferInput) -> AppResult
             "Le motif de report est obligatoire.".into()
         ]));
     }
+    let reason = super::reference_catalog::validate_di_decision_reason(
+        db,
+        super::reference_catalog::DOMAIN_DEFERRAL_REASON,
+        &input.reason_code,
+    )
+    .await?;
 
     // deferred_until must be a calendar date strictly after today (UTC).
     let until = input.deferred_until.trim();
@@ -986,7 +1103,7 @@ pub async fn defer_di(db: &DatabaseConnection, input: DiDeferInput) -> AppResult
         &now,
         from_str,
         to_str,
-        Some(&input.reason_code),
+        Some(&reason),
         input.notes.as_deref(),
         snap.response_target_hours,
         snap.response_deadline.as_deref(),
@@ -1004,7 +1121,7 @@ pub async fn defer_di(db: &DatabaseConnection, input: DiDeferInput) -> AppResult
         "defer",
         input.actor_id,
         &now,
-        Some(&input.reason_code),
+        Some(&reason),
         input.notes.as_deref(),
     )
     .await?;
