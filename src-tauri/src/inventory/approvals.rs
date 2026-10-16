@@ -264,17 +264,24 @@ async fn approver_limit<C: ConnectionTrait>(
     if configured == 0 {
         return Ok(None);
     }
+    // The shared rule and clock: stored bounds are `YYYY-MM-DDTHH:MM:SSZ`, which
+    // `datetime('now')` (`YYYY-MM-DD HH:MM:SS`) does not compare with, so a lapsed grant used
+    // to keep its limit until midnight.
+    let now = crate::rbac::resolver::assignment_clock();
+    let mut values: Vec<sea_orm::Value> = vec![user_id.into()];
+    values.extend(crate::rbac::resolver::in_force_binds(&now));
+    values.push(document_type.into());
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT l.max_amount FROM procurement_approval_limits l
-             JOIN user_scope_assignments usa ON usa.role_id = l.role_id
-             WHERE usa.user_id = ? AND usa.deleted_at IS NULL
-               AND (usa.valid_from IS NULL OR usa.valid_from <= datetime('now'))
-               AND (usa.valid_to IS NULL OR usa.valid_to >= datetime('now'))
-               AND (usa.is_emergency = 0 OR usa.emergency_expires_at > datetime('now'))
-               AND l.document_type = ? AND l.is_active = 1",
-            [user_id.into(), document_type.into()],
+            format!(
+                "SELECT l.max_amount FROM procurement_approval_limits l
+                 JOIN user_scope_assignments usa ON usa.role_id = l.role_id
+                 WHERE usa.user_id = ? AND {}
+                   AND l.document_type = ? AND l.is_active = 1",
+                crate::rbac::resolver::ASSIGNMENT_IN_FORCE_SQL
+            ),
+            values,
         ))
         .await?;
     if rows.is_empty() {

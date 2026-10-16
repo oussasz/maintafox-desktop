@@ -81,6 +81,22 @@ pub async fn all_scope_permissions<C: ConnectionTrait>(db: &C, user_id: i64) -> 
     names(db, &sql, values).await
 }
 
+/// Every permission `user_id` holds now or will hold later: assignments in force plus those whose
+/// validity starts in the future (ended assignments and lapsed emergency grants excluded). Used
+/// to judge whether a caller may manage the account, so that a weaker caller cannot prepare a
+/// takeover of an account that is about to become stronger.
+pub async fn reachable_permissions<C: ConnectionTrait>(db: &C, user_id: i64) -> AppResult<HashSet<String>> {
+    let now = assignment_clock();
+    let sql = "SELECT DISTINCT p.name FROM permissions p \
+         INNER JOIN role_permissions rp ON rp.permission_id = p.id \
+         INNER JOIN user_scope_assignments usa ON usa.role_id = rp.role_id \
+         WHERE usa.user_id = ? AND usa.deleted_at IS NULL \
+           AND (usa.valid_to IS NULL OR usa.valid_to >= ?) \
+           AND (usa.is_emergency = 0 \
+                OR (usa.emergency_expires_at IS NOT NULL AND usa.emergency_expires_at > ?))";
+    names(db, sql, vec![user_id.into(), now.clone().into(), now.into()]).await
+}
+
 /// The next instant at which one of the user's assignments starts, ends or expires (emergency):
 /// a permission set computed now is valid only until then.
 pub async fn next_assignment_change<C: ConnectionTrait>(db: &C, user_id: i64) -> AppResult<Option<String>> {

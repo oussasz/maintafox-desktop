@@ -307,7 +307,10 @@
     "saved": "Politique enregistrée avec succès.",
     "saveError": "Échec de l'enregistrement de la politique de mot de passe.",
     "minLengthHint": "8 caractères au minimum, 128 au maximum.",
-    "loadError": "La politique de mot de passe n'a pas pu être chargée."
+    "loadError": "La politique de mot de passe n'a pas pu être chargée.",
+    "unreadableTitle": "Politique enregistrée illisible — valeurs livrées appliquées",
+    "unreadableBody": "Certains réglages enregistrés n'ont pas pu être lus ({{keys}}). Pour chaque règle, la plus stricte entre la valeur enregistrée et la valeur livrée s'applique. Vérifiez les valeurs ci-dessous et enregistrez la politique pour corriger.",
+    "unreadableFix": "Enregistrer ces valeurs"
   },
   "permissions": {
     "domains": "Domaines",
@@ -354,7 +357,8 @@
       "requires": "Requiert",
       "requiredBy": "Requis par",
       "suggests": "Suggère",
-      "suggestedBy": "Suggéré par"
+      "suggestedBy": "Suggéré par",
+      "loadError": "Les dépendances de cette permission n'ont pas pu être chargées."
     },
     "domainLabels": {
       "eq": "Équipements",
@@ -638,7 +642,8 @@
       "enableTitle": "Réactiver le compte de {{name}} ?",
       "enableBody": "La personne pourra de nouveau se connecter avec ses rôles actuels.",
       "cannotDisableSelf": "Vous ne pouvez pas désactiver votre propre compte.",
-      "noDeleteHint": "Un compte n'est jamais supprimé : son historique doit rester lisible. On le désactive."
+      "noDeleteHint": "Un compte n'est jamais supprimé : son historique doit rester lisible. On le désactive.",
+      "loadError": "Le compte n'a pas pu être chargé."
     },
     "roles": {
       "scopeHint": "Un compte peut avoir un rôle par périmètre. Les accès d'urgence expirent d'eux-mêmes.",

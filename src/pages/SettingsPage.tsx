@@ -42,6 +42,7 @@ import { mfLayout } from "@/design-system/tokens";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useToast } from "@/hooks/use-toast";
 import { i18n } from "@/i18n";
+import { describeAppError } from "@/lib/app-error";
 import {
   ensureSettingsDefaults,
   getSettingsOverview,
@@ -268,7 +269,7 @@ export function SettingsPage() {
       console.error("[SettingsPage] Failed to restore defaults:", err);
       onToast({
         title: t("page.restoreDefaultsError"),
-        description: String(err),
+        description: describeAppError(err).title,
         variant: "destructive",
       });
     } finally {

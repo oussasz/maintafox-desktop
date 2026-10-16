@@ -120,20 +120,27 @@ fn normalize_phone_e164(raw: &str) -> AppResult<Option<String>> {
 pub async fn get_my_profile(state: State<'_, AppState>) -> AppResult<UserProfile> {
     let user = require_session!(state);
 
+    // The role shown is one in force (the shared rule of `rbac::resolver`).
+    let now = crate::rbac::resolver::assignment_clock();
+    let mut values: Vec<sea_orm::Value> = crate::rbac::resolver::in_force_binds(&now).to_vec();
+    values.push(user.user_id.into());
     let row = state
         .db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            r"SELECT u.id, u.username, u.personnel_id, u.display_name, u.email, u.phone,
+            format!(
+                r"SELECT u.id, u.username, u.personnel_id, u.display_name, u.email, u.phone,
                      u.identity_mode, u.created_at,
                      u.password_changed_at,
                      CASE WHEN u.pin_hash IS NOT NULL THEN 1 ELSE 0 END AS pin_configured,
                      r.name AS role_name
               FROM user_accounts u
-              LEFT JOIN user_scope_assignments usa ON usa.user_id = u.id AND usa.deleted_at IS NULL
+              LEFT JOIN user_scope_assignments usa ON usa.user_id = u.id AND {}
               LEFT JOIN roles r ON r.id = usa.role_id
               WHERE u.id = ? AND u.deleted_at IS NULL",
-            [user.user_id.into()],
+                crate::rbac::resolver::ASSIGNMENT_IN_FORCE_SQL
+            ),
+            values,
         ))
         .await?
         .ok_or_else(|| AppError::NotFound {
@@ -285,24 +292,11 @@ pub(crate) async fn change_password_impl(state: &AppState, payload: ChangePasswo
 
     // Hash and save new password
     let new_hash = password::hash_password(new_password)?;
-    let now = Utc::now().to_rfc3339();
 
-    state
-        .db
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            r"UPDATE user_accounts
-               SET password_hash = ?,
-                   password_changed_at = ?,
-                   updated_at = ?
-               WHERE id = ?",
-            [new_hash.into(), now.clone().into(), now.into(), user.user_id.into()],
-        ))
-        .await?;
-
-    // Close the account's other sessions (other devices included: the change travels with the
-    // account); this one continues on a new stored row.
-    session_manager::rotate_after_password_change(&state.db, &state.session, user.user_id).await?;
+    // The new password and the session rotation in one transaction: the account's other
+    // sessions close (other devices included: the change travels with the account); this one
+    // continues on a new stored row.
+    session_manager::change_password_and_rotate(&state.db, &state.session, user.user_id, &new_hash, false).await?;
 
     crate::audit::emit(
         &state.db,

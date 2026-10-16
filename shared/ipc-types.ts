@@ -5619,6 +5619,11 @@ export interface PasswordPolicySettings {
   require_lowercase: boolean;
   require_digit: boolean;
   require_special: boolean;
+  /**
+   * Stored keys that could not be read: the values above are then the stricter of the stored
+   * and shipped ones until the policy is saved again. Ignored by `set_password_policy`.
+   */
+  unreadable_keys: string[];
 }
 
 /** Sign-in lockout thresholds (`get_lockout_policy` / `set_lockout_policy`). */

@@ -38,8 +38,7 @@ export function PasswordPolicyPanel() {
     void load();
   }, [load]);
 
-  const handleSubmit = async (e: FormEvent) => {
-    e.preventDefault();
+  const save = async () => {
     if (!policy) return;
 
     setSaving(true);
@@ -51,11 +50,18 @@ export function PasswordPolicyPanel() {
       await withStepUp(() => setPasswordPolicy(policy));
       setSuccess(true);
       setTimeout(() => setSuccess(false), 3000);
+      // Reload: the server says whether the stored policy is readable again.
+      await load();
     } catch (err) {
       setError(toErrorMessage(err) || t("passwordPolicy.saveError"));
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    await save();
   };
 
   if (loadError != null) {
@@ -75,6 +81,24 @@ export function PasswordPolicyPanel() {
   return (
     <div className="rounded-lg border border-surface-border bg-surface-1 p-6">
       <h2 className="text-lg font-semibold text-text-primary">{t("passwordPolicy.title")}</h2>
+
+      {policy.unreadable_keys.length > 0 ? (
+        <div
+          role="alert"
+          className="mt-3 max-w-xl space-y-2 rounded-md border border-tone-danger-border bg-tone-danger-bg p-3 text-sm text-tone-danger-fg"
+        >
+          <p className="font-semibold">{t("passwordPolicy.unreadableTitle")}</p>
+          <p>{t("passwordPolicy.unreadableBody", { keys: policy.unreadable_keys.join(", ") })}</p>
+          <button
+            type="button"
+            className="btn-primary text-sm"
+            disabled={saving}
+            onClick={() => void save()}
+          >
+            {t("passwordPolicy.unreadableFix")}
+          </button>
+        </div>
+      ) : null}
 
       <form onSubmit={handleSubmit} className="mt-4 max-w-md space-y-4">
         <NumberField

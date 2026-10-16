@@ -389,6 +389,7 @@ const PasswordPolicySchema = z.object({
   require_lowercase: z.boolean(),
   require_digit: z.boolean(),
   require_special: z.boolean(),
+  unreadable_keys: z.array(z.string()),
 });
 
 export async function getPasswordPolicy(): Promise<PasswordPolicySettings> {

@@ -336,18 +336,22 @@ pub async fn resolve_tenant_scope_for_user(
     user_id: i32,
     activated_tenant_id: &str,
 ) -> AppResult<Option<TenantScopeResolution>> {
-    let now = chrono::Utc::now().to_rfc3339();
+    // Tenant-scope assignments in force (the shared rule and clock of `rbac::resolver`).
+    let now = crate::rbac::resolver::assignment_clock();
+    let mut values: Vec<sea_orm::Value> = vec![user_id.into()];
+    values.extend(crate::rbac::resolver::in_force_binds(&now));
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            r"SELECT scope_reference
-               FROM user_scope_assignments
-               WHERE user_id = ?
-                 AND scope_type = 'tenant'
-                 AND deleted_at IS NULL
-                 AND (valid_from IS NULL OR valid_from <= ?)
-                 AND (valid_to   IS NULL OR valid_to   >= ?)",
-            [user_id.into(), now.clone().into(), now.into()],
+            format!(
+                "SELECT usa.scope_reference
+                   FROM user_scope_assignments usa
+                  WHERE usa.user_id = ?
+                    AND usa.scope_type = 'tenant'
+                    AND {}",
+                crate::rbac::resolver::ASSIGNMENT_IN_FORCE_SQL
+            ),
+            values,
         ))
         .await?;
 
@@ -477,6 +481,12 @@ pub async fn record_successful_login(db: &DatabaseConnection, user_id: i32) -> A
 /// Error message prefix of a command refused because the user must change their password first.
 pub const PASSWORD_CHANGE_REQUIRED: &str = "PASSWORD_CHANGE_REQUIRED";
 
+/// Clock tolerance when comparing a password change with a session start: the change may have
+/// been made on another device whose clock runs ahead. A session ends when the password changed
+/// more than this after it started. A forced change (administrator reset) does not rely on it:
+/// its flag refuses every command at once.
+pub const PASSWORD_CHANGE_CLOCK_TOLERANCE: TimeDelta = TimeDelta::minutes(2);
+
 /// What the stored rows say about an in-memory session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StoredSessionState {
@@ -538,7 +548,8 @@ pub async fn enforce_session_alive(
                     "unreadable password_changed_at: the session start is not compared with it"
                 );
             }
-            password_newer = matches!((changed, created), (Some(c), Some(s)) if c > s);
+            password_newer =
+                matches!((changed, created), (Some(c), Some(s)) if c > s + PASSWORD_CHANGE_CLOCK_TOLERANCE);
             r.try_get::<i32>("", "is_active").unwrap_or(0) != 1
                 || r.try_get::<Option<String>>("", "deleted_at").ok().flatten().is_some()
                 || r.try_get::<i32>("", "is_revoked").unwrap_or(1) == 1
@@ -609,25 +620,65 @@ pub async fn enforce_stored_session(
     Ok(())
 }
 
-/// After a password change by the user: close every stored session of the account (other
-/// devices, older sessions) and give the current session a new stored row, started after the
-/// change, so it is the only one still alive ([`enforce_session_alive`] ends sessions older than
-/// the password).
-pub async fn rotate_after_password_change(
+/// A password change by the user, in one transaction with the session rotation: the new hash
+/// (and, for a forced change, the cleared flag), a new stored row for the current session, and
+/// every other stored session of the account closed (`id <> new`, other devices included). The
+/// in-memory session is held while this runs and switches to the new row only once committed:
+/// no window where the current session is closed, and never "password written but rotation
+/// failed". [`enforce_session_alive`] then ends any session older than the password.
+pub async fn change_password_and_rotate(
     db: &DatabaseConnection,
     session: &tokio::sync::RwLock<SessionManager>,
     user_id: i32,
+    new_hash: &str,
+    clear_forced_change: bool,
 ) -> crate::errors::AppResult<()> {
-    revoke_user_sessions(db, i64::from(user_id)).await?;
-    let new_id = Uuid::new_v4().to_string();
+    use sea_orm::TransactionTrait;
     let mut guard = session.write().await;
     let Some(current) = guard.current.as_mut().filter(|s| s.user.user_id == user_id) else {
         return Err(crate::errors::AppError::Auth(
             "Session expirée ou absente. Veuillez vous reconnecter.".into(),
         ));
     };
-    create_session_record(db, &new_id, user_id, &current.expires_at.to_rfc3339()).await?;
+    let now = Utc::now().to_rfc3339();
+    let new_id = Uuid::new_v4().to_string();
+    let tx = db.begin().await?;
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        if clear_forced_change {
+            "UPDATE user_accounts SET password_hash = ?, force_password_change = 0, password_changed_at = ?, \
+             updated_at = ? WHERE id = ?"
+        } else {
+            "UPDATE user_accounts SET password_hash = ?, password_changed_at = ?, updated_at = ? WHERE id = ?"
+        },
+        [new_hash.into(), now.clone().into(), now.clone().into(), user_id.into()],
+    ))
+    .await?;
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO app_sessions (id, user_id, created_at, expires_at, last_activity_at, is_revoked) \
+         VALUES (?, ?, ?, ?, ?, 0)",
+        [
+            new_id.clone().into(),
+            user_id.to_string().into(),
+            now.clone().into(),
+            current.expires_at.to_rfc3339().into(),
+            now.into(),
+        ],
+    ))
+    .await?;
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE app_sessions SET is_revoked = 1 WHERE user_id = CAST(? AS TEXT) AND id <> ? AND is_revoked = 0",
+        [user_id.into(), new_id.clone().into()],
+    ))
+    .await?;
+    tx.commit().await?;
     current.session_db_id = new_id;
+    if clear_forced_change {
+        current.user.force_password_change = false;
+        current.password_expires_in_days = None;
+    }
     Ok(())
 }
 
@@ -642,6 +693,27 @@ pub async fn revoke_user_sessions<C: ConnectionTrait>(conn: &C, user_id: i64) ->
         ))
         .await?
         .rows_affected())
+}
+
+/// At sign-in, with the session lock held: record the login and write the session's stored row
+/// before the new session is usable. If either write fails, the in-memory session is cleared, so
+/// a session without its `app_sessions` row never exists in memory.
+pub async fn store_session_or_clear(
+    db: &DatabaseConnection,
+    manager: &mut SessionManager,
+    user_id: i32,
+    session_db_id: &str,
+    expires_at: &str,
+) -> AppResult<()> {
+    let stored = async {
+        record_successful_login(db, user_id).await?;
+        create_session_record(db, session_db_id, user_id, expires_at).await
+    }
+    .await;
+    if stored.is_err() {
+        manager.clear_session();
+    }
+    stored
 }
 
 /// Write an `app_sessions` row for audit purposes.

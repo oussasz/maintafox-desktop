@@ -17,6 +17,7 @@ import { AssignRoleDialog } from "@/components/admin/AssignRoleDialog";
 import { useScopeLabel } from "@/components/admin/ScopeNodeSelect";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { ErrorState } from "@/components/ui/data-state";
 import {
   Dialog,
   DialogContent,
@@ -98,6 +99,7 @@ export function UserDetailDialog({
   const [detail, setDetail] = useState<UserDetail | null>(null);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [tab, setTab] = useState("overview");
   const [pending, setPending] = useState<PendingAction | null>(null);
   const [reason, setReason] = useState("");
@@ -107,13 +109,16 @@ export function UserDetailDialog({
   const load = useCallback(async () => {
     if (userId == null) return;
     setLoading(true);
+    setLoadError(null);
     try {
       const [d, s] = await Promise.all([getUser(userId), listActiveSessions(userId)]);
       setDetail(d);
       setSessions(s);
-    } catch {
+    } catch (err) {
+      // Shown with a retry (never an empty account).
       setDetail(null);
       setSessions([]);
+      setLoadError(err);
     } finally {
       setLoading(false);
     }
@@ -281,6 +286,14 @@ export function UserDetailDialog({
 
           {loading && !detail ? (
             <p className="py-6 text-sm text-text-secondary">{t("common.loading")}</p>
+          ) : null}
+          {!loading && loadError != null ? (
+            <ErrorState
+              error={loadError}
+              title={t("console.user.loadError")}
+              onRetry={() => void load()}
+              className="mt-2"
+            />
           ) : null}
 
           {user && detail ? (

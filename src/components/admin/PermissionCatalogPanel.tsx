@@ -14,6 +14,7 @@ import { useTranslation } from "react-i18next";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ErrorState } from "@/components/ui/data-state";
 import {
   Dialog,
   DialogContent,
@@ -211,14 +212,24 @@ function DependencyViewer({
   const { t } = useTranslation("admin");
   const [deps, setDeps] = useState<PermissionDependencyRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<unknown>(null);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     setLoading(true);
+    setLoadError(null);
     getPermissionDependencies(permissionName)
       .then(setDeps)
-      .catch(() => setDeps([]))
+      .catch((err: unknown) => {
+        // Shown with a retry: never "no dependencies" when they could not be read.
+        setDeps([]);
+        setLoadError(err);
+      })
       .finally(() => setLoading(false));
   }, [permissionName]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
 
   const hardDeps = deps.filter((d) => d.dependency_type === "hard");
   const warnDeps = deps.filter((d) => d.dependency_type !== "hard");
@@ -237,7 +248,16 @@ function DependencyViewer({
 
       {loading && <p className="mt-3 text-xs text-text-secondary">{t("common.loading")}</p>}
 
-      {!loading && deps.length === 0 && (
+      {!loading && loadError != null ? (
+        <ErrorState
+          error={loadError}
+          title={t("permissions.dependencies.loadError")}
+          onRetry={load}
+          className="mt-3 px-3 py-4"
+        />
+      ) : null}
+
+      {!loading && loadError == null && deps.length === 0 && (
         <p className="mt-3 text-xs text-text-secondary">{t("permissions.dependencies.none")}</p>
       )}
 

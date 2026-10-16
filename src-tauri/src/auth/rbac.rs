@@ -244,7 +244,7 @@ pub(crate) const ELEVATED_ADMIN_ROLES_SQL: &str = "('Administrator', 'Superadmin
 /// (`is_admin`) or holds Administrator / Superadmin plant-wide (tenant scope) through a
 /// permanent assignment in force. An emergency or expired assignment never elevates: it only
 /// gives the permissions of its role while in force. Binds [`permanent_binds`].
-fn elevated_admin_sql() -> String {
+pub(crate) fn elevated_admin_sql() -> String {
     format!(
         "ua.is_active = 1 AND ua.deleted_at IS NULL AND (ua.is_admin = 1 OR EXISTS ( \
            SELECT 1 FROM user_scope_assignments usa INNER JOIN roles r ON r.id = usa.role_id \

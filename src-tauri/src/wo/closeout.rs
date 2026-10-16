@@ -551,7 +551,7 @@ async fn verify_user_password(db: &impl ConnectionTrait, user_id: i64, password_
     password::verify_password(password_raw, &hash)
 }
 
-async fn has_supervisor_override_role(
+pub(crate) async fn has_supervisor_override_role(
     db: &impl ConnectionTrait,
     user_id: i64,
     allowed_role_names: &[String],
@@ -564,21 +564,22 @@ async fn has_supervisor_override_role(
         .map(|v| format!("'{}'", v.replace('\'', "''").to_lowercase()))
         .collect::<Vec<_>>()
         .join(",");
+    // An assignment in force only: an expired or lapsed emergency grant signs nothing.
     let sql = format!(
         "SELECT COUNT(*) AS c
          FROM user_scope_assignments usa
          INNER JOIN roles r ON r.id = usa.role_id
          WHERE usa.user_id = ?
-           AND usa.deleted_at IS NULL
+           AND {}
            AND r.deleted_at IS NULL
-           AND LOWER(TRIM(r.name)) IN ({role_list})"
+           AND LOWER(TRIM(r.name)) IN ({role_list})",
+        crate::rbac::resolver::ASSIGNMENT_IN_FORCE_SQL
     );
+    let now = crate::rbac::resolver::assignment_clock();
+    let mut values: Vec<sea_orm::Value> = vec![user_id.into()];
+    values.extend(crate::rbac::resolver::in_force_binds(&now));
     let row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            &sql,
-            [user_id.into()],
-        ))
+        .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("override role count missing")))?;
     let count: i64 = row.try_get("", "c").map_err(|e| decode_err("override_role_count", e))?;

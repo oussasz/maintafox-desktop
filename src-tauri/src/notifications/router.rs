@@ -52,6 +52,11 @@ const ACTIVE_USER: &str = "ua.is_active = 1 AND ua.deleted_at IS NULL";
 const IN_FORCE_NOW: &str = "(x.valid_from IS NULL OR x.valid_from <= strftime('%Y-%m-%dT%H:%M:%SZ','now')) \
      AND (x.valid_to IS NULL OR x.valid_to >= strftime('%Y-%m-%dT%H:%M:%SZ','now'))";
 
+/// Role assignments (`x` = `user_scope_assignments`): an emergency grant only before its expiry,
+/// as in `rbac::resolver::ASSIGNMENT_IN_FORCE_SQL` (same clock format).
+const EMERGENCY_IN_FORCE_NOW: &str = "(x.is_emergency = 0 OR (x.emergency_expires_at IS NOT NULL \
+     AND x.emergency_expires_at > strftime('%Y-%m-%dT%H:%M:%SZ','now')))";
+
 fn as_i64(value: &serde_json::Value) -> Option<i64> {
     value
         .as_i64()
@@ -258,7 +263,7 @@ pub async fn team_member_user_ids(conn: &impl ConnectionTrait, team_id: i64, lea
                 &format!(
                     "SELECT ua.id AS v FROM user_scope_assignments x JOIN user_accounts ua ON ua.id = x.user_id \
                      WHERE x.scope_type = 'team' AND x.scope_reference = ? AND x.deleted_at IS NULL \
-                       AND {IN_FORCE_NOW} AND {ACTIVE_USER}"
+                       AND {IN_FORCE_NOW} AND {EMERGENCY_IN_FORCE_NOW} AND {ACTIVE_USER}"
                 ),
                 vec![team_id.to_string().into()],
             )
@@ -333,7 +338,7 @@ pub async fn entity_manager_user_ids(conn: &impl ConnectionTrait, org_node_id: i
                 &format!(
                     "SELECT ua.id AS v FROM user_scope_assignments x JOIN user_accounts ua ON ua.id = x.user_id \
                      WHERE x.scope_type IN ('entity', 'org_node') AND x.scope_reference = ? \
-                       AND x.deleted_at IS NULL AND {IN_FORCE_NOW} AND {ACTIVE_USER}"
+                       AND x.deleted_at IS NULL AND {IN_FORCE_NOW} AND {EMERGENCY_IN_FORCE_NOW} AND {ACTIVE_USER}"
                 ),
                 vec![node.to_string().into()],
             )
@@ -392,7 +397,8 @@ pub async fn permission_holder_user_ids(
              JOIN user_accounts ua ON ua.id = x.user_id
              JOIN role_permissions rp ON rp.role_id = x.role_id
              JOIN permissions p ON p.id = rp.permission_id
-             WHERE p.name = ? AND {scope} AND x.deleted_at IS NULL AND {IN_FORCE_NOW} AND {ACTIVE_USER}"
+             WHERE p.name = ? AND {scope} AND x.deleted_at IS NULL AND {IN_FORCE_NOW} \
+               AND {EMERGENCY_IN_FORCE_NOW} AND {ACTIVE_USER}"
         ),
         values,
     )
@@ -411,7 +417,7 @@ pub async fn role_user_ids(conn: &impl ConnectionTrait, role_name: &str) -> Resu
             "SELECT ua.id AS v FROM user_scope_assignments x \
              JOIN roles r ON r.id = x.role_id JOIN user_accounts ua ON ua.id = x.user_id \
              WHERE LOWER(TRIM(r.name)) = LOWER(TRIM(?)) AND r.deleted_at IS NULL \
-               AND x.deleted_at IS NULL AND {IN_FORCE_NOW} AND {ACTIVE_USER}"
+               AND x.deleted_at IS NULL AND {IN_FORCE_NOW} AND {EMERGENCY_IN_FORCE_NOW} AND {ACTIVE_USER}"
         ),
         vec![role_name.into()],
     )

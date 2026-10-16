@@ -56,6 +56,27 @@ pub struct PasswordPolicySettings {
     pub require_lowercase: bool,
     pub require_digit: bool,
     pub require_special: bool,
+    /// Stored keys that could not be read: the values above are then the stricter of the
+    /// stored and shipped ones, and Settings asks the administrator to save the policy again.
+    /// Ignored on input.
+    #[serde(default)]
+    pub unreadable_keys: Vec<String>,
+}
+
+/// The policy in force, as the admin panel shows it (see `PasswordPolicy::load_checked`).
+pub(crate) async fn password_policy_settings(db: &sea_orm::DatabaseConnection) -> PasswordPolicySettings {
+    let loaded = PasswordPolicy::load_checked(db).await;
+    let policy = loaded.policy;
+    PasswordPolicySettings {
+        max_age_days: policy.max_age_days,
+        warn_days_before_expiry: policy.warn_days_before_expiry,
+        min_length: policy.min_length,
+        require_uppercase: policy.require_uppercase,
+        require_lowercase: policy.require_lowercase,
+        require_digit: policy.require_digit,
+        require_special: policy.require_special,
+        unreadable_keys: loaded.unreadable_keys,
+    }
 }
 
 /// Verify the user's password for a dangerous-action step-up.
@@ -444,6 +465,7 @@ mod rbac_settings_tests {
             require_lowercase: true,
             require_digit: true,
             require_special: true,
+            unreadable_keys: Vec::new(),
         };
         let changes = password_policy_changes(&input).unwrap();
         write_rbac_settings(&db, &changes, 1).await.unwrap();
@@ -464,6 +486,57 @@ mod rbac_settings_tests {
             1
         );
     }
+
+    async fn set_raw(db: &sea_orm::DatabaseConnection, key: &str, value: &str) {
+        use sea_orm::ConnectionTrait;
+        db.execute(sea_orm::Statement::from_sql_and_values(
+            sea_orm::DbBackend::Sqlite,
+            "UPDATE rbac_settings SET value = ? WHERE key = ?",
+            [value.into(), key.into()],
+        ))
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_stored_policy_applies_the_stricter_values_and_says_so() {
+        let db = crate::db::test_db::seeded().await;
+        let readable = password_policy_settings(&db).await;
+        assert!(readable.unreadable_keys.is_empty(), "{:?}", readable.unreadable_keys);
+
+        // A weak but readable stored policy is applied as stored while everything is readable.
+        set_raw(&db, "password_max_age_days", "0").await;
+        set_raw(&db, "password_require_uppercase", "0").await;
+        let weak = PasswordPolicy::load(&db).await;
+        assert_eq!(weak.max_age_days, 0);
+        assert!(!weak.require_uppercase);
+
+        // One unreadable key: sign-in keeps working with the stricter of stored and shipped.
+        set_raw(&db, "password_min_length", "douze").await;
+        set_raw(&db, "password_require_special", "1").await;
+        let settings = password_policy_settings(&db).await;
+        assert_eq!(settings.unreadable_keys, vec!["password_min_length".to_string()]);
+        assert_eq!(settings.min_length, 8, "shipped minimum for the unreadable key");
+        assert_eq!(
+            settings.max_age_days, 90,
+            "no expiry is weaker than the shipped 90 days"
+        );
+        assert!(settings.require_uppercase, "shipped rule kept");
+        assert!(settings.require_special, "a stricter stored rule is kept");
+
+        // A readable stored value stricter than the shipped one wins.
+        set_raw(&db, "password_min_length", "14").await;
+        set_raw(&db, "password_require_digit", "yes").await;
+        let settings = password_policy_settings(&db).await;
+        assert_eq!(settings.unreadable_keys, vec!["password_require_digit".to_string()]);
+        assert_eq!(settings.min_length, 14);
+        assert!(settings.require_digit);
+
+        // Saving the policy again (the fix action) clears the warning.
+        let changes = password_policy_changes(&settings).unwrap();
+        write_rbac_settings(&db, &changes, 1).await.unwrap();
+        assert!(password_policy_settings(&db).await.unreadable_keys.is_empty());
+    }
 }
 
 /// Return the resolved password policy used by login/password-change flows.
@@ -478,14 +551,5 @@ pub async fn get_password_policy(state: State<'_, AppState>) -> AppResult<Passwo
         PermissionScope::Global
     );
 
-    let policy = PasswordPolicy::load(&state.db).await;
-    Ok(PasswordPolicySettings {
-        max_age_days: policy.max_age_days,
-        warn_days_before_expiry: policy.warn_days_before_expiry,
-        min_length: policy.min_length,
-        require_uppercase: policy.require_uppercase,
-        require_lowercase: policy.require_lowercase,
-        require_digit: policy.require_digit,
-        require_special: policy.require_special,
-    })
+    Ok(password_policy_settings(&state.db).await)
 }

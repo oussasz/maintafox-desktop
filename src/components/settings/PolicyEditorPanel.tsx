@@ -37,6 +37,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { type AppErrorDescription, describeAppError } from "@/lib/app-error";
 import {
   activatePolicy,
   discardPolicyDraft,
@@ -115,6 +116,11 @@ const POLICY_FIELDS: Record<string, PolicyField[]> = {
 const SECURITY_DOMAINS = new Set(["session", "password"]);
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
+
+/** The app's FR/EN message for a failure (error code, validation details), never a raw object. */
+function errorText(described: AppErrorDescription): string {
+  return described.description ? `${described.title} — ${described.description}` : described.title;
+}
 
 /** Values of a stored policy snapshot; null when the stored JSON is not a readable object. */
 export function parseSnapshotValues(
@@ -260,7 +266,7 @@ export function PolicyEditorPanel({
     } catch (err) {
       onToast({
         title: t("policy.draftSaveError"),
-        description: String(err),
+        description: errorText(describeAppError(err)),
         variant: "destructive",
       });
     } finally {
@@ -292,7 +298,7 @@ export function PolicyEditorPanel({
     } catch (err) {
       onToast({
         title: t("policy.testError"),
-        description: String(err),
+        description: errorText(describeAppError(err)),
         variant: "destructive",
       });
     } finally {
@@ -321,8 +327,8 @@ export function PolicyEditorPanel({
       });
       void loadData();
     } catch (err) {
-      const msg = String(err);
-      if (msg.includes("STEP_UP_REQUIRED")) {
+      const described = describeAppError(err);
+      if (described.code === "STEP_UP_REQUIRED") {
         onToast({
           title: t("policy.stepUpRequired"),
           variant: "destructive",
@@ -330,7 +336,7 @@ export function PolicyEditorPanel({
       } else {
         onToast({
           title: t("policy.activateError"),
-          description: msg,
+          description: errorText(described),
           variant: "destructive",
         });
       }
@@ -365,7 +371,7 @@ export function PolicyEditorPanel({
     } catch (err) {
       onToast({
         title: t("policy.discardError"),
-        description: String(err),
+        description: errorText(describeAppError(err)),
         variant: "destructive",
       });
     } finally {

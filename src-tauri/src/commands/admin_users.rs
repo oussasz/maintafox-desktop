@@ -300,11 +300,9 @@ pub struct UserPresence {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Invalidate the permission cache for a specific user and emit `rbac-changed`.
-fn notify_rbac_user_change(app: &AppHandle, state: &AppState, user_id: i64, action: &str) {
-    // Cache invalidation (sync since we have &AppState not State<>)
-    if let Ok(mut cache) = state.permission_cache.try_write() {
-        cache.invalidate_user(user_id);
-    }
+async fn notify_rbac_user_change(app: &AppHandle, state: &AppState, user_id: i64, action: &str) {
+    // Waits for the lock: an invalidation is never skipped under contention.
+    state.permission_cache.write().await.invalidate_user(user_id);
     // Emit event to frontend PermissionProvider
     let _ = app.emit(
         "rbac-changed",
@@ -316,10 +314,8 @@ fn notify_rbac_user_change(app: &AppHandle, state: &AppState, user_id: i64, acti
 }
 
 /// Invalidate the entire permission cache and emit `rbac-changed`.
-fn notify_rbac_global_change(app: &AppHandle, state: &AppState, action: &str) {
-    if let Ok(mut cache) = state.permission_cache.try_write() {
-        cache.invalidate_all();
-    }
+async fn notify_rbac_global_change(app: &AppHandle, state: &AppState, action: &str) {
+    state.permission_cache.write().await.invalidate_all();
     let _ = app.emit(
         "rbac-changed",
         RbacChangedPayload {
@@ -681,7 +677,7 @@ pub async fn create_user(input: CreateUserInput, app: AppHandle, state: State<'_
     )
     .await;
     if let Ok(created) = &result {
-        notify_rbac_user_change(&app, &state, created.id, "user_created");
+        notify_rbac_user_change(&app, &state, created.id, "user_created").await;
     }
     result
 }
@@ -1171,9 +1167,7 @@ pub(crate) async fn update_user_impl(
 
     tx.commit().await?;
 
-    if let Ok(mut cache) = state.permission_cache.try_write() {
-        cache.invalidate_user(input.user_id);
-    }
+    state.permission_cache.write().await.invalidate_user(input.user_id);
 
     Ok(())
 }
@@ -1221,7 +1215,7 @@ pub async fn deactivate_user(input: SetUserActiveInput, app: AppHandle, state: S
     )
     .await;
     if result.is_ok() {
-        notify_rbac_user_change(&app, &state, target, "user_deactivated");
+        notify_rbac_user_change(&app, &state, target, "user_deactivated").await;
     }
     result
 }
@@ -1252,7 +1246,7 @@ pub async fn reactivate_user(input: SetUserActiveInput, app: AppHandle, state: S
     )
     .await;
     if result.is_ok() {
-        notify_rbac_user_change(&app, &state, target, "user_reactivated");
+        notify_rbac_user_change(&app, &state, target, "user_reactivated").await;
     }
     result
 }
@@ -1343,9 +1337,7 @@ pub(crate) async fn set_user_active_impl(
     .await?;
     tx.commit().await?;
 
-    if let Ok(mut cache) = state.permission_cache.try_write() {
-        cache.invalidate_user(user_id);
-    }
+    state.permission_cache.write().await.invalidate_user(user_id);
 
     {
         let target_str = user_id.to_string();
@@ -1663,10 +1655,10 @@ pub(crate) async fn assign_role_scope_impl(
 
     if emit_frontend {
         if let Some(app) = app {
-            notify_rbac_user_change(app, state, user_id_for_audit, "role_assigned");
+            notify_rbac_user_change(app, state, user_id_for_audit, "role_assigned").await;
         }
-    } else if let Ok(mut cache) = state.permission_cache.try_write() {
-        cache.invalidate_user(user_id_for_audit);
+    } else {
+        state.permission_cache.write().await.invalidate_user(user_id_for_audit);
     }
 
     {
@@ -1759,7 +1751,7 @@ pub async fn revoke_role_scope(
     )
     .await;
     let affected_user_id = result?;
-    notify_rbac_user_change(&app, &state, affected_user_id, "role_revoked");
+    notify_rbac_user_change(&app, &state, affected_user_id, "role_revoked").await;
     Ok(())
 }
 
@@ -1846,9 +1838,7 @@ pub(crate) async fn revoke_assignment_impl(
     .await?;
     tx.commit().await?;
 
-    if let Ok(mut cache) = state.permission_cache.try_write() {
-        cache.invalidate_user(user_id);
-    }
+    state.permission_cache.write().await.invalidate_user(user_id);
 
     {
         let target_str = assignment_id.to_string();
@@ -1939,17 +1929,8 @@ pub async fn get_role(role_id: i64, state: State<'_, AppState>) -> AppResult<Rol
 
     let perms = load_role_permission_names(&state.db, role_id).await?;
     let perm_set: HashSet<String> = perms.iter().cloned().collect();
-    let warnings = match compute_dependency_warnings(&state.db, &perm_set).await {
-        Ok(w) => w,
-        Err(err) => {
-            tracing::warn!(
-                role_id = role_id,
-                error = ?err,
-                "get_role: dependency warning computation failed; returning empty warning list"
-            );
-            Vec::new()
-        }
-    };
+    // A failed dependency check is reported (the role editor shows it), never an empty list.
+    let warnings = compute_dependency_warnings(&state.db, &perm_set).await?;
 
     Ok(RoleDetail {
         role: RoleWithPermissions {
@@ -1999,7 +1980,7 @@ pub async fn create_role(input: CreateRoleInput, app: AppHandle, state: State<'_
     )
     .await;
     if result.is_ok() {
-        notify_rbac_global_change(&app, &state, "role_created");
+        notify_rbac_global_change(&app, &state, "role_created").await;
     }
     result
 }
@@ -2030,7 +2011,7 @@ pub async fn clone_role(input: CloneRoleInput, app: AppHandle, state: State<'_, 
     )
     .await;
     if result.is_ok() {
-        notify_rbac_global_change(&app, &state, "role_created");
+        notify_rbac_global_change(&app, &state, "role_created").await;
     }
     result
 }
@@ -2204,7 +2185,7 @@ pub async fn update_role(input: UpdateRoleInput, app: AppHandle, state: State<'_
     .await;
     // Role permissions changed → invalidate all cached entries (any user may hold this role)
     if let Ok(true) = result {
-        notify_rbac_global_change(&app, &state, "role_updated");
+        notify_rbac_global_change(&app, &state, "role_updated").await;
     }
     result.map(|_| ())
 }
@@ -2377,7 +2358,7 @@ pub async fn delete_role(role_id: i64, app: AppHandle, state: State<'_, AppState
     )
     .await;
     if result.is_ok() {
-        notify_rbac_global_change(&app, &state, "role_deleted");
+        notify_rbac_global_change(&app, &state, "role_deleted").await;
     }
     result
 }
@@ -2573,7 +2554,7 @@ pub async fn grant_emergency_elevation(
     )
     .await;
     if result.is_ok() {
-        notify_rbac_user_change(&app, &state, target_user, "emergency_granted");
+        notify_rbac_user_change(&app, &state, target_user, "emergency_granted").await;
     }
     result
 }
@@ -2733,9 +2714,7 @@ pub(crate) async fn grant_emergency_elevation_impl(
     .await?;
     tx.commit().await?;
 
-    if let Ok(mut cache) = state.permission_cache.try_write() {
-        cache.invalidate_user(input.user_id);
-    }
+    state.permission_cache.write().await.invalidate_user(input.user_id);
 
     {
         let target_str = input.user_id.to_string();
@@ -2792,7 +2771,7 @@ pub async fn revoke_emergency_elevation(
     )
     .await;
     let target_user_id = result?;
-    notify_rbac_user_change(&app, &state, target_user_id, "emergency_revoked");
+    notify_rbac_user_change(&app, &state, target_user_id, "emergency_revoked").await;
     Ok(())
 }
 
@@ -3242,11 +3221,11 @@ where
 }
 
 async fn list_missing_tenant_scope_users(db: &sea_orm::DatabaseConnection) -> AppResult<Vec<MissingTenantScopeUser>> {
-    let now = chrono::Utc::now().to_rfc3339();
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT ua.id AS user_id, ua.username, ua.identity_mode, \
+            format!(
+                "SELECT ua.id AS user_id, ua.username, ua.identity_mode, \
                     CASE \
                       WHEN EXISTS ( \
                         SELECT 1 FROM user_scope_assignments usa_any \
@@ -3261,12 +3240,12 @@ async fn list_missing_tenant_scope_users(db: &sea_orm::DatabaseConnection) -> Ap
                  SELECT 1 FROM user_scope_assignments usa \
                  WHERE usa.user_id = ua.id \
                    AND usa.scope_type = 'tenant' \
-                   AND usa.deleted_at IS NULL \
-                   AND (usa.valid_from IS NULL OR usa.valid_from <= ?) \
-                   AND (usa.valid_to   IS NULL OR usa.valid_to   >= ?) \
+                   AND {} \
                ) \
              ORDER BY ua.username ASC",
-            vec![now.clone().into(), now.into()],
+                resolver::ASSIGNMENT_IN_FORCE_SQL
+            ),
+            resolver::in_force_binds(&resolver::assignment_clock()).to_vec(),
         ))
         .await?;
 
@@ -3528,7 +3507,8 @@ pub(crate) async fn ensure_may_manage_account(
         // One's own account: its permissions are one's own (grants to oneself are refused).
         return Ok(());
     }
-    let target_permissions = resolver::all_scope_permissions(db, target).await?;
+    // Future grants count too: no takeover prepared before the account becomes stronger.
+    let target_permissions = resolver::reachable_permissions(db, target).await?;
     let missing = missing_from_caller(db, caller, &target_permissions).await?;
     if missing.is_empty() {
         return Ok(());
@@ -3542,24 +3522,16 @@ pub(crate) async fn ensure_may_manage_account(
 /// Role names that make an account a plant administrator (Phase 1 name `Administrator`).
 const ADMIN_ROLE_NAMES: &[&str] = &["Superadmin", "Administrator"];
 
-/// Active accounts holding an administrator role through an assignment valid now and not an
-/// emergency grant (a grant expires by itself, so it does not keep the plant administrable).
+/// Accounts that can administer the plant, counted exactly like [`is_plant_admin`] (the elevated
+/// admin rule of `auth::rbac`: the active bootstrap account, or a permanent, in-force,
+/// tenant-scope administrator assignment). An emergency grant expires by itself, so it does
+/// not keep the plant administrable.
 async fn active_admin_holders<C: ConnectionTrait>(conn: &C) -> AppResult<i64> {
-    let now = now_utc_text();
-    let placeholders = vec!["?"; ADMIN_ROLE_NAMES.len()].join(",");
     let sql = format!(
-        "SELECT COUNT(DISTINCT ua.id) AS cnt \
-         FROM user_accounts ua \
-         INNER JOIN user_scope_assignments usa ON usa.user_id = ua.id \
-         INNER JOIN roles r ON r.id = usa.role_id \
-         WHERE ua.is_active = 1 AND ua.deleted_at IS NULL \
-           AND usa.deleted_at IS NULL AND usa.is_emergency = 0 \
-           AND (usa.valid_from IS NULL OR usa.valid_from <= ?) \
-           AND (usa.valid_to IS NULL OR usa.valid_to >= ?) \
-           AND r.deleted_at IS NULL AND r.name IN ({placeholders})"
+        "SELECT COUNT(*) AS cnt FROM user_accounts ua WHERE {}",
+        crate::auth::rbac::elevated_admin_sql()
     );
-    let mut values: Vec<sea_orm::Value> = vec![now.clone().into(), now.into()];
-    values.extend(ADMIN_ROLE_NAMES.iter().map(|n| (*n).into()));
+    let values = resolver::permanent_binds(&resolver::assignment_clock()).to_vec();
     Ok(conn
         .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
         .await?

@@ -307,7 +307,10 @@
     "saved": "Policy saved successfully.",
     "saveError": "Failed to save password policy.",
     "minLengthHint": "At least 8 characters, at most 128.",
-    "loadError": "The password policy could not be loaded."
+    "loadError": "The password policy could not be loaded.",
+    "unreadableTitle": "Stored policy unreadable — shipped values applied",
+    "unreadableBody": "Some stored settings could not be read ({{keys}}). For each rule, the stricter of the stored and shipped values applies. Check the values below and save the policy to fix it.",
+    "unreadableFix": "Save these values"
   },
   "permissions": {
     "domains": "Domains",
@@ -354,7 +357,8 @@
       "requires": "Requires",
       "requiredBy": "Required by",
       "suggests": "Suggests",
-      "suggestedBy": "Suggested by"
+      "suggestedBy": "Suggested by",
+      "loadError": "The dependencies of this permission could not be loaded."
     },
     "domainLabels": {
       "eq": "Equipment",
@@ -638,7 +642,8 @@
       "enableTitle": "Re-enable the account of {{name}}?",
       "enableBody": "The person can sign in again with their current roles.",
       "cannotDisableSelf": "You cannot disable your own account.",
-      "noDeleteHint": "Accounts are never deleted: their history must stay readable. Disable them instead."
+      "noDeleteHint": "Accounts are never deleted: their history must stay readable. Disable them instead.",
+      "loadError": "The account could not be loaded."
     },
     "roles": {
       "scopeHint": "An account can hold one role per scope. Emergency access expires by itself.",

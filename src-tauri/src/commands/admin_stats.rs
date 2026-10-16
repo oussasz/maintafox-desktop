@@ -64,18 +64,25 @@ pub async fn get_admin_stats(state: State<'_, AppState>) -> AppResult<AdminStats
             WHERE ua.is_active = 1
               AND ua.deleted_at IS NULL
               AND NOT EXISTS (
+                  -- An assignment in force (rule of rbac::resolver::ASSIGNMENT_IN_FORCE_SQL,
+                  -- same clock format as the stored bounds).
                   SELECT 1 FROM user_scope_assignments usa
                   WHERE usa.user_id = ua.id
                     AND usa.deleted_at IS NULL
-                    AND (usa.valid_to IS NULL OR usa.valid_to >= date('now'))
+                    AND (usa.valid_from IS NULL OR usa.valid_from <= strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+                    AND (usa.valid_to IS NULL OR usa.valid_to >= strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+                    AND (usa.is_emergency = 0 OR (usa.emergency_expires_at IS NOT NULL
+                         AND usa.emergency_expires_at > strftime('%Y-%m-%dT%H:%M:%SZ','now')))
               )
         ),
         emergency AS (
+            -- A grant without an expiry gives nothing, so it is not counted as running.
             SELECT COUNT(*) AS emergency_grants_active
             FROM user_scope_assignments
             WHERE is_emergency = 1
               AND deleted_at IS NULL
-              AND (emergency_expires_at IS NULL OR emergency_expires_at > datetime('now'))
+              AND emergency_expires_at IS NOT NULL
+              AND emergency_expires_at > strftime('%Y-%m-%dT%H:%M:%SZ','now')
         )
         SELECT
             COALESCE(uc.active_users, 0)          AS active_users,

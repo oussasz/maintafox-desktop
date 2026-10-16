@@ -392,21 +392,21 @@ pub async fn list_active_sessions(user_id: Option<i64>, state: State<'_, AppStat
 
 /// Load active role names for a user (by text user_id from app_sessions).
 async fn load_user_role_names(db: &sea_orm::DatabaseConnection, user_id_text: &str) -> AppResult<Vec<String>> {
-    let sql = "\
-        SELECT DISTINCT r.name \
+    // Roles in force only (the shared rule and clock of `rbac::resolver`).
+    let sql = format!(
+        "SELECT DISTINCT r.name \
         FROM user_scope_assignments usa \
         INNER JOIN roles r ON r.id = usa.role_id \
         WHERE CAST(usa.user_id AS TEXT) = ? \
-          AND usa.deleted_at IS NULL \
-          AND (usa.is_emergency = 0 \
-               OR julianday(usa.emergency_expires_at) > julianday('now'))";
+          AND {}",
+        crate::rbac::resolver::ASSIGNMENT_IN_FORCE_SQL
+    );
+    let now = crate::rbac::resolver::assignment_clock();
+    let mut values: Vec<sea_orm::Value> = vec![user_id_text.to_string().into()];
+    values.extend(crate::rbac::resolver::in_force_binds(&now));
 
     let rows = db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            sql,
-            [user_id_text.to_string().into()],
-        ))
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
         .await?;
 
     let names = rows

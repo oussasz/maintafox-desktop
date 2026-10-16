@@ -10,6 +10,7 @@ import {
   deactivateUser,
   getLockoutPolicy,
   setLockoutPolicy,
+  getPasswordPolicy,
   setPasswordPolicy,
   exportAdminEventsCsv,
   getRoleEditorCatalog,
@@ -330,9 +331,27 @@ describe("security policies", () => {
       require_lowercase: true,
       require_digit: true,
       require_special: false,
+      unreadable_keys: [],
     };
     await setPasswordPolicy(policy);
     expect(ipc.invoke).toHaveBeenCalledWith("set_password_policy", { input: policy });
+  });
+
+  it("reads which stored password rules could not be read", async () => {
+    const stored = {
+      max_age_days: 90,
+      warn_days_before_expiry: 14,
+      min_length: 8,
+      require_uppercase: true,
+      require_lowercase: true,
+      require_digit: true,
+      require_special: false,
+      unreadable_keys: ["password_min_length"],
+    };
+    ipc.invoke.mockResolvedValueOnce(stored);
+    await expect(getPasswordPolicy()).resolves.toEqual(stored);
+    ipc.invoke.mockResolvedValueOnce({ ...stored, unreadable_keys: undefined });
+    await expect(getPasswordPolicy()).rejects.toThrow();
   });
 
   it("reads and saves the sign-in lockout", async () => {
