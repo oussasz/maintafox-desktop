@@ -12,6 +12,8 @@ import { Link } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { errorText } from "@/components/planning/weekly-schedule-model";
+import { mfTone } from "@/design-system/tone";
+import { cn } from "@/lib/utils";
 import { listCrewsWithoutPlanningSite } from "@/services/planning-service";
 import type { WeeklyCrew } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
@@ -50,7 +52,11 @@ export function CrewsWithoutSiteBanner() {
   return (
     <div
       role="status"
-      className="flex flex-wrap items-start gap-2 border-b border-amber-200 bg-amber-50 px-6 py-2 text-sm text-amber-900"
+      className={cn(
+        "flex flex-wrap items-start gap-2 border-b px-6 py-2 text-sm",
+        mfTone.warning.panel,
+        mfTone.warning.text,
+      )}
     >
       <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
       <div className="min-w-0 flex-1">

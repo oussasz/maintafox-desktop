@@ -11,6 +11,7 @@ import {
 } from "@/components/planning/planning-model";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { mfTone } from "@/design-system/tone";
 import { cn } from "@/lib/utils";
 import type {
   CandidateConflictSummary,
@@ -229,7 +230,7 @@ function CandidateCardBody({
               <Badge
                 key={codeKey}
                 variant="outline"
-                className="border-amber-200 bg-amber-50 text-[10px] font-normal text-amber-800"
+                className={cn("text-[10px] font-normal", mfTone.warning.chip)}
               >
                 {t(`blockers.${codeKey}`, { defaultValue: codeKey })}
               </Badge>

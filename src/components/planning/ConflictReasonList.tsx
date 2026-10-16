@@ -14,6 +14,7 @@ import {
   conflictReasonText,
   isBlockingSeverity,
 } from "@/components/planning/planning-model";
+import { mfTone } from "@/design-system/tone";
 import { cn } from "@/lib/utils";
 import type { ConflictReason } from "@shared/ipc-types";
 
@@ -43,16 +44,14 @@ export function ConflictReasonList({ reasons, onOpenWindows, className }: Confli
             key={`${reason.conflict_type}-${reason.reason_code}-${i}`}
             className={cn(
               "flex items-start gap-1.5 rounded-md border px-1.5 py-1",
-              blocking
-                ? "border-status-danger/30 bg-status-danger/10"
-                : "border-amber-200 bg-amber-50",
+              blocking ? "border-status-danger/30 bg-status-danger/10" : mfTone.warning.panel,
             )}
             data-severity={blocking ? "blocking" : "warning"}
           >
             <Icon
               className={cn(
                 "mt-0.5 h-3 w-3 shrink-0",
-                blocking ? "text-status-danger" : "text-amber-700",
+                blocking ? "text-status-danger" : mfTone.warning.text,
               )}
               role="img"
               aria-label={blocking ? t("reasonUi.blocking") : t("reasonUi.warning")}

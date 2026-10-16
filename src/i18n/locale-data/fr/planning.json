@@ -417,5 +417,20 @@
     "fixTeams": "Corriger les équipes",
     "fixOrg": "Ouvrir l'organisation",
     "loadFailed": "Impossible de vérifier les équipes sans site de planification : {{error}}"
+  },
+  "feedback": {
+    "committed": "Travail engagé au planning",
+    "windowCreated": "Fenêtre de planification enregistrée",
+    "breakInRecorded": "Break-in enregistré",
+    "slotReleased": "Créneau libéré",
+    "commitmentCancelled": "Engagement annulé",
+    "periodFrozen": "Période gelée",
+    "teamsNotified": "Équipes notifiées",
+    "weekApproved": "Semaine approuvée",
+    "weekFrozen": "Semaine gelée",
+    "weekPublished": "Semaine publiée aux équipes",
+    "unfreezeRequested": "Demande de dégel envoyée",
+    "unfreezeApproved": "Dégel approuvé",
+    "unfreezeRejected": "Dégel refusé"
   }
 }

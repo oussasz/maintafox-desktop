@@ -766,7 +766,7 @@ export function CommitDialog({
                   </p>
                 ) : null}
                 {slotOutsideHorizon ? (
-                  <p className="text-[11px] text-amber-700 dark:text-amber-400">
+                  <p className="text-[11px] text-text-warning">
                     {t("commitment.horizonPrefillWarning")}
                   </p>
                 ) : null}

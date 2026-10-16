@@ -417,5 +417,20 @@
     "fixTeams": "Fix the crews",
     "fixOrg": "Open the organisation",
     "loadFailed": "Could not check for crews without a planning site: {{error}}"
+  },
+  "feedback": {
+    "committed": "Work committed to the schedule",
+    "windowCreated": "Planning window saved",
+    "breakInRecorded": "Break-in recorded",
+    "slotReleased": "Slot released",
+    "commitmentCancelled": "Commitment cancelled",
+    "periodFrozen": "Period frozen",
+    "teamsNotified": "Crews notified",
+    "weekApproved": "Week approved",
+    "weekFrozen": "Week frozen",
+    "weekPublished": "Week published to crews",
+    "unfreezeRequested": "Unfreeze request sent",
+    "unfreezeApproved": "Unfreeze approved",
+    "unfreezeRejected": "Unfreeze rejected"
   }
 }
