@@ -120,20 +120,27 @@ fn normalize_phone_e164(raw: &str) -> AppResult<Option<String>> {
 pub async fn get_my_profile(state: State<'_, AppState>) -> AppResult<UserProfile> {
     let user = require_session!(state);
 
+    // The role shown is one in force (the shared rule of `rbac::resolver`).
+    let now = crate::rbac::resolver::assignment_clock();
+    let mut values: Vec<sea_orm::Value> = crate::rbac::resolver::in_force_binds(&now).to_vec();
+    values.push(user.user_id.into());
     let row = state
         .db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            r"SELECT u.id, u.username, u.personnel_id, u.display_name, u.email, u.phone,
+            format!(
+                r"SELECT u.id, u.username, u.personnel_id, u.display_name, u.email, u.phone,
                      u.identity_mode, u.created_at,
                      u.password_changed_at,
                      CASE WHEN u.pin_hash IS NOT NULL THEN 1 ELSE 0 END AS pin_configured,
                      r.name AS role_name
               FROM user_accounts u
-              LEFT JOIN user_scope_assignments usa ON usa.user_id = u.id AND usa.deleted_at IS NULL
+              LEFT JOIN user_scope_assignments usa ON usa.user_id = u.id AND {}
               LEFT JOIN roles r ON r.id = usa.role_id
               WHERE u.id = ? AND u.deleted_at IS NULL",
-            [user.user_id.into()],
+                crate::rbac::resolver::ASSIGNMENT_IN_FORCE_SQL
+            ),
+            values,
         ))
         .await?
         .ok_or_else(|| AppError::NotFound {
@@ -244,15 +251,19 @@ pub async fn update_my_profile(payload: UpdateProfilePayload, state: State<'_, A
 
 #[tauri::command]
 pub async fn change_password(payload: ChangePasswordPayload, state: State<'_, AppState>) -> AppResult<()> {
+    change_password_impl(state.inner(), payload).await
+}
+
+/// The user's own password change: current password checked, the plant policy applied, the
+/// account's other sessions closed (this one continues on a new stored row).
+pub(crate) async fn change_password_impl(state: &AppState, payload: ChangePasswordPayload) -> AppResult<()> {
     let user = require_session!(state);
 
-    // Validate new password strength
+    // The plant password policy (Settings › Security), as for every other password set.
     let new_password = payload.new_password.trim();
-    if new_password.len() < 8 {
-        return Err(AppError::ValidationFailed(vec![
-            "Le mot de passe doit contenir au moins 8 caractères.".into(),
-        ]));
-    }
+    let policy = crate::auth::password_policy::PasswordPolicy::load(&state.db).await;
+    crate::auth::password_policy::validate_password_strength(new_password, &policy)
+        .map_err(AppError::ValidationFailed)?;
 
     // Fetch current hash to verify old password
     let record = session_manager::find_active_user(&state.db, &user.username)
@@ -281,20 +292,11 @@ pub async fn change_password(payload: ChangePasswordPayload, state: State<'_, Ap
 
     // Hash and save new password
     let new_hash = password::hash_password(new_password)?;
-    let now = Utc::now().to_rfc3339();
 
-    state
-        .db
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            r"UPDATE user_accounts
-               SET password_hash = ?,
-                   password_changed_at = ?,
-                   updated_at = ?
-               WHERE id = ?",
-            [new_hash.into(), now.clone().into(), now.into(), user.user_id.into()],
-        ))
-        .await?;
+    // The new password and the session rotation in one transaction: the account's other
+    // sessions close (other devices included: the change travels with the account); this one
+    // continues on a new stored row.
+    session_manager::change_password_and_rotate(&state.db, &state.session, user.user_id, &new_hash, false).await?;
 
     crate::audit::emit(
         &state.db,

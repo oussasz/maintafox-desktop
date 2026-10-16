@@ -28,6 +28,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { usePermissions } from "@/hooks/use-permissions";
+import { useStepUp } from "@/hooks/use-step-up";
 import { useToast } from "@/hooks/use-toast";
 import { listPersonnel } from "@/services/personnel-service";
 import { createUser, listAssignableRoles } from "@/services/rbac-service";
@@ -93,6 +94,7 @@ export function CreateUserDialog({
   const { t } = useTranslation("admin");
   const { toast } = useToast();
   const { can } = usePermissions();
+  const { withStepUp, StepUpDialogElement } = useStepUp();
   const canViewPersonnel = can(P.PER_VIEW);
 
   const [username, setUsername] = useState("");
@@ -228,7 +230,7 @@ export function CreateUserDialog({
           ? { initial_password: password, force_password_change: forceChange }
           : {}),
       };
-      await createUser(input);
+      await withStepUp(() => createUser(input));
       toast({ title: t("users.create.success"), variant: "success" });
       onCreated();
       onClose();
@@ -241,10 +243,12 @@ export function CreateUserDialog({
       setRoleIdStr("");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      toast({
-        title: msg || t("users.create.error"),
-        variant: "destructive",
-      });
+      if (!msg.includes("Step-up cancelled")) {
+        toast({
+          title: msg || t("users.create.error"),
+          variant: "destructive",
+        });
+      }
     } finally {
       setSubmitting(false);
     }
@@ -436,6 +440,7 @@ export function CreateUserDialog({
           </Button>
         </DialogFooter>
       </DialogContent>
+      {StepUpDialogElement}
     </Dialog>
   );
 }

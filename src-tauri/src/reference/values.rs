@@ -561,6 +561,15 @@ pub async fn create_value(
             .await?,
         );
     }
+    // A currency is an ISO 4217 code with its minor units (`reference::currencies`).
+    let metadata_json = if crate::reference::currencies::is_currency_domain(&domain.code) {
+        Some(crate::reference::currencies::checked_currency_metadata(
+            &code,
+            payload.metadata_json.as_deref(),
+        )?)
+    } else {
+        payload.metadata_json.clone()
+    };
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -579,7 +588,7 @@ pub async fn create_value(
             payload.icon_name.into(),
             semantic_tag.into(),
             payload.external_code.into(),
-            payload.metadata_json.into(),
+            metadata_json.into(),
         ],
     ))
     .await
@@ -817,7 +826,11 @@ pub async fn update_value(
         values.push(ec.clone().into());
     }
     if let Some(ref mj) = payload.metadata_json {
-        if !crate::reference::units::is_units_domain(&domain.code) {
+        if crate::reference::currencies::is_currency_domain(&domain.code) {
+            let checked = crate::reference::currencies::checked_currency_metadata(&existing.code, mj.as_deref())?;
+            sets_clause.push("metadata_json = ?".into());
+            values.push(checked.into());
+        } else if !crate::reference::units::is_units_domain(&domain.code) {
             sets_clause.push("metadata_json = ?".into());
             values.push(mj.clone().into());
         }
@@ -858,6 +871,10 @@ pub async fn deactivate_value(db: &DatabaseConnection, value_id: i64, _actor_id:
         return Err(AppError::ValidationFailed(vec![
             "Cette valeur est déjà désactivée.".into()
         ]));
+    }
+    if crate::reference::currencies::is_currency_domain(&domain.code) {
+        // A currency still in use (company currency, stock costs, valuation, settlements) stays.
+        crate::reference::currencies::ensure_currency_not_in_use(db, &existing.code).await?;
     }
 
     db.execute(Statement::from_sql_and_values(

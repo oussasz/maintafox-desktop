@@ -1111,6 +1111,17 @@ export interface SettingDefinitionView {
   last_modified_by: string | null;
 }
 
+/** A currency of Données de référence › Devises (`list_reference_currencies`). */
+export interface CurrencyOption {
+  code: string;
+  /** French name (primary label of the list). */
+  label: string;
+  label_en: string | null;
+  symbol: string | null;
+  minor_units: number | null;
+  is_active: boolean;
+}
+
 export interface SettingsOverview {
   definitions: SettingDefinitionView[];
   /** Roles whose holders may change settings (`adm.settings`). */
@@ -5608,6 +5619,18 @@ export interface PasswordPolicySettings {
   require_lowercase: boolean;
   require_digit: boolean;
   require_special: boolean;
+  /**
+   * Stored keys that could not be read: the values above are then the stricter of the stored
+   * and shipped ones until the policy is saved again. Ignored by `set_password_policy`.
+   */
+  unreadable_keys: string[];
+}
+
+/** Sign-in lockout thresholds (`get_lockout_policy` / `set_lockout_policy`). */
+export interface LockoutPolicySettings {
+  max_attempts: number;
+  lockout_minutes: number;
+  progressive: boolean;
 }
 
 export interface RbacSettingEntry {

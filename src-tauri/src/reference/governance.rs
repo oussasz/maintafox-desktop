@@ -124,7 +124,9 @@ fn category_for_known_code(code: &str) -> Option<GovernanceCategory> {
         | "WORK.ORDER_SUBTYPES"
         // Units of measure: the plant adds its own units through draft → validate → publish, every
         // module links them by id (`units`, owner decision of the reference data review).
-        | "MEASURE.UNITS" => Some(GovernanceCategory::ControlledCatalog),
+        | "MEASURE.UNITS"
+        // ISO 4217 currencies: shipped ones, the plant adds others (`reference::currencies`).
+        | "INVENTORY.CURRENCY" => Some(GovernanceCategory::ControlledCatalog),
 
         _ => None,
     }
@@ -271,6 +273,8 @@ fn has_integrity_owned_system_values(code: &str) -> bool {
             // Standard units of measure: stock and meter history depend on them; the plant adds
             // its own units (`reference::units`), never retires or recodes the standard ones.
             | "MEASURE.UNITS"
+            // Shipped ISO currencies: stock costs and the tenant currency depend on them.
+            | "INVENTORY.CURRENCY"
     )
 }
 

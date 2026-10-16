@@ -26,6 +26,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { ErrorState } from "@/components/ui/data-state";
 import {
   Dialog,
   DialogContent,
@@ -36,6 +37,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { type AppErrorDescription, describeAppError } from "@/lib/app-error";
 import {
   activatePolicy,
   discardPolicyDraft,
@@ -89,13 +91,13 @@ interface PolicyField {
 }
 
 const POLICY_FIELDS: Record<string, PolicyField[]> = {
+  // `offline_grace_hours`, `max_failed_attempts` and `lockout_minutes` stay in the stored policy
+  // but the sign-in does not read them: the lockout is set in the Lockout panel (the values the
+  // sign-in applies) and offline grace comes from the device configuration.
   session: [
     { key: "idle_timeout_minutes", type: "number" },
     { key: "absolute_session_minutes", type: "number" },
-    { key: "offline_grace_hours", type: "number" },
     { key: "step_up_window_minutes", type: "number" },
-    { key: "max_failed_attempts", type: "number" },
-    { key: "lockout_minutes", type: "number" },
   ],
   password: [
     { key: "min_length", type: "number" },
@@ -115,11 +117,23 @@ const SECURITY_DOMAINS = new Set(["session", "password"]);
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-function parseJson(json: string): Record<string, unknown> {
+/** The app's FR/EN message for a failure (error code, validation details), never a raw object. */
+function errorText(described: AppErrorDescription): string {
+  return described.description ? `${described.title} — ${described.description}` : described.title;
+}
+
+/** Values of a stored policy snapshot; null when the stored JSON is not a readable object. */
+export function parseSnapshotValues(
+  json: string | null | undefined,
+): Record<string, unknown> | null {
+  if (json == null) return {};
   try {
-    return JSON.parse(json) as Record<string, unknown>;
+    const parsed: unknown = JSON.parse(json);
+    return parsed != null && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
   } catch {
-    return {};
+    return null;
   }
 }
 
@@ -158,6 +172,7 @@ export function PolicyEditorPanel({
   const [activeSnapshot, setActiveSnapshot] = useState<PolicySnapshot | null>(null);
   const [history, setHistory] = useState<PolicySnapshot[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [editing, setEditing] = useState(false);
   const [discardOpen, setDiscardOpen] = useState(false);
   const [draftValues, setDraftValues] = useState<Record<string, unknown>>({});
@@ -182,10 +197,12 @@ export function PolicyEditorPanel({
 
   const loadData = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
+      // No snapshot yet is a normal state (null), not an error.
       const [snap, snapshots] = await Promise.all([
         getPolicySnapshot(domain),
-        listPolicySnapshots(domain).catch(() => [] as PolicySnapshot[]),
+        listPolicySnapshots(domain),
       ]);
       setActiveSnapshot(snap);
       setHistory(snapshots);
@@ -193,8 +210,8 @@ export function PolicyEditorPanel({
       // Look for existing draft in history
       const existingDraft = snapshots.find((s) => !s.is_active && !s.activated_at);
       setDraftPolicy(existingDraft ?? null);
-    } catch {
-      // snapshot may not exist yet
+    } catch (err) {
+      setLoadError(err);
     } finally {
       setLoading(false);
     }
@@ -204,14 +221,16 @@ export function PolicyEditorPanel({
     void loadData();
   }, [loadData]);
 
-  const activeValues = useMemo(
-    () => parseJson(activeSnapshot?.snapshot_json ?? "{}"),
+  const parsedActive = useMemo(
+    () => parseSnapshotValues(activeSnapshot?.snapshot_json),
     [activeSnapshot],
   );
-  const draftSnapshotValues = useMemo(
-    () => parseJson(draftPolicy?.snapshot_json ?? "{}"),
-    [draftPolicy],
-  );
+  const parsedDraft = useMemo(() => parseSnapshotValues(draftPolicy?.snapshot_json), [draftPolicy]);
+  // An unreadable stored policy is shown as such and cannot be edited (editing would start
+  // from blank values and overwrite it).
+  const snapshotUnreadable = parsedActive == null || parsedDraft == null;
+  const activeValues = useMemo(() => parsedActive ?? {}, [parsedActive]);
+  const draftSnapshotValues = useMemo(() => parsedDraft ?? {}, [parsedDraft]);
 
   const hasActiveSnapshot = activeSnapshot?.is_active === true;
 
@@ -247,7 +266,7 @@ export function PolicyEditorPanel({
     } catch (err) {
       onToast({
         title: t("policy.draftSaveError"),
-        description: String(err),
+        description: errorText(describeAppError(err)),
         variant: "destructive",
       });
     } finally {
@@ -279,7 +298,7 @@ export function PolicyEditorPanel({
     } catch (err) {
       onToast({
         title: t("policy.testError"),
-        description: String(err),
+        description: errorText(describeAppError(err)),
         variant: "destructive",
       });
     } finally {
@@ -308,8 +327,8 @@ export function PolicyEditorPanel({
       });
       void loadData();
     } catch (err) {
-      const msg = String(err);
-      if (msg.includes("STEP_UP_REQUIRED")) {
+      const described = describeAppError(err);
+      if (described.code === "STEP_UP_REQUIRED") {
         onToast({
           title: t("policy.stepUpRequired"),
           variant: "destructive",
@@ -317,7 +336,7 @@ export function PolicyEditorPanel({
       } else {
         onToast({
           title: t("policy.activateError"),
-          description: msg,
+          description: errorText(described),
           variant: "destructive",
         });
       }
@@ -352,7 +371,7 @@ export function PolicyEditorPanel({
     } catch (err) {
       onToast({
         title: t("policy.discardError"),
-        description: String(err),
+        description: errorText(describeAppError(err)),
         variant: "destructive",
       });
     } finally {
@@ -385,8 +404,22 @@ export function PolicyEditorPanel({
     );
   }
 
+  if (loadError != null) {
+    return (
+      <ErrorState error={loadError} title={t("policy.loadError")} onRetry={() => void loadData()} />
+    );
+  }
+
   return (
     <div className="flex flex-1 flex-col gap-4 overflow-auto">
+      {snapshotUnreadable ? (
+        <p
+          role="alert"
+          className="rounded-md border border-tone-danger-border bg-tone-danger-bg px-3 py-2 text-sm text-tone-danger-fg"
+        >
+          {t("policy.unreadable")}
+        </p>
+      ) : null}
       {/* Status banner */}
       <div className="flex items-center gap-3 rounded-md border bg-muted/30 p-3">
         <Shield className="h-5 w-5 shrink-0 text-primary" />
@@ -577,7 +610,7 @@ export function PolicyEditorPanel({
           variant="outline"
           size="sm"
           onClick={handleEditDraft}
-          disabled={policyOperationLoading || editing}
+          disabled={policyOperationLoading || editing || snapshotUnreadable}
         >
           {t("policy.editDraft")}
         </Button>

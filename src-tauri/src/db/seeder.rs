@@ -1672,6 +1672,9 @@ pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
         let d = get_domain_id(db, "inventory.currency").await?;
         seed_value(db, d, "EUR", "EUR", "EUR", "EUR", None, 1, true).await?;
         seed_value(db, d, "USD", "USD", "USD", "USD", None, 2, true).await?;
+        // The governed list (Données de référence › Devises) is the source of this copy: it adds
+        // the other currencies and the French / English names (`reference::currencies`).
+        crate::reference::currencies::ensure_currency_catalog(db).await?;
     }
 
     // inventory.erp_reconcile_state
@@ -2512,6 +2515,18 @@ async fn seed_permissions(db: &DatabaseConnection) -> AppResult<()> {
         .await?;
     }
 
+    // Every catalog permission is a system permission, however its row first appeared (an older
+    // migration may have created it differently): the administrator roles are linked to every
+    // system permission below, on every start, so permissions added in later versions reach them.
+    for meta in crate::rbac::permissions::CATALOG {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE permissions SET is_system = 1 WHERE name = ? AND is_system <> 1",
+            [meta.name.into()],
+        ))
+        .await?;
+    }
+
     // Keep metadata aligned for rows that already existed under older descriptions.
     for meta in crate::rbac::permissions::CATALOG {
         db.execute(Statement::from_sql_and_values(
@@ -2889,6 +2904,61 @@ mod tests {
         assert!(
             SEED_SCHEMA_VERSION > 0,
             "Seed schema version must be a positive integer"
+        );
+    }
+
+    /// Permissions of a later version (and links lost on an older database) reach the
+    /// administrator roles at the next start: the seed runs on every start and is idempotent.
+    #[tokio::test]
+    async fn administrator_roles_hold_every_catalog_permission_after_each_start() {
+        let db = crate::db::test_db::seeded().await;
+        let probe = crate::rbac::permissions::CATALOG[0].name;
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE permissions SET is_system = 0 WHERE name = ?",
+            [probe.into()],
+        ))
+        .await
+        .unwrap();
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "DELETE FROM role_permissions WHERE permission_id = (SELECT id FROM permissions WHERE name = ?)",
+            [probe.into()],
+        ))
+        .await
+        .unwrap();
+
+        seed_system_data(&db).await.expect("seed again");
+
+        for role in ["Administrator", "Superadmin"] {
+            let missing = db
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "SELECT COUNT(*) AS n FROM permissions p \
+                      WHERE p.is_system = 1 AND NOT EXISTS ( \
+                        SELECT 1 FROM role_permissions rp JOIN roles r ON r.id = rp.role_id \
+                         WHERE rp.permission_id = p.id AND r.name = ? AND r.deleted_at IS NULL)",
+                    [role.into()],
+                ))
+                .await
+                .unwrap()
+                .and_then(|r| r.try_get::<i64>("", "n").ok())
+                .unwrap();
+            assert_eq!(missing, 0, "{role} misses system permissions");
+        }
+        let catalog_names = crate::rbac::permissions::CATALOG.len() as i64;
+        let system = db
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT COUNT(*) AS n FROM permissions WHERE is_system = 1".to_string(),
+            ))
+            .await
+            .unwrap()
+            .and_then(|r| r.try_get::<i64>("", "n").ok())
+            .unwrap();
+        assert!(
+            system >= catalog_names,
+            "every catalog permission is a system permission"
         );
     }
 

@@ -6,6 +6,8 @@
 //! frontend `PermissionProvider` can refresh its own state.
 //!
 //! Safety-net: entries older than `max_age` are silently evicted on read.
+//! An entry also ends at the next instant one of the user's assignments starts, ends or expires
+//! (`valid_until`): an expired emergency grant stops counting at its expiry, without a sweep.
 
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
@@ -19,7 +21,7 @@ const DEFAULT_MAX_AGE_SECS: u64 = 120;
 /// `"node:15"` so that different scope resolutions are cached independently.
 #[derive(Debug)]
 pub struct PermissionCache {
-    entries: HashMap<(i64, String), (HashSet<String>, Instant)>,
+    entries: HashMap<(i64, String), CachedSet>,
     max_age: Duration,
 }
 
@@ -36,23 +38,34 @@ impl PermissionCache {
     ///
     /// Returns `None` if:
     /// - no entry exists, or
-    /// - the entry has expired (older than `max_age`).
+    /// - the entry has expired (older than `max_age`), or
+    /// - one of the user's assignments started, ended or expired since it was computed.
     pub fn get(&self, user_id: i64, scope_key: &str) -> Option<&HashSet<String>> {
         let key = (user_id, scope_key.to_string());
-        self.entries.get(&key).and_then(
-            |(perms, ts)| {
-                if ts.elapsed() < self.max_age {
-                    Some(perms)
-                } else {
-                    None
-                }
-            },
-        )
+        let now = chrono::Utc::now();
+        self.entries.get(&key).and_then(|entry| {
+            let fresh = entry.stored_at.elapsed() < self.max_age && entry.valid_until.is_none_or(|until| now < until);
+            fresh.then_some(&entry.perms)
+        })
     }
 
-    /// Store permissions for a `(user_id, scope_key)` pair.
-    pub fn put(&mut self, user_id: i64, scope_key: String, perms: HashSet<String>) {
-        self.entries.insert((user_id, scope_key), (perms, Instant::now()));
+    /// Store permissions for a `(user_id, scope_key)` pair, valid until `valid_until` (the next
+    /// change of the user's assignments; `None` when none is scheduled).
+    pub fn put(
+        &mut self,
+        user_id: i64,
+        scope_key: String,
+        perms: HashSet<String>,
+        valid_until: Option<chrono::DateTime<chrono::Utc>>,
+    ) {
+        self.entries.insert(
+            (user_id, scope_key),
+            CachedSet {
+                perms,
+                stored_at: Instant::now(),
+                valid_until,
+            },
+        );
     }
 
     /// Invalidate **all** entries for a given `user_id`.
@@ -71,6 +84,13 @@ impl PermissionCache {
     }
 }
 
+#[derive(Debug)]
+struct CachedSet {
+    perms: HashSet<String>,
+    stored_at: Instant,
+    valid_until: Option<chrono::DateTime<chrono::Utc>>,
+}
+
 impl Default for PermissionCache {
     fn default() -> Self {
         Self::new(DEFAULT_MAX_AGE_SECS)
@@ -86,4 +106,28 @@ pub struct RbacChangedPayload {
     pub affected_user_id: Option<i64>,
     /// Human-readable action label for debugging / logging.
     pub action: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_entry_ends_at_the_next_assignment_change() {
+        let mut cache = PermissionCache::default();
+        let perms: HashSet<String> = [crate::rbac::permissions::ADM_USERS.to_string()].into();
+        cache.put(1, "tenant".into(), perms.clone(), None);
+        assert!(cache.get(1, "tenant").is_some());
+
+        let past = chrono::Utc::now() - chrono::Duration::seconds(1);
+        cache.put(1, "tenant".into(), perms.clone(), Some(past));
+        assert!(
+            cache.get(1, "tenant").is_none(),
+            "an expired grant is not served from cache"
+        );
+
+        let future = chrono::Utc::now() + chrono::Duration::minutes(5);
+        cache.put(1, "tenant".into(), perms, Some(future));
+        assert!(cache.get(1, "tenant").is_some());
+    }
 }

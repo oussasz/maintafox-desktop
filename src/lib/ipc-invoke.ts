@@ -14,6 +14,9 @@ const SILENT_IPC_COMMANDS = new Set(["health_check", "get_app_info", "get_task_s
 
 type AuthLockMode = "session" | "permission" | "unknown";
 
+/** Server code (`AppError::PasswordChangeRequired`): the password must be changed first. */
+export const PASSWORD_CHANGE_REQUIRED = "PASSWORD_CHANGE_REQUIRED";
+
 function extractIpcErrorMeta(err: unknown): { code: string; rawMsg: string } {
   const code =
     typeof err === "object" && err !== null && "code" in err
@@ -104,6 +107,13 @@ function handleAuthAndPermissionFailures(cmd: string, err: unknown): void {
     return;
   }
 
+  if (code === PASSWORD_CHANGE_REQUIRED) {
+    // The server refuses every command until the password is changed and flags the session:
+    // the refreshed session routes AuthGuard to the change-password screen (no lock, no toast).
+    void refreshSessionStoreSilent();
+    return;
+  }
+
   if (isSessionConfirmCode(code)) {
     void (async () => {
       const snapshot = await refreshSessionStoreSilent();
@@ -190,6 +200,11 @@ function notifyInvokeFailure(cmd: string, err: unknown): void {
 
   if (code === "STEP_UP_REQUIRED") {
     // `useStepUp` shows `StepUpDialog` with a password field; no global lock/toast.
+    return;
+  }
+
+  if (code === PASSWORD_CHANGE_REQUIRED) {
+    // AuthGuard shows the change-password screen instead.
     return;
   }
 

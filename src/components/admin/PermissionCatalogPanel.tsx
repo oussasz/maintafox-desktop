@@ -14,6 +14,7 @@ import { useTranslation } from "react-i18next";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ErrorState } from "@/components/ui/data-state";
 import {
   Dialog,
   DialogContent,
@@ -26,6 +27,7 @@ import { Input } from "@/components/ui/input";
 import { mfChip, mfPermissionDomainChip } from "@/design-system/tokens";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useToast } from "@/hooks/use-toast";
+import { describeAppError } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import {
   createCustomPermission,
@@ -148,9 +150,14 @@ function CreatePermissionDialog({
       onClose();
       setName("cst.");
       setDescription("");
-    } catch {
+    } catch (err) {
+      // The real cause (FR/EN message for the error code), not only "creation failed".
+      const described = describeAppError(err);
       toast({
         title: t("permissions.errors.createFailed"),
+        description: described.description
+          ? `${described.title} — ${described.description}`
+          : described.title,
         variant: "destructive",
       });
     } finally {
@@ -211,14 +218,24 @@ function DependencyViewer({
   const { t } = useTranslation("admin");
   const [deps, setDeps] = useState<PermissionDependencyRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<unknown>(null);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     setLoading(true);
+    setLoadError(null);
     getPermissionDependencies(permissionName)
       .then(setDeps)
-      .catch(() => setDeps([]))
+      .catch((err: unknown) => {
+        // Shown with a retry: never "no dependencies" when they could not be read.
+        setDeps([]);
+        setLoadError(err);
+      })
       .finally(() => setLoading(false));
   }, [permissionName]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
 
   const hardDeps = deps.filter((d) => d.dependency_type === "hard");
   const warnDeps = deps.filter((d) => d.dependency_type !== "hard");
@@ -237,7 +254,16 @@ function DependencyViewer({
 
       {loading && <p className="mt-3 text-xs text-text-secondary">{t("common.loading")}</p>}
 
-      {!loading && deps.length === 0 && (
+      {!loading && loadError != null ? (
+        <ErrorState
+          error={loadError}
+          title={t("permissions.dependencies.loadError")}
+          onRetry={load}
+          className="mt-3 px-3 py-4"
+        />
+      ) : null}
+
+      {!loading && loadError == null && deps.length === 0 && (
         <p className="mt-3 text-xs text-text-secondary">{t("permissions.dependencies.none")}</p>
       )}
 
@@ -325,10 +351,10 @@ function exportToCSV(permissions: PermissionWithSystem[]) {
 export function PermissionCatalogPanel() {
   const { t } = useTranslation("admin");
   const { can } = usePermissions();
-  const { toast } = useToast();
 
   const [allPermissions, setAllPermissions] = useState<PermissionWithSystem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [selectedDomain, setSelectedDomain] = useState<string>("eq");
   const [searchQuery, setSearchQuery] = useState("");
   const [showCreate, setShowCreate] = useState(false);
@@ -339,18 +365,18 @@ export function PermissionCatalogPanel() {
 
   const fetchPermissions = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const perms = await listPermissions({});
       setAllPermissions(perms);
-    } catch {
-      toast({
-        title: t("permissions.errors.loadFailed"),
-        variant: "destructive",
-      });
+    } catch (err) {
+      // Shown in place of the list with a retry (never an empty catalog).
+      setAllPermissions([]);
+      setLoadError(err);
     } finally {
       setLoading(false);
     }
-  }, [toast, t]);
+  }, []);
 
   useEffect(() => {
     void fetchPermissions();
@@ -400,6 +426,7 @@ export function PermissionCatalogPanel() {
               variant="ghost"
               size="sm"
               onClick={() => exportToCSV(allPermissions)}
+              disabled={loading || loadError != null}
               title={t("permissions.export")}
             >
               <Download className="h-4 w-4" />
@@ -484,8 +511,17 @@ export function PermissionCatalogPanel() {
         {/* Loading */}
         {loading && <p className="text-sm text-text-secondary">{t("common.loading")}</p>}
 
+        {/* Load failure */}
+        {!loading && loadError != null ? (
+          <ErrorState
+            error={loadError}
+            title={t("permissions.errors.loadFailed")}
+            onRetry={() => void fetchPermissions()}
+          />
+        ) : null}
+
         {/* Empty state */}
-        {!loading && filteredPermissions.length === 0 && (
+        {!loading && loadError == null && filteredPermissions.length === 0 && (
           <p className="text-sm text-text-secondary">{t("permissions.empty")}</p>
         )}
 

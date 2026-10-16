@@ -574,6 +574,21 @@ pub async fn validate_import_batch(
             }
         }
 
+        // ── Check: currencies (ISO 4217 code, minor units 0-4, symbol), as in the editor ──
+        if crate::reference::currencies::is_currency_domain(&domain.code) {
+            if let Err(AppError::ValidationFailed(errs)) = crate::reference::currencies::checked_currency_metadata(
+                input.code.as_deref().unwrap_or(""),
+                input.metadata_json.as_deref(),
+            ) {
+                messages.push(ImportRowMessage {
+                    category: "InvalidCurrency".into(),
+                    severity: "error".into(),
+                    message: format!("Ligne {row_no}: {}", errs.join(" ")),
+                });
+                status = "error";
+            }
+        }
+
         let messages_json = serde_json::to_string(&messages)?;
 
         txn.execute(Statement::from_sql_and_values(
@@ -807,6 +822,16 @@ pub async fn apply_import_batch(
                     parent_id = base;
                     semantic_tag = Some(dimension);
                 }
+                Err(_) => {
+                    errored += 1;
+                    continue;
+                }
+            }
+        }
+        if crate::reference::currencies::is_currency_domain(&target_domain.code) {
+            // Same rules as the editor: ISO 4217 code, minor units 0-4, short symbol.
+            match crate::reference::currencies::checked_currency_metadata(&code, input.metadata_json.as_deref()) {
+                Ok(meta) => input.metadata_json = Some(meta),
                 Err(_) => {
                     errored += 1;
                     continue;

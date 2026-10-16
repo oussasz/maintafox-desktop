@@ -10,6 +10,10 @@
 
 use crate::errors::AppResult;
 use crate::rbac::cache::PermissionCache;
+use crate::rbac::resolver::{
+    assignment_clock, in_force_binds, next_assignment_change, permanent_binds, ASSIGNMENT_IN_FORCE_SQL,
+    PERMANENT_ASSIGNMENT_IN_FORCE_SQL,
+};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use serde::Serialize;
 use std::collections::HashSet;
@@ -41,8 +45,8 @@ pub struct PermissionRecord {
 /// Check whether a user has a given permission, considering scope.
 ///
 /// Algorithm:
-///   1. Get all role assignments for the user that are currently active
-///      (`valid_from` <= now <= `valid_to`, or NULL meaning unlimited)
+///   1. Get all role assignments for the user that are in force now
+///      ([`ASSIGNMENT_IN_FORCE_SQL`]: validity window, emergency grants only before expiry)
 ///   2. Filter to assignments whose `scope_type` is `tenant` (covers everything) or
 ///      matches the requested scope
 ///   3. For each matching role, check if it has the permission in `role_permissions`
@@ -55,7 +59,7 @@ pub async fn check_permission(
     permission_name: &str,
     scope: &PermissionScope,
 ) -> AppResult<bool> {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = assignment_clock();
 
     // Determine scope filter components
     let (scope_type_filter, scope_ref_filter): (Option<&str>, Option<String>) = match scope {
@@ -81,15 +85,15 @@ pub async fn check_permission(
         INNER JOIN role_permissions rp ON rp.role_id = usa.role_id
         INNER JOIN permissions p       ON p.id = rp.permission_id
         WHERE usa.user_id = ?
-          AND usa.deleted_at IS NULL
-          AND (usa.valid_from IS NULL OR usa.valid_from <= ?)
-          AND (usa.valid_to   IS NULL OR usa.valid_to   >= ?)
+          AND {ASSIGNMENT_IN_FORCE_SQL}
           AND p.name = ?
           AND {scope_sql}
     "
     );
 
-    let mut values: Vec<sea_orm::Value> = vec![user_id.into(), now.clone().into(), now.into(), permission_name.into()];
+    let mut values: Vec<sea_orm::Value> = vec![user_id.into()];
+    values.extend(in_force_binds(&now));
+    values.push(permission_name.into());
 
     if let (Some(st), Some(sr)) = (&scope_type_filter, &scope_ref_filter) {
         values.push((*st).into());
@@ -159,9 +163,18 @@ pub async fn check_permission_cached(
     let perms = load_scope_permissions(db, user_id, scope).await?;
     let has = perms.contains(permission_name);
 
+    // The set holds until one of the user's assignments starts, ends or expires.
+    let valid_until = match next_assignment_change(db, uid).await? {
+        None => None,
+        Some(at) => match chrono::DateTime::parse_from_rfc3339(&at) {
+            Ok(t) => Some(t.with_timezone(&chrono::Utc)),
+            // An unreadable bound: do not keep the set at all.
+            Err(_) => Some(chrono::Utc::now()),
+        },
+    };
     {
         let mut guard = cache.write().await;
-        guard.put(uid, cache_key, perms);
+        guard.put(uid, cache_key, perms, valid_until);
     }
 
     Ok(has)
@@ -178,7 +191,7 @@ async fn load_scope_permissions(
         return Ok(all.into_iter().map(|p| p.name).collect());
     }
 
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = assignment_clock();
 
     let (scope_type_filter, scope_ref_filter): (Option<&str>, Option<String>) = match scope {
         PermissionScope::Global => (None, None),
@@ -200,13 +213,12 @@ async fn load_scope_permissions(
          INNER JOIN role_permissions rp ON rp.permission_id = p.id \
          INNER JOIN user_scope_assignments usa ON usa.role_id = rp.role_id \
          WHERE usa.user_id = ? \
-           AND usa.deleted_at IS NULL \
-           AND (usa.valid_from IS NULL OR usa.valid_from <= ?) \
-           AND (usa.valid_to   IS NULL OR usa.valid_to   >= ?) \
+           AND {ASSIGNMENT_IN_FORCE_SQL} \
            AND {scope_sql}"
     );
 
-    let mut values: Vec<sea_orm::Value> = vec![user_id.into(), now.clone().into(), now.into()];
+    let mut values: Vec<sea_orm::Value> = vec![user_id.into()];
+    values.extend(in_force_binds(&now));
 
     if let (Some(st), Some(sr)) = (&scope_type_filter, &scope_ref_filter) {
         values.push((*st).into());
@@ -228,51 +240,53 @@ async fn load_scope_permissions(
 /// Roles that hold every permission (`user_has_elevated_admin_access`).
 pub(crate) const ELEVATED_ADMIN_ROLES_SQL: &str = "('Administrator', 'Superadmin')";
 
+/// Elevated admin access for the account `ua.id`: an active account that is the bootstrap admin
+/// (`is_admin`) or holds Administrator / Superadmin plant-wide (tenant scope) through a
+/// permanent assignment in force. An emergency or expired assignment never elevates: it only
+/// gives the permissions of its role while in force. Binds [`permanent_binds`].
+pub(crate) fn elevated_admin_sql() -> String {
+    format!(
+        "ua.is_active = 1 AND ua.deleted_at IS NULL AND (ua.is_admin = 1 OR EXISTS ( \
+           SELECT 1 FROM user_scope_assignments usa INNER JOIN roles r ON r.id = usa.role_id \
+           WHERE usa.user_id = ua.id AND usa.scope_type = 'tenant' \
+             AND {PERMANENT_ASSIGNMENT_IN_FORCE_SQL} \
+             AND r.deleted_at IS NULL AND r.name IN {ELEVATED_ADMIN_ROLES_SQL}))"
+    )
+}
+
 /// Active users with elevated admin access (the rule of [`user_has_elevated_admin_access`]): they
 /// hold every permission, so the notifications routed to a permission reach them too.
 pub async fn elevated_admin_user_ids(db: &impl ConnectionTrait) -> AppResult<Vec<i64>> {
+    let now = assignment_clock();
     let rows = db
-        .query_all(Statement::from_string(
+        .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             format!(
-                "SELECT ua.id FROM user_accounts ua
-                 WHERE ua.is_active = 1 AND ua.deleted_at IS NULL AND (ua.is_admin = 1 OR EXISTS (
-                   SELECT 1 FROM user_scope_assignments usa INNER JOIN roles r ON r.id = usa.role_id
-                   WHERE usa.user_id = ua.id AND usa.deleted_at IS NULL AND r.deleted_at IS NULL
-                     AND r.name IN {ELEVATED_ADMIN_ROLES_SQL}))
-                 ORDER BY ua.id"
+                "SELECT ua.id FROM user_accounts ua WHERE {} ORDER BY ua.id",
+                elevated_admin_sql()
             ),
+            permanent_binds(&now),
         ))
         .await?;
     Ok(rows.iter().filter_map(|r| r.try_get::<i64>("", "id").ok()).collect())
 }
 
-/// True when the account is a bootstrap/system admin or holds Administrator/Superadmin.
-pub async fn user_has_elevated_admin_access(db: &DatabaseConnection, user_id: i32) -> AppResult<bool> {
+/// True when the account has elevated admin access ([`elevated_admin_sql`]).
+pub async fn user_has_elevated_admin_access<C: ConnectionTrait>(db: &C, user_id: i32) -> AppResult<bool> {
+    let now = assignment_clock();
+    let mut values: Vec<sea_orm::Value> = vec![user_id.into()];
+    values.extend(permanent_binds(&now));
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             format!(
-                "SELECT
-                COALESCE((SELECT is_admin FROM user_accounts WHERE id = ? AND is_active = 1), 0) AS is_admin,
-                (SELECT COUNT(*)
-                 FROM user_scope_assignments usa
-                 INNER JOIN roles r ON r.id = usa.role_id
-                 WHERE usa.user_id = ?
-                   AND usa.deleted_at IS NULL
-                   AND r.deleted_at IS NULL
-                   AND r.name IN {ELEVATED_ADMIN_ROLES_SQL}) AS admin_role_cnt"
+                "SELECT EXISTS (SELECT 1 FROM user_accounts ua WHERE ua.id = ? AND {}) AS elevated",
+                elevated_admin_sql()
             ),
-            [user_id.into(), user_id.into()],
+            values,
         ))
         .await?;
-
-    let Some(row) = row else {
-        return Ok(false);
-    };
-    let is_admin: i32 = row.try_get("", "is_admin").unwrap_or(0);
-    let admin_role_cnt: i64 = row.try_get("", "admin_role_cnt").unwrap_or(0);
-    Ok(is_admin == 1 || admin_role_cnt > 0)
+    Ok(row.and_then(|r| r.try_get::<i32>("", "elevated").ok()).unwrap_or(0) == 1)
 }
 
 /// Load all effective permissions for a user (for frontend pre-loading).
@@ -282,22 +296,23 @@ pub async fn get_user_permissions(db: &DatabaseConnection, user_id: i32) -> AppR
         return get_all_permissions(db).await;
     }
 
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = assignment_clock();
+    let mut values: Vec<sea_orm::Value> = vec![user_id.into()];
+    values.extend(in_force_binds(&now));
 
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            r"SELECT DISTINCT p.name, p.description, p.category,
-                  p.is_dangerous, p.requires_step_up
-           FROM permissions p
-           INNER JOIN role_permissions rp ON rp.permission_id = p.id
-           INNER JOIN user_scope_assignments usa ON usa.role_id = rp.role_id
-           WHERE usa.user_id = ?
-             AND usa.deleted_at IS NULL
-             AND (usa.valid_from IS NULL OR usa.valid_from <= ?)
-             AND (usa.valid_to   IS NULL OR usa.valid_to   >= ?)
-           ORDER BY p.name",
-            [user_id.into(), now.clone().into(), now.into()],
+            format!(
+                "SELECT DISTINCT p.name, p.description, p.category, \
+                        p.is_dangerous, p.requires_step_up \
+                 FROM permissions p \
+                 INNER JOIN role_permissions rp ON rp.permission_id = p.id \
+                 INNER JOIN user_scope_assignments usa ON usa.role_id = rp.role_id \
+                 WHERE usa.user_id = ? AND {ASSIGNMENT_IN_FORCE_SQL} \
+                 ORDER BY p.name"
+            ),
+            values,
         ))
         .await?;
 

@@ -23,22 +23,92 @@ pub struct PasswordPolicy {
     pub require_special: bool,
 }
 
+/// The policy as loaded, with the stored keys that could not be read (missing, undecodable or
+/// out of their rules). Empty when the stored policy is applied as it is.
+#[derive(Debug, Clone)]
+pub struct LoadedPasswordPolicy {
+    pub policy: PasswordPolicy,
+    pub unreadable_keys: Vec<String>,
+}
+
 impl PasswordPolicy {
-    /// Load from `rbac_settings` table with fallback defaults.
-    /// If a key is missing or unparseable, the safe default is used.
-    pub async fn load(db: &DatabaseConnection) -> Self {
+    /// The values shipped with the application (migration 033).
+    pub const fn shipped() -> Self {
         Self {
-            max_age_days: load_setting(db, "password_max_age_days", "90")
-                .await
-                .parse()
-                .unwrap_or(90),
-            warn_days_before_expiry: load_setting(db, "password_warn_days", "14").await.parse().unwrap_or(14),
-            min_length: load_setting(db, "password_min_length", "8").await.parse().unwrap_or(8),
-            require_uppercase: load_setting(db, "password_require_uppercase", "1").await == "1",
-            require_lowercase: load_setting(db, "password_require_lowercase", "1").await == "1",
-            require_digit: load_setting(db, "password_require_digit", "1").await == "1",
-            require_special: load_setting(db, "password_require_special", "0").await == "1",
+            max_age_days: 90,
+            warn_days_before_expiry: 14,
+            min_length: 8,
+            require_uppercase: true,
+            require_lowercase: true,
+            require_digit: true,
+            require_special: false,
         }
+    }
+
+    /// The policy to apply (see [`PasswordPolicy::load_checked`]).
+    pub async fn load(db: &DatabaseConnection) -> Self {
+        Self::load_checked(db).await.policy
+    }
+
+    /// Load the stored policy (`rbac_settings`). When every key is readable it applies as
+    /// stored. When a key is missing or unreadable, sign-in is not blocked (that would lock
+    /// everyone out): each rule takes the stricter of its readable stored value and the shipped
+    /// value, an error is logged, and the unreadable keys are returned so Settings can warn the
+    /// administrator.
+    pub async fn load_checked(db: &DatabaseConnection) -> LoadedPasswordPolicy {
+        let mut unreadable = Vec::new();
+        let max_age = number_setting(db, "password_max_age_days", 0, 3650, &mut unreadable).await;
+        let warn = number_setting(db, "password_warn_days", 0, 3650, &mut unreadable).await;
+        let min_length = number_setting(db, "password_min_length", 8, 128, &mut unreadable).await;
+        let upper = flag_setting(db, "password_require_uppercase", &mut unreadable).await;
+        let lower = flag_setting(db, "password_require_lowercase", &mut unreadable).await;
+        let digit = flag_setting(db, "password_require_digit", &mut unreadable).await;
+        let special = flag_setting(db, "password_require_special", &mut unreadable).await;
+        let shipped = Self::shipped();
+
+        if unreadable.is_empty() {
+            return LoadedPasswordPolicy {
+                policy: Self {
+                    max_age_days: max_age.unwrap_or(shipped.max_age_days),
+                    warn_days_before_expiry: warn.unwrap_or(shipped.warn_days_before_expiry),
+                    min_length: min_length.map_or(shipped.min_length, |n| usize::try_from(n).unwrap_or(8)),
+                    require_uppercase: upper.unwrap_or(shipped.require_uppercase),
+                    require_lowercase: lower.unwrap_or(shipped.require_lowercase),
+                    require_digit: digit.unwrap_or(shipped.require_digit),
+                    require_special: special.unwrap_or(shipped.require_special),
+                },
+                unreadable_keys: unreadable,
+            };
+        }
+
+        tracing::error!(
+            keys = ?unreadable,
+            "stored password policy unreadable: the stricter of the stored and shipped values is applied"
+        );
+        let shipped_len = i64::try_from(shipped.min_length).unwrap_or(8);
+        LoadedPasswordPolicy {
+            policy: Self {
+                max_age_days: stricter_max_age(max_age, shipped.max_age_days),
+                warn_days_before_expiry: warn.map_or(shipped.warn_days_before_expiry, |w| {
+                    w.max(shipped.warn_days_before_expiry)
+                }),
+                min_length: usize::try_from(min_length.map_or(shipped_len, |n| n.max(shipped_len))).unwrap_or(8),
+                require_uppercase: upper.unwrap_or(false) || shipped.require_uppercase,
+                require_lowercase: lower.unwrap_or(false) || shipped.require_lowercase,
+                require_digit: digit.unwrap_or(false) || shipped.require_digit,
+                require_special: special.unwrap_or(false) || shipped.require_special,
+            },
+            unreadable_keys: unreadable,
+        }
+    }
+}
+
+/// The stricter maximum age: the shorter one, `0` (no expiry) being the weakest.
+fn stricter_max_age(stored: Option<i64>, shipped: i64) -> i64 {
+    match stored {
+        None | Some(0) => shipped,
+        Some(days) if shipped == 0 => days,
+        Some(days) => days.min(shipped),
     }
 }
 
@@ -154,8 +224,9 @@ pub fn validate_password_strength(password: &str, policy: &PasswordPolicy) -> Re
 
 // ── DB helper ─────────────────────────────────────────────────────────────────
 
-/// Read a single value from `rbac_settings`. Returns `default` on any error.
-async fn load_setting(db: &DatabaseConnection, key: &str, default: &str) -> String {
+/// Raw stored value of `key` in `rbac_settings`; `None` when missing or unreadable (a database
+/// error is logged).
+async fn stored_setting(db: &DatabaseConnection, key: &str) -> Option<String> {
     let result = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -163,11 +234,42 @@ async fn load_setting(db: &DatabaseConnection, key: &str, default: &str) -> Stri
             [key.into()],
         ))
         .await;
-
     match result {
-        Ok(Some(row)) => row
-            .try_get::<String>("", "value")
-            .unwrap_or_else(|_| default.to_string()),
-        _ => default.to_string(),
+        Ok(row) => row.and_then(|r| r.try_get::<String>("", "value").ok()),
+        Err(err) => {
+            tracing::error!(key, error = %err, "password policy setting could not be read");
+            None
+        }
     }
+}
+
+/// A number within its rules, or `None` (and `key` noted as unreadable).
+async fn number_setting(
+    db: &DatabaseConnection,
+    key: &str,
+    min: i64,
+    max: i64,
+    unreadable: &mut Vec<String>,
+) -> Option<i64> {
+    let value = stored_setting(db, key)
+        .await
+        .and_then(|v| v.trim().parse::<i64>().ok())
+        .filter(|n| (min..=max).contains(n));
+    if value.is_none() {
+        unreadable.push(key.to_string());
+    }
+    value
+}
+
+/// A `"1"` / `"0"` flag, or `None` (and `key` noted as unreadable).
+async fn flag_setting(db: &DatabaseConnection, key: &str, unreadable: &mut Vec<String>) -> Option<bool> {
+    let value = match stored_setting(db, key).await.as_deref().map(str::trim) {
+        Some("1") => Some(true),
+        Some("0") => Some(false),
+        _ => None,
+    };
+    if value.is_none() {
+        unreadable.push(key.to_string());
+    }
+    value
 }

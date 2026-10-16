@@ -305,7 +305,12 @@
     "save": "Save policy",
     "saving": "Saving...",
     "saved": "Policy saved successfully.",
-    "saveError": "Failed to save password policy."
+    "saveError": "Failed to save password policy.",
+    "minLengthHint": "At least 8 characters, at most 128.",
+    "loadError": "The password policy could not be loaded.",
+    "unreadableTitle": "Stored policy unreadable — shipped values applied",
+    "unreadableBody": "Some stored settings could not be read ({{keys}}). For each rule, the stricter of the stored and shipped values applies. Check the values below and save the policy to fix it.",
+    "unreadableFix": "Save these values"
   },
   "permissions": {
     "domains": "Domains",
@@ -352,7 +357,8 @@
       "requires": "Requires",
       "requiredBy": "Required by",
       "suggests": "Suggests",
-      "suggestedBy": "Suggested by"
+      "suggestedBy": "Suggested by",
+      "loadError": "The dependencies of this permission could not be loaded."
     },
     "domainLabels": {
       "eq": "Equipment",
@@ -495,7 +501,7 @@
     },
     "noGrants": "No emergency elevations.",
     "errors": {
-      "loadFailed": "Failed to load grants",
+      "loadFailed": "The emergency grants could not be loaded.",
       "grantFailed": "Failed to grant access",
       "revokeFailed": "Failed to revoke access",
       "reasonTooShort": "Reason must be at least 20 characters"
@@ -636,7 +642,8 @@
       "enableTitle": "Re-enable the account of {{name}}?",
       "enableBody": "The person can sign in again with their current roles.",
       "cannotDisableSelf": "You cannot disable your own account.",
-      "noDeleteHint": "Accounts are never deleted: their history must stay readable. Disable them instead."
+      "noDeleteHint": "Accounts are never deleted: their history must stay readable. Disable them instead.",
+      "loadError": "The account could not be loaded."
     },
     "roles": {
       "scopeHint": "An account can hold one role per scope. Emergency access expires by itself.",
@@ -715,7 +722,8 @@
       "exportCsv": "Export CSV",
       "rangeInvalid": "The start date must be before the end date.",
       "firstN": "The {{count}} most recent events are shown; the CSV export contains every event of the filter.",
-      "count": "{{count}} event(s)"
+      "count": "{{count}} event(s)",
+      "facetsLoadError": "The log filter choices could not be loaded: the filters are disabled."
     },
     "roleEditor": {
       "new": "New",
@@ -752,7 +760,23 @@
       "chooseRole": "Choose a role",
       "module": "Module",
       "onlyIn": "Only in {{name}}",
-      "common": "In common"
-    }
+      "common": "In common",
+      "loadError": "The roles could not be loaded.",
+      "validationError": "The dependency check could not run. The server checks again when you save.",
+      "templateUnreadable": "This role template is unreadable: the role was not created. Choose another template or none."
+    },
+    "choicesLoadError": "The role and site lists could not be loaded: role and site filters and role assignment are unavailable.",
+    "usersLoadError": "The accounts could not be loaded."
+  },
+  "lockoutPolicy": {
+    "title": "Account lockout",
+    "hint": "Values the sign-in applies: failed attempts before the account locks, lock duration, progressive locks (the duration grows with each lock).",
+    "maxAttempts": "Failed attempts before lock",
+    "lockoutMinutes": "Lock duration (minutes)",
+    "progressive": "Progressive lock",
+    "save": "Save lockout",
+    "saved": "Lockout saved.",
+    "saveError": "Failed to save the lockout.",
+    "loadError": "The lockout policy could not be loaded."
   }
 }

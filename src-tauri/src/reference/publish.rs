@@ -354,6 +354,12 @@ pub async fn publish_reference_set(
         crate::qualification::catalog::ensure_habilitation_certification_types(&txn, french).await?;
     }
 
+    // The currency list is mirrored into the operational copy stock costs link to (same codes,
+    // ids unchanged), in the same transaction.
+    if crate::reference::currencies::is_currency_domain(&domain_probe.code) {
+        crate::reference::currencies::mirror_into_lookup(&txn).await?;
+    }
+
     txn.commit().await?;
 
     let published_set = sets::get_reference_set(db, set_id).await?;

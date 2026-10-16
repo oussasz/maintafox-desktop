@@ -521,21 +521,27 @@ fn parse_activity_summary(row: &sea_orm::QueryResult) -> ActivityEventSummary {
 }
 
 async fn resolve_accessible_entity_scope_ids(state: &State<'_, AppState>, user_id: i32) -> AppResult<Vec<i64>> {
+    // Assignments in force only (validity window, emergency grants before their expiry).
+    let now = crate::rbac::resolver::assignment_clock();
+    let mut values: Vec<sea_orm::Value> = vec![i64::from(user_id).into()];
+    values.extend(crate::rbac::resolver::in_force_binds(&now));
+    values.push(crate::rbac::permissions::LOG_VIEW.into());
     let rows = state
         .db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT DISTINCT usa.scope_reference
-             FROM user_scope_assignments usa
-             INNER JOIN role_permissions rp ON rp.role_id = usa.role_id
-             INNER JOIN permissions p ON p.id = rp.permission_id
-             WHERE usa.user_id = ?
-               AND usa.deleted_at IS NULL
-               AND (usa.valid_from IS NULL OR usa.valid_from <= datetime('now'))
-               AND (usa.valid_to IS NULL OR usa.valid_to >= datetime('now'))
-               AND usa.scope_type IN ('entity', 'org_node')
-               AND p.name = ?",
-            [i64::from(user_id).into(), crate::rbac::permissions::LOG_VIEW.into()],
+            format!(
+                "SELECT DISTINCT usa.scope_reference
+                 FROM user_scope_assignments usa
+                 INNER JOIN role_permissions rp ON rp.role_id = usa.role_id
+                 INNER JOIN permissions p ON p.id = rp.permission_id
+                 WHERE usa.user_id = ?
+                   AND {}
+                   AND usa.scope_type IN ('entity', 'org_node')
+                   AND p.name = ?",
+                crate::rbac::resolver::ASSIGNMENT_IN_FORCE_SQL
+            ),
+            values,
         ))
         .await?;
 

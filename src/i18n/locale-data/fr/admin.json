@@ -305,7 +305,12 @@
     "save": "Enregistrer la politique",
     "saving": "Enregistrement...",
     "saved": "Politique enregistrée avec succès.",
-    "saveError": "Échec de l'enregistrement de la politique de mot de passe."
+    "saveError": "Échec de l'enregistrement de la politique de mot de passe.",
+    "minLengthHint": "8 caractères au minimum, 128 au maximum.",
+    "loadError": "La politique de mot de passe n'a pas pu être chargée.",
+    "unreadableTitle": "Politique enregistrée illisible — valeurs livrées appliquées",
+    "unreadableBody": "Certains réglages enregistrés n'ont pas pu être lus ({{keys}}). Pour chaque règle, la plus stricte entre la valeur enregistrée et la valeur livrée s'applique. Vérifiez les valeurs ci-dessous et enregistrez la politique pour corriger.",
+    "unreadableFix": "Enregistrer ces valeurs"
   },
   "permissions": {
     "domains": "Domaines",
@@ -352,7 +357,8 @@
       "requires": "Requiert",
       "requiredBy": "Requis par",
       "suggests": "Suggère",
-      "suggestedBy": "Suggéré par"
+      "suggestedBy": "Suggéré par",
+      "loadError": "Les dépendances de cette permission n'ont pas pu être chargées."
     },
     "domainLabels": {
       "eq": "Équipements",
@@ -495,7 +501,7 @@
     },
     "noGrants": "Aucune élévation d'urgence.",
     "errors": {
-      "loadFailed": "Erreur de chargement",
+      "loadFailed": "Les accès d'urgence n'ont pas pu être chargés.",
       "grantFailed": "Erreur lors de l'attribution",
       "revokeFailed": "Erreur lors de la révocation",
       "reasonTooShort": "La raison doit contenir au moins 20 caractères"
@@ -636,7 +642,8 @@
       "enableTitle": "Réactiver le compte de {{name}} ?",
       "enableBody": "La personne pourra de nouveau se connecter avec ses rôles actuels.",
       "cannotDisableSelf": "Vous ne pouvez pas désactiver votre propre compte.",
-      "noDeleteHint": "Un compte n'est jamais supprimé : son historique doit rester lisible. On le désactive."
+      "noDeleteHint": "Un compte n'est jamais supprimé : son historique doit rester lisible. On le désactive.",
+      "loadError": "Le compte n'a pas pu être chargé."
     },
     "roles": {
       "scopeHint": "Un compte peut avoir un rôle par périmètre. Les accès d'urgence expirent d'eux-mêmes.",
@@ -715,7 +722,8 @@
       "exportCsv": "Exporter en CSV",
       "rangeInvalid": "La date de début doit précéder la date de fin.",
       "firstN": "Les {{count}} événements les plus récents sont affichés ; l'export CSV contient tous ceux du filtre.",
-      "count": "{{count}} événement(s)"
+      "count": "{{count}} événement(s)",
+      "facetsLoadError": "Les choix de filtre du journal n'ont pas pu être chargés : les filtres sont désactivés."
     },
     "roleEditor": {
       "new": "Nouveau",
@@ -752,7 +760,23 @@
       "chooseRole": "Choisir un rôle",
       "module": "Module",
       "onlyIn": "Seulement dans {{name}}",
-      "common": "En commun"
-    }
+      "common": "En commun",
+      "loadError": "Les rôles n'ont pas pu être chargés.",
+      "validationError": "La vérification des dépendances n'a pas pu être effectuée. Le serveur la refait à l'enregistrement.",
+      "templateUnreadable": "Ce modèle de rôle est illisible : le rôle n'a pas été créé. Choisissez un autre modèle ou aucun modèle."
+    },
+    "choicesLoadError": "Les listes de rôles et de sites n'ont pas pu être chargées : les filtres par rôle et par site et l'attribution de rôles sont indisponibles.",
+    "usersLoadError": "Les comptes n'ont pas pu être chargés."
+  },
+  "lockoutPolicy": {
+    "title": "Verrouillage des comptes",
+    "hint": "Valeurs appliquées à la connexion : nombre d'échecs avant verrouillage, durée, verrouillage progressif (la durée augmente à chaque verrouillage).",
+    "maxAttempts": "Échecs avant verrouillage",
+    "lockoutMinutes": "Durée du verrouillage (minutes)",
+    "progressive": "Verrouillage progressif",
+    "save": "Enregistrer le verrouillage",
+    "saved": "Verrouillage enregistré.",
+    "saveError": "Échec de l'enregistrement du verrouillage.",
+    "loadError": "La politique de verrouillage n'a pas pu être chargée."
   }
 }

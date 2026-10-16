@@ -594,6 +594,10 @@ pub async fn publish_set(db: &DatabaseConnection, set_id: i64, _actor_id: i64) -
 
     // Records saved against an earlier version follow their code into this version.
     super::publish::remap_usage_to_published_set(&txn, set.domain_id, set_id).await?;
+    // The currency list feeds the operational copy stock costs link to (`currencies`).
+    if super::currencies::is_currency_domain(&domain.code) {
+        super::currencies::mirror_into_lookup(&txn).await?;
+    }
 
     txn.commit().await?;
 

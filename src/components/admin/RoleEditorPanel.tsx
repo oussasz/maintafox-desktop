@@ -16,6 +16,7 @@ import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { ErrorState } from "@/components/ui/data-state";
 import {
   Dialog,
   DialogContent,
@@ -73,6 +74,19 @@ function useModuleLabel() {
 
 // ── Create (empty or from a template) ───────────────────────────────────────
 
+/** Permissions of a stored role template; null when its stored list is unreadable. */
+export function templatePermissions(
+  template: Pick<RoleTemplate, "module_set_json">,
+): string[] | null {
+  try {
+    const parsed: unknown = JSON.parse(template.module_set_json);
+    if (!Array.isArray(parsed) || !parsed.every((p) => typeof p === "string")) return null;
+    return parsed as string[];
+  } catch {
+    return null;
+  }
+}
+
 function CreateRoleDialog({
   open,
   onClose,
@@ -91,35 +105,33 @@ function CreateRoleDialog({
   const [description, setDescription] = useState("");
   const [templateId, setTemplateId] = useState("__none__");
   const [submitting, setSubmitting] = useState(false);
+  const [templateUnreadable, setTemplateUnreadable] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     setName("");
     setDescription("");
     setTemplateId("__none__");
+    setTemplateUnreadable(false);
   }, [open]);
 
   const handleCreate = async () => {
     if (!name.trim()) return;
+    setTemplateUnreadable(false);
+    let permissionNames: string[] = [];
+    const template = templates.find((tmpl) => String(tmpl.id) === templateId);
+    if (template) {
+      const fromGenerated = ROLE_TEMPLATES[template.name];
+      const fromStored = fromGenerated ? [...fromGenerated] : templatePermissions(template);
+      if (fromStored == null) {
+        // Never create the role without the template's permissions.
+        setTemplateUnreadable(true);
+        return;
+      }
+      permissionNames = fromStored;
+    }
     setSubmitting(true);
     try {
-      const template = templates.find((tmpl) => String(tmpl.id) === templateId);
-      let permissionNames: string[] = [];
-      if (template) {
-        const fromGenerated = ROLE_TEMPLATES[template.name];
-        if (fromGenerated) {
-          permissionNames = [...fromGenerated];
-        } else {
-          try {
-            const parsed: unknown = JSON.parse(template.module_set_json);
-            permissionNames = Array.isArray(parsed)
-              ? parsed.filter((p): p is string => typeof p === "string")
-              : [];
-          } catch {
-            permissionNames = [];
-          }
-        }
-      }
       const created = await withStepUp(() =>
         createRole({
           name: name.trim(),
@@ -178,6 +190,14 @@ function CreateRoleDialog({
                 </SelectContent>
               </Select>
             </div>
+          ) : null}
+          {templateUnreadable ? (
+            <p
+              role="alert"
+              className="rounded-md border border-tone-danger-border bg-tone-danger-bg px-3 py-2 text-sm text-tone-danger-fg"
+            >
+              {t("console.roleEditor.templateUnreadable")}
+            </p>
           ) : null}
         </div>
         <DialogFooter>
@@ -530,11 +550,14 @@ export function RoleEditorPanel() {
   const [templates, setTemplates] = useState<RoleTemplate[]>([]);
   const [catalog, setCatalog] = useState<RoleEditorCatalog | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [pendingAdd, setPendingAdd] = useState<Set<string>>(new Set());
   const [pendingRemove, setPendingRemove] = useState<Set<string>>(new Set());
   const [description, setDescription] = useState("");
   const [validation, setValidation] = useState<RoleValidationResult | null>(null);
+  const [validationError, setValidationError] = useState<unknown>(null);
+  const [validationRun, setValidationRun] = useState(0);
   const [permissionFilter, setPermissionFilter] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -545,6 +568,7 @@ export function RoleEditorPanel() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const [r, tmpl, cat] = await Promise.all([
         listRoles(),
@@ -554,8 +578,8 @@ export function RoleEditorPanel() {
       setRoles(r);
       setTemplates(tmpl);
       setCatalog(cat);
-    } catch {
-      // Reported by the IPC layer.
+    } catch (err) {
+      setLoadError(err);
     } finally {
       setLoading(false);
     }
@@ -594,20 +618,26 @@ export function RoleEditorPanel() {
   useEffect(() => {
     if (!selected || selected.is_system || !permsChanged) {
       setValidation(null);
+      setValidationError(null);
       return;
     }
     let cancelled = false;
+    setValidationError(null);
     validateRolePermissions([...active])
       .then((r) => {
         if (!cancelled) setValidation(r);
       })
-      .catch(() => {
-        if (!cancelled) setValidation(null);
+      .catch((err: unknown) => {
+        // The server still checks dependencies on save; say the preview could not run.
+        if (!cancelled) {
+          setValidation(null);
+          setValidationError(err);
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [active, selected, permsChanged]);
+  }, [active, selected, permsChanged, validationRun]);
 
   const toggle = (perm: string, enabled: boolean) => {
     const original = new Set(selected?.permissions ?? []);
@@ -665,6 +695,14 @@ export function RoleEditorPanel() {
           ) : null}
         </div>
         {loading ? <p className="text-xs text-text-secondary">{t("common.loading")}</p> : null}
+        {loadError != null ? (
+          <ErrorState
+            error={loadError}
+            title={t("console.roleEditor.loadError")}
+            onRetry={() => void load()}
+            retrying={loading}
+          />
+        ) : null}
         <ul className="space-y-1">
           {roles.map((role) => (
             <li key={role.id}>
@@ -757,6 +795,15 @@ export function RoleEditorPanel() {
               <p className="rounded-md border border-surface-border bg-surface-1 p-3 text-xs text-text-secondary">
                 {t("console.roleEditor.systemReadOnly")}
               </p>
+            ) : null}
+
+            {validationError != null ? (
+              <ErrorState
+                error={validationError}
+                title={t("console.roleEditor.validationError")}
+                onRetry={() => setValidationRun((n) => n + 1)}
+                className="py-4"
+              />
             ) : null}
 
             {hardMissing.length > 0 ? (

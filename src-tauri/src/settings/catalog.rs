@@ -264,8 +264,13 @@ pub const POLICY_DOMAINS_WITH_VALUE_HISTORY: &[&str] = &["session", "backup"];
 /// token and machine fingerprint, bootstrap state, module-managed rows, unused rows) is recorded
 /// by hash only — the history is synced to every device and readable by settings administrators.
 pub fn keeps_value_history(key_or_domain: &str) -> bool {
-    POLICY_DOMAINS_WITH_VALUE_HISTORY.contains(&key_or_domain) || is_plant_parameter(key_or_domain)
+    POLICY_DOMAINS_WITH_VALUE_HISTORY.contains(&key_or_domain)
+        || key_or_domain.starts_with(RBAC_HISTORY_PREFIX)
+        || is_plant_parameter(key_or_domain)
 }
+
+/// History key prefix of the security settings (`rbac_settings`: password policy, lockout).
+pub const RBAC_HISTORY_PREFIX: &str = "rbac.";
 
 /// A catalog key edited in Settings (a section or the document header panel).
 pub fn is_plant_parameter(key: &str) -> bool {

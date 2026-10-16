@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ErrorState } from "@/components/ui/data-state";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -14,11 +15,10 @@ import {
 } from "@/components/ui/select";
 import { StatusChip } from "@/components/ui/status-chip";
 import { useFormatters } from "@/hooks/use-formatters";
-import { CURRENCY_CODE_OPTIONS } from "@/lib/currency";
 import { applyI18nFallbackLanguage } from "@/lib/i18n-fallback";
 import { listSettingChangeEvents, setSetting } from "@/services/settings-service";
 import { useLocaleStore } from "@/stores/locale-store";
-import type { SettingDefinitionView, SettingsChangeEvent } from "@shared/ipc-types";
+import type { CurrencyOption, SettingDefinitionView, SettingsChangeEvent } from "@shared/ipc-types";
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
@@ -61,8 +61,25 @@ function toValueJson(def: SettingDefinitionView, input: string): string {
   return JSON.stringify(input);
 }
 
+/** "DZD — Dinar algérien (DA)" in the interface language, from Données de référence. */
+export function currencyOptionLabel(c: CurrencyOption, locale: string): string {
+  const name = locale === "en" ? (c.label_en ?? c.label) : c.label;
+  return `${c.code} — ${name}${c.symbol ? ` (${c.symbol})` : ""}`;
+}
+
+/**
+ * Currencies of Données de référence › Devises for the tenant currency picker: `options` is null
+ * until the list is loaded; `error` is the failed load (the picker then stays disabled).
+ */
+export interface CurrencyListState {
+  options: CurrencyOption[] | null;
+  error: unknown;
+  onRetry: () => void;
+}
+
 interface RowProps {
   def: SettingDefinitionView;
+  currencies: CurrencyListState;
   canEdit: boolean;
   onSaved: () => void;
   onToast: (msg: {
@@ -72,27 +89,33 @@ interface RowProps {
   }) => void;
 }
 
-function SettingRow({ def, canEdit, onSaved, onToast }: RowProps) {
+function SettingRow({ def, currencies, canEdit, onSaved, onToast }: RowProps) {
   const { t: tTyped } = useTranslation("settings");
   const t = tTyped as unknown as Translate;
   const { formatDateTime } = useFormatters();
   const setLocale = useLocaleStore((s) => s.setLocale);
   const setCurrencyCode = useLocaleStore((s) => s.setCurrencyCode);
+  const activeLocale = useLocaleStore((s) => s.activeLocale);
   const [draft, setDraft] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [history, setHistory] = useState<SettingsChangeEvent[] | null>(null);
+  const [historyError, setHistoryError] = useState<unknown>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
 
   const current = parseJson(def.current_value_json);
   const currentText = current == null ? "" : String(current);
   const locked = def.locked_reason != null;
-  const disabled = !canEdit || locked || saving;
+  // The currency picker waits for the list: never offer a partial or empty choice.
+  const currencyUnavailable = def.kind === "currency" && currencies.options == null;
+  const disabled = !canEdit || locked || saving || currencyUnavailable;
 
   const loadHistory = useCallback(async () => {
+    setHistoryError(null);
     try {
       setHistory(await listSettingChangeEvents(20, def.key));
-    } catch {
-      setHistory([]);
+    } catch (err) {
+      setHistory(null);
+      setHistoryError(err);
     }
   }, [def.key]);
 
@@ -162,10 +185,9 @@ function SettingRow({ def, canEdit, onSaved, onToast }: RowProps) {
               value: String(i + 1),
               label: t(`options.month.${i + 1}`),
             }))
-          : [...new Set([...CURRENCY_CODE_OPTIONS, currentText].filter(Boolean))].map((c) => ({
-              value: c,
-              label: t(`options.currency.${c}`, { defaultValue: c }),
-            }));
+          : (currencies.options ?? [])
+              .filter((c) => c.is_active || c.code === currentText)
+              .map((c) => ({ value: c.code, label: currencyOptionLabel(c, activeLocale) }));
     control = (
       <Select
         value={currentText}
@@ -175,7 +197,11 @@ function SettingRow({ def, canEdit, onSaved, onToast }: RowProps) {
         disabled={disabled}
       >
         <SelectTrigger id={inputId} className="h-9 w-full" aria-label={label}>
-          <SelectValue />
+          {currencyUnavailable && currencies.error == null ? (
+            <span className="text-text-muted">{t("catalog.currencyLoading")}</span>
+          ) : (
+            <SelectValue />
+          )}
         </SelectTrigger>
         <SelectContent>
           {options.map((o) => (
@@ -242,7 +268,7 @@ function SettingRow({ def, canEdit, onSaved, onToast }: RowProps) {
               size="sm"
               title={t("catalog.restoreShipped")}
               aria-label={t("catalog.restoreShipped")}
-              disabled={saving}
+              disabled={saving || currencyUnavailable}
               onClick={() =>
                 void save(def.shipped_value_json, t("catalog.restoredSummary", { key: def.key }))
               }
@@ -252,6 +278,15 @@ function SettingRow({ def, canEdit, onSaved, onToast }: RowProps) {
           ) : null}
         </div>
       </div>
+
+      {def.kind === "currency" && currencies.error != null ? (
+        <ErrorState
+          error={currencies.error}
+          title={t("catalog.currencyLoadError")}
+          onRetry={currencies.onRetry}
+          className="px-4 py-4"
+        />
+      ) : null}
 
       {locked ? (
         <p className="flex items-start gap-1.5 rounded-md border border-tone-attention-border bg-tone-attention-bg px-2.5 py-1.5 text-xs text-tone-attention-fg">
@@ -275,7 +310,14 @@ function SettingRow({ def, canEdit, onSaved, onToast }: RowProps) {
           {historyOpen ? t("catalog.hideHistory") : t("catalog.showHistory")}
         </button>
         {historyOpen ? (
-          history == null ? (
+          historyError != null ? (
+            <ErrorState
+              error={historyError}
+              title={t("catalog.historyLoadError")}
+              onRetry={() => void loadHistory()}
+              className="mt-1 px-4 py-4"
+            />
+          ) : history == null ? (
             <p className="mt-1 text-xs text-text-secondary">{t("page.loading")}</p>
           ) : history.length === 0 ? (
             <p className="mt-1 text-xs text-text-secondary">{t("auditLog.empty")}</p>
@@ -308,6 +350,7 @@ function SettingRow({ def, canEdit, onSaved, onToast }: RowProps) {
 interface SettingsCatalogSectionsProps {
   categories: readonly string[];
   definitions: SettingDefinitionView[];
+  currencies: CurrencyListState;
   rolesAllowed: string[];
   canEdit: boolean;
   onSaved: () => void;
@@ -321,6 +364,7 @@ interface SettingsCatalogSectionsProps {
 export function SettingsCatalogSections({
   categories,
   definitions,
+  currencies,
   rolesAllowed,
   canEdit,
   onSaved,
@@ -351,6 +395,7 @@ export function SettingsCatalogSections({
                 {rows.map((def) => (
                   <SettingRow
                     key={def.key}
+                    currencies={currencies}
                     def={def}
                     canEdit={canEdit}
                     onSaved={onSaved}

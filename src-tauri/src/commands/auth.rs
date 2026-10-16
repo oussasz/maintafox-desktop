@@ -300,11 +300,12 @@ pub async fn login(payload: LoginRequest, state: State<'_, AppState>) -> AppResu
 
     // A successful password login is equivalent to a step-up verification.
     session_guard.record_step_up();
-    drop(session_guard);
 
-    // Record in DB for audit purposes
-    session_manager::record_successful_login(&state.db, user_id).await?;
-    session_manager::create_session_record(&state.db, &session_id, user_id, &expires_rfc3339).await?;
+    // The stored rows are written while the lock is held, before the session is usable; on
+    // failure the in-memory session is cleared (no row-less session).
+    session_manager::store_session_or_clear(&state.db, &mut session_guard, user_id, &session_id, &expires_rfc3339)
+        .await?;
+    drop(session_guard);
 
     // ── Audit: successful login ───────────────────────────────────────
     crate::audit::emit(
@@ -852,29 +853,45 @@ pub struct ForceChangePasswordResponse {
     pub session_info: session_manager::SessionInfo,
 }
 
-/// Change the password for a user who has `force_password_change = true`.
+/// Change the password of an account that must change it (`force_password_change`).
 ///
-/// This command is only callable when the current session has
-/// `force_password_change` set. It hashes the new password with argon2id,
-/// updates the database, clears the flag, and returns the updated session.
+/// It does not go through `require_session!` (which refuses everything while a change is
+/// required) but runs the same stored checks: an ended session (revoked, disabled account,
+/// password changed elsewhere) is refused. The stored flag decides: when the change is no
+/// longer required (made on another device), the in-memory flag is lowered and the command is
+/// refused so the shell leaves the change screen. On success the password follows the plant
+/// policy, the user's other sessions are closed and this one gets a new stored row.
 #[tauri::command]
 pub async fn force_change_password(
     payload: ForceChangePasswordRequest,
     state: State<'_, AppState>,
 ) -> AppResult<ForceChangePasswordResponse> {
-    // Read current session — must be authenticated with force_password_change
-    let user = {
+    force_change_password_impl(state.inner(), payload).await
+}
+
+pub(crate) async fn force_change_password_impl(
+    state: &AppState,
+    payload: ForceChangePasswordRequest,
+) -> AppResult<ForceChangePasswordResponse> {
+    let (user, session_db_id) = {
         let sm = state.session.read().await;
         match &sm.current {
-            Some(s) if !s.is_expired() && s.user.force_password_change => s.user.clone(),
-            Some(_) => {
-                return Err(AppError::Auth("Le changement de mot de passe n'est pas requis.".into()));
-            }
-            None => {
+            Some(s) if !s.is_expired() => (s.user.clone(), s.session_db_id.clone()),
+            _ => {
                 return Err(AppError::Auth("Non authentifi\u{00e9}.".into()));
             }
         }
     };
+    let stored = session_manager::enforce_session_alive(&state.db, &state.session, &user, Some(&session_db_id)).await?;
+    if !stored.must_change_password {
+        let mut sm = state.session.write().await;
+        if let Some(session) = sm.current.as_mut().filter(|s| s.session_db_id == session_db_id) {
+            session.user.force_password_change = false;
+        }
+        return Err(AppError::ValidationFailed(vec![
+            "Le changement de mot de passe n'est plus requis : continuez avec votre mot de passe actuel.".into(),
+        ]));
+    }
 
     // Validate password strength (minimum 8 characters)
     let new_password = payload.new_password.trim();
@@ -884,33 +901,9 @@ pub async fn force_change_password(
     // Hash the new password with argon2id
     let new_hash = password::hash_password(new_password)?;
 
-    // Update user_accounts in the database
-    let now = chrono::Utc::now().to_rfc3339();
-    state
-        .db
-        .execute(sea_orm::Statement::from_sql_and_values(
-            sea_orm::DbBackend::Sqlite,
-            r"UPDATE user_accounts
-               SET password_hash = ?,
-                   force_password_change = 0,
-                   password_changed_at = ?,
-                   updated_at = ?
-               WHERE id = ?",
-            [
-                new_hash.into(),
-                now.clone().into(),
-                now.clone().into(),
-                user.user_id.into(),
-            ],
-        ))
-        .await?;
-
-    // Update the in-memory session
-    let mut sm = state.session.write().await;
-    if let Some(session) = &mut sm.current {
-        session.user.force_password_change = false;
-        session.password_expires_in_days = None;
-    }
+    // The new password, the cleared flag and the session rotation, in one transaction.
+    session_manager::change_password_and_rotate(&state.db, &state.session, user.user_id, &new_hash, true).await?;
+    let sm = state.session.read().await;
 
     crate::audit::emit(
         &state.db,
@@ -954,31 +947,19 @@ pub async fn get_password_recovery_contacts(state: State<'_, AppState>) -> AppRe
 pub(crate) async fn query_password_recovery_contacts(
     db: &sea_orm::DatabaseConnection,
 ) -> AppResult<Vec<PasswordRecoveryContact>> {
+    // The same rule as elevated admin access (`auth::rbac`): administrators in force only.
+    let now = crate::rbac::resolver::assignment_clock();
     let rows = db
         .query_all(sea_orm::Statement::from_sql_and_values(
             sea_orm::DbBackend::Sqlite,
-            r"SELECT DISTINCT
-                ua.username,
-                ua.display_name,
-                ua.email,
-                ua.phone
-              FROM user_accounts ua
-              WHERE ua.is_active = 1
-                AND ua.deleted_at IS NULL
-                AND (
-                  ua.is_admin = 1
-                  OR EXISTS (
-                    SELECT 1
-                      FROM user_scope_assignments usa
-                      INNER JOIN roles r ON r.id = usa.role_id
-                     WHERE usa.user_id = ua.id
-                       AND usa.deleted_at IS NULL
-                       AND r.deleted_at IS NULL
-                       AND r.name IN ('Administrator', 'Superadmin')
-                  )
-                )
-              ORDER BY COALESCE(ua.display_name, ua.username) COLLATE NOCASE",
-            [],
+            format!(
+                "SELECT DISTINCT ua.username, ua.display_name, ua.email, ua.phone
+                   FROM user_accounts ua
+                  WHERE {}
+                  ORDER BY COALESCE(ua.display_name, ua.username) COLLATE NOCASE",
+                crate::auth::rbac::elevated_admin_sql()
+            ),
+            crate::rbac::resolver::permanent_binds(&now),
         ))
         .await?;
 
@@ -1049,6 +1030,11 @@ mod password_recovery_contacts_tests {
                 id INTEGER PRIMARY KEY,
                 user_id INTEGER NOT NULL,
                 role_id INTEGER NOT NULL,
+                scope_type TEXT NOT NULL DEFAULT 'tenant',
+                valid_from TEXT,
+                valid_to TEXT,
+                is_emergency INTEGER NOT NULL DEFAULT 0,
+                emergency_expires_at TEXT,
                 deleted_at TEXT
               );",
         ))
@@ -1091,11 +1077,16 @@ mod password_recovery_contacts_tests {
             r"INSERT INTO user_accounts (id, entity_sync_id, username, display_name, email, phone, is_admin, is_active)
               VALUES (10, 'test-user-dave', 'dave', 'Dave RoleAdmin', NULL, '+33123456789', 0, 1);
               INSERT INTO roles (id, entity_sync_id, name) VALUES (1, 'test-role-administrator', 'Administrator');
-              INSERT INTO user_scope_assignments (id, user_id, role_id) VALUES (1, 10, 1);",
+              INSERT INTO user_scope_assignments (id, user_id, role_id) VALUES (1, 10, 1);
+              INSERT INTO user_accounts (id, entity_sync_id, username, display_name, email, phone, is_admin, is_active)
+              VALUES (11, 'test-user-erin', 'erin', 'Erin Emergency', NULL, NULL, 0, 1);
+              INSERT INTO user_scope_assignments (id, user_id, role_id, is_emergency, emergency_expires_at)
+              VALUES (2, 11, 1, 1, '2999-01-01T00:00:00Z');",
         ))
         .await
         .unwrap();
 
+        // An emergency administrator is not a recovery contact (no lasting administration).
         let contacts = query_password_recovery_contacts(&db).await.unwrap();
         assert_eq!(contacts.len(), 1);
         assert_eq!(contacts[0].display_name, "Dave RoleAdmin");
