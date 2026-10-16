@@ -10829,6 +10829,61 @@ export interface UnfreezeRequestInput extends WeeklyScheduleRef {
   reason: string;
 }
 
+/** Planning KPIs against the frozen weekly baseline (planning step E). */
+export interface PlanningKpiFilter {
+  site_id?: number | null;
+  /** Weeks whose first day is in `[from_day, to_day]` (`YYYY-MM-DD`). */
+  from_day: string;
+  to_day: string;
+  /** Leave out the weeks frozen without approval and not approved since. */
+  exclude_unapproved?: boolean;
+}
+
+export interface WeekKpi {
+  weekly_schedule_id: number;
+  site_id: number;
+  site_name: string;
+  week_start: string;
+  week_end: string;
+  status: string;
+  awaiting_approval: boolean;
+  baseline_no: number;
+  baseline_jobs: number;
+  baseline_hours: number;
+  /** null while the week is not over. */
+  done_hours: number | null;
+  compliance_pct: number | null;
+  break_in_jobs: number;
+  break_in_hours: number;
+  break_in_pct: number | null;
+  displaced_jobs: number;
+  available_hours: number;
+  overtime_hours: number;
+  loading_pct: number | null;
+}
+
+export interface PlanningKpiTotals {
+  weeks: number;
+  weeks_judged: number;
+  weeks_awaiting_approval: number;
+  weeks_not_frozen: number;
+  baseline_hours: number;
+  judged_baseline_hours: number;
+  done_hours: number;
+  compliance_pct: number | null;
+  break_in_hours: number;
+  break_in_pct: number | null;
+  displaced_jobs: number;
+  available_hours: number;
+  overtime_hours: number;
+  loading_pct: number | null;
+}
+
+export interface PlanningKpis {
+  weeks: WeekKpi[];
+  totals: PlanningKpiTotals;
+}
+
 export interface UnfreezeDecisionInput extends WeeklyScheduleRef {
   approve: boolean;
   comment?: string | null;

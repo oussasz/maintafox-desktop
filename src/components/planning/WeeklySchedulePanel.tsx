@@ -10,6 +10,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
+import { PlanningKpiSection } from "@/components/planning/PlanningKpiSection";
 import {
   addDays,
   commitmentsOnDay,
@@ -401,6 +402,10 @@ export function WeeklySchedulePanel() {
             </tbody>
           </table>
         </div>
+      ) : null}
+
+      {view && siteId != null ? (
+        <PlanningKpiSection siteId={siteId} weekStart={view.week.week_start} />
       ) : null}
 
       {view && view.events.length > 0 ? (

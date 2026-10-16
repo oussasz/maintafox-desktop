@@ -432,5 +432,23 @@
     "unfreezeRequested": "Unfreeze request sent",
     "unfreezeApproved": "Unfreeze approved",
     "unfreezeRejected": "Unfreeze rejected"
+  },
+  "kpis": {
+    "title": "Planning KPIs (frozen baseline, last 8 weeks)",
+    "excludeUnapproved": "Leave out weeks frozen without approval",
+    "loading": "Loading",
+    "loadingHint": "{{baseline}} planned / {{available}} available (+ {{overtime}} overtime possible)",
+    "compliance": "Schedule compliance",
+    "complianceHint": "{{done}} done of {{baseline}} planned",
+    "breakIns": "Break-ins",
+    "displaced": "Displaced jobs",
+    "awaitingApproval": "Frozen without approval",
+    "notFrozen": "Weeks never frozen",
+    "noFrozenWeek": "No frozen week in the period: the KPIs are measured on the frozen baseline.",
+    "week": "Week",
+    "baseline": "Baseline",
+    "jobsHours": "{{jobs}} jobs · {{hours}}",
+    "hours": "{{hours}} h",
+    "inProgress": "in progress"
   }
 }
