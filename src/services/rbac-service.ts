@@ -11,8 +11,8 @@ import type {
   AdminSetUserPasswordInput,
   AdminSetUserPasswordResult,
   AdminStatsPayload,
-  AssignableRoleSummary,
   AssignRoleScopeInput,
+  AssignableRoleSummary,
   CreateCustomPermissionInput,
   CreateDelegationInput,
   CreateRoleInput,
@@ -402,7 +402,7 @@ export async function getPermissionDependencies(
   permissionName: string,
 ): Promise<PermissionDependencyRow[]> {
   const raw = await invoke<unknown[]>("get_permission_dependencies", {
-    permission_name: permissionName,
+    permissionName,
   });
   return z.array(PermissionDependencyRowSchema).parse(raw);
 }
@@ -548,7 +548,7 @@ export async function exportRoleModel(roleIds: number[]): Promise<RoleExportPayl
 }
 
 export async function importRoleModel(payload: RoleImportPayload): Promise<ImportResult> {
-  const raw = await invoke<unknown>("import_role_model", { payload });
+  const raw = await invoke<unknown>("import_role_model", { input: payload });
   return ImportResultSchema.parse(raw);
 }
 

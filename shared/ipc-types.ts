@@ -5308,12 +5308,6 @@ export interface AddWoToolInput {
   notes?: string | null;
 }
 
-export interface MarkWoToolStatusInput {
-  tool_id: number;
-  usage_status: string;
-  notes?: string | null;
-}
-
 // ── Attachment phase ─────────────────────────────────────────────────────────
 
 export type WoAttachmentPhase = "before" | "during" | "after" | "evidence";
@@ -5801,12 +5795,12 @@ export interface ImportResult {
 
 export interface AdminEventFilter {
   action?: string;
-  actorId?: number;
-  targetUserId?: number;
-  targetRoleId?: number;
-  dateFrom?: string;
-  dateTo?: string;
-  applyResult?: string;
+  actor_id?: number;
+  target_user_id?: number;
+  target_role_id?: number;
+  date_from?: string;
+  date_to?: string;
+  apply_result?: string;
   limit?: number;
   offset?: number;
 }

@@ -2,7 +2,6 @@ import { invoke } from "@/lib/ipc-invoke";
 import type {
   AddWoToolInput,
   DowntimeType,
-  MarkWoToolStatusInput,
   TaskResultCode,
   WoDelaySegment,
   WoDowntimeSegment,
@@ -285,10 +284,10 @@ export async function addWoTool(input: AddWoToolInput): Promise<WoTool> {
   return invoke<WoTool>("add_wo_tool", { input });
 }
 
-export async function markWoToolUsed(input: MarkWoToolStatusInput): Promise<WoTool> {
-  return invoke<WoTool>("mark_wo_tool_used", { input });
+export async function markWoToolUsed(toolId: number): Promise<WoTool> {
+  return invoke<WoTool>("mark_wo_tool_used", { toolId });
 }
 
-export async function markWoToolNotUsed(input: MarkWoToolStatusInput): Promise<WoTool> {
-  return invoke<WoTool>("mark_wo_tool_not_used", { input });
+export async function markWoToolNotUsed(toolId: number): Promise<WoTool> {
+  return invoke<WoTool>("mark_wo_tool_not_used", { toolId });
 }

@@ -801,7 +801,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
         setBusy(true);
         setError(null);
         try {
-          await markWoToolUsed({ tool_id: toolId, usage_status: "used" });
+          await markWoToolUsed(toolId);
           await loadData();
         } catch (e) {
           setError(woActionFailureText(t("execution.tools.updateError"), e));
@@ -817,7 +817,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
         setBusy(true);
         setError(null);
         try {
-          await markWoToolNotUsed({ tool_id: toolId, usage_status: "not_used" });
+          await markWoToolNotUsed(toolId);
           await loadData();
         } catch (e) {
           setError(woActionFailureText(t("execution.tools.updateError"), e));

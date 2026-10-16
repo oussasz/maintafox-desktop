@@ -143,7 +143,9 @@ export async function listArchiveItems(filter: ArchiveFilterInput): Promise<Arch
 }
 
 export async function getArchiveItem(archive_item_id: number): Promise<ArchiveItemDetail> {
-  const raw = await invoke<ArchiveItemDetail>("get_archive_item", { archive_item_id });
+  const raw = await invoke<ArchiveItemDetail>("get_archive_item", {
+    archiveItemId: archive_item_id,
+  });
   return ArchiveItemDetailSchema.parse(raw);
 }
 

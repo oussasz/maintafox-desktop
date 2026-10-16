@@ -98,7 +98,7 @@ export async function listLicenseTraceEvents(
   try {
     const raw = await invoke<unknown>("list_license_trace_events", {
       limit: limit ?? null,
-      correlation_id: correlationId ?? null,
+      correlationId: correlationId ?? null,
     });
     return z.array(LicenseTraceEventSchema).parse(raw) as LicenseTraceEvent[];
   } catch (err) {
