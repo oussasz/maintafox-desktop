@@ -113,6 +113,7 @@
     "estimatedDurationHours": "Durée estimée (h)",
     "plannedCrewSize": "Effectif prévu (personnes)",
     "plannedCrewSizeHint": "Reporté sur l'OT généré par ce PM ; le planning réserve durée × effectif.",
+    "plannedCrewSizeInvalid": "L'effectif est un nombre entier de personnes, de 1 à {{max}}.",
     "estimatedLaborCost": "Coût main-d'œuvre estimé",
     "estimatedPartsCost": "Coût pièces estimé",
     "estimatedServiceCost": "Coût prestations estimé",

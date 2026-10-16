@@ -153,6 +153,8 @@ function makeLoad(overrides: Partial<TeamCapacityLoad> = {}): TeamCapacityLoad {
     committed_hours: 4,
     utilization_ratio: 0.5,
     basis: "roster",
+    work_windows: [{ start: "2026-10-02T08:00:00", end: "2026-10-02T16:00:00", hours: 8 }],
+    unwindowed_hours: 0,
     ...overrides,
   };
 }

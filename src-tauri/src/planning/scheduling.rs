@@ -9,12 +9,12 @@ use crate::notifications::emitter::{emit_event, NotificationEventInput};
 use crate::{activity, notifications};
 
 use super::domain::{
-    CapacityRule, CapacityRuleFilter, CreateCapacityRuleInput, CreatePlanningWindowInput, CreateScheduleBreakInInput,
-    CreateScheduleCommitmentInput, ExportPlanningGanttPdfInput, ExportedBinaryDocument, FreezeSchedulePeriodInput,
-    NotifyTeamsInput, NotifyTeamsResult, PlanningAssigneeLane, PlanningCrewLane, PlanningGanttFilter,
-    PlanningGanttSnapshot, PlanningWindow, PlanningWindowFilter, RescheduleCommitmentInput, ScheduleBreakIn,
-    ScheduleBreakInFilter, ScheduleChangeLogEntry, ScheduleCommitment, ScheduleCommitmentFilter, TeamCapacityLoad,
-    UpdateCapacityRuleInput, UpdatePlanningWindowInput,
+    CapacityRule, CapacityRuleFilter, CapacityWindow, CreateCapacityRuleInput, CreatePlanningWindowInput,
+    CreateScheduleBreakInInput, CreateScheduleCommitmentInput, ExportPlanningGanttPdfInput, ExportedBinaryDocument,
+    FreezeSchedulePeriodInput, NotifyTeamsInput, NotifyTeamsResult, PlanningAssigneeLane, PlanningCrewLane,
+    PlanningGanttFilter, PlanningGanttSnapshot, PlanningWindow, PlanningWindowFilter, RescheduleCommitmentInput,
+    ScheduleBreakIn, ScheduleBreakInFilter, ScheduleChangeLogEntry, ScheduleCommitment, ScheduleCommitmentFilter,
+    TeamCapacityLoad, UpdateCapacityRuleInput, UpdatePlanningWindowInput,
 };
 use super::load;
 use super::wo_sync::{self, WoSyncOutcome};
@@ -491,18 +491,12 @@ async fn compute_capacity_gate(
     let (Some(first), Some(last)) = (days.first().map(|d| d.0), days.last().map(|d| d.0)) else {
         return Ok((true, None));
     };
-    let mut hours_by_day = BTreeMap::new();
-    let mut available = BTreeMap::new();
-    for day in crate::personnel::capacity::team_capacity_span(db, team_id, first, last).await? {
-        if let Ok(d) = chrono::NaiveDate::parse_from_str(&day.day, "%Y-%m-%d") {
-            available.insert(d, day.available_hours);
-            hours_by_day.insert(d, team_hours_from(day));
-        }
-    }
+    // From the day before: a night shift that started then may run into the slot.
+    let team = load::team_days(db, team_id, first - chrono::Duration::days(1), last).await?;
     // A team with no timetable at all over the slot: say so rather than call it overloaded.
-    if hours_by_day
-        .values()
-        .all(|h| h.basis == "no_schedule" || h.basis == "no_members")
+    if team
+        .range(first..=last)
+        .all(|(_, d)| d.basis == "no_schedule" || d.basis == "no_members")
     {
         return Err(crate::errors::org_validation_failed(
             "TEAM_NO_SCHEDULE",
@@ -510,12 +504,15 @@ async fn compute_capacity_gate(
             std::collections::HashMap::from([("day".to_string(), first.to_string())]),
         ));
     }
-    let committed = load::team_day_loads(db, Some(&[team_id]), first, last, exclude_commitment_id).await?;
-    for (day, share) in load::spread(labour_hours, &days, &available) {
-        let (cap, overtime) = hours_by_day
-            .get(&day)
-            .map(|h| (h.available, h.overtime))
-            .unwrap_or((0.0, 0.0));
+    let hours: BTreeMap<chrono::NaiveDate, load::DayHours> = team.iter().map(|(d, t)| (*d, t.hours.clone())).collect();
+    let spread = load::spread(labour_hours, start, end, &hours)?;
+    let (Some(spread_first), Some(spread_last)) = (spread.keys().next().copied(), spread.keys().last().copied()) else {
+        return Ok((true, None));
+    };
+    let committed =
+        load::team_day_loads(db, Some(&[team_id]), spread_first, spread_last, exclude_commitment_id).await?;
+    for (day, share) in spread {
+        let (cap, overtime) = team.get(&day).map(|t| (t.available, t.overtime)).unwrap_or((0.0, 0.0));
         let already = committed.get(&(team_id, day)).copied().unwrap_or(0.0);
         // A hundredth of an hour of tolerance for the spread's rounding.
         if already + share > cap + overtime + 0.01 {
@@ -763,13 +760,18 @@ async fn candidate_labour_hours(db: &impl ConnectionTrait, candidate_id: i64) ->
             "SELECT estimated_duration_hours, planned_crew_size FROM schedule_candidates WHERE id = ?",
             [candidate_id.into()],
         ))
-        .await?;
-    let estimate = row
-        .as_ref()
-        .and_then(|r| r.try_get::<Option<f64>>("", "estimated_duration_hours").ok().flatten());
-    let crew = row
-        .as_ref()
-        .and_then(|r| r.try_get::<Option<i64>>("", "planned_crew_size").ok().flatten());
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "ScheduleCandidate".to_string(),
+            id: candidate_id.to_string(),
+        })?;
+    // A value that cannot be read is an error, never "not estimated".
+    let estimate: Option<f64> = row
+        .try_get("", "estimated_duration_hours")
+        .map_err(|e| decode_err("estimated_duration_hours", e))?;
+    let crew: Option<i64> = row
+        .try_get("", "planned_crew_size")
+        .map_err(|e| decode_err("planned_crew_size", e))?;
     match (estimate, crew) {
         (Some(hours), Some(people)) if hours > 0.0 && people >= 1 => Ok(hours * people as f64),
         _ => Err(crate::errors::org_validation_failed(
@@ -804,6 +806,7 @@ async fn run_commitment_gates(
     exclude_commitment_id: Option<i64>,
 ) -> AppResult<CommitmentGateResult> {
     validate_window(committed_start, committed_end, "committed_start", "committed_end")?;
+    load::validate_slot_length(committed_start, committed_end)?;
     let (source_type, source_id) = enforce_candidate_ready(tx, candidate_id, expected_candidate_row_version).await?;
 
     if let Some(window) = find_locked_window(tx, committed_start, committed_end).await? {
@@ -1301,6 +1304,7 @@ pub async fn create_schedule_break_in(
         "new_slot_start",
         "new_slot_end",
     )?;
+    load::validate_slot_length(&input.new_slot_start, &input.new_slot_end)?;
     let reason = input.break_in_reason.trim().to_ascii_lowercase();
     if !is_valid_break_in_reason(&reason) {
         return Err(AppError::ValidationFailed(vec![
@@ -1953,6 +1957,8 @@ pub async fn get_planning_gantt_snapshot(
                             committed_hours: 0.0,
                             utilization_ratio: None,
                             basis: String::new(),
+                            work_windows: Vec::new(),
+                            unwindowed_hours: 0.0,
                         });
                 }
             }
@@ -1966,15 +1972,10 @@ pub async fn get_planning_gantt_snapshot(
         span.0 = span.0.min(day);
         span.1 = span.1.max(day);
     }
-    let mut roster: BTreeMap<(i64, String), TeamDayHours> = BTreeMap::new();
+    let mut roster: BTreeMap<(i64, String), load::TeamDay> = BTreeMap::new();
     for (team_id, (from, to)) in days_by_team {
-        let mut cursor = from;
-        while cursor <= to {
-            let chunk_end = (cursor + chrono::Duration::days(crate::personnel::capacity::MAX_RANGE_DAYS - 1)).min(to);
-            for day in crate::personnel::capacity::team_capacity_range(db, team_id, cursor, chunk_end).await? {
-                roster.insert((team_id, day.day.clone()), team_hours_from(day));
-            }
-            cursor = chunk_end + chrono::Duration::days(1);
+        for (day, team_day) in load::team_days(db, team_id, from, to).await? {
+            roster.insert((team_id, day.to_string()), team_day);
         }
     }
     for ((team_id, day), row) in &mut capacity_by_team_day {
@@ -1985,6 +1986,17 @@ pub async fn get_planning_gantt_snapshot(
         row.available_hours = hours.available;
         row.overtime_hours = hours.overtime;
         row.basis = hours.basis;
+        row.work_windows = hours
+            .hours
+            .windows
+            .iter()
+            .map(|w| CapacityWindow {
+                start: w.start.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                end: w.end.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                hours: w.hours,
+            })
+            .collect();
+        row.unwindowed_hours = hours.hours.unwindowed;
     }
     // Committed load per team-day (`planning::load`): labour hours spread over the slots' working
     // days, finished work excluded.

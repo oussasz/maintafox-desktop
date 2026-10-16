@@ -25,6 +25,8 @@ import {
   parseMs,
   previewLaborCost,
   sanitizeBudgetThresholdInput,
+  slotCapacityRows,
+  slotShiftHours,
   teamGroupId,
 } from "@/components/planning/planning-model";
 import {
@@ -255,6 +257,23 @@ export function CommitDialog({
   }, [effectiveTeamId, start, end, labourHours, gantt?.capacity]);
 
   const capacityBlocked = slotCapacity?.overloaded != null;
+
+  /**
+   * Each person works the whole duration: warn (not block) when the slot holds less shift time
+   * than that. Unknown when a day's shift windows are not known.
+   */
+  const shiftTimeShort = useMemo(() => {
+    const duration = candidate?.estimated_duration_hours;
+    if (effectiveTeamId == null || !start.trim() || !end.trim() || duration == null) return null;
+    const startIso = fromDateTimeLocal(start);
+    const endIso = fromDateTimeLocal(end);
+    const shiftHours = slotShiftHours(
+      startIso,
+      endIso,
+      slotCapacityRows(gantt?.capacity, effectiveTeamId, startIso, endIso),
+    );
+    return shiftHours != null && duration > shiftHours + 0.01 ? { duration, shiftHours } : null;
+  }, [candidate?.estimated_duration_hours, effectiveTeamId, start, end, gantt?.capacity]);
 
   const isLocalDateAtCapacity = useMemo(() => {
     if (effectiveTeamId == null) return () => false;
@@ -683,6 +702,14 @@ export function CommitDialog({
                     >
                       {t("commitment.setUpTeamCapacity")}
                     </Link>
+                  </p>
+                ) : null}
+                {shiftTimeShort ? (
+                  <p className="text-[11px] text-tone-attention-fg" role="status">
+                    {t("commitment.shiftTimeShort", {
+                      duration: shiftTimeShort.duration.toFixed(1),
+                      shift: shiftTimeShort.shiftHours.toFixed(1),
+                    })}
                   </p>
                 ) : null}
                 {capacityBlocked && slotCapacity?.overloaded ? (

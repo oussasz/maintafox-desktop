@@ -113,6 +113,7 @@
     "estimatedDurationHours": "Estimated duration (h)",
     "plannedCrewSize": "Crew size (people)",
     "plannedCrewSizeHint": "Copied onto the work order this PM generates; planning books duration × crew size.",
+    "plannedCrewSizeInvalid": "The crew size is a whole number of people from 1 to {{max}}.",
     "estimatedLaborCost": "Estimated labor cost",
     "estimatedPartsCost": "Estimated parts cost",
     "estimatedServiceCost": "Estimated service cost",

@@ -36,6 +36,9 @@ pub struct WoScheduleSaveInput {
     /// People the job takes; `None` keeps the current one.
     #[serde(default)]
     pub planned_crew_size: Option<i64>,
+    /// Removes the crew size (the job is then not estimated for planning).
+    #[serde(default)]
+    pub clear_crew_size: bool,
     /// Level of the shared DI / OT urgency scale (`emergency` … `low`); `None` keeps the current one.
     pub urgency_code: Option<String>,
     pub planned_downtime_hours: Option<f64>,
@@ -145,7 +148,7 @@ pub async fn save_schedule(db: &DatabaseConnection, input: WoScheduleSaveInput) 
                 shift = COALESCE(?, shift), \
                 urgency_id = COALESCE(?, urgency_id), \
                 expected_duration_hours = COALESCE(?, expected_duration_hours), \
-                planned_crew_size = COALESCE(?, planned_crew_size), \
+                planned_crew_size = CASE WHEN ? = 1 THEN NULL ELSE COALESCE(?, planned_crew_size) END, \
                 planned_downtime_hours = COALESCE(?, planned_downtime_hours), \
                 row_version = row_version + 1, \
                 updated_at = ? \
@@ -169,6 +172,7 @@ pub async fn save_schedule(db: &DatabaseConnection, input: WoScheduleSaveInput) 
                     .expected_duration_hours
                     .map(sea_orm::Value::from)
                     .unwrap_or(sea_orm::Value::from(None::<f64>)),
+                i64::from(input.clear_crew_size).into(),
                 input
                     .planned_crew_size
                     .map(sea_orm::Value::from)
@@ -191,7 +195,7 @@ pub async fn save_schedule(db: &DatabaseConnection, input: WoScheduleSaveInput) 
                 shift = COALESCE(?, shift), \
                 urgency_id = COALESCE(?, urgency_id), \
                 expected_duration_hours = COALESCE(?, expected_duration_hours), \
-                planned_crew_size = COALESCE(?, planned_crew_size), \
+                planned_crew_size = CASE WHEN ? = 1 THEN NULL ELSE COALESCE(?, planned_crew_size) END, \
                 planned_downtime_hours = COALESCE(?, planned_downtime_hours), \
                 row_version = row_version + 1, \
                 updated_at = ? \
@@ -213,6 +217,7 @@ pub async fn save_schedule(db: &DatabaseConnection, input: WoScheduleSaveInput) 
                     .expected_duration_hours
                     .map(sea_orm::Value::from)
                     .unwrap_or(sea_orm::Value::from(None::<f64>)),
+                i64::from(input.clear_crew_size).into(),
                 input
                     .planned_crew_size
                     .map(sea_orm::Value::from)

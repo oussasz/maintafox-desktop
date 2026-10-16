@@ -257,7 +257,8 @@ pub async fn list_schedule_candidates(
     }
 
     let limit = filter.limit.unwrap_or(400).clamp(1, 2_000);
-    let include_resolved = filter.include_resolved_conflicts.unwrap_or(true);
+    // Blocked work is listed only when the caller asks (the planning board does, explicitly).
+    let include_resolved = filter.include_resolved_conflicts.unwrap_or(false);
     if !include_resolved {
         where_sql.push(
             "NOT EXISTS (SELECT 1 FROM scheduling_conflicts scx WHERE scx.candidate_id = sc.id AND scx.resolved_at IS NULL)"

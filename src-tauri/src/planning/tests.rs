@@ -416,7 +416,7 @@ async fn ensure_planning_notification_rule(db: &DatabaseConnection) {
 }
 
 #[tokio::test]
-async fn list_candidates_shows_blocked_work_by_default_and_can_hide_it() {
+async fn list_candidates_shows_blocked_work_when_asked_and_can_hide_it() {
     let db = setup_db().await;
     let candidate_id = insert_candidate(&db, "manual_test", 1, "blocked", 40.0).await;
     insert_conflict(&db, candidate_id, "missing_critical_part", false).await;
@@ -441,13 +441,13 @@ async fn list_candidates_shows_blocked_work_by_default_and_can_hide_it() {
             source_type: Some("manual_test".to_string()),
             readiness_status: None,
             assigned_personnel_id: None,
-            include_resolved_conflicts: None,
+            include_resolved_conflicts: Some(true),
             limit: Some(20),
         },
     )
     .await
     .expect("list visible");
-    assert_eq!(visible.len(), 1, "blocked work is listed by default");
+    assert_eq!(visible.len(), 1, "blocked work is listed when asked for");
 }
 
 #[tokio::test]
@@ -1489,28 +1489,69 @@ async fn team_loads(
     .collect()
 }
 
+fn shift_hours(d: &str, start: &str, end: &str, hours: f64) -> crate::planning::load::DayHours {
+    let (s, e) = crate::personnel::capacity::shift_window(day(d), start, end).expect("window");
+    crate::planning::load::DayHours {
+        windows: vec![crate::planning::load::WorkWindow {
+            start: s,
+            end: e,
+            hours,
+        }],
+        unwindowed: 0.0,
+    }
+}
+
 #[test]
-fn a_slot_spreads_its_labour_over_the_working_days_it_covers() {
-    use crate::planning::load::{slot_days, spread};
-    // Monday 08:00 → Wednesday 16:00 (local): two-thirds of Monday, all Tuesday, two-thirds of
-    // Wednesday; Tuesday is a rest day for the team.
-    let days = slot_days(&local("2026-05-04T08:00"), &local("2026-05-06T16:00")).expect("days");
-    assert_eq!(
-        days.iter().map(|d| d.0).collect::<Vec<_>>(),
-        vec![day("2026-05-04"), day("2026-05-05"), day("2026-05-06")]
-    );
-    let available = std::collections::BTreeMap::from([
-        (day("2026-05-04"), 8.0),
-        (day("2026-05-05"), 0.0),
-        (day("2026-05-06"), 8.0),
+fn a_slot_spreads_its_labour_over_working_hours_not_calendar_hours() {
+    use crate::planning::load::{slot_days, spread, DayHours};
+    // Mon 08:00 → Wed 17:00, 8 h shifts 08:00–16:00: 24 h of labour is 8 / 8 / 8 (the calendar
+    // share gave 6.7 / 10.1 / 7.2 and refused a job that fits).
+    let days = std::collections::BTreeMap::from([
+        (day("2026-05-04"), shift_hours("2026-05-04", "08:00", "16:00", 8.0)),
+        (day("2026-05-05"), shift_hours("2026-05-05", "08:00", "16:00", 8.0)),
+        (day("2026-05-06"), shift_hours("2026-05-06", "08:00", "16:00", 8.0)),
     ]);
-    let shares = spread(12.0, &days, &available);
+    let shares = spread(24.0, &local("2026-05-04T08:00"), &local("2026-05-06T17:00"), &days).expect("spread");
+    for d in ["2026-05-04", "2026-05-05", "2026-05-06"] {
+        assert!((shares[&day(d)] - 8.0).abs() < 1e-6, "{shares:?}");
+    }
+    // A rest day in the middle takes nothing.
+    let mut with_rest = days.clone();
+    with_rest.insert(day("2026-05-05"), DayHours::default());
+    let shares = spread(12.0, &local("2026-05-04T08:00"), &local("2026-05-06T16:00"), &with_rest).expect("spread");
     assert!((shares[&day("2026-05-04")] - 6.0).abs() < 1e-6, "{shares:?}");
     assert!(!shares.contains_key(&day("2026-05-05")), "nothing on the rest day");
     assert!((shares[&day("2026-05-06")] - 6.0).abs() < 1e-6, "{shares:?}");
+    // A member whose window is not known counts in full on the day the slot touches.
+    let unknown = std::collections::BTreeMap::from([(
+        day("2026-05-04"),
+        DayHours {
+            windows: Vec::new(),
+            unwindowed: 8.0,
+        },
+    )]);
+    let shares = spread(3.0, &local("2026-05-04T10:00"), &local("2026-05-04T11:00"), &unknown).expect("spread");
+    assert!((shares[&day("2026-05-04")] - 3.0).abs() < 1e-6, "{shares:?}");
     // A slot ending at midnight stops the day before.
     let one_day = slot_days(&local("2026-05-04T08:00"), &local("2026-05-05T00:00")).expect("days");
     assert_eq!(one_day.len(), 1);
+}
+
+#[test]
+fn a_night_shift_books_on_the_day_it_starts() {
+    use crate::planning::load::spread;
+    let days = std::collections::BTreeMap::from([
+        (day("2026-05-03"), shift_hours("2026-05-03", "22:00", "06:00", 8.0)),
+        (day("2026-05-04"), shift_hours("2026-05-04", "22:00", "06:00", 8.0)),
+        (day("2026-05-05"), shift_hours("2026-05-05", "22:00", "06:00", 8.0)),
+    ]);
+    // 22:00 → 06:00: all of it on the start day (the calendar share put 75 % on the next day).
+    let shares = spread(8.0, &local("2026-05-04T22:00"), &local("2026-05-05T06:00"), &days).expect("spread");
+    assert_eq!(shares.len(), 1, "{shares:?}");
+    assert!((shares[&day("2026-05-04")] - 8.0).abs() < 1e-6, "{shares:?}");
+    // 02:00 → 04:00 on the 5th sits in the shift that started on the 4th.
+    let shares = spread(2.0, &local("2026-05-05T02:00"), &local("2026-05-05T04:00"), &days).expect("spread");
+    assert!((shares[&day("2026-05-04")] - 2.0).abs() < 1e-6, "{shares:?}");
 }
 
 #[tokio::test]
@@ -1846,4 +1887,226 @@ async fn the_work_order_crew_size_reaches_the_backlog() {
         (Some(3), 0),
         "estimated once the crew size is set"
     );
+}
+
+/// The test crew on a 7-day night shift 22:00–06:00 (8 h), instead of the day shift.
+async fn give_team_night_shift(db: &DatabaseConnection, team_id: i64) {
+    for sql in [
+        "INSERT OR IGNORE INTO reference_values (entity_sync_id, set_id, code, label, sort_order, is_active) \
+         SELECT 'planning-test-night-shift', rs.id, 'PLN-NIGHT', 'Planning test night shift', 98, 1 \
+         FROM reference_sets rs JOIN reference_domains rd ON rd.id = rs.domain_id \
+         WHERE UPPER(rd.code) = 'ORG.SCHEDULE_CLASS' AND rs.status = 'published' \
+         ORDER BY rs.version_no DESC LIMIT 1",
+        "INSERT OR IGNORE INTO schedule_class_versions (entity_sync_id, reference_value_id, effective_from, \
+         cycle_length_days, rotation_start_date, days_json, is_continuous, utilisation_percent, created_at, updated_at) \
+         SELECT 'planning-test-night-version', rv.id, '2000-01-01', 7, NULL, \
+         (SELECT json_group_array(json_object('cycle_day', n, 'shift_start', '22:00', 'shift_end', '06:00', \
+                 'break_minutes', 0, 'is_rest_day', json('false'))) \
+            FROM (SELECT 1 AS n UNION SELECT 2 UNION SELECT 3 UNION SELECT 4 UNION SELECT 5 UNION SELECT 6 \
+                  UNION SELECT 7)), \
+         1, 100.0, datetime('now'), datetime('now') \
+         FROM reference_values rv WHERE rv.entity_sync_id = 'planning-test-night-shift'",
+    ] {
+        db.execute(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
+            .await
+            .expect("night shift schedule");
+    }
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT OR IGNORE INTO personnel (employee_code, full_name, availability_status, primary_team_id, \
+         home_schedule_reference_value_id) \
+         SELECT ?, 'Planning night technician', 'available', ?, rv.id FROM reference_values rv \
+         WHERE rv.entity_sync_id = 'planning-test-night-shift'",
+        [format!("PLN-NIGHT-{team_id}").into(), team_id.into()],
+    ))
+    .await
+    .expect("night member");
+}
+
+#[tokio::test]
+async fn a_three_day_job_fits_three_eight_hour_days() {
+    let db = setup_db().await;
+    let team_id = get_any_team_id(&db).await; // 08:00–16:00 every day
+    let candidate = insert_candidate(&db, "pm_occurrence", 7501, "ready", 100.0).await;
+    set_estimate(&db, candidate, Some(8.0)).await;
+    set_crew(&db, candidate, Some(3)).await;
+    scheduling::create_schedule_commitment(
+        &db,
+        1,
+        commit_input(candidate, team_id, "2026-05-04T08:00", "2026-05-06T17:00"),
+    )
+    .await
+    .expect("8 h × 3 people over three 8 h days fits");
+    let loads = team_loads(&db, team_id, "2026-05-04", "2026-05-06").await;
+    for d in ["2026-05-04", "2026-05-05", "2026-05-06"] {
+        assert!((loads[d].0 - 8.0).abs() < 0.01, "{loads:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_night_job_loads_the_night_it_starts() {
+    let db = setup_db().await;
+    let team_id = get_any_team_id_inner(&db).await;
+    give_team_night_shift(&db, team_id).await;
+    let candidate = insert_candidate(&db, "pm_occurrence", 7601, "ready", 100.0).await;
+    set_estimate(&db, candidate, Some(8.0)).await;
+    scheduling::create_schedule_commitment(
+        &db,
+        1,
+        commit_input(candidate, team_id, "2026-05-04T22:00", "2026-05-05T06:00"),
+    )
+    .await
+    .expect("an 8 h night job fits the 8 h night shift");
+    let loads = team_loads(&db, team_id, "2026-05-04", "2026-05-05").await;
+    assert!((loads["2026-05-04"].0 - 8.0).abs() < 0.01, "{loads:?}");
+    assert!(loads["2026-05-05"].0.abs() < 0.01, "nothing on the next day: {loads:?}");
+    // A second job the same night no longer fits, and the refusal names the night's start day.
+    let second = insert_candidate(&db, "pm_occurrence", 7602, "ready", 100.0).await;
+    set_estimate(&db, second, Some(2.0)).await;
+    let refused = scheduling::create_schedule_commitment(
+        &db,
+        1,
+        commit_input(second, team_id, "2026-05-05T02:00", "2026-05-05T04:00"),
+    )
+    .await
+    .expect_err("the night is full");
+    assert!(format!("{refused:?}").contains("2026-05-04"), "{refused:?}");
+}
+
+#[tokio::test]
+async fn a_slot_longer_than_a_month_is_refused() {
+    let db = setup_db().await;
+    let team_id = get_any_team_id(&db).await;
+    let candidate = insert_candidate(&db, "pm_occurrence", 7701, "ready", 100.0).await;
+    let refused = scheduling::create_schedule_commitment(
+        &db,
+        1,
+        commit_input(candidate, team_id, "2026-05-01T08:00", "2026-06-05T16:00"),
+    )
+    .await
+    .expect_err("35 days");
+    assert!(format!("{refused:?}").contains("PLANNING_SLOT_TOO_LONG"), "{refused:?}");
+}
+
+#[tokio::test]
+async fn the_crew_size_is_bounded_whole_and_clearable() {
+    let db = setup_db().await;
+    let (wo_id, actor) = create_planning_wo(&db, "Crew bounds").await;
+    let row_version = |db: &DatabaseConnection| {
+        let db = db.clone();
+        async move {
+            db.query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT row_version, planned_crew_size FROM work_orders WHERE id = ?",
+                [wo_id.into()],
+            ))
+            .await
+            .expect("query")
+            .map(|r| {
+                (
+                    r.try_get::<i64>("", "row_version").expect("rv"),
+                    r.try_get::<Option<i64>>("", "planned_crew_size").expect("crew"),
+                )
+            })
+            .expect("work order")
+        }
+    };
+    let save = |rv: i64, crew: Option<i64>, clear: bool| crate::wo::workflow::actions::WoScheduleSaveInput {
+        wo_id,
+        actor_id: actor,
+        expected_row_version: rv,
+        planner_id: None,
+        planned_start: None,
+        planned_end: None,
+        shift: None,
+        shift_class_version_id: None,
+        clear_shift: false,
+        expected_duration_hours: None,
+        planned_crew_size: crew,
+        clear_crew_size: clear,
+        urgency_code: None,
+        planned_downtime_hours: None,
+    };
+    for bad in [0, crate::planning::load::MAX_CREW_SIZE + 1] {
+        let (rv, _) = row_version(&db).await;
+        let err = crate::wo::workflow::actions::save_schedule(&db, save(rv, Some(bad), false))
+            .await
+            .expect_err("out of bounds");
+        assert!(format!("{err:?}").contains("PLANNING_CREW_SIZE_INVALID"), "{err:?}");
+    }
+    let (rv, _) = row_version(&db).await;
+    crate::wo::workflow::actions::save_schedule(&db, save(rv, Some(4), false))
+        .await
+        .expect("4 people");
+    assert_eq!(row_version(&db).await.1, Some(4));
+    let (rv, _) = row_version(&db).await;
+    crate::wo::workflow::actions::save_schedule(&db, save(rv, None, false))
+        .await
+        .expect("omitted keeps it");
+    assert_eq!(row_version(&db).await.1, Some(4));
+    let (rv, _) = row_version(&db).await;
+    crate::wo::workflow::actions::save_schedule(&db, save(rv, None, true))
+        .await
+        .expect("cleared");
+    assert_eq!(row_version(&db).await.1, None, "the crew size can be removed");
+    // The database refuses an impossible crew size whatever writes it (migration 207).
+    for value in ["99", "2.5", "0"] {
+        let err = db
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                &format!("UPDATE work_orders SET planned_crew_size = {value} WHERE id = ?"),
+                [wo_id.into()],
+            ))
+            .await
+            .expect_err("trigger");
+        assert!(err.to_string().contains("planned_crew_size"), "{err}");
+    }
+}
+
+#[tokio::test]
+async fn finance_counts_a_team_month_like_the_board() {
+    let db = setup_db().await;
+    let team_id = get_any_team_id(&db).await;
+    // 3 h × 2 people in May 2026.
+    let counted = insert_candidate(&db, "pm_occurrence", 7801, "ready", 100.0).await;
+    set_estimate(&db, counted, Some(3.0)).await;
+    set_crew(&db, counted, Some(2)).await;
+    scheduling::create_schedule_commitment(
+        &db,
+        1,
+        commit_input(counted, team_id, "2026-05-04T08:00", "2026-05-04T11:00"),
+    )
+    .await
+    .expect("counted job");
+    // Cancelled work in May 2026: left out.
+    let (wo_id, _) = create_planning_wo(&db, "Cancelled job").await;
+    let cancelled = insert_candidate(&db, "work_order", wo_id, "ready", 100.0).await;
+    scheduling::create_schedule_commitment(
+        &db,
+        1,
+        commit_input(cancelled, team_id, "2026-05-05T08:00", "2026-05-05T09:00"),
+    )
+    .await
+    .expect("cancelled job");
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE work_orders SET cancelled_at = '2026-05-01T00:00:00Z' WHERE id = ?",
+        [wo_id.into()],
+    ))
+    .await
+    .expect("cancel");
+    // May of another year: not merged into May 2026.
+    let other_year = insert_candidate(&db, "pm_occurrence", 7802, "ready", 100.0).await;
+    scheduling::create_schedule_commitment(
+        &db,
+        1,
+        commit_input(other_year, team_id, "2025-05-05T08:00", "2025-05-05T09:00"),
+    )
+    .await
+    .expect("2025 job");
+
+    let months = crate::planning::load::team_month_loads(&db, 2026)
+        .await
+        .expect("month loads");
+    assert!((months[&(team_id, 5)] - 6.0).abs() < 0.01, "{months:?}");
 }

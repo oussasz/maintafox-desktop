@@ -118,7 +118,7 @@
     "budgetThresholdHint": "Optional ceiling for labor cost. If the calculated estimate exceeds it, a variance warning is recorded.",
     "estimatedLaborCost": "Estimated labor cost",
     "estimatedLaborCostValue": "{{value}}",
-    "estimatedLaborCostHint": "Calculated automatically from assignee rate × committed hours. Final value is confirmed by the server on commit.",
+    "estimatedLaborCostHint": "An estimate: the job's labour hours (duration × crew size) × the assignee's rate. The server confirms it on commit.",
     "estimatedLaborCostNeedAssignee": "Select an assignee with a rate card, or see the candidate cost range when available.",
     "estimatedLaborCostNeedSlot": "Enter committed start and end to calculate the estimate.",
     "estimatedLaborCostNoRate": "No rate card for this assignee — estimate unavailable until a rate is configured.",
@@ -165,6 +165,7 @@
     },
     "notEstimated": "This work is not estimated: enter its duration and crew size on the work order or the PM before committing it.",
     "labourHours": "{{hours}} h of labour ({{duration}} h × {{crew}} people)",
+    "shiftTimeShort": "Each person works {{duration}} h, but the slot holds only {{shift}} h of shift time: extend the slot or plan overtime.",
     "capacityByDay": "{{day}}: {{share}} h of this job, {{remaining}} h free of {{available}} h"
   },
   "gantt": {

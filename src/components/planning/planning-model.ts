@@ -4,8 +4,8 @@
 
 import type { ResourceTimelineState } from "@/design-system/resource-timeline-tokens";
 import {
-  blockTypeToTimelineState,
   RESOURCE_TIMELINE_HORIZON_PRESETS,
+  blockTypeToTimelineState,
 } from "@/design-system/resource-timeline-tokens";
 import type {
   PlanningGanttSnapshot,
@@ -775,35 +775,107 @@ export function slotDays(startIso: string, endIso: string): Array<{ day: string;
   return out;
 }
 
+/** A capacity window's local wall-clock time (`YYYY-MM-DDTHH:MM:SS`, no offset ⇒ local) in ms. */
+function localWallMs(raw: string): number | null {
+  const ms = new Date(raw).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function overlapMs(aStart: number, aEnd: number, bStart: number, bEnd: number): number {
+  return Math.max(0, Math.min(aEnd, bEnd) - Math.max(aStart, bStart));
+}
+
 /**
- * Spreads labour hours over the slot's days by the team's hours each day and the share of the day
- * covered (mirrors `planning::load::spread`); a slot without any working hours keeps them on the
- * days it covers, so the overload shows.
+ * Spreads labour hours over working time (mirrors `planning::load::spread`): each day weighs its
+ * members' shift windows by the part inside the slot (a night shift belongs to the day it starts);
+ * hours of members without a known window count in full on the days the slot touches. Only a slot
+ * touching no working time at all keeps its hours on the calendar days it covers (the overload shows).
  */
 export function spreadLabour(
   labourHours: number,
-  days: Array<{ day: string; share: number }>,
-  availableByDay: (day: string) => number,
+  startIso: string,
+  endIso: string,
+  teamRows: TeamCapacityLoad[],
 ): Map<string, number> {
-  let weights = days.map((d) => ({ day: d.day, w: d.share * Math.max(0, availableByDay(d.day)) }));
-  if (weights.reduce((sum, d) => sum + d.w, 0) <= 0) {
-    weights = days.map((d) => ({ day: d.day, w: d.share }));
-  }
-  const total = weights.reduce((sum, d) => sum + d.w, 0);
+  const calendar = slotDays(startIso, endIso);
   const out = new Map<string, number>();
-  if (total <= 0) return out;
-  for (const { day, w } of weights) {
-    if (w > 0) out.set(day, (labourHours * w) / total);
+  const startMs = parseMs(startIso);
+  const endMs = parseMs(endIso);
+  if (calendar.length === 0 || !startMs || !endMs) return out;
+  const touched = new Set(calendar.map((d) => d.day));
+  let weights: Array<{ day: string; w: number }> = [];
+  for (const row of teamRows) {
+    let w = 0;
+    for (const win of row.work_windows) {
+      const s = localWallMs(win.start);
+      const e = localWallMs(win.end);
+      if (s == null || e == null || e <= s) continue;
+      w += (win.hours * overlapMs(startMs, endMs, s, e)) / (e - s);
+    }
+    if (row.unwindowed_hours > 0 && touched.has(row.work_date)) w += row.unwindowed_hours;
+    if (w > 0) weights.push({ day: row.work_date, w });
   }
+  if (weights.length === 0) weights = calendar.map((d) => ({ day: d.day, w: d.share }));
+  const total = weights.reduce((sum, d) => sum + d.w, 0);
+  if (total <= 0) return out;
+  for (const { day, w } of weights) out.set(day, (out.get(day) ?? 0) + (labourHours * w) / total);
   return out;
+}
+
+/**
+ * Shift time one person can give the slot: each day, the longest part of a member's shift window
+ * inside the slot, summed (hours). Null when a day it touches has hours without a known window.
+ */
+export function slotShiftHours(
+  startIso: string,
+  endIso: string,
+  teamRows: TeamCapacityLoad[],
+): number | null {
+  const startMs = parseMs(startIso);
+  const endMs = parseMs(endIso);
+  if (!startMs || !endMs || endMs <= startMs) return null;
+  const touched = new Set(slotDays(startIso, endIso).map((d) => d.day));
+  let total = 0;
+  for (const row of teamRows) {
+    if (row.unwindowed_hours > 0 && touched.has(row.work_date)) return null;
+    let longest = 0;
+    for (const win of row.work_windows) {
+      const s = localWallMs(win.start);
+      const e = localWallMs(win.end);
+      if (s == null || e == null) continue;
+      longest = Math.max(longest, overlapMs(startMs, endMs, s, e));
+    }
+    total += longest / 3_600_000;
+  }
+  return total;
 }
 
 export type SlotCapacityDay = TeamDayCapacity & { day: string; shareHours: number };
 
+/** The previous local day (`YYYY-MM-DD`): a night shift that started then may run into a slot. */
+function previousDay(day: string): string {
+  const d = new Date(`${day}T12:00:00`);
+  d.setDate(d.getDate() - 1);
+  return localDayOf(d.toISOString()) ?? day;
+}
+
+/** The team's capacity rows a slot can use: the day before it starts through its last day. */
+export function slotCapacityRows(
+  capacity: TeamCapacityLoad[] | null | undefined,
+  teamId: number,
+  startIso: string,
+  endIso: string,
+): TeamCapacityLoad[] {
+  const days = slotDays(startIso, endIso);
+  const usable = new Set(days.map((d) => d.day));
+  const first = days[0]?.day;
+  if (first) usable.add(previousDay(first));
+  return (capacity ?? []).filter((c) => c.team_id === teamId && usable.has(c.work_date));
+}
+
 /**
- * Capacity over every day of the slot, as the backend gate checks it: the work's labour hours (its
- * estimate — one person per work order until a planned crew size exists) spread over the slot's
- * working days, against each day's remaining hours.
+ * Capacity over the days a slot uses, as the backend gate checks it: the work's labour hours
+ * (duration × crew size) spread over the working time it covers, against each day's remaining hours.
  */
 export function checkSlotCapacity(args: {
   capacity: TeamCapacityLoad[] | null | undefined;
@@ -813,17 +885,24 @@ export function checkSlotCapacity(args: {
   labourHours: number;
 }): { days: SlotCapacityDay[]; overloaded: SlotCapacityDay | null; noSchedule: boolean } {
   const { capacity, teamId, startIso, endIso, labourHours } = args;
-  const days = slotDays(startIso, endIso);
-  const byDay = new Map(days.map((d) => [d.day, resolveTeamDayCapacity(capacity, teamId, d.day)]));
-  const shares = spreadLabour(labourHours, days, (day) => byDay.get(day)?.availableHours ?? 0);
-  const rows: SlotCapacityDay[] = days.map((d) => ({
-    ...(byDay.get(d.day) as TeamDayCapacity),
-    day: d.day,
-    shareHours: shares.get(d.day) ?? 0,
+  const days = slotDays(startIso, endIso).map((d) => d.day);
+  const shares = spreadLabour(
+    labourHours,
+    startIso,
+    endIso,
+    slotCapacityRows(capacity, teamId, startIso, endIso),
+  );
+  const shown = [...new Set([...days, ...shares.keys()])].sort();
+  const rows: SlotCapacityDay[] = shown.map((day) => ({
+    ...resolveTeamDayCapacity(capacity, teamId, day),
+    day,
+    shareHours: shares.get(day) ?? 0,
   }));
   const overloaded = rows.find((r) => r.shareHours > r.remainingHours + 0.01) ?? null;
+  const slotRows = rows.filter((r) => days.includes(r.day));
   const noSchedule =
-    rows.length > 0 && rows.every((r) => r.basis === "no_schedule" || r.basis === "no_members");
+    slotRows.length > 0 &&
+    slotRows.every((r) => r.basis === "no_schedule" || r.basis === "no_members");
   return { days: rows, overloaded, noSchedule };
 }
 

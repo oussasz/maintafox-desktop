@@ -118,7 +118,7 @@
     "budgetThresholdHint": "Plafond optionnel de coût main-d'œuvre. Si l'estimation calculée le dépasse, un avertissement d'écart est enregistré.",
     "estimatedLaborCost": "Coût main-d'œuvre estimé",
     "estimatedLaborCostValue": "{{value}}",
-    "estimatedLaborCostHint": "Calculé automatiquement (taux de l'affecté × heures engagées). La valeur définitive est confirmée par le serveur à l'engagement.",
+    "estimatedLaborCostHint": "Une estimation : heures de main-d'œuvre du travail (durée × effectif) × taux de l'affecté. Le serveur la confirme à l'engagement.",
     "estimatedLaborCostNeedAssignee": "Choisissez un affecté avec une grille de taux, ou consultez la fourchette du candidat si disponible.",
     "estimatedLaborCostNeedSlot": "Saisissez le début et la fin engagés pour calculer l'estimation.",
     "estimatedLaborCostNoRate": "Pas de grille de taux pour cet affecté — estimation indisponible tant qu'un taux n'est pas configuré.",
@@ -165,6 +165,7 @@
     },
     "notEstimated": "Ce travail n'est pas estimé : saisissez sa durée et son effectif sur l'OT ou le PM avant de l'engager.",
     "labourHours": "{{hours}} h de main-d'œuvre ({{duration}} h × {{crew}} pers.)",
+    "shiftTimeShort": "Chaque personne travaille {{duration}} h, mais le créneau ne contient que {{shift}} h de poste : allongez le créneau ou prévoyez des heures supplémentaires.",
     "capacityByDay": "{{day}} : {{share}} h de ce travail, {{remaining}} h libres sur {{available}} h"
   },
   "gantt": {

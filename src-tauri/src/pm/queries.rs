@@ -598,7 +598,7 @@ pub async fn update_pm_plan_version(
     let tx = db.begin().await?;
     tx.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
         "UPDATE pm_plan_versions SET effective_from=?,effective_to=?,trigger_definition_json=?,task_package_json=?,required_parts_json=?,required_skills_json=?,required_tools_json=?,estimated_duration_hours=?,planned_crew_size=?,estimated_labor_cost=?,estimated_parts_cost=?,estimated_service_cost=?,change_reason=?,row_version=row_version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=? AND row_version=?",
-        [effective_from.into(),effective_to.into(),trigger_definition_json.into(),input.task_package_json.or(row.try_get("", "task_package_json")?).into(),input.required_parts_json.or(row.try_get("", "required_parts_json")?).into(),required_skills_json.into(),input.required_tools_json.or(row.try_get("", "required_tools_json")?).into(),input.estimated_duration_hours.or(row.try_get("", "estimated_duration_hours")?).into(),input.planned_crew_size.or(row.try_get("", "planned_crew_size")?).into(),input.estimated_labor_cost.or(row.try_get("", "estimated_labor_cost")?).into(),input.estimated_parts_cost.or(row.try_get("", "estimated_parts_cost")?).into(),input.estimated_service_cost.or(row.try_get("", "estimated_service_cost")?).into(),input.change_reason.or(row.try_get("", "change_reason")?).into(),version_id.into(),expected_row_version.into()])).await?;
+        [effective_from.into(),effective_to.into(),trigger_definition_json.into(),input.task_package_json.or(row.try_get("", "task_package_json")?).into(),input.required_parts_json.or(row.try_get("", "required_parts_json")?).into(),required_skills_json.into(),input.required_tools_json.or(row.try_get("", "required_tools_json")?).into(),input.estimated_duration_hours.or(row.try_get("", "estimated_duration_hours")?).into(),(if input.clear_planned_crew_size { None } else { input.planned_crew_size.or(row.try_get("", "planned_crew_size")?) }).into(),input.estimated_labor_cost.or(row.try_get("", "estimated_labor_cost")?).into(),input.estimated_parts_cost.or(row.try_get("", "estimated_parts_cost")?).into(),input.estimated_service_cost.or(row.try_get("", "estimated_service_cost")?).into(),input.change_reason.or(row.try_get("", "change_reason")?).into(),version_id.into(),expected_row_version.into()])).await?;
     let row = tx.query_one(Statement::from_sql_and_values(DbBackend::Sqlite, "SELECT id,pm_plan_id,version_no,status,effective_from,effective_to,trigger_definition_json,task_package_json,required_parts_json,required_skills_json,required_tools_json,estimated_duration_hours,planned_crew_size,estimated_labor_cost,estimated_parts_cost,estimated_service_cost,change_reason,row_version,created_at,updated_at FROM pm_plan_versions WHERE id = ?", [version_id.into()])).await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("updated version missing")))?;
     let version = decode_pm_plan_version_row(&row)?;
@@ -1475,7 +1475,12 @@ pub async fn transition_pm_occurrence(
                 planned_end: None,
                 shift: None,
                 expected_duration_hours: content.expected_duration_hours,
-                creator_id: input.actor_id.unwrap_or(1),
+                // The OT's creator is the person who generated it: never a stand-in user.
+                creator_id: input.actor_id.ok_or_else(|| {
+                    AppError::ValidationFailed(vec![
+                        "An acting user is required to generate the work order of a PM occurrence.".to_string(),
+                    ])
+                })?,
                 requires_permit: Some(content.requires_permit),
             },
         )
@@ -2251,7 +2256,16 @@ pub async fn execute_pm_occurrence(
     )
     .await?;
 
-    let actor_id = input.actor_id.unwrap_or(1);
+    // Recorded as given; without one the execution has no actor (never a stand-in user).
+    let actor_id = input.actor_id;
+    // A follow-up request or work order is created by someone: it needs the acting user.
+    let creator = || {
+        actor_id.ok_or_else(|| {
+            AppError::ValidationFailed(vec![
+                "An acting user is required to create the follow-up of a PM finding.".to_string(),
+            ])
+        })
+    };
     let mut work_order_id = input.work_order_id.or(occurrence.linked_work_order_id);
     if let (Some(linked), Some(provided)) = (occurrence.linked_work_order_id, input.work_order_id) {
         if linked != provided {
@@ -2358,12 +2372,12 @@ pub async fn execute_pm_occurrence(
         let mut follow_up_wo_id: Option<i64> = None;
 
         if finding.create_follow_up_di == Some(true) {
-            follow_up_di_id = Some(create_follow_up_di_from_finding(db, &occurrence, &finding, actor_id).await?);
+            follow_up_di_id = Some(create_follow_up_di_from_finding(db, &occurrence, &finding, creator()?).await?);
         }
 
         if finding.create_follow_up_work_order == Some(true) {
             follow_up_wo_id =
-                Some(create_follow_up_wo_from_finding(db, &occurrence, &finding, actor_id, follow_up_di_id).await?);
+                Some(create_follow_up_wo_from_finding(db, &occurrence, &finding, creator()?, follow_up_di_id).await?);
         }
 
         db.execute(Statement::from_sql_and_values(
@@ -2394,8 +2408,7 @@ pub async fn execute_pm_occurrence(
                 PmEventOrigin::Person,
             )
             .await;
-            let _ = emit_pm_occurrence_activity(db, &occurrence, "pm.finding.follow_up_created", Some(actor_id), None)
-                .await;
+            let _ = emit_pm_occurrence_activity(db, &occurrence, "pm.finding.follow_up_created", actor_id, None).await;
         }
     }
 

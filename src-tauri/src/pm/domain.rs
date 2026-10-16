@@ -137,6 +137,9 @@ pub struct UpdatePmPlanVersionInput {
     /// People the job takes; copied onto the OT the PM generates.
     #[serde(default)]
     pub planned_crew_size: Option<i64>,
+    /// Removes the crew size (`planned_crew_size` omitted keeps it).
+    #[serde(default)]
+    pub clear_planned_crew_size: bool,
     pub estimated_labor_cost: Option<f64>,
     pub estimated_parts_cost: Option<f64>,
     pub estimated_service_cost: Option<f64>,

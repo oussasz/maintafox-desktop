@@ -170,7 +170,11 @@ pub async fn has_column(db: &DatabaseConnection, table: &str, column: &str) -> A
 
 // ── Schedule compliance ────────────────────────────────────────────────────────────────────
 
-/// Committed hours and hours completed as scheduled, for commitments ending in the window.
+/// SMRP 5.4.2 schedule compliance (hours): labour hours of scheduled work completed as scheduled ÷
+/// labour hours scheduled, for commitments ending in the window. A commitment weighs its planned
+/// labour hours (duration × crew size, `planning::load`); one from before those were recorded weighs
+/// its slot. Cancelled work (work order or PM occurrence cancelled, request declined or archived)
+/// left the schedule and does not count.
 pub async fn schedule_compliance(
     db: &DatabaseConnection,
     window: SmrpWindow,
@@ -180,7 +184,8 @@ pub async fn schedule_compliance(
     let row = one_row(
         db,
         "WITH c AS ( \
-           SELECT (julianday(sc.committed_end) - julianday(sc.committed_start)) * 24.0 AS hours, \
+           SELECT COALESCE(sc.planned_labor_hours, \
+                           (julianday(sc.committed_end) - julianday(sc.committed_start)) * 24.0) AS hours, \
                   sc.committed_end AS committed_end, \
                   CASE sc.source_type \
                     WHEN 'work_order' THEN sc.source_id \
@@ -190,6 +195,13 @@ pub async fn schedule_compliance(
            FROM schedule_commitments sc \
            WHERE datetime(sc.committed_end) >= datetime(?) AND datetime(sc.committed_end) < datetime(?) \
              AND julianday(sc.committed_end) > julianday(sc.committed_start) \
+             AND NOT ( \
+               (sc.source_type = 'work_order' AND EXISTS (SELECT 1 FROM work_orders cw \
+                  WHERE cw.id = sc.source_id AND cw.cancelled_at IS NOT NULL)) \
+               OR (sc.source_type = 'pm_occurrence' AND EXISTS (SELECT 1 FROM pm_occurrences cp \
+                  WHERE cp.id = sc.source_id AND cp.status = 'cancelled')) \
+               OR (sc.source_type = 'inspection_follow_up' AND EXISTS (SELECT 1 FROM intervention_requests cr \
+                  WHERE cr.id = sc.source_id AND (cr.declined_at IS NOT NULL OR cr.archived_at IS NOT NULL)))) \
          ) \
          SELECT COALESCE(SUM(c.hours), 0) AS scheduled, \
                 COALESCE(SUM(CASE WHEN COALESCE(w.mechanically_completed_at, w.actual_end, w.closed_at) IS NOT NULL \
