@@ -192,6 +192,7 @@ mod m20261016_000206_planned_crew_size;
 mod m20261016_000208_notification_inbox;
 mod m20261016_000209_notification_subscriptions;
 mod m20261017_000207_crew_size_bounds;
+mod m20261017_000213_settings_change_values;
 mod m20261101_000036_activity_audit_log;
 mod m20261201_000037_observability_permissions;
 mod m_test;
@@ -397,6 +398,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261017_000207_crew_size_bounds::Migration),
             Box::new(m20261016_000208_notification_inbox::Migration),
             Box::new(m20261016_000209_notification_subscriptions::Migration),
+            Box::new(m20261017_000213_settings_change_values::Migration),
         ]
     }
 }

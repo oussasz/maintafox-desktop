@@ -1078,9 +1078,43 @@ export interface SettingsChangeEvent {
   old_value_hash: string | null;
   new_value_hash: string | null;
   changed_by_id: number | null;
+  /** Display name (or username) of the author. */
+  changed_by_name: string | null;
   changed_at: string;
   required_step_up: boolean;
   apply_result: string;
+  /** Values before / after (null on events recorded before values were kept). */
+  old_value_json: string | null;
+  new_value_json: string | null;
+}
+
+/** A setting in use, as listed by `get_settings_overview`. */
+export interface SettingDefinitionView {
+  key: string;
+  category: string;
+  scope: string;
+  kind: "choice" | "integer" | "currency" | "month" | "document_header" | "module";
+  options: string[];
+  min: number | null;
+  max: number | null;
+  /** Value shipped with the application ("Valeur livrée"). */
+  shipped_value_json: string;
+  current_value_json: string | null;
+  differs_from_shipped: boolean;
+  /** `section` = edited in its Settings section; `dedicated` = own panel or module screen. */
+  editor: "section" | "dedicated";
+  risk: "low" | "high";
+  required_permission: string;
+  /** Stored data depends on the current value: the setting cannot change. */
+  locked_reason: string | null;
+  last_modified_at: string | null;
+  last_modified_by: string | null;
+}
+
+export interface SettingsOverview {
+  definitions: SettingDefinitionView[];
+  /** Roles whose holders may change settings (`adm.settings`). */
+  roles_allowed_to_change: string[];
 }
 
 // â”€â”€â”€ Notifications â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -5518,6 +5552,9 @@ export interface RoleAssignmentSummary {
   valid_from: string | null;
   valid_to: string | null;
   is_emergency: boolean;
+  emergency_expires_at: string | null;
+  /** Name of the org node / team the assignment is limited to (null = whole plant). */
+  scope_label: string | null;
 }
 
 export interface UserWithRoles {
@@ -5531,7 +5568,10 @@ export interface UserWithRoles {
   is_active: boolean;
   force_password_change: boolean;
   last_seen_at: string | null;
+  last_login_at: string | null;
   locked_until: string | null;
+  /** A sign-in lockout is still running. */
+  is_locked: boolean;
   roles: RoleAssignmentSummary[];
 }
 
@@ -5560,8 +5600,45 @@ export interface UserDetail {
 
 export interface UserListFilter {
   is_active?: boolean;
+  status?: "active" | "inactive" | "locked";
   identity_mode?: string;
   search?: string;
+  role_id?: number;
+  /** Users with an assignment on this org node or below it. */
+  org_node_id?: number;
+}
+
+/** Disable / enable an account; the reason goes to the admin change ledger. */
+export interface SetUserActiveInput {
+  user_id: number;
+  reason: string;
+}
+
+/** Org node a role assignment can be limited to (covers the node and below). */
+export interface AssignableScopeNode {
+  id: number;
+  parent_id: number | null;
+  code: string;
+  name: string;
+  type_label: string | null;
+  depth: number;
+}
+
+export interface CloneRoleInput {
+  source_role_id: number;
+  name: string;
+  description?: string | null;
+}
+
+export interface RoleHolderCount {
+  role_id: number;
+  active_users: number;
+}
+
+export interface RoleEditorCatalog {
+  permissions: PermissionWithSystem[];
+  dependencies: PermissionDependencyRow[];
+  role_holders: RoleHolderCount[];
 }
 
 export interface UpdateUserInput {
@@ -5707,6 +5784,7 @@ export interface GrantEmergencyElevationInput {
 
 export interface RevokeEmergencyElevationInput {
   assignment_id: number;
+  reason?: string | null;
 }
 
 // â”€â”€â”€ Admin Governance â€” Session Visibility (SP06-F03) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -5815,6 +5893,21 @@ export interface AdminEventFilter {
   apply_result?: string;
   limit?: number;
   offset?: number;
+}
+
+export interface AdminEventFacetOption {
+  id: number;
+  label: string;
+  count: number;
+}
+
+/** Filter choices taken from the ledger events the caller may see. */
+export interface AdminEventFacets {
+  actions: string[];
+  actors: AdminEventFacetOption[];
+  target_users: AdminEventFacetOption[];
+  target_roles: AdminEventFacetOption[];
+  apply_results: string[];
 }
 
 export interface AdminChangeEventDetail {

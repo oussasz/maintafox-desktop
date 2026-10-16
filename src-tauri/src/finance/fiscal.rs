@@ -90,7 +90,20 @@ pub async fn guard_fiscal_start_write<C: ConnectionTrait>(db: &C, key: &str, val
     if fiscal_start_month(db).await.ok() == Some(month) {
         return Ok(());
     }
-    let in_use = db
+    if fiscal_start_in_use(db).await? {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_FIN_FISCAL_START_LOCKED: budget actuals or closed periods already exist; changing the start \
+             month would move every past posting to another month"
+                .to_string(),
+        ]));
+    }
+    Ok(())
+}
+
+/// Budget actuals, closed periods or posted settlements exist: their periods are stored as
+/// fiscal periods, so the start month can no longer change.
+pub async fn fiscal_start_in_use<C: ConnectionTrait>(db: &C) -> AppResult<bool> {
+    Ok(db
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
             "SELECT EXISTS (SELECT 1 FROM budget_actuals)
@@ -101,15 +114,7 @@ pub async fn guard_fiscal_start_write<C: ConnectionTrait>(db: &C, key: &str, val
         .await?
         .and_then(|r| r.try_get::<i64>("", "in_use").ok())
         .unwrap_or(0)
-        != 0;
-    if in_use {
-        return Err(AppError::ValidationFailed(vec![
-            "GATE_FIN_FISCAL_START_LOCKED: budget actuals or closed periods already exist; changing the start \
-             month would move every past posting to another month"
-                .to_string(),
-        ]));
-    }
-    Ok(())
+        != 0)
 }
 
 #[cfg(test)]

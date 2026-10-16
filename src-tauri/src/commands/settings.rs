@@ -7,7 +7,7 @@ use serde::Deserialize;
 use tauri::{AppHandle, Manager, State};
 
 use crate::auth::rbac::PermissionScope;
-use crate::errors::AppResult;
+use crate::errors::{AppError, AppResult};
 use crate::settings::{self, AppSetting, PolicySnapshot, SessionPolicy, SettingsChangeEvent};
 use crate::state::AppState;
 use crate::{require_permission, require_session, require_step_up};
@@ -72,7 +72,8 @@ pub struct SetSettingPayload {
 }
 
 /// Write a setting value. Requires `adm.settings`.
-/// Existing settings with `setting_risk = high` also require step-up.
+/// Only settings of the catalog are accepted, each validated against its kind; settings with
+/// `setting_risk = high` also require step-up.
 #[tauri::command]
 pub async fn set_setting(payload: SetSettingPayload, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
@@ -83,28 +84,50 @@ pub async fn set_setting(payload: SetSettingPayload, state: State<'_, AppState>)
         PermissionScope::Global
     );
 
-    let scope = payload.scope.unwrap_or_else(|| "tenant".to_string());
+    let Some(def) = settings::catalog::definition(&payload.key) else {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "Unknown setting '{}'.",
+            payload.key
+        )]));
+    };
+    let scope = payload.scope.unwrap_or_else(|| def.scope.to_string());
+    if scope != def.scope {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "Setting '{}' is stored at {} scope, not '{scope}'.",
+            def.key, def.scope
+        )]));
+    }
 
     let existing = settings::get_setting(&state.db, &payload.key, &scope).await?;
-    if let Some(ref s) = existing {
-        if s.setting_risk == "high" {
-            require_step_up!(state);
-        }
+    let high_risk = def.risk == "high" || existing.as_ref().is_some_and(|s| s.setting_risk == "high");
+    if high_risk {
+        require_step_up!(state);
+    }
+
+    let mut value_json = settings::catalog::validate_value(def, &payload.value_json)?;
+    if def.kind == settings::catalog::SettingKind::DocumentHeader {
+        value_json = settings::branding::keep_stored_logo(&state.db, &value_json).await?;
     }
 
     let summary = payload
         .change_summary
         .unwrap_or_else(|| format!("Setting '{}' updated via IPC", payload.key));
 
-    settings::set_setting(
-        &state.db,
-        &payload.key,
-        &scope,
-        &payload.value_json,
-        Some(user.user_id),
-        &summary,
-    )
-    .await
+    settings::set_setting(&state.db, def.key, &scope, &value_json, Some(user.user_id), &summary).await
+}
+
+/// Settings in use with their shipped and current values, lock state, last change and the roles
+/// allowed to change them. Requires `adm.settings`.
+#[tauri::command]
+pub async fn get_settings_overview(state: State<'_, AppState>) -> AppResult<settings::catalog::SettingsOverview> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_SETTINGS,
+        PermissionScope::Global
+    );
+    settings::catalog::overview(&state.db).await
 }
 
 /// Return the active policy snapshot for a domain.
@@ -125,6 +148,7 @@ pub async fn get_session_policy(state: State<'_, AppState>) -> AppResult<Session
 #[tauri::command]
 pub async fn list_setting_change_events(
     limit: Option<i64>,
+    setting_key: Option<String>,
     state: State<'_, AppState>,
 ) -> AppResult<Vec<SettingsChangeEvent>> {
     let user = require_session!(state);
@@ -134,7 +158,7 @@ pub async fn list_setting_change_events(
         crate::rbac::permissions::ADM_SETTINGS,
         PermissionScope::Global
     );
-    settings::list_change_events(&state.db, limit.unwrap_or(50)).await
+    settings::list_change_events(&state.db, limit.unwrap_or(50), setting_key.as_deref()).await
 }
 
 #[derive(Debug, Deserialize)]

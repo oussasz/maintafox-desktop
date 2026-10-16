@@ -246,7 +246,7 @@
     "integrations": "System & Sync",
     "profileHint": "Account details, password, PIN, trusted devices, and session history.",
     "notificationsHint": "Inbox, acknowledgements, snoozes, and per-category preferences.",
-    "generalHint": "Language, appearance, and system preferences.",
+    "generalHint": "Language, currency and fiscal year, work orders, reliability, printed document header. Each setting shows its shipped value, who may change it and its history.",
     "securityHint": "Password policy, session policy, activity feed, and audit log.",
     "integrationsHint": "Sync status, license, connections, and diagnostics."
   },
@@ -326,5 +326,44 @@
     "copied": "Key copied to clipboard",
     "copyError": "Copy failed",
     "revealError": "Could not display the recovery key"
+  },
+  "catalog": {
+    "shipped": "Shipped value",
+    "changed": "Changed",
+    "lastChange": "Changed by {{who}} on {{when}}",
+    "restoreShipped": "Restore the shipped value",
+    "restoredSummary": "Setting '{{key}}' restored to its shipped value",
+    "showHistory": "Change history",
+    "hideHistory": "Hide history",
+    "system": "System",
+    "whoMayChange": "Can be changed by the roles: {{roles}} (permission adm.settings)",
+    "nobodyMayChange": "No active role holds the adm.settings permission.",
+    "outOfRange": "Value out of range ({{min}} to {{max}}).",
+    "locked": {
+      "locale.fiscal_year_start_month": "Locked: budget actuals, closed periods or postings are already stored by fiscal period. Changing the start month would move the whole past.",
+      "locale.currency_code": "Locked: stock, receipts or postings are already valued in this currency. Changing it would relabel every stored amount."
+    },
+    "help": {
+      "locale.primary_language": "Default interface language for every user.",
+      "locale.fallback_language": "Language used when a text is missing in the primary language.",
+      "locale.currency_code": "Currency in which stock, purchases and costs are valued (ISO 4217 code).",
+      "locale.fiscal_year_start_month": "First month of the fiscal year: budget periods, postings, period close.",
+      "wo.reopen_window_days": "Days after closure during which a closed work order can be reopened (0 = never).",
+      "ram.fmeca_rpn_critical_threshold": "From this risk priority number (S × O × D) an FMECA failure mode is critical.",
+      "backup.retention_daily": "Number of daily scheduled backups kept (at least one).",
+      "backup.retention_weekly": "Number of weekly backups kept in addition.",
+      "backup.retention_monthly": "Number of monthly backups kept in addition."
+    },
+    "units": {
+      "wo.reopen_window_days_one": "{{count}} day",
+      "wo.reopen_window_days_other": "{{count}} days",
+      "ram.fmeca_rpn_critical_threshold": "{{count}}",
+      "backup.retention_daily_one": "{{count}} backup",
+      "backup.retention_daily_other": "{{count}} backups",
+      "backup.retention_weekly_one": "{{count}} week",
+      "backup.retention_weekly_other": "{{count}} weeks",
+      "backup.retention_monthly_one": "{{count}} month",
+      "backup.retention_monthly_other": "{{count}} months"
+    }
   }
 }

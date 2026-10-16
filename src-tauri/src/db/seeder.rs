@@ -6,44 +6,6 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, Value};
 /// Increment this when adding new system domains or values in a release.
 pub const SEED_SCHEMA_VERSION: i32 = 2;
 
-/// Baseline settings seeded on first startup after settings migration is applied.
-/// Tuple format: (`setting_key`, category, `setting_scope`, `setting_value_json`)
-const DEFAULT_SETTINGS: &[(&str, &str, &str, &str)] = &[
-    ("ram.fmeca_rpn_critical_threshold", "reliability", "tenant", r"150"),
-    // Plant FMECA rating grids (severity / occurrence / detection, criticality matrix).
-    (
-        crate::reliability::study::scales::SETTING_KEY,
-        "reliability",
-        "tenant",
-        crate::reliability::study::scales::DEFAULT_RATING_SCALES_JSON,
-    ),
-    // PRD §6.5: a closed WO may be reopened within this many days of its closure.
-    ("wo.reopen_window_days", "work_orders", "tenant", r"30"),
-    ("locale.primary_language", "localization", "tenant", r#""fr""#),
-    ("locale.fallback_language", "localization", "tenant", r#""en""#),
-    ("locale.date_format", "localization", "tenant", r#""DD/MM/YYYY""#),
-    ("locale.number_format", "localization", "tenant", r#""fr-FR""#),
-    ("locale.week_start_day", "localization", "tenant", r"1"),
-    ("locale.currency_code", "localization", "tenant", r#""DZD""#),
-    // Month the company's fiscal year starts in (budget periods, settlement, period close).
-    ("locale.fiscal_year_start_month", "localization", "tenant", r"1"),
-    ("appearance.color_mode", "appearance", "tenant", r#""light""#),
-    ("appearance.density", "appearance", "tenant", r#""standard""#),
-    ("appearance.text_scale", "appearance", "tenant", r"1.0"),
-    ("updater.release_channel", "system", "device", r#""stable""#),
-    ("updater.auto_check", "system", "device", r"true"),
-    ("backup.retention_daily", "backup", "tenant", r"7"),
-    ("backup.retention_weekly", "backup", "tenant", r"4"),
-    ("backup.retention_monthly", "backup", "tenant", r"12"),
-    ("diagnostics.log_retention_days", "system", "device", r"30"),
-    (
-        "documents.default_header",
-        "documents",
-        "tenant",
-        r#"{"version":1,"content_json":{"type":"doc","content":[{"type":"paragraph"}]},"html":"","logo_relative_path":null}"#,
-    ),
-];
-
 /// Inserts all system-governed lookup domains and values idempotently.
 ///
 /// Safe to call on every startup: uses INSERT OR IGNORE semantics.
@@ -2290,19 +2252,23 @@ pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
 pub async fn seed_default_settings(db: &DatabaseConnection) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
 
-    for (setting_key, category, setting_scope, setting_value_json) in DEFAULT_SETTINGS {
+    // Shipped values come from the settings catalog (single source of the "Valeur livree").
+    for def in crate::settings::catalog::SETTINGS_CATALOG {
+        let (setting_key, category, setting_scope, setting_value_json) =
+            (&def.key, &def.category, &def.scope, &def.shipped_value_json);
         // Insert missing rows; do not overwrite tenant-customized values.
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             r"INSERT OR IGNORE INTO app_settings
                    (setting_key, category, setting_scope, setting_value_json,
                     setting_risk, validation_status, last_modified_at)
-               VALUES (?, ?, ?, ?, 'low', 'valid', ?)",
+               VALUES (?, ?, ?, ?, ?, 'valid', ?)",
             [
                 (*setting_key).into(),
                 (*category).into(),
                 (*setting_scope).into(),
                 (*setting_value_json).into(),
+                def.risk.into(),
                 now.clone().into(),
             ],
         ))
@@ -2349,7 +2315,7 @@ pub async fn seed_default_settings(db: &DatabaseConnection) -> AppResult<()> {
     }
 
     tracing::info!(
-        count = DEFAULT_SETTINGS.len(),
+        count = crate::settings::catalog::SETTINGS_CATALOG.len(),
         "seed_default_settings: baseline settings ensured (idempotent)"
     );
 
@@ -2923,7 +2889,7 @@ mod tests {
     #[test]
     fn default_settings_count_is_expected() {
         assert_eq!(
-            DEFAULT_SETTINGS.len(),
+            crate::settings::catalog::SETTINGS_CATALOG.len(),
             // +locale.currency_code, +ram.fmeca_rpn_critical_threshold, +wo.reopen_window_days,
             // +ram.fmeca_rating_scales, +locale.fiscal_year_start_month
             20,

@@ -246,7 +246,7 @@
     "integrations": "Système & Sync",
     "profileHint": "Informations du compte, mot de passe, PIN, appareils de confiance et historique de session.",
     "notificationsHint": "Boîte de réception, accusés, reports et préférences par catégorie.",
-    "generalHint": "Langue, apparence et préférences système.",
+    "generalHint": "Langue, devise et exercice fiscal, ordres de travail, fiabilité, en-tête des documents imprimés. Chaque paramètre montre sa valeur livrée, qui peut le modifier et son historique.",
     "securityHint": "Politique mot de passe, session, journal d'activité et audit.",
     "integrationsHint": "État de sync, licence, connexions et diagnostics."
   },
@@ -326,5 +326,44 @@
     "copied": "Clé copiée dans le presse-papiers",
     "copyError": "Copie impossible",
     "revealError": "Impossible d’afficher la clé de récupération"
+  },
+  "catalog": {
+    "shipped": "Valeur livrée",
+    "changed": "Modifiée",
+    "lastChange": "Modifiée par {{who}} le {{when}}",
+    "restoreShipped": "Revenir à la valeur livrée",
+    "restoredSummary": "Paramètre '{{key}}' remis à la valeur livrée",
+    "showHistory": "Historique des changements",
+    "hideHistory": "Masquer l'historique",
+    "system": "Système",
+    "whoMayChange": "Modifiable par les rôles : {{roles}} (permission adm.settings)",
+    "nobodyMayChange": "Aucun rôle actif ne détient la permission adm.settings.",
+    "outOfRange": "Valeur hors limites ({{min}} à {{max}}).",
+    "locked": {
+      "locale.fiscal_year_start_month": "Verrouillé : des réalisés budgétaires, des périodes clôturées ou des imputations sont déjà enregistrés par période fiscale. Changer le mois de début déplacerait tout le passé.",
+      "locale.currency_code": "Verrouillé : du stock, des réceptions ou des imputations sont déjà valorisés dans cette devise. La changer réétiquetterait tous les montants enregistrés."
+    },
+    "help": {
+      "locale.primary_language": "Langue de l'interface par défaut pour tous les utilisateurs.",
+      "locale.fallback_language": "Langue utilisée quand un texte manque dans la langue principale.",
+      "locale.currency_code": "Devise de valorisation du stock, des achats et des coûts (code ISO 4217).",
+      "locale.fiscal_year_start_month": "Mois de début de l'exercice : périodes budgétaires, imputations, clôtures.",
+      "wo.reopen_window_days": "Nombre de jours après clôture pendant lesquels un OT clôturé peut être rouvert (0 = jamais).",
+      "ram.fmeca_rpn_critical_threshold": "À partir de cet indice de priorité de risque (G × O × D), un mode de défaillance AMDEC est critique.",
+      "backup.retention_daily": "Nombre de sauvegardes planifiées quotidiennes conservées (au moins une).",
+      "backup.retention_weekly": "Nombre de sauvegardes hebdomadaires conservées en plus.",
+      "backup.retention_monthly": "Nombre de sauvegardes mensuelles conservées en plus."
+    },
+    "units": {
+      "wo.reopen_window_days_one": "{{count}} jour",
+      "wo.reopen_window_days_other": "{{count}} jours",
+      "ram.fmeca_rpn_critical_threshold": "{{count}}",
+      "backup.retention_daily_one": "{{count}} sauvegarde",
+      "backup.retention_daily_other": "{{count}} sauvegardes",
+      "backup.retention_weekly_one": "{{count}} semaine",
+      "backup.retention_weekly_other": "{{count}} semaines",
+      "backup.retention_monthly_one": "{{count}} mois",
+      "backup.retention_monthly_other": "{{count}} mois"
+    }
   }
 }
