@@ -213,7 +213,7 @@ export function LockoutPolicyPanel() {
           label={t("lockoutPolicy.maxAttempts")}
           value={policy.max_attempts}
           onChange={(v) => setPolicy({ ...policy, max_attempts: v })}
-          min={1}
+          min={3}
           max={20}
         />
         <NumberField

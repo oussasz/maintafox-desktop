@@ -9,6 +9,7 @@ import { templatePermissions } from "@/components/admin/RoleEditorPanel";
 import { parseSnapshotValues } from "@/components/settings/PolicyEditorPanel";
 import { SettingsCatalogSections } from "@/components/settings/SettingsCatalogSections";
 import type { SettingDefinitionView } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: (key: string) => key }),
@@ -20,7 +21,7 @@ const currencyDef: SettingDefinitionView = {
   category: "localization",
   editor: "section",
   risk: "high",
-  required_permission: "adm.settings",
+  required_permission: P.ADM_SETTINGS,
   kind: "currency",
   options: [],
   min: null,
@@ -98,11 +99,9 @@ describe("unreadable stored data is reported, not blanked", () => {
   });
 
   it("role template permissions", () => {
-    expect(templatePermissions({ module_set_json: '["ot.view","di.view"]' })).toEqual([
-      "ot.view",
-      "di.view",
-    ]);
+    const stored = JSON.stringify([P.OT_VIEW, P.DI_VIEW]);
+    expect(templatePermissions({ module_set_json: stored })).toEqual([P.OT_VIEW, P.DI_VIEW]);
     expect(templatePermissions({ module_set_json: "{broken" })).toBeNull();
-    expect(templatePermissions({ module_set_json: '["ot.view",3]' })).toBeNull();
+    expect(templatePermissions({ module_set_json: JSON.stringify([P.OT_VIEW, 3]) })).toBeNull();
   });
 });

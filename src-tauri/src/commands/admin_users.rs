@@ -2679,9 +2679,9 @@ pub(crate) async fn grant_emergency_elevation_impl(
         DbBackend::Sqlite,
         "INSERT INTO user_scope_assignments \
          (entity_sync_id, user_id, role_id, scope_type, scope_reference, \
-          is_emergency, emergency_reason, emergency_expires_at, \
+          is_emergency, emergency_reason, emergency_expires_at, valid_to, \
           assigned_by_id, notes, created_at, updated_at) \
-         VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)",
+         VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)",
         [
             entity_sync_id.into(),
             input.user_id.into(),
@@ -2689,6 +2689,8 @@ pub(crate) async fn grant_emergency_elevation_impl(
             input.scope_type.clone().into(),
             scope_reference.clone().into(),
             reason.clone().into(),
+            expires_text.clone().into(),
+            // The grant also closes its validity window (both are checked everywhere).
             expires_text.clone().into(),
             caller.user_id.into(),
             format!("Emergency grant by user {}: {}", caller.user_id, reason).into(),
@@ -3383,33 +3385,15 @@ async fn validate_permission_names_exist(db: &impl ConnectionTrait, names: &Hash
 //  ANTI-ESCALATION (who may grant / manage what)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// A plant administrator: the bootstrap account (`is_admin`) or an active account holding an
-/// administrator role through a valid, non-emergency assignment (an emergency elevation is
-/// temporary and cannot make anything permanent).
+/// A plant administrator: the rule of elevated admin access (`auth::rbac`): the active bootstrap
+/// account, or an active account holding an administrator role plant-wide (tenant scope)
+/// through a permanent assignment in force. An emergency elevation is temporary and cannot make
+/// anything permanent.
 async fn is_plant_admin<C: ConnectionTrait>(conn: &C, user_id: i64) -> AppResult<bool> {
-    let now = now_utc_text();
-    let placeholders = vec!["?"; ADMIN_ROLE_NAMES.len()].join(",");
-    let sql = format!(
-        "SELECT CASE WHEN EXISTS (SELECT 1 FROM user_accounts WHERE id = ? AND is_admin = 1 \
-                                   AND is_active = 1 AND deleted_at IS NULL) \
-                  OR EXISTS (SELECT 1 FROM user_scope_assignments usa \
-                             INNER JOIN roles r ON r.id = usa.role_id \
-                             INNER JOIN user_accounts ua ON ua.id = usa.user_id \
-                             WHERE usa.user_id = ? AND ua.is_active = 1 AND ua.deleted_at IS NULL \
-                               AND usa.deleted_at IS NULL AND usa.is_emergency = 0 \
-                               AND (usa.valid_from IS NULL OR usa.valid_from <= ?) \
-                               AND (usa.valid_to IS NULL OR usa.valid_to >= ?) \
-                               AND r.deleted_at IS NULL AND r.name IN ({placeholders})) \
-                  THEN 1 ELSE 0 END AS v"
-    );
-    let mut values: Vec<sea_orm::Value> = vec![user_id.into(), user_id.into(), now.clone().into(), now.into()];
-    values.extend(ADMIN_ROLE_NAMES.iter().map(|n| (*n).into()));
-    Ok(conn
-        .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
-        .await?
-        .and_then(|r| r.try_get::<i32>("", "v").ok())
-        .unwrap_or(0)
-        == 1)
+    let Ok(id) = i32::try_from(user_id) else {
+        return Ok(false);
+    };
+    crate::auth::rbac::user_has_elevated_admin_access(conn, id).await
 }
 
 /// The account has (or may get back by re-enabling) administrator access: the bootstrap flag or
@@ -3434,12 +3418,35 @@ async fn is_admin_account<C: ConnectionTrait>(conn: &C, user_id: i64) -> AppResu
         == 1)
 }
 
-/// Permissions the caller holds plant-wide right now (roles and running emergency grants).
+/// Permissions the caller holds plant-wide through permanent assignments in force: a running
+/// emergency grant is temporary and never lets its holder create, grant or manage anything.
 async fn caller_permissions(
     db: &sea_orm::DatabaseConnection,
     caller: &AuthenticatedUser,
 ) -> AppResult<HashSet<String>> {
-    resolver::effective_permissions(db, i64::from(caller.user_id), "tenant", None).await
+    resolver::permanent_tenant_permissions(db, i64::from(caller.user_id)).await
+}
+
+/// The permissions of `wanted` the caller lacks, sorted (see [`caller_permissions`]).
+async fn missing_from_caller(
+    db: &sea_orm::DatabaseConnection,
+    caller: &AuthenticatedUser,
+    wanted: &HashSet<String>,
+) -> AppResult<Vec<String>> {
+    let held = caller_permissions(db, caller).await?;
+    let mut missing: Vec<String> = wanted.iter().filter(|p| !held.contains(*p)).cloned().collect();
+    missing.sort();
+    Ok(missing)
+}
+
+/// "a, b, c, …" (at most ten names) for a refusal message.
+fn shown_permissions(missing: &[String]) -> String {
+    let shown: Vec<&str> = missing.iter().take(10).map(String::as_str).collect();
+    format!(
+        "{}{}",
+        shown.join(", "),
+        if missing.len() > shown.len() { ", …" } else { "" }
+    )
 }
 
 /// The caller holds every permission of `wanted` (role editors cannot hand out more than they
@@ -3452,17 +3459,13 @@ pub(crate) async fn ensure_caller_holds(
     if wanted.is_empty() || is_plant_admin(db, i64::from(caller.user_id)).await? {
         return Ok(());
     }
-    let held = caller_permissions(db, caller).await?;
-    let mut missing: Vec<&String> = wanted.iter().filter(|p| !held.contains(*p)).collect();
+    let missing = missing_from_caller(db, caller, wanted).await?;
     if missing.is_empty() {
         return Ok(());
     }
-    missing.sort();
-    let shown: Vec<&str> = missing.iter().take(10).map(|s| s.as_str()).collect();
     Err(AppError::PermissionDenied(format!(
-        "You can only grant permissions you hold yourself; missing: {}{}",
-        shown.join(", "),
-        if missing.len() > shown.len() { ", …" } else { "" }
+        "You can only grant permissions you hold yourself; missing: {}",
+        shown_permissions(&missing)
     )))
 }
 
@@ -3503,19 +3506,37 @@ async fn ensure_may_grant_role(
     ensure_caller_holds(db, caller, &perms).await
 }
 
-/// Managing an administrator account (disable, re-enable, unlock, password reset, roles,
-/// details) is reserved to plant administrators.
-async fn ensure_may_manage_account(
+/// Managing an account (details, disable, re-enable, unlock, password reset, roles, sessions):
+/// an administrator account only by a plant administrator; any other account only by someone
+/// who holds every permission that account has right now (otherwise a user manager could take
+/// over a stronger account by resetting its password).
+pub(crate) async fn ensure_may_manage_account(
     db: &sea_orm::DatabaseConnection,
     caller: &AuthenticatedUser,
     target: i64,
 ) -> AppResult<()> {
-    if is_admin_account(db, target).await? && !is_plant_admin(db, i64::from(caller.user_id)).await? {
+    let caller_id = i64::from(caller.user_id);
+    if is_plant_admin(db, caller_id).await? {
+        return Ok(());
+    }
+    if is_admin_account(db, target).await? {
         return Err(AppError::PermissionDenied(
             "Only a plant administrator can change an administrator account.".into(),
         ));
     }
-    Ok(())
+    if target == caller_id {
+        // One's own account: its permissions are one's own (grants to oneself are refused).
+        return Ok(());
+    }
+    let target_permissions = resolver::all_scope_permissions(db, target).await?;
+    let missing = missing_from_caller(db, caller, &target_permissions).await?;
+    if missing.is_empty() {
+        return Ok(());
+    }
+    Err(AppError::PermissionDenied(format!(
+        "You can only manage an account whose permissions you all hold yourself; missing: {}",
+        shown_permissions(&missing)
+    )))
 }
 
 /// Role names that make an account a plant administrator (Phase 1 name `Administrator`).

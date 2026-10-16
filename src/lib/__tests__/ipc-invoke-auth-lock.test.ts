@@ -62,6 +62,34 @@ describe("ipc-invoke auth lock gating", () => {
     expect(useAuthInterceptorStore.getState().isLockOpen).toBe(false);
   });
 
+  it("routes PASSWORD_CHANGE_REQUIRED to the change-password screen, without AuthLock", async () => {
+    mockInvoke
+      .mockRejectedValueOnce({
+        code: "PASSWORD_CHANGE_REQUIRED",
+        message: "PASSWORD_CHANGE_REQUIRED: le mot de passe doit être changé avant de continuer.",
+      })
+      .mockResolvedValueOnce(fixtures.authenticatedSession);
+
+    await expect(invoke("list_work_orders")).rejects.toBeTruthy();
+
+    await vi.waitFor(() => {
+      expect(useSessionStore.getState().info?.force_password_change).toBe(true);
+    });
+    expect(useAuthInterceptorStore.getState().isLockOpen).toBe(false);
+  });
+
+  it("takes the server state when the change is no longer required", async () => {
+    mockInvoke
+      .mockRejectedValueOnce({
+        code: "VALIDATION_FAILED",
+        message: "Le changement de mot de passe n'est plus requis.",
+      })
+      .mockResolvedValueOnce({ ...fixtures.authenticatedSession, force_password_change: false });
+
+    await expect(useSessionStore.getState().changePassword("Nouveau#2026")).rejects.toThrow();
+    expect(useSessionStore.getState().info?.force_password_change).toBe(false);
+  });
+
   it("does not open AuthLock when AUTH_ERROR refresh still shows authenticated", async () => {
     mockInvoke
       .mockRejectedValueOnce({

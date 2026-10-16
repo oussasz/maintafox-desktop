@@ -872,6 +872,10 @@ pub async fn deactivate_value(db: &DatabaseConnection, value_id: i64, _actor_id:
             "Cette valeur est déjà désactivée.".into()
         ]));
     }
+    if crate::reference::currencies::is_currency_domain(&domain.code) {
+        // A currency still in use (company currency, stock costs, valuation, settlements) stays.
+        crate::reference::currencies::ensure_currency_not_in_use(db, &existing.code).await?;
+    }
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,

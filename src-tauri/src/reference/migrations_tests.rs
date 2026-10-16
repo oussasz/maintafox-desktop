@@ -271,6 +271,15 @@ mod tests {
                 token_tenant_id: "tenant-test".into(),
             });
         }
+        // A signed-in session has its stored row (sessions without one are refused).
+        let (session_id, expires_at) = {
+            let sm = state.session.read().await;
+            let s = sm.current.as_ref().expect("session");
+            (s.session_db_id.clone(), s.expires_at.to_rfc3339())
+        };
+        crate::auth::session_manager::create_session_record(&db, &session_id, 20, &expires_at)
+            .await
+            .expect("session row");
 
         // No step-up yet -> must fail.
         let err = guarded_merge_action(&state, domain_id, from.id, to.id)

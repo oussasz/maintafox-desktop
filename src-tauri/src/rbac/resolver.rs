@@ -18,6 +18,107 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 use crate::errors::{AppError, AppResult};
 
+/// An assignment (alias `usa`) in force at the bound instant: not deleted, inside its validity
+/// window, and an emergency grant only before its expiry (a grant without an expiry gives
+/// nothing). The single rule of every permission query; binds the instant three times
+/// ([`in_force_binds`]).
+pub const ASSIGNMENT_IN_FORCE_SQL: &str = "usa.deleted_at IS NULL \
+     AND (usa.valid_from IS NULL OR usa.valid_from <= ?) \
+     AND (usa.valid_to IS NULL OR usa.valid_to >= ?) \
+     AND (usa.is_emergency = 0 \
+          OR (usa.emergency_expires_at IS NOT NULL AND usa.emergency_expires_at > ?))";
+
+/// [`ASSIGNMENT_IN_FORCE_SQL`] restricted to permanent assignments: an emergency grant is
+/// temporary and never lets anyone grant, manage or administer anything lasting. Binds the
+/// instant twice ([`permanent_binds`]).
+pub const PERMANENT_ASSIGNMENT_IN_FORCE_SQL: &str = "usa.deleted_at IS NULL AND usa.is_emergency = 0 \
+     AND (usa.valid_from IS NULL OR usa.valid_from <= ?) \
+     AND (usa.valid_to IS NULL OR usa.valid_to >= ?)";
+
+/// The instant the assignment rules compare with, in the stored form of validity bounds and
+/// emergency expiries (`YYYY-MM-DDTHH:MM:SSZ`).
+pub fn assignment_clock() -> String {
+    chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+}
+
+/// Values bound by [`ASSIGNMENT_IN_FORCE_SQL`].
+pub fn in_force_binds(now: &str) -> [sea_orm::Value; 3] {
+    [now.to_owned().into(), now.to_owned().into(), now.to_owned().into()]
+}
+
+/// Values bound by [`PERMANENT_ASSIGNMENT_IN_FORCE_SQL`].
+pub fn permanent_binds(now: &str) -> [sea_orm::Value; 2] {
+    [now.to_owned().into(), now.to_owned().into()]
+}
+
+/// Permissions `user_id` holds plant-wide through permanent assignments in force (emergency
+/// grants excluded): what the caller may hand out or manage.
+pub async fn permanent_tenant_permissions<C: ConnectionTrait>(db: &C, user_id: i64) -> AppResult<HashSet<String>> {
+    let now = assignment_clock();
+    let sql = format!(
+        "SELECT DISTINCT p.name FROM permissions p \
+         INNER JOIN role_permissions rp ON rp.permission_id = p.id \
+         INNER JOIN user_scope_assignments usa ON usa.role_id = rp.role_id \
+         WHERE usa.user_id = ? AND usa.scope_type = 'tenant' AND {PERMANENT_ASSIGNMENT_IN_FORCE_SQL}"
+    );
+    let mut values: Vec<sea_orm::Value> = vec![user_id.into()];
+    values.extend(permanent_binds(&now));
+    names(db, &sql, values).await
+}
+
+/// Every permission `user_id` holds right now at any scope (emergency grants in force
+/// included): the reach of the account.
+pub async fn all_scope_permissions<C: ConnectionTrait>(db: &C, user_id: i64) -> AppResult<HashSet<String>> {
+    let now = assignment_clock();
+    let sql = format!(
+        "SELECT DISTINCT p.name FROM permissions p \
+         INNER JOIN role_permissions rp ON rp.permission_id = p.id \
+         INNER JOIN user_scope_assignments usa ON usa.role_id = rp.role_id \
+         WHERE usa.user_id = ? AND {ASSIGNMENT_IN_FORCE_SQL}"
+    );
+    let mut values: Vec<sea_orm::Value> = vec![user_id.into()];
+    values.extend(in_force_binds(&now));
+    names(db, &sql, values).await
+}
+
+/// The next instant at which one of the user's assignments starts, ends or expires (emergency):
+/// a permission set computed now is valid only until then.
+pub async fn next_assignment_change<C: ConnectionTrait>(db: &C, user_id: i64) -> AppResult<Option<String>> {
+    let now = assignment_clock();
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT MIN(t) AS next FROM ( \
+               SELECT valid_from AS t FROM user_scope_assignments \
+                WHERE user_id = ? AND deleted_at IS NULL AND valid_from > ? \
+               UNION ALL SELECT valid_to FROM user_scope_assignments \
+                WHERE user_id = ? AND deleted_at IS NULL AND valid_to >= ? \
+               UNION ALL SELECT emergency_expires_at FROM user_scope_assignments \
+                WHERE user_id = ? AND deleted_at IS NULL AND is_emergency = 1 \
+                  AND emergency_expires_at > ?)",
+            [
+                user_id.into(),
+                now.clone().into(),
+                user_id.into(),
+                now.clone().into(),
+                user_id.into(),
+                now.into(),
+            ],
+        ))
+        .await?;
+    Ok(row.and_then(|r| r.try_get::<Option<String>>("", "next").ok().flatten()))
+}
+
+async fn names<C: ConnectionTrait>(db: &C, sql: &str, values: Vec<sea_orm::Value>) -> AppResult<HashSet<String>> {
+    let rows = db
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, sql, values))
+        .await?;
+    Ok(rows
+        .iter()
+        .filter_map(|r| r.try_get::<String>("", "name").ok())
+        .collect())
+}
+
 /// Compute the full set of permission names that `user_id` holds at the
 /// requested scope.
 ///
@@ -40,7 +141,7 @@ pub async fn effective_permissions(
     scope_type: &str,
     scope_reference: Option<&str>,
 ) -> AppResult<HashSet<String>> {
-    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = assignment_clock();
 
     // ── Step 1: collect active role_ids ───────────────────────────────────
     // Scope clause: always include tenant; if a specific scope is requested,
@@ -107,7 +208,7 @@ pub async fn effective_permissions_for_node(
         }
         Some(node_id) => {
             let chain = super::scope_chain::resolve_scope_chain(db, node_id).await?;
-            let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+            let now = assignment_clock();
 
             // Build scope matching clause:
             //   tenant-wide assignments  OR
@@ -125,24 +226,19 @@ pub async fn effective_permissions_for_node(
                 "SELECT DISTINCT usa.role_id \
                  FROM user_scope_assignments usa \
                  WHERE usa.user_id = ? \
-                   AND usa.deleted_at IS NULL \
-                   AND (usa.valid_from IS NULL OR usa.valid_from <= ?) \
-                   AND (usa.valid_to   IS NULL OR usa.valid_to   >= ?) \
+                   AND {ASSIGNMENT_IN_FORCE_SQL} \
                    AND ( \
                        usa.scope_type = 'tenant' \
                        OR usa.scope_reference IN ({ref_placeholders}) \
-                   ) \
-                   AND (usa.is_emergency = 0 OR usa.emergency_expires_at > ?)"
+                   )"
             );
 
             let mut values: Vec<sea_orm::Value> = Vec::with_capacity(4 + scope_refs.len());
             values.push(user_id.into());
-            values.push(now.clone().into());
-            values.push(now.clone().into());
+            values.extend(in_force_binds(&now));
             for r in &scope_refs {
                 values.push(r.clone().into());
             }
-            values.push(now.into());
 
             let role_rows = db
                 .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
@@ -290,21 +386,17 @@ fn build_scope_query(
         "SELECT DISTINCT usa.role_id \
          FROM user_scope_assignments usa \
          WHERE usa.user_id = ? \
-           AND usa.deleted_at IS NULL \
-           AND (usa.valid_from IS NULL OR usa.valid_from <= ?) \
-           AND (usa.valid_to   IS NULL OR usa.valid_to   >= ?) \
-           AND ({scope_clause}) \
-           AND (usa.is_emergency = 0 OR usa.emergency_expires_at > ?)"
+           AND {ASSIGNMENT_IN_FORCE_SQL} \
+           AND ({scope_clause})"
     );
 
-    let mut values: Vec<sea_orm::Value> = vec![user_id.into(), now.to_owned().into(), now.to_owned().into()];
+    let mut values: Vec<sea_orm::Value> = vec![user_id.into()];
+    values.extend(in_force_binds(now));
 
     if scope_type != "tenant" {
         values.push(scope_type.to_owned().into());
         values.push(scope_reference.unwrap_or("").to_owned().into());
     }
-
-    values.push(now.to_owned().into());
 
     (sql, values)
 }

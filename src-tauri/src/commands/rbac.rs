@@ -174,7 +174,8 @@ const EDITABLE_RBAC_SETTINGS: &[(&str, RbacSettingRule)] = &[
     ("password_require_lowercase", RbacSettingRule::Flag),
     ("password_require_digit", RbacSettingRule::Flag),
     ("password_require_special", RbacSettingRule::Flag),
-    ("lockout_max_attempts", RbacSettingRule::Range(1, 20)),
+    // At least 3 attempts: fewer locks people out on a single typo.
+    ("lockout_max_attempts", RbacSettingRule::Range(3, 20)),
     ("lockout_base_minutes", RbacSettingRule::Range(1, 1440)),
     ("lockout_progressive", RbacSettingRule::Flag),
 ];
@@ -278,9 +279,20 @@ pub async fn update_rbac_setting(key: String, value: String, state: State<'_, Ap
 
     let key = key.trim();
     let value = validate_rbac_setting(key, &value)?;
+    // The warning period and the maximum age are checked together, whichever one changes.
+    let number = || -> AppResult<i64> {
+        value
+            .parse()
+            .map_err(|_| AppError::ValidationFailed(vec![format!("{key} must be a number.")]))
+    };
     if key == "password_warn_days" {
         if let Some(max_age) = stored_rbac_number(&state.db, "password_max_age_days").await? {
-            check_warn_within_max_age(value.parse().unwrap_or(0), max_age)?;
+            check_warn_within_max_age(number()?, max_age)?;
+        }
+    }
+    if key == "password_max_age_days" {
+        if let Some(warn) = stored_rbac_number(&state.db, "password_warn_days").await? {
+            check_warn_within_max_age(warn, number()?)?;
         }
     }
     write_rbac_settings(&state.db, &[(key, value)], user.user_id).await
@@ -412,6 +424,11 @@ mod rbac_settings_tests {
             "unused keys are refused"
         );
         assert!(validate_rbac_setting("lockout_max_attempts", "0").is_err());
+        assert!(
+            validate_rbac_setting("lockout_max_attempts", "2").is_err(),
+            "at least 3"
+        );
+        assert_eq!(validate_rbac_setting("lockout_max_attempts", "3").unwrap(), "3");
         assert!(check_warn_within_max_age(30, 14).is_err());
         assert!(check_warn_within_max_age(30, 0).is_ok(), "no expiry: no constraint");
     }

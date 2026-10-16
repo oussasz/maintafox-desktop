@@ -461,6 +461,12 @@ pub async fn revoke_session(session_id: String, state: State<'_, AppState>) -> A
         })?;
 
     let target_user_id: String = row.try_get("", "user_id")?;
+    // Ending someone's session is managing their account (administrators, stronger accounts).
+    let target_id = target_user_id.parse::<i64>().map_err(|_| AppError::NotFound {
+        entity: "UserAccount".into(),
+        id: target_user_id.clone(),
+    })?;
+    crate::commands::admin_users::ensure_may_manage_account(&state.db, &caller, target_id).await?;
 
     state
         .db

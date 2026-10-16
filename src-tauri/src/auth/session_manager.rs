@@ -477,63 +477,157 @@ pub async fn record_successful_login(db: &DatabaseConnection, user_id: i32) -> A
 /// Error message prefix of a command refused because the user must change their password first.
 pub const PASSWORD_CHANGE_REQUIRED: &str = "PASSWORD_CHANGE_REQUIRED";
 
+/// What the stored rows say about an in-memory session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StoredSessionState {
+    /// The account must change its password before anything else.
+    pub must_change_password: bool,
+}
+
+/// Parse a stored RFC 3339 instant (`app_sessions.created_at`, `password_changed_at`).
+fn parse_instant(raw: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(raw).ok().map(|t| t.with_timezone(&Utc))
+}
+
+/// The session is still alive in the database, or it is ended here and refused. Ended when:
+/// - there is no stored session row for this user (fail closed: no row, no session);
+/// - the row was closed (`app_sessions.is_revoked`: an administrator, a disable, a reset);
+/// - the account was disabled or deleted (also by a change received from another device);
+/// - the password changed after the session started (a reset or change made on any device:
+///   `password_changed_at` travels with the account) — the row is closed too.
+///
+/// Used by `require_session!` (through [`enforce_stored_session`]) and by the change-password
+/// command, which must work while a change is required but never on an ended session.
+pub async fn enforce_session_alive(
+    db: &DatabaseConnection,
+    session: &tokio::sync::RwLock<SessionManager>,
+    user: &AuthenticatedUser,
+    session_db_id: Option<&str>,
+) -> crate::errors::AppResult<StoredSessionState> {
+    use crate::errors::AppError;
+    let row = match session_db_id {
+        None => None,
+        Some(id) => {
+            db.query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT ua.is_active, ua.deleted_at, ua.force_password_change, ua.password_changed_at, \
+                        s.is_revoked, s.created_at AS session_created_at \
+                 FROM user_accounts ua \
+                 INNER JOIN app_sessions s ON s.id = ? AND s.user_id = CAST(ua.id AS TEXT) \
+                 WHERE ua.id = ?",
+                [id.into(), user.user_id.into()],
+            ))
+            .await?
+        }
+    };
+    let mut password_newer = false;
+    let ended = match &row {
+        None => true,
+        Some(r) => {
+            let created = r
+                .try_get::<Option<String>>("", "session_created_at")
+                .ok()
+                .flatten()
+                .as_deref()
+                .and_then(parse_instant);
+            let changed_raw = r.try_get::<Option<String>>("", "password_changed_at").ok().flatten();
+            let changed = changed_raw.as_deref().and_then(parse_instant);
+            if changed_raw.is_some() && changed.is_none() {
+                tracing::warn!(
+                    user_id = user.user_id,
+                    "unreadable password_changed_at: the session start is not compared with it"
+                );
+            }
+            password_newer = matches!((changed, created), (Some(c), Some(s)) if c > s);
+            r.try_get::<i32>("", "is_active").unwrap_or(0) != 1
+                || r.try_get::<Option<String>>("", "deleted_at").ok().flatten().is_some()
+                || r.try_get::<i32>("", "is_revoked").unwrap_or(1) == 1
+                // A session row we cannot date is not trusted.
+                || created.is_none()
+                || password_newer
+        }
+    };
+    if ended {
+        if password_newer {
+            if let Some(id) = session_db_id {
+                db.execute(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "UPDATE app_sessions SET is_revoked = 1 WHERE id = ?",
+                    [id.into()],
+                ))
+                .await?;
+            }
+        }
+        let mut guard = session.write().await;
+        if guard.current.as_ref().map(|s| s.session_db_id.as_str()) == session_db_id {
+            guard.clear_session();
+        }
+        return Err(AppError::Auth(
+            "Session fermée : le compte a été désactivé, le mot de passe a changé ou la session a été révoquée. \
+             Veuillez vous reconnecter."
+                .into(),
+        ));
+    }
+    Ok(StoredSessionState {
+        must_change_password: row
+            .as_ref()
+            .and_then(|r| r.try_get::<i32>("", "force_password_change").ok())
+            .unwrap_or(0)
+            == 1,
+    })
+}
+
 /// Checks of the stored state behind an in-memory session, run by `require_session!` on every
 /// command:
-/// - the session row was closed (`app_sessions.is_revoked`, by an administrator, a disable or a
-///   password reset) or the account was disabled / deleted, including by a change received from
-///   another device → the in-memory session ends and the command is refused;
+/// - an ended session ([`enforce_session_alive`]) ends here and the command is refused;
 /// - the account must change its password (`force_password_change`, set at creation or by an
-///   administrator's reset) → every command is refused; only the change-password and sign-out
-///   commands (which do not use `require_session!`) work. The in-memory flag is raised so the
-///   shell shows the change-password screen.
+///   administrator's reset, possibly on another device) → every command is refused with
+///   `PASSWORD_CHANGE_REQUIRED`; only the change-password and sign-out commands (which do not
+///   use `require_session!`) work. The in-memory flag is raised so the shell shows the
+///   change-password screen, and lowered again once the change is no longer required (made on
+///   another device).
 pub async fn enforce_stored_session(
     db: &DatabaseConnection,
     session: &tokio::sync::RwLock<SessionManager>,
     user: &AuthenticatedUser,
     session_db_id: Option<&str>,
 ) -> crate::errors::AppResult<()> {
-    use crate::errors::AppError;
-    let row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT ua.is_active, ua.deleted_at, ua.force_password_change, \
-                    (SELECT s.is_revoked FROM app_sessions s WHERE s.id = ?) AS revoked \
-             FROM user_accounts ua WHERE ua.id = ?",
-            [session_db_id.map(str::to_string).into(), user.user_id.into()],
-        ))
-        .await?;
-    let ended = match &row {
-        None => true,
-        Some(r) => {
-            r.try_get::<i32>("", "is_active").unwrap_or(0) != 1
-                || r.try_get::<Option<String>>("", "deleted_at").ok().flatten().is_some()
-                || r.try_get::<Option<i32>>("", "revoked").ok().flatten() == Some(1)
-        }
-    };
-    if ended {
-        let mut guard = session.write().await;
-        if guard.current.as_ref().map(|s| s.session_db_id.as_str()) == session_db_id {
-            guard.clear_session();
-        }
-        return Err(AppError::Auth(
-            "Session fermée : le compte a été désactivé ou la session a été révoquée. Veuillez vous reconnecter."
-                .into(),
-        ));
-    }
-    let must_change = row
-        .as_ref()
-        .and_then(|r| r.try_get::<i32>("", "force_password_change").ok())
-        .unwrap_or(0)
-        == 1;
-    if must_change {
-        let mut guard = session.write().await;
-        if let Some(current) = guard.current.as_mut() {
+    let state = enforce_session_alive(db, session, user, session_db_id).await?;
+    let mut guard = session.write().await;
+    let same_session = guard.current.as_ref().map(|s| s.session_db_id.as_str()) == session_db_id;
+    if state.must_change_password {
+        if let Some(current) = guard.current.as_mut().filter(|_| same_session) {
             current.user.force_password_change = true;
         }
-        return Err(AppError::Auth(format!(
+        return Err(crate::errors::AppError::PasswordChangeRequired(format!(
             "{PASSWORD_CHANGE_REQUIRED}: le mot de passe doit être changé avant de continuer."
         )));
     }
+    if let Some(current) = guard.current.as_mut().filter(|_| same_session) {
+        current.user.force_password_change = false;
+    }
+    Ok(())
+}
+
+/// After a password change by the user: close every stored session of the account (other
+/// devices, older sessions) and give the current session a new stored row, started after the
+/// change, so it is the only one still alive ([`enforce_session_alive`] ends sessions older than
+/// the password).
+pub async fn rotate_after_password_change(
+    db: &DatabaseConnection,
+    session: &tokio::sync::RwLock<SessionManager>,
+    user_id: i32,
+) -> crate::errors::AppResult<()> {
+    revoke_user_sessions(db, i64::from(user_id)).await?;
+    let new_id = Uuid::new_v4().to_string();
+    let mut guard = session.write().await;
+    let Some(current) = guard.current.as_mut().filter(|s| s.user.user_id == user_id) else {
+        return Err(crate::errors::AppError::Auth(
+            "Session expirée ou absente. Veuillez vous reconnecter.".into(),
+        ));
+    };
+    create_session_record(db, &new_id, user_id, &current.expires_at.to_rfc3339()).await?;
+    current.session_db_id = new_id;
     Ok(())
 }
 

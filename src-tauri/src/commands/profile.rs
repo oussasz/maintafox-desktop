@@ -244,15 +244,19 @@ pub async fn update_my_profile(payload: UpdateProfilePayload, state: State<'_, A
 
 #[tauri::command]
 pub async fn change_password(payload: ChangePasswordPayload, state: State<'_, AppState>) -> AppResult<()> {
+    change_password_impl(state.inner(), payload).await
+}
+
+/// The user's own password change: current password checked, the plant policy applied, the
+/// account's other sessions closed (this one continues on a new stored row).
+pub(crate) async fn change_password_impl(state: &AppState, payload: ChangePasswordPayload) -> AppResult<()> {
     let user = require_session!(state);
 
-    // Validate new password strength
+    // The plant password policy (Settings › Security), as for every other password set.
     let new_password = payload.new_password.trim();
-    if new_password.len() < 8 {
-        return Err(AppError::ValidationFailed(vec![
-            "Le mot de passe doit contenir au moins 8 caractères.".into(),
-        ]));
-    }
+    let policy = crate::auth::password_policy::PasswordPolicy::load(&state.db).await;
+    crate::auth::password_policy::validate_password_strength(new_password, &policy)
+        .map_err(AppError::ValidationFailed)?;
 
     // Fetch current hash to verify old password
     let record = session_manager::find_active_user(&state.db, &user.username)
@@ -295,6 +299,10 @@ pub async fn change_password(payload: ChangePasswordPayload, state: State<'_, Ap
             [new_hash.into(), now.clone().into(), now.into(), user.user_id.into()],
         ))
         .await?;
+
+    // Close the account's other sessions (other devices included: the change travels with the
+    // account); this one continues on a new stored row.
+    session_manager::rotate_after_password_change(&state.db, &state.session, user.user_id).await?;
 
     crate::audit::emit(
         &state.db,

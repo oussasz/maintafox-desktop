@@ -934,7 +934,7 @@ async fn a_password_reset_closes_sessions_and_forces_the_change_first() {
     )
     .await;
     match refused {
-        Err(AppError::Auth(message)) => {
+        Err(AppError::PasswordChangeRequired(message)) => {
             assert!(message.starts_with(crate::auth::session_manager::PASSWORD_CHANGE_REQUIRED));
         }
         other => panic!("expected a password-change refusal, got {other:?}"),
@@ -989,4 +989,522 @@ async fn admin_set_passwords_follow_the_plant_policy_too() {
     );
     assert!(validate_admin_set_password(&db, "ValidPassword1234").await.is_ok());
     assert!(validate_admin_set_password(&db, "short").await.is_err());
+}
+
+// ── Security review: expiry, permanent rights only, stronger accounts, stale sessions ────────
+
+/// A raw assignment row (emergency grants, validity windows) for the checks below.
+#[allow(clippy::too_many_arguments)]
+async fn raw_assignment(
+    db: &DatabaseConnection,
+    tag: &str,
+    user: i64,
+    role: i64,
+    scope_type: &str,
+    scope_reference: Option<&str>,
+    emergency_expires_at: Option<String>,
+    valid_to: Option<String>,
+) {
+    let now = chrono::Utc::now().to_rfc3339();
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO user_scope_assignments \
+         (entity_sync_id, user_id, role_id, scope_type, scope_reference, is_emergency, emergency_reason, \
+          emergency_expires_at, valid_to, created_at, updated_at, row_version) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
+        [
+            format!("{tag}-usa").into(),
+            user.into(),
+            role.into(),
+            scope_type.into(),
+            scope_reference.map(str::to_string).into(),
+            i32::from(emergency_expires_at.is_some()).into(),
+            emergency_expires_at.as_ref().map(|_| "test grant".to_string()).into(),
+            emergency_expires_at.into(),
+            valid_to.into(),
+            now.clone().into(),
+            now.into(),
+        ],
+    ))
+    .await
+    .unwrap();
+}
+
+async fn clear_assignments(db: &DatabaseConnection, user: i64) {
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "DELETE FROM user_scope_assignments WHERE user_id = ?",
+        [user.into()],
+    ))
+    .await
+    .unwrap();
+}
+
+fn stamp(offset: chrono::Duration) -> String {
+    (chrono::Utc::now() + offset).format("%Y-%m-%dT%H:%M:%SZ").to_string()
+}
+
+#[tokio::test]
+async fn an_expired_emergency_grant_gives_nothing() {
+    use crate::auth::rbac::{check_permission, check_permission_cached, get_user_permissions, PermissionScope};
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let wanted = crate::rbac::permissions::ADM_SETTINGS;
+    let (_, settings_role) = account_with_permissions(&db, "settings_source", &[wanted]).await;
+    let holder = insert_user(&db, "emergency_holder").await;
+    let uid = i32::try_from(holder).unwrap();
+
+    raw_assignment(
+        &db,
+        "expired-grant",
+        holder,
+        settings_role,
+        "tenant",
+        None,
+        Some(stamp(-chrono::Duration::minutes(5))),
+        None,
+    )
+    .await;
+    assert!(!check_permission(&db, uid, wanted, &PermissionScope::Global)
+        .await
+        .unwrap());
+    assert!(
+        !check_permission_cached(&db, &state.permission_cache, uid, wanted, &PermissionScope::Global)
+            .await
+            .unwrap()
+    );
+    assert!(!get_user_permissions(&db, uid)
+        .await
+        .unwrap()
+        .iter()
+        .any(|p| p.name == wanted));
+    assert!(!resolver::all_scope_permissions(&db, holder)
+        .await
+        .unwrap()
+        .contains(wanted));
+
+    // A permanent assignment whose validity ended gives nothing either.
+    clear_assignments(&db, holder).await;
+    raw_assignment(
+        &db,
+        "ended-window",
+        holder,
+        settings_role,
+        "tenant",
+        None,
+        None,
+        Some(stamp(-chrono::Duration::minutes(5))),
+    )
+    .await;
+    assert!(!check_permission(&db, uid, wanted, &PermissionScope::Global)
+        .await
+        .unwrap());
+
+    // A running grant gives it until its expiry, which bounds the cached set.
+    clear_assignments(&db, holder).await;
+    let expiry = stamp(chrono::Duration::minutes(30));
+    raw_assignment(
+        &db,
+        "running-grant",
+        holder,
+        settings_role,
+        "tenant",
+        None,
+        Some(expiry.clone()),
+        None,
+    )
+    .await;
+    state.permission_cache.write().await.invalidate_user(holder);
+    assert!(
+        check_permission_cached(&db, &state.permission_cache, uid, wanted, &PermissionScope::Global)
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        resolver::next_assignment_change(&db, holder).await.unwrap(),
+        Some(expiry),
+        "the cache entry ends at the grant's expiry"
+    );
+}
+
+#[tokio::test]
+async fn only_a_permanent_plant_wide_administrator_assignment_elevates() {
+    use crate::auth::rbac::user_has_elevated_admin_access;
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let admin_role = role_id(&db, "Administrator").await;
+    let other = insert_user(&db, "elevation_target").await;
+
+    let emergency = insert_user(&db, "emergency_admin").await;
+    raw_assignment(
+        &db,
+        "emergency-admin",
+        emergency,
+        admin_role,
+        "tenant",
+        None,
+        Some(stamp(chrono::Duration::hours(1))),
+        None,
+    )
+    .await;
+    let ended = insert_user(&db, "ended_admin").await;
+    raw_assignment(
+        &db,
+        "ended-admin",
+        ended,
+        admin_role,
+        "tenant",
+        None,
+        None,
+        Some(stamp(-chrono::Duration::hours(1))),
+    )
+    .await;
+    let site = insert_user(&db, "site_admin").await;
+    raw_assignment(&db, "site-admin", site, admin_role, "site", Some("1"), None, None).await;
+    let plant = insert_user(&db, "plant_admin").await;
+    raw_assignment(&db, "plant-admin", plant, admin_role, "tenant", None, None, None).await;
+
+    for (id, name) in [(emergency, "emergency"), (ended, "ended"), (site, "site-scoped")] {
+        let uid = i32::try_from(id).unwrap();
+        assert!(
+            !user_has_elevated_admin_access(&db, uid).await.unwrap(),
+            "{name} admin elevates"
+        );
+        assert!(!is_plant_admin(&db, id).await.unwrap(), "{name} admin is a plant admin");
+    }
+    assert!(user_has_elevated_admin_access(&db, i32::try_from(plant).unwrap())
+        .await
+        .unwrap());
+    let bootstrap = admin_caller(&db).await;
+    assert!(
+        is_plant_admin(&db, i64::from(bootstrap.user_id)).await.unwrap(),
+        "the bootstrap admin keeps working"
+    );
+
+    // An emergency administrator cannot hand out an administrator role.
+    let r = assign_role_scope_impl(
+        &state,
+        &caller_for(emergency, "emergency_admin"),
+        assign(other, admin_role, "tenant", None),
+        false,
+        None,
+    )
+    .await;
+    assert!(matches!(r, Err(AppError::PermissionDenied(_))), "{r:?}");
+}
+
+#[tokio::test]
+async fn an_emergency_grant_never_lets_its_holder_grant_what_it_brings() {
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let (_, settings_role) =
+        account_with_permissions(&db, "grant_source", &[crate::rbac::permissions::ADM_SETTINGS]).await;
+    let (ops_id, _) = account_with_permissions(&db, "temp_ops", &[crate::rbac::permissions::ADM_USERS]).await;
+    raw_assignment(
+        &db,
+        "temp-ops-grant",
+        ops_id,
+        settings_role,
+        "tenant",
+        None,
+        Some(stamp(chrono::Duration::hours(1))),
+        None,
+    )
+    .await;
+    let other = insert_user(&db, "temp_target").await;
+    let r = assign_role_scope_impl(
+        &state,
+        &caller_for(ops_id, "temp_ops"),
+        assign(other, settings_role, "tenant", None),
+        false,
+        None,
+    )
+    .await;
+    assert!(matches!(r, Err(AppError::PermissionDenied(_))), "{r:?}");
+}
+
+#[tokio::test]
+async fn a_user_manager_cannot_take_over_a_stronger_account() {
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let (ops_id, _) = account_with_permissions(&db, "user_manager", &[crate::rbac::permissions::ADM_USERS]).await;
+    let ops = caller_for(ops_id, "user_manager");
+    let (strong, _) = account_with_permissions(
+        &db,
+        "strong_account",
+        &[
+            crate::rbac::permissions::ADM_USERS,
+            crate::rbac::permissions::ADM_SETTINGS,
+        ],
+    )
+    .await;
+    let (weak, _) = account_with_permissions(&db, "weak_account", &[crate::rbac::permissions::ADM_USERS]).await;
+    let denied = |r: &AppResult<()>| matches!(r, Err(AppError::PermissionDenied(_)));
+
+    let reset = admin_set_user_password_impl(
+        &state,
+        &ops,
+        AdminSetUserPasswordInput {
+            user_id: strong,
+            temporary_password: None,
+        },
+    )
+    .await;
+    assert!(matches!(reset, Err(AppError::PermissionDenied(_))), "{reset:?}");
+    assert!(denied(&unlock_user_account_impl(&state, &ops, strong).await));
+    let disable = set_user_active_impl(
+        &state,
+        &ops,
+        SetUserActiveInput {
+            user_id: strong,
+            reason: "Takeover attempt".into(),
+        },
+        false,
+    )
+    .await;
+    assert!(denied(&disable), "{disable:?}");
+    let edit = update_user_impl(
+        &state,
+        &ops,
+        UpdateUserInput {
+            user_id: strong,
+            username: None,
+            display_name: Some("Taken over".into()),
+            email: None,
+            phone: None,
+            personnel_id: None,
+            force_password_change: None,
+            is_active: None,
+        },
+    )
+    .await;
+    assert!(denied(&edit), "{edit:?}");
+    // Ending a session of the stronger account (revoke_session) uses the same rule.
+    assert!(denied(&ensure_may_manage_account(&db, &ops, strong).await));
+
+    // An account within the manager's own permissions can be managed.
+    admin_set_user_password_impl(
+        &state,
+        &ops,
+        AdminSetUserPasswordInput {
+            user_id: weak,
+            temporary_password: None,
+        },
+    )
+    .await
+    .expect("reset of an account the manager covers");
+}
+
+#[tokio::test]
+async fn sessions_older_than_the_password_end_even_when_it_changed_on_another_device() {
+    use crate::auth::session_manager::enforce_stored_session;
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let worker = insert_user(&db, "roaming_worker").await;
+    let user = caller_for(worker, "roaming_worker");
+    let session_id = open_session(&state, &db, worker, "roaming_worker").await;
+    enforce_stored_session(&db, &state.session, &user, Some(&session_id))
+        .await
+        .expect("open session passes");
+
+    // An administrator reset on another device arrives by sync: new password, change required.
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE user_accounts SET password_changed_at = ?, force_password_change = 1 WHERE id = ?",
+        [chrono::Utc::now().to_rfc3339().into(), worker.into()],
+    ))
+    .await
+    .unwrap();
+    let refused = enforce_stored_session(&db, &state.session, &user, Some(&session_id)).await;
+    assert!(matches!(refused, Err(AppError::Auth(_))), "{refused:?}");
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT is_revoked AS v FROM app_sessions WHERE id = ?",
+            vec![session_id.clone().into()],
+        )
+        .await,
+        1,
+        "the stale session row is closed"
+    );
+    assert!(state.session.read().await.current.is_none());
+
+    // The forced change itself refuses an ended session.
+    {
+        let mut sm = state.session.write().await;
+        sm.create_session(caller_for(worker, "roaming_worker"));
+        sm.current.as_mut().unwrap().session_db_id = session_id.clone();
+    }
+    let forced = crate::commands::auth::force_change_password_impl(
+        &state,
+        crate::commands::auth::ForceChangePasswordRequest {
+            new_password: "NewPassword12".into(),
+        },
+    )
+    .await;
+    assert!(matches!(forced, Err(AppError::Auth(_))), "{forced:?}");
+
+    // No stored row: no session (fail closed).
+    let ghost = {
+        let mut sm = state.session.write().await;
+        sm.create_session(caller_for(worker, "roaming_worker"))
+            .session_db_id
+            .clone()
+    };
+    let refused = enforce_stored_session(&db, &state.session, &user, Some(&ghost)).await;
+    assert!(matches!(refused, Err(AppError::Auth(_))), "{refused:?}");
+}
+
+#[tokio::test]
+async fn the_forced_change_follows_the_policy_and_leaves_one_live_session() {
+    use crate::auth::session_manager::enforce_stored_session;
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let admin = admin_caller(&db).await;
+    let worker = insert_user(&db, "forced_worker").await;
+    let user = caller_for(worker, "forced_worker");
+    admin_set_user_password_impl(
+        &state,
+        &admin,
+        AdminSetUserPasswordInput {
+            user_id: worker,
+            temporary_password: None,
+        },
+    )
+    .await
+    .expect("reset");
+    let session_id = open_session(&state, &db, worker, "forced_worker").await;
+    let refused = enforce_stored_session(&db, &state.session, &user, Some(&session_id)).await;
+    assert!(
+        matches!(refused, Err(AppError::PasswordChangeRequired(_))),
+        "{refused:?}"
+    );
+
+    let change = |p: &str| crate::commands::auth::ForceChangePasswordRequest { new_password: p.into() };
+    let weak = crate::commands::auth::force_change_password_impl(&state, change("short")).await;
+    assert!(matches!(weak, Err(AppError::ValidationFailed(_))), "{weak:?}");
+    crate::commands::auth::force_change_password_impl(&state, change("NewPassword12"))
+        .await
+        .expect("change");
+
+    let current = state
+        .session
+        .read()
+        .await
+        .current
+        .as_ref()
+        .unwrap()
+        .session_db_id
+        .clone();
+    assert_ne!(current, session_id, "the session continues on a new stored row");
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT is_revoked AS v FROM app_sessions WHERE id = ?",
+            vec![session_id.into()],
+        )
+        .await,
+        1
+    );
+    enforce_stored_session(&db, &state.session, &user, Some(&current))
+        .await
+        .expect("the changed session works");
+    assert!(
+        !state
+            .session
+            .read()
+            .await
+            .current
+            .as_ref()
+            .unwrap()
+            .user
+            .force_password_change
+    );
+
+    // Once the change is no longer required (made elsewhere), the screen is left.
+    state
+        .session
+        .write()
+        .await
+        .current
+        .as_mut()
+        .unwrap()
+        .user
+        .force_password_change = true;
+    let not_required = crate::commands::auth::force_change_password_impl(&state, change("OtherPassword12")).await;
+    assert!(
+        matches!(not_required, Err(AppError::ValidationFailed(_))),
+        "{not_required:?}"
+    );
+    assert!(
+        !state
+            .session
+            .read()
+            .await
+            .current
+            .as_ref()
+            .unwrap()
+            .user
+            .force_password_change
+    );
+}
+
+#[tokio::test]
+async fn ones_own_password_change_follows_the_policy_and_closes_other_sessions() {
+    use crate::auth::session_manager::enforce_stored_session;
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let worker = insert_user(&db, "own_change").await;
+    let hash = crate::auth::password::hash_password("OldPassword12").unwrap();
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE user_accounts SET password_hash = ? WHERE id = ?",
+        [hash.into(), worker.into()],
+    ))
+    .await
+    .unwrap();
+    let other_device = "other-device-session";
+    crate::auth::session_manager::create_session_record(
+        &db,
+        other_device,
+        i32::try_from(worker).unwrap(),
+        &(chrono::Utc::now() + chrono::Duration::hours(8)).to_rfc3339(),
+    )
+    .await
+    .unwrap();
+    let session_id = open_session(&state, &db, worker, "own_change").await;
+    let payload = |new: &str| crate::commands::profile::ChangePasswordPayload {
+        current_password: "OldPassword12".into(),
+        new_password: new.into(),
+    };
+
+    let weak = crate::commands::profile::change_password_impl(&state, payload("abcdefgh")).await;
+    assert!(matches!(weak, Err(AppError::ValidationFailed(_))), "{weak:?}");
+    crate::commands::profile::change_password_impl(&state, payload("NewPassword12"))
+        .await
+        .expect("change");
+
+    for closed in [other_device.to_string(), session_id] {
+        assert_eq!(
+            scalar_i64(
+                &db,
+                "SELECT is_revoked AS v FROM app_sessions WHERE id = ?",
+                vec![closed.into()],
+            )
+            .await,
+            1
+        );
+    }
+    let current = state
+        .session
+        .read()
+        .await
+        .current
+        .as_ref()
+        .unwrap()
+        .session_db_id
+        .clone();
+    enforce_stored_session(&db, &state.session, &caller_for(worker, "own_change"), Some(&current))
+        .await
+        .expect("this session continues");
 }

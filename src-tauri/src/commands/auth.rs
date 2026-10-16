@@ -852,29 +852,45 @@ pub struct ForceChangePasswordResponse {
     pub session_info: session_manager::SessionInfo,
 }
 
-/// Change the password for a user who has `force_password_change = true`.
+/// Change the password of an account that must change it (`force_password_change`).
 ///
-/// This command is only callable when the current session has
-/// `force_password_change` set. It hashes the new password with argon2id,
-/// updates the database, clears the flag, and returns the updated session.
+/// It does not go through `require_session!` (which refuses everything while a change is
+/// required) but runs the same stored checks: an ended session (revoked, disabled account,
+/// password changed elsewhere) is refused. The stored flag decides: when the change is no
+/// longer required (made on another device), the in-memory flag is lowered and the command is
+/// refused so the shell leaves the change screen. On success the password follows the plant
+/// policy, the user's other sessions are closed and this one gets a new stored row.
 #[tauri::command]
 pub async fn force_change_password(
     payload: ForceChangePasswordRequest,
     state: State<'_, AppState>,
 ) -> AppResult<ForceChangePasswordResponse> {
-    // Read current session — must be authenticated with force_password_change
-    let user = {
+    force_change_password_impl(state.inner(), payload).await
+}
+
+pub(crate) async fn force_change_password_impl(
+    state: &AppState,
+    payload: ForceChangePasswordRequest,
+) -> AppResult<ForceChangePasswordResponse> {
+    let (user, session_db_id) = {
         let sm = state.session.read().await;
         match &sm.current {
-            Some(s) if !s.is_expired() && s.user.force_password_change => s.user.clone(),
-            Some(_) => {
-                return Err(AppError::Auth("Le changement de mot de passe n'est pas requis.".into()));
-            }
-            None => {
+            Some(s) if !s.is_expired() => (s.user.clone(), s.session_db_id.clone()),
+            _ => {
                 return Err(AppError::Auth("Non authentifi\u{00e9}.".into()));
             }
         }
     };
+    let stored = session_manager::enforce_session_alive(&state.db, &state.session, &user, Some(&session_db_id)).await?;
+    if !stored.must_change_password {
+        let mut sm = state.session.write().await;
+        if let Some(session) = sm.current.as_mut().filter(|s| s.session_db_id == session_db_id) {
+            session.user.force_password_change = false;
+        }
+        return Err(AppError::ValidationFailed(vec![
+            "Le changement de mot de passe n'est plus requis : continuez avec votre mot de passe actuel.".into(),
+        ]));
+    }
 
     // Validate password strength (minimum 8 characters)
     let new_password = payload.new_password.trim();
@@ -904,6 +920,9 @@ pub async fn force_change_password(
             ],
         ))
         .await?;
+
+    // Close the account's other sessions; this one continues on a new stored row.
+    session_manager::rotate_after_password_change(&state.db, &state.session, user.user_id).await?;
 
     // Update the in-memory session
     let mut sm = state.session.write().await;

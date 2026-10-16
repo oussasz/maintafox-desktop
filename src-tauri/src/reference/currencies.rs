@@ -35,6 +35,9 @@ pub const LOOKUP_DOMAIN_KEY: &str = "inventory.currency";
 /// A currency that is not an active value of the published currency list.
 pub const GATE_CURRENCY_NOT_ACTIVE: &str = "GATE_CURRENCY_NOT_ACTIVE";
 
+/// A currency still in use cannot be deactivated.
+pub const GATE_CURRENCY_IN_USE: &str = "GATE_CURRENCY_IN_USE";
+
 /// One ISO 4217 currency shipped with the application.
 #[derive(Debug, Clone, Copy)]
 pub struct IsoCurrency {
@@ -286,6 +289,24 @@ pub async fn mirror_into_lookup(conn: &impl ConnectionTrait) -> AppResult<u64> {
     let now = chrono::Utc::now().to_rfc3339();
     let mut written = 0;
     for (i, c) in published_currencies(conn).await?.iter().enumerate() {
+        if !c.is_active {
+            // Retiring a currency (active in the operational copy, inactive in the list being
+            // published): refused while it is still in use.
+            let active_now = conn
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "SELECT 1 AS x FROM lookup_values \
+                      WHERE domain_id = ? AND code = ? AND deleted_at IS NULL AND is_active = 1",
+                    [domain_id.into(), c.code.clone().into()],
+                ))
+                .await?
+                .is_some();
+            if active_now {
+                ensure_currency_not_in_use(conn, &c.code).await?;
+            }
+        }
+        // Only the shipped ISO currencies are system rows; a currency the plant added is not.
+        let is_system = ISO_CURRENCIES.iter().any(|iso| iso.code.eq_ignore_ascii_case(&c.code));
         let en = c.label_en.clone().unwrap_or_else(|| c.label.clone());
         let sync_id =
             crate::sync::identity::seeded_entity_sync_id("lookup_values", &format!("{LOOKUP_DOMAIN_KEY}:{}", c.code));
@@ -295,7 +316,7 @@ pub async fn mirror_into_lookup(conn: &impl ConnectionTrait) -> AppResult<u64> {
                 "INSERT OR IGNORE INTO lookup_values \
                  (entity_sync_id, domain_id, code, label, fr_label, en_label, color, sort_order, is_active, is_system, \
                   created_at, updated_at, row_version) \
-                 SELECT ?, ?, ?, ?, ?, ?, NULL, ?, ?, 1, ?, ?, 1 \
+                 SELECT ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, 1 \
                   WHERE NOT EXISTS (SELECT 1 FROM lookup_values WHERE domain_id = ? AND code = ? AND deleted_at IS NULL)",
                 [
                     sync_id.into(),
@@ -306,6 +327,7 @@ pub async fn mirror_into_lookup(conn: &impl ConnectionTrait) -> AppResult<u64> {
                     en.clone().into(),
                     ((i as i64) + 1).into(),
                     i32::from(c.is_active).into(),
+                    i32::from(is_system).into(),
                     now.clone().into(),
                     now.clone().into(),
                     domain_id.into(),
@@ -339,6 +361,80 @@ pub async fn mirror_into_lookup(conn: &impl ConnectionTrait) -> AppResult<u64> {
             .rows_affected();
     }
     Ok(written)
+}
+
+/// Where a currency is still used: the company currency (Settings), stock costs (balances,
+/// movements, work-order parts, requisition lines), valuation periods, cost estimates and
+/// settlements. Returns the uses as "French / English" labels, empty when unused.
+pub async fn currency_uses(conn: &impl ConnectionTrait, code: &str) -> AppResult<Vec<&'static str>> {
+    let code = code.trim().to_ascii_uppercase();
+    let mut uses = Vec::new();
+    if crate::inventory::fx::tenant_currency(conn).await.ok().as_deref() == Some(code.as_str()) {
+        uses.push("devise de l'entreprise / company currency");
+    }
+    let lookup_id = "(SELECT lv.id FROM lookup_values lv JOIN lookup_domains ld ON ld.id = lv.domain_id \
+                      WHERE ld.domain_key = ? AND UPPER(lv.code) = ?)";
+    let checks: [(&str, String, bool); 4] = [
+        (
+            "coûts de stock / stock costs",
+            format!(
+                "SELECT EXISTS (SELECT 1 FROM stock_balances WHERE valuation_currency_value_id IN {lookup_id}) \
+                     OR EXISTS (SELECT 1 FROM inventory_transactions WHERE cost_currency_value_id IN {lookup_id}) \
+                     OR EXISTS (SELECT 1 FROM work_order_parts WHERE cost_currency_value_id IN {lookup_id}) \
+                     OR EXISTS (SELECT 1 FROM procurement_requisition_lines \
+                                 WHERE projected_cost_currency_value_id IN {lookup_id}) AS used"
+            ),
+            true,
+        ),
+        (
+            "périodes de valorisation / valuation periods",
+            "SELECT EXISTS (SELECT 1 FROM inventory_valuation_periods WHERE UPPER(currency_code) = ?) AS used".into(),
+            false,
+        ),
+        (
+            "estimations de coût d'OT / work-order cost estimates",
+            "SELECT EXISTS (SELECT 1 FROM wo_cost_estimates WHERE UPPER(currency_code) = ?) AS used".into(),
+            false,
+        ),
+        (
+            "règlements de coût d'OT / work-order cost settlements",
+            "SELECT EXISTS (SELECT 1 FROM wo_cost_settlements WHERE UPPER(currency_code) = ?) AS used".into(),
+            false,
+        ),
+    ];
+    for (label, sql, by_lookup) in checks {
+        let values: Vec<sea_orm::Value> = if by_lookup {
+            (0..4)
+                .flat_map(|_| [LOOKUP_DOMAIN_KEY.into(), code.clone().into()])
+                .collect::<Vec<sea_orm::Value>>()
+        } else {
+            vec![code.clone().into()]
+        };
+        let used = conn
+            .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
+            .await?
+            .and_then(|r| r.try_get::<i64>("", "used").ok())
+            .unwrap_or(0)
+            != 0;
+        if used {
+            uses.push(label);
+        }
+    }
+    Ok(uses)
+}
+
+/// Refuse to deactivate a currency that is still in use ([`currency_uses`]), in French and
+/// English.
+pub async fn ensure_currency_not_in_use(conn: &impl ConnectionTrait, code: &str) -> AppResult<()> {
+    let uses = currency_uses(conn, code).await?;
+    if uses.is_empty() {
+        return Ok(());
+    }
+    Err(AppError::ValidationFailed(vec![format!(
+        "{GATE_CURRENCY_IN_USE}: la devise {code} ne peut pas être désactivée, elle est utilisée / \
+         the currency {code} cannot be deactivated, it is in use: {}.",
+        uses.join(", ")
+    )]))
 }
 
 /// The tenant currency must be an active currency of the published list.
