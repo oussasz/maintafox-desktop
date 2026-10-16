@@ -906,6 +906,21 @@ export function checkSlotCapacity(args: {
   return { days: rows, overloaded, noSchedule };
 }
 
+/** Assignee refusals the planner may override with a reason (the commit gate's codes). */
+export const ASSIGNEE_OVERRIDABLE_CODES = [
+  "PLANNING_ASSIGNEE_NOT_IN_CREW",
+  "PLANNING_ASSIGNEE_NOT_WORKING",
+  "PLANNING_ASSIGNEE_OVERLOADED",
+] as const;
+
+/** A refusal about the technician (crew, shift, hours left, double booking): overridable with a reason. */
+export function isAssigneeOverridableError(codes: string[], message: string): boolean {
+  return (
+    codes.some((c) => (ASSIGNEE_OVERRIDABLE_CODES as readonly string[]).includes(c)) ||
+    isDoubleBookingErrorMessage(message)
+  );
+}
+
 export function isDoubleBookingErrorMessage(message: string): boolean {
   const lower = message.toLowerCase();
   return lower.includes("double-booking") || lower.includes("double booking");

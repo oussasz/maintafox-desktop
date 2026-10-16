@@ -18,6 +18,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { PermissionGate } from "@/components/PermissionGate";
 import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
 import type { SmartFilterDef } from "@/components/filters/smart-filter-types";
+import { AssigneeCapacityDetails } from "@/components/planning/AssigneeCapacityDetails";
 import { BreakInDialog } from "@/components/planning/BreakInDialog";
 import { CommitDialog } from "@/components/planning/CommitDialog";
 import { CommitmentInspectorDialog } from "@/components/planning/CommitmentInspectorDialog";
@@ -49,7 +50,9 @@ import {
   writeStoredPageView,
   type PlanningBoardScope,
   type PlanningPageView,
+  isAssigneeOverridableError,
 } from "@/components/planning/planning-model";
+import { useAssigneeCapacity } from "@/components/planning/use-assignee-capacity";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -75,7 +78,7 @@ import { listActiveTeams, listPersonnel } from "@/services/personnel-service";
 import { listUsers } from "@/services/rbac-service";
 import { useSessionStore } from "@/store/session-store";
 import { usePlanningStore } from "@/stores/planning-store";
-import { toErrorMessage } from "@/utils/errors";
+import { extractIpcValidationDetails, toErrorMessage } from "@/utils/errors";
 import type {
   CreateScheduleBreakInInput,
   CreateScheduleCommitmentInput,
@@ -93,6 +96,8 @@ type ApproverOption = { id: number; label: string };
 type PendingReschedule = {
   input: RescheduleCommitmentInput;
   needsOverride: boolean;
+  /** The assignee refusals the override would cover (shown before confirming). */
+  codes: string[];
 };
 
 export function PlanningPage() {
@@ -183,6 +188,15 @@ export function PlanningPage() {
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [overrideOpen, setOverrideOpen] = useState(false);
   const pendingRescheduleRef = useRef<PendingReschedule | null>(null);
+  const [pendingReschedule, setPendingReschedule] = useState<PendingReschedule | null>(null);
+  /** The technician's days over the new slot, shown in the override dialog. */
+  const rescheduleCapacity = useAssigneeCapacity({
+    enabled: overrideOpen && pendingReschedule != null,
+    teamId: pendingReschedule?.input.assigned_team_id ?? null,
+    startIso: pendingReschedule?.input.committed_start ?? "",
+    endIso: pendingReschedule?.input.committed_end ?? "",
+    commitmentId: pendingReschedule?.input.commitment_id ?? null,
+  });
 
   // Board IPC period — derived strictly from DU/AU, not from pan/zoom viewport.
   const periodStartIso = useMemo(() => localDateStartIso(dateFrom), [dateFrom]);
@@ -465,8 +479,17 @@ export function PlanningPage() {
       await reloadBoard();
     } catch (err) {
       const text = toErrorMessage(err);
-      if (text.toLowerCase().includes("double-booking") && !input.allow_double_booking_override) {
-        pendingRescheduleRef.current = { input, needsOverride: true };
+      const codes = extractIpcValidationDetails(err).map((d) => d.code);
+      const assigneeCodes = codes.filter((c) => c.startsWith("PLANNING_ASSIGNEE_"));
+      const acknowledged = input.acknowledged_assignee_issues ?? [];
+      const unacknowledged = assigneeCodes.some((c) => !acknowledged.includes(c));
+      if (
+        isAssigneeOverridableError(codes, text) &&
+        (!input.allow_double_booking_override || unacknowledged)
+      ) {
+        const pending = { input, needsOverride: true, codes: assigneeCodes };
+        pendingRescheduleRef.current = pending;
+        setPendingReschedule(pending);
         setOverrideOpen(true);
         return;
       }
@@ -961,17 +984,28 @@ export function PlanningPage() {
       <OverrideReasonDialog
         open={overrideOpen}
         onOpenChange={setOverrideOpen}
+        issues={pendingReschedule?.codes ?? []}
         onConfirm={(reason) => {
           const pending = pendingRescheduleRef.current;
           if (!pending) return;
           pendingRescheduleRef.current = null;
+          setPendingReschedule(null);
           void applyReschedule({
             ...pending.input,
             allow_double_booking_override: true,
             override_reason: reason,
+            // Only the refusals shown in the dialog are overridden.
+            acknowledged_assignee_issues: pending.codes,
           });
         }}
-      />
+      >
+        {pendingReschedule?.input.assigned_personnel_id != null ? (
+          <AssigneeCapacityDetails
+            capacity={rescheduleCapacity.get(pendingReschedule.input.assigned_personnel_id)}
+            assigned
+          />
+        ) : null}
+      </OverrideReasonDialog>
     </div>
   );
 }

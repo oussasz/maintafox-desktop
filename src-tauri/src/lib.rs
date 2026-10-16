@@ -492,6 +492,7 @@ pub fn run() {
             commands::planning::freeze_schedule_period,
             commands::planning::get_planning_gantt_snapshot,
             commands::planning::list_team_capacity_load,
+            commands::planning::list_assignee_capacity,
             commands::planning::notify_schedule_teams,
             commands::planning::export_planning_gantt_pdf,
             commands::finance::list_cost_centers,

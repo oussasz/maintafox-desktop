@@ -3,6 +3,10 @@ import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
+import {
+  AssigneeCapacityDetails,
+  assigneeOptionSuffix,
+} from "@/components/planning/AssigneeCapacityDetails";
 import { OverrideReasonDialog } from "@/components/planning/OverrideReasonDialog";
 import {
   PLANNING_PROPOSED_ITEM_ID,
@@ -19,7 +23,7 @@ import {
   fromDateTimeLocal,
   hoursBetweenLocals,
   isCapacityGateErrorMessage,
-  isDoubleBookingErrorMessage,
+  isAssigneeOverridableError,
   msToLocalIsoDate,
   parseLaborCostRange,
   parseMs,
@@ -29,6 +33,7 @@ import {
   slotShiftHours,
   teamGroupId,
 } from "@/components/planning/planning-model";
+import { useAssigneeCapacity } from "@/components/planning/use-assignee-capacity";
 import {
   ResourceTimeline,
   type ResourceTimelineGroup,
@@ -56,7 +61,7 @@ import {
 import { useFormatters } from "@/hooks/use-formatters";
 import { formatOrDash, formatPersonLabel } from "@/lib/display";
 import { getActiveRateCard, listTeamMembers } from "@/services/personnel-service";
-import { toErrorMessage } from "@/utils/errors";
+import { extractIpcValidationDetails, toErrorMessage } from "@/utils/errors";
 import type {
   CandidateConflictSummary,
   CreateScheduleCommitmentInput,
@@ -125,6 +130,8 @@ export function CommitDialog({
   const [overrideOpen, setOverrideOpen] = useState(false);
   const [pendingOverrideInput, setPendingOverrideInput] =
     useState<CreateScheduleCommitmentInput | null>(null);
+  /** The assignee refusals the pending override would cover (shown before confirming). */
+  const [pendingOverrideCodes, setPendingOverrideCodes] = useState<string[]>([]);
 
   const requireTargetCrew = boardScope.kind === "all";
   const effectiveTeamId = requireTargetCrew ? targetCrewId : teamId;
@@ -208,16 +215,30 @@ export function CommitDialog({
 
   const rosterIds = useMemo(() => new Set(roster.map((m) => m.personnel_id)), [roster]);
 
+  /** Each crew member over the chosen slot: shift and hours left per day, refusals. */
+  const assigneeCapacity = useAssigneeCapacity({
+    enabled: open,
+    teamId: effectiveTeamId,
+    startIso: start.trim() ? fromDateTimeLocal(start) : "",
+    endIso: end.trim() ? fromDateTimeLocal(end) : "",
+    candidateId: candidate?.id ?? null,
+  });
+
   const assigneeOptions = useMemo(
     () =>
-      roster.map((m) => ({
-        id: m.personnel_id,
-        label: m.employee_code
+      roster.map((m) => {
+        const name = m.employee_code
           ? `${formatPersonLabel(m.full_name)} (${m.employee_code})`
-          : formatPersonLabel(m.full_name),
-      })),
-    [roster],
+          : formatPersonLabel(m.full_name);
+        const cap = assigneeCapacity.get(m.personnel_id);
+        return {
+          id: m.personnel_id,
+          label: cap ? `${name} — ${assigneeOptionSuffix(cap, t)}` : name,
+        };
+      }),
+    [roster, assigneeCapacity, t],
   );
+  const selectedCapacity = personnelId != null ? assigneeCapacity.get(personnelId) : undefined;
 
   // Drop assignee if no longer on crew (e.g. crew changed while dialog open).
   useEffect(() => {
@@ -559,8 +580,10 @@ export function CommitDialog({
       } else {
         setFormError(message);
       }
-      if (isDoubleBookingErrorMessage(message)) {
+      const codes = extractIpcValidationDetails(err).map((d) => d.code);
+      if (isAssigneeOverridableError(codes, message)) {
         setPendingOverrideInput(input);
+        setPendingOverrideCodes(codes.filter((c) => c.startsWith("PLANNING_ASSIGNEE_")));
       }
     }
   }
@@ -781,6 +804,11 @@ export function CommitDialog({
                     ))}
                   </SelectContent>
                 </Select>
+                <AssigneeCapacityDetails
+                  capacity={selectedCapacity}
+                  crewSize={candidate?.planned_crew_size ?? null}
+                  assigned={personnelId != null}
+                />
                 {assigneeHelper ? (
                   <p className={cnHelper(rosterError != null)}>{assigneeHelper}</p>
                 ) : (
@@ -924,6 +952,7 @@ export function CommitDialog({
       <OverrideReasonDialog
         open={overrideOpen}
         onOpenChange={setOverrideOpen}
+        issues={pendingOverrideCodes}
         onConfirm={(reason) => {
           const pending = pendingOverrideInput;
           if (!pending) return;
@@ -932,9 +961,17 @@ export function CommitDialog({
             ...pending,
             allow_double_booking_override: true,
             override_reason: reason,
+            // Only the refusals shown in the dialog are overridden.
+            acknowledged_assignee_issues: pendingOverrideCodes,
           });
         }}
-      />
+      >
+        <AssigneeCapacityDetails
+          capacity={selectedCapacity}
+          crewSize={candidate?.planned_crew_size ?? null}
+          assigned={personnelId != null}
+        />
+      </OverrideReasonDialog>
     </>
   );
 }
