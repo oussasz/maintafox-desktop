@@ -294,8 +294,10 @@ async fn hydrate_assets_by_ids(
 
     let mut where_clauses = vec!["e.deleted_at IS NULL".to_string(), format!("e.id IN ({placeholders})")];
     if !include_decommissioned {
-        where_clauses
-            .push("COALESCE(rs_stat.code, e.lifecycle_status) NOT IN ('DECOMMISSIONED', 'SCRAPPED')".to_string());
+        where_clauses.push(format!(
+            "NOT ({})",
+            crate::assets::taxonomy_reference::STATUS_RETIRED_SQL
+        ));
     }
     let where_sql = where_clauses.join(" AND ");
 
@@ -550,8 +552,10 @@ pub(crate) fn build_asset_scope_where(
     let mut binds: Vec<sea_orm::Value> = Vec::new();
 
     if !filters.include_decommissioned.unwrap_or(false) {
-        where_clauses
-            .push("COALESCE(rs_stat.code, e.lifecycle_status) NOT IN ('DECOMMISSIONED', 'SCRAPPED')".to_string());
+        where_clauses.push(format!(
+            "NOT ({})",
+            crate::assets::taxonomy_reference::STATUS_RETIRED_SQL
+        ));
     }
 
     if let Some(ids) = text_matches {
@@ -618,62 +622,10 @@ pub(crate) fn build_asset_scope_where(
     }
 
     if let Some(ref focus) = filters.registry_focus {
-        match focus.as_str() {
-            "status_down" => {
-                where_clauses.push(
-                    "UPPER(COALESCE(rs_stat.code, e.lifecycle_status)) IN (\
-                     'OUT_OF_SERVICE','DOWN','INACTIVE','OUTOFSERVICE')"
-                        .to_string(),
-                );
-            }
-            "critical_at_risk" => {
-                where_clauses.push(
-                    "UPPER(COALESCE(rs_crit.code, lv.code)) IN ('A','CRITICAL','CRITIQUE') \
-                     AND (\
-                       UPPER(COALESCE(rs_stat.code, e.lifecycle_status)) IN (\
-                         'OUT_OF_SERVICE','DOWN','INACTIVE','OUTOFSERVICE') \
-                       OR EXISTS (\
-                         SELECT 1 FROM intervention_requests ir \
-                         WHERE ir.equipment_id = e.id \
-                           AND ir.status NOT IN ('rejected','converted_to_work_order',\
-                             'closed_as_non_executable','archived')\
-                       ) \
-                       OR EXISTS (\
-                         SELECT 1 FROM work_orders wo \
-                         JOIN work_order_statuses s ON s.id = wo.status_id \
-                         WHERE wo.equipment_id = e.id AND s.code NOT IN ('closed','cancelled')\
-                       )\
-                     )"
-                    .to_string(),
-                );
-            }
-            "open_work" => {
-                where_clauses.push(
-                    "(EXISTS (\
-                       SELECT 1 FROM intervention_requests ir \
-                       WHERE ir.equipment_id = e.id \
-                         AND ir.status NOT IN ('rejected','converted_to_work_order',\
-                           'closed_as_non_executable','archived')\
-                     ) OR EXISTS (\
-                       SELECT 1 FROM work_orders wo \
-                       JOIN work_order_statuses s ON s.id = wo.status_id \
-                       WHERE wo.equipment_id = e.id AND s.code NOT IN ('closed','cancelled')\
-                     ))"
-                    .to_string(),
-                );
-            }
-            "stale_meters" => {
-                where_clauses.push(
-                    "EXISTS (\
-                       SELECT 1 FROM equipment_meters em \
-                       WHERE em.equipment_id = e.id AND em.is_active = 1 \
-                         AND (em.last_read_at IS NULL \
-                              OR datetime(em.last_read_at) < datetime('now', '-30 days'))\
-                     )"
-                    .to_string(),
-                );
-            }
-            _ => {}
+        // The strip tile's own predicate (module definitions, reference-data tags), so the list
+        // opened from a tile shows exactly the assets it counts.
+        if let Some(sql) = crate::assets::registry_metrics::registry_focus_sql(focus) {
+            where_clauses.push(sql);
         }
     }
 

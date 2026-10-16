@@ -91,6 +91,7 @@ const AnalyticsExecutiveDashboardSchema = z.object({
   avg_availability: AnalyticsKpiValueSchema,
   avg_data_quality: AnalyticsKpiValueSchema,
   maintenance_cost: AnalyticsKpiValueSchema,
+  maintenance_cost_pending: z.number().nullable(),
   reliability_snapshot_count: z.number(),
   reliability_total_events: z.number(),
   workload_days: z.array(

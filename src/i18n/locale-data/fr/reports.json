@@ -54,7 +54,7 @@
         "dataQuality": "Qualité des données",
         "snapshots": "Snapshots",
         "failureEvents": "Événements de défaillance",
-        "maintenanceCost": "Coût OT clôturés (horizon)"
+        "maintenanceCost": "Coût OT valorisé au budget"
       },
       "badActors": {
         "title": "Top 5 équipements à risque",
@@ -74,7 +74,10 @@
         "next7": "7 prochains jours",
         "horizon": "{{days}} derniers jours",
         "inService": "Enregistrés, non supprimés",
-        "overdue": "DI ouvertes > 7 jours + PM en retard"
+        "overdue": "DI ouvertes > 7 jours + PM en retard",
+        "costSettled": "Comptabilisé au budget par la Finance, {{days}} derniers jours",
+        "costPending_one": "{{days}} derniers jours · {{count}} OT clôturé pas encore valorisé",
+        "costPending_other": "{{days}} derniers jours · {{count}} OT clôturés pas encore valorisés"
       },
       "diStatus": {
         "openList": "Ouvrir les demandes",

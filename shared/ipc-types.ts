@@ -2364,7 +2364,6 @@ export interface EquipmentRegistryMetricCell {
   semantic_key: string;
   catalog_id: string;
   value: number;
-  previous_value: number;
   available: boolean;
   value_kind: EquipmentRegistryMetricValueKind;
   trend_sense: EquipmentRegistryMetricTrendSense;
@@ -9252,7 +9251,10 @@ export interface AnalyticsExecutiveDashboard {
   avg_mttr_hours: AnalyticsKpiValue;
   avg_availability: AnalyticsKpiValue;
   avg_data_quality: AnalyticsKpiValue;
+  /** OT costs settled into the budget over the horizon (Finance settlement flow; finance view). */
   maintenance_cost: AnalyticsKpiValue;
+  /** Work orders closed in the horizon whose settlement is pending; null without finance view. */
+  maintenance_cost_pending: number | null;
   reliability_snapshot_count: number;
   reliability_total_events: number;
   workload_days: AnalyticsWorkloadDay[];

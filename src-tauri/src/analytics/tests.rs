@@ -211,6 +211,7 @@ async fn seed_dataset(db: &DatabaseConnection) -> Data {
         )
         .await;
     }
+    seed_settled_costs(db).await;
 
     let plan = crate::pm::queries::create_pm_plan(
         db,
@@ -286,6 +287,59 @@ async fn seed_dataset(db: &DatabaseConnection) -> Data {
         .await;
     }
     Data { e1, e2 }
+}
+
+/// The Finance settlement flow's budget actuals for the seeded OTs: WO-3 settled 100 (−5 d),
+/// WO-4 settled 40 (−45 d), an earlier WO-3 cycle of 30 posted then reversed (nets 0), and a
+/// non-OT actual of 500 (−3 d) that is not OT cost. WO-1's settlement is pending (closed −2 d).
+async fn seed_settled_costs(db: &DatabaseConnection) {
+    let currency = crate::inventory::fx::tenant_currency(db)
+        .await
+        .expect("tenant currency");
+    exec(
+        db,
+        "INSERT INTO cost_centers (entity_sync_id, code, name, is_active) VALUES ('an-cc', 'CC-AN', 'Maintenance', 1)",
+    )
+    .await;
+    exec(
+        db,
+        &format!(
+            "INSERT INTO budget_versions (entity_sync_id, fiscal_year, scenario_type, version_no, status, currency_code, title) \
+             VALUES ('an-bv', CAST(strftime('%Y','now') AS INTEGER), 'approved', 1, 'approved', '{currency}', 'Budget')"
+        ),
+    )
+    .await;
+    for (key, wo, source, amount, at, status) in [
+        ("s3", "WO-3", "wo_settlement", 100.0, "-5 days", "posted"),
+        ("s4", "WO-4", "wo_settlement", 40.0, "-45 days", "posted"),
+        ("s3-old", "WO-3", "wo_settlement", 30.0, "-8 days", "reversed"),
+        ("s3-rev", "WO-3", "wo_settlement", -30.0, "-7 days", "reversed"),
+        ("manual", "WO-3", "manual_adjustment", 500.0, "-3 days", "posted"),
+    ] {
+        exec(
+            db,
+            &format!(
+                "INSERT INTO budget_actuals (entity_sync_id, budget_version_id, cost_center_id, period_month, budget_bucket, \
+                 amount_source, source_currency, amount_base, base_currency, source_type, source_id, work_order_id, \
+                 posting_status, posted_at, event_at) \
+                 VALUES ('an-ba-{key}', (SELECT id FROM budget_versions WHERE entity_sync_id = 'an-bv'), \
+                 (SELECT id FROM cost_centers WHERE entity_sync_id = 'an-cc'), 1, 'labor', {amount}, '{currency}', {amount}, \
+                 '{currency}', '{source}', 'an-src-{key}', (SELECT id FROM work_orders WHERE code = '{wo}'), '{status}', \
+                 strftime('%Y-%m-%dT%H:%M:%SZ','now','{at}'), strftime('%Y-%m-%dT%H:%M:%SZ','now','{at}'))"
+            ),
+        )
+        .await;
+    }
+    exec(
+        db,
+        &format!(
+            "INSERT INTO wo_cost_settlements (entity_sync_id, work_order_id, settlement_cycle, status, pending_reason, \
+             currency_code, closed_at, created_at, updated_at) \
+             VALUES ('an-pending', (SELECT id FROM work_orders WHERE code = 'WO-1'), 1, 'pending', 'no_cost_center', \
+             '{currency}', strftime('%Y-%m-%dT%H:%M:%SZ','now','-2 days'), datetime('now'), datetime('now'))"
+        ),
+    )
+    .await;
 }
 
 fn cell<'a>(p: &'a OverviewKpisPayload, key: &str) -> &'a OverviewKpiCell {
@@ -692,7 +746,7 @@ async fn overview_reliability_cells_unavailable_without_snapshots() {
 async fn executive_dashboard_fleet_wide_values() {
     let db = setup().await;
     let d = seed_dataset(&db).await;
-    let x = build_executive_dashboard(&db, &filter(30, None), true, true, true, true, true)
+    let x = build_executive_dashboard(&db, &filter(30, None), true, true, true, true, true, true)
         .await
         .expect("dashboard");
     assert_eq!((x.horizon_days, x.org_node_id), (30, None));
@@ -732,6 +786,9 @@ async fn executive_dashboard_fleet_wide_values() {
         (x.maintenance_cost.value, x.maintenance_cost.previous_value),
         (100.0, 40.0)
     );
+    // Settled OT cost only (the reversed cycle nets 0, the manual actual is not OT cost); WO-1's
+    // pending settlement is reported apart.
+    assert_eq!(x.maintenance_cost_pending, Some(1));
 
     // Workload axis: one entry per day of the horizon, ending today.
     assert_eq!(x.workload_days.len(), 30);
@@ -814,7 +871,7 @@ async fn executive_dashboard_fleet_wide_values() {
 async fn executive_dashboard_scoped_to_one_site() {
     let db = setup().await;
     let d = seed_dataset(&db).await;
-    let x = build_executive_dashboard(&db, &filter(30, Some(1)), true, true, true, true, true)
+    let x = build_executive_dashboard(&db, &filter(30, Some(1)), true, true, true, true, true, true)
         .await
         .expect("site 1");
     assert_eq!(x.org_node_id, Some(1));
@@ -827,15 +884,17 @@ async fn executive_dashboard_scoped_to_one_site() {
     assert_eq!(x.total_assets.value, 1.0);
     assert_eq!(x.overdue_items.value, 2.0, "DI2 + PM O1");
     assert_eq!(x.maintenance_cost.value, 100.0);
+    assert_eq!(x.maintenance_cost_pending, Some(1));
     assert_eq!(x.di_status_segments.iter().map(|s| s.count).sum::<i64>(), 4);
 
-    let site2 = build_executive_dashboard(&db, &filter(30, Some(2)), true, true, true, true, true)
+    let site2 = build_executive_dashboard(&db, &filter(30, Some(2)), true, true, true, true, true, true)
         .await
         .expect("site 2");
     assert_eq!(site2.open_dis.value, 1.0);
     assert_eq!(site2.open_wos.value, 1.0);
     assert_eq!(site2.pm_overdue.value, 0.0, "the PM plan is on the site 1 asset");
     assert_eq!(site2.maintenance_cost.value, 0.0);
+    assert_eq!(site2.maintenance_cost_pending, Some(0));
     assert_eq!(site2.reliability_snapshot_count, 1);
     assert!(close(site2.avg_mtbf_hours.value, 500.0));
     assert_eq!(site2.bad_actor_assets.len(), 1);
@@ -846,13 +905,14 @@ async fn executive_dashboard_scoped_to_one_site() {
 async fn executive_dashboard_pm_only_overdue_baseline() {
     let db = setup().await;
     seed_dataset(&db).await;
-    let x = build_executive_dashboard(&db, &filter(30, None), false, false, false, true, false)
+    let x = build_executive_dashboard(&db, &filter(30, None), false, false, false, true, false, false)
         .await
         .expect("dashboard");
     // O1 is overdue now; 30 days ago no occurrence existed yet.
     assert_eq!((x.overdue_items.value, x.overdue_items.previous_value), (1.0, 0.0));
     assert!(!x.open_dis.available);
     assert!(!x.maintenance_cost.available);
+    assert_eq!(x.maintenance_cost_pending, None, "finance data needs the finance view");
     assert!(x.bad_actor_assets.is_empty());
     assert!(x.reliability_series.is_empty());
     assert!(x.di_status_segments.is_empty());
@@ -870,7 +930,7 @@ async fn executive_dashboard_pm_only_overdue_baseline() {
 async fn executive_dashboard_overdue_baseline_counts_each_source_once() {
     let db = setup().await;
     seed_dataset(&db).await;
-    let x = build_executive_dashboard(&db, &filter(30, None), true, false, false, true, false)
+    let x = build_executive_dashboard(&db, &filter(30, None), true, false, false, true, false, false)
         .await
         .expect("dashboard");
     assert_eq!(x.overdue_items.value, 3.0);
@@ -882,7 +942,7 @@ async fn executive_dashboard_overdue_baseline_counts_each_source_once() {
 async fn executive_dashboard_without_permissions_is_all_denied() {
     let db = setup().await;
     seed_dataset(&db).await;
-    let x = build_executive_dashboard(&db, &filter(7, None), false, false, false, false, false)
+    let x = build_executive_dashboard(&db, &filter(7, None), false, false, false, false, false, false)
         .await
         .expect("dashboard");
     for k in [
@@ -913,24 +973,31 @@ async fn executive_dashboard_without_permissions_is_all_denied() {
 }
 
 #[tokio::test]
-async fn executive_dashboard_normalizes_horizon_and_flags_sparse_workload() {
+async fn executive_dashboard_refuses_other_horizons_and_flags_sparse_workload() {
     let db = setup().await;
-    let x = build_executive_dashboard(&db, &filter(45, None), true, true, false, true, false)
+    let err = build_executive_dashboard(&db, &filter(45, None), true, true, false, true, false, false)
+        .await
+        .expect_err("45 days is not a horizon choice");
+    assert!(
+        matches!(err, crate::errors::AppError::ValidationFailed(_)),
+        "never silently replaced by 30: {err:?}"
+    );
+    let x = build_executive_dashboard(&db, &filter(30, None), true, true, false, true, false, false)
         .await
         .expect("dashboard");
-    assert_eq!(x.horizon_days, 30, "unsupported horizon falls back to 30");
+    assert_eq!(x.horizon_days, 30);
     assert_eq!(x.workload_days.len(), 30);
     assert_eq!(
         x.workload_quality_badge.as_deref(),
         Some(kpi_definitions::quality_badge::SPARSE_WORKLOAD)
     );
 
-    let week = build_executive_dashboard(&db, &filter(7, None), true, false, false, false, false)
+    let week = build_executive_dashboard(&db, &filter(7, None), true, false, false, false, false, false)
         .await
         .expect("dashboard");
     assert_eq!(week.horizon_days, 7);
     assert_eq!(week.workload_days.len(), 7);
-    let q = build_executive_dashboard(&db, &filter(90, None), true, false, false, false, false)
+    let q = build_executive_dashboard(&db, &filter(90, None), true, false, false, false, false, false)
         .await
         .expect("dashboard");
     assert_eq!(q.workload_days.len(), 90);

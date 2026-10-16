@@ -2,30 +2,15 @@ import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import type { LinkedEntityKind } from "@/components/common/LinkedEntityBadge";
+import type { Tone } from "@/design-system/tone";
 
 /**
- * Single semantic tone vocabulary for every board surface (column header,
- * badge, accent bar). KanbanBoard owns the class mapping — adapters never
- * pass colours, spacing, typography, or any other Tailwind for board chrome.
+ * Board colours are the seven status tones of the design system (`design-system/tone.ts`), the
+ * same vocabulary as the list chips: adapters pass `toneOf(WO_STATUS_TONE, code)`,
+ * `urgencyTone(code)` … so a status or an urgency level has the same colour on the board and
+ * in the list. KanbanBoard owns the class mapping — adapters never pass Tailwind classes.
  */
-export type KanbanTone =
-  | "draft"
-  | "planning"
-  | "ready"
-  | "executing"
-  | "success"
-  | "closed"
-  | "cancelled"
-  | "work"
-  | "info"
-  | "warning"
-  | "danger"
-  | "muted"
-  | "critical"
-  | "high"
-  | "medium"
-  | "low"
-  | "neutral";
+export type KanbanTone = Tone;
 
 export interface KanbanBadge {
   label: string;
@@ -85,7 +70,10 @@ export interface KanbanCard {
   /** Accent bar tone (urgency / priority). Defaults to neutral. */
   accent?: KanbanTone | undefined;
   actions?: KanbanCardAction[] | undefined;
-  /** When false, card is not HTML5-draggable even if the board enables drag. */
+  /**
+   * When false, the card cannot be moved (neither dragged nor moved with the keyboard / the
+   * "Move to" menu) even if the board enables moving.
+   */
   draggable?: boolean | undefined;
   disabled?: boolean | undefined;
   selected?: boolean | undefined;
@@ -100,16 +88,20 @@ export interface KanbanBoardProps<T = KanbanCard> {
   items?: T[] | undefined;
   getCard?: ((item: T, index: number) => KanbanCard) | undefined;
   onCardClick?: ((card: KanbanCard) => void) | undefined;
+  /**
+   * Cards can change column: by drag and drop, by the card's "Move to" menu, or with
+   * Alt+←/→ on a focused card (keyboard alternative to dragging).
+   */
   enableDrag?: boolean | undefined;
   canDrag?: ((card: KanbanCard) => boolean) | undefined;
   canDrop?: ((card: KanbanCard, fromColumnId: string, toColumnId: string) => boolean) | undefined;
   /**
-   * Called after a drop when canDrop allows (or when canDrop is omitted).
+   * Called after a drop / keyboard move when canDrop allows (or when canDrop is omitted).
    * Adapters own validation feedback and open-detail side effects.
    */
   onDrop?: ((card: KanbanCard, fromColumnId: string, toColumnId: string) => void) | undefined;
   pageSize?: number | undefined;
-  /** Already-localized load-more text builder. */
+  /** Already-localized load-more text builder (defaults to common.kanban.showMore). */
   loadMoreLabel?: ((remaining: number) => string) | undefined;
   /**
    * Shared empty-column label for every column (from common.kanban.emptyColumn).

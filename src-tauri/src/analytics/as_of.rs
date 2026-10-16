@@ -169,14 +169,17 @@ pub async fn wo_in_progress_at(db: &DatabaseConnection, at: DateTime<Utc>, org: 
     count(db, sql, vec![at_s.clone().into(), org.into(), org.into(), at_s.into()]).await
 }
 
-/// PM occurrences still pending at `at` whose due date was already past.
+/// PM occurrences still pending at `at` and already overdue then: past the end of their tolerance
+/// window, the due date when they have none (`pm::queries::PM_OVERDUE_FROM_SQL`) — at now, the PM
+/// page's and the home page's `PM_OVERDUE_SQL`.
 pub async fn pm_overdue_at(db: &DatabaseConnection, at: DateTime<Utc>, org: Option<i64>) -> AppResult<i64> {
     let at_s = instant(at);
+    let overdue_from = crate::pm::queries::PM_OVERDUE_FROM_SQL;
     let sql = format!(
         "SELECT COUNT(*) AS cnt FROM pm_occurrences po \
          JOIN pm_plans pp ON pp.id = po.pm_plan_id \
          LEFT JOIN equipment e ON e.id = pp.asset_scope_id AND pp.asset_scope_type = 'equipment' \
-         WHERE po.due_at IS NOT NULL AND datetime(po.due_at) < datetime(?) \
+         WHERE po.due_at IS NOT NULL AND datetime({overdue_from}) < datetime(?) \
            AND datetime(po.created_at) <= datetime(?) \
            AND ({PM_END} IS NULL OR datetime({PM_END}) > datetime(?)) \
            AND (? IS NULL OR e.installed_at_node_id = ?)"

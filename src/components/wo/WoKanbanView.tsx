@@ -13,9 +13,11 @@ import { Calendar as CalendarIcon, User } from "lucide-react";
 import { useCallback, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 
-import { urgencyKanbanTone, useUrgencyScale } from "@/components/common/urgency/use-urgency-scale";
+import { urgencyTone, useUrgencyScale } from "@/components/common/urgency/use-urgency-scale";
 import { KanbanBoard } from "@/components/kanban";
-import type { KanbanBadge, KanbanCard, KanbanColumn, KanbanTone } from "@/components/kanban";
+import type { KanbanBadge, KanbanCard, KanbanColumn } from "@/components/kanban";
+import { WO_STATUS_TONE, toneOf } from "@/design-system/tone";
+import { formatShortDate, intlLocaleForLanguage } from "@/utils/format-date";
 import type { WorkOrder } from "@shared/ipc-types";
 
 /**
@@ -41,27 +43,16 @@ const STATUS_TO_COLUMN: Record<string, string> = {
   technically_verified: "completed",
 };
 
-const COLUMN_META: { id: string; labelKey: string; tone: KanbanTone }[] = [
-  { id: "draft", labelKey: "kanban.columnDraft", tone: "draft" },
-  { id: "planning", labelKey: "kanban.columnPlanning", tone: "planning" },
-  { id: "ready", labelKey: "kanban.columnReady", tone: "ready" },
-  { id: "executing", labelKey: "kanban.columnExecuting", tone: "executing" },
-  { id: "completed", labelKey: "kanban.columnCompleted", tone: "success" },
-  { id: "closed", labelKey: "kanban.columnClosed", tone: "closed" },
-  { id: "cancelled", labelKey: "kanban.columnCancelled", tone: "cancelled" },
+/** Lanes, each coloured like the list chip of its main status (`WO_STATUS_TONE`). */
+const COLUMN_META: { id: string; labelKey: string; status: string }[] = [
+  { id: "draft", labelKey: "kanban.columnDraft", status: "draft" },
+  { id: "planning", labelKey: "kanban.columnPlanning", status: "planning" },
+  { id: "ready", labelKey: "kanban.columnReady", status: "ready" },
+  { id: "executing", labelKey: "kanban.columnExecuting", status: "in_progress" },
+  { id: "completed", labelKey: "kanban.columnCompleted", status: "completed" },
+  { id: "closed", labelKey: "kanban.columnClosed", status: "closed" },
+  { id: "cancelled", labelKey: "kanban.columnCancelled", status: "cancelled" },
 ];
-
-function shortDate(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  try {
-    return new Date(iso).toLocaleDateString(undefined, {
-      day: "2-digit",
-      month: "short",
-    });
-  } catch {
-    return iso;
-  }
-}
 
 interface WoKanbanViewProps {
   items: WorkOrder[];
@@ -69,8 +60,9 @@ interface WoKanbanViewProps {
 }
 
 export function WoKanbanView({ items, onCardClick }: WoKanbanViewProps) {
-  const { t } = useTranslation(["ot", "common"]);
+  const { t, i18n } = useTranslation(["ot", "common"]);
   const { labelOf: urgencyLabel } = useUrgencyScale();
+  const locale = intlLocaleForLanguage(i18n.language);
   const byId = useRef(new Map<string, WorkOrder>());
 
   const columns = useMemo<KanbanColumn[]>(
@@ -78,7 +70,7 @@ export function WoKanbanView({ items, onCardClick }: WoKanbanViewProps) {
       COLUMN_META.map((c) => ({
         id: c.id,
         label: t(c.labelKey),
-        tone: c.tone,
+        tone: toneOf(WO_STATUS_TONE, c.status),
       })),
     [t],
   );
@@ -88,13 +80,10 @@ export function WoKanbanView({ items, onCardClick }: WoKanbanViewProps) {
     const result = items.map<KanbanCard>((wo) => {
       const id = String(wo.id);
       map.set(id, wo);
-      const urgencyTone = urgencyKanbanTone(wo.urgency_code);
+      const urgency = wo.urgency_code ? urgencyTone(wo.urgency_code) : undefined;
       const badges: KanbanBadge[] = [];
-      if (wo.urgency_code) {
-        badges.push({
-          label: urgencyLabel(wo.urgency_code),
-          ...(urgencyTone ? { tone: urgencyTone } : {}),
-        });
+      if (wo.urgency_code && urgency) {
+        badges.push({ label: urgencyLabel(wo.urgency_code), tone: urgency });
       }
 
       return {
@@ -106,14 +95,17 @@ export function WoKanbanView({ items, onCardClick }: WoKanbanViewProps) {
         ...(badges.length > 0 ? { badges } : {}),
         meta: [
           { label: wo.responsible_username ?? t("kanban.unassigned"), icon: User },
-          { label: shortDate(wo.planned_end), icon: CalendarIcon },
+          {
+            label: wo.planned_end ? formatShortDate(wo.planned_end, locale) : "—",
+            icon: CalendarIcon,
+          },
         ],
-        accent: urgencyTone ?? "neutral",
+        accent: urgency ?? "neutral",
       };
     });
     byId.current = map;
     return result;
-  }, [items, t, urgencyLabel]);
+  }, [items, locale, t, urgencyLabel]);
 
   const handleCardClick = useCallback(
     (card: KanbanCard) => {

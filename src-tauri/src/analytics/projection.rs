@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::analytics::as_of::{self, PmDueWindow};
 use crate::analytics::smrp::{build_smrp_kpis, SmrpKpis, SmrpWindow};
-use crate::errors::AppResult;
+use crate::errors::{AppError, AppResult};
+use crate::finance::settlement;
 use crate::kpi_definitions;
 use crate::reliability::fleet::{pooled_fleet_kpis, pooled_fleet_series, FleetWindow};
 use crate::reliability::readiness::DQ_GREEN_THRESHOLD;
@@ -79,7 +80,12 @@ pub struct AnalyticsExecutiveDashboard {
     pub avg_mttr_hours: AnalyticsKpiValue,
     pub avg_availability: AnalyticsKpiValue,
     pub avg_data_quality: AnalyticsKpiValue,
+    /// OT costs settled into the budget over the horizon (`finance::settlement`); needs the
+    /// finance view.
     pub maintenance_cost: AnalyticsKpiValue,
+    /// Work orders closed in the horizon whose settlement is still pending (their cost is not
+    /// booked yet); `None` without the finance view.
+    pub maintenance_cost_pending: Option<i64>,
     pub reliability_snapshot_count: i64,
     pub reliability_total_events: i64,
     pub workload_days: Vec<AnalyticsWorkloadDay>,
@@ -91,10 +97,14 @@ pub struct AnalyticsExecutiveDashboard {
     pub smrp: Option<SmrpKpis>,
 }
 
-fn normalize_horizon(days: i64) -> i64 {
+/// The horizon selector's choices (7, 30 or 90 days); anything else is refused, never silently
+/// replaced by a default.
+fn checked_horizon(days: i64) -> AppResult<i64> {
     match days {
-        7 | 30 | 90 => days,
-        _ => 30,
+        7 | 30 | 90 => Ok(days),
+        other => Err(AppError::ValidationFailed(vec![format!(
+            "analytics horizon must be 7, 30 or 90 days (got {other})"
+        )])),
     }
 }
 
@@ -153,8 +163,9 @@ pub async fn build_executive_dashboard(
     can_eq: bool,
     can_pm: bool,
     can_rep: bool,
+    can_fin: bool,
 ) -> AppResult<AnalyticsExecutiveDashboard> {
-    let horizon = normalize_horizon(filter.horizon_days);
+    let horizon = checked_horizon(filter.horizon_days)?;
     let org = filter.org_node_id;
     let org_bind: sea_orm::Value = org.into();
 
@@ -294,55 +305,32 @@ pub async fn build_executive_dashboard(
         )
     };
 
-    // ── Maintenance cost (closed WO total_cost in horizon) ─────────────────
-    let maintenance_cost = if can_ot {
-        let shift = format!("-{horizon} days");
-        let row = db
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT COALESCE(SUM(wo.total_cost), 0) AS total
-                 FROM work_orders wo
-                 JOIN work_order_statuses s ON s.id = wo.status_id
-                 WHERE s.code = 'closed'
-                   AND wo.closed_at IS NOT NULL
-                   AND datetime(wo.closed_at) >= datetime('now', ?)
-                   AND (? IS NULL OR wo.entity_id = ?)",
-                [shift.clone().into(), org_bind.clone(), org_bind.clone()],
-            ))
-            .await?;
-        let prev_shift = format!("-{} days", horizon * 2);
-        let prev_row = db
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT COALESCE(SUM(wo.total_cost), 0) AS total
-                 FROM work_orders wo
-                 JOIN work_order_statuses s ON s.id = wo.status_id
-                 WHERE s.code = 'closed'
-                   AND wo.closed_at IS NOT NULL
-                   AND datetime(wo.closed_at) >= datetime('now', ?)
-                   AND datetime(wo.closed_at) < datetime('now', ?)
-                   AND (? IS NULL OR wo.entity_id = ?)",
-                [prev_shift.into(), shift.into(), org_bind.clone(), org_bind.clone()],
-            ))
-            .await?;
-        let cur = row
-            .as_ref()
-            .and_then(|r| f64::try_get(r, "", "total").ok())
-            .unwrap_or(0.0);
-        let prev = prev_row
-            .as_ref()
-            .and_then(|r| f64::try_get(r, "", "total").ok())
-            .unwrap_or(0.0);
-        AnalyticsKpiValue {
-            key: "maintenance_cost".into(),
-            value: cur,
-            previous_value: prev,
-            available: true,
-            quality_badge: kpi_badge(prev, cur),
-            catalog_id: Some(kpi_definitions::catalog::MAINTENANCE_COST.to_string()),
-        }
+    // ── Maintenance cost: OT costs settled into the budget over the horizon (Finance flow) ──
+    // The budget actuals of the OT settlement (settlements + late costs, reversals netted), the
+    // figure the Finance cockpit shows; Finance data, so it needs the finance view. Work orders
+    // closed in the horizon whose settlement is still pending are counted apart (not cost yet).
+    let (maintenance_cost, maintenance_cost_pending) = if can_fin {
+        let (now_s, start_s) = (as_of::instant(now), as_of::instant(start));
+        let prev_start_s = as_of::instant(as_of::days_before(start, horizon));
+        let cur = settlement::settled_wo_cost_between(db, &start_s, &now_s, org).await?;
+        let prev = settlement::settled_wo_cost_between(db, &prev_start_s, &start_s, org).await?;
+        let pending = settlement::pending_settlements_closed_between(db, &start_s, &now_s, org).await?;
+        (
+            AnalyticsKpiValue {
+                key: "maintenance_cost".into(),
+                value: cur,
+                previous_value: prev,
+                available: true,
+                quality_badge: kpi_badge(prev, cur),
+                catalog_id: Some(kpi_definitions::catalog::MAINTENANCE_COST.to_string()),
+            },
+            Some(pending),
+        )
     } else {
-        denied_kpi("maintenance_cost", Some(kpi_definitions::catalog::MAINTENANCE_COST))
+        (
+            denied_kpi("maintenance_cost", Some(kpi_definitions::catalog::MAINTENANCE_COST)),
+            None,
+        )
     };
 
     // ── Workload chart (grouped; one query per series) ─────────────────────
@@ -565,6 +553,7 @@ pub async fn build_executive_dashboard(
         avg_availability,
         avg_data_quality,
         maintenance_cost,
+        maintenance_cost_pending,
         reliability_snapshot_count,
         reliability_total_events,
         workload_days,

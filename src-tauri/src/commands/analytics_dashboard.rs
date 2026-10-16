@@ -39,8 +39,9 @@ pub async fn get_analytics_executive_dashboard(
     let can_eq = check_permission(db, uid, crate::rbac::permissions::EQ_VIEW, &PermissionScope::Global).await?;
     let can_pm = check_permission(db, uid, crate::rbac::permissions::PM_VIEW, &PermissionScope::Global).await?;
     let can_rep = check_permission(db, uid, crate::rbac::permissions::REP_VIEW, &PermissionScope::Global).await?;
+    let can_fin = check_permission(db, uid, crate::rbac::permissions::FIN_VIEW, &PermissionScope::Global).await?;
 
-    build_executive_dashboard(db, &filter, can_di, can_ot, can_eq, can_pm, can_rep).await
+    build_executive_dashboard(db, &filter, can_di, can_ot, can_eq, can_pm, can_rep, can_fin).await
 }
 
 #[tauri::command]
