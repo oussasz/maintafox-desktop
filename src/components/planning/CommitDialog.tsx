@@ -1,3 +1,4 @@
+import type { TFunction } from "i18next";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
@@ -19,7 +20,7 @@ import {
   fromDateTimeLocal,
   hoursBetweenLocals,
   isCapacityGateErrorMessage,
-  isDoubleBookingErrorMessage,
+  isAssigneeOverridableError,
   msToLocalIsoDate,
   parseLaborCostRange,
   parseMs,
@@ -56,8 +57,10 @@ import {
 import { useFormatters } from "@/hooks/use-formatters";
 import { formatOrDash, formatPersonLabel } from "@/lib/display";
 import { getActiveRateCard, listTeamMembers } from "@/services/personnel-service";
-import { toErrorMessage } from "@/utils/errors";
+import { listAssigneeCapacity } from "@/services/planning-service";
+import { extractIpcValidationDetails, toErrorMessage } from "@/utils/errors";
 import type {
+  AssigneeCapacity,
   CandidateConflictSummary,
   CreateScheduleCommitmentInput,
   PlanningGanttSnapshot,
@@ -208,16 +211,48 @@ export function CommitDialog({
 
   const rosterIds = useMemo(() => new Set(roster.map((m) => m.personnel_id)), [roster]);
 
+  /** Each crew member over the chosen slot: shift, hours left net of all their work, refusals. */
+  const [assigneeCapacity, setAssigneeCapacity] = useState<Map<number, AssigneeCapacity>>(
+    new Map(),
+  );
+  useEffect(() => {
+    const startIso = start.trim() ? fromDateTimeLocal(start) : "";
+    const endIso = end.trim() ? fromDateTimeLocal(end) : "";
+    if (!open || effectiveTeamId == null || !startIso || !endIso || endIso <= startIso) {
+      setAssigneeCapacity(new Map());
+      return;
+    }
+    let cancelled = false;
+    listAssigneeCapacity({
+      team_id: effectiveTeamId,
+      start: startIso,
+      end: endIso,
+      candidate_id: candidate?.id ?? null,
+    })
+      .then((rows) => {
+        if (!cancelled) setAssigneeCapacity(new Map(rows.map((r) => [r.personnel_id, r])));
+      })
+      .catch(() => {
+        // The picker still lists the crew; the commit gate checks the hours anyway.
+        if (!cancelled) setAssigneeCapacity(new Map());
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, effectiveTeamId, start, end, candidate?.id]);
+
   const assigneeOptions = useMemo(
     () =>
-      roster.map((m) => ({
-        id: m.personnel_id,
-        label: m.employee_code
+      roster.map((m) => {
+        const name = m.employee_code
           ? `${formatPersonLabel(m.full_name)} (${m.employee_code})`
-          : formatPersonLabel(m.full_name),
-      })),
-    [roster],
+          : formatPersonLabel(m.full_name);
+        const cap = assigneeCapacity.get(m.personnel_id);
+        return { id: m.personnel_id, label: cap ? `${name} — ${assigneeSummary(cap, t)}` : name };
+      }),
+    [roster, assigneeCapacity, t],
   );
+  const selectedCapacity = personnelId != null ? assigneeCapacity.get(personnelId) : undefined;
 
   // Drop assignee if no longer on crew (e.g. crew changed while dialog open).
   useEffect(() => {
@@ -559,7 +594,8 @@ export function CommitDialog({
       } else {
         setFormError(message);
       }
-      if (isDoubleBookingErrorMessage(message)) {
+      const codes = extractIpcValidationDetails(err).map((d) => d.code);
+      if (isAssigneeOverridableError(codes, message)) {
         setPendingOverrideInput(input);
       }
     }
@@ -781,6 +817,13 @@ export function CommitDialog({
                     ))}
                   </SelectContent>
                 </Select>
+                {selectedCapacity && selectedCapacity.issues.length > 0 ? (
+                  <ul className="mt-1 space-y-0.5 text-[11px] text-tone-attention-fg" role="status">
+                    {selectedCapacity.issues.map((code) => (
+                      <li key={code}>{t(`assignee.issues.${code}`)}</li>
+                    ))}
+                  </ul>
+                ) : null}
                 {assigneeHelper ? (
                   <p className={cnHelper(rosterError != null)}>{assigneeHelper}</p>
                 ) : (
@@ -941,4 +984,18 @@ export function CommitDialog({
 
 function cnHelper(isError: boolean): string {
   return isError ? "mt-1 text-[11px] text-destructive" : "mt-1 text-[11px] text-text-muted";
+}
+
+/** "5.5 h left · 08:00–16:00", or why the person does not work during the slot. */
+function assigneeSummary(cap: AssigneeCapacity, t: TFunction<"planning">): string {
+  if (cap.issues.includes("PLANNING_ASSIGNEE_NOT_WORKING") || cap.slot_working_hours <= 0) {
+    const off = cap.days.find((d) => d.reason !== "working");
+    return t("assignee.notWorking", {
+      reason: t(`assignee.reasons.${off?.reason ?? "outside_shift"}`),
+    });
+  }
+  const left = cap.days.reduce((sum, d) => sum + d.remaining_hours, 0);
+  const shift = cap.days.find((d) => d.shift_start && d.shift_end);
+  const hours = t("assignee.hoursLeft", { hours: left.toFixed(1) });
+  return shift ? `${hours} · ${shift.shift_start}–${shift.shift_end}` : hours;
 }

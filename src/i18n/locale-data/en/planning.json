@@ -268,5 +268,25 @@
   "notes": {
     "PM_PARTS_TO_CHECK": "Parts listed on the PM: check they are available before the work.",
     "PM_PERMIT_TO_OBTAIN": "Permit required: to obtain before the work starts."
+  },
+  "assignee": {
+    "hoursLeft": "{{hours}} h left",
+    "notWorking": "not working ({{reason}})",
+    "reasons": {
+      "working": "working",
+      "absent": "absent",
+      "rest_day": "rest day",
+      "site_rest_day": "site rest day",
+      "holiday": "holiday",
+      "no_schedule": "no timetable",
+      "timetable_not_set_up": "timetable not set up",
+      "not_employed": "not employed",
+      "outside_shift": "outside their shift"
+    },
+    "issues": {
+      "PLANNING_ASSIGNEE_NOT_IN_CREW": "Not a member of this crew on the slot's days.",
+      "PLANNING_ASSIGNEE_NOT_WORKING": "Does not work during this slot.",
+      "PLANNING_ASSIGNEE_OVERLOADED": "Not enough hours left for this job on one of the days."
+    }
   }
 }

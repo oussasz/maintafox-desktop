@@ -268,5 +268,25 @@
   "notes": {
     "PM_PARTS_TO_CHECK": "Pièces prévues au PM : vérifiez leur disponibilité avant les travaux.",
     "PM_PERMIT_TO_OBTAIN": "Permis requis : à obtenir avant le début des travaux."
+  },
+  "assignee": {
+    "hoursLeft": "{{hours}} h restantes",
+    "notWorking": "ne travaille pas ({{reason}})",
+    "reasons": {
+      "working": "au travail",
+      "absent": "absent",
+      "rest_day": "repos",
+      "site_rest_day": "repos du site",
+      "holiday": "jour férié",
+      "no_schedule": "sans horaire",
+      "timetable_not_set_up": "horaire non configuré",
+      "not_employed": "hors contrat",
+      "outside_shift": "hors de son poste"
+    },
+    "issues": {
+      "PLANNING_ASSIGNEE_NOT_IN_CREW": "N'est pas membre de cette équipe sur les jours du créneau.",
+      "PLANNING_ASSIGNEE_NOT_WORKING": "Ne travaille pas pendant ce créneau.",
+      "PLANNING_ASSIGNEE_OVERLOADED": "Pas assez d'heures restantes pour ce travail sur l'un des jours."
+    }
   }
 }

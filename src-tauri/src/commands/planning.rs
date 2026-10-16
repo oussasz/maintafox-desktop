@@ -5,13 +5,13 @@ use tauri::State;
 use crate::auth::rbac::{check_permission, PermissionScope};
 use crate::errors::{AppError, AppResult};
 use crate::planning::domain::{
-    CapacityRule, CapacityRuleFilter, CreateCapacityRuleInput, CreatePlanningWindowInput, CreateScheduleBreakInInput,
-    CreateScheduleCommitmentInput, ExportPlanningGanttPdfInput, ExportedBinaryDocument, FreezeSchedulePeriodInput,
-    NotifyTeamsInput, NotifyTeamsResult, PlanningGanttFilter, PlanningGanttSnapshot, PlanningWindow,
-    PlanningWindowFilter, RefreshScheduleCandidatesInput, RefreshScheduleCandidatesResult, RescheduleCommitmentInput,
-    ScheduleBacklogSnapshot, ScheduleBreakIn, ScheduleBreakInFilter, ScheduleCandidate, ScheduleCandidateFilter,
-    ScheduleChangeLogEntry, ScheduleCommitment, ScheduleCommitmentFilter, SchedulingConflict, TeamCapacityLoad,
-    UpdateCapacityRuleInput, UpdatePlanningWindowInput,
+    AssigneeCapacityInput, CapacityRule, CapacityRuleFilter, CreateCapacityRuleInput, CreatePlanningWindowInput,
+    CreateScheduleBreakInInput, CreateScheduleCommitmentInput, ExportPlanningGanttPdfInput, ExportedBinaryDocument,
+    FreezeSchedulePeriodInput, NotifyTeamsInput, NotifyTeamsResult, PlanningGanttFilter, PlanningGanttSnapshot,
+    PlanningWindow, PlanningWindowFilter, RefreshScheduleCandidatesInput, RefreshScheduleCandidatesResult,
+    RescheduleCommitmentInput, ScheduleBacklogSnapshot, ScheduleBreakIn, ScheduleBreakInFilter, ScheduleCandidate,
+    ScheduleCandidateFilter, ScheduleChangeLogEntry, ScheduleCommitment, ScheduleCommitmentFilter, SchedulingConflict,
+    TeamCapacityLoad, UpdateCapacityRuleInput, UpdatePlanningWindowInput,
 };
 use crate::planning::queries;
 use crate::planning::scheduling;
@@ -311,6 +311,22 @@ pub async fn get_planning_gantt_snapshot(
         PermissionScope::Global
     );
     scheduling::get_planning_gantt_snapshot(&state.db, filter).await
+}
+
+/// The assignee picker: each crew member's shift and hours left over a slot.
+#[tauri::command]
+pub async fn list_assignee_capacity(
+    input: AssigneeCapacityInput,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::planning::person_load::AssigneeCapacity>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PLAN_VIEW,
+        PermissionScope::Global
+    );
+    scheduling::list_assignee_capacity(&state.db, input).await
 }
 
 #[tauri::command]

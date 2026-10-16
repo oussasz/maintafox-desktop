@@ -310,6 +310,21 @@ async fn get_any_team_id_inner(db: &DatabaseConnection) -> i64 {
     .expect("inserted crew id")
 }
 
+/// A technician on the test crew's 08:00–16:00 shift (primary team, home Classe horaire).
+async fn join_test_crew(db: &DatabaseConnection, personnel_id: i64) {
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE personnel SET \
+            primary_team_id = (SELECT id FROM teams WHERE deleted_at IS NULL ORDER BY id LIMIT 1), \
+            home_schedule_reference_value_id = \
+                (SELECT id FROM reference_values WHERE entity_sync_id = 'planning-test-7d-shift') \
+         WHERE id = ?",
+        [personnel_id.into()],
+    ))
+    .await
+    .expect("join test crew");
+}
+
 async fn ensure_personnel_with_rate(db: &DatabaseConnection, employee_code: &str) -> i64 {
     let existing = db
         .query_one(Statement::from_sql_and_values(
@@ -340,6 +355,7 @@ async fn ensure_personnel_with_rate(db: &DatabaseConnection, employee_code: &str
     ))
     .await
     .expect("insert rate card");
+    join_test_crew(db, personnel_id).await;
     personnel_id
 }
 
@@ -2109,4 +2125,206 @@ async fn finance_counts_a_team_month_like_the_board() {
         .await
         .expect("month loads");
     assert!((months[&(team_id, 5)] - 6.0).abs() < 0.01, "{months:?}");
+}
+
+async fn roster_person(db: &DatabaseConnection, team_id: i64) -> i64 {
+    db.query_one(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "SELECT id FROM personnel WHERE employee_code = ?",
+        [format!("PLN-ROSTER-{team_id}").into()],
+    ))
+    .await
+    .expect("query")
+    .expect("roster person")
+    .try_get("", "id")
+    .expect("id")
+}
+
+/// A work order the technician carries outside planning: responsible, planned slot, duration.
+async fn wo_outside_planning(db: &DatabaseConnection, person: i64, start: &str, end: &str, hours: f64) -> i64 {
+    let (wo_id, actor) = create_planning_wo(db, "Assigned outside planning").await;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE user_accounts SET personnel_id = ? WHERE id = ?",
+        [person.into(), actor.into()],
+    ))
+    .await
+    .expect("link login");
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE work_orders SET primary_responsible_id = ?, planned_start = ?, planned_end = ?, \
+             expected_duration_hours = ? WHERE id = ?",
+        [
+            actor.into(),
+            local(start).into(),
+            local(end).into(),
+            hours.into(),
+            wo_id.into(),
+        ],
+    ))
+    .await
+    .expect("assign outside planning");
+    wo_id
+}
+
+async fn assignee_overrides(db: &DatabaseConnection) -> i64 {
+    db.query_one(Statement::from_string(
+        DbBackend::Sqlite,
+        "SELECT COUNT(*) AS c FROM schedule_change_log WHERE action_type = 'override_assignee'".to_string(),
+    ))
+    .await
+    .expect("query")
+    .expect("row")
+    .try_get("", "c")
+    .expect("count")
+}
+
+#[tokio::test]
+async fn a_technician_carries_work_orders_assigned_outside_planning() {
+    let db = setup_db().await;
+    let team_id = get_any_team_id(&db).await; // the roster technician works 08:00–16:00
+                                              // A second technician on the crew: the crew has room, only this technician's day is full.
+    ensure_personnel_with_rate(&db, "PLN-SECOND").await;
+    let person = roster_person(&db, team_id).await;
+    let wo_id = wo_outside_planning(&db, person, "2026-05-04T08:00", "2026-05-04T16:00", 6.0).await;
+
+    let loads = crate::planning::person_load::person_day_loads(
+        &db,
+        &[person],
+        day("2026-05-04"),
+        day("2026-05-04"),
+        None,
+        None,
+    )
+    .await
+    .expect("person loads");
+    assert!((loads[&(person, day("2026-05-04"))] - 6.0).abs() < 0.01, "{loads:?}");
+
+    // Committing that same work order to them does not count it twice.
+    let own = insert_candidate(&db, "work_order", wo_id, "ready", 100.0).await;
+    set_estimate(&db, own, Some(6.0)).await;
+    let mut input = commit_input(own, team_id, "2026-05-04T08:00", "2026-05-04T14:00");
+    input.assigned_personnel_id = Some(person);
+    scheduling::create_schedule_commitment(&db, 1, input)
+        .await
+        .expect("its own work order is not counted against it");
+    let loads = crate::planning::person_load::person_day_loads(
+        &db,
+        &[person],
+        day("2026-05-04"),
+        day("2026-05-04"),
+        None,
+        None,
+    )
+    .await
+    .expect("person loads");
+    assert!(
+        (loads[&(person, day("2026-05-04"))] - 6.0).abs() < 0.01,
+        "counted once: {loads:?}"
+    );
+
+    // Another 4 h job the same day: 6 + 4 > 8, refused for the technician.
+    let other = insert_candidate(&db, "pm_occurrence", 7901, "ready", 100.0).await;
+    set_estimate(&db, other, Some(4.0)).await;
+    let mut input = commit_input(other, team_id, "2026-05-04T10:00", "2026-05-04T14:00");
+    input.assigned_personnel_id = Some(person);
+    let refused = scheduling::create_schedule_commitment(&db, 1, input.clone())
+        .await
+        .expect_err("technician overloaded");
+    assert!(
+        format!("{refused:?}").contains("PLANNING_ASSIGNEE_OVERLOADED"),
+        "{refused:?}"
+    );
+
+    // The picker says the same before committing: 2 h left, the shift, the refusal.
+    let picker = scheduling::list_assignee_capacity(
+        &db,
+        crate::planning::domain::AssigneeCapacityInput {
+            team_id,
+            start: local("2026-05-04T10:00"),
+            end: local("2026-05-04T14:00"),
+            candidate_id: Some(other),
+            commitment_id: None,
+        },
+    )
+    .await
+    .expect("picker");
+    let row = picker
+        .iter()
+        .find(|r| r.personnel_id == person)
+        .expect("technician listed");
+    assert!((row.days[0].remaining_hours - 2.0).abs() < 0.01, "{row:?}");
+    assert_eq!(row.days[0].shift_start.as_deref(), Some("08:00"));
+    assert!(
+        row.issues.contains(&"PLANNING_ASSIGNEE_OVERLOADED".to_string()),
+        "{row:?}"
+    );
+
+    // Overridden with a reason: committed and logged.
+    input.allow_double_booking_override = Some(true);
+    input.override_reason = Some("Short job, overtime agreed with the shift lead".to_string());
+    scheduling::create_schedule_commitment(&db, 1, input)
+        .await
+        .expect("overridden");
+    assert_eq!(assignee_overrides(&db).await, 1, "the override is logged");
+}
+
+#[tokio::test]
+async fn an_assignee_off_shift_or_outside_the_crew_is_refused_unless_overridden() {
+    let db = setup_db().await;
+    let team_id = get_any_team_id(&db).await;
+    let person = roster_person(&db, team_id).await;
+
+    // 18:00–20:00: after the 08:00–16:00 shift.
+    let late = insert_candidate(&db, "pm_occurrence", 8001, "ready", 100.0).await;
+    let mut input = commit_input(late, team_id, "2026-05-04T18:00", "2026-05-04T20:00");
+    input.assigned_personnel_id = Some(person);
+    let refused = scheduling::create_schedule_commitment(&db, 1, input)
+        .await
+        .expect_err("off shift");
+    assert!(
+        format!("{refused:?}").contains("PLANNING_ASSIGNEE_NOT_WORKING"),
+        "{refused:?}"
+    );
+
+    // Someone who is not in the crew.
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "INSERT INTO personnel (employee_code, full_name, availability_status) \
+         VALUES ('PLN-OUTSIDER', 'Outside technician', 'available')"
+            .to_string(),
+    ))
+    .await
+    .expect("outsider");
+    let outsider: i64 = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT id FROM personnel WHERE employee_code = 'PLN-OUTSIDER'".to_string(),
+        ))
+        .await
+        .expect("query")
+        .expect("row")
+        .try_get("", "id")
+        .expect("id");
+    let job = insert_candidate(&db, "pm_occurrence", 8002, "ready", 100.0).await;
+    let mut input = commit_input(job, team_id, "2026-05-05T09:00", "2026-05-05T10:00");
+    input.assigned_personnel_id = Some(outsider);
+    let refused = scheduling::create_schedule_commitment(&db, 1, input.clone())
+        .await
+        .expect_err("not in the crew");
+    assert!(
+        format!("{refused:?}").contains("PLANNING_ASSIGNEE_NOT_IN_CREW"),
+        "{refused:?}"
+    );
+
+    // An override without a reason is refused; with one, the commitment is made and logged.
+    input.allow_double_booking_override = Some(true);
+    scheduling::create_schedule_commitment(&db, 1, input.clone())
+        .await
+        .expect_err("a reason is required");
+    input.override_reason = Some("Borrowed from the electrical crew for the day".to_string());
+    scheduling::create_schedule_commitment(&db, 1, input)
+        .await
+        .expect("overridden with a reason");
+    assert_eq!(assignee_overrides(&db).await, 1);
 }

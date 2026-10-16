@@ -244,6 +244,39 @@ pub fn spread(
         .collect())
 }
 
+/// Instants bounding the slots that can load the days `[from, to]`: local midnight of `from`, and
+/// local midnight two days after `to` (a slot early the next morning may sit in a night shift that
+/// starts on `to`).
+pub fn load_query_bounds(from: NaiveDate, to: NaiveDate) -> (String, String) {
+    (
+        local_midnight(from).to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        local_midnight(to + Duration::days(2)).to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+    )
+}
+
+/// Working time a slot covers (hours): the parts of the shift windows inside it, plus the hours of
+/// members without a known window on the days it touches.
+pub fn working_hours_in(start: &str, end: &str, days: &BTreeMap<NaiveDate, DayHours>) -> AppResult<f64> {
+    let calendar = slot_days(start, end)?;
+    if calendar.is_empty() {
+        return Ok(0.0);
+    }
+    let slot = (
+        local_naive(parse_instant(start, "start")?),
+        local_naive(parse_instant(end, "end")?),
+    );
+    let mut hours = 0.0;
+    for (day, day_hours) in days {
+        for window in &day_hours.windows {
+            hours += overlap_seconds(slot, (window.start, window.end)) / 3600.0;
+        }
+        if day_hours.unwindowed > 0.0 && calendar.iter().any(|(d, _)| d == day) {
+            hours += day_hours.unwindowed;
+        }
+    }
+    Ok(hours)
+}
+
 /// SQL predicate: the commitment's work is still to do (alias `cmt`).
 pub const ACTIVE_COMMITMENT_SQL: &str = "NOT ( \
     (cmt.source_type = 'work_order' AND EXISTS (SELECT 1 FROM work_orders fw WHERE fw.id = cmt.source_id \

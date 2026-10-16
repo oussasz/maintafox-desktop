@@ -8482,6 +8482,8 @@ export interface ScheduleCommitment {
   nearest_feasible_window: string | null;
   /** Labour hours the commitment books; null for one from before they were stored. */
   planned_labor_hours: number | null;
+  /** Hours the assigned technician works on it (the job's duration); null for an older one. */
+  planned_person_hours: number | null;
   row_version: number;
   created_at: string;
   updated_at: string;
@@ -8606,6 +8608,38 @@ export interface TeamCapacityLoad {
   work_windows: CapacityWindow[];
   /** Hours of members whose shift window is not known (counted in full on the days a slot touches). */
   unwindowed_hours: number;
+}
+
+/** The assignee picker's question for a slot (a job to commit or a commitment being moved). */
+export interface AssigneeCapacityInput {
+  team_id: number;
+  start: string;
+  end: string;
+  candidate_id?: number | null;
+  commitment_id?: number | null;
+}
+
+/** One day of a crew member over the slot. */
+export interface AssigneeDay {
+  day: string;
+  shift_start: string | null;
+  shift_end: string | null;
+  available_hours: number;
+  committed_hours: number;
+  remaining_hours: number;
+  /** `working` | `absent` | `rest_day` | `site_rest_day` | `holiday` | `no_schedule` | … */
+  reason: string;
+}
+
+/** A crew member as the assignee picker shows them: shift and hours left, net of all their work. */
+export interface AssigneeCapacity {
+  personnel_id: number;
+  full_name: string;
+  employee_code: string | null;
+  days: AssigneeDay[];
+  slot_working_hours: number;
+  /** What the commit would refuse for this job (`PLANNING_ASSIGNEE_*`), overridable with a reason. */
+  issues: string[];
 }
 
 /** One member's shift window (local `YYYY-MM-DDTHH:MM:SS`; a night shift ends the next day). */

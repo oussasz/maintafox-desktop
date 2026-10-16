@@ -49,6 +49,7 @@ import {
   writeStoredPageView,
   type PlanningBoardScope,
   type PlanningPageView,
+  isAssigneeOverridableError,
 } from "@/components/planning/planning-model";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -75,7 +76,7 @@ import { listActiveTeams, listPersonnel } from "@/services/personnel-service";
 import { listUsers } from "@/services/rbac-service";
 import { useSessionStore } from "@/store/session-store";
 import { usePlanningStore } from "@/stores/planning-store";
-import { toErrorMessage } from "@/utils/errors";
+import { extractIpcValidationDetails, toErrorMessage } from "@/utils/errors";
 import type {
   CreateScheduleBreakInInput,
   CreateScheduleCommitmentInput,
@@ -465,7 +466,8 @@ export function PlanningPage() {
       await reloadBoard();
     } catch (err) {
       const text = toErrorMessage(err);
-      if (text.toLowerCase().includes("double-booking") && !input.allow_double_booking_override) {
+      const codes = extractIpcValidationDetails(err).map((d) => d.code);
+      if (isAssigneeOverridableError(codes, text) && !input.allow_double_booking_override) {
         pendingRescheduleRef.current = { input, needsOverride: true };
         setOverrideOpen(true);
         return;

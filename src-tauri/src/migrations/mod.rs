@@ -190,6 +190,7 @@ pub(crate) mod m20261015_000204_entered_units_on_receipts_and_issues;
 mod m20261016_000205_commitment_planned_labor;
 mod m20261016_000206_planned_crew_size;
 mod m20261017_000207_crew_size_bounds;
+mod m20261017_000210_commitment_person_hours;
 mod m20261101_000036_activity_audit_log;
 mod m20261201_000037_observability_permissions;
 mod m_test;
@@ -393,6 +394,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261016_000205_commitment_planned_labor::Migration),
             Box::new(m20261016_000206_planned_crew_size::Migration),
             Box::new(m20261017_000207_crew_size_bounds::Migration),
+            Box::new(m20261017_000210_commitment_person_hours::Migration),
         ]
     }
 }
