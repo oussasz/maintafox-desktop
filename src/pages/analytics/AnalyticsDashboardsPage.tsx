@@ -368,11 +368,19 @@ export function AnalyticsDashboardsPage() {
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {renderKpi({
               title: t("hub.dashboards.kpi.maintenanceCost"),
-              context: horizonText,
-              value: formatCurrency(data?.maintenance_cost.value ?? 0),
+              context:
+                (data?.maintenance_cost_pending ?? 0) > 0
+                  ? t("hub.dashboards.context.costPending", {
+                      days: horizon,
+                      count: data?.maintenance_cost_pending ?? 0,
+                    })
+                  : t("hub.dashboards.context.costSettled", { days: horizon }),
+              value: data?.maintenance_cost.available
+                ? formatCurrency(data.maintenance_cost.value)
+                : "—",
               available: data?.maintenance_cost.available ?? false,
               trend: periodTrend(data?.maintenance_cost, "up-bad"),
-              onOpen: () => navigate("/work-orders"),
+              ...(can(P.FIN_VIEW) ? { onOpen: () => navigate("/budget") } : {}),
             })}
           </div>
         );

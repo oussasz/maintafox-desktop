@@ -10,7 +10,11 @@ import type { AnalyticsKpiValue } from "@shared/ipc-types";
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
     t: (key: string, opts?: Record<string, unknown>) =>
-      opts && "change" in opts ? `${key}:${String(opts["change"])}` : key,
+      opts && "change" in opts
+        ? `${key}:${String(opts["change"])}`
+        : opts && "count" in opts
+          ? `${key}:${String(opts["count"])}`
+          : key,
     i18n: { language: "en" },
   }),
 }));
@@ -48,6 +52,7 @@ const DATA: AnalyticsExecutiveDashboardWithSmrp = {
   avg_availability: kpi("avg_availability", 0.962, 0.95),
   avg_data_quality: kpi("avg_data_quality", 0.875, 0.8),
   maintenance_cost: kpi("maintenance_cost", 12000, 10000),
+  maintenance_cost_pending: 0,
   reliability_snapshot_count: 30,
   reliability_total_events: 9,
   workload_days: [],
@@ -93,6 +98,25 @@ describe("AnalyticsDashboardsPage", () => {
     expect(screen.getAllByText("hub.dashboards.trend.stable").length).toBeGreaterThan(0);
     // DI status chart in words
     expect(screen.getByText("hub.dashboards.diStatus.in_review")).toBeInTheDocument();
+  });
+
+  it("states the settled cost and counts closed work orders not yet costed", async () => {
+    svc.getAnalyticsExecutiveDashboard.mockResolvedValue({ ...DATA, maintenance_cost_pending: 2 });
+    renderPage();
+    expect(await screen.findByText("hub.dashboards.kpi.maintenanceCost")).toBeInTheDocument();
+    expect(screen.getByText("hub.dashboards.context.costPending:2")).toBeInTheDocument();
+  });
+
+  it("shows the settled cost as not available without the finance view", async () => {
+    svc.getAnalyticsExecutiveDashboard.mockResolvedValue({
+      ...DATA,
+      maintenance_cost: kpi("maintenance_cost", 0, 0, false),
+      maintenance_cost_pending: null,
+    });
+    renderPage();
+    expect(await screen.findByText("hub.dashboards.kpi.maintenanceCost")).toBeInTheDocument();
+    expect(screen.getByText("hub.dashboards.context.costSettled")).toBeInTheDocument();
+    expect(screen.queryByText("hub.dashboards.context.costPending:0")).not.toBeInTheDocument();
   });
 
   it("shows an error state with retry instead of raw error text", async () => {

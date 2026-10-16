@@ -46,6 +46,66 @@ pub const PENDING_UNPRICED_LABOR: &str = "unpriced_labor";
 /// Cost documents reaching an OT after its settlement (late receipts, issues, returns).
 pub const SETTLEMENT_LATE_SOURCE_TYPE: &str = "wo_late_cost";
 
+/// Work-order cost settled into the budget with a posting instant in `[from, to)` (RFC 3339): the
+/// budget actuals of the OT settlement flow — settlements and late costs, reversals netted — in the
+/// tenant base currency, as the Finance cockpit counts them. `org` limits it to the work orders of
+/// one site (`work_orders.entity_id`). Pending settlements are not cost yet ([`pending_settlements_closed_between`]).
+pub async fn settled_wo_cost_between<C: ConnectionTrait>(
+    db: &C,
+    from: &str,
+    to: &str,
+    org: Option<i64>,
+) -> AppResult<f64> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COALESCE(SUM(ba.amount_base), 0.0) AS total
+               FROM budget_actuals ba
+               LEFT JOIN work_orders wo ON wo.id = ba.work_order_id
+              WHERE ba.source_type IN (?, ?)
+                AND ba.posting_status IN ('posted', 'reversed')
+                AND datetime(COALESCE(ba.event_at, ba.posted_at)) >= datetime(?)
+                AND datetime(COALESCE(ba.event_at, ba.posted_at)) < datetime(?)
+                AND (? IS NULL OR wo.entity_id = ?)",
+            [
+                SETTLEMENT_SOURCE_TYPE.into(),
+                SETTLEMENT_LATE_SOURCE_TYPE.into(),
+                from.into(),
+                to.into(),
+                org.into(),
+                org.into(),
+            ],
+        ))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("settled cost total returned no row")))?;
+    let total: f64 = decode(&row, "total")?;
+    Ok(round_money(total))
+}
+
+/// Work orders closed (or cancelled) in `[from, to)` whose settlement is still pending: their cost
+/// is not in [`settled_wo_cost_between`] until Finance settles them.
+pub async fn pending_settlements_closed_between<C: ConnectionTrait>(
+    db: &C,
+    from: &str,
+    to: &str,
+    org: Option<i64>,
+) -> AppResult<i64> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS n
+               FROM wo_cost_settlements s
+               JOIN work_orders wo ON wo.id = s.work_order_id
+              WHERE s.status = 'pending'
+                AND datetime(s.closed_at) >= datetime(?) AND datetime(s.closed_at) < datetime(?)
+                AND (? IS NULL OR wo.entity_id = ?)",
+            [from.into(), to.into(), org.into(), org.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("pending settlement count returned no row")))?;
+    decode(&row, "n")
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WoCostSettlement {
     pub id: i64,

@@ -943,10 +943,23 @@ pub async fn list_pm_occurrences(db: &DatabaseConnection, filter: PmOccurrenceFi
 /// SQL predicate (alias `po`): an occurrence still to do (not completed, cancelled or missed).
 pub const PM_PENDING_SQL: &str = "po.status NOT IN ('completed','cancelled','missed')";
 
+/// SQL expression (alias `po`): the instant an occurrence becomes overdue — the end of its
+/// tolerance window, the due date when it has none. The one overdue rule: [`PM_OVERDUE_SQL`] and
+/// `analytics::as_of::pm_overdue_at` both read it.
+macro_rules! pm_overdue_from_sql {
+    () => {
+        "COALESCE(po.window_end_at, po.due_at)"
+    };
+}
+pub const PM_OVERDUE_FROM_SQL: &str = pm_overdue_from_sql!();
+
 /// SQL predicate (alias `po`, one bind: now, RFC 3339): pending and past the end of its tolerance
 /// window (the due date when it has none) — the PM page's "overdue".
-pub const PM_OVERDUE_SQL: &str = "po.status NOT IN ('completed','cancelled','missed') \
-     AND po.due_at IS NOT NULL AND COALESCE(po.window_end_at, po.due_at) < ?";
+pub const PM_OVERDUE_SQL: &str = concat!(
+    "po.status NOT IN ('completed','cancelled','missed') AND po.due_at IS NOT NULL AND ",
+    pm_overdue_from_sql!(),
+    " < ?"
+);
 
 /// SQL predicate (alias `po`, two binds: now, now): pending and due within the next 7 days.
 pub const PM_DUE_NEXT_7D_SQL: &str = "po.status NOT IN ('completed','cancelled','missed') \

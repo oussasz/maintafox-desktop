@@ -314,8 +314,21 @@ async fn pm_compliance_and_pm_overdue_from_occurrences() {
     assert_eq!(prev.value_pct, None, "nothing due 30–60 days ago");
 
     let at = |d: i64| now + Duration::days(d);
-    // Overdue counts the due date (not the tolerance window): P3 and P7.
-    assert_eq!(as_of::pm_overdue_at(&db, at(0), None).await.unwrap(), 2, "P3, P7");
+    // Overdue is past the end of the tolerance window (the due date without one), the PM page's
+    // rule: P3 (no window, due −5 d). P7 is due −1 d but its window runs to +2 d.
+    assert_eq!(as_of::pm_overdue_at(&db, at(0), None).await.unwrap(), 1, "P3");
+    // A day after its window closes P7 is overdue too, like P4 (due +2 d, no window).
+    assert_eq!(as_of::pm_overdue_at(&db, at(3), None).await.unwrap(), 3, "P3, P4, P7");
+    // The analytics count at now is the PM page's count (same expression, `PM_OVERDUE_SQL`).
+    let page_rule = id_of(
+        &db,
+        &format!(
+            "SELECT COUNT(*) FROM pm_occurrences po WHERE {}",
+            crate::pm::queries::PM_OVERDUE_SQL.replace('?', &format!("'{}'", as_of::instant(now)))
+        ),
+    )
+    .await;
+    assert_eq!(page_rule, as_of::pm_overdue_at(&db, now, None).await.unwrap());
     assert_eq!(
         as_of::pm_overdue_at(&db, at(-8), None).await.unwrap(),
         1,

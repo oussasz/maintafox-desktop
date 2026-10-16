@@ -623,3 +623,135 @@ async fn criticality_assessment_sets_the_class_and_keeps_history() {
     assert_eq!(history.len(), 1);
     assert_eq!(history[0].method_code, "RISK_5X5_V1");
 }
+
+// ── Registry strip: reference-data tags and the modules' open rules ─────────────────────────
+
+async fn set_status_and_criticality(db: &DatabaseConnection, code: &str, status: &str, criticality: &str) {
+    exec(
+        db,
+        &format!(
+            "UPDATE equipment SET \
+               equipment_status_ref_id = (SELECT rv.id FROM reference_values rv \
+                 JOIN reference_sets rs ON rs.id = rv.set_id AND rs.status = 'published' \
+                 JOIN reference_domains d ON d.id = rs.domain_id \
+                 WHERE d.code = 'EQUIPMENT.STATUS' AND rv.code = '{status}'), \
+               lifecycle_status = '{status}', \
+               equipment_criticality_ref_id = (SELECT rv.id FROM reference_values rv \
+                 JOIN reference_sets rs ON rs.id = rv.set_id AND rs.status = 'published' \
+                 JOIN reference_domains d ON d.id = rs.domain_id \
+                 WHERE d.code = 'EQUIPMENT.CRITICALITY' AND rv.code = '{criticality}') \
+             WHERE asset_id_code = '{code}'"
+        ),
+    )
+    .await;
+}
+
+async fn request_on(db: &DatabaseConnection, code: &str, asset: &str, site: i64, status: &str, converted: bool) {
+    let closed_at = if status == "closed" { "datetime('now')" } else { "NULL" };
+    let converted_at = if converted { "datetime('now')" } else { "NULL" };
+    exec(
+        db,
+        &format!(
+            "INSERT INTO intervention_requests (code, equipment_id, org_node_id, status, title, description, \
+             origin_type, impact_level, reported_urgency, submitted_at, submitter_id, closed_at, converted_at, \
+             created_at, updated_at) VALUES ('{code}', (SELECT id FROM equipment WHERE asset_id_code = '{asset}'), \
+             {site}, '{status}', '{code}', 'd', 'operator', 'unknown', 'normal', datetime('now'), 1, {closed_at}, \
+             {converted_at}, datetime('now'), datetime('now'))"
+        ),
+    )
+    .await;
+}
+
+async fn work_order_on(db: &DatabaseConnection, code: &str, asset: &str, site: i64, status: &str) {
+    exec(
+        db,
+        &format!(
+            "INSERT INTO work_orders (code, type_id, status_id, equipment_id, entity_id, title, row_version, \
+             created_at, updated_at) VALUES ('{code}', \
+             (SELECT v.id FROM reference_values v JOIN reference_sets s ON s.id = v.set_id \
+               JOIN reference_domains d ON d.id = s.domain_id \
+               WHERE d.code = 'WORK.ORDER_TYPES' AND v.code = 'corrective'), \
+             (SELECT id FROM work_order_statuses WHERE code = '{status}'), \
+             (SELECT id FROM equipment WHERE asset_id_code = '{asset}'), {site}, '{code}', 1, \
+             datetime('now'), datetime('now'))"
+        ),
+    )
+    .await;
+}
+
+fn metric(p: &crate::assets::registry_metrics::EquipmentRegistryMetricsPayload, key: &str) -> f64 {
+    p.cells
+        .iter()
+        .find(|c| c.semantic_key == key)
+        .unwrap_or_else(|| panic!("cell {key}"))
+        .value
+}
+
+#[tokio::test]
+async fn registry_strip_reads_reference_tags_and_module_open_rules() {
+    use crate::assets::registry_metrics::get_equipment_registry_metrics;
+    use crate::kpi_definitions::equipment as k;
+
+    let db = setup().await;
+    // Startup integrity hook: tags the system EQUIPMENT.STATUS rows (up / down / retired …).
+    crate::assets::taxonomy_reference::ensure_equipment_taxonomy_reference_integrity(&db)
+        .await
+        .expect("taxonomy integrity");
+    let site = site_with_cost_center(&db).await;
+    for code in [
+        "EQ-UP",
+        "EQ-MAINT",
+        "EQ-CLOSED-DI",
+        "EQ-DONE-OT",
+        "EQ-OPEN-DI",
+        "EQ-SCRAP",
+    ] {
+        identity::create_asset(&db, payload(code, site, None), 1)
+            .await
+            .expect("create");
+    }
+    // Under maintenance carries the `down` tag in EQUIPMENT.STATUS; A is the most critical level.
+    set_status_and_criticality(&db, "EQ-MAINT", "UNDER_MAINTENANCE", "A").await;
+    set_status_and_criticality(&db, "EQ-CLOSED-DI", "ACTIVE_IN_SERVICE", "A").await;
+    set_status_and_criticality(&db, "EQ-DONE-OT", "ACTIVE_IN_SERVICE", "A").await;
+    set_status_and_criticality(&db, "EQ-OPEN-DI", "ACTIVE_IN_SERVICE", "B").await;
+    set_status_and_criticality(&db, "EQ-SCRAP", "SCRAPPED", "A").await;
+    request_on(&db, "DI-CLOSED", "EQ-CLOSED-DI", site, "closed", false).await;
+    request_on(&db, "DI-CONV", "EQ-CLOSED-DI", site, "submitted", true).await;
+    request_on(&db, "DI-OPEN", "EQ-OPEN-DI", site, "submitted", false).await;
+    work_order_on(&db, "OT-DONE", "EQ-DONE-OT", site, "completed").await;
+    work_order_on(&db, "OT-CANCEL", "EQ-DONE-OT", site, "cancelled").await;
+
+    let p = get_equipment_registry_metrics(&db, filters(100, 0))
+        .await
+        .expect("metrics");
+    assert_eq!(p.scoped_total, 5, "the scrapped (retired) asset is out of scope");
+    let status = p
+        .cells
+        .iter()
+        .find(|c| c.semantic_key == k::EQUIP_STATUS_SUMMARY)
+        .expect("status cell");
+    assert_eq!((status.active_count, status.down_count), (Some(4), Some(1)));
+    // Closed / converted requests and completed / cancelled work orders are not open work.
+    assert_eq!(metric(&p, k::EQUIP_OPEN_WORK), 1.0, "EQ-OPEN-DI only");
+    assert_eq!(
+        metric(&p, k::EQUIP_CRITICAL_AT_RISK),
+        1.0,
+        "EQ-MAINT (down); EQ-OPEN-DI is not critical"
+    );
+
+    // The list opened from a tile holds exactly what the tile counts.
+    for (focus, expected) in [("status_down", 1), ("open_work", 1), ("critical_at_risk", 1)] {
+        let mut f = filters(100, 0);
+        f.registry_focus = Some(focus.into());
+        let page = search::search_assets_page(&db, f).await.expect("focus");
+        assert_eq!(page.total, expected, "{focus}");
+    }
+
+    let mut with_retired = filters(100, 0);
+    with_retired.include_decommissioned = Some(true);
+    assert_eq!(
+        search::search_assets_page(&db, with_retired).await.expect("all").total,
+        6
+    );
+}

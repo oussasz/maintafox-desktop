@@ -34,23 +34,73 @@ const REQUIRED_STATUS: &[(&str, &str, i64, &str, &str)] = &[
     ("SPARE", "Pièce de rechange", 7, "#6c757d", STATUS_TAG_NOT_INSTALLED),
 ];
 
+/// Active codes of a domain's published set (sub-select, then `$tail`: a filter or an ordering).
+macro_rules! published_codes_sql {
+    ($domain:literal, $tail:literal) => {
+        concat!(
+            "SELECT rv.code FROM reference_values rv \
+               JOIN reference_sets rs ON rs.id = rv.set_id AND rs.status = 'published' \
+               JOIN reference_domains d ON d.id = rs.domain_id \
+              WHERE d.code = '",
+            $domain,
+            "' AND rv.is_active = 1",
+            $tail
+        )
+    };
+}
+
+/// SQL predicate (alias `e`, no bind): the equipment's status carries availability tag `$tag` in
+/// the published `EQUIPMENT.STATUS` list. Never NULL: an equipment without a status is false.
+macro_rules! status_tag_sql {
+    ($tag:literal) => {
+        concat!(
+            "COALESCE((SELECT st.code FROM reference_values st WHERE st.id = e.equipment_status_ref_id), '') IN (",
+            published_codes_sql!("EQUIPMENT.STATUS", " AND rv.semantic_tag = '"),
+            $tag,
+            "')"
+        )
+    };
+}
+
+/// SQL predicate (alias `e`, no bind): the equipment's status is `up` (in service).
+pub const STATUS_UP_SQL: &str = status_tag_sql!("up");
+/// SQL predicate (alias `e`, no bind): the equipment's status is `down` (out of service or under
+/// maintenance — unable to perform its function).
+pub const STATUS_DOWN_SQL: &str = status_tag_sql!("down");
+/// SQL predicate (alias `e`, no bind): the equipment is retired (decommissioned, scrapped).
+pub const STATUS_RETIRED_SQL: &str = status_tag_sql!("retired");
+
+/// SQL predicate (alias `e`, no bind): the equipment is at the most critical level of the published
+/// `EQUIPMENT.CRITICALITY` list (lowest `sort_order`). Never NULL.
+macro_rules! most_critical_sql {
+    () => {
+        concat!(
+            "COALESCE((SELECT c.code FROM reference_values c WHERE c.id = e.equipment_criticality_ref_id), '') \
+             = COALESCE((",
+            published_codes_sql!(
+                "EQUIPMENT.CRITICALITY",
+                " ORDER BY rv.sort_order ASC, rv.id ASC LIMIT 1"
+            ),
+            "), '-')"
+        )
+    };
+}
+
+/// SQL predicate (alias `e`, no bind): the equipment is at the most critical level of the published
+/// `EQUIPMENT.CRITICALITY` list (lowest `sort_order`).
+pub const MOST_CRITICAL_SQL: &str = most_critical_sql!();
+
 /// SQL predicate (alias `e`, no bind): equipment at the most critical level of the published
 /// `EQUIPMENT.CRITICALITY` list (lowest `sort_order`) whose status carries the `down`
 /// availability tag in the published `EQUIPMENT.STATUS` list. Both are read from Données de
 /// référence by code, so a republished set keeps working; no criticality or status code is
 /// written here.
-pub const CRITICAL_DOWN_SQL: &str = "e.deleted_at IS NULL \
-     AND (SELECT c.code FROM reference_values c WHERE c.id = e.equipment_criticality_ref_id) = ( \
-         SELECT rv.code FROM reference_values rv \
-           JOIN reference_sets rs ON rs.id = rv.set_id AND rs.status = 'published' \
-           JOIN reference_domains d ON d.id = rs.domain_id \
-          WHERE d.code = 'EQUIPMENT.CRITICALITY' AND rv.is_active = 1 \
-          ORDER BY rv.sort_order ASC, rv.id ASC LIMIT 1) \
-     AND (SELECT st.code FROM reference_values st WHERE st.id = e.equipment_status_ref_id) IN ( \
-         SELECT rv.code FROM reference_values rv \
-           JOIN reference_sets rs ON rs.id = rv.set_id AND rs.status = 'published' \
-           JOIN reference_domains d ON d.id = rs.domain_id \
-          WHERE d.code = 'EQUIPMENT.STATUS' AND rv.is_active = 1 AND rv.semantic_tag = 'down')";
+pub const CRITICAL_DOWN_SQL: &str = concat!(
+    "e.deleted_at IS NULL AND ",
+    most_critical_sql!(),
+    " AND ",
+    status_tag_sql!("down")
+);
 
 const REQUIRED_CRITICALITY: &[(&str, &str, i64, &str)] = &[
     ("A", "Criticité A", 1, "#dc3545"),

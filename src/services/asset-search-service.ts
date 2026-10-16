@@ -78,7 +78,6 @@ const EquipmentRegistryMetricCellSchema = z.object({
   semantic_key: z.string(),
   catalog_id: z.string(),
   value: z.number(),
-  previous_value: z.number(),
   available: z.boolean(),
   value_kind: z.enum(["count", "percent"]),
   trend_sense: z.enum(["up-good", "up-bad", "neutral"]),
