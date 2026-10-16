@@ -35,7 +35,7 @@ import { SupplierContactsSection } from "@/components/inventory/SupplierContacts
 import { riskBadgeVariant } from "@/components/inventory/supplier-sourcing";
 import { useLookupOptions } from "@/components/inventory/use-lookup-options";
 import { KanbanBoard } from "@/components/kanban";
-import type { KanbanCard, KanbanColumn, KanbanTone } from "@/components/kanban";
+import type { KanbanCard, KanbanColumn } from "@/components/kanban";
 import { type ViewOption, ViewToggle } from "@/components/layout/ModuleHeaderControls";
 import { KpiTile } from "@/components/metrics/KpiTile";
 import { Timeline } from "@/components/timeline";
@@ -224,18 +224,6 @@ const PO_KANBAN_STATUSES = [
   "RECEIVED_CLOSED",
   "CANCELLED",
 ] as const;
-
-/** Kanban column tones (kanban vocabulary, not status-chip tones). */
-const PROCUREMENT_KANBAN_TONE: Record<string, KanbanTone> = {
-  DRAFT: "draft",
-  SUBMITTED: "planning",
-  APPROVED: "success",
-  PARTIALLY_RECEIVED: "executing",
-  RECEIVED_CLOSED: "closed",
-  CLOSED: "closed",
-  REJECTED: "cancelled",
-  CANCELLED: "cancelled",
-};
 
 const REPAIRABLE_STATUSES = [
   "REQUESTED",
@@ -1600,7 +1588,7 @@ export const ProcurementRepairablePanel = forwardRef<
       REQ_KANBAN_STATUSES.map((status) => ({
         id: status,
         label: t(`procurement.statuses.${status}`, { defaultValue: status }),
-        tone: PROCUREMENT_KANBAN_TONE[status] ?? "muted",
+        tone: toneOf(PROCUREMENT_STATUS_TONE, status),
       })),
     [t],
   );
@@ -1619,7 +1607,7 @@ export const ProcurementRepairablePanel = forwardRef<
               badges: [
                 {
                   label: priorityLabel(req.purchase_priority),
-                  tone: "warning" as const,
+                  tone: toneOf(PURCHASE_PRIORITY_TONE, req.purchase_priority),
                 },
               ],
             }
@@ -1634,7 +1622,7 @@ export const ProcurementRepairablePanel = forwardRef<
       PO_KANBAN_STATUSES.map((status) => ({
         id: status,
         label: t(`procurement.statuses.${status}`, { defaultValue: status }),
-        tone: PROCUREMENT_KANBAN_TONE[status] ?? "muted",
+        tone: toneOf(PROCUREMENT_STATUS_TONE, status),
       })),
     [t],
   );

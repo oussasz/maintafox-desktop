@@ -148,7 +148,15 @@
     "clear": "Clear selection"
   },
   "kanban": {
-    "emptyColumn": "—"
+    "emptyColumn": "—",
+    "boardLabel": "Board",
+    "showMore": "Show {{count}} more",
+    "move": "Move",
+    "moveTo": "Move to…",
+    "moveCard": "Move {{card}} to another column",
+    "moveHint": "Press Alt+Left arrow or Alt+Right arrow to move this card to the neighbouring column, or use the Move button.",
+    "moved": "{{card}} moved to “{{column}}”.",
+    "noTarget": "No other column accepts {{card}} in that direction."
   },
   "resourceTimeline": {
     "loading": "Loading timeline…",

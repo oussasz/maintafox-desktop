@@ -7,7 +7,6 @@
 import { useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 
-import type { KanbanTone } from "@/components/kanban";
 import { type Tone, URGENCY_TONE, toneOf } from "@/design-system/tone";
 import { useUrgencyScaleStore } from "@/stores/urgency-scale-store";
 import type { UrgencyCode, UrgencyLevel } from "@shared/ipc-types";
@@ -55,19 +54,6 @@ export function useUrgencyScale() {
   );
 
   return { levels, loading, error, levelOf, labelOf, rankOf, language: i18n.language };
-}
-
-/** Kanban card tone of a level (accent bar + badge). */
-export const URGENCY_KANBAN_TONE: Record<UrgencyCode, KanbanTone> = {
-  emergency: "critical",
-  urgent: "high",
-  high: "medium",
-  normal: "info",
-  low: "low",
-};
-
-export function urgencyKanbanTone(code: string | null | undefined): KanbanTone | undefined {
-  return code ? URGENCY_KANBAN_TONE[code as UrgencyCode] : undefined;
 }
 
 /** Left border of calendar chips per level (tone colours of the design system). */

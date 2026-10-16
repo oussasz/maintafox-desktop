@@ -11,49 +11,44 @@ import { AlertTriangle, Calendar as CalendarIcon, Clock } from "lucide-react";
 import { useCallback, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 
-import { urgencyKanbanTone, useUrgencyScale } from "@/components/common/urgency/use-urgency-scale";
+import { urgencyTone, useUrgencyScale } from "@/components/common/urgency/use-urgency-scale";
 import { useDiReferenceLabels } from "@/components/di/di-reference-labels";
 import { KanbanBoard } from "@/components/kanban";
-import type { KanbanBadge, KanbanCard, KanbanColumn, KanbanTone } from "@/components/kanban";
+import type { KanbanBadge, KanbanCard, KanbanColumn } from "@/components/kanban";
+import { DI_SLA_TONE, DI_STATUS_TONE, toneOf } from "@/design-system/tone";
 import { formatShortDate, intlLocaleForLanguage } from "@/utils/format-date";
 import type { InterventionRequest } from "@shared/ipc-types";
 
 const COLUMN_DEFS = [
-  { id: "submitted", labelKey: "kanban.colSubmitted", tone: "planning", statuses: ["submitted"] },
+  { id: "submitted", labelKey: "kanban.colSubmitted", statuses: ["submitted"] },
   {
     id: "in_review",
     labelKey: "kanban.colPendingReview",
-    tone: "executing",
     statuses: ["in_review"],
   },
   {
     id: "awaiting_approval",
     labelKey: "kanban.colAwaitingApproval",
-    tone: "ready",
     statuses: ["awaiting_approval"],
   },
   {
     id: "needs_clarification",
     labelKey: "kanban.colNeedsClarification",
-    tone: "warning",
     statuses: ["returned_for_clarification"],
   },
   {
     id: "approved",
     labelKey: "kanban.colApproved",
-    tone: "success",
     statuses: ["approved"],
   },
   {
     id: "deferred",
     labelKey: "kanban.colDeferred",
-    tone: "muted",
     statuses: ["deferred"],
   },
 ] as const satisfies readonly {
   id: string;
   labelKey: string;
-  tone: KanbanTone;
   statuses: readonly string[];
 }[];
 
@@ -78,7 +73,8 @@ export function DiKanbanBoard({ items, onCardClick }: DiKanbanBoardProps) {
       COLUMN_DEFS.map((col) => ({
         id: col.id,
         label: t(col.labelKey),
-        tone: col.tone,
+        // Lane colour = the list chip colour of the lane's status.
+        tone: toneOf(DI_STATUS_TONE, col.statuses[0]),
       })),
     [t],
   );
@@ -94,20 +90,18 @@ export function DiKanbanBoard({ items, onCardClick }: DiKanbanBoardProps) {
       const id = String(di.id);
       map.set(id, di);
 
-      const urgencyTone = urgencyKanbanTone(di.validated_urgency ?? di.reported_urgency);
+      const urgencyCode = di.validated_urgency ?? di.reported_urgency;
+      const urgency = urgencyCode ? urgencyTone(urgencyCode) : undefined;
       const badges: KanbanBadge[] = [];
       if (di.sla_state === "breached" || di.sla_state === "at_risk") {
         badges.push({
           label: t(`sla.status.${di.sla_state}`),
-          tone: di.sla_state === "breached" ? "danger" : "warning",
+          tone: toneOf(DI_SLA_TONE, di.sla_state),
           icon: Clock,
         });
       }
-      if (urgencyTone) {
-        badges.push({
-          label: urgencyLabel(di.validated_urgency ?? di.reported_urgency),
-          tone: urgencyTone,
-        });
+      if (urgency) {
+        badges.push({ label: urgencyLabel(urgencyCode), tone: urgency });
       }
       badges.push({ label: originLabel(di.origin_type) });
       if (di.safety_flag) {
@@ -128,7 +122,7 @@ export function DiKanbanBoard({ items, onCardClick }: DiKanbanBoardProps) {
           title: di.converted_to_wo_title,
         },
         meta: [{ label: formatShortDate(di.submitted_at, locale), icon: CalendarIcon }],
-        accent: urgencyTone ?? "neutral",
+        accent: urgency ?? "neutral",
       });
     }
 

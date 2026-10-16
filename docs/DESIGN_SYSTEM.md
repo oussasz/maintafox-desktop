@@ -43,6 +43,9 @@ same colour in every module.
 - Legacy `*_STYLE` maps (`STATUS_STYLE`, `DI_STATUS_STYLE`, …) are derived with `toneChipMap` and stay for
   existing call sites; new code uses `StatusChip`.
 - Labels are always translated. A raw status code on screen is a bug.
+- Kanban boards (`components/kanban`) use the same tones: lane dot = the list chip tone of the lane's
+  status, card accent and urgency chip = `urgencyTone(code)`. When a board lets cards change column, the
+  engine offers drag and drop, a "Move to" menu on the card and Alt+←/→ on the focused card.
 
 ## 3. Module page anatomy (OT/DI pattern)
 

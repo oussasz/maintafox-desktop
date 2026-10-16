@@ -148,7 +148,15 @@
     "clear": "Effacer la sélection"
   },
   "kanban": {
-    "emptyColumn": "—"
+    "emptyColumn": "—",
+    "boardLabel": "Tableau",
+    "showMore": "Afficher {{count}} de plus",
+    "move": "Déplacer",
+    "moveTo": "Déplacer vers…",
+    "moveCard": "Déplacer {{card}} vers une autre colonne",
+    "moveHint": "Alt+flèche gauche ou Alt+flèche droite déplace cette carte vers la colonne voisine ; le bouton Déplacer propose toutes les colonnes possibles.",
+    "moved": "{{card}} déplacé vers « {{column}} ».",
+    "noTarget": "Aucune autre colonne n’accepte {{card}} dans cette direction."
   },
   "resourceTimeline": {
     "loading": "Chargement du chronogramme…",
