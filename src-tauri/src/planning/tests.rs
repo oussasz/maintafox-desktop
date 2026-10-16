@@ -3487,7 +3487,10 @@ async fn an_expired_emergency_grant_gives_no_planning_approval_right() {
     let expired = scheduling::create_schedule_break_in(&db, 1, emergency_break_in(&commitment))
         .await
         .expect_err("expired emergency grant");
-    assert!(format!("{expired:?}").contains("plan.confirm"), "{expired:?}");
+    assert!(
+        format!("{expired:?}").contains(crate::rbac::permissions::PLAN_CONFIRM),
+        "{expired:?}"
+    );
 
     // A grant that has not started yet gives nothing either.
     exec_sql(

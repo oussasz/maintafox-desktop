@@ -729,39 +729,30 @@ async fn maybe_sync_work_order(
 }
 
 /// Whether the user holds plan.confirm or plan.windows through an assignment in force now: the
-/// same rule as the permission resolver (`rbac::resolver`) — started (`valid_from`), not ended
-/// (`valid_to`), and an emergency grant only until `emergency_expires_at`.
-///
-/// TODO(admin security): replace the three predicates below with the shared
-/// `crate::rbac::resolver::ASSIGNMENT_IN_FORCE_SQL` and `assignment_clock()` once that admin work
-/// is in the base; until then this mirrors the resolver's rule exactly.
+/// permission resolver's own rule (`rbac::resolver::ASSIGNMENT_IN_FORCE_SQL`) — started
+/// (`valid_from`), not ended (`valid_to`), and an emergency grant only until
+/// `emergency_expires_at`.
 async fn user_has_plan_approval_scope(db: &impl ConnectionTrait, user_id: i64) -> AppResult<bool> {
-    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let has: i64 = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT COUNT(*) AS c
-             FROM user_scope_assignments usa
-             JOIN role_permissions rp ON rp.role_id = usa.role_id
-             JOIN permissions p ON p.id = rp.permission_id
-             WHERE usa.user_id = ?
-               AND usa.deleted_at IS NULL
-               AND (usa.valid_from IS NULL OR usa.valid_from <= ?)
-               AND (usa.valid_to   IS NULL OR usa.valid_to   >= ?)
-               AND (usa.is_emergency = 0 OR usa.emergency_expires_at > ?)
-               AND p.name IN (?, ?)",
-            [
-                user_id.into(),
-                now.clone().into(),
-                now.clone().into(),
-                now.into(),
-                crate::rbac::permissions::PLAN_CONFIRM.into(),
-                crate::rbac::permissions::PLAN_WINDOWS.into(),
-            ],
-        ))
+    let sql = format!(
+        "SELECT COUNT(*) AS c
+         FROM user_scope_assignments usa
+         JOIN role_permissions rp ON rp.role_id = usa.role_id
+         JOIN permissions p ON p.id = rp.permission_id
+         WHERE usa.user_id = ?
+           AND {}
+           AND p.name IN (?, ?)",
+        crate::rbac::resolver::ASSIGNMENT_IN_FORCE_SQL
+    );
+    let now = crate::rbac::resolver::assignment_clock();
+    let mut values: Vec<sea_orm::Value> = vec![user_id.into()];
+    values.extend(crate::rbac::resolver::in_force_binds(&now));
+    values.push(crate::rbac::permissions::PLAN_CONFIRM.into());
+    values.push(crate::rbac::permissions::PLAN_WINDOWS.into());
+    let row = db
+        .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
         .await?
-        .and_then(|r| r.try_get("", "c").ok())
-        .unwrap_or_default();
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("plan approval scope count missing")))?;
+    let has: i64 = row.try_get("", "c").map_err(|e| decode_err("plan_approval_scope", e))?;
     Ok(has > 0)
 }
 
