@@ -141,7 +141,8 @@
     "permission": "Vous détenez l'autorisation {{permission}}.",
     "escalation": "Escaladée vers vous (niveau {{level}}) : non acquittée {{minutes}} min après l'alerte.",
     "digest": "Votre résumé quotidien.",
-    "other": "Envoyée par une règle de notification."
+    "other": "Envoyée par une règle de notification.",
+    "alreadyTrue": "Déjà vrai au démarrage de la surveillance : listée sans alerte."
   },
   "deliveryState": {
     "pending": "En attente",

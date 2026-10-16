@@ -141,7 +141,8 @@
     "permission": "You hold the permission {{permission}}.",
     "escalation": "Escalated to you (level {{level}}): not acknowledged {{minutes}} min after the alert.",
     "digest": "Your daily digest.",
-    "other": "Sent by a notification rule."
+    "other": "Sent by a notification rule.",
+    "alreadyTrue": "Already true when this device started watching: listed without an alert."
   },
   "deliveryState": {
     "pending": "Pending",

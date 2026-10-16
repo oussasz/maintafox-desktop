@@ -75,7 +75,7 @@ pub async fn emit_event_with(
     pool.query_one(Statement::from_string(DbBackend::Sqlite, "SELECT 1".to_string()))
         .await?;
 
-    if let Err(err) = emit(pool, &input, None, message, true).await {
+    if let Err(err) = emit(pool, &input, None, message, Arrival::New).await {
         tracing::error!(error = %err, "notifications::emit_event fire-and-log failure");
     }
 
@@ -103,7 +103,7 @@ pub async fn emit_device_event_with(
     message: Option<&NotificationMessage>,
 ) -> Result<()> {
     let event_sync_id = identity.map(|basis| seeded_entity_sync_id("notification_events", basis));
-    if let Err(err) = emit(conn, &input, event_sync_id, message, true).await {
+    if let Err(err) = emit(conn, &input, event_sync_id, message, Arrival::New).await {
         tracing::error!(error = %err, "notifications::emit_device_event fire-and-log failure");
     }
     Ok(())
@@ -195,15 +195,26 @@ pub(crate) async fn unsubscribed(conn: &impl ConnectionTrait, user_id: i64, cate
         .is_some())
 }
 
-/// Raises the event and notifies its recipients (unless `notify` is false: the event is recorded
-/// only, as watchers do for conditions already true when they start). Returns the event id, or
-/// `None` when an open event with the same de-duplication key was refreshed instead.
+/// How the notifications of a new event reach their recipients.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Arrival {
+    /// Delivered: unread, toasted and emailed per the recipient's preferences.
+    New,
+    /// The condition was already true when this device started watching it: the notification is
+    /// listed as read (it does not ring the bell, it is not toasted or emailed) and says so; one
+    /// that must be acknowledged still waits for its acknowledgement.
+    AlreadyTrue,
+}
+
+/// Raises the event and notifies its recipients. Returns the event id, or `None` when an open
+/// event with the same de-duplication key was refreshed instead. An event with a seeded identity
+/// that exists already but was resolved (the same occurrence came back) is reopened.
 pub(crate) async fn emit(
     pool: &impl ConnectionTrait,
     input: &NotificationEventInput,
     event_sync_id: Option<String>,
     message: Option<&NotificationMessage>,
-    notify: bool,
+    arrival: Arrival,
 ) -> Result<Option<i64>> {
     let message_params = message.map(|m| m.params.to_string());
     if let Some(dedupe_key) = input.dedupe_key.as_deref() {
@@ -222,32 +233,38 @@ pub(crate) async fn emit(
         }
     }
 
+    // The record's routing context also gives the event its org node (read-time visibility).
+    let payload = compose_payload(input);
+    let ctx = router::load_context(pool, &payload).await?;
+
     let event_sync_id = event_sync_id.unwrap_or_else(new_entity_sync_id);
-    pool.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO notification_events
+    let inserted = pool
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO notification_events
             (entity_sync_id, source_module, source_record_id, event_code, category_code, severity, dedupe_key,
-             payload_json, message_key, message_params_json, urgency_code)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             payload_json, message_key, message_params_json, urgency_code, org_node_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(entity_sync_id) DO NOTHING",
-        [
-            event_sync_id.clone().into(),
-            input.source_module.clone().into(),
-            input.source_record_id.clone().into(),
-            input.event_code.clone().into(),
-            input.category_code.clone().into(),
-            normalize_severity(&input.severity).into(),
-            input.dedupe_key.clone().into(),
-            input.payload_json.clone().into(),
-            message.map(|m| m.key.clone()).into(),
-            message_params.clone().into(),
-            message.and_then(|m| m.urgency_code.clone()).into(),
-        ],
-    ))
-    .await?;
+            [
+                event_sync_id.clone().into(),
+                input.source_module.clone().into(),
+                input.source_record_id.clone().into(),
+                input.event_code.clone().into(),
+                input.category_code.clone().into(),
+                normalize_severity(&input.severity).into(),
+                input.dedupe_key.clone().into(),
+                input.payload_json.clone().into(),
+                message.map(|m| m.key.clone()).into(),
+                message_params.clone().into(),
+                message.and_then(|m| m.urgency_code.clone()).into(),
+                ctx.org_node_id.into(),
+            ],
+        ))
+        .await?;
     let event_id = row_id_of(pool, "notification_events", &event_sync_id).await?;
-    if !notify {
-        return Ok(Some(event_id));
+    if inserted.rows_affected() == 0 {
+        reopen_event(pool, event_id, input, arrival).await?;
     }
 
     let rule = pool
@@ -275,8 +292,6 @@ pub(crate) async fn emit(
         .unwrap_or_else(|| "manual".to_string());
     let audiences_json = rule_row.try_get::<Option<String>>("", "audiences_json")?;
     let audiences = rule_audiences(audiences_json.as_deref(), &routing_mode);
-    let payload = compose_payload(input);
-    let ctx = router::load_context(pool, &payload).await?;
     let recipients = router::resolve_audiences(pool, &audiences, &ctx).await?;
 
     for recipient in recipients {
@@ -301,16 +316,63 @@ pub(crate) async fn emit(
             continue;
         };
 
-        if let Err(err) = delivery::schedule_deliveries(pool, notification_id).await {
-            tracing::error!(
-                notification_id,
-                error = %err,
-                "notifications::emit_event failed to schedule in-app delivery"
-            );
+        match arrival {
+            Arrival::New => {
+                if let Err(err) = delivery::schedule_deliveries(pool, notification_id).await {
+                    tracing::error!(
+                        notification_id,
+                        error = %err,
+                        "notifications::emit_event failed to schedule in-app delivery"
+                    );
+                }
+            }
+            Arrival::AlreadyTrue => {
+                pool.execute(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "UPDATE notifications SET delivery_state = 'read', \
+                     read_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'), already_true = 1 WHERE id = ?",
+                    [notification_id.into()],
+                ))
+                .await?;
+            }
         }
     }
 
     Ok(Some(event_id))
+}
+
+/// The same occurrence (same seeded identity) is true again after it was resolved: the event and
+/// its notifications are open again, unread when it is new to this device's watch.
+async fn reopen_event(
+    pool: &impl ConnectionTrait,
+    event_id: i64,
+    input: &NotificationEventInput,
+    arrival: Arrival,
+) -> Result<()> {
+    let reopened = pool
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE notification_events SET resolved_at = NULL, dedupe_key = COALESCE(?, dedupe_key) \
+             WHERE id = ? AND resolved_at IS NOT NULL",
+            [input.dedupe_key.clone().into(), event_id.into()],
+        ))
+        .await?;
+    if reopened.rows_affected() == 0 {
+        return Ok(());
+    }
+    let unread = arrival == Arrival::New;
+    pool.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE notifications SET resolved_at = NULL, \
+            delivery_state = CASE WHEN ? = 1 AND delivery_state = 'read' AND archived_at IS NULL \
+                                  THEN 'delivered' ELSE delivery_state END, \
+            read_at = CASE WHEN ? = 1 AND delivery_state = 'read' AND archived_at IS NULL \
+                           THEN NULL ELSE read_at END \
+         WHERE notification_event_id = ?",
+        [i64::from(unread).into(), i64::from(unread).into(), event_id.into()],
+    ))
+    .await?;
+    Ok(())
 }
 
 /// The condition of an open event happened again: its texts are refreshed and the notifications

@@ -17,6 +17,9 @@
 //! nobody, which still moves the event to the next level). The delays and targets are the plant's
 //! (Données de référence → Notifications); the shipped defaults are documented in migration 209.
 //!
+//! Each stage runs in its own transaction: a stage that fails is rolled back and logged, the next
+//! stages still run (one bad row never stops the notifications of a device).
+//!
 //! Each device runs this sweep over its own copy of the notifications: un-snoozing, watchers,
 //! resolution, escalation and expiry are not sent (capture suppressed). Escalated notifications
 //! get the same id on every device (`emitter::insert_notification_for`), so a recipient's
@@ -49,52 +52,111 @@ pub async fn start_notification_scheduler(pool: SqlitePool) {
     }
 }
 
+/// One stage of the sweep.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Stage {
+    Unsnooze,
+    Watch(&'static str),
+    Resolve,
+    Escalate,
+    Expire,
+}
+
+/// The stages of one sweep, in order.
+pub(crate) fn stages() -> Vec<Stage> {
+    let mut out = vec![Stage::Unsnooze];
+    out.extend(watchers::WATCHERS.iter().map(|w| Stage::Watch(w)));
+    out.extend([Stage::Resolve, Stage::Escalate, Stage::Expire]);
+    out
+}
+
 #[cfg(test)]
 pub async fn run_scheduler_tick_for_test(pool: &SqlitePool) -> Result<()> {
     run_scheduler_tick(pool).await
 }
 
+/// One sweep: every stage in its own transaction with capture suppressed. A failing stage is
+/// rolled back and logged; the next ones still run.
 async fn run_scheduler_tick(pool: &SqlitePool) -> Result<()> {
     let fr = crate::pm::wo_content::tenant_text_locale(pool)
         .await
         .map(|l| l.to_ascii_lowercase().starts_with("fr"))
         .unwrap_or(true);
-    let txn = pool.begin().await?;
-    begin_suppression(&txn).await?;
-    run_scheduler_tick_in(&txn, Utc::now(), fr).await?;
-    end_suppression(&txn).await?;
-    txn.commit().await?;
+    let now = Utc::now();
+    for stage in stages() {
+        let txn = pool.begin().await?;
+        begin_suppression(&txn).await?;
+        match run_stage(&txn, stage, now, fr).await {
+            Ok(()) => {
+                end_suppression(&txn).await?;
+                txn.commit().await?;
+            }
+            Err(err) => {
+                tracing::error!(?stage, error = %err, "notifications::scheduler stage failed");
+                txn.rollback().await?;
+            }
+        }
+    }
     Ok(())
 }
 
+/// The sweep on one connection (tests): a failing stage is logged and the next ones run.
+#[cfg(test)]
 pub(crate) async fn run_scheduler_tick_in(pool: &impl ConnectionTrait, now: DateTime<Utc>, fr: bool) -> Result<()> {
-    pool.execute(Statement::from_string(
-        DbBackend::Sqlite,
-        "UPDATE notifications
-         SET delivery_state = 'delivered', read_at = NULL, snoozed_until = NULL
-         WHERE delivery_state = 'snoozed'
-           AND snoozed_until IS NOT NULL
-           AND snoozed_until <= strftime('%Y-%m-%dT%H:%M:%SZ','now')"
-            .to_string(),
-    ))
-    .await?;
+    for stage in stages() {
+        if let Err(err) = run_stage(pool, stage, now, fr).await {
+            tracing::error!(?stage, error = %err, "notifications::scheduler stage failed");
+        }
+    }
+    Ok(())
+}
 
-    watchers::run_watchers(pool, now, fr).await?;
-    conditions::resolve_cleared(pool).await?;
-    run_escalation_sweep(pool, now).await?;
-
-    let expiry_days = expiry_days(pool).await?;
-    let expiry_modifier = format!("-{expiry_days} days");
-    pool.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "UPDATE notifications
-         SET delivery_state = 'expired'
-         WHERE delivery_state IN ('pending', 'delivered', 'read', 'escalated')
-           AND created_at < strftime('%Y-%m-%dT%H:%M:%SZ', datetime('now', ?))",
-        [expiry_modifier.into()],
-    ))
-    .await?;
-
+pub(crate) async fn run_stage(pool: &impl ConnectionTrait, stage: Stage, now: DateTime<Utc>, fr: bool) -> Result<()> {
+    match stage {
+        Stage::Unsnooze => {
+            pool.execute(Statement::from_string(
+                DbBackend::Sqlite,
+                "UPDATE notifications
+                 SET delivery_state = 'delivered', read_at = NULL, snoozed_until = NULL
+                 WHERE delivery_state = 'snoozed'
+                   AND snoozed_until IS NOT NULL
+                   AND snoozed_until <= strftime('%Y-%m-%dT%H:%M:%SZ','now')"
+                    .to_string(),
+            ))
+            .await?;
+        }
+        Stage::Watch(watcher) => {
+            let r = watchers::run_watcher(pool, watcher, now, fr).await?;
+            if r.raised + r.already_true + r.resolved > 0 {
+                tracing::info!(
+                    watcher,
+                    raised = r.raised,
+                    already_true = r.already_true,
+                    resolved = r.resolved,
+                    "notifications::watchers round"
+                );
+            }
+        }
+        Stage::Resolve => {
+            conditions::resolve_cleared(pool).await?;
+        }
+        Stage::Escalate => {
+            run_escalation_sweep(pool, now).await?;
+        }
+        Stage::Expire => {
+            let expiry_days = expiry_days(pool).await?;
+            let expiry_modifier = format!("-{expiry_days} days");
+            pool.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "UPDATE notifications
+                 SET delivery_state = 'expired'
+                 WHERE delivery_state IN ('pending', 'delivered', 'read', 'escalated')
+                   AND created_at < strftime('%Y-%m-%dT%H:%M:%SZ', datetime('now', ?))",
+                [expiry_modifier.into()],
+            ))
+            .await?;
+        }
+    }
     Ok(())
 }
 
@@ -164,8 +226,11 @@ pub(crate) async fn run_escalation_sweep(pool: &impl ConnectionTrait, now: DateT
         if now.signed_duration_since(first.with_timezone(&Utc)).num_minutes() < wait {
             continue;
         }
-        escalate(pool, &p, level, wait, &target, reference.as_deref()).await?;
-        escalated += 1;
+        // One event that cannot escalate (bad row, missing record) does not hold the others back.
+        match escalate(pool, &p, level, wait, &target, reference.as_deref()).await {
+            Ok(()) => escalated += 1,
+            Err(err) => tracing::error!(event_id = p.event_id, level, error = %err, "notifications: escalation failed"),
+        }
     }
     Ok(escalated)
 }
@@ -289,7 +354,7 @@ async fn escalate(
     ))
     .await?;
 
-    let _ = emit_activity_event(
+    if let Err(err) = emit_activity_event(
         pool,
         ActivityEventInput {
             event_class: "system".to_string(),
@@ -312,7 +377,10 @@ async fn escalate(
             visibility_scope: "global".to_string(),
         },
     )
-    .await;
+    .await
+    {
+        tracing::error!(event_id = p.event_id, level, error = %err, "notifications: escalation not logged");
+    }
     if created == 0 {
         tracing::warn!(
             event_id = p.event_id,

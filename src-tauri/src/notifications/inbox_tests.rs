@@ -2,12 +2,10 @@
 
 use chrono::{Duration, Utc};
 use sea_orm::DatabaseConnection;
-use tokio::sync::RwLock;
 
 use crate::notifications::catalog::MODULES;
 use crate::notifications::inbox::{self, InboxFilter};
 use crate::notifications::{conditions, config, delivery, emitter, scheduler, watchers};
-use crate::rbac::cache::PermissionCache;
 use crate::sync::test_support::{exec, scalar_i64, scalar_opt_text};
 
 const NOW: &str = "strftime('%Y-%m-%dT%H:%M:%SZ','now')";
@@ -122,8 +120,8 @@ async fn work_order(
     .await;
 }
 
-fn all_modules() -> Vec<String> {
-    MODULES.iter().map(|(m, _)| (*m).to_string()).collect()
+fn all_modules() -> inbox::Visibility {
+    inbox::Visibility::all()
 }
 
 async fn tick(db: &DatabaseConnection) {
@@ -211,19 +209,20 @@ async fn inbox_shows_only_modules_the_reader_may_view_and_the_bell_agrees() {
     user(&db, 10, None).await;
     grant(&db, 10, &[crate::rbac::permissions::DI_VIEW]).await;
     work_order(&db, 1, Some(10), None, None).await;
-    // Watchers start silently, then the new assignment is notified.
+    exec(
+        &db,
+        "UPDATE work_orders SET updated_at = ? WHERE id = 1",
+        vec![past(60).into()],
+    )
+    .await;
+    // The assignment that existed when watching started is listed read; the new one is notified.
     tick(&db).await;
     work_order(&db, 2, Some(10), None, None).await;
     tick(&db).await;
-    assert_eq!(
-        notifications_of(&db, 10, "wo_assigned").await,
-        1,
-        "only the new assignment"
-    );
+    assert_eq!(notifications_of(&db, 10, "wo_assigned").await, 2);
 
-    let cache = RwLock::new(PermissionCache::default());
-    let visible = inbox::visible_modules(&db, &cache, 10).await.expect("modules");
-    assert!(visible.contains(&"di".to_string()) && !visible.contains(&"ot".to_string()));
+    let visible = inbox::visible_to(&db, 10).await.expect("visibility");
+    assert!(visible.sees_module("di") && !visible.sees_module("ot"));
     // No ot.view: the work-order notification is neither listed nor counted.
     let listed = inbox::list(&db, 10, &visible, &InboxFilter::default())
         .await
@@ -266,7 +265,7 @@ async fn inbox_shows_only_modules_the_reader_may_view_and_the_bell_agrees() {
             .await
             .expect("inbox")
             .len(),
-        1
+        2
     );
 }
 
@@ -728,7 +727,12 @@ async fn ptw_expiring_uses_the_rule_lead_time() {
     let r = watchers::run_watcher(&db, "ptw_expiring", Utc::now(), false)
         .await
         .expect("watch");
-    assert_eq!(r.raised, 1, "120 min lead time covers a permit expiring in 60 min");
+    // Its warning window (expiry − 120 min) began before this device started watching: listed, read.
+    assert_eq!(
+        (r.raised, r.already_true),
+        (0, 1),
+        "120 min lead time covers a permit expiring in 60 min"
+    );
     exec(
         &db,
         "UPDATE notification_rules SET lead_time_minutes = 30 WHERE category_code = 'ptw_expiring'",
@@ -739,4 +743,322 @@ async fn ptw_expiring_uses_the_rule_lead_time() {
         .await
         .expect("watch");
     assert_eq!(r.resolved, 1, "outside a 30 min lead time");
+}
+
+// ─── Review follow-ups ─────────────────────────────────────────────────────────
+
+async fn org_node(db: &DatabaseConnection, id: i64, parent: Option<i64>) {
+    exec(
+        db,
+        &format!(
+            "INSERT INTO org_nodes (id, entity_sync_id, code, name, node_type_id, parent_id, status, created_at, \
+             updated_at, row_version, structure_model_id) VALUES (?, ?, ?, ?, 1, ?, 'active', {NOW}, {NOW}, 1, 1)"
+        ),
+        vec![
+            id.into(),
+            format!("nt-node-{id}").into(),
+            format!("N-{id}").into(),
+            format!("Node {id}").into(),
+            parent.into(),
+        ],
+    )
+    .await;
+}
+
+/// A role holding `permission`, granted to `user_id` on one org node only.
+async fn grant_on_node(db: &DatabaseConnection, user_id: i64, permission: &str, node: i64) {
+    let role = format!("nt-node-role-{user_id}");
+    exec(
+        db,
+        &format!(
+            "INSERT INTO roles (entity_sync_id, name, description, is_system, role_type, status, created_at, updated_at) \
+             VALUES (?, ?, '', 0, 'custom', 'active', {NOW}, {NOW})"
+        ),
+        vec![role.clone().into(), role.clone().into()],
+    )
+    .await;
+    let role_id = scalar_i64(db, "SELECT id FROM roles WHERE name = ?", vec![role.into()]).await;
+    exec(
+        db,
+        &format!("INSERT INTO role_permissions (role_id, permission_id, granted_at) SELECT ?, id, {NOW} FROM permissions WHERE name = ?"),
+        vec![role_id.into(), permission.into()],
+    )
+    .await;
+    exec(
+        db,
+        &format!(
+            "INSERT INTO user_scope_assignments (entity_sync_id, user_id, role_id, scope_type, scope_reference, \
+             created_at, updated_at) VALUES (?, ?, ?, 'org_node', ?, {NOW}, {NOW})"
+        ),
+        vec![
+            format!("nt-usa-node-{user_id}").into(),
+            user_id.into(),
+            role_id.into(),
+            node.to_string().into(),
+        ],
+    )
+    .await;
+}
+
+/// The device has been watching every rule since yesterday.
+async fn watching_since_yesterday(db: &DatabaseConnection) {
+    exec(
+        db,
+        "UPDATE notification_watch_state SET watching_since = ?",
+        vec![past(24 * 60).into()],
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_view_permission_granted_on_a_site_shows_the_notifications_of_that_site_and_below() {
+    let db = db().await;
+    org_node(&db, 901, None).await;
+    org_node(&db, 902, Some(901)).await;
+    org_node(&db, 903, None).await;
+    user(&db, 90, None).await;
+    grant_on_node(&db, 90, crate::rbac::permissions::OT_VIEW, 901).await;
+    tick(&db).await;
+    watching_since_yesterday(&db).await;
+    for (id, node) in [(21, Some(902_i64)), (22, Some(903)), (23, None)] {
+        work_order(&db, id, Some(90), None, None).await;
+        exec(
+            &db,
+            "UPDATE work_orders SET entity_id = ? WHERE id = ?",
+            vec![node.into(), id.into()],
+        )
+        .await;
+    }
+    tick(&db).await;
+    assert_eq!(notifications_of(&db, 90, "wo_assigned").await, 3);
+
+    let vis = inbox::visible_to(&db, 90).await.expect("visibility");
+    assert!(vis.everywhere.iter().all(|m| m != "ot"), "not plant-wide");
+    assert!(vis.sees_module("ot"));
+    let items = inbox::list(&db, 90, &vis, &InboxFilter::default()).await.expect("list");
+    let mut codes: Vec<String> = items
+        .iter()
+        .filter_map(|i| {
+            i.message_params
+                .as_ref()
+                .and_then(|p| p["code"].as_str().map(str::to_string))
+        })
+        .collect();
+    codes.sort();
+    // The area below the granted site, and the order without a node; not the other site.
+    assert_eq!(codes, vec!["OT-21".to_string(), "OT-23".to_string()]);
+    assert_eq!(
+        inbox::unread_count(&db, 90, &vis).await.expect("bell"),
+        2,
+        "bell = inbox"
+    );
+    let other_site = scalar_i64(
+        &db,
+        "SELECT n.id FROM notifications n JOIN notification_events e ON e.id = n.notification_event_id \
+         WHERE e.source_record_id = '22'",
+        vec![],
+    )
+    .await;
+    assert!(inbox::ensure_visible(&db, 90, &vis, other_site).await.is_err());
+}
+
+#[tokio::test]
+async fn conditions_already_true_when_watching_starts_are_listed_read_never_swallowed() {
+    let db = db().await;
+    user(&db, 100, None).await;
+    exec(
+        &db,
+        "UPDATE notification_rules SET requires_ack = 1 WHERE category_code = 'wo_overdue'",
+        vec![],
+    )
+    .await;
+    // A new device: the order was assigned and overdue before it started watching.
+    work_order(&db, 31, Some(100), None, Some(&past(120))).await;
+    exec(
+        &db,
+        "UPDATE work_orders SET updated_at = ? WHERE id = 31",
+        vec![past(180).into()],
+    )
+    .await;
+    tick(&db).await;
+    let modules = all_modules();
+    assert_eq!(notifications_of(&db, 100, "wo_overdue").await, 1, "listed");
+    assert_eq!(
+        inbox::unread_count(&db, 100, &modules).await.expect("bell"),
+        0,
+        "no bell"
+    );
+    let items = inbox::list(&db, 100, &modules, &InboxFilter::default())
+        .await
+        .expect("list");
+    let overdue = items.iter().find(|i| i.category_code == "wo_overdue").expect("overdue");
+    assert!(overdue.already_true && overdue.read_at.is_some());
+    let to_ack = InboxFilter {
+        view: Some("to_acknowledge".into()),
+        ..InboxFilter::default()
+    };
+    assert_eq!(
+        inbox::list(&db, 100, &modules, &to_ack).await.expect("list").len(),
+        1,
+        "still to acknowledge"
+    );
+    let toasts = crate::notifications::os_toast::pending_os_toasts(&db, 100, Some(0))
+        .await
+        .expect("toasts");
+    assert!(toasts.items.is_empty(), "no toast either");
+
+    // Once watching, a new overdue order rings the bell.
+    watching_since_yesterday(&db).await;
+    work_order(&db, 32, Some(100), None, Some(&past(10))).await;
+    tick(&db).await;
+    let fresh = scalar_i64(
+        &db,
+        "SELECT COUNT(*) FROM notifications n JOIN notification_events e ON e.id = n.notification_event_id \
+         WHERE e.category_code = 'wo_overdue' AND n.read_at IS NULL AND n.already_true = 0",
+        vec![],
+    )
+    .await;
+    assert_eq!(fresh, 1);
+
+    // An inactive rule is not watched; activated later, what became true meanwhile is listed read.
+    exec(
+        &db,
+        "UPDATE notification_rules SET is_active = 0 WHERE category_code = 'wo_overdue'",
+        vec![],
+    )
+    .await;
+    tick(&db).await;
+    work_order(&db, 33, Some(100), None, Some(&past(5))).await;
+    tick(&db).await;
+    assert_eq!(
+        notifications_of(&db, 100, "wo_overdue").await,
+        2,
+        "nothing while inactive"
+    );
+    exec(
+        &db,
+        "UPDATE notification_rules SET is_active = 1 WHERE category_code = 'wo_overdue'",
+        vec![],
+    )
+    .await;
+    tick(&db).await;
+    let late = scalar_i64(
+        &db,
+        "SELECT n.already_true FROM notifications n JOIN notification_events e ON e.id = n.notification_event_id \
+         WHERE e.category_code = 'wo_overdue' AND e.source_record_id = '33'",
+        vec![],
+    )
+    .await;
+    assert_eq!(late, 1);
+}
+
+#[tokio::test]
+async fn a_failing_stage_does_not_stop_the_other_stages() {
+    let db = db().await;
+    user(&db, 110, None).await;
+    tick(&db).await;
+    watching_since_yesterday(&db).await;
+    work_order(&db, 41, Some(110), None, Some(&past(10))).await;
+    // One watcher cannot read its table on this device (private in-memory test database).
+    exec(
+        &db,
+        "ALTER TABLE inspection_rounds RENAME TO inspection_rounds_gone",
+        vec![],
+    )
+    .await;
+    scheduler::run_scheduler_tick_for_test(&db).await.expect("tick");
+    assert_eq!(
+        notifications_of(&db, 110, "wo_overdue").await,
+        1,
+        "earlier stage committed"
+    );
+    assert_eq!(notifications_of(&db, 110, "wo_assigned").await, 1);
+    // A later stage still runs: a snoozed notification comes back.
+    let id = scalar_i64(
+        &db,
+        "SELECT n.id FROM notifications n JOIN notification_events e ON e.id = n.notification_event_id \
+         WHERE e.category_code = 'wo_assigned' AND n.recipient_user_id = 110",
+        vec![],
+    )
+    .await;
+    exec(
+        &db,
+        "UPDATE notifications SET delivery_state = 'snoozed', snoozed_until = ? WHERE id = ?",
+        vec![past(1).into(), id.into()],
+    )
+    .await;
+    scheduler::run_scheduler_tick_for_test(&db).await.expect("tick");
+    let state = scalar_opt_text(
+        &db,
+        "SELECT delivery_state FROM notifications WHERE id = ?",
+        vec![id.into()],
+    )
+    .await;
+    assert_eq!(state.as_deref(), Some("delivered"));
+}
+
+#[tokio::test]
+async fn elevated_admins_hold_every_permission_for_routing_too() {
+    let db = db().await;
+    user(&db, 120, None).await;
+    exec(&db, "UPDATE user_accounts SET is_admin = 1 WHERE id = 120", vec![]).await;
+    let holders = crate::notifications::router::permission_holder_user_ids(&db, "inv.manage", None)
+        .await
+        .expect("holders");
+    assert!(holders.contains(&120));
+    let admins = crate::auth::rbac::elevated_admin_user_ids(&db).await.expect("admins");
+    assert!(admins.contains(&120));
+    for a in &admins {
+        let id = i32::try_from(*a).expect("id");
+        assert!(
+            crate::auth::rbac::user_has_elevated_admin_access(&db, id)
+                .await
+                .expect("check"),
+            "same rule as the permission checks"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_stock_occurrence_is_identified_by_the_movement_that_crossed_the_reorder_point() {
+    let db = db().await;
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO articles (id, article_code, article_name, unit_value_id, reorder_point, is_active, entity_sync_id, \
+             created_at, updated_at) VALUES (910, 'ART-910', 'Seal', 1, 5, 1, 'nt-art-910', {NOW}, {NOW})"
+        ),
+        vec![],
+    )
+    .await;
+    for (sid, kind, qty, at) in [
+        ("nt-tx-1", "ADJUST_IN", 10.0, "2026-10-01T08:00:00Z"),
+        ("nt-tx-2", "ADJUST_OUT", 3.0, "2026-10-02T08:00:00Z"),
+        ("nt-tx-3", "ADJUST_OUT", 4.0, "2026-10-03T08:00:00Z"),
+    ] {
+        exec(
+            &db,
+            "INSERT INTO inventory_transactions (entity_sync_id, article_id, warehouse_id, location_id, movement_type, \
+             quantity, source_type, performed_at) VALUES (?, 910, 1, 1, ?, ?, 'manual', ?)",
+            vec![sid.into(), kind.into(), qty.into(), at.into()],
+        )
+        .await;
+    }
+    exec(
+        &db,
+        "INSERT INTO stock_balances (article_id, warehouse_id, location_id, on_hand_qty, available_qty) \
+         VALUES (910, 1, 1, 3, 3)",
+        vec![],
+    )
+    .await;
+    let c = watchers::candidates(&db, "stock_critical", Utc::now(), None, false)
+        .await
+        .expect("candidates");
+    let seal = c
+        .iter()
+        .find(|c| c.record_key.starts_with("nt-art-910|"))
+        .expect("seal");
+    // 10 → 7 stays above 5; 7 → 3 crosses it: the occurrence every device names the same way.
+    assert_eq!(seal.record_key, "nt-art-910|nt-tx-3");
+    assert_eq!(seal.since, watchers::parse_time("2026-10-03T08:00:00Z"));
 }

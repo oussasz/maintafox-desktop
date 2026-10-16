@@ -324,27 +324,7 @@ async fn node_responsible_user_ids(pool: &impl ConnectionTrait, org_node_id: i64
 /// Responsibles of the node (responsibilities and node-scoped roles), else of its nearest parent
 /// that has some.
 pub async fn entity_manager_user_ids(conn: &impl ConnectionTrait, org_node_id: i64) -> Result<Vec<i64>> {
-    // The node and its parents, nearest first.
-    let ordered = conn
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "WITH RECURSIVE up(id, parent_id, lvl) AS ( \
-                SELECT id, parent_id, 0 FROM org_nodes WHERE id = ? \
-                UNION ALL SELECT o.id, o.parent_id, up.lvl + 1 FROM org_nodes o JOIN up ON o.id = up.parent_id \
-                WHERE up.lvl < 32) \
-             SELECT id FROM up ORDER BY lvl",
-            [org_node_id.into()],
-        ))
-        .await?
-        .iter()
-        .filter_map(|r| r.try_get::<i64>("", "id").ok())
-        .collect::<Vec<_>>();
-    let nodes = if ordered.is_empty() {
-        // The node is not in the org tree on this device: its own responsibilities only.
-        vec![org_node_id]
-    } else {
-        ordered
-    };
+    let nodes = node_chain(conn, org_node_id).await?;
     for node in nodes {
         let mut found = node_responsible_user_ids(conn, node).await?;
         found.extend(
@@ -368,7 +348,28 @@ pub async fn entity_manager_user_ids(conn: &impl ConnectionTrait, org_node_id: i
     Ok(Vec::new())
 }
 
-/// Active users granted `permission` through a role in force, plant-wide or on `org_node_id`.
+/// The node and its parents, nearest first (just the node when it is not in the org tree here).
+pub async fn node_chain(conn: &impl ConnectionTrait, org_node_id: i64) -> Result<Vec<i64>> {
+    let chain = conn
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "WITH RECURSIVE up(id, parent_id, lvl) AS (
+                SELECT id, parent_id, 0 FROM org_nodes WHERE id = ?
+                UNION ALL SELECT o.id, o.parent_id, up.lvl + 1 FROM org_nodes o JOIN up ON o.id = up.parent_id
+                WHERE up.lvl < 32)
+             SELECT id FROM up ORDER BY lvl",
+            [org_node_id.into()],
+        ))
+        .await?
+        .iter()
+        .filter_map(|r| r.try_get::<i64>("", "id").ok())
+        .collect::<Vec<_>>();
+    Ok(if chain.is_empty() { vec![org_node_id] } else { chain })
+}
+
+/// Active users granted `permission` through a role in force — plant-wide, or on the record's node
+/// or one of its parents — and the users with elevated admin access, who hold every permission
+/// (`auth::rbac::elevated_admin_user_ids`, the rule the permission checks use).
 pub async fn permission_holder_user_ids(
     conn: &impl ConnectionTrait,
     permission: &str,
@@ -377,23 +378,29 @@ pub async fn permission_holder_user_ids(
     let mut values: Vec<sea_orm::Value> = vec![permission.into()];
     let scope = match org_node_id {
         Some(node) => {
-            values.push(node.to_string().into());
-            "(x.scope_type = 'tenant' OR (x.scope_type IN ('entity', 'org_node', 'site') AND x.scope_reference = ?))"
+            let chain = node_chain(conn, node).await?;
+            let marks = vec!["?"; chain.len()].join(",");
+            values.extend(chain.iter().map(|n| n.to_string().into()));
+            format!("(x.scope_type = 'tenant' OR (x.scope_type IN ('entity', 'org_node', 'site') AND x.scope_reference IN ({marks})))")
         }
-        None => "x.scope_type = 'tenant'",
+        None => "x.scope_type = 'tenant'".to_string(),
     };
-    ids(
+    let mut users = ids(
         conn,
         &format!(
-            "SELECT ua.id AS v FROM user_scope_assignments x \
-             JOIN user_accounts ua ON ua.id = x.user_id \
-             JOIN role_permissions rp ON rp.role_id = x.role_id \
-             JOIN permissions p ON p.id = rp.permission_id \
+            "SELECT ua.id AS v FROM user_scope_assignments x
+             JOIN user_accounts ua ON ua.id = x.user_id
+             JOIN role_permissions rp ON rp.role_id = x.role_id
+             JOIN permissions p ON p.id = rp.permission_id
              WHERE p.name = ? AND {scope} AND x.deleted_at IS NULL AND {IN_FORCE_NOW} AND {ACTIVE_USER}"
         ),
         values,
     )
-    .await
+    .await?;
+    users.extend(crate::auth::rbac::elevated_admin_user_ids(conn).await?);
+    users.sort_unstable();
+    users.dedup();
+    Ok(users)
 }
 
 /// Active users holding the role named `role_name` (case-insensitive), in force now.

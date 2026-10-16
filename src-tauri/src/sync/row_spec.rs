@@ -1012,26 +1012,30 @@ pub const ROW_SPECS: &[RowSpec] = &[
         device_local: &["dedupe_key", "resolved_at"],
         ..spec(
             "notification_events",
-            &[poly_hist(
-                "source_record_id",
-                "source_module",
-                &[
-                    ("di", "intervention_requests"),
-                    ("intervention_requests", "intervention_requests"),
-                    ("pm", "pm_occurrences"),
-                    ("personnel", "personnel"),
-                    ("planning", "schedule_commitments"),
-                    ("finance_budget", "budget_versions"),
-                    ("work_orders", "work_orders"),
-                    ("wo", "work_orders"),
-                    ("inspection", "inspection_rounds"),
-                    ("inventory", "articles"),
-                    ("permit", "work_permits"),
-                    // The daily digest names its day (`2026-10-15`); conflicts carry no record.
-                    ("notifications", NOT_A_ROW),
-                    ("sync", NOT_A_ROW),
-                ],
-            )],
+            &[
+                // Org node of the record, for read-time visibility (`notifications::inbox`).
+                hist("org_node_id", "org_nodes"),
+                poly_hist(
+                    "source_record_id",
+                    "source_module",
+                    &[
+                        ("di", "intervention_requests"),
+                        ("intervention_requests", "intervention_requests"),
+                        ("pm", "pm_occurrences"),
+                        ("personnel", "personnel"),
+                        ("planning", "schedule_commitments"),
+                        ("finance_budget", "budget_versions"),
+                        ("work_orders", "work_orders"),
+                        ("wo", "work_orders"),
+                        ("inspection", "inspection_rounds"),
+                        ("inventory", "articles"),
+                        ("permit", "work_permits"),
+                        // The daily digest names its day (`2026-10-15`); conflicts carry no record.
+                        ("notifications", NOT_A_ROW),
+                        ("sync", NOT_A_ROW),
+                    ],
+                ),
+            ],
         )
     },
     RowSpec {
@@ -1045,8 +1049,9 @@ pub const ROW_SPECS: &[RowSpec] = &[
             json_ref_hist("action_url", "?articleId", "articles"),
             json_ref_hist("action_url", "?permit", "work_permits"),
         ],
-        // Whether the condition cleared is computed by each device (`notifications::conditions`).
-        device_local: &["resolved_at"],
+        // Whether the condition cleared is computed by each device (`notifications::conditions`);
+        // whether the condition was already true when this device started watching it, too.
+        device_local: &["resolved_at", "already_true"],
         ..spec(
             "notifications",
             &[

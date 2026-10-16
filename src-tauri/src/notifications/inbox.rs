@@ -1,8 +1,10 @@
 //! The notification inbox of one person: what it lists, what it counts, and bulk "mark all read".
 //!
 //! **Visibility (checked at read time).** A notification is listed and counted only when the
-//! reader may view its module (`notifications::catalog::MODULES`); a category without a known
-//! module is never shown. The bell, the inbox views and "mark all read" use the same conditions,
+//! reader may view its module (`notifications::catalog::MODULES`) where its record is: a view
+//! permission granted plant-wide shows the module, one granted on org nodes shows the records on
+//! those nodes and below (and the records without a node); a category without a known module is
+//! never shown. The bell, the inbox views and "mark all read" use the same conditions,
 //! so their numbers always agree.
 //!
 //! **Views.**
@@ -33,32 +35,148 @@ const EVENT_ACKNOWLEDGED: &str = "EXISTS (SELECT 1 FROM notifications n2 \
 const SEVERITY_SQL: &str = "CASE WHEN e.severity IN ('critical', 'error') THEN 'critical' \
      WHEN e.severity = 'warning' THEN 'warning' ELSE 'info' END";
 
-/// Modules whose notifications `user_id` may see now (the view permission of each module,
-/// plant-wide, as the module screens check it).
-pub async fn visible_modules(
-    db: &sea_orm::DatabaseConnection,
-    cache: &tokio::sync::RwLock<crate::rbac::cache::PermissionCache>,
-    user_id: i32,
-) -> AppResult<Vec<String>> {
-    let mut out = Vec::new();
-    for (module, permission) in catalog::MODULES {
-        let visible = match permission {
-            None => true,
-            Some(p) => {
-                crate::auth::rbac::check_permission_cached(
-                    db,
-                    cache,
-                    user_id,
-                    p,
-                    &crate::auth::rbac::PermissionScope::Global,
-                )
-                .await?
-            }
-        };
-        if visible {
-            out.push((*module).to_string());
+/// What a reader may see, module by module, from the view permission of each module
+/// (`catalog::MODULES`) as their roles grant it now.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Visibility {
+    /// Modules seen plant-wide (a tenant-wide grant, elevated admin, or no permission needed).
+    pub everywhere: Vec<String>,
+    /// Modules granted on some org nodes only: the notifications of records on those nodes or
+    /// below them, and of records that belong to no node.
+    pub on_nodes: Vec<(String, Vec<i64>)>,
+}
+
+impl Visibility {
+    /// Every module plant-wide.
+    pub fn all() -> Self {
+        Self {
+            everywhere: catalog::MODULES.iter().map(|(m, _)| (*m).to_string()).collect(),
+            on_nodes: Vec::new(),
         }
     }
+
+    pub fn sees_module(&self, module: &str) -> bool {
+        self.everywhere.iter().any(|m| m == module) || self.on_nodes.iter().any(|(m, _)| m == module)
+    }
+
+    /// SQL condition on the category `c` and the event `e`.
+    fn sql(&self, values: &mut Vec<Value>) -> String {
+        let mut parts = Vec::new();
+        if !self.everywhere.is_empty() {
+            values.extend(self.everywhere.iter().map(|m| m.clone().into()));
+            parts.push(format!(
+                "c.module_code IN ({})",
+                vec!["?"; self.everywhere.len()].join(",")
+            ));
+        }
+        for (module, nodes) in &self.on_nodes {
+            values.push(module.clone().into());
+            if nodes.is_empty() {
+                parts.push("(c.module_code = ? AND e.org_node_id IS NULL)".to_string());
+            } else {
+                values.extend(nodes.iter().map(|n| (*n).into()));
+                parts.push(format!(
+                    "(c.module_code = ? AND (e.org_node_id IS NULL OR e.org_node_id IN ({})))",
+                    vec!["?"; nodes.len()].join(",")
+                ));
+            }
+        }
+        if parts.is_empty() {
+            "1 = 0".to_string()
+        } else {
+            format!("({})", parts.join(" OR "))
+        }
+    }
+}
+
+/// What `user_id` may see now. A role granted plant-wide shows the whole module; a role granted on
+/// org nodes (site, area…) shows the notifications of records on those nodes and below, plus those
+/// of records without a node. Users with elevated admin access see everything, as in every module.
+pub async fn visible_to(db: &sea_orm::DatabaseConnection, user_id: i32) -> AppResult<Visibility> {
+    if crate::auth::rbac::user_has_elevated_admin_access(db, user_id).await? {
+        return Ok(Visibility::all());
+    }
+    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let mut out = Visibility::default();
+    for (module, permission) in catalog::MODULES {
+        let Some(permission) = permission else {
+            out.everywhere.push((*module).to_string());
+            continue;
+        };
+        let grants = db
+            .query_all(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT DISTINCT usa.scope_type, usa.scope_reference
+                 FROM user_scope_assignments usa
+                 JOIN role_permissions rp ON rp.role_id = usa.role_id
+                 JOIN permissions p ON p.id = rp.permission_id
+                 WHERE usa.user_id = ? AND p.name = ? AND usa.deleted_at IS NULL
+                   AND (usa.valid_from IS NULL OR usa.valid_from <= ?)
+                   AND (usa.valid_to IS NULL OR usa.valid_to >= ?)
+                   AND (usa.is_emergency = 0 OR usa.emergency_expires_at > ?)",
+                [
+                    user_id.into(),
+                    (*permission).into(),
+                    now.clone().into(),
+                    now.clone().into(),
+                    now.clone().into(),
+                ],
+            ))
+            .await?;
+        if grants.is_empty() {
+            continue;
+        }
+        let mut nodes = Vec::new();
+        let mut tenant = false;
+        for g in &grants {
+            let scope: String = g.try_get("", "scope_type").map_err(|e| decode("scope_type", e))?;
+            let reference: Option<String> = g
+                .try_get("", "scope_reference")
+                .map_err(|e| decode("scope_reference", e))?;
+            match scope.as_str() {
+                "tenant" => tenant = true,
+                "entity" | "org_node" | "site" => {
+                    if let Some(id) = reference.and_then(|r| r.trim().parse::<i64>().ok()) {
+                        nodes.push(id);
+                    }
+                }
+                // A team-scoped grant still is a grant of the permission: records without a node.
+                _ => {}
+            }
+        }
+        if tenant {
+            out.everywhere.push((*module).to_string());
+        } else {
+            out.on_nodes
+                .push(((*module).to_string(), node_subtrees(db, &nodes).await?));
+        }
+    }
+    Ok(out)
+}
+
+/// The nodes and every node below them.
+async fn node_subtrees(db: &impl ConnectionTrait, roots: &[i64]) -> AppResult<Vec<i64>> {
+    if roots.is_empty() {
+        return Ok(Vec::new());
+    }
+    let marks = vec!["?"; roots.len()].join(",");
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "WITH RECURSIVE down(id, lvl) AS (
+                    SELECT id, 0 FROM org_nodes WHERE id IN ({marks})
+                    UNION SELECT o.id, down.lvl + 1 FROM org_nodes o JOIN down ON o.parent_id = down.id
+                    WHERE down.lvl < 32)
+                 SELECT DISTINCT id FROM down"
+            ),
+            roots.iter().map(|r| (*r).into()).collect::<Vec<Value>>(),
+        ))
+        .await?;
+    let mut out: Vec<i64> = rows.iter().filter_map(|r| r.try_get::<i64>("", "id").ok()).collect();
+    out.extend_from_slice(roots);
+    out.sort_unstable();
+    out.dedup();
     Ok(out)
 }
 
@@ -100,6 +218,8 @@ pub struct InboxItem {
     pub event_acknowledged_by: Option<String>,
     pub reason_code: Option<String>,
     pub reason_ref: Option<String>,
+    /// The condition was already true when this device started watching it: listed as read.
+    pub already_true: bool,
     pub source_module: String,
     pub source_record_id: Option<String>,
 }
@@ -142,21 +262,14 @@ fn view_sql(view: &str) -> AppResult<String> {
     })
 }
 
-/// `FROM … WHERE` shared by every inbox query: the reader's notifications in visible modules.
-fn base(user_id: i64, modules: &[String], values: &mut Vec<Value>) -> String {
+/// `FROM … WHERE` shared by every inbox query: the reader's notifications they may see.
+fn base(user_id: i64, vis: &Visibility, values: &mut Vec<Value>) -> String {
     values.push(user_id.into());
-    let visible = if modules.is_empty() {
-        "1 = 0".to_string()
-    } else {
-        for m in modules {
-            values.push(m.clone().into());
-        }
-        format!("c.module_code IN ({})", vec!["?"; modules.len()].join(","))
-    };
+    let visible = vis.sql(values);
     format!(
-        "FROM notifications n \
-         JOIN notification_events e ON e.id = n.notification_event_id \
-         JOIN notification_categories c ON c.code = e.category_code \
+        "FROM notifications n
+         JOIN notification_events e ON e.id = n.notification_event_id
+         JOIN notification_categories c ON c.code = e.category_code
          WHERE n.recipient_user_id = ? AND {visible}"
     )
 }
@@ -200,11 +313,11 @@ fn decode(field: &str, err: impl std::fmt::Display) -> AppError {
 pub async fn list(
     conn: &impl ConnectionTrait,
     user_id: i64,
-    modules: &[String],
+    vis: &Visibility,
     filter: &InboxFilter,
 ) -> AppResult<Vec<InboxItem>> {
     let mut values = Vec::new();
-    let from = base(user_id, modules, &mut values);
+    let from = base(user_id, vis, &mut values);
     let cond = filter_sql(filter, &mut values)?;
     let limit = filter.limit.unwrap_or(50).clamp(1, MAX_PAGE);
     let offset = filter.offset.unwrap_or(0).max(0);
@@ -220,7 +333,7 @@ pub async fn list(
                    JOIN user_accounts ua ON ua.id = a.acknowledged_by_id \
                   WHERE n3.notification_event_id = n.notification_event_id ORDER BY a.id LIMIT 1) AS acked_by, \
                 CASE WHEN {EVENT_ACKNOWLEDGED} THEN 1 ELSE 0 END AS event_acked, \
-                n.reason_code, n.reason_ref, e.source_module, e.source_record_id \
+                n.reason_code, n.reason_ref, n.already_true, e.source_module, e.source_record_id \
          {from}{cond} ORDER BY n.created_at DESC, n.id DESC LIMIT ? OFFSET ?"
     );
     let rows = conn
@@ -269,6 +382,10 @@ pub async fn list(
             },
             reason_code: r.try_get("", "reason_code").map_err(|e| decode("reason_code", e))?,
             reason_ref: r.try_get("", "reason_ref").map_err(|e| decode("reason_ref", e))?,
+            already_true: r
+                .try_get::<i64>("", "already_true")
+                .map_err(|e| decode("already_true", e))?
+                == 1,
             source_module: r.try_get("", "source_module").map_err(|e| decode("source_module", e))?,
             source_record_id: r
                 .try_get("", "source_record_id")
@@ -278,9 +395,9 @@ pub async fn list(
     Ok(out)
 }
 
-async fn count(conn: &impl ConnectionTrait, user_id: i64, modules: &[String], view: &str) -> AppResult<i64> {
+async fn count(conn: &impl ConnectionTrait, user_id: i64, vis: &Visibility, view: &str) -> AppResult<i64> {
     let mut values = Vec::new();
-    let from = base(user_id, modules, &mut values);
+    let from = base(user_id, vis, &mut values);
     let sql = format!("SELECT COUNT(*) AS cnt {from} AND {}", view_sql(view)?);
     Ok(conn
         .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, sql, values))
@@ -292,13 +409,13 @@ async fn count(conn: &impl ConnectionTrait, user_id: i64, modules: &[String], vi
 }
 
 /// Unread count (the bell) — the same condition as the `unread` view.
-pub async fn unread_count(conn: &impl ConnectionTrait, user_id: i64, modules: &[String]) -> AppResult<i64> {
-    count(conn, user_id, modules, "unread").await
+pub async fn unread_count(conn: &impl ConnectionTrait, user_id: i64, vis: &Visibility) -> AppResult<i64> {
+    count(conn, user_id, vis, "unread").await
 }
 
-pub async fn counts(conn: &impl ConnectionTrait, user_id: i64, modules: &[String]) -> AppResult<InboxCounts> {
+pub async fn counts(conn: &impl ConnectionTrait, user_id: i64, vis: &Visibility) -> AppResult<InboxCounts> {
     let mut values = Vec::new();
-    let from = base(user_id, modules, &mut values);
+    let from = base(user_id, vis, &mut values);
     let rows = conn
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -318,8 +435,8 @@ pub async fn counts(conn: &impl ConnectionTrait, user_id: i64, modules: &[String
     }
     Ok(InboxCounts {
         unread: by_module.iter().map(|m| m.unread).sum(),
-        to_acknowledge: count(conn, user_id, modules, "to_acknowledge").await?,
-        snoozed: count(conn, user_id, modules, "snoozed").await?,
+        to_acknowledge: count(conn, user_id, vis, "to_acknowledge").await?,
+        snoozed: count(conn, user_id, vis, "snoozed").await?,
         by_module,
     })
 }
@@ -329,11 +446,11 @@ pub async fn counts(conn: &impl ConnectionTrait, user_id: i64, modules: &[String
 pub async fn mark_all_read(
     conn: &impl ConnectionTrait,
     user_id: i64,
-    modules: &[String],
+    vis: &Visibility,
     filter: &InboxFilter,
 ) -> AppResult<u64> {
     let mut values = Vec::new();
-    let from = base(user_id, modules, &mut values);
+    let from = base(user_id, vis, &mut values);
     let scoped = InboxFilter {
         view: Some("unread".into()),
         limit: None,
@@ -360,12 +477,12 @@ pub async fn mark_all_read(
 pub async fn ensure_visible(
     conn: &impl ConnectionTrait,
     user_id: i64,
-    modules: &[String],
+    vis: &Visibility,
     notification_id: i64,
 ) -> AppResult<()> {
     crate::notifications::delivery::ensure_recipient(conn, notification_id, user_id).await?;
     let mut values = Vec::new();
-    let from = base(user_id, modules, &mut values);
+    let from = base(user_id, vis, &mut values);
     values.push(notification_id.into());
     let visible = conn
         .query_one(Statement::from_sql_and_values(

@@ -368,6 +368,9 @@ export function NotificationInbox({
             ) : null}
           </div>
           {reason ? <p className="mt-1 text-xs text-text-muted">{reason}</p> : null}
+          {row.already_true ? (
+            <p className="mt-0.5 text-xs text-text-muted">{t("reason.alreadyTrue")}</p>
+          ) : null}
         </div>
         <time
           dateTime={row.created_at}

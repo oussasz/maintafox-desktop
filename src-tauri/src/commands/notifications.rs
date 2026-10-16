@@ -11,8 +11,8 @@ use crate::notifications::{config, delivery, inbox};
 use crate::state::AppState;
 use crate::{require_permission, require_session};
 
-async fn visible_modules(state: &AppState, user_id: i32) -> AppResult<Vec<String>> {
-    inbox::visible_modules(&state.db, &state.permission_cache, user_id).await
+async fn visible_modules(state: &AppState, user_id: i32) -> AppResult<inbox::Visibility> {
+    inbox::visible_to(&state.db, user_id).await
 }
 
 /// One page of the inbox (see `notifications::inbox` for the views and filters).

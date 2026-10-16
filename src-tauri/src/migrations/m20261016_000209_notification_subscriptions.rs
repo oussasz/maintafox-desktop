@@ -46,7 +46,8 @@ const NEW_CATEGORIES: &[(&str, &str, &str, &str, i64, i64)] = &[
         0,
         1,
     ),
-    ("ptw_expiring", "Work permit expiring", "ptw", "warning", 0, 1),
+    // Permit safety, like `ptw_critical`: users cannot turn it off.
+    ("ptw_expiring", "Work permit expiring", "ptw", "warning", 0, 0),
     (
         "sync_conflict",
         "Synchronisation conflict to review",
@@ -91,17 +92,24 @@ const CATEGORY_MODULES: &[(&str, &str)] = &[
     ("wo_overdue", "ot"),
 ];
 
-/// Audiences of the categories whose recipients differ from their old single routing mode.
-const AUDIENCE_OVERRIDES: &[(&str, &str)] = &[
-    ("stock_critical", r#"["permission:inv.manage"]"#),
-    ("wo_overdue", r#"["assignee","planner"]"#),
-    ("pm_due", r#"["assignee","team"]"#),
-    ("inspection_round_missed", r#"["assignee","team_lead"]"#),
-    ("ptw_expiring", r#"["assignee","planner","entity_manager"]"#),
-    ("ptw_critical", r#"["assignee","planner","entity_manager"]"#),
-    ("sync_conflict", r#"["permission:sync.resolve"]"#),
-    ("cert_expiry", r#"["entity_manager","supervisor"]"#),
-    ("budget_control_alert", "[]"),
+/// Audiences of the categories whose recipients differ from their old single routing mode:
+/// `(category, routing mode it shipped with, audiences)`. Applied only while the rule still has
+/// that routing mode — a plant that changed it keeps its choice (then the generic mapping below
+/// turns its routing mode into the audience).
+const AUDIENCE_OVERRIDES: &[(&str, &str, &str)] = &[
+    ("stock_critical", "role", r#"["permission:inv.manage"]"#),
+    ("wo_overdue", "assignee", r#"["assignee","planner"]"#),
+    ("pm_due", "assignee", r#"["assignee","team"]"#),
+    ("inspection_round_missed", "assignee", r#"["assignee","team_lead"]"#),
+    ("ptw_expiring", "assignee", r#"["assignee","planner","entity_manager"]"#),
+    (
+        "ptw_critical",
+        "entity_manager",
+        r#"["assignee","planner","entity_manager"]"#,
+    ),
+    ("sync_conflict", "manual", r#"["permission:sync.resolve"]"#),
+    ("cert_expiry", "entity_manager", r#"["entity_manager","supervisor"]"#),
+    ("budget_control_alert", "manual", "[]"),
 ];
 
 /// `(level, shipped role name, new target type, new reference)`.
@@ -180,11 +188,12 @@ impl MigrationTrait for Migration {
             ))
             .await?;
         }
-        for (category, audiences) in AUDIENCE_OVERRIDES {
+        for (category, shipped_mode, audiences) in AUDIENCE_OVERRIDES {
             db.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "UPDATE notification_rules SET audiences_json = ? WHERE category_code = ? AND audiences_json IS NULL",
-                [(*audiences).into(), (*category).into()],
+                "UPDATE notification_rules SET audiences_json = ? \
+                 WHERE category_code = ? AND routing_mode = ? AND audiences_json IS NULL",
+                [(*audiences).into(), (*category).into(), (*shipped_mode).into()],
             ))
             .await?;
         }
@@ -251,5 +260,61 @@ impl MigrationTrait for Migration {
             .await?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use sea_orm_migration::prelude::*;
+
+    use super::Migration;
+    use crate::sync::test_support::{exec, scalar_opt_text};
+
+    async fn audiences(db: &sea_orm::DatabaseConnection, category: &str) -> Option<String> {
+        scalar_opt_text(
+            db,
+            "SELECT audiences_json FROM notification_rules WHERE category_code = ?",
+            vec![category.into()],
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn shipped_audiences_never_replace_a_routing_the_plant_changed() {
+        let db = crate::db::test_db::migrated().await;
+        // As before migration 209: no audiences yet. The plant had routed overdue orders to the
+        // team; stock alerts still had their shipped routing.
+        exec(
+            &db,
+            "UPDATE notification_rules SET audiences_json = NULL, routing_mode = 'team' WHERE category_code = 'wo_overdue'",
+            vec![],
+        )
+        .await;
+        exec(
+            &db,
+            "UPDATE notification_rules SET audiences_json = NULL, routing_mode = 'role' WHERE category_code = 'stock_critical'",
+            vec![],
+        )
+        .await;
+        Migration
+            .up(&SchemaManager::new(&db))
+            .await
+            .expect("migration 209 again");
+        assert_eq!(audiences(&db, "wo_overdue").await.as_deref(), Some(r#"["team"]"#));
+        assert_eq!(
+            audiences(&db, "stock_critical").await.as_deref(),
+            Some(r#"["permission:inv.manage"]"#)
+        );
+        // Permit expiry warnings are safety: not something a user can turn off.
+        assert_eq!(
+            scalar_opt_text(
+                &db,
+                "SELECT CAST(is_user_configurable AS TEXT) FROM notification_categories WHERE code = 'ptw_expiring'",
+                vec![],
+            )
+            .await
+            .as_deref(),
+            Some("0")
+        );
     }
 }

@@ -17,15 +17,20 @@
 //!   without a language (email).
 //! - `notification_events.urgency_code` — level of the shared urgency scale (`WORK.URGENCY`) when
 //!   the notification is about work.
+//! - `notification_events.org_node_id` — org node of the record (site / area): a reader whose view
+//!   permission is scoped to nodes sees the notification only when the record sits in one of them
+//!   (`notifications::inbox`).
+//! - `notifications.already_true` — created when the condition was already true as this device
+//!   started watching it (new device, rule activated later): the notification is listed, read,
+//!   and says so, instead of ringing the bell (`notifications::watchers`). Device-local.
 //! - `notification_rules.audiences_json` — who receives the category (array of audience codes),
 //!   `notification_rules.lead_time_minutes` — advance warning of the "due soon" categories.
 //! - `notification_categories.module_code` — module the category belongs to (inbox filter, and the
 //!   view permission checked when the inbox is read), `is_offered` — the category has a generator
 //!   in this version (categories without one are not shown).
 //!
-//! Device-local table `notification_watch_state`: when each condition watcher started on this
-//! device. Conditions already true then are recorded without notifying (an upgrade or a new
-//! device does not flood the inbox with old facts).
+//! Device-local table `notification_watch_state`: since when this device watches each active
+//! rule of the condition watchers (the row is removed while the rule is inactive).
 
 use sea_orm::{ConnectionTrait, DatabaseBackend, Statement, TransactionTrait};
 use sea_orm_migration::prelude::*;
@@ -58,10 +63,12 @@ const COLUMNS: &[(&str, &str, &str)] = &[
     ("notifications", "resolved_at", "TEXT NULL"),
     ("notifications", "reason_code", "TEXT NULL"),
     ("notifications", "reason_ref", "TEXT NULL"),
+    ("notifications", "already_true", "INTEGER NOT NULL DEFAULT 0"),
     ("notification_events", "message_key", "TEXT NULL"),
     ("notification_events", "message_params_json", "TEXT NULL"),
     ("notification_events", "urgency_code", "TEXT NULL"),
     ("notification_events", "resolved_at", "TEXT NULL"),
+    ("notification_events", "org_node_id", "INTEGER NULL"),
     ("notification_rules", "audiences_json", "TEXT NULL"),
     ("notification_rules", "lead_time_minutes", "INTEGER NULL"),
     ("notification_categories", "module_code", "TEXT NULL"),
@@ -83,8 +90,8 @@ impl MigrationTrait for Migration {
              ON notifications(recipient_user_id, archived_at, read_at)",
             "CREATE INDEX IF NOT EXISTS idx_ne_source ON notification_events(source_module, source_record_id)",
             "CREATE TABLE IF NOT EXISTS notification_watch_state (
-                watcher_code  TEXT PRIMARY KEY NOT NULL,
-                baselined_at  TEXT NOT NULL
+                watcher_code    TEXT PRIMARY KEY NOT NULL,
+                watching_since  TEXT NOT NULL
              )",
         ] {
             txn.execute_unprepared(sql).await?;

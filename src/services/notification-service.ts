@@ -30,6 +30,8 @@ const NotificationSummarySchema = z.object({
   event_acknowledged_by: z.string().nullable(),
   reason_code: z.string().nullable(),
   reason_ref: z.string().nullable(),
+  /** The condition was already true when this device started watching it (listed as read). */
+  already_true: z.boolean().default(false),
   source_module: z.string(),
   source_record_id: z.string().nullable(),
 });

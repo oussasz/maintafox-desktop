@@ -64,6 +64,7 @@ function row(partial: Partial<NotificationSummary>): NotificationSummary {
     event_acknowledged_by: null,
     reason_code: "planner",
     reason_ref: null,
+    already_true: false,
     source_module: "work_orders",
     source_record_id: "42",
     ...partial,
@@ -214,6 +215,16 @@ describe("NotificationInbox", () => {
     await waitFor(() =>
       expect(screen.getByRole("button", { name: /inbox\.actions\.archive/ })).toBeEnabled(),
     );
+  });
+
+  it("says when a condition was already true as this device started watching it", async () => {
+    svc.listNotifications.mockResolvedValue([
+      row({ already_true: true, read_at: new Date().toISOString(), delivery_state: "read" }),
+    ]);
+    renderInbox();
+    expect(await screen.findByText("reason.alreadyTrue")).toBeInTheDocument();
+    // Read: no "mark as read" action.
+    expect(screen.queryByRole("button", { name: /inbox\.actions\.markRead/ })).toBeNull();
   });
 
   it("shows the empty label of the selected view", async () => {
