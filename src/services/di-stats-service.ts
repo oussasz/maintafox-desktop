@@ -59,6 +59,7 @@ const DiSlaOpenSplitSchema = z.object({
   on_track: z.number(),
   at_risk: z.number(),
   breached: z.number(),
+  paused: z.number(),
   no_target: z.number(),
 });
 
@@ -90,6 +91,7 @@ const DiStatsPayloadSchema = z.object({
   overdue_dis: z.array(DiOverdueDiSchema),
   backlog_by_status: z.array(DiBacklogStatusSchema),
   sla_open: DiSlaOpenSplitSchema,
+  closed_in_period: z.number(),
   converted_count: z.number(),
   avg_response_hours: z.number().nullable(),
   avg_conversion_hours: z.number().nullable(),

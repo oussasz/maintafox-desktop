@@ -133,6 +133,7 @@ export const DI_SLA_TONE: Record<string, Tone> = {
   at_risk: "attention",
   breached: "danger",
   completed: "neutral",
+  paused: "neutral",
 };
 
 /**

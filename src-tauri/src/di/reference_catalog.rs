@@ -145,20 +145,25 @@ pub async fn validate_di_decision_reason(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT rv.id FROM reference_values rv \
+            "SELECT rv.code FROM reference_values rv \
              INNER JOIN reference_sets rs ON rs.id = rv.set_id \
              INNER JOIN reference_domains d ON d.id = rs.domain_id \
              WHERE d.code = ? AND rs.status = 'published' \
-               AND UPPER(TRIM(rv.code)) = UPPER(TRIM(?)) AND rv.is_active = 1",
+               AND UPPER(TRIM(rv.code)) = UPPER(TRIM(?)) AND rv.is_active = 1 \
+             ORDER BY rs.version_no DESC LIMIT 1",
             [domain_code.into(), code.clone().into()],
         ))
         .await?;
-    if row.is_none() {
+    let Some(row) = row else {
         return Err(AppError::ValidationFailed(vec![format!(
             "Motif '{code}' introuvable dans le référentiel {domain_code} (valeur publiée active requise)."
         )]));
-    }
-    Ok(code)
+    };
+    // The code as the list stores it (a reason typed in another case is stored canonically).
+    let canonical: String = row
+        .try_get("", "code")
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("decision reason code decode: {e}")))?;
+    Ok(canonical.trim().to_string())
 }
 
 /// Validate `symptom_code_id` against the published active shared symptom list by id.
@@ -294,6 +299,11 @@ mod tests {
                 .await
                 .expect("seeded reason accepted");
             assert_eq!(ok, code);
+            // Another case is accepted and stored as the list writes it.
+            let upper = validate_di_decision_reason(&db, domain, &code.to_uppercase())
+                .await
+                .expect("case-insensitive match");
+            assert_eq!(upper, code);
             let err = validate_di_decision_reason(&db, domain, "not-a-reason")
                 .await
                 .expect_err("unknown reason refused");

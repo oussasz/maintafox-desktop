@@ -299,7 +299,10 @@ export function DiDetailDialog({
                   className="text-xs"
                 />
               )}
-              <DiSlaStatusBadge status={slaStatus?.status ?? di.sla_state ?? null} />
+              <DiSlaStatusBadge
+                status={slaStatus?.status ?? di.sla_state ?? null}
+                requestStatus={di.status}
+              />
               {di.safety_flag && (
                 <StatusChip label={t("detail.safety")} tone="danger" icon={Shield} size="md" />
               )}
@@ -489,6 +492,14 @@ export function DiDetailDialog({
                   value={formatDiDate(slaStatus.resolution_deadline, dateLocale)}
                 />
               )}
+              {slaStatus && slaStatus.paused_hours > 0 ? (
+                <InfoRow
+                  label={t("detail.fields.slaPaused")}
+                  value={t("detail.fields.hoursValue", {
+                    hours: Math.round(slaStatus.paused_hours * 10) / 10,
+                  })}
+                />
+              ) : null}
               {slaStatus?.response_remaining_hours != null && (
                 <InfoRow
                   label={t("detail.fields.slaResponseRemaining")}

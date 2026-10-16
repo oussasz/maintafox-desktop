@@ -97,7 +97,9 @@ export function DiDashboardView({ onOpenQueue }: DiDashboardViewProps) {
   const decided = stats.sla_met_count + stats.sla_breached_count;
   const slaCompliance = decided > 0 ? formatPercent((stats.sla_met_count / decided) * 100) : "—";
   const conversionRate =
-    stats.closed > 0 ? formatPercent((stats.converted_count / stats.closed) * 100) : "—";
+    stats.closed_in_period > 0
+      ? formatPercent((stats.converted_count / stats.closed_in_period) * 100)
+      : "—";
   const periodHint =
     period === "all" ? t("dashboard.periodAll") : t("dashboard.periodMonths", { months: period });
   const openProps = (q: DiQueueSelection) => (onOpenQueue ? { onOpen: () => onOpenQueue(q) } : {});
@@ -105,6 +107,7 @@ export function DiDashboardView({ onOpenQueue }: DiDashboardViewProps) {
     stats.sla_open.on_track +
     stats.sla_open.at_risk +
     stats.sla_open.breached +
+    stats.sla_open.paused +
     stats.sla_open.no_target;
   const maxDisposition = Math.max(1, ...stats.disposition_distribution.map((d) => d.count));
   const maxTrend = Math.max(1, ...stats.monthly_trend.map((p) => Math.max(p.created, p.closed)));
@@ -183,7 +186,7 @@ export function DiDashboardView({ onOpenQueue }: DiDashboardViewProps) {
           value={conversionRate}
           hint={t("dashboard.conversionHint", {
             converted: stats.converted_count,
-            closed: stats.closed,
+            closed: stats.closed_in_period,
           })}
           icon={Wrench}
         />
@@ -255,6 +258,7 @@ export function DiDashboardView({ onOpenQueue }: DiDashboardViewProps) {
                   ["on_track", stats.sla_open.on_track, mfTone.success.bar],
                   ["at_risk", stats.sla_open.at_risk, mfTone.attention.bar],
                   ["breached", stats.sla_open.breached, mfTone.danger.bar],
+                  ["paused", stats.sla_open.paused, mfTone.info.bar],
                   ["none", stats.sla_open.no_target, mfTone.neutral.bar],
                 ] as const
               ).map(([key, count, bar]) => (

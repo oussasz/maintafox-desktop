@@ -122,7 +122,10 @@ export function DiAuditTimeline({ diId }: DiAuditTimelineProps) {
         return {
           id: String(evt.id),
           title: actionLabel(evt.action),
-          description: evt.summary ?? undefined,
+          // The stored summary is the backend's English record; known actions read in the UI language.
+          description:
+            t(`auditTimeline.summary.${evt.action}`, { defaultValue: evt.summary ?? "" }) ||
+            undefined,
           timestamp: evt.acted_at,
           actor:
             evt.actor_id != null

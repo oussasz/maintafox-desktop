@@ -401,7 +401,7 @@ pub async fn resubmit_di(
             di_id: Some(di.id),
             action: "resubmitted".into(),
             actor_id: Some(i64::from(user.user_id)),
-            summary: Some("Demande complétée par le demandeur et renvoyée en revue.".into()),
+            summary: Some("DI answered by the requester and resubmitted for review.".into()),
             details_json: None,
             requires_step_up: false,
             apply_result: "applied".into(),
