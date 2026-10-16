@@ -124,6 +124,9 @@ const DocumentationIndexRedirect = lazy(() =>
 const ArchivePage = lazy(() =>
   import("@/pages/ArchivePage").then((m) => ({ default: m.ArchivePage })),
 );
+const NotificationsPage = lazy(() =>
+  import("@/pages/NotificationsPage").then((m) => ({ default: m.NotificationsPage })),
+);
 const SettingsPage = lazy(() =>
   import("@/pages/SettingsPage").then((m) => ({ default: m.SettingsPage })),
 );
@@ -331,10 +334,7 @@ const routes: RouteObject[] = [
                     element: <PermissionRoute permission={P.REF_VIEW} />,
                     children: [{ path: "lookups", element: <LookupsPage /> }],
                   },
-                  {
-                    path: "notifications",
-                    element: <Navigate to="/settings?tab=notifications" replace />,
-                  },
+                  { path: "notifications", element: <NotificationsPage /> },
                   {
                     element: <PermissionRoute permission={P.DOC_VIEW} />,
                     children: [

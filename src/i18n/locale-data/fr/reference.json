@@ -303,7 +303,9 @@
       "articleFamilies": "Familles d'articles de stock",
       "taxCategories": "Catégories TVA des articles",
       "woStatuses": "Statuts d'ordre de travail",
-      "urgencyScale": "Échelle d'urgence (DI / OT)"
+      "urgencyScale": "Échelle d'urgence (DI / OT)",
+      "notificationRules": "Notifications (destinataires et escalade)",
+      "notificationCategories": "Catégories de notification"
     }
   },
   "combobox": {

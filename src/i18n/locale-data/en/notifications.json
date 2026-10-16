@@ -1,8 +1,15 @@
 {
   "bell": {
     "title": "Notifications",
-    "aria": "Notifications ({{count}})",
-    "unread": "{{count}} unread"
+    "aria": "Notifications ({{count}} unread)",
+    "unread": "{{count}} unread",
+    "toAcknowledge": "{{count}} to acknowledge",
+    "openInbox": "Open the inbox"
+  },
+  "page": {
+    "title": "Notifications",
+    "description": "What needs your attention: assigned and overdue work, requests to review, missed PM and rounds, stock and permits.",
+    "preferences": "My preferences"
   },
   "osToast": {
     "summaryTitle_one": "{{count}} new notification",
@@ -12,56 +19,130 @@
   },
   "preferences": {
     "title": "Notification preferences",
+    "intro": "Choose what you receive and how. Your notifications are in the",
+    "openInbox": "notification inbox",
     "loading": "Loading preferences…",
     "categories_one": "{{count}} category",
     "categories_other": "{{count}} categories",
-    "systemManaged": "Managed by the system",
+    "systemManaged": "Safety-related: always delivered",
     "col": {
       "category": "Category",
-      "inApp": "In-app",
+      "inApp": "Receive",
       "os": "OS toast",
       "email": "Email",
-      "sms": "SMS",
-      "digest": "Digest",
-      "muteUntil": "Mute until"
+      "digest": "Delivery",
+      "muteUntil": "Silence until"
     },
     "digest": {
       "instant": "Instant",
       "daily_digest": "Daily digest",
       "off": "In-app only"
     },
-    "digestHelp": "Instant: shown and sent as soon as it happens. Daily digest: kept in the inbox, then one summary of the day's unread notifications the next day (shown as a toast and emailed like the \"Daily Digest\" category). In-app only: kept in the inbox, no toast, email or summary. Days follow this computer's time zone.",
+    "receiveHelp": "Receive: turn a category off to stop receiving it at all. Categories marked with a lock are safety-related and always delivered.",
+    "digestHelp": "Instant: shown and sent as soon as it happens. Daily digest: kept in the inbox, then one summary of each day's unread notifications the next day (up to the last 7 days, shown as a toast and emailed like the \"Daily digest\" category). In-app only: kept in the inbox, no toast, email or summary. Days follow this computer's time zone. Silence until: no toast or email for the category until then.",
     "emailUnavailable": {
       "server_endpoint_not_enabled": "Email is not available yet: the Maintafox server has not enabled email sending for your organisation.",
       "licence_blocked": "Email is not available: your licence does not allow it in its current state.",
       "device_not_activated": "Email is not available: this device is not activated.",
       "unknown": "Email is not available: {{message}}"
-    },
-    "smsUnavailable": "SMS is not available in this version."
+    }
   },
   "inbox": {
-    "tabsAria": "Filter notifications",
+    "tabsAria": "Notification views",
+    "listAria": "Notifications",
     "tabs": {
-      "all": "All",
+      "inbox": "Inbox",
       "unread": "Unread",
-      "escalated": "Escalated",
-      "snoozed": "Snoozed"
+      "to_acknowledge": "To acknowledge",
+      "snoozed": "Snoozed",
+      "archived": "Archived"
     },
     "empty": {
-      "all": "No notifications yet.",
+      "inbox": "Your inbox is empty.",
       "unread": "No unread notifications.",
-      "escalated": "No escalated notifications.",
-      "snoozed": "No snoozed notifications."
+      "to_acknowledge": "Nothing waits for your acknowledgement.",
+      "snoozed": "No snoozed notifications.",
+      "archived": "No archived notifications."
     },
+    "emptyFiltered": "No notification matches these filters.",
     "loading": "Loading notifications…",
     "loadError": "The notifications could not be loaded",
-    "retryMore": "Load more",
+    "retryMore": "Try again",
+    "loadMore": "Load more",
     "openAria": "Open the record of “{{title}}”",
+    "unreadMark": "Unread:",
+    "newArrivals_one": "New notification. {{count}} unread.",
+    "newArrivals_other": "New notifications. {{count}} unread.",
+    "markedAll_one": "{{count}} notification marked as read.",
+    "markedAll_other": "{{count}} notifications marked as read.",
+    "urgencyTitle": "Urgency of the work (shared request / work order scale)",
+    "escalated": "Escalated · level {{level}}",
+    "resolved": "Resolved",
+    "acknowledged": "Acknowledged",
+    "acknowledgedBy": "Acknowledged by {{name}}",
+    "ackRequired": "To acknowledge",
+    "snoozedUntil": "Snoozed until {{when}}",
+    "groupByObject": "Group by record",
+    "groupCount_one": "({{count}} notification)",
+    "groupCount_other": "({{count}} notifications)",
     "actions": {
       "markRead": "Mark as read",
+      "markUnread": "Mark as unread",
       "acknowledge": "Acknowledge",
-      "snooze": "Snooze {{hours}} h"
+      "snooze": "Snooze",
+      "archive": "Archive",
+      "unarchive": "Back to inbox",
+      "markAllRead": "Mark all as read"
+    },
+    "snooze": {
+      "oneHour": "For 1 hour",
+      "fourHours": "For 4 hours",
+      "tomorrow": "Until tomorrow 08:00"
     }
+  },
+  "filters": {
+    "module": "Module",
+    "allModules": "All modules",
+    "severity": "Severity",
+    "allSeverities": "All severities",
+    "from": "From",
+    "to": "To",
+    "clear": "Clear filters"
+  },
+  "module": {
+    "di": "Requests",
+    "ot": "Work orders",
+    "pm": "Preventive maintenance",
+    "ins": "Inspections",
+    "inv": "Inventory",
+    "ptw": "Work permits",
+    "per": "Personnel",
+    "plan": "Planning",
+    "fin": "Budget",
+    "sync": "Synchronisation",
+    "system": "Maintafox"
+  },
+  "severity": {
+    "info": "Information",
+    "warning": "Warning",
+    "critical": "Critical"
+  },
+  "reason": {
+    "assignee": "You are responsible for this work.",
+    "requester": "You requested this work.",
+    "planner": "You plan this work.",
+    "reviewer": "You review this request.",
+    "submitter": "You submitted this request.",
+    "watcher": "You follow this record.",
+    "team": "Your team is assigned.",
+    "team_lead": "You lead the assigned team.",
+    "supervisor": "You supervise the person concerned.",
+    "entity_manager": "You are responsible for this site / area.",
+    "permission": "You hold the permission {{permission}}.",
+    "escalation": "Escalated to you (level {{level}}): not acknowledged {{minutes}} min after the alert.",
+    "digest": "Your daily digest.",
+    "other": "Sent by a notification rule.",
+    "alreadyTrue": "Already true when this device started watching: listed without an alert."
   },
   "deliveryState": {
     "pending": "Pending",
@@ -86,16 +167,186 @@
     "di_pending_review": "Request to review",
     "di_returned": "Request returned for clarification",
     "di_sla_breach": "Request SLA breached",
+    "inspection_round_missed": "Inspection round missed",
     "integration_failure": "Integration failure",
     "personnel_critical_block": "Critical staffing gap",
+    "planning": {
+      "schedule": "Planning schedule"
+    },
     "pm_deferred": "PM deferred",
-    "pm_due": "PM due soon",
+    "pm_due": "PM due",
     "pm_follow_up_created": "PM follow-up created",
     "pm_missed": "PM missed",
-    "ptw_critical": "Work permit critical event",
-    "stock_critical": "Critical stock",
+    "ptw_critical": "Expired work permit still open",
+    "ptw_expiring": "Work permit expiring",
+    "stock_critical": "Stock at reorder point",
     "support_response": "Support reply available",
+    "sync_conflict": "Synchronisation conflict",
     "wo_assigned": "Work order assigned",
     "wo_overdue": "Work order overdue"
+  },
+  "messages": {
+    "wo_assigned": {
+      "title": "Work order {{code}} assigned",
+      "body": "{{title}} · responsible: {{assignee}}"
+    },
+    "wo_overdue": {
+      "title": "Work order {{code}} overdue",
+      "body": "{{title}} · planned end {{planned_end}}"
+    },
+    "inspection_round_missed": {
+      "title": "Inspection round missed — {{code}}",
+      "body": "{{title}} · window closed {{missed_at}}"
+    },
+    "stock_critical": {
+      "title": "{{code}} at reorder point",
+      "body": "{{title}}: {{available}} available, reorder point {{reorder_point}}"
+    },
+    "ptw_expiring": {
+      "title": "Work permit {{code}} expires soon",
+      "body": "{{title}} · {{asset}} · expires {{expires_at}}"
+    },
+    "ptw_expired": {
+      "title": "Work permit {{code}} expired but still open",
+      "body": "{{title}} · {{asset}} · expired {{expires_at}}: close or revalidate it"
+    },
+    "sync_conflict": {
+      "title": "Synchronisation conflict to review",
+      "body": "{{entity_type}} · {{conflict_type}} · since {{created_at}}"
+    },
+    "di_pending_review": {
+      "title": "Request {{code}} to review",
+      "body": "{{title}}"
+    },
+    "di_returned": {
+      "title": "Request {{code}} returned for clarification",
+      "body": "{{title}}: details are needed from the requester"
+    },
+    "di_approved": {
+      "title": "Request {{code}} approved",
+      "body": "{{title}}: it can be converted to a work order"
+    },
+    "di_closed": {
+      "title": "Request {{code}} closed",
+      "body": "{{title}}"
+    },
+    "di_converted": {
+      "title": "Request {{code}} converted to work order {{wo_code}}",
+      "body": "{{title}}"
+    },
+    "di_deferred": {
+      "title": "Request {{code}} deferred",
+      "body": "{{title}} · until {{until}}"
+    },
+    "di_sla_breach_response": {
+      "title": "Response time exceeded — request {{code}}",
+      "body": "{{title}} · response was due {{deadline}}"
+    },
+    "di_sla_breach_resolution": {
+      "title": "Resolution time exceeded — request {{code}}",
+      "body": "{{title}} · resolution was due {{deadline}}"
+    },
+    "pm_due": {
+      "title": "PM due — {{code}}",
+      "body": "{{title}} · due {{due_at}}"
+    },
+    "pm_missed": {
+      "title": "PM missed — {{code}}",
+      "body": "{{title}} · was due {{due_at}}"
+    },
+    "pm_deferred": {
+      "title": "PM deferred — {{code}}",
+      "body": "{{title}} · was due {{due_at}}"
+    },
+    "pm_follow_up_created": {
+      "title": "Follow-up raised from PM — {{code}}",
+      "body": "{{title}}: a finding created a request or work order"
+    },
+    "cert_expiry": {
+      "title": "Certification running out: {{person}}",
+      "body": "{{title}} expires on {{expires_on}}: plan the renewal"
+    },
+    "cert_expired": {
+      "title": "Certification expired: {{person}}",
+      "body": "{{title}} expired on {{expires_on}}"
+    },
+    "personnel_critical_block": {
+      "title": "Critical unavailability: {{person}}",
+      "body": "Unavailable from {{start_at}} to {{end_at}}"
+    },
+    "daily_digest": {
+      "title": "Daily digest for {{date}}: {{total}} unread"
+    }
+  },
+  "audience": {
+    "assignee": "Responsible",
+    "requester": "Requester",
+    "planner": "Planner",
+    "reviewer": "Reviewer",
+    "submitter": "Submitter",
+    "watcher": "Followers",
+    "team": "Team members",
+    "team_lead": "Team leads",
+    "supervisor": "Supervisor",
+    "entity_manager": "Site / area responsibles",
+    "permission": "Holders of {{permission}}",
+    "permissionPick": "Holders of a permission…"
+  },
+  "escalationTarget": {
+    "supervisor": "Supervisor of the people notified",
+    "planner": "Planner of the record",
+    "team_lead": "Leads of the record's team",
+    "entity_manager": "Site / area responsibles",
+    "permission": "Holders of a permission",
+    "role": "Members of a role",
+    "user": "A named user"
+  },
+  "rules": {
+    "title": "Notifications — recipients and escalation",
+    "companyList": "Company settings",
+    "companyHint": "The categories are fixed by Maintafox; who receives them, the acknowledgement and the escalation are your plant's.",
+    "hint": "Each category is raised by Maintafox when its condition occurs (work order overdue, request to review, PM missed…). Choose who receives it. People only see the notifications of modules they are allowed to view.",
+    "readOnly": "Read only: changing these settings needs the permission ref.manage.",
+    "loading": "Loading the notification settings…",
+    "loadError": "The notification settings could not be loaded",
+    "recipientsTitle": "Categories and recipients",
+    "col": {
+      "category": "Category",
+      "active": "Raised",
+      "recipients": "Recipients",
+      "ack": "Must be acknowledged",
+      "escalation": "Escalation",
+      "leadTime": "Advance warning",
+      "level": "Level",
+      "delay": "Delay",
+      "target": "Escalates to",
+      "reference": "Permission / role"
+    },
+    "noRecipient": "Nobody receives it",
+    "addAudience": "Add recipients",
+    "removeAudience": "Remove {{audience}}",
+    "pickPermission": "Choose a permission",
+    "pickTarget": "Choose a target",
+    "roleName": "Role name",
+    "noEscalation": "No escalation",
+    "escalationNeedsAck": "Escalation only applies to categories that must be acknowledged.",
+    "fixedRouting": {
+      "budget_control_alert": "Recipient chosen in the budget alert settings.",
+      "daily_digest": "Sent to each person who chose the daily digest."
+    },
+    "minutes": "min",
+    "minutesAfterAlert": "min after the alert",
+    "escalationTitle": "Escalation — {{name}}",
+    "escalationHint": "While nobody acknowledged a notification and its condition still holds, each level notifies its target the given number of minutes after the alert. Delays increase from one level to the next.",
+    "level": "Level {{level}}",
+    "newLevel": "New level {{level}}",
+    "addLevel": "Add",
+    "removeLevel": "Remove level {{level}}",
+    "save": "Save",
+    "retentionTitle": "Retention",
+    "retentionHint": "Notifications older than this expire (from {{min}} to {{max}} days; shipped value {{default}} days).",
+    "retentionDays": "Retention in days",
+    "days": "days",
+    "defaultValue": "Shipped value"
   }
 }

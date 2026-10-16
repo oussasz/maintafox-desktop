@@ -182,7 +182,9 @@ pub struct ModuleCatalog {
 }
 
 /// Audience of the module catalogs. The OT statuses drive the work-order state machine, so they
-/// belong to the program. Article families and tax categories are the company's own.
+/// belong to the program. Article families and tax categories are the company's own. The
+/// notification categories are the program's (each has a generator); who receives them, the
+/// escalation delays and the retention are the company's (`NOTIFICATION.RULES`).
 ///
 /// `WORK.URGENCY_SCALE` is the plant's view of the shared DI / OT urgency scale: the five levels
 /// are the SYSTEM domain `WORK.URGENCY` (fixed codes, hidden from the generic editor), and this
@@ -207,10 +209,23 @@ pub const MODULE_CATALOGS: &[ModuleCatalog] = &[
         code: MODULE_CATALOG_WORK_ORDER_STATUSES,
         audience: DomainAudience::System,
     },
+    ModuleCatalog {
+        code: MODULE_CATALOG_NOTIFICATION_RULES,
+        audience: DomainAudience::Company,
+    },
+    ModuleCatalog {
+        code: MODULE_CATALOG_NOTIFICATION_CATEGORIES,
+        audience: DomainAudience::System,
+    },
 ];
 
 pub const MODULE_CATALOG_URGENCY_SCALE: &str = "WORK.URGENCY_SCALE";
 pub const MODULE_CATALOG_WORK_ORDER_STATUSES: &str = "WO.WORK_ORDER_STATUSES";
+/// The plant's notification settings: who receives each category, acknowledgement, escalation
+/// delays and targets, retention (`notifications::config`).
+pub const MODULE_CATALOG_NOTIFICATION_RULES: &str = "NOTIFICATION.RULES";
+/// The notification categories (event types), their module and severity: fixed by Maintafox.
+pub const MODULE_CATALOG_NOTIFICATION_CATEGORIES: &str = "NOTIFICATION.CATEGORIES";
 
 /// Audience of a module catalog, `None` for an unknown code.
 pub fn module_catalog_audience(code: &str) -> Option<DomainAudience> {

@@ -973,7 +973,17 @@ pub const ROW_SPECS: &[RowSpec] = &[
             poly(
                 "route_to_reference",
                 "route_to_type",
-                &[("role", NOT_A_ROW), ("team", "teams"), ("user", USER)],
+                &[
+                    ("role", NOT_A_ROW),
+                    ("team", "teams"),
+                    ("user", USER),
+                    // Resolved from the record and the people notified; `permission` holds a code.
+                    ("supervisor", NOT_A_ROW),
+                    ("planner", NOT_A_ROW),
+                    ("team_lead", NOT_A_ROW),
+                    ("entity_manager", NOT_A_ROW),
+                    ("permission", NOT_A_ROW),
+                ],
             ),
         ],
     ),
@@ -997,22 +1007,35 @@ pub const ROW_SPECS: &[RowSpec] = &[
         ],
         // The de-duplication key is built from local ids (`di-…-<id>`, `planning.notify.<id>…`):
         // received on another device it would suppress an unrelated event there. Each device keeps
-        // its own keys; received events carry none.
-        device_local: &["dedupe_key"],
+        // its own keys; received events carry none. Whether the event's condition cleared is
+        // computed by each device from synchronised data (`notifications::conditions`).
+        device_local: &["dedupe_key", "resolved_at"],
         ..spec(
             "notification_events",
-            &[poly_hist(
-                "source_record_id",
-                "source_module",
-                &[
-                    ("di", "intervention_requests"),
-                    ("intervention_requests", "intervention_requests"),
-                    ("pm", "pm_occurrences"),
-                    ("personnel", "personnel"),
-                    ("planning", "schedule_commitments"),
-                    ("finance_budget", "budget_versions"),
-                ],
-            )],
+            &[
+                // Org node of the record, for read-time visibility (`notifications::inbox`).
+                hist("org_node_id", "org_nodes"),
+                poly_hist(
+                    "source_record_id",
+                    "source_module",
+                    &[
+                        ("di", "intervention_requests"),
+                        ("intervention_requests", "intervention_requests"),
+                        ("pm", "pm_occurrences"),
+                        ("personnel", "personnel"),
+                        ("planning", "schedule_commitments"),
+                        ("finance_budget", "budget_versions"),
+                        ("work_orders", "work_orders"),
+                        ("wo", "work_orders"),
+                        ("inspection", "inspection_rounds"),
+                        ("inventory", "articles"),
+                        ("permit", "work_permits"),
+                        // The daily digest names its day (`2026-10-15`); conflicts carry no record.
+                        ("notifications", NOT_A_ROW),
+                        ("sync", NOT_A_ROW),
+                    ],
+                ),
+            ],
         )
     },
     RowSpec {
@@ -1021,7 +1044,14 @@ pub const ROW_SPECS: &[RowSpec] = &[
             json_ref_hist("action_url", "?openDi", "intervention_requests"),
             json_ref_hist("action_url", "?di", "intervention_requests"),
             json_ref_hist("action_url", "?occurrence", "pm_occurrences"),
+            json_ref_hist("action_url", "?openWo", "work_orders"),
+            json_ref_hist("action_url", "?openRound", "inspection_rounds"),
+            json_ref_hist("action_url", "?articleId", "articles"),
+            json_ref_hist("action_url", "?permit", "work_permits"),
         ],
+        // Whether the condition cleared is computed by each device (`notifications::conditions`);
+        // whether the condition was already true when this device started watching it, too.
+        device_local: &["resolved_at", "already_true"],
         ..spec(
             "notifications",
             &[

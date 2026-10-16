@@ -1,7 +1,23 @@
-use std::collections::BTreeSet;
+//! Raising a notification event and creating the notifications of its recipients.
+//!
+//! An event names the record it is about (`source_module`, `source_record_id`) and its category;
+//! the category's rule lists who receives it (`notifications::router`). Each recipient gets one
+//! notification, with the audience that matched (why they got it). A recipient who turned the
+//! category off (preference `in_app_enabled = 0` on a category users may configure) gets none.
+//!
+//! Text: an event may carry a message key and display parameters (`NotificationMessage`); the
+//! inbox renders them in the reader's language. `title` / `body` are kept as written for channels
+//! without a language (email) and for events without a key.
+//!
+//! De-duplication: an event with a `dedupe_key` that is still open refreshes its notifications
+//! instead of creating others; once the condition cleared (`resolved_at`, set by
+//! `notifications::conditions`), the same key raises a new event. Device-generated events use a
+//! seeded identity, so the same event and notifications are created once per device and share
+//! their ids everywhere.
 
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
+use crate::notifications::catalog::{normalize_severity, rule_audiences};
 use crate::notifications::{delivery, router, Result};
 use crate::sync::identity::{new_entity_sync_id, optional_entity_sync_id, seeded_entity_sync_id};
 
@@ -19,12 +35,47 @@ pub struct NotificationEventInput {
     pub action_url: Option<String>,
 }
 
+/// Text of a notification in the reader's language: message key (`notifications:messages.<key>`)
+/// and display parameters (codes, titles, ISO dates — never local ids), plus the level of the
+/// shared urgency scale when the notification is about work.
+#[derive(Debug, Clone, Default)]
+pub struct NotificationMessage {
+    pub key: String,
+    pub params: serde_json::Value,
+    pub urgency_code: Option<String>,
+}
+
+impl NotificationMessage {
+    pub fn new(key: &str, params: serde_json::Value) -> Self {
+        Self {
+            key: key.to_string(),
+            params,
+            urgency_code: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_urgency(mut self, urgency: Option<String>) -> Self {
+        self.urgency_code = urgency;
+        self
+    }
+}
+
 pub async fn emit_event(pool: &impl ConnectionTrait, input: NotificationEventInput) -> Result<()> {
+    emit_event_with(pool, input, None).await
+}
+
+/// [`emit_event`] with a localisable message.
+pub async fn emit_event_with(
+    pool: &impl ConnectionTrait,
+    input: NotificationEventInput,
+    message: Option<&NotificationMessage>,
+) -> Result<()> {
     // Keep "disconnected pool" behavior visible to callers.
     pool.query_one(Statement::from_string(DbBackend::Sqlite, "SELECT 1".to_string()))
         .await?;
 
-    if let Err(err) = emit_event_inner(pool, input, None).await {
+    if let Err(err) = emit(pool, &input, None, message, Arrival::New).await {
         tracing::error!(error = %err, "notifications::emit_event fire-and-log failure");
     }
 
@@ -41,8 +92,18 @@ pub async fn emit_device_event(
     input: NotificationEventInput,
     identity: Option<&str>,
 ) -> Result<()> {
+    emit_device_event_with(conn, input, identity, None).await
+}
+
+/// [`emit_device_event`] with a localisable message.
+pub async fn emit_device_event_with(
+    conn: &impl ConnectionTrait,
+    input: NotificationEventInput,
+    identity: Option<&str>,
+    message: Option<&NotificationMessage>,
+) -> Result<()> {
     let event_sync_id = identity.map(|basis| seeded_entity_sync_id("notification_events", basis));
-    if let Err(err) = emit_event_inner(conn, input, event_sync_id).await {
+    if let Err(err) = emit(conn, &input, event_sync_id, message, Arrival::New).await {
         tracing::error!(error = %err, "notifications::emit_device_event fire-and-log failure");
     }
     Ok(())
@@ -59,9 +120,18 @@ async fn notification_sync_id(conn: &impl ConnectionTrait, event_id: i64, user_i
     })
 }
 
-/// Creates the notification of `user_id` for an event at an escalation level; `None` when it
-/// already exists (received from another device of the recipient, or created earlier here).
-pub(crate) async fn insert_notification(
+/// Why a recipient received a notification (`notifications.reason_code` / `reason_ref`).
+#[derive(Debug, Clone, Copy)]
+pub struct Reason<'a> {
+    pub code: &'a str,
+    pub reference: Option<&'a str>,
+}
+
+/// Creates the notification of `user_id` for an event at an escalation level, with why the person
+/// receives it; `None` when it already exists (received from another device of the recipient, or
+/// created earlier here).
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn insert_notification_for(
     conn: &impl ConnectionTrait,
     event_id: i64,
     user_id: i64,
@@ -69,14 +139,16 @@ pub(crate) async fn insert_notification(
     body: Option<&str>,
     action_url: Option<&str>,
     level: i64,
+    reason: Option<Reason<'_>>,
 ) -> Result<Option<i64>> {
     let sync_id = notification_sync_id(conn, event_id, user_id, level).await?;
     let inserted = conn
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO notifications
-                (entity_sync_id, notification_event_id, recipient_user_id, delivery_state, title, body, action_url, created_at, escalation_level)
-             VALUES (?, ?, ?, 'pending', ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ','now'), ?)
+                (entity_sync_id, notification_event_id, recipient_user_id, delivery_state, title, body, action_url,
+                 created_at, escalation_level, reason_code, reason_ref)
+             VALUES (?, ?, ?, 'pending', ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ','now'), ?, ?, ?)
              ON CONFLICT(entity_sync_id) DO NOTHING",
             [
                 sync_id.clone().into(),
@@ -86,6 +158,8 @@ pub(crate) async fn insert_notification(
                 body.map(str::to_string).into(),
                 action_url.map(str::to_string).into(),
                 level.into(),
+                reason.map(|r| r.code.to_string()).into(),
+                reason.and_then(|r| r.reference.map(str::to_string)).into(),
             ],
         ))
         .await?;
@@ -107,93 +181,96 @@ async fn row_id_of(conn: &impl ConnectionTrait, table: &str, sync_id: &str) -> R
     .map_err(Into::into)
 }
 
-async fn emit_event_inner(
+/// The recipient turned the category off (only categories users may configure).
+pub(crate) async fn unsubscribed(conn: &impl ConnectionTrait, user_id: i64, category: &str) -> Result<bool> {
+    Ok(conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS x FROM notification_preferences p \
+             JOIN notification_categories c ON c.code = p.category_code \
+             WHERE p.user_id = ? AND p.category_code = ? AND p.in_app_enabled = 0 AND c.is_user_configurable = 1",
+            [user_id.into(), category.into()],
+        ))
+        .await?
+        .is_some())
+}
+
+/// How the notifications of a new event reach their recipients.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Arrival {
+    /// Delivered: unread, toasted and emailed per the recipient's preferences.
+    New,
+    /// The condition was already true when this device started watching it: the notification is
+    /// listed as read (it does not ring the bell, it is not toasted or emailed) and says so; one
+    /// that must be acknowledged still waits for its acknowledgement.
+    AlreadyTrue,
+}
+
+/// Raises the event and notifies its recipients. Returns the event id, or `None` when an open
+/// event with the same de-duplication key was refreshed instead. An event with a seeded identity
+/// that exists already but was resolved (the same occurrence came back) is reopened.
+pub(crate) async fn emit(
     pool: &impl ConnectionTrait,
-    input: NotificationEventInput,
+    input: &NotificationEventInput,
     event_sync_id: Option<String>,
-) -> Result<()> {
+    message: Option<&NotificationMessage>,
+    arrival: Arrival,
+) -> Result<Option<i64>> {
+    let message_params = message.map(|m| m.params.to_string());
     if let Some(dedupe_key) = input.dedupe_key.as_deref() {
         let existing = pool
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT n.id, n.delivery_state
-                 FROM notifications n
-                 JOIN notification_events e ON e.id = n.notification_event_id
-                 WHERE e.dedupe_key = ?
-                   AND n.delivery_state NOT IN ('closed', 'expired', 'acknowledged')
-                 ORDER BY n.id DESC
-                 LIMIT 1",
+                "SELECT id FROM notification_events WHERE dedupe_key = ? AND resolved_at IS NULL \
+                 ORDER BY id DESC LIMIT 1",
                 [dedupe_key.into()],
             ))
             .await?;
-
         if let Some(row) = existing {
-            let notification_id = row.try_get::<i64>("", "id")?;
-            let state = row.try_get::<String>("", "delivery_state")?;
-
-            pool.execute(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "UPDATE notifications
-                 SET title = ?,
-                     body = ?,
-                     action_url = ?,
-                     delivery_state = CASE WHEN delivery_state = 'read' THEN 'delivered' ELSE delivery_state END,
-                     read_at = CASE WHEN delivery_state = 'read' THEN NULL ELSE read_at END
-                 WHERE id = ?",
-                [
-                    input.title.clone().into(),
-                    input.body.clone().into(),
-                    input.action_url.clone().into(),
-                    notification_id.into(),
-                ],
-            ))
-            .await?;
-
-            if state == "read" {
-                let _ = delivery::schedule_deliveries(pool, notification_id).await;
-            }
-            return Ok(());
-        }
-
-        // Event-level dedupe: freeze-breach (and similar) may emit with no recipients
-        // when team scope resolves empty — still must not insert duplicate events.
-        let existing_event = pool
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT id FROM notification_events WHERE dedupe_key = ? LIMIT 1",
-                [dedupe_key.into()],
-            ))
-            .await?;
-        if existing_event.is_some() {
-            return Ok(());
+            let event_id = row.try_get::<i64>("", "id")?;
+            refresh_event(pool, event_id, input, message, message_params.as_deref()).await?;
+            return Ok(None);
         }
     }
 
+    // The record's routing context also gives the event its org node (read-time visibility).
+    let payload = compose_payload(input);
+    let ctx = router::load_context(pool, &payload).await?;
+
     let event_sync_id = event_sync_id.unwrap_or_else(new_entity_sync_id);
-    pool.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO notification_events
-            (entity_sync_id, source_module, source_record_id, event_code, category_code, severity, dedupe_key, payload_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    let inserted = pool
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO notification_events
+            (entity_sync_id, source_module, source_record_id, event_code, category_code, severity, dedupe_key,
+             payload_json, message_key, message_params_json, urgency_code, org_node_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(entity_sync_id) DO NOTHING",
-        [
-            event_sync_id.clone().into(),
-            input.source_module.clone().into(),
-            input.source_record_id.clone().into(),
-            input.event_code.clone().into(),
-            input.category_code.clone().into(),
-            input.severity.clone().into(),
-            input.dedupe_key.clone().into(),
-            input.payload_json.clone().into(),
-        ],
-    ))
-    .await?;
+            [
+                event_sync_id.clone().into(),
+                input.source_module.clone().into(),
+                input.source_record_id.clone().into(),
+                input.event_code.clone().into(),
+                input.category_code.clone().into(),
+                normalize_severity(&input.severity).into(),
+                input.dedupe_key.clone().into(),
+                input.payload_json.clone().into(),
+                message.map(|m| m.key.clone()).into(),
+                message_params.clone().into(),
+                message.and_then(|m| m.urgency_code.clone()).into(),
+                ctx.org_node_id.into(),
+            ],
+        ))
+        .await?;
     let event_id = row_id_of(pool, "notification_events", &event_sync_id).await?;
+    if inserted.rows_affected() == 0 {
+        reopen_event(pool, event_id, input, arrival).await?;
+    }
 
     let rule = pool
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT routing_mode
+            "SELECT routing_mode, audiences_json
              FROM notification_rules
              WHERE category_code = ?
                AND is_active = 1
@@ -207,68 +284,161 @@ async fn emit_event_inner(
             category = input.category_code,
             "notifications::emit_event no active routing rule found"
         );
-        return Ok(());
+        return Ok(Some(event_id));
     };
 
     let routing_mode = rule_row
-        .try_get::<String>("", "routing_mode")
-        .unwrap_or_else(|_| "manual".to_string());
-    let payload = compose_payload(&input);
-    let routing = router::resolve_recipients(pool, &routing_mode, &payload).await?;
+        .try_get::<Option<String>>("", "routing_mode")?
+        .unwrap_or_else(|| "manual".to_string());
+    let audiences_json = rule_row.try_get::<Option<String>>("", "audiences_json")?;
+    let audiences = rule_audiences(audiences_json.as_deref(), &routing_mode);
+    let recipients = router::resolve_audiences(pool, &audiences, &ctx).await?;
 
-    let mut recipient_users = BTreeSet::new();
-    for user_id in routing.recipient_user_ids {
-        recipient_users.insert(user_id);
-    }
-    for role_id in routing.recipient_role_ids {
-        let rows = pool
-            .query_all(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT DISTINCT usa.user_id
-                 FROM user_scope_assignments usa
-                 JOIN user_accounts ua ON ua.id = usa.user_id
-                 WHERE usa.role_id = ?
-                   AND usa.deleted_at IS NULL
-                   AND ua.is_active = 1
-                   AND (usa.valid_to IS NULL OR usa.valid_to >= strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
-                [role_id.into()],
-            ))
-            .await?;
-        for row in rows {
-            if let Ok(user_id) = row.try_get::<i64>("", "user_id") {
-                recipient_users.insert(user_id);
-            }
+    for recipient in recipients {
+        if unsubscribed(pool, recipient.user_id, &input.category_code).await? {
+            continue;
         }
-    }
-
-    for user_id in recipient_users {
-        let Some(notification_id) = insert_notification(
+        let Some(notification_id) = insert_notification_for(
             pool,
             event_id,
-            user_id,
+            recipient.user_id,
             &input.title,
             input.body.as_deref(),
             input.action_url.as_deref(),
             0,
+            Some(Reason {
+                code: &recipient.reason,
+                reference: recipient.reason_ref.as_deref(),
+            }),
         )
         .await?
         else {
             continue;
         };
 
-        if let Err(err) = delivery::schedule_deliveries(pool, notification_id).await {
-            tracing::error!(
-                notification_id,
-                error = %err,
-                "notifications::emit_event failed to schedule in-app delivery"
-            );
+        match arrival {
+            Arrival::New => {
+                if let Err(err) = delivery::schedule_deliveries(pool, notification_id).await {
+                    tracing::error!(
+                        notification_id,
+                        error = %err,
+                        "notifications::emit_event failed to schedule in-app delivery"
+                    );
+                }
+            }
+            Arrival::AlreadyTrue => {
+                pool.execute(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "UPDATE notifications SET delivery_state = 'read', \
+                     read_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'), already_true = 1 WHERE id = ?",
+                    [notification_id.into()],
+                ))
+                .await?;
+            }
         }
     }
 
+    Ok(Some(event_id))
+}
+
+/// The same occurrence (same seeded identity) is true again after it was resolved: the event and
+/// its notifications are open again, unread when it is new to this device's watch.
+async fn reopen_event(
+    pool: &impl ConnectionTrait,
+    event_id: i64,
+    input: &NotificationEventInput,
+    arrival: Arrival,
+) -> Result<()> {
+    let reopened = pool
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE notification_events SET resolved_at = NULL, dedupe_key = COALESCE(?, dedupe_key) \
+             WHERE id = ? AND resolved_at IS NOT NULL",
+            [input.dedupe_key.clone().into(), event_id.into()],
+        ))
+        .await?;
+    if reopened.rows_affected() == 0 {
+        return Ok(());
+    }
+    let unread = arrival == Arrival::New;
+    pool.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE notifications SET resolved_at = NULL, \
+            delivery_state = CASE WHEN ? = 1 AND delivery_state = 'read' AND archived_at IS NULL \
+                                  THEN 'delivered' ELSE delivery_state END, \
+            read_at = CASE WHEN ? = 1 AND delivery_state = 'read' AND archived_at IS NULL \
+                           THEN NULL ELSE read_at END \
+         WHERE notification_event_id = ?",
+        [i64::from(unread).into(), i64::from(unread).into(), event_id.into()],
+    ))
+    .await?;
     Ok(())
 }
 
-fn compose_payload(input: &NotificationEventInput) -> serde_json::Value {
+/// The condition of an open event happened again: its texts are refreshed and the notifications
+/// already read become unread (and are delivered again).
+async fn refresh_event(
+    pool: &impl ConnectionTrait,
+    event_id: i64,
+    input: &NotificationEventInput,
+    message: Option<&NotificationMessage>,
+    message_params: Option<&str>,
+) -> Result<()> {
+    if let Some(m) = message {
+        pool.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE notification_events SET message_key = ?, message_params_json = ?, urgency_code = ?, \
+             severity = ? WHERE id = ?",
+            [
+                m.key.clone().into(),
+                message_params.map(str::to_string).into(),
+                m.urgency_code.clone().into(),
+                normalize_severity(&input.severity).into(),
+                event_id.into(),
+            ],
+        ))
+        .await?;
+    }
+    let read_ids: Vec<i64> = pool
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id FROM notifications WHERE notification_event_id = ? AND delivery_state = 'read' \
+             AND archived_at IS NULL AND resolved_at IS NULL",
+            [event_id.into()],
+        ))
+        .await?
+        .iter()
+        .filter_map(|r| r.try_get::<i64>("", "id").ok())
+        .collect();
+    pool.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE notifications
+         SET title = ?,
+             body = ?,
+             action_url = ?,
+             delivery_state = CASE WHEN delivery_state = 'read' AND archived_at IS NULL THEN 'delivered'
+                                   ELSE delivery_state END,
+             read_at = CASE WHEN delivery_state = 'read' AND archived_at IS NULL THEN NULL ELSE read_at END
+         WHERE notification_event_id = ?
+           AND resolved_at IS NULL
+           AND delivery_state NOT IN ('closed', 'expired', 'acknowledged')",
+        [
+            input.title.clone().into(),
+            input.body.clone().into(),
+            input.action_url.clone().into(),
+            event_id.into(),
+        ],
+    ))
+    .await?;
+    for id in read_ids {
+        if let Err(err) = delivery::schedule_deliveries(pool, id).await {
+            tracing::error!(notification_id = id, error = %err, "notifications: redelivery failed");
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn compose_payload(input: &NotificationEventInput) -> serde_json::Value {
     let mut payload = input
         .payload_json
         .as_deref()

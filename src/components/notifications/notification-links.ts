@@ -7,11 +7,20 @@
  *  - PM page reads `?planId=<id>` (a plan) and `?occurrence=<id>` (an occurrence, opened in its
  *    plan; PM notifications carry the occurrence id).
  *  - Budget lives at `/budget` (finance alerts wrote `/finance/budget`).
+ *  - Inspection rounds `?openRound=<id>`, articles `?articleId=<id>`, permits `?permit=<id>`: the
+ *    pages read them as they are.
+ *  - `/sync-center` is not a page: it opens the synchronisation center of the top bar
+ *    ([`SYNC_CENTER_LINK`], event [`OPEN_SYNC_CENTER_EVENT`]).
  * This is the one place that knows those forms. Anything that is not an in-app route (external
  * URLs, `javascript:` …) is refused.
  */
 
 export type NotificationLink = { path: string; exact: boolean };
+
+/** Link of the synchronisation conflict notifications. */
+export const SYNC_CENTER_LINK = "/sync-center";
+/** Window event the top bar listens to, to open its synchronisation center. */
+export const OPEN_SYNC_CENTER_EVENT = "mf:open-sync-center";
 
 const ID = /^\d+$/;
 
@@ -63,6 +72,8 @@ export function resolveNotificationLink(
     if (planId && ID.test(planId)) return { path: withParam("/pm", "planId", planId), exact: true };
     return { path: "/pm", exact: false };
   }
+
+  if (path === SYNC_CENTER_LINK) return { path: SYNC_CENTER_LINK, exact: true };
 
   // Budget
   if (path === "/finance/budget" || path === "/budget") return { path: "/budget", exact: true };

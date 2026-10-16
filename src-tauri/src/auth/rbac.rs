@@ -225,12 +225,35 @@ async fn load_scope_permissions(
     Ok(perms)
 }
 
+/// Roles that hold every permission (`user_has_elevated_admin_access`).
+pub(crate) const ELEVATED_ADMIN_ROLES_SQL: &str = "('Administrator', 'Superadmin')";
+
+/// Active users with elevated admin access (the rule of [`user_has_elevated_admin_access`]): they
+/// hold every permission, so the notifications routed to a permission reach them too.
+pub async fn elevated_admin_user_ids(db: &impl ConnectionTrait) -> AppResult<Vec<i64>> {
+    let rows = db
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT ua.id FROM user_accounts ua
+                 WHERE ua.is_active = 1 AND ua.deleted_at IS NULL AND (ua.is_admin = 1 OR EXISTS (
+                   SELECT 1 FROM user_scope_assignments usa INNER JOIN roles r ON r.id = usa.role_id
+                   WHERE usa.user_id = ua.id AND usa.deleted_at IS NULL AND r.deleted_at IS NULL
+                     AND r.name IN {ELEVATED_ADMIN_ROLES_SQL}))
+                 ORDER BY ua.id"
+            ),
+        ))
+        .await?;
+    Ok(rows.iter().filter_map(|r| r.try_get::<i64>("", "id").ok()).collect())
+}
+
 /// True when the account is a bootstrap/system admin or holds Administrator/Superadmin.
 pub async fn user_has_elevated_admin_access(db: &DatabaseConnection, user_id: i32) -> AppResult<bool> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            r"SELECT
+            format!(
+                "SELECT
                 COALESCE((SELECT is_admin FROM user_accounts WHERE id = ? AND is_active = 1), 0) AS is_admin,
                 (SELECT COUNT(*)
                  FROM user_scope_assignments usa
@@ -238,7 +261,8 @@ pub async fn user_has_elevated_admin_access(db: &DatabaseConnection, user_id: i3
                  WHERE usa.user_id = ?
                    AND usa.deleted_at IS NULL
                    AND r.deleted_at IS NULL
-                   AND r.name IN ('Administrator', 'Superadmin')) AS admin_role_cnt",
+                   AND r.name IN {ELEVATED_ADMIN_ROLES_SQL}) AS admin_role_cnt"
+            ),
             [user_id.into(), user_id.into()],
         ))
         .await?;

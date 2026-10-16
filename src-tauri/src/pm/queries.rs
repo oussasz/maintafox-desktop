@@ -5,7 +5,10 @@ use serde_json::{json, Value};
 use crate::activity::emitter::{emit_activity_event, ActivityEventInput};
 use crate::di::queries::{create_intervention_request, DiCreateInput};
 use crate::errors::{AppError, AppResult};
-use crate::notifications::emitter::{emit_device_event, emit_event as emit_notification_event, NotificationEventInput};
+use crate::notifications::emitter::{
+    emit_device_event_with, emit_event_with as emit_notification_event_with, NotificationEventInput,
+    NotificationMessage,
+};
 use crate::pm::domain::{
     CreatePmPlanInput, CreatePmPlanVersionInput, ExecutePmOccurrenceInput, ExecutePmOccurrenceResult,
     GeneratePmOccurrencesInput, GeneratePmOccurrencesResult, PmDueMetrics, PmEffortVarianceKpi, PmExecution,
@@ -1769,21 +1772,35 @@ async fn emit_pm_notification(
         severity: severity.to_string(),
         dedupe_key,
         payload_json: Some(payload.to_string()),
-        title: format!("PM {}", event_code),
+        // Fallback text (email, older readers); the inbox renders `message` in the reader's language.
+        title: match (&occurrence.plan_code, &occurrence.plan_title) {
+            (Some(code), Some(title)) => format!("{code} — {title}"),
+            (Some(code), None) => code.clone(),
+            (None, Some(title)) => title.clone(),
+            (None, None) => category_code.to_string(),
+        },
         body: Some(format!(
-            "PM occurrence {} for plan {} is {}.",
-            occurrence.id,
-            occurrence
-                .plan_code
-                .clone()
-                .unwrap_or_else(|| occurrence.pm_plan_id.to_string()),
+            "{} · {}",
+            occurrence.due_at.as_deref().unwrap_or("—"),
             occurrence.status
         )),
         action_url: Some(format!("/pm?occurrence={}", occurrence.id)),
     };
+    let message = NotificationMessage::new(
+        category_code,
+        json!({
+            "code": occurrence.plan_code,
+            "title": occurrence.plan_title,
+            "due_at": occurrence.due_at,
+            "status": occurrence.status,
+            "reason": reason_code,
+        }),
+    );
     match origin {
-        PmEventOrigin::EachDevice(identity) => emit_device_event(db, input, identity.as_deref()).await?,
-        PmEventOrigin::Person => emit_notification_event(db, input).await?,
+        PmEventOrigin::EachDevice(identity) => {
+            emit_device_event_with(db, input, identity.as_deref(), Some(&message)).await?;
+        }
+        PmEventOrigin::Person => emit_notification_event_with(db, input, Some(&message)).await?,
     }
 
     Ok(())

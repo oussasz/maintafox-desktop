@@ -2,12 +2,29 @@
 
 use sea_orm::DatabaseConnection;
 
-use crate::notifications::emitter::{emit_event, NotificationEventInput};
+use crate::notifications::emitter::{emit_event_with, NotificationEventInput, NotificationMessage};
 
 use super::domain::InterventionRequest;
 
 fn di_action_url(di_id: i64) -> String {
     format!("/requests?openDi={di_id}")
+}
+
+/// Level of the shared urgency scale of a request (validated, else reported).
+pub(crate) fn di_urgency(di: &InterventionRequest) -> Option<String> {
+    let raw = di.validated_urgency.as_deref().unwrap_or(&di.reported_urgency);
+    crate::reference::urgency_scale::legacy_urgency_code(raw).map(|c| c.as_str().to_string())
+}
+
+/// Display parameters of a request message (`notifications:messages.<key>`).
+fn di_params(di: &InterventionRequest) -> serde_json::Value {
+    serde_json::json!({
+        "code": di.code,
+        "title": di.title,
+        "wo_code": di.converted_to_wo_code,
+        "until": di.deferred_until,
+        "disposition": di.disposition_code,
+    })
 }
 
 async fn emit_di_lifecycle(
@@ -32,7 +49,8 @@ async fn emit_di_lifecycle(
         body,
         action_url: Some(di_action_url(di.id)),
     };
-    if let Err(err) = emit_event(db, input).await {
+    let message = NotificationMessage::new(category_code, di_params(di)).with_urgency(di_urgency(di));
+    if let Err(err) = emit_event_with(db, input, Some(&message)).await {
         tracing::warn!(error = %err, di_id = di.id, event_code, "DI notification emit failed");
     }
 }
