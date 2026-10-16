@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { formatOrDash, formatPersonLabel } from "@/lib/display";
+import { listTeamMembers } from "@/services/personnel-service";
 import type {
   CreateScheduleBreakInInput,
   ScheduleBreakIn,
@@ -43,6 +44,8 @@ type BreakInDialogProps = {
   commitments: ScheduleCommitment[];
   breakIns: ScheduleBreakIn[];
   teamId: number | null;
+  /** Commitment to move when the dialog opens (from the commitment inspector). */
+  initialCommitmentId?: number | null;
   approvers: ApproverOption[];
   personnel: PersonnelOption[];
   saving: boolean;
@@ -55,6 +58,7 @@ export function BreakInDialog({
   commitments,
   breakIns,
   teamId,
+  initialCommitmentId = null,
   approvers,
   personnel,
   saving,
@@ -69,8 +73,45 @@ export function BreakInDialog({
   const [newPersonnelId, setNewPersonnelId] = useState<number | null>(null);
   const [overrideReason, setOverrideReason] = useState("");
   const [dangerousOverrideReason, setDangerousOverrideReason] = useState("");
+  const [slotError, setSlotError] = useState<string | null>(null);
+  const [crew, setCrew] = useState<PersonnelOption[] | null>(null);
+
+  // Opened on a commitment (inspector): that one is selected.
+  useEffect(() => {
+    if (open && initialCommitmentId != null) setCommitmentId(initialCommitmentId);
+  }, [open, initialCommitmentId]);
 
   const selected = commitments.find((c) => c.id === commitmentId) ?? null;
+  // The crew it moves to: the crew in scope, else the commitment's own crew.
+  const targetTeamId = teamId ?? selected?.assigned_team_id ?? null;
+
+  // Technicians offered: the target crew's members (all personnel only if it cannot be read).
+  useEffect(() => {
+    if (!open || targetTeamId == null) {
+      setCrew(null);
+      return;
+    }
+    let cancelled = false;
+    listTeamMembers(targetTeamId)
+      .then((members) => {
+        if (cancelled) return;
+        setCrew(
+          members.map((m) => ({
+            id: m.personnel_id,
+            label: m.employee_code
+              ? `${formatPersonLabel(m.full_name)} (${m.employee_code})`
+              : formatPersonLabel(m.full_name),
+          })),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setCrew(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, targetTeamId]);
+  const assigneeOptions = crew ?? personnel;
 
   useEffect(() => {
     if (!selected || !open) return;
@@ -81,15 +122,24 @@ export function BreakInDialog({
 
   async function handleSubmit() {
     if (!selected) return;
+    const startIso = fromDateTimeLocal(newStart);
+    const endIso = fromDateTimeLocal(newEnd);
+    if (!startIso || !endIso || new Date(endIso).getTime() <= new Date(startIso).getTime()) {
+      setSlotError(t("commitment.errors.endAfterStart"));
+      return;
+    }
+    setSlotError(null);
     await onSubmit({
       schedule_commitment_id: selected.id,
       expected_commitment_row_version: selected.row_version,
       break_in_reason: reason,
       approved_by_user_id: approverUserId,
-      new_slot_start: fromDateTimeLocal(newStart),
-      new_slot_end: fromDateTimeLocal(newEnd),
-      new_assigned_team_id: teamId,
+      new_slot_start: startIso,
+      new_slot_end: endIso,
+      new_assigned_team_id: targetTeamId,
       new_assigned_personnel_id: newPersonnelId,
+      // "Unassigned" chosen on a commitment that has a technician removes them.
+      clear_assignee: newPersonnelId == null && selected.assigned_personnel_id != null,
       bypass_availability: false,
       override_reason: overrideReason.trim() || null,
       dangerous_override_reason: dangerousOverrideReason.trim() || null,
@@ -197,7 +247,7 @@ export function BreakInDialog({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__unassigned__">{t("commitment.unassigned")}</SelectItem>
-                  {personnel.map((person) => (
+                  {assigneeOptions.map((person) => (
                     <SelectItem key={person.id} value={String(person.id)}>
                       {person.label}
                     </SelectItem>
@@ -207,6 +257,11 @@ export function BreakInDialog({
             </div>
           </div>
 
+          {slotError ? (
+            <p className="text-xs text-tone-danger-fg" role="alert">
+              {slotError}
+            </p>
+          ) : null}
           <div>
             <Label>{t("breakIns.overrideReason")}</Label>
             <Textarea

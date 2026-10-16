@@ -76,6 +76,7 @@ async fn setup() -> Fixture {
             required_skills_json: Some("[]".into()),
             required_tools_json: None,
             estimated_duration_hours: Some(1.5),
+            planned_crew_size: None,
             estimated_labor_cost: None,
             estimated_parts_cost: None,
             estimated_service_cost: None,

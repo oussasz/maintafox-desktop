@@ -709,11 +709,14 @@ export function deriveCommitSlotLocals(candidate: ScheduleCandidate | null): {
   return { startLocal: "", endLocal: "" };
 }
 
-/** UTC work-date key used by the Rust capacity gate (`date_naive` of committed_start). */
-export function workDateFromCommittedIso(iso: string): string | null {
+/** Local calendar day (`YYYY-MM-DD`) of an instant — the days the timetables and the load use. */
+export function localDayOf(iso: string): string | null {
   const ms = parseMs(iso);
   if (!ms) return null;
-  return new Date(ms).toISOString().slice(0, 10);
+  const d = new Date(ms);
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${m}-${day}`;
 }
 
 export type TeamDayCapacity = {
@@ -726,9 +729,9 @@ export type TeamDayCapacity = {
 };
 
 /**
- * Remaining team capacity for a work date (mirrors compute_capacity_gate): the members' Classes
- * horaires on the site's working days − absences, × utilisation, plus the planner's overtime
- * ceiling. No row ⇒ 0 h, never a default.
+ * A team's capacity on a local day (the members' Classes horaires on the site's working days −
+ * absences, × utilisation, plus the planner's overtime ceiling) and the labour hours already
+ * committed there. No row ⇒ 0 h, never a default.
  */
 export function resolveTeamDayCapacity(
   capacity: TeamCapacityLoad[] | null | undefined,
@@ -749,52 +752,79 @@ export function resolveTeamDayCapacity(
   };
 }
 
-/** True when requested hours would fail the daily capacity gate. */
-export function exceedsTeamDayCapacity(
-  capacity: TeamCapacityLoad[] | null | undefined,
-  teamId: number,
-  committedStartIso: string,
-  committedEndIso: string,
-): boolean {
-  const workDate = workDateFromCommittedIso(committedStartIso);
-  if (!workDate) return true;
-  const startMs = parseMs(committedStartIso);
-  const endMs = parseMs(committedEndIso);
-  if (!startMs || !endMs || endMs <= startMs) return true;
-  const requested = (endMs - startMs) / 3_600_000;
-  const { remainingHours } = resolveTeamDayCapacity(capacity, teamId, workDate);
-  return requested > remainingHours + 1e-6;
+/** The local days a slot covers, with the share (0–1] of each (mirrors `planning::load::slot_days`). */
+export function slotDays(startIso: string, endIso: string): Array<{ day: string; share: number }> {
+  const startMs = parseMs(startIso);
+  const endMs = parseMs(endIso);
+  if (!startMs || !endMs || endMs <= startMs) return [];
+  const out: Array<{ day: string; share: number }> = [];
+  const cursor = new Date(startMs);
+  cursor.setHours(0, 0, 0, 0);
+  while (cursor.getTime() < endMs) {
+    const dayStart = cursor.getTime();
+    const next = new Date(cursor);
+    next.setDate(next.getDate() + 1);
+    const dayEnd = next.getTime();
+    const covered = Math.min(endMs, dayEnd) - Math.max(startMs, dayStart);
+    const key = localDayOf(new Date(dayStart).toISOString());
+    if (covered > 0 && key) {
+      out.push({ day: key, share: Math.min(1, covered / (dayEnd - dayStart)) });
+    }
+    cursor.setTime(dayEnd);
+  }
+  return out;
 }
 
 /**
- * Clamp end so the slot fits remaining daily capacity (and optional hard max end ms).
+ * Spreads labour hours over the slot's days by the team's hours each day and the share of the day
+ * covered (mirrors `planning::load::spread`); a slot without any working hours keeps them on the
+ * days it covers, so the overload shows.
  */
-export function clampEndToRemainingCapacity(args: {
+export function spreadLabour(
+  labourHours: number,
+  days: Array<{ day: string; share: number }>,
+  availableByDay: (day: string) => number,
+): Map<string, number> {
+  let weights = days.map((d) => ({ day: d.day, w: d.share * Math.max(0, availableByDay(d.day)) }));
+  if (weights.reduce((sum, d) => sum + d.w, 0) <= 0) {
+    weights = days.map((d) => ({ day: d.day, w: d.share }));
+  }
+  const total = weights.reduce((sum, d) => sum + d.w, 0);
+  const out = new Map<string, number>();
+  if (total <= 0) return out;
+  for (const { day, w } of weights) {
+    if (w > 0) out.set(day, (labourHours * w) / total);
+  }
+  return out;
+}
+
+export type SlotCapacityDay = TeamDayCapacity & { day: string; shareHours: number };
+
+/**
+ * Capacity over every day of the slot, as the backend gate checks it: the work's labour hours (its
+ * estimate — one person per work order until a planned crew size exists) spread over the slot's
+ * working days, against each day's remaining hours.
+ */
+export function checkSlotCapacity(args: {
+  capacity: TeamCapacityLoad[] | null | undefined;
+  teamId: number;
   startIso: string;
   endIso: string;
-  teamId: number;
-  capacity: TeamCapacityLoad[] | null | undefined;
-  hardMaxEndMs?: number;
-}): string {
-  const { startIso, endIso, teamId, capacity, hardMaxEndMs } = args;
-  const startMs = parseMs(startIso);
-  const endMs = parseMs(endIso);
-  if (!startMs || !endMs || endMs <= startMs) return endIso;
-
-  const workDate = workDateFromCommittedIso(startIso);
-  if (!workDate) return endIso;
-  const { remainingHours } = resolveTeamDayCapacity(capacity, teamId, workDate);
-  if (remainingHours <= 0) {
-    // Keep a 1-minute marker so the field stays valid; submit will block.
-    return toDateTimeLocal(new Date(startMs + 60_000).toISOString());
-  }
-
-  let maxEndMs = startMs + remainingHours * 3_600_000;
-  if (hardMaxEndMs != null && hardMaxEndMs > startMs) {
-    maxEndMs = Math.min(maxEndMs, hardMaxEndMs);
-  }
-  const nextEndMs = Math.min(endMs, maxEndMs);
-  return toDateTimeLocal(new Date(nextEndMs).toISOString());
+  labourHours: number;
+}): { days: SlotCapacityDay[]; overloaded: SlotCapacityDay | null; noSchedule: boolean } {
+  const { capacity, teamId, startIso, endIso, labourHours } = args;
+  const days = slotDays(startIso, endIso);
+  const byDay = new Map(days.map((d) => [d.day, resolveTeamDayCapacity(capacity, teamId, d.day)]));
+  const shares = spreadLabour(labourHours, days, (day) => byDay.get(day)?.availableHours ?? 0);
+  const rows: SlotCapacityDay[] = days.map((d) => ({
+    ...(byDay.get(d.day) as TeamDayCapacity),
+    day: d.day,
+    shareHours: shares.get(d.day) ?? 0,
+  }));
+  const overloaded = rows.find((r) => r.shareHours > r.remainingHours + 0.01) ?? null;
+  const noSchedule =
+    rows.length > 0 && rows.every((r) => r.basis === "no_schedule" || r.basis === "no_members");
+  return { days: rows, overloaded, noSchedule };
 }
 
 export function isDoubleBookingErrorMessage(message: string): boolean {

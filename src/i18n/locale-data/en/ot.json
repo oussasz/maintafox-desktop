@@ -200,6 +200,8 @@
     "shiftOutsideWindow": "The planned start or end is outside the chosen shift. Check the hours, or choose another shift.",
     "shiftTimetableChanged": "Timetable changed since planning: planned {{planned}}, the timetable now says {{now}}. Check the hours.",
     "expectedDuration": "Expected duration (hours)",
+    "plannedCrewSize": "Crew size (people)",
+    "plannedCrewSizeHint": "Planning books the duration × the crew size against the team's capacity.",
     "urgency": "Urgency",
     "selectUrgency": "Select urgency",
     "assignment": "Schedule & crew (Planning SSOT)",

@@ -13,7 +13,8 @@
 //! - `required_parts_json`: an entry `{"article_code", "quantity"}` whose code is an active article
 //!   and whose quantity is > 0 → planned OT part; every other entry (plain code, unknown article,
 //!   no quantity) is only listed in the description, because no quantity can be planned for it.
-//! - `estimated_duration_hours` → `expected_duration_hours`; plan `requires_permit` → OT permit gate;
+//! - `estimated_duration_hours` → `expected_duration_hours`; `planned_crew_size` → the OT's crew
+//!   size; plan `requires_permit` → OT permit gate;
 //!   plan `requires_shutdown` → a line in the description (the OT has no shutdown field).
 
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
@@ -62,6 +63,7 @@ pub struct PmWoContent {
     pub title: String,
     pub description: Option<String>,
     pub expected_duration_hours: Option<f64>,
+    pub planned_crew_size: Option<i64>,
     pub requires_permit: bool,
     pub equipment_id: Option<i64>,
     pub tasks: Vec<PmWoTask>,
@@ -411,7 +413,7 @@ pub async fn build_pm_work_order_content(
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT task_package_json, required_parts_json, required_skills_json, required_tools_json,
-                    estimated_duration_hours
+                    estimated_duration_hours, planned_crew_size
              FROM pm_plan_versions WHERE id = ?",
             [plan_version_id.into()],
         ))
@@ -433,6 +435,7 @@ pub async fn build_pm_work_order_content(
     let required_tools_json: Option<String> = version.try_get("", "required_tools_json")?;
     let required_skills_json: Option<String> = version.try_get("", "required_skills_json")?;
     let estimated_duration_hours: Option<f64> = version.try_get("", "estimated_duration_hours")?;
+    let planned_crew_size: Option<i64> = version.try_get("", "planned_crew_size")?;
 
     let tasks = parse_task_package(task_package_json.as_deref());
     let tools = parse_label_list(required_tools_json.as_deref());
@@ -452,6 +455,7 @@ pub async fn build_pm_work_order_content(
             requires_shutdown == 1,
         ),
         expected_duration_hours: estimated_duration_hours.filter(|h| *h > 0.0),
+        planned_crew_size: planned_crew_size.filter(|n| *n >= 1),
         requires_permit: requires_permit == 1,
         equipment_id: asset_scope_id,
         tasks,
@@ -467,6 +471,15 @@ pub async fn apply_pm_content_to_work_order(
     wo_id: i64,
     content: &PmWoContent,
 ) -> AppResult<()> {
+    if let Some(crew) = content.planned_crew_size {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE work_orders SET planned_crew_size = ?, row_version = row_version + 1, \
+                 updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
+            [crew.into(), wo_id.into()],
+        ))
+        .await?;
+    }
     for (idx, task) in content.tasks.iter().enumerate() {
         crate::wo::tasks::add_task(
             db,

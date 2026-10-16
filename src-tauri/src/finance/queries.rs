@@ -3965,7 +3965,11 @@ pub async fn build_budget_report_pack(
     let reassignment_row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT COALESCE(SUM(has_blocking_conflict), 0) AS churn FROM schedule_commitments",
+            // Real churn: commitments moved after they were committed — reschedules and emergency
+            // reassignments (planning change log) and break-ins.
+            "SELECT (SELECT COUNT(*) FROM schedule_change_log \
+                      WHERE action_type IN ('reschedule_commitment', 'emergency_reassign')) \
+                  + (SELECT COUNT(*) FROM schedule_break_ins) AS churn",
             [],
         ))
         .await?;

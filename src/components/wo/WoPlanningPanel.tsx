@@ -133,6 +133,12 @@ function parseNumber(value: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/** Whole people; the backend refuses fewer than one. */
+function parseCrewSize(value: string): number | null {
+  const n = parseNumber(value);
+  return n == null ? null : Math.trunc(n);
+}
+
 function toTaskDraft(task: WoExecTask): TaskDraft {
   return {
     localId: `task-${task.id}`,
@@ -194,6 +200,9 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
     const [expectedHours, setExpectedHours] = useState(
       wo.expected_duration_hours != null ? String(wo.expected_duration_hours) : "",
     );
+    const [crewSize, setCrewSize] = useState(
+      wo.planned_crew_size != null ? String(wo.planned_crew_size) : "",
+    );
     const [plannedDowntimeHours, setPlannedDowntimeHours] = useState(
       wo.planned_downtime_hours != null ? String(wo.planned_downtime_hours) : "",
     );
@@ -248,6 +257,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
       setExpectedHours(
         wo.expected_duration_hours != null ? String(wo.expected_duration_hours) : "",
       );
+      setCrewSize(wo.planned_crew_size != null ? String(wo.planned_crew_size) : "");
       setPlannedDowntimeHours(
         wo.planned_downtime_hours != null ? String(wo.planned_downtime_hours) : "",
       );
@@ -592,6 +602,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
           // The shift only when the planner changed it; the stored one is kept otherwise.
           ...shiftSaveFields(shiftTouched, shiftVersionId, wo),
           expected_duration_hours: parseNumber(expectedHours),
+          planned_crew_size: parseCrewSize(crewSize),
           planned_downtime_hours: parseNumber(plannedDowntimeHours),
           urgency_code: urgencyId ? (urgencyId as UrgencyCode) : null,
         });
@@ -620,6 +631,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
       shiftVersionId,
       shiftTouched,
       expectedHours,
+      crewSize,
       plannedDowntimeHours,
       urgencyId,
       refreshActiveWo,
@@ -1006,6 +1018,18 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                 onChange={(e) => setExpectedHours(e.target.value)}
                 disabled={allFieldsDisabled}
               />
+            </div>
+            <div className="space-y-1">
+              <Label>{t("planning.plannedCrewSize")}</Label>
+              <Input
+                type="number"
+                step="1"
+                min="1"
+                value={crewSize}
+                onChange={(e) => setCrewSize(e.target.value)}
+                disabled={allFieldsDisabled}
+              />
+              <p className="text-[11px] text-text-muted">{t("planning.plannedCrewSizeHint")}</p>
             </div>
             <div className="space-y-1">
               <Label>{t("planning.plannedDowntimeHours")}</Label>

@@ -516,6 +516,7 @@ async fn assigned_wo_requiring_permit(db: &DatabaseConnection, asset_id: i64) ->
             shift_class_version_id: None,
             clear_shift: false,
             expected_duration_hours: Some(8.0),
+            planned_crew_size: None,
             urgency_code: None,
             planned_downtime_hours: None,
         },

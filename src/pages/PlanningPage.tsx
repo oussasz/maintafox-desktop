@@ -178,6 +178,7 @@ export function PlanningPage() {
   const [windowOpen, setWindowOpen] = useState(false);
   const [windowDetailOpen, setWindowDetailOpen] = useState(false);
   const [breakInOpen, setBreakInOpen] = useState(false);
+  const [breakInCommitmentId, setBreakInCommitmentId] = useState<number | null>(null);
   const [freezeOpen, setFreezeOpen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [overrideOpen, setOverrideOpen] = useState(false);
@@ -912,10 +913,14 @@ export function PlanningPage() {
       />
       <BreakInDialog
         open={breakInOpen}
-        onOpenChange={setBreakInOpen}
+        onOpenChange={(next) => {
+          setBreakInOpen(next);
+          if (!next) setBreakInCommitmentId(null);
+        }}
         commitments={commitments}
         breakIns={breakIns}
         teamId={teamId}
+        initialCommitmentId={breakInCommitmentId}
         approvers={approvers}
         personnel={personnel}
         saving={saving}
@@ -940,6 +945,7 @@ export function PlanningPage() {
         }}
         onRequestBreakIn={() => {
           setInspectorOpen(false);
+          setBreakInCommitmentId(selectedCommitment?.id ?? null);
           setBreakInOpen(true);
         }}
         {...(pageView === "calendar" ? { onOpenOnBoard: handleOpenOnBoard } : {})}

@@ -21,13 +21,6 @@ type PlanningBacklogRailProps = {
   className?: string;
 };
 
-function riskTone(risk: number | null | undefined): "default" | "secondary" | "destructive" {
-  if (risk == null) return "secondary";
-  if (risk >= 0.7) return "destructive";
-  if (risk >= 0.4) return "secondary";
-  return "default";
-}
-
 export function PlanningBacklogRail({
   ready,
   blocked,
@@ -158,6 +151,16 @@ function CandidateCardBody({
   const { t } = useTranslation("planning");
   const code = candidateDisplayCode(candidate);
   const title = candidateDisplayTitle(candidate);
+  const notes = readinessNotes(candidate.risk_reason_codes_json);
+  // Duration × crew size, or what is missing (no duration → not estimated; no crew → said so).
+  const hours = candidate.estimated_duration_hours;
+  const crew = candidate.planned_crew_size;
+  const estimateLabel =
+    hours == null || hours <= 0
+      ? t("backlog.notEstimated")
+      : crew == null || crew < 1
+        ? t("backlog.noCrew", { hours: hours.toFixed(1) })
+        : t("backlog.estimate", { hours: hours.toFixed(1), crew });
 
   return (
     <div className="space-y-2">
@@ -182,11 +185,9 @@ function CandidateCardBody({
             {t("backlog.skillMatch")}: {Math.round(candidate.skill_match_score * 100)}%
           </Badge>
         )}
-        {candidate.estimated_assignment_risk != null && (
-          <Badge variant={riskTone(candidate.estimated_assignment_risk)} className="text-[10px]">
-            {t("backlog.risk")}: {Math.round(candidate.estimated_assignment_risk * 100)}%
-          </Badge>
-        )}
+        <Badge variant="outline" className="text-[10px]">
+          {estimateLabel}
+        </Badge>
         {candidate.priority_label ? (
           <Badge variant="outline" className="text-[10px]">
             {candidate.priority_label}
@@ -203,6 +204,28 @@ function CandidateCardBody({
           ))}
         </div>
       )}
+      {notes.length > 0 && (
+        <ul className="space-y-0.5 text-[10px] text-text-secondary">
+          {notes.map((note) => (
+            <li key={note}>{t(`notes.${note}`)}</li>
+          ))}
+        </ul>
+      )}
     </div>
   );
+}
+
+/** Readiness notes the planner should see (not blocking): parts to check, permit to obtain. */
+const READINESS_NOTES = new Set(["PM_PARTS_TO_CHECK", "PM_PERMIT_TO_OBTAIN"]);
+
+function readinessNotes(json: string | null | undefined): string[] {
+  if (!json) return [];
+  try {
+    const parsed: unknown = JSON.parse(json);
+    return Array.isArray(parsed)
+      ? parsed.filter((c): c is string => typeof c === "string" && READINESS_NOTES.has(c))
+      : [];
+  } catch {
+    return [];
+  }
 }

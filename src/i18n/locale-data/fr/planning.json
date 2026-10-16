@@ -73,7 +73,10 @@
     "emptyBlocked": "Aucun candidat bloqué.",
     "readyHint": "Cliquez une carte Prêt pour l'engager au planning.",
     "blockedHint": "Ouvrez un élément bloqué pour lever ses blocages dans l'ordre de travail ou la demande.",
-    "openSource": "Ouvrir {{code}}"
+    "openSource": "Ouvrir {{code}}",
+    "estimate": "{{hours}} h × {{crew}} pers.",
+    "noCrew": "{{hours}} h · effectif à saisir",
+    "notEstimated": "Non estimé"
   },
   "blockers": {
     "missing_critical_part": "Pièces critiques non réservées",
@@ -81,7 +84,8 @@
     "permit_not_ready": "Permis non prêt",
     "prerequisite_incomplete": "Prérequis incomplets",
     "locked_window": "Fenêtre verrouillée",
-    "double_booking": "Double affectation"
+    "double_booking": "Double affectation",
+    "not_estimated": "Non estimé"
   },
   "board": {
     "unassignedLane": "Équipe — pas encore affecté à une personne",
@@ -156,8 +160,12 @@
       "outsideHorizon": "Le début et la fin engagés doivent être dans la période Du–Au du tableau.",
       "assigneeNotOnCrew": "L'affecté doit être membre de l'équipe du tableau sélectionnée.",
       "capacityExceeded": "Ce créneau dépasse la capacité restante de l'équipe pour ce jour ({{remaining}} h restantes). Choisissez un créneau plus court ou un autre jour.",
-      "budgetInvalid": "Le seuil budgétaire doit être un nombre positif ou nul."
-    }
+      "budgetInvalid": "Le seuil budgétaire doit être un nombre positif ou nul.",
+      "capacityExceededDay": "Capacité insuffisante le {{day}} : {{share}} h nécessaires, {{remaining}} h libres."
+    },
+    "notEstimated": "Ce travail n'est pas estimé : saisissez sa durée et son effectif sur l'OT ou le PM avant de l'engager.",
+    "labourHours": "{{hours}} h de main-d'œuvre ({{duration}} h × {{crew}} pers.)",
+    "capacityByDay": "{{day}} : {{share}} h de ce travail, {{remaining}} h libres sur {{available}} h"
   },
   "gantt": {
     "capacityTitle": "Capacité équipe",
@@ -168,7 +176,8 @@
     "laneHeader": "Affecté",
     "overrideReasonPrompt": "Motif de dérogation double-affectation",
     "defaultReason": "Planning gelé par le planificateur.",
-    "freezeOverlayTitle": "Fenêtres verrouillées"
+    "freezeOverlayTitle": "Fenêtres verrouillées",
+    "noCapacity": "pas de capacité"
   },
   "windows": {
     "title": "Fenêtres de production",
@@ -189,7 +198,7 @@
     }
   },
   "breakIns": {
-    "title": "Break-ins",
+    "title": "Insertions d'urgence",
     "commitment": "Engagement",
     "selectCommitment": "Sélectionner un engagement",
     "reason": "Code motif",
@@ -254,5 +263,9 @@
     "woNotInBacklog": "Cet ordre de travail n'est pas dans le backlog de planification (pas encore prêt à planifier, déjà engagé ou hors filtre).",
     "openWo": "Ouvrir l'ordre de travail",
     "dismiss": "Fermer"
+  },
+  "notes": {
+    "PM_PARTS_TO_CHECK": "Pièces prévues au PM : vérifiez leur disponibilité avant les travaux.",
+    "PM_PERMIT_TO_OBTAIN": "Permis requis : à obtenir avant le début des travaux."
   }
 }

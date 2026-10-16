@@ -346,6 +346,7 @@ fn decode_pm_plan_version_row(row: &sea_orm::QueryResult) -> AppResult<PmPlanVer
         required_skills_json: row.try_get("", "required_skills_json")?,
         required_tools_json: row.try_get("", "required_tools_json")?,
         estimated_duration_hours: row.try_get("", "estimated_duration_hours")?,
+        planned_crew_size: row.try_get("", "planned_crew_size")?,
         estimated_labor_cost: row.try_get("", "estimated_labor_cost")?,
         estimated_parts_cost: row.try_get("", "estimated_parts_cost")?,
         estimated_service_cost: row.try_get("", "estimated_service_cost")?,
@@ -507,7 +508,7 @@ pub async fn transition_pm_plan_lifecycle(
 
 pub async fn list_pm_plan_versions(db: &DatabaseConnection, pm_plan_id: i64) -> AppResult<Vec<PmPlanVersion>> {
     let rows = db.query_all(Statement::from_sql_and_values(DbBackend::Sqlite,
-        "SELECT id,pm_plan_id,version_no,status,effective_from,effective_to,trigger_definition_json,task_package_json,required_parts_json,required_skills_json,required_tools_json,estimated_duration_hours,estimated_labor_cost,estimated_parts_cost,estimated_service_cost,change_reason,row_version,created_at,updated_at
+        "SELECT id,pm_plan_id,version_no,status,effective_from,effective_to,trigger_definition_json,task_package_json,required_parts_json,required_skills_json,required_tools_json,estimated_duration_hours,planned_crew_size,estimated_labor_cost,estimated_parts_cost,estimated_service_cost,change_reason,row_version,created_at,updated_at
          FROM pm_plan_versions WHERE pm_plan_id = ? ORDER BY version_no DESC", [pm_plan_id.into()])).await?;
     rows.iter().map(decode_pm_plan_version_row).collect()
 }
@@ -521,6 +522,7 @@ pub async fn create_pm_plan_version(
     validate_effective_window(&input.effective_from, input.effective_to.as_deref())?;
     validate_trigger_definition(db, &plan.strategy_type, &input.trigger_definition_json).await?;
     validate_required_skills_json(db, input.required_skills_json.as_deref()).await?;
+    crate::planning::load::validate_crew_size(input.planned_crew_size)?;
     let version_no_row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -533,9 +535,9 @@ pub async fn create_pm_plan_version(
     let version_entity_sync_id = crate::sync::identity::new_entity_sync_id();
     let tx = db.begin().await?;
     tx.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
-        "INSERT INTO pm_plan_versions (entity_sync_id,pm_plan_id,version_no,status,effective_from,effective_to,trigger_definition_json,task_package_json,required_parts_json,required_skills_json,required_tools_json,estimated_duration_hours,estimated_labor_cost,estimated_parts_cost,estimated_service_cost,change_reason)
-         VALUES (?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [version_entity_sync_id.into(),pm_plan_id.into(),next_no.into(),input.effective_from.into(),input.effective_to.into(),input.trigger_definition_json.into(),input.task_package_json.into(),input.required_parts_json.into(),input.required_skills_json.into(),input.required_tools_json.into(),input.estimated_duration_hours.into(),input.estimated_labor_cost.into(),input.estimated_parts_cost.into(),input.estimated_service_cost.into(),input.change_reason.into()])).await?;
+        "INSERT INTO pm_plan_versions (entity_sync_id,pm_plan_id,version_no,status,effective_from,effective_to,trigger_definition_json,task_package_json,required_parts_json,required_skills_json,required_tools_json,estimated_duration_hours,planned_crew_size,estimated_labor_cost,estimated_parts_cost,estimated_service_cost,change_reason)
+         VALUES (?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [version_entity_sync_id.into(),pm_plan_id.into(),next_no.into(),input.effective_from.into(),input.effective_to.into(),input.trigger_definition_json.into(),input.task_package_json.into(),input.required_parts_json.into(),input.required_skills_json.into(),input.required_tools_json.into(),input.estimated_duration_hours.into(),input.planned_crew_size.into(),input.estimated_labor_cost.into(),input.estimated_parts_cost.into(),input.estimated_service_cost.into(),input.change_reason.into()])).await?;
     let row = tx
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -545,7 +547,7 @@ pub async fn create_pm_plan_version(
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("created version not found")))?;
     let id: i64 = row.try_get("", "id")?;
-    let row = tx.query_one(Statement::from_sql_and_values(DbBackend::Sqlite, "SELECT id,pm_plan_id,version_no,status,effective_from,effective_to,trigger_definition_json,task_package_json,required_parts_json,required_skills_json,required_tools_json,estimated_duration_hours,estimated_labor_cost,estimated_parts_cost,estimated_service_cost,change_reason,row_version,created_at,updated_at FROM pm_plan_versions WHERE id = ?", [id.into()])).await?
+    let row = tx.query_one(Statement::from_sql_and_values(DbBackend::Sqlite, "SELECT id,pm_plan_id,version_no,status,effective_from,effective_to,trigger_definition_json,task_package_json,required_parts_json,required_skills_json,required_tools_json,estimated_duration_hours,planned_crew_size,estimated_labor_cost,estimated_parts_cost,estimated_service_cost,change_reason,row_version,created_at,updated_at FROM pm_plan_versions WHERE id = ?", [id.into()])).await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("created version missing")))?;
     let version = decode_pm_plan_version_row(&row)?;
     tx.commit().await?;
@@ -592,11 +594,12 @@ pub async fn update_pm_plan_version(
     validate_trigger_definition(db, &plan.strategy_type, &trigger_definition_json).await?;
     let required_skills_json = input.required_skills_json.or(row.try_get("", "required_skills_json")?);
     validate_required_skills_json(db, required_skills_json.as_deref()).await?;
+    crate::planning::load::validate_crew_size(input.planned_crew_size)?;
     let tx = db.begin().await?;
     tx.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
-        "UPDATE pm_plan_versions SET effective_from=?,effective_to=?,trigger_definition_json=?,task_package_json=?,required_parts_json=?,required_skills_json=?,required_tools_json=?,estimated_duration_hours=?,estimated_labor_cost=?,estimated_parts_cost=?,estimated_service_cost=?,change_reason=?,row_version=row_version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=? AND row_version=?",
-        [effective_from.into(),effective_to.into(),trigger_definition_json.into(),input.task_package_json.or(row.try_get("", "task_package_json")?).into(),input.required_parts_json.or(row.try_get("", "required_parts_json")?).into(),required_skills_json.into(),input.required_tools_json.or(row.try_get("", "required_tools_json")?).into(),input.estimated_duration_hours.or(row.try_get("", "estimated_duration_hours")?).into(),input.estimated_labor_cost.or(row.try_get("", "estimated_labor_cost")?).into(),input.estimated_parts_cost.or(row.try_get("", "estimated_parts_cost")?).into(),input.estimated_service_cost.or(row.try_get("", "estimated_service_cost")?).into(),input.change_reason.or(row.try_get("", "change_reason")?).into(),version_id.into(),expected_row_version.into()])).await?;
-    let row = tx.query_one(Statement::from_sql_and_values(DbBackend::Sqlite, "SELECT id,pm_plan_id,version_no,status,effective_from,effective_to,trigger_definition_json,task_package_json,required_parts_json,required_skills_json,required_tools_json,estimated_duration_hours,estimated_labor_cost,estimated_parts_cost,estimated_service_cost,change_reason,row_version,created_at,updated_at FROM pm_plan_versions WHERE id = ?", [version_id.into()])).await?
+        "UPDATE pm_plan_versions SET effective_from=?,effective_to=?,trigger_definition_json=?,task_package_json=?,required_parts_json=?,required_skills_json=?,required_tools_json=?,estimated_duration_hours=?,planned_crew_size=?,estimated_labor_cost=?,estimated_parts_cost=?,estimated_service_cost=?,change_reason=?,row_version=row_version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=? AND row_version=?",
+        [effective_from.into(),effective_to.into(),trigger_definition_json.into(),input.task_package_json.or(row.try_get("", "task_package_json")?).into(),input.required_parts_json.or(row.try_get("", "required_parts_json")?).into(),required_skills_json.into(),input.required_tools_json.or(row.try_get("", "required_tools_json")?).into(),input.estimated_duration_hours.or(row.try_get("", "estimated_duration_hours")?).into(),input.planned_crew_size.or(row.try_get("", "planned_crew_size")?).into(),input.estimated_labor_cost.or(row.try_get("", "estimated_labor_cost")?).into(),input.estimated_parts_cost.or(row.try_get("", "estimated_parts_cost")?).into(),input.estimated_service_cost.or(row.try_get("", "estimated_service_cost")?).into(),input.change_reason.or(row.try_get("", "change_reason")?).into(),version_id.into(),expected_row_version.into()])).await?;
+    let row = tx.query_one(Statement::from_sql_and_values(DbBackend::Sqlite, "SELECT id,pm_plan_id,version_no,status,effective_from,effective_to,trigger_definition_json,task_package_json,required_parts_json,required_skills_json,required_tools_json,estimated_duration_hours,planned_crew_size,estimated_labor_cost,estimated_parts_cost,estimated_service_cost,change_reason,row_version,created_at,updated_at FROM pm_plan_versions WHERE id = ?", [version_id.into()])).await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("updated version missing")))?;
     let version = decode_pm_plan_version_row(&row)?;
     tx.commit().await?;
@@ -641,7 +644,7 @@ pub async fn publish_pm_plan_version(
     };
     tx.execute(Statement::from_sql_and_values(DbBackend::Sqlite, "UPDATE pm_plans SET current_version_id=?,lifecycle_status=?,row_version=row_version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=?", [input.version_id.into(), next_plan_lifecycle.into(), plan_id.into()])).await?;
     tx.commit().await?;
-    let row = db.query_one(Statement::from_sql_and_values(DbBackend::Sqlite, "SELECT id,pm_plan_id,version_no,status,effective_from,effective_to,trigger_definition_json,task_package_json,required_parts_json,required_skills_json,required_tools_json,estimated_duration_hours,estimated_labor_cost,estimated_parts_cost,estimated_service_cost,change_reason,row_version,created_at,updated_at FROM pm_plan_versions WHERE id = ?", [input.version_id.into()])).await?
+    let row = db.query_one(Statement::from_sql_and_values(DbBackend::Sqlite, "SELECT id,pm_plan_id,version_no,status,effective_from,effective_to,trigger_definition_json,task_package_json,required_parts_json,required_skills_json,required_tools_json,estimated_duration_hours,planned_crew_size,estimated_labor_cost,estimated_parts_cost,estimated_service_cost,change_reason,row_version,created_at,updated_at FROM pm_plan_versions WHERE id = ?", [input.version_id.into()])).await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("published version missing")))?;
     decode_pm_plan_version_row(&row)
 }
