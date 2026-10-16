@@ -639,7 +639,7 @@ async fn usernames_are_unique_regardless_of_case_and_spaces() {
 async fn refusals_of_non_administrators_go_to_the_security_journal() {
     let db = crate::db::test_db::seeded().await;
     let outsider = insert_user(&db, "no_admin_rights").await;
-    let result: AppResult<()> = Err(AppError::PermissionDenied("adm.users".into()));
+    let result: AppResult<()> = Err(AppError::PermissionDenied(crate::rbac::permissions::ADM_USERS.into()));
     crate::commands::admin_governance::record_blocked_admin_action(
         &db,
         outsider,
