@@ -637,6 +637,9 @@ pub const ROW_SPECS: &[RowSpec] = &[
         ..spec("schedule_change_log", &[hist("actor_id", USER)])
     },
     spec("schedule_details", &[]),
+    spec("weekly_schedules", &[]),
+    spec("weekly_schedule_events", &[]),
+    spec("weekly_schedule_baseline_items", &[]),
     // ── Finance ─────────────────────────────────────────────────────────────────────────────
     spec("cost_centers", &[]),
     spec("budget_versions", &[]),

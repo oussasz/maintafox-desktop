@@ -28,7 +28,7 @@ CASE WHEN sc.has_blocking_conflict = 1 OR EXISTS (SELECT 1 FROM scheduling_confl
 (SELECT json_group_array(json_object('conflict_type', c.conflict_type, 'reason_code', c.reason_code, \
      'severity', c.severity, 'details_json', c.details_json)) \
    FROM scheduling_conflicts c WHERE c.candidate_id = sc.schedule_candidate_id AND c.resolved_at IS NULL) AS conflict_reasons_json,\
-sc.nearest_feasible_window,sc.planned_labor_hours,sc.planned_person_hours,sc.row_version,sc.created_at,sc.updated_at";
+sc.nearest_feasible_window,sc.planned_labor_hours,sc.planned_person_hours,sc.status,sc.status_reason,sc.status_changed_at,sc.row_version,sc.created_at,sc.updated_at";
 const COMMITMENT_JOIN_COLS: &str = "\
     CASE sc.source_type \
         WHEN 'work_order' THEN wo.code \
@@ -219,6 +219,13 @@ fn map_commitment(row: &QueryResult) -> AppResult<ScheduleCommitment> {
         nearest_feasible_window: row
             .try_get("", "nearest_feasible_window")
             .map_err(|e| decode_err("nearest_feasible_window", e))?,
+        status: row.try_get("", "status").map_err(|e| decode_err("status", e))?,
+        status_reason: row
+            .try_get("", "status_reason")
+            .map_err(|e| decode_err("status_reason", e))?,
+        status_changed_at: row
+            .try_get("", "status_changed_at")
+            .map_err(|e| decode_err("status_changed_at", e))?,
         planned_labor_hours: row
             .try_get("", "planned_labor_hours")
             .map_err(|e| decode_err("planned_labor_hours", e))?,
@@ -347,6 +354,34 @@ async fn get_commitment(db: &impl ConnectionTrait, commitment_id: i64) -> AppRes
             id: commitment_id.to_string(),
         })?;
     map_commitment(&row)
+}
+
+/// Records a commitment released or cancelled (`planning::lifecycle`) in the schedule change log.
+pub(crate) async fn append_lifecycle_log(
+    db: &impl ConnectionTrait,
+    commitment_id: i64,
+    actor_id: i64,
+    to_status: &str,
+    reason: &str,
+) -> AppResult<()> {
+    append_change_log(
+        db,
+        Some(commitment_id),
+        if to_status == "released" {
+            "release_commitment"
+        } else {
+            "cancel_commitment"
+        },
+        Some(actor_id),
+        Some("status".to_string()),
+        Some("committed".to_string()),
+        Some(to_status.to_string()),
+        Some(to_status.to_string()),
+        Some(reason.to_string()),
+        Some(reason.to_string()),
+        None,
+    )
+    .await
 }
 
 async fn append_change_log(
@@ -680,13 +715,6 @@ async fn check_double_booking(
     Ok(overlap_count)
 }
 
-fn is_valid_break_in_reason(reason: &str) -> bool {
-    matches!(
-        reason,
-        "emergency" | "safety" | "production_loss" | "regulatory" | "other"
-    )
-}
-
 async fn resolve_user_personnel_id(db: &impl ConnectionTrait, user_id: i64) -> AppResult<Option<i64>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
@@ -808,7 +836,7 @@ fn team_hours_from(roster: crate::personnel::capacity::TeamDayCapacity) -> TeamD
     }
 }
 
-async fn emit_planning_notification(
+pub(crate) async fn emit_planning_notification(
     db: &notifications::SqlitePool,
     event_code: &str,
     severity: &str,
@@ -911,6 +939,14 @@ async fn run_commitment_gates(
 ) -> AppResult<CommitmentGateResult> {
     validate_window(committed_start, committed_end, "committed_start", "committed_end")?;
     load::validate_slot_length(committed_start, committed_end)?;
+    // A job holds one slot at a time: release (or cancel) it before committing it again.
+    if exclude_commitment_id.is_none() && super::lifecycle::candidate_holds_a_slot(tx, candidate_id).await? {
+        return Err(crate::errors::org_validation_failed(
+            "PLANNING_ALREADY_COMMITTED",
+            "This job already holds a slot in the schedule: reschedule it, or release its slot first.",
+            std::collections::HashMap::new(),
+        ));
+    }
     let (source_type, source_id) = enforce_candidate_ready(tx, candidate_id, expected_candidate_row_version).await?;
 
     let location = windows::job_location(tx, &source_type, source_id).await?;
@@ -1344,7 +1380,8 @@ pub async fn list_schedule_commitments(
     db: &DatabaseConnection,
     filter: ScheduleCommitmentFilter,
 ) -> AppResult<Vec<ScheduleCommitment>> {
-    let mut where_sql = vec!["1 = 1".to_string()];
+    // The board shows slots held and work done; released or cancelled slots are history only.
+    let mut where_sql = vec!["sc.status IN ('committed', 'closed')".to_string()];
     let mut values: Vec<sea_orm::Value> = Vec::new();
     if let Some(start) = filter.period_start {
         where_sql.push("sc.committed_end >= ?".to_string());
@@ -1457,12 +1494,9 @@ pub async fn create_schedule_break_in(
         "new_slot_end",
     )?;
     load::validate_slot_length(&input.new_slot_start, &input.new_slot_end)?;
-    let reason = input.break_in_reason.trim().to_ascii_lowercase();
-    if !is_valid_break_in_reason(&reason) {
-        return Err(AppError::ValidationFailed(vec![
-            "break_in_reason must be one of: emergency, safety, production_loss, regulatory, other.".to_string(),
-        ]));
-    }
+    // A reason of the COMPANY list PLANNING.BREAK_IN_REASONS; an urgent one needs evidence.
+    let break_in_reason = super::break_in_reasons::resolve_break_in_reason(db, &input.break_in_reason).await?;
+    let reason = break_in_reason.code.clone();
     let dangerous_override_reason = input
         .dangerous_override_reason
         .as_ref()
@@ -1491,13 +1525,12 @@ pub async fn create_schedule_break_in(
             ]));
         }
     }
-    if matches!(reason.as_str(), "emergency" | "safety")
-        && approved_by_user_id.is_none()
-        && dangerous_override_reason.is_none()
-    {
-        return Err(AppError::ValidationFailed(vec![
-            "Emergency and safety break-ins require approver evidence or dangerous_override_reason.".to_string(),
-        ]));
+    if break_in_reason.urgent && approved_by_user_id.is_none() && dangerous_override_reason.is_none() {
+        return Err(crate::errors::org_validation_failed(
+            "PLANNING_BREAK_IN_APPROVAL_REQUIRED",
+            "An urgent break-in (emergency, safety) needs an approver or a recorded dangerous-override reason.",
+            std::collections::HashMap::from([("reason".to_string(), reason.clone())]),
+        ));
     }
     if approved_by_user_id.is_none() && dangerous_override_reason.is_some() {
         approved_by_user_id = Some(actor_id);
@@ -1875,6 +1908,51 @@ pub async fn create_schedule_commitment(
     )
     .await?;
 
+    // New work enters a frozen week only as a recorded break-in.
+    let frozen_week = super::weekly_schedule::frozen_week_for_slot(
+        &tx,
+        input.assigned_team_id,
+        &input.committed_start,
+        &input.committed_end,
+    )
+    .await?;
+    let break_in = match (&frozen_week, &input.frozen_week_break_in) {
+        (None, _) => None,
+        (Some(week), None) => {
+            return Err(crate::errors::org_validation_failed(
+                "PLANNING_WEEK_FROZEN",
+                format!(
+                    "The week of {} is frozen: new work enters it only as a break-in, with its reason.",
+                    week.week_start
+                ),
+                std::collections::HashMap::from([("week_start".to_string(), week.week_start.clone())]),
+            ))
+        }
+        (Some(_), Some(b)) => {
+            let reason = super::break_in_reasons::resolve_break_in_reason(&tx, &b.reason).await?;
+            let dangerous = b
+                .dangerous_override_reason
+                .as_ref()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty());
+            if let Some(approver) = b.approved_by_user_id {
+                if !user_has_plan_approval_scope(&tx, approver).await? {
+                    return Err(AppError::ValidationFailed(vec![
+                        "approved_by_user_id must have plan.confirm or plan.windows permission.".to_string(),
+                    ]));
+                }
+            }
+            if reason.urgent && b.approved_by_user_id.is_none() && dangerous.is_none() {
+                return Err(crate::errors::org_validation_failed(
+                    "PLANNING_BREAK_IN_APPROVAL_REQUIRED",
+                    "An urgent break-in (emergency, safety) needs an approver or a recorded dangerous-override reason.",
+                    std::collections::HashMap::from([("reason".to_string(), reason.code.clone())]),
+                ));
+            }
+            Some((reason, b.approved_by_user_id, dangerous))
+        }
+    };
+
     let period_start = parse_rfc3339(&input.committed_start, "committed_start")?
         .date_naive()
         .to_string();
@@ -1914,6 +1992,63 @@ pub async fn create_schedule_commitment(
         .map_err(|_| AppError::Internal(anyhow::anyhow!("schedule_commitments last_insert_id does not fit i64")))?;
     // The candidate is derived on each device; the commitment depends on it, so it travels now.
     crate::sync::capture::capture_row_change(&tx, "schedule_candidates", input.schedule_candidate_id).await?;
+    if let Some((reason, approver, dangerous)) = &break_in {
+        // Part of the frozen week from now on (not of its baseline: unplanned work), recorded as a
+        // break-in that inserts the job (its slot is both the old and the new one).
+        let approver_personnel = match approver {
+            Some(user) => resolve_user_personnel_id(&tx, *user).await?,
+            None => None,
+        };
+        tx.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE schedule_commitments SET frozen_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
+            [id.into()],
+        ))
+        .await?;
+        tx.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO schedule_break_ins
+                (schedule_commitment_id, break_in_reason, approved_by_user_id, approved_by_personnel_id, override_reason,
+                 old_slot_start, old_slot_end, new_slot_start, new_slot_end, old_assignee_id, new_assignee_id,
+                 cost_impact_delta, notification_dedupe_key, created_by_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL, ?)",
+            [
+                id.into(),
+                reason.code.clone().into(),
+                approver.unwrap_or(actor_id).into(),
+                approver_personnel.into(),
+                dangerous.clone().into(),
+                input.committed_start.clone().into(),
+                input.committed_end.clone().into(),
+                input.committed_start.clone().into(),
+                input.committed_end.clone().into(),
+                input.assigned_personnel_id.into(),
+                Some(actor_id).into(),
+            ],
+        ))
+        .await?;
+        append_change_log(
+            &tx,
+            Some(id),
+            "break_in_insert",
+            Some(actor_id),
+            Some("commitment_slot".to_string()),
+            None,
+            Some(format!("{} -> {}", input.committed_start, input.committed_end)),
+            Some(reason.code.clone()),
+            dangerous.clone(),
+            Some(reason.code.clone()),
+            Some(
+                json!({
+                    "approved_by_user_id": approver,
+                    "dangerous_override_reason": dangerous,
+                    "frozen_week": frozen_week.as_ref().map(|w| w.week_start.clone()),
+                })
+                .to_string(),
+            ),
+        )
+        .await?;
+    }
     append_change_log(
         &tx,
         Some(id),
@@ -2018,6 +2153,24 @@ pub async fn reschedule_schedule_commitment(
         Some(input.commitment_id),
     )
     .await?;
+    // Moving work into a frozen week is a break-in (recorded with its reason), not a reschedule.
+    if let Some(week) = super::weekly_schedule::frozen_week_for_slot(
+        &tx,
+        input.assigned_team_id,
+        &input.committed_start,
+        &input.committed_end,
+    )
+    .await?
+    {
+        return Err(crate::errors::org_validation_failed(
+            "PLANNING_WEEK_FROZEN",
+            format!(
+                "The week of {} is frozen: move work into it with a break-in, with its reason.",
+                week.week_start
+            ),
+            std::collections::HashMap::from([("week_start".to_string(), week.week_start.clone())]),
+        ));
+    }
 
     let period_start = parse_rfc3339(&input.committed_start, "committed_start")?
         .date_naive()

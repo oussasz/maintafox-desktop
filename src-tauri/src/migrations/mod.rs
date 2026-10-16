@@ -194,6 +194,7 @@ mod m20261016_000209_notification_subscriptions;
 mod m20261017_000207_crew_size_bounds;
 mod m20261017_000210_commitment_person_hours;
 mod m20261017_000211_planning_window_equipment;
+mod m20261017_000212_weekly_schedules;
 mod m20261017_000213_settings_change_values;
 mod m20261017_000214_currency_reference_list;
 mod m20261017_000217_di_decision_reasons;
@@ -405,6 +406,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261016_000209_notification_subscriptions::Migration),
             Box::new(m20261017_000210_commitment_person_hours::Migration),
             Box::new(m20261017_000211_planning_window_equipment::Migration),
+            Box::new(m20261017_000212_weekly_schedules::Migration),
             Box::new(m20261017_000213_settings_change_values::Migration),
             Box::new(m20261017_000214_currency_reference_list::Migration),
             Box::new(m20261017_000217_di_decision_reasons::Migration),

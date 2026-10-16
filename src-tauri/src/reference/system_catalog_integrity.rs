@@ -36,6 +36,8 @@ pub async fn ensure_system_reference_catalog_integrity(db: &DatabaseConnection) 
     crate::qualification::catalog::ensure_qualification_catalog(db).await?;
     // Planning window types (production, maintenance, shutdown, freeze).
     crate::planning::windows::ensure_window_type_catalog(db).await?;
+    // Break-in reasons (COMPANY list: each plant extends it).
+    crate::planning::break_in_reasons::ensure_break_in_reason_catalog(db).await?;
     Ok(())
 }
 

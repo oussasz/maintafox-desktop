@@ -7,11 +7,11 @@ import {
   assigneeOptionSuffix,
 } from "@/components/planning/AssigneeCapacityDetails";
 import {
-  fromDateTimeLocal,
-  PLANNING_BREAK_IN_REASONS,
-  toDateTimeLocal,
-  type PlanningBreakInReason,
-} from "@/components/planning/planning-model";
+  breakInReasonLabel,
+  isUrgentBreakInReason,
+  useBreakInReasons,
+} from "@/components/planning/break-in-reasons";
+import { fromDateTimeLocal, toDateTimeLocal } from "@/components/planning/planning-model";
 import { useAssigneeCapacity } from "@/components/planning/use-assignee-capacity";
 import { Button } from "@/components/ui/button";
 import {
@@ -70,9 +70,15 @@ export function BreakInDialog({
   saving,
   onSubmit,
 }: BreakInDialogProps) {
-  const { t } = useTranslation("planning");
+  const { t, i18n } = useTranslation("planning");
+  const reasons = useBreakInReasons(open);
   const [commitmentId, setCommitmentId] = useState<number | null>(null);
-  const [reason, setReason] = useState<PlanningBreakInReason>("emergency");
+  const [reason, setReason] = useState<string>("");
+  // The plant's list decides the reasons: the first one until the planner picks.
+  useEffect(() => {
+    if (reason === "" && reasons.length > 0) setReason(reasons[0]?.code ?? "");
+  }, [reason, reasons]);
+  const urgent = isUrgentBreakInReason(reasons.find((r) => r.code === reason));
   const [approverUserId, setApproverUserId] = useState<number | null>(null);
   const [newStart, setNewStart] = useState("");
   const [newEnd, setNewEnd] = useState("");
@@ -223,18 +229,21 @@ export function BreakInDialog({
             </div>
             <div>
               <Label>{t("breakIns.reason")}</Label>
-              <Select value={reason} onValueChange={(v) => setReason(v as PlanningBreakInReason)}>
-                <SelectTrigger className="h-8 text-sm">
+              <Select value={reason} onValueChange={setReason}>
+                <SelectTrigger className="h-8 text-sm" aria-label={t("breakIns.reason")}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {PLANNING_BREAK_IN_REASONS.map((code) => (
-                    <SelectItem key={code} value={code}>
-                      {t(`breakIns.reasons.${code}`)}
+                  {reasons.map((value) => (
+                    <SelectItem key={value.code} value={value.code}>
+                      {breakInReasonLabel(value.code, reasons, i18n.language)}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+              {urgent ? (
+                <p className="mt-1 text-xs text-amber-800">{t("breakIns.urgentHint")}</p>
+              ) : null}
             </div>
           </div>
 
@@ -355,9 +364,7 @@ export function BreakInDialog({
                 <span className="font-medium text-text-primary">
                   {formatOrDash(entry.commitment_source_code)}
                 </span>{" "}
-                {t(`breakIns.reasons.${entry.break_in_reason}`, {
-                  defaultValue: entry.break_in_reason,
-                })}
+                {breakInReasonLabel(entry.break_in_reason, reasons, i18n.language)}
                 {" · "}
                 {new Date(entry.old_slot_start).toLocaleString()}
                 {" → "}

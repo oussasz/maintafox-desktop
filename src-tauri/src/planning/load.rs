@@ -304,15 +304,16 @@ pub fn net_hours_in(start: &str, end: &str, days: &BTreeMap<NaiveDate, DayHours>
     Ok(hours)
 }
 
-/// SQL predicate: the commitment's work is still to do (alias `cmt`).
-pub const ACTIVE_COMMITMENT_SQL: &str = "NOT ( \
+/// SQL predicate: the commitment's work is still to do (alias `cmt`): the slot is held (not
+/// released, cancelled or closed — migration 212) and its source is not finished.
+pub const ACTIVE_COMMITMENT_SQL: &str = "(cmt.status = 'committed' AND NOT ( \
     (cmt.source_type = 'work_order' AND EXISTS (SELECT 1 FROM work_orders fw WHERE fw.id = cmt.source_id \
         AND (fw.mechanically_completed_at IS NOT NULL OR fw.closed_at IS NOT NULL OR fw.cancelled_at IS NOT NULL))) \
     OR (cmt.source_type = 'pm_occurrence' AND EXISTS (SELECT 1 FROM pm_occurrences fp WHERE fp.id = cmt.source_id \
         AND fp.status IN ('completed', 'cancelled', 'missed'))) \
     OR (cmt.source_type = 'inspection_follow_up' AND EXISTS (SELECT 1 FROM intervention_requests fr \
         WHERE fr.id = cmt.source_id AND (fr.converted_to_wo_id IS NOT NULL OR fr.closed_at IS NOT NULL \
-        OR fr.declined_at IS NOT NULL OR fr.archived_at IS NOT NULL))))";
+        OR fr.declined_at IS NOT NULL OR fr.archived_at IS NOT NULL)))))";
 
 /// [`ACTIVE_COMMITMENT_SQL`] for another alias of `schedule_commitments`.
 pub fn active_commitment_sql_as(alias: &str) -> String {

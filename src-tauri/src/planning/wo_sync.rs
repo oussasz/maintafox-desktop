@@ -193,3 +193,58 @@ async fn resolve_personnel_user_id(tx: &impl ConnectionTrait, personnel_id: Opti
         .await?;
     Ok(row.and_then(|r| r.try_get::<i64>("", "id").ok()))
 }
+
+/// A commitment released or cancelled gives its slot back: the work order's planned dates it
+/// wrote are cleared — only while the work order is still in planning / ready and still carries
+/// exactly that slot (a later manual change is kept). Its crew and responsible stay. Returns
+/// whether the work order was changed.
+pub async fn clear_work_order_slot(
+    tx: &impl ConnectionTrait,
+    actor_id: i64,
+    wo_id: i64,
+    committed_start: &str,
+    committed_end: &str,
+    commitment_status: &str,
+) -> AppResult<bool> {
+    let (from_code, status, row_version) = load_wo_status(tx, wo_id).await?;
+    if !matches!(status, WoStatus::Planning | WoStatus::Ready) {
+        return Ok(false);
+    }
+    let now = now_utc_z();
+    let result = tx
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE work_orders SET planned_start = NULL, planned_end = NULL, scheduled_at = NULL,
+                    row_version = row_version + 1, updated_at = ?
+              WHERE id = ? AND row_version = ? AND planned_start = ? AND planned_end = ?",
+            [
+                now.into(),
+                wo_id.into(),
+                row_version.into(),
+                committed_start.to_string().into(),
+                committed_end.to_string().into(),
+            ],
+        ))
+        .await?;
+    if result.rows_affected() == 0 {
+        return Ok(false);
+    }
+    let payload = json!({
+        "origin": "planning_commitment",
+        "commitment_status": commitment_status,
+        "cleared_start": committed_start,
+        "cleared_end": committed_end,
+    })
+    .to_string();
+    emit_action_event(
+        tx,
+        wo_id,
+        "schedule_changed",
+        Some(actor_id),
+        Some(&from_code),
+        Some(&from_code),
+        Some(&payload),
+    )
+    .await?;
+    Ok(true)
+}

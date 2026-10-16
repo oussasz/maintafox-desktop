@@ -445,4 +445,48 @@ impl SiteWeekBook {
             .find(|(from, _)| *from <= day)
             .is_some_and(|(_, days)| days.contains(&weekday))
     }
+
+    /// The site's weekend in force on `day` (ISO weekdays, 1 = Monday); `None` when no row
+    /// applies yet.
+    pub fn weekend_on(&self, day: NaiveDate) -> Option<&[i64]> {
+        self.rows
+            .iter()
+            .rev()
+            .find(|(from, _)| *from <= day)
+            .map(|(_, days)| days.as_slice())
+    }
+}
+
+/// Active holidays of a site between two days (inclusive): its own, its parents' and the ones of
+/// every site.
+pub async fn site_holidays(
+    db: &impl ConnectionTrait,
+    entity_id: i64,
+    from: NaiveDate,
+    to: NaiveDate,
+) -> AppResult<Vec<NaiveDate>> {
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "WITH RECURSIVE ancestors(id, parent_id) AS ( \
+                SELECT id, parent_id FROM org_nodes WHERE id = ? \
+                UNION ALL \
+                SELECT n.id, n.parent_id FROM org_nodes n JOIN ancestors a ON n.id = a.parent_id \
+             ) \
+             SELECT DISTINCT holiday_date FROM work_calendar_holidays \
+             WHERE is_active = 1 AND holiday_date BETWEEN ? AND ? \
+               AND (entity_id IS NULL OR entity_id IN (SELECT id FROM ancestors)) \
+             ORDER BY holiday_date",
+            [entity_id.into(), from.to_string().into(), to.to_string().into()],
+        ))
+        .await?;
+    rows.iter()
+        .map(|r| {
+            let raw: String = r
+                .try_get("", "holiday_date")
+                .map_err(|e| decode_err("holiday_date", e))?;
+            NaiveDate::parse_from_str(raw.get(..10).unwrap_or(&raw), "%Y-%m-%d")
+                .map_err(|e| decode_err("holiday_date", e))
+        })
+        .collect()
 }

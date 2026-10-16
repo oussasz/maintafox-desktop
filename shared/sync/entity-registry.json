@@ -1895,6 +1895,41 @@
       "sync_status": "synced"
     },
     {
+      "entity_type": "weekly_schedules",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 4,
+      "parents": [
+        "org_nodes",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "weekly_schedule_events",
+      "scope": "tenant",
+      "conflict_policy": "append_only",
+      "apply_priority": 5,
+      "parents": [
+        "weekly_schedules",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "weekly_schedule_baseline_items",
+      "scope": "tenant",
+      "conflict_policy": "append_only",
+      "apply_priority": 15,
+      "parents": [
+        "weekly_schedules",
+        "schedule_commitments",
+        "teams",
+        "personnel"
+      ],
+      "sync_status": "synced"
+    },
+    {
       "entity_type": "schedule_details",
       "scope": "tenant",
       "conflict_policy": "operator_review",
