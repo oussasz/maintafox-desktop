@@ -26,6 +26,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { ErrorState } from "@/components/ui/data-state";
 import {
   Dialog,
   DialogContent,
@@ -115,11 +116,18 @@ const SECURITY_DOMAINS = new Set(["session", "password"]);
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-function parseJson(json: string): Record<string, unknown> {
+/** Values of a stored policy snapshot; null when the stored JSON is not a readable object. */
+export function parseSnapshotValues(
+  json: string | null | undefined,
+): Record<string, unknown> | null {
+  if (json == null) return {};
   try {
-    return JSON.parse(json) as Record<string, unknown>;
+    const parsed: unknown = JSON.parse(json);
+    return parsed != null && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
   } catch {
-    return {};
+    return null;
   }
 }
 
@@ -158,6 +166,7 @@ export function PolicyEditorPanel({
   const [activeSnapshot, setActiveSnapshot] = useState<PolicySnapshot | null>(null);
   const [history, setHistory] = useState<PolicySnapshot[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [editing, setEditing] = useState(false);
   const [discardOpen, setDiscardOpen] = useState(false);
   const [draftValues, setDraftValues] = useState<Record<string, unknown>>({});
@@ -182,10 +191,12 @@ export function PolicyEditorPanel({
 
   const loadData = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
+      // No snapshot yet is a normal state (null), not an error.
       const [snap, snapshots] = await Promise.all([
         getPolicySnapshot(domain),
-        listPolicySnapshots(domain).catch(() => [] as PolicySnapshot[]),
+        listPolicySnapshots(domain),
       ]);
       setActiveSnapshot(snap);
       setHistory(snapshots);
@@ -193,8 +204,8 @@ export function PolicyEditorPanel({
       // Look for existing draft in history
       const existingDraft = snapshots.find((s) => !s.is_active && !s.activated_at);
       setDraftPolicy(existingDraft ?? null);
-    } catch {
-      // snapshot may not exist yet
+    } catch (err) {
+      setLoadError(err);
     } finally {
       setLoading(false);
     }
@@ -204,14 +215,16 @@ export function PolicyEditorPanel({
     void loadData();
   }, [loadData]);
 
-  const activeValues = useMemo(
-    () => parseJson(activeSnapshot?.snapshot_json ?? "{}"),
+  const parsedActive = useMemo(
+    () => parseSnapshotValues(activeSnapshot?.snapshot_json),
     [activeSnapshot],
   );
-  const draftSnapshotValues = useMemo(
-    () => parseJson(draftPolicy?.snapshot_json ?? "{}"),
-    [draftPolicy],
-  );
+  const parsedDraft = useMemo(() => parseSnapshotValues(draftPolicy?.snapshot_json), [draftPolicy]);
+  // An unreadable stored policy is shown as such and cannot be edited (editing would start
+  // from blank values and overwrite it).
+  const snapshotUnreadable = parsedActive == null || parsedDraft == null;
+  const activeValues = useMemo(() => parsedActive ?? {}, [parsedActive]);
+  const draftSnapshotValues = useMemo(() => parsedDraft ?? {}, [parsedDraft]);
 
   const hasActiveSnapshot = activeSnapshot?.is_active === true;
 
@@ -385,8 +398,22 @@ export function PolicyEditorPanel({
     );
   }
 
+  if (loadError != null) {
+    return (
+      <ErrorState error={loadError} title={t("policy.loadError")} onRetry={() => void loadData()} />
+    );
+  }
+
   return (
     <div className="flex flex-1 flex-col gap-4 overflow-auto">
+      {snapshotUnreadable ? (
+        <p
+          role="alert"
+          className="rounded-md border border-tone-danger-border bg-tone-danger-bg px-3 py-2 text-sm text-tone-danger-fg"
+        >
+          {t("policy.unreadable")}
+        </p>
+      ) : null}
       {/* Status banner */}
       <div className="flex items-center gap-3 rounded-md border bg-muted/30 p-3">
         <Shield className="h-5 w-5 shrink-0 text-primary" />
@@ -577,7 +604,7 @@ export function PolicyEditorPanel({
           variant="outline"
           size="sm"
           onClick={handleEditDraft}
-          disabled={policyOperationLoading || editing}
+          disabled={policyOperationLoading || editing || snapshotUnreadable}
         >
           {t("policy.editDraft")}
         </Button>

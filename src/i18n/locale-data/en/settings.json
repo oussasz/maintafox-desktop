@@ -115,7 +115,8 @@
     "summary": "Summary",
     "changedAt": "Date",
     "changedBy": "By",
-    "stepUp": "Step-up"
+    "stepUp": "Step-up",
+    "loadError": "The change log could not be loaded."
   },
   "sidebar": {
     "search": "Search categories…"
@@ -170,7 +171,9 @@
       "retention_days": "Retention (days)",
       "include_photos": "Include Photos",
       "compression_level": "Compression Level"
-    }
+    },
+    "loadError": "The policy could not be loaded.",
+    "unreadable": "The stored policy is unreadable: it cannot be edited here. Contact support."
   },
   "permissionDenied": "You do not have permission to access settings",
   "options": {
@@ -352,6 +355,9 @@
       "backup.retention_weekly_other": "{{count}} weeks",
       "backup.retention_monthly_one": "{{count}} month",
       "backup.retention_monthly_other": "{{count}} months"
-    }
+    },
+    "currencyLoadError": "The currency list (Reference data › Currencies) could not be loaded: the currency cannot be changed.",
+    "currencyLoading": "Loading currencies…",
+    "historyLoadError": "The history of this setting could not be loaded."
   }
 }

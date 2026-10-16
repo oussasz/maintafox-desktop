@@ -28,6 +28,7 @@ import { useTranslation } from "react-i18next";
 import { Timeline } from "@/components/timeline";
 import type { TimelineEntry, TimelineTone } from "@/components/timeline";
 import { Button } from "@/components/ui/button";
+import { ErrorState } from "@/components/ui/data-state";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -156,6 +157,7 @@ export function AdminAuditTimeline({ fixedFilter, compact = false }: AdminAuditT
   const { t: tShell } = useTranslation("shell");
   const [events, setEvents] = useState<AdminChangeEventDetail[]>([]);
   const [facets, setFacets] = useState<AdminEventFacets | null>(null);
+  const [facetsError, setFacetsError] = useState<unknown>(null);
   const [filter, setFilter] = useState<FilterState>(EMPTY_FILTER);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
@@ -200,12 +202,20 @@ export function AdminAuditTimeline({ fixedFilter, compact = false }: AdminAuditT
     void loadEvents();
   }, [loadEvents]);
 
+  const loadFacets = useCallback(async () => {
+    setFacetsError(null);
+    try {
+      setFacets(await listAdminEventFacets());
+    } catch (err) {
+      setFacets(null);
+      setFacetsError(err);
+    }
+  }, []);
+
   useEffect(() => {
     if (compact) return;
-    listAdminEventFacets()
-      .then(setFacets)
-      .catch(() => setFacets(null));
-  }, [compact]);
+    void loadFacets();
+  }, [compact, loadFacets]);
 
   const handleExport = async () => {
     setExporting(true);
@@ -297,7 +307,8 @@ export function AdminAuditTimeline({ fixedFilter, compact = false }: AdminAuditT
       <Label htmlFor={id} className="text-xs text-text-secondary">
         {label}
       </Label>
-      <Select value={value} onValueChange={onChange}>
+      {/* The filter choices come from the ledger: disabled until they are loaded. */}
+      <Select value={value} onValueChange={onChange} disabled={facets == null}>
         <SelectTrigger id={id} className="h-9">
           <SelectValue />
         </SelectTrigger>
@@ -315,6 +326,14 @@ export function AdminAuditTimeline({ fixedFilter, compact = false }: AdminAuditT
 
   return (
     <div className="space-y-4">
+      {!compact && facetsError != null ? (
+        <ErrorState
+          error={facetsError}
+          title={t("console.audit.facetsLoadError")}
+          onRetry={() => void loadFacets()}
+          className="py-4"
+        />
+      ) : null}
       {!compact ? (
         <div className="space-y-3 rounded-lg border border-surface-border bg-surface-0 p-3">
           <div className="flex flex-wrap items-end gap-3">

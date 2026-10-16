@@ -115,7 +115,8 @@
     "summary": "Résumé",
     "changedAt": "Date",
     "changedBy": "Par",
-    "stepUp": "Élévation"
+    "stepUp": "Élévation",
+    "loadError": "Le journal des modifications n'a pas pu être chargé."
   },
   "sidebar": {
     "search": "Rechercher…"
@@ -170,7 +171,9 @@
       "retention_days": "Rétention (jours)",
       "include_photos": "Inclure les photos",
       "compression_level": "Niveau de compression"
-    }
+    },
+    "loadError": "La politique n'a pas pu être chargée.",
+    "unreadable": "La politique enregistrée est illisible : elle ne peut pas être modifiée ici. Contactez le support."
   },
   "permissionDenied": "Vous n'avez pas la permission d'accéder aux paramètres",
   "options": {
@@ -352,6 +355,9 @@
       "backup.retention_weekly_other": "{{count}} semaines",
       "backup.retention_monthly_one": "{{count}} mois",
       "backup.retention_monthly_other": "{{count}} mois"
-    }
+    },
+    "currencyLoadError": "La liste des devises (Données de référence › Devises) n'a pas pu être chargée : la devise ne peut pas être modifiée.",
+    "currencyLoading": "Chargement des devises…",
+    "historyLoadError": "L'historique de ce paramètre n'a pas pu être chargé."
   }
 }

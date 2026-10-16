@@ -13,6 +13,7 @@ import { DataTable } from "@/components/data/DataTable";
 import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
 import type { SmartFilterDef } from "@/components/filters/smart-filter-types";
 import { Button } from "@/components/ui/button";
+import { ErrorState } from "@/components/ui/data-state";
 import { StatusChip } from "@/components/ui/status-chip";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
@@ -47,6 +48,9 @@ export function UserListPanel() {
   const [roles, setRoles] = useState<AssignableRoleSummary[]>([]);
   const [nodes, setNodes] = useState<AssignableScopeNode[]>([]);
   const [loading, setLoading] = useState(true);
+  const [usersError, setUsersError] = useState<unknown>(null);
+  // Roles and sites feed the filters and the role assignment of an account.
+  const [choicesError, setChoicesError] = useState<unknown>(null);
 
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
@@ -73,10 +77,12 @@ export function UserListPanel() {
 
   const fetchUsers = useCallback(async () => {
     setLoading(true);
+    setUsersError(null);
     try {
       setUsers(await listUsers(filter));
-    } catch {
-      // The IPC layer reports the error.
+    } catch (err) {
+      setUsers([]);
+      setUsersError(err);
     } finally {
       setLoading(false);
     }
@@ -86,14 +92,20 @@ export function UserListPanel() {
     void fetchUsers();
   }, [fetchUsers]);
 
-  useEffect(() => {
-    listAssignableRoles()
-      .then(setRoles)
-      .catch(() => setRoles([]));
-    listAssignableScopeNodes()
-      .then(setNodes)
-      .catch(() => setNodes([]));
+  const fetchChoices = useCallback(async () => {
+    setChoicesError(null);
+    try {
+      const [r, n] = await Promise.all([listAssignableRoles(), listAssignableScopeNodes()]);
+      setRoles(r);
+      setNodes(n);
+    } catch (err) {
+      setChoicesError(err);
+    }
   }, []);
+
+  useEffect(() => {
+    void fetchChoices();
+  }, [fetchChoices]);
 
   const columns: ColumnDef<UserWithRoles>[] = useMemo(
     () => [
@@ -196,7 +208,7 @@ export function UserListPanel() {
     [t, formatDateTime, scopeLabel],
   );
 
-  const filters: SmartFilterDef[] = [
+  const allFilters: SmartFilterDef[] = [
     {
       id: "status",
       kind: "select",
@@ -243,6 +255,11 @@ export function UserListPanel() {
       allLabel: t("console.filters.all"),
     },
   ];
+  // Without the role / site lists, those filters are not offered (never an empty choice).
+  const filters =
+    choicesError != null
+      ? allFilters.filter((f) => f.id !== "role" && f.id !== "site")
+      : allFilters;
 
   return (
     <div className="space-y-4">
@@ -276,15 +293,32 @@ export function UserListPanel() {
       {siteFilter ? (
         <p className="text-xs text-text-secondary">{t("console.filters.siteHint")}</p>
       ) : null}
+      {choicesError != null ? (
+        <ErrorState
+          error={choicesError}
+          title={t("console.choicesLoadError")}
+          onRetry={() => void fetchChoices()}
+          className="py-4"
+        />
+      ) : null}
 
-      <DataTable
-        columns={columns}
-        data={users}
-        isLoading={loading}
-        skeletonRows={8}
-        pageSize={20}
-        onRowClick={(row) => setDetailUserId(row.id)}
-      />
+      {usersError != null ? (
+        <ErrorState
+          error={usersError}
+          title={t("console.usersLoadError")}
+          onRetry={() => void fetchUsers()}
+          retrying={loading}
+        />
+      ) : (
+        <DataTable
+          columns={columns}
+          data={users}
+          isLoading={loading}
+          skeletonRows={8}
+          pageSize={20}
+          onRowClick={(row) => setDetailUserId(row.id)}
+        />
+      )}
 
       <UserDetailDialog
         userId={detailUserId}
@@ -296,6 +330,7 @@ export function UserListPanel() {
         withStepUp={withStepUp}
         roles={roles}
         nodes={nodes}
+        choicesUnavailable={choicesError != null}
         currentUserId={currentUserId}
       />
 

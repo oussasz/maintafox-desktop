@@ -1,6 +1,7 @@
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import { useStepUp } from "@/hooks/use-step-up";
 import {
   getLockoutPolicy,
@@ -19,16 +20,17 @@ export function PasswordPolicyPanel() {
   const { t } = useTranslation("admin");
   const { withStepUp, StepUpDialogElement } = useStepUp();
   const [policy, setPolicy] = useState<PasswordPolicySettings | null>(null);
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
   const load = useCallback(async () => {
+    setLoadError(null);
     try {
-      const data = await getPasswordPolicy();
-      setPolicy(data);
-    } catch {
-      // keep previous data
+      setPolicy(await getPasswordPolicy());
+    } catch (err) {
+      setLoadError(err);
     }
   }, []);
 
@@ -56,13 +58,16 @@ export function PasswordPolicyPanel() {
     }
   };
 
-  if (!policy) {
+  if (loadError != null) {
     return (
-      <div className="flex h-32 items-center justify-center">
-        <div className="h-5 w-5 animate-spin rounded-full border-2 border-surface-3 border-t-primary" />
-      </div>
+      <ErrorState
+        error={loadError}
+        title={t("passwordPolicy.loadError")}
+        onRetry={() => void load()}
+      />
     );
   }
+  if (!policy) return <LoadingState />;
 
   const update = <K extends keyof PasswordPolicySettings>(key: K, val: PasswordPolicySettings[K]) =>
     setPolicy((p) => (p ? { ...p, [key]: val } : p));
@@ -154,17 +159,34 @@ export function LockoutPolicyPanel() {
   const { t } = useTranslation("admin");
   const { withStepUp, StepUpDialogElement } = useStepUp();
   const [policy, setPolicy] = useState<LockoutPolicySettings | null>(null);
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
-  useEffect(() => {
-    getLockoutPolicy()
-      .then(setPolicy)
-      .catch(() => setPolicy(null));
+  const load = useCallback(async () => {
+    setLoadError(null);
+    try {
+      setPolicy(await getLockoutPolicy());
+    } catch (err) {
+      setLoadError(err);
+    }
   }, []);
 
-  if (!policy) return null;
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  if (loadError != null) {
+    return (
+      <ErrorState
+        error={loadError}
+        title={t("lockoutPolicy.loadError")}
+        onRetry={() => void load()}
+      />
+    );
+  }
+  if (!policy) return <LoadingState />;
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();

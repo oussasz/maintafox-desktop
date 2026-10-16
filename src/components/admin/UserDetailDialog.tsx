@@ -60,6 +60,8 @@ interface UserDetailDialogProps {
   withStepUp: <T>(action: () => Promise<T>) => Promise<T>;
   roles: AssignableRoleSummary[];
   nodes: AssignableScopeNode[];
+  /** The role / site lists failed to load: assigning a role is not offered. */
+  choicesUnavailable?: boolean;
   currentUserId: number | null;
 }
 
@@ -87,6 +89,7 @@ export function UserDetailDialog({
   withStepUp,
   roles,
   nodes,
+  choicesUnavailable = false,
   currentUserId,
 }: UserDetailDialogProps) {
   const { t } = useTranslation("admin");
@@ -385,7 +388,12 @@ export function UserDetailDialog({
               <TabsContent value="roles" className="space-y-3 pt-4 text-sm">
                 <div className="flex items-center justify-between">
                   <p className="text-xs text-text-secondary">{t("console.roles.scopeHint")}</p>
-                  <Button size="sm" onClick={() => setAssignOpen(true)} disabled={!user.is_active}>
+                  <Button
+                    size="sm"
+                    onClick={() => setAssignOpen(true)}
+                    disabled={!user.is_active || choicesUnavailable}
+                    {...(choicesUnavailable ? { title: t("console.choicesLoadError") } : {})}
+                  >
                     <Plus className="mr-1.5 h-3.5 w-3.5" aria-hidden />
                     {t("console.roles.assign")}
                   </Button>

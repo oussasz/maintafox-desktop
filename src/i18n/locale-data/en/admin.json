@@ -306,7 +306,8 @@
     "saving": "Saving...",
     "saved": "Policy saved successfully.",
     "saveError": "Failed to save password policy.",
-    "minLengthHint": "At least 8 characters, at most 128."
+    "minLengthHint": "At least 8 characters, at most 128.",
+    "loadError": "The password policy could not be loaded."
   },
   "permissions": {
     "domains": "Domains",
@@ -496,7 +497,7 @@
     },
     "noGrants": "No emergency elevations.",
     "errors": {
-      "loadFailed": "Failed to load grants",
+      "loadFailed": "The emergency grants could not be loaded.",
       "grantFailed": "Failed to grant access",
       "revokeFailed": "Failed to revoke access",
       "reasonTooShort": "Reason must be at least 20 characters"
@@ -716,7 +717,8 @@
       "exportCsv": "Export CSV",
       "rangeInvalid": "The start date must be before the end date.",
       "firstN": "The {{count}} most recent events are shown; the CSV export contains every event of the filter.",
-      "count": "{{count}} event(s)"
+      "count": "{{count}} event(s)",
+      "facetsLoadError": "The log filter choices could not be loaded: the filters are disabled."
     },
     "roleEditor": {
       "new": "New",
@@ -753,8 +755,13 @@
       "chooseRole": "Choose a role",
       "module": "Module",
       "onlyIn": "Only in {{name}}",
-      "common": "In common"
-    }
+      "common": "In common",
+      "loadError": "The roles could not be loaded.",
+      "validationError": "The dependency check could not run. The server checks again when you save.",
+      "templateUnreadable": "This role template is unreadable: the role was not created. Choose another template or none."
+    },
+    "choicesLoadError": "The role and site lists could not be loaded: role and site filters and role assignment are unavailable.",
+    "usersLoadError": "The accounts could not be loaded."
   },
   "lockoutPolicy": {
     "title": "Account lockout",
@@ -764,6 +771,7 @@
     "progressive": "Progressive lock",
     "save": "Save lockout",
     "saved": "Lockout saved.",
-    "saveError": "Failed to save the lockout."
+    "saveError": "Failed to save the lockout.",
+    "loadError": "The lockout policy could not be loaded."
   }
 }

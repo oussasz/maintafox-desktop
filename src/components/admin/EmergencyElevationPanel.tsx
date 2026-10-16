@@ -12,6 +12,7 @@ import {
 import { DataTable } from "@/components/data/DataTable";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ErrorState } from "@/components/ui/data-state";
 import {
   Dialog,
   DialogContent,
@@ -115,6 +116,7 @@ export function EmergencyElevationPanel() {
   const [roles, setRoles] = useState<AssignableRoleSummary[]>([]);
   const [nodes, setNodes] = useState<AssignableScopeNode[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<unknown>(null);
 
   // Grant dialog state
   const [showGrant, setShowGrant] = useState(false);
@@ -129,6 +131,8 @@ export function EmergencyElevationPanel() {
   const [revokeTarget, setRevokeTarget] = useState<EmergencyGrantView | null>(null);
 
   const fetchData = useCallback(async () => {
+    setLoading(true);
+    setLoadError(null);
     try {
       const [grantsData, usersData, rolesData, nodesData] = await Promise.all([
         listEmergencyGrants(),
@@ -140,15 +144,13 @@ export function EmergencyElevationPanel() {
       setUsers(usersData);
       setRoles(rolesData);
       setNodes(nodesData);
-    } catch {
-      toast({
-        title: t("emergency.errors.loadFailed", "Failed to load grants"),
-        variant: "destructive",
-      });
+    } catch (err) {
+      // Shown in place of the table (never an empty list of grants).
+      setLoadError(err);
     } finally {
       setLoading(false);
     }
-  }, [t, toast]);
+  }, []);
 
   useEffect(() => {
     void fetchData();
@@ -367,6 +369,7 @@ export function EmergencyElevationPanel() {
         {can(P.ADM_USERS) && (
           <Button
             size="sm"
+            disabled={loading || loadError != null}
             onClick={() => {
               resetGrantForm();
               setShowGrant(true);
@@ -379,13 +382,22 @@ export function EmergencyElevationPanel() {
       </div>
 
       {/* Table */}
-      <DataTable<EmergencyGrantView, unknown>
-        columns={columns}
-        data={sortedGrants}
-        isLoading={loading}
-        skeletonRows={4}
-        pageSize={20}
-      />
+      {loadError != null ? (
+        <ErrorState
+          error={loadError}
+          title={t("emergency.errors.loadFailed")}
+          onRetry={() => void fetchData()}
+          retrying={loading}
+        />
+      ) : (
+        <DataTable<EmergencyGrantView, unknown>
+          columns={columns}
+          data={sortedGrants}
+          isLoading={loading}
+          skeletonRows={4}
+          pageSize={20}
+        />
+      )}
 
       {/* ── Grant Dialog ─────────────────────────────────────────────────── */}
       <Dialog open={showGrant} onOpenChange={(v) => !v && setShowGrant(false)}>
