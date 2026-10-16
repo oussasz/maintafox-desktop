@@ -695,9 +695,13 @@ async fn plant_settings_validate_audiences_delays_and_targets() {
     config::update_step(&db, level2.id, &step(90, "planner", None))
         .await
         .expect("update step");
-    config::add_step(&db, policy.id, &step(240, "permission", Some("adm.settings")))
-        .await
-        .expect("add");
+    config::add_step(
+        &db,
+        policy.id,
+        &step(240, "permission", Some(crate::rbac::permissions::ADM_SETTINGS)),
+    )
+    .await
+    .expect("add");
     let level1 = policy.steps.iter().find(|s| s.level_no == 1).expect("level 1");
     assert!(
         config::remove_step(&db, level1.id).await.is_err(),
@@ -1002,9 +1006,10 @@ async fn elevated_admins_hold_every_permission_for_routing_too() {
     let db = db().await;
     user(&db, 120, None).await;
     exec(&db, "UPDATE user_accounts SET is_admin = 1 WHERE id = 120", vec![]).await;
-    let holders = crate::notifications::router::permission_holder_user_ids(&db, "inv.manage", None)
-        .await
-        .expect("holders");
+    let holders =
+        crate::notifications::router::permission_holder_user_ids(&db, crate::rbac::permissions::INV_MANAGE, None)
+            .await
+            .expect("holders");
     assert!(holders.contains(&120));
     let admins = crate::auth::rbac::elevated_admin_user_ids(&db).await.expect("admins");
     assert!(admins.contains(&120));
