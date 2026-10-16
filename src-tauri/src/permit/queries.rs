@@ -1683,6 +1683,25 @@ async fn record_loto_card_print_in(
     Ok(job)
 }
 
+/// Lockout points still fitted: isolations applied whose lock removal is not verified yet (the
+/// close gate's condition), whatever the permit's status — a lock stays on the plant until its
+/// removal is verified. Returns `(permits, points)`.
+pub async fn isolation_locks_in_place(db: &impl ConnectionTrait) -> AppResult<(i64, i64)> {
+    let row = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT COUNT(DISTINCT pi.permit_id) AS permits, COUNT(*) AS points FROM permit_isolations pi \
+             WHERE pi.applied_at IS NOT NULL AND pi.removal_verified_at IS NULL"
+                .to_string(),
+        ))
+        .await?
+        .ok_or_else(|| AppError::SyncError("Failed to count isolation locks in place.".into()))?;
+    Ok((
+        row.try_get("", "permits").map_err(|e| decode_err("permits", e))?,
+        row.try_get("", "points").map_err(|e| decode_err("points", e))?,
+    ))
+}
+
 pub async fn list_open_permits_report(db: &impl ConnectionTrait) -> AppResult<Vec<WorkPermit>> {
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let rows = db

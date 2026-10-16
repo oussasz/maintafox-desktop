@@ -186,11 +186,7 @@ fn round_filter_sql(filter: &InspectionRoundSummaryFilter) -> AppResult<(String,
         values.extend(statuses.iter().cloned().map(sea_orm::Value::from));
     }
     if filter.overdue_only == Some(true) {
-        clauses.push(
-            "ir.status IN ('scheduled', 'released', 'in_progress') AND ir.scheduled_at IS NOT NULL \
-             AND julianday(ir.scheduled_at) < julianday('now')"
-                .to_string(),
-        );
+        clauses.push(super::insights::ROUND_OVERDUE_SQL.to_string());
     }
     if let Some(from) = filter.due_from.as_deref().filter(|s| !s.trim().is_empty()) {
         clauses.push("julianday(ir.scheduled_at) >= julianday(?)".to_string());

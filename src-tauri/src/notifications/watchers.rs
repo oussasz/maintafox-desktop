@@ -141,7 +141,7 @@ async fn category_severity(conn: &impl ConnectionTrait, category: &str) -> Resul
 }
 
 /// `(is_active, lead_time_minutes)` of the watcher's rule.
-async fn rule_of(conn: &impl ConnectionTrait, category: &str) -> Result<Option<(bool, Option<i64>)>> {
+pub(crate) async fn rule_of(conn: &impl ConnectionTrait, category: &str) -> Result<Option<(bool, Option<i64>)>> {
     let row = conn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,

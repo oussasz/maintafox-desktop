@@ -31,6 +31,7 @@ pub mod diagnostics;
 pub mod entitlements;
 pub mod errors;
 pub mod finance;
+pub mod home;
 pub mod inspection;
 pub mod inventory;
 pub mod jobs;
@@ -1065,13 +1066,13 @@ pub fn run() {
             commands::inspection::list_inspection_reliability_signals,
             commands::inspection::refresh_inspection_reliability_signals,
             // Ã¢â€â‚¬Ã¢â€â‚¬ Dashboard Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-            commands::dashboard::get_dashboard_kpis,
             commands::dashboard::get_dashboard_workload_chart,
             commands::dashboard::get_dashboard_layout,
             commands::dashboard::save_dashboard_layout,
             commands::dashboard::get_dashboard_di_status_chart,
-            commands::dashboard::get_dashboard_reliability_snapshot_summary,
-            commands::dashboard::get_dashboard_kpi_validation,
+            commands::home::get_home_my_work,
+            commands::home::get_home_planning,
+            commands::home::get_home_supervision,
             commands::dashboard::get_overview_kpis,
             commands::dashboard::get_overview_kpi_layout,
             commands::dashboard::save_overview_kpi_layout,

@@ -16,7 +16,6 @@ export const OVERVIEW_KPI_SEMANTIC_KEYS = {
   DATA_QUALITY: "DATA_QUALITY",
   STOCK_OUT: "STOCK_OUT",
   REORDER_ALERT: "REORDER_ALERT",
-  TOTAL_COST: "TOTAL_COST",
 } as const;
 
 export type OverviewKpiSemanticKey =
@@ -226,17 +225,6 @@ export const OVERVIEW_KPI_REGISTRY: OverviewKpiRegistryEntry[] = [
     drillPath: "/inventory",
     labelKey: "overviewKpi.reorderAlert",
     contextKey: "overviewKpi.contextInventory",
-  },
-  {
-    semanticKey: OVERVIEW_KPI_SEMANTIC_KEYS.TOTAL_COST,
-    catalogId: ANALYTICS_HUB_KPI_CATALOG_IDS.MAINTENANCE_COST,
-    permission: P.FIN_VIEW,
-    trendSense: "up-bad",
-    valueKind: "currency",
-    vizKind: "waterfall",
-    drillPath: "/analytics/dashboards",
-    labelKey: "overviewKpi.totalCost",
-    contextKey: "overviewKpi.contextCost",
   },
 ];
 

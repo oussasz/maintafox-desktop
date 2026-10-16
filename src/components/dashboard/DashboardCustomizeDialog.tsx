@@ -16,9 +16,10 @@ import { cn } from "@/lib/utils";
 import { saveDashboardLayout, saveOverviewKpiLayout } from "@/services/dashboard-service";
 import {
   DASHBOARD_WIDGET_IDS,
+  DASHBOARD_WIDGET_PERMISSIONS,
   type DashboardLayoutV1,
-  type DashboardWidgetLayoutEntry,
   DEFAULT_DASHBOARD_LAYOUT,
+  isDashboardWidgetId,
   mergeWithDefaultLayout,
 } from "@shared/dashboard-layout";
 import {
@@ -103,7 +104,7 @@ export function DashboardCustomizeDialog({
   onOverviewKpiSaved,
 }: DashboardCustomizeDialogProps) {
   const { t } = useTranslation("dashboard");
-  const { can } = usePermissions();
+  const { can, canAny } = usePermissions();
   const [draft, setDraft] = useState<DashboardLayoutV1>(() => cloneDashboardLayout(layout));
   const [kpiDraft, setKpiDraft] = useState<OverviewKpiLayoutEntry[]>([]);
   const [saving, setSaving] = useState(false);
@@ -120,12 +121,15 @@ export function DashboardCustomizeDialog({
     }
   }, [open, layout, overviewKpiLayout, allowedKpiIds]);
 
+  // Only the widgets the user may see are offered; the others keep their place.
+  const allowedWidget = useMemo(
+    () => (id: string) => isDashboardWidgetId(id) && canAny(...DASHBOARD_WIDGET_PERMISSIONS[id]),
+    [canAny],
+  );
+
   const orderedWidgets = useMemo(
-    () =>
-      [...draft.widgets]
-        .filter((w) => w.id !== DASHBOARD_WIDGET_IDS.RELIABILITY_SNAPSHOT)
-        .sort((a, b) => a.order - b.order),
-    [draft.widgets],
+    () => [...draft.widgets].filter((w) => allowedWidget(w.id)).sort((a, b) => a.order - b.order),
+    [draft.widgets, allowedWidget],
   );
 
   const orderedKpis = useMemo(() => [...kpiDraft].sort((a, b) => a.order - b.order), [kpiDraft]);
@@ -139,12 +143,10 @@ export function DashboardCustomizeDialog({
 
   const onMoveWidget = (index: number, dir: -1 | 1) => {
     setDraft((d) => {
-      const sorted = [...d.widgets]
-        .filter((w) => w.id !== DASHBOARD_WIDGET_IDS.RELIABILITY_SNAPSHOT)
-        .sort((a, b) => a.order - b.order);
-      const moved = reorderOrders(moveAtIndex(sorted, index, dir));
-      const other = d.widgets.filter((w) => w.id === DASHBOARD_WIDGET_IDS.RELIABILITY_SNAPSHOT);
-      return { ...d, widgets: [...moved, ...other] as DashboardWidgetLayoutEntry[] };
+      const sorted = [...d.widgets].sort((a, b) => a.order - b.order);
+      const shown = sorted.filter((w) => allowedWidget(w.id));
+      const others = sorted.filter((w) => !allowedWidget(w.id));
+      return { ...d, widgets: reorderOrders([...moveAtIndex(shown, index, dir), ...others]) };
     });
   };
 
@@ -176,11 +178,7 @@ export function DashboardCustomizeDialog({
   const onSave = async () => {
     setSaving(true);
     try {
-      const widgetsOrdered = reorderOrders(
-        [...draft.widgets]
-          .filter((w) => w.id !== DASHBOARD_WIDGET_IDS.RELIABILITY_SNAPSHOT)
-          .sort((a, b) => a.order - b.order),
-      );
+      const widgetsOrdered = reorderOrders([...draft.widgets].sort((a, b) => a.order - b.order));
       const pageLayout: DashboardLayoutV1 = {
         version: 1,
         widgets: widgetsOrdered,
@@ -202,6 +200,12 @@ export function DashboardCustomizeDialog({
 
   const labelForWidget = (id: string) => {
     switch (id) {
+      case DASHBOARD_WIDGET_IDS.MY_WORK:
+        return t("layout.labels.myWork");
+      case DASHBOARD_WIDGET_IDS.SUPERVISION:
+        return t("layout.labels.supervision");
+      case DASHBOARD_WIDGET_IDS.PLANNING:
+        return t("layout.labels.planning");
       case DASHBOARD_WIDGET_IDS.KPIS:
         return t("layout.labels.kpis");
       case DASHBOARD_WIDGET_IDS.WORKLOAD:

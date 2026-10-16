@@ -192,7 +192,7 @@ export async function triageSubmittedDi(
   }
 }
 
-const DiQueueCountsSchema = z.object({
+export const DiQueueCountsSchema = z.object({
   to_screen: z.number(),
   to_review: z.number(),
   awaiting_info: z.number(),

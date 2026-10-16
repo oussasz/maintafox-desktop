@@ -39,10 +39,13 @@
     "diCreated": "DI créées",
     "woCompleted": "OT terminées",
     "pmDue": "MP prévues",
-    "loading": "Chargement…",
-    "empty": "Pas encore assez de données",
     "ariaLabel": "Graphique charge de travail",
-    "openRamEvidence": "Ouvrir la qualité des données RAM (preuves)"
+    "sectionTitle": "Activité par jour",
+    "noSeries": "Vous n'avez accès à aucune des séries de ce graphique.",
+    "emptyPeriod_one": "Aucune activité le dernier jour.",
+    "emptyPeriod_other": "Aucune activité sur les {{count}} derniers jours.",
+    "empty": "Pas encore assez de données",
+    "loading": "Chargement…"
   },
   "quickActions": {
     "title": "Actions rapides",
@@ -68,10 +71,12 @@
       "danger": "Danger"
     },
     "labels": {
-      "kpis": "Bandeau KPI Vue d'ensemble",
-      "workload": "Graphique charge de travail",
-      "diStatus": "Répartition des DI par statut",
-      "reliability": "Instantanés KPI fiabilité (365 j)"
+      "kpis": "Indicateurs",
+      "workload": "Activité par jour",
+      "diStatus": "Demandes ouvertes par statut",
+      "myWork": "Mon travail",
+      "supervision": "Supervision",
+      "planning": "Planification"
     }
   },
   "overviewKpi": {
@@ -90,7 +95,6 @@
     "dataQuality": "Qualité des données",
     "stockOut": "Ruptures de stock",
     "reorderAlert": "Alertes réappro.",
-    "totalCost": "Coût maintenance",
     "contextOpenQueue": "File opérationnelle",
     "contextExecution": "Exécution active",
     "contextWoOverdue": "OT dépassant la fin planifiée",
@@ -100,7 +104,6 @@
     "contextFleet": "Instantané parc (30 j)",
     "contextCriticalAssets": "Équipements critiques hors service",
     "contextInventory": "Signaux inventaire",
-    "contextCost": "Coût OT clôturés (30 j)",
     "unit": {
       "di": "DI",
       "wo": "OT",
@@ -111,25 +114,234 @@
     "alertAttention": "Attention",
     "contextPmCompliance": "Réalisées dans leur fenêtre, 30 derniers jours"
   },
-  "dev": {
-    "kpiValidation": "Validation KPI (échantillons SQL)",
-    "kpiValidationHint": "Vérifier les totaux et les identifiants d’échantillon contre la base locale (développement uniquement)."
-  },
   "widgets": {
     "diStatus": {
-      "title": "DI par statut",
-      "empty": "Aucune demande d’intervention.",
-      "openList": "Ouvrir les demandes",
-      "aria": "Histogramme statuts DI"
+      "title": "Demandes ouvertes par statut",
+      "empty": "Aucune demande ouverte.",
+      "aria": "Histogramme statuts DI",
+      "section": "Demandes ouvertes",
+      "avgAge": "âge moyen {{days}} j",
+      "openQueue": "Ouvrir la file « {{status}} »",
+      "queuesAria": "Files de travail des demandes"
+    }
+  },
+  "home": {
+    "refresh": "Actualiser — {{title}}",
+    "staleTitle": "L'actualisation a échoué ; les chiffres affichés sont ceux du chargement précédent",
+    "layoutError": "La disposition enregistrée n'a pas pu être lue ; la disposition par défaut est affichée",
+    "nothingToShow": "Aucun panneau à afficher : vos droits n'ouvrent aucun des modules de l'accueil, ou vous les avez tous masqués (Personnaliser).",
+    "noPermission": "Vous n'avez pas accès à ce module.",
+    "definitionsAria": "Définitions — {{title}}",
+    "overdueBadge": "En retard",
+    "noUrgency": "Sans urgence",
+    "none": "—",
+    "hours": "{{value}} h",
+    "period": {
+      "label": "Période",
+      "days_one": "{{count}} j",
+      "days_other": "{{count}} j"
     },
-    "reliability": {
-      "title": "Instantanés fiabilité",
-      "subtitle": "Agrégats depuis reliability_kpi_snapshots (365 derniers jours).",
-      "openEvidence": "Qualité données RAM",
-      "snapshots": "Instantanés",
-      "dqScore": "Qualité données (moy.)",
-      "mtbf": "MTBF moy. (h)",
-      "events": "Événements défaillance"
+    "open": {
+      "workOrders": "Ordres de travail",
+      "requests": "Demandes",
+      "inspections": "Inspections",
+      "pm": "Maintenance préventive",
+      "planning": "Planification",
+      "inventory": "Stock",
+      "permits": "Permis",
+      "equipment": "Équipements"
+    },
+    "myWork": {
+      "title": "Mon travail",
+      "subtitle": "Ce qui vous est attribué, à jour à l'instant",
+      "wo": {
+        "title": "Mes OT",
+        "open": "À faire",
+        "overdue": "En retard",
+        "today": "Aujourd'hui",
+        "byUrgency": "Mes OT par urgence",
+        "listAria": "Mes OT les plus urgents",
+        "empty": "Aucun OT ne vous est attribué."
+      },
+      "di": {
+        "title": "Mes demandes",
+        "open": "Ouvertes",
+        "awaiting": "Attendent ma réponse"
+      },
+      "rounds": {
+        "title": "Mes tournées d'inspection",
+        "overdue": "En retard",
+        "today": "Aujourd'hui",
+        "next7": "7 prochains jours",
+        "listAria": "Mes tournées à faire",
+        "empty": "Aucune tournée à faire ne vous est attribuée.",
+        "notLinked": "Votre compte n'est relié à aucune fiche du personnel : aucune tournée ne peut vous être attribuée. Demandez à l'administrateur de relier votre compte (Personnel)."
+      },
+      "pm": {
+        "title": "Mes MP",
+        "overdue": "En retard",
+        "next7": "Dues sous 7 jours",
+        "listAria": "Mes occurrences de MP",
+        "empty": "Aucune MP en attente sur vos OT."
+      },
+      "notifications": {
+        "title": "Mes notifications",
+        "toAck": "À acquitter",
+        "unread": "Non lues"
+      }
+    },
+    "planning": {
+      "title": "Planification",
+      "subtitle": "Arriéré planifiable, charge de la semaine, respect du planning",
+      "backlog": {
+        "title": "Arriéré planifiable",
+        "ready": "Prêts",
+        "blocked": "Bloqués",
+        "blockedBy": "Travaux bloqués par cause",
+        "truncated": "L'arriéré compte au moins {{count}} travaux : les chiffres portent sur les {{count}} premiers lus par le tableau de planification."
+      },
+      "blocker": {
+        "parts": "Pièces",
+        "skills": "Compétences",
+        "permits": "Permis",
+        "windows": "Créneaux",
+        "prerequisites": "Prérequis"
+      },
+      "week": {
+        "title": "Semaine du {{from}} au {{to}}",
+        "load": "Charge / capacité",
+        "overloaded": "Jours-équipe surchargés",
+        "hoursOf": "{{committed}} engagées sur {{capacity}}",
+        "noCapacity": "Aucune heure",
+        "noTeams": "Aucune équipe active : la capacité ne peut pas être calculée."
+      },
+      "compliance": {
+        "title": "Respect du planning",
+        "value": "Respect (heures)",
+        "hint": "{{done}} réalisées sur {{scheduled}} engagées, {{count}} derniers jours",
+        "none_one": "Aucun engagement planifié ne s'est terminé le dernier jour.",
+        "none_other": "Aucun engagement planifié ne s'est terminé ces {{count}} derniers jours."
+      }
+    },
+    "supervision": {
+      "title": "Supervision",
+      "subtitle": "Demandes, OT, MP, stock, sécurité et équipements critiques",
+      "noModule": "Vous n'avez accès à aucun des modules de ce panneau.",
+      "di": {
+        "title": "Demandes et délais (SLA)",
+        "breached": "Délai dépassé",
+        "atRisk": "Délai menacé",
+        "onTrack": "Dans les délais",
+        "paused": "En pause",
+        "closing": "Respect à la clôture",
+        "closingHint_one": "{{met}} sur {{total}} clôturées, dernier jour",
+        "closingHint_other": "{{met}} sur {{total}} clôturées, {{count}} derniers jours",
+        "toScreen": "À trier",
+        "toReview": "À examiner",
+        "toApprove": "À approuver",
+        "noTarget_one": "{{count}} demande ouverte n'a pas d'objectif de délai (niveau d'urgence sans délai).",
+        "noTarget_other": "{{count}} demandes ouvertes n'ont pas d'objectif de délai (niveau d'urgence sans délai)."
+      },
+      "wo": {
+        "title": "Arriéré OT",
+        "open": "À réaliser",
+        "overdue": "En retard",
+        "planned": "Planifié",
+        "reactive": "Réactif",
+        "emergency": "Urgence",
+        "nature": "Nature",
+        "noNature": "Sans nature",
+        "matrixCaption": "OT à réaliser par nature de maintenance et par urgence",
+        "empty": "Aucun OT à réaliser."
+      },
+      "pm": {
+        "title": "Maintenance préventive",
+        "overdue": "En retard",
+        "today": "Dues aujourd'hui",
+        "next7": "Dues sous 7 jours",
+        "compliance": "Respect des MP",
+        "complianceHint_one": "{{done}} dans la fenêtre sur {{due}}, dernier jour",
+        "complianceHint_other": "{{done}} dans la fenêtre sur {{due}}, {{count}} derniers jours"
+      },
+      "stock": {
+        "title": "Stock à réapprovisionner",
+        "toReorder": "Lignes sous le seuil",
+        "out": "Ruptures",
+        "articles_one": "{{count}} article",
+        "articles_other": "{{count}} articles",
+        "line": "{{warehouse}} · disponible {{available}} · seuil {{threshold}}",
+        "outBadge": "Rupture",
+        "listAria": "Articles à réapprovisionner",
+        "empty": "Aucun article sous son seuil."
+      },
+      "safety": {
+        "title": "Sécurité : permis et consignations",
+        "open": "Permis ouverts",
+        "expiring": "Expirent bientôt",
+        "expired": "Expirés encore ouverts",
+        "locks": "Cadenas posés",
+        "within": "dans les {{hours}} h",
+        "noLead": "Aucun délai d'alerte défini (Données de référence → Notifications)",
+        "locksOn_one": "sur {{count}} permis",
+        "locksOn_other": "sur {{count}} permis",
+        "expiredBadge": "Expiré",
+        "expiringBadge": "Expire bientôt",
+        "listAria": "Permis à traiter"
+      },
+      "assets": {
+        "title": "Équipements critiques à l'arrêt",
+        "down": "Critiques à l'arrêt",
+        "noLevel": "aucun niveau défini",
+        "noDownStatus": "aucun statut marqué « à l'arrêt »",
+        "listAria": "Équipements critiques à l'arrêt",
+        "empty": "Aucun équipement critique à l'arrêt."
+      }
+    },
+    "indicators": {
+      "title": "Indicateurs",
+      "subtitle_one": "Valeur actuelle et évolution sur {{count}} jour",
+      "subtitle_other": "Valeur actuelle et évolution sur {{count}} jours"
+    },
+    "def": {
+      "myWoOpen": "OT dont vous êtes le responsable principal et dont le travail reste à faire (brouillon, planification, prêt, en cours, en attente).",
+      "woOverdue": "OT dont la fin planifiée est dépassée (même règle que le module OT).",
+      "myWoToday": "OT dont la période planifiée comprend aujourd'hui (jour local) et qui ne sont pas en retard.",
+      "myDiOpen": "Demandes que vous avez soumises, ni clôturées ni transformées en OT (file « Mes demandes »).",
+      "myDiAwaiting": "Vos demandes renvoyées pour complément : elles attendent votre réponse.",
+      "roundOverdue": "Tournées qui vous sont attribuées, à faire (planifiée, lancée, en cours) et dont l'heure prévue est passée (même règle que le module Inspections).",
+      "roundToday": "Tournées à faire prévues plus tard aujourd'hui (jour local).",
+      "roundNext7": "Tournées à faire prévues dans les 7 prochains jours, après aujourd'hui.",
+      "pmOverdue": "Occurrences de MP en attente dont la fin de la fenêtre de tolérance (ou l'échéance sans fenêtre) est dépassée (même règle que la page MP).",
+      "pmNext7": "Occurrences de MP en attente dues dans les 7 prochains jours.",
+      "pmToday": "Occurrences de MP en attente dues aujourd'hui.",
+      "pmCompliance": "Indicateur SMRP : occurrences réalisées dans leur fenêtre de tolérance ÷ occurrences dues sur la période dont le résultat est connu (annulées exclues) — le chiffre de la page MP.",
+      "toAck": "Notifications dont la règle demande un acquittement, non résolues et non encore acquittées.",
+      "unread": "Notifications de votre boîte non lues (le chiffre de la cloche).",
+      "backlogReady": "Travaux du tableau de planification sans blocage.",
+      "backlogBlocked": "Travaux du tableau de planification ayant au moins un blocage (pièces, compétences, permis, créneaux, prérequis).",
+      "weekLoad": "Heures de main-d'œuvre engagées cette semaine (lundi–dimanche) ÷ heures disponibles + heures supplémentaires des équipes actives, sur la semaine entière (jamais une moyenne de ratios journaliers).",
+      "weekOverloaded": "Jours-équipe de la semaine dont les heures engagées dépassent les heures disponibles (y compris les jours sans aucune heure).",
+      "scheduleCompliance": "Indicateur SMRP : heures engagées dont l'OT a été réalisé au plus tard le jour engagé ÷ heures engagées, pour les engagements finissant dans la période.",
+      "slaBreached": "Demandes ouvertes dont un délai (réponse ou résolution) est dépassé, temps en pause exclu (même règle que les listes DI).",
+      "slaAtRisk": "Demandes ouvertes ayant atteint le seuil d'escalade sans avoir dépassé le délai.",
+      "slaPaused": "Demandes ouvertes en attente du demandeur ou reportées : le délai est suspendu.",
+      "slaClosing": "Demandes clôturées sur la période (avec ou sans OT) dont aucun délai n'a été dépassé, pauses exclues ÷ demandes clôturées ayant un objectif.",
+      "backlogOpen": "OT dont le travail reste à faire (brouillon à en attente), par nature EN 13306 du type d'OT et par niveau d'urgence.",
+      "woOverdueAll": "OT dont la fin planifiée est dépassée et qui ne sont ni clôturés ni annulés (le chiffre du tableau de bord OT ; un OT terminé non clôturé compte).",
+      "planned": "OT de nature préventive ou d'amélioration (travail planifié au sens SMRP).",
+      "reactive": "OT de nature corrective (immédiate ou différée).",
+      "emergency": "OT de maintenance corrective immédiate (sous-ensemble du réactif).",
+      "stockReorder": "Lignes article × magasin dont le disponible est au plus le point de commande (ou sous le stock minimum) — la règle de réapprovisionnement du module Stock.",
+      "stockOut": "Parmi ces lignes, celles sans aucun disponible.",
+      "permitsOpen": "Permis délivrés, actifs ou suspendus et non expirés.",
+      "permitsExpiring": "Permis ouverts dont l'expiration tombe dans le délai d'alerte de la règle « Permis bientôt expiré » (Données de référence → Notifications).",
+      "permitsExpired": "Permis dont l'expiration est passée mais qui ne sont ni clôturés ni rendus.",
+      "locks": "Points d'isolement posés dont la dépose n'est pas encore vérifiée, quel que soit le statut du permis.",
+      "criticalDown": "Équipements du niveau de criticité le plus élevé de la liste de référence ({{level}}) dont le statut est marqué « à l'arrêt » ({{statuses}}).",
+      "diOpenByStatus": "Demandes ni clôturées ni transformées en OT, par statut, avec leur âge moyen depuis la soumission (le chiffre de la page DI).",
+      "chartDi": "Demandes soumises ce jour-là.",
+      "chartWo": "OT clôturés ce jour-là.",
+      "chartPm": "Occurrences de MP dues ce jour-là, annulées exclues."
     }
   }
 }

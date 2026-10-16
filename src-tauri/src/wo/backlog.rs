@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use crate::errors::{AppError, AppResult};
 
 /// Statuses whose work is still ahead (not finished, not abandoned).
-const OPEN_STATUS_SQL: &str = "('draft', 'planning', 'ready', 'in_progress', 'on_hold')";
+pub const OPEN_STATUS_SQL: &str = "('draft', 'planning', 'ready', 'in_progress', 'on_hold')";
 pub const MAX_WEEKS: i64 = 12;
 
 #[derive(Debug, Clone, Deserialize)]
