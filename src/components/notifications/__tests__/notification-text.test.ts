@@ -8,6 +8,7 @@ import {
   notificationText,
   tomorrowMorning,
 } from "@/components/notifications/notification-text";
+import { P } from "@shared/rbac/permissions.generated";
 
 const t = ((key: string, o?: Record<string, unknown>) =>
   o ? `${key}:${JSON.stringify(o)}` : key) as unknown as TFunction<"notifications">;
@@ -68,8 +69,8 @@ describe("notification text", () => {
   });
 
   it("explains permission and escalation reasons", () => {
-    expect(notificationReason({ reason_code: "permission", reason_ref: "inv.manage" }, t)).toBe(
-      'reason.permission:{"permission":"inv.manage"}',
+    expect(notificationReason({ reason_code: "permission", reason_ref: P.INV_MANAGE }, t)).toBe(
+      `reason.permission:{"permission":"${P.INV_MANAGE}"}`,
     );
     expect(notificationReason({ reason_code: "escalation", reason_ref: "2:60" }, t)).toBe(
       'reason.escalation:{"level":"2","minutes":"60"}',

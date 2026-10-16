@@ -154,8 +154,8 @@ mod tests {
     fn audiences_parse_named_and_permission_codes() {
         assert_eq!(parse_audience("planner"), Some(Audience::Named("planner")));
         assert_eq!(
-            parse_audience("permission:inv.manage"),
-            Some(Audience::Permission("inv.manage".into()))
+            parse_audience(&format!("permission:{}", crate::rbac::permissions::INV_MANAGE)),
+            Some(Audience::Permission(crate::rbac::permissions::INV_MANAGE.into()))
         );
         assert_eq!(parse_audience("permission:no.such"), None);
         assert_eq!(parse_audience("boss"), None);
@@ -171,8 +171,17 @@ mod tests {
         assert_eq!(rule_audiences(None, "reviewer"), vec![Audience::Named("reviewer")]);
         assert!(rule_audiences(None, "manual").is_empty());
         assert_eq!(
-            rule_audiences(Some(r#"["team","permission:ot.view"]"#), "assignee"),
-            vec![Audience::Named("team"), Audience::Permission("ot.view".into())]
+            rule_audiences(
+                Some(&format!(
+                    r#"["team","permission:{}"]"#,
+                    crate::rbac::permissions::OT_VIEW
+                )),
+                "assignee"
+            ),
+            vec![
+                Audience::Named("team"),
+                Audience::Permission(crate::rbac::permissions::OT_VIEW.into())
+            ]
         );
     }
 
