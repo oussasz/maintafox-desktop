@@ -1,203 +1,86 @@
+//! Notification IPC: the signed-in person's inbox and preferences, the OS toast and email
+//! channels, and the plant's notification settings (Données de référence → Notifications).
+
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::auth::rbac::{check_permission_cached, PermissionScope};
 use crate::errors::{AppError, AppResult};
-use crate::notifications::delivery;
+use crate::notifications::{config, delivery, inbox};
 use crate::state::AppState;
 use crate::{require_permission, require_session};
 
-#[derive(Debug, Deserialize)]
-pub struct NotificationFilterInput {
-    pub delivery_state: Option<String>,
-    pub category_code: Option<String>,
-    pub limit: Option<i64>,
-    pub offset: Option<i64>,
+async fn visible_modules(state: &AppState, user_id: i32) -> AppResult<Vec<String>> {
+    inbox::visible_modules(&state.db, &state.permission_cache, user_id).await
 }
 
-#[derive(Debug, Serialize)]
-pub struct NotificationSummary {
-    pub id: i64,
-    pub title: String,
-    pub body: Option<String>,
-    pub category_code: String,
-    pub severity: String,
-    pub delivery_state: String,
-    pub created_at: String,
-    pub read_at: Option<String>,
-    pub acknowledged_at: Option<String>,
-    pub action_url: Option<String>,
-    pub escalation_level: i64,
-    pub requires_ack: bool,
-}
-
-#[derive(Debug, Serialize)]
-pub struct UserPreferenceRow {
-    pub category_code: String,
-    pub label: String,
-    pub is_user_configurable: bool,
-    pub in_app_enabled: bool,
-    pub os_enabled: bool,
-    pub email_enabled: bool,
-    pub sms_enabled: bool,
-    pub digest_mode: String,
-    pub muted_until: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct UpdatePreferenceInput {
-    pub category_code: String,
-    pub in_app_enabled: Option<bool>,
-    pub os_enabled: Option<bool>,
-    pub email_enabled: Option<bool>,
-    pub sms_enabled: Option<bool>,
-    pub digest_mode: Option<String>,
-    pub muted_until: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct NotificationRuleDetail {
-    pub id: i64,
-    pub category_code: String,
-    pub category_label: String,
-    pub routing_mode: String,
-    pub requires_ack: bool,
-    pub dedupe_window_minutes: i64,
-    pub quiet_hours_policy_json: Option<String>,
-    pub escalation_policy_id: Option<i64>,
-    pub escalation_policy_name: Option<String>,
-    pub is_active: bool,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct UpdateNotificationRuleInput {
-    pub rule_id: i64,
-    pub routing_mode: Option<String>,
-    pub requires_ack: Option<bool>,
-    pub dedupe_window_minutes: Option<i64>,
-    pub is_active: Option<bool>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct NotificationCategory {
-    pub id: i64,
-    pub code: String,
-    pub label: String,
-    pub default_severity: String,
-    pub default_requires_ack: bool,
-    pub is_user_configurable: bool,
-}
-
+/// One page of the inbox (see `notifications::inbox` for the views and filters).
 #[tauri::command]
 pub async fn list_notifications(
-    filter: Option<NotificationFilterInput>,
+    filter: Option<inbox::InboxFilter>,
     state: State<'_, AppState>,
-) -> AppResult<Vec<NotificationSummary>> {
+) -> AppResult<Vec<inbox::InboxItem>> {
     let user = require_session!(state);
-
-    let filter = filter.unwrap_or(NotificationFilterInput {
-        delivery_state: None,
-        category_code: None,
-        limit: Some(50),
-        offset: Some(0),
-    });
-
-    let limit = filter.limit.unwrap_or(50).clamp(1, 200);
-    let offset = filter.offset.unwrap_or(0).max(0);
-
-    let mut sql = String::from(
-        "SELECT
-            n.id,
-            n.title,
-            n.body,
-            e.category_code,
-            e.severity,
-            n.delivery_state,
-            n.created_at,
-            n.read_at,
-            n.acknowledged_at,
-            n.action_url,
-            n.escalation_level,
-            COALESCE((
-                SELECT MAX(r2.requires_ack)
-                FROM notification_rules r2
-                WHERE r2.category_code = e.category_code
-                  AND r2.is_active = 1
-            ), 0) AS requires_ack
-         FROM notifications n
-         JOIN notification_events e ON e.id = n.notification_event_id
-         WHERE n.recipient_user_id = ?",
-    );
-    let mut params: Vec<sea_orm::Value> = vec![user.user_id.into()];
-
-    if let Some(category_code) = filter.category_code {
-        sql.push_str(" AND e.category_code = ?");
-        params.push(category_code.into());
-    }
-
-    if let Some(delivery_state) = filter.delivery_state {
-        if delivery_state == "unread" {
-            sql.push_str(" AND n.delivery_state IN ('delivered', 'escalated')");
-        } else {
-            sql.push_str(" AND n.delivery_state = ?");
-            params.push(delivery_state.into());
-        }
-    }
-
-    sql.push_str(" ORDER BY n.created_at DESC LIMIT ? OFFSET ?");
-    params.push(limit.into());
-    params.push(offset.into());
-
-    let rows = state
-        .db
-        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, sql, params))
-        .await?;
-
-    let mut items = Vec::with_capacity(rows.len());
-    for row in rows {
-        items.push(NotificationSummary {
-            id: row.try_get::<i64>("", "id").unwrap_or_default(),
-            title: row.try_get::<String>("", "title").unwrap_or_default(),
-            body: row.try_get::<Option<String>>("", "body").unwrap_or(None),
-            category_code: row.try_get::<String>("", "category_code").unwrap_or_default(),
-            severity: row.try_get::<String>("", "severity").unwrap_or_default(),
-            delivery_state: row.try_get::<String>("", "delivery_state").unwrap_or_default(),
-            created_at: row.try_get::<String>("", "created_at").unwrap_or_default(),
-            read_at: row.try_get::<Option<String>>("", "read_at").unwrap_or(None),
-            acknowledged_at: row.try_get::<Option<String>>("", "acknowledged_at").unwrap_or(None),
-            action_url: row.try_get::<Option<String>>("", "action_url").unwrap_or(None),
-            escalation_level: row.try_get::<i64>("", "escalation_level").unwrap_or_default(),
-            requires_ack: row.try_get::<i32>("", "requires_ack").unwrap_or(0) == 1,
-        });
-    }
-
-    Ok(items)
+    let modules = visible_modules(&state, user.user_id).await?;
+    inbox::list(
+        &state.db,
+        i64::from(user.user_id),
+        &modules,
+        &filter.unwrap_or_default(),
+    )
+    .await
 }
 
+/// Unread count of the bell (same condition as the inbox's unread view).
 #[tauri::command]
 pub async fn get_unread_count(state: State<'_, AppState>) -> AppResult<i64> {
     let user = require_session!(state);
-    let row = state
-        .db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT COUNT(*) AS cnt
-             FROM notifications
-             WHERE recipient_user_id = ?
-               AND delivery_state IN ('delivered', 'escalated')",
-            [user.user_id.into()],
-        ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("count query returned no row")))?;
+    let modules = visible_modules(&state, user.user_id).await?;
+    inbox::unread_count(&state.db, i64::from(user.user_id), &modules).await
+}
 
-    Ok(row.try_get::<i64>("", "cnt").unwrap_or(0))
+#[tauri::command]
+pub async fn get_notification_counts(state: State<'_, AppState>) -> AppResult<inbox::InboxCounts> {
+    let user = require_session!(state);
+    let modules = visible_modules(&state, user.user_id).await?;
+    inbox::counts(&state.db, i64::from(user.user_id), &modules).await
+}
+
+async fn visible(state: &AppState, user_id: i32, notification_id: i64) -> AppResult<()> {
+    let modules = visible_modules(state, user_id).await?;
+    inbox::ensure_visible(&state.db, i64::from(user_id), &modules, notification_id).await
 }
 
 #[tauri::command]
 pub async fn mark_notification_read(notification_id: i64, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
+    visible(&state, user.user_id, notification_id).await?;
     delivery::mark_as_read(&state.db, notification_id, i64::from(user.user_id)).await
+}
+
+#[tauri::command]
+pub async fn mark_notification_unread(notification_id: i64, state: State<'_, AppState>) -> AppResult<()> {
+    let user = require_session!(state);
+    visible(&state, user.user_id, notification_id).await?;
+    delivery::mark_as_unread(&state.db, notification_id, i64::from(user.user_id)).await
+}
+
+/// Marks read every unread notification matching the filter; returns how many.
+#[tauri::command]
+pub async fn mark_all_notifications_read(
+    filter: Option<inbox::InboxFilter>,
+    state: State<'_, AppState>,
+) -> AppResult<u64> {
+    let user = require_session!(state);
+    let modules = visible_modules(&state, user.user_id).await?;
+    inbox::mark_all_read(
+        &state.db,
+        i64::from(user.user_id),
+        &modules,
+        &filter.unwrap_or_default(),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -227,6 +110,7 @@ pub async fn acknowledge_notification(
         .unwrap_or(None);
 
     if recipient_user_id == Some(user_id) {
+        visible(&state, user.user_id, notification_id).await?;
         return delivery::acknowledge(&state.db, notification_id, user_id, note).await;
     }
 
@@ -245,45 +129,172 @@ pub async fn acknowledge_notification(
         ));
     }
 
-    state
-        .db
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "UPDATE notifications
-             SET delivery_state = 'acknowledged',
-                 acknowledged_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-             WHERE id = ?",
-            [notification_id.into()],
-        ))
-        .await?;
-
-    state
-        .db
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "INSERT INTO notification_acknowledgements
-                (notification_id, acknowledged_by_id, acknowledged_at, acknowledgement_note)
-             VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%SZ','now'), ?)",
-            [notification_id.into(), user_id.into(), note.into()],
-        ))
-        .await?;
-
-    Ok(())
+    delivery::record_acknowledgement(&state.db, notification_id, user_id, note).await
 }
 
+/// Snoozes until `snooze_until` (RFC 3339, within `delivery::MAX_SNOOZE_DAYS`).
 #[tauri::command]
 pub async fn snooze_notification(
     notification_id: i64,
-    snooze_minutes: i64,
+    snooze_until: String,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
     let user = require_session!(state);
-    if !(1..=480).contains(&snooze_minutes) {
-        return Err(AppError::ValidationFailed(vec![
-            "snooze_minutes must be within 1..=480".to_string(),
-        ]));
-    }
-    delivery::snooze(&state.db, notification_id, i64::from(user.user_id), snooze_minutes).await
+    let until = chrono::DateTime::parse_from_rfc3339(snooze_until.trim())
+        .map_err(|_| {
+            AppError::ValidationFailed(vec![
+                "GATE_NOTIFICATION_SNOOZE_INVALID: snooze_until must be an RFC 3339 time.".to_string(),
+            ])
+        })?
+        .with_timezone(&chrono::Utc);
+    visible(&state, user.user_id, notification_id).await?;
+    delivery::snooze_until(&state.db, notification_id, i64::from(user.user_id), until).await
+}
+
+#[tauri::command]
+pub async fn archive_notification(notification_id: i64, state: State<'_, AppState>) -> AppResult<()> {
+    let user = require_session!(state);
+    visible(&state, user.user_id, notification_id).await?;
+    delivery::set_archived(&state.db, notification_id, i64::from(user.user_id), true).await
+}
+
+#[tauri::command]
+pub async fn unarchive_notification(notification_id: i64, state: State<'_, AppState>) -> AppResult<()> {
+    let user = require_session!(state);
+    visible(&state, user.user_id, notification_id).await?;
+    delivery::set_archived(&state.db, notification_id, i64::from(user.user_id), false).await
+}
+
+#[derive(Debug, Serialize)]
+pub struct UserPreferenceRow {
+    pub category_code: String,
+    pub module_code: String,
+    pub label: String,
+    pub is_user_configurable: bool,
+    pub in_app_enabled: bool,
+    pub os_enabled: bool,
+    pub email_enabled: bool,
+    pub sms_enabled: bool,
+    pub digest_mode: String,
+    pub muted_until: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdatePreferenceInput {
+    pub category_code: String,
+    pub in_app_enabled: Option<bool>,
+    pub os_enabled: Option<bool>,
+    pub email_enabled: Option<bool>,
+    pub sms_enabled: Option<bool>,
+    pub digest_mode: Option<String>,
+    pub muted_until: Option<String>,
+}
+
+// ─── Plant settings (Données de référence → Notifications) ─────────────────────
+
+/// Rules, escalation steps and retention.
+#[tauri::command]
+pub async fn get_notification_config(state: State<'_, AppState>) -> AppResult<config::NotificationConfig> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::REF_VIEW,
+        PermissionScope::Global
+    );
+    config::load(&state.db).await
+}
+
+#[tauri::command]
+pub async fn update_notification_rule(
+    payload: config::UpdateRuleInput,
+    state: State<'_, AppState>,
+) -> AppResult<config::NotificationConfig> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::REF_MANAGE,
+        PermissionScope::Global
+    );
+    config::update_rule(&state.db, &payload).await?;
+    config::load(&state.db).await
+}
+
+#[tauri::command]
+pub async fn update_notification_escalation_step(
+    step_id: i64,
+    payload: config::EscalationStepInput,
+    state: State<'_, AppState>,
+) -> AppResult<config::NotificationConfig> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::REF_MANAGE,
+        PermissionScope::Global
+    );
+    config::update_step(&state.db, step_id, &payload).await?;
+    config::load(&state.db).await
+}
+
+#[tauri::command]
+pub async fn add_notification_escalation_step(
+    policy_id: i64,
+    payload: config::EscalationStepInput,
+    state: State<'_, AppState>,
+) -> AppResult<config::NotificationConfig> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::REF_MANAGE,
+        PermissionScope::Global
+    );
+    config::add_step(&state.db, policy_id, &payload).await?;
+    config::load(&state.db).await
+}
+
+#[tauri::command]
+pub async fn remove_notification_escalation_step(
+    step_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<config::NotificationConfig> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::REF_MANAGE,
+        PermissionScope::Global
+    );
+    config::remove_step(&state.db, step_id).await?;
+    config::load(&state.db).await
+}
+
+/// Sets how long notifications are kept (tenant setting `notifications.expiry_days`).
+#[tauri::command]
+pub async fn set_notification_retention(
+    expiry_days: i64,
+    state: State<'_, AppState>,
+) -> AppResult<config::NotificationConfig> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::REF_MANAGE,
+        PermissionScope::Global
+    );
+    config::validate_expiry_days(expiry_days)?;
+    crate::settings::set_setting(
+        &state.db,
+        crate::notifications::scheduler::EXPIRY_SETTING_KEY,
+        "tenant",
+        &expiry_days.to_string(),
+        Some(user.user_id),
+        "Notification retention changed",
+    )
+    .await?;
+    config::load(&state.db).await
 }
 
 #[tauri::command]
@@ -295,6 +306,7 @@ pub async fn get_notification_preferences(state: State<'_, AppState>) -> AppResu
             DbBackend::Sqlite,
             "SELECT
                 c.code AS category_code,
+                COALESCE(c.module_code, '') AS module_code,
                 c.label,
                 c.is_user_configurable,
                 COALESCE(p.in_app_enabled, 1) AS in_app_enabled,
@@ -307,7 +319,8 @@ pub async fn get_notification_preferences(state: State<'_, AppState>) -> AppResu
              LEFT JOIN notification_preferences p
                 ON p.category_code = c.code
                AND p.user_id = ?
-             ORDER BY c.code",
+             WHERE c.is_offered = 1
+             ORDER BY c.module_code, c.code",
             [user.user_id.into()],
         ))
         .await?;
@@ -316,6 +329,7 @@ pub async fn get_notification_preferences(state: State<'_, AppState>) -> AppResu
     for row in rows {
         prefs.push(UserPreferenceRow {
             category_code: row.try_get::<String>("", "category_code").unwrap_or_default(),
+            module_code: row.try_get::<String>("", "module_code").unwrap_or_default(),
             label: row.try_get::<String>("", "label").unwrap_or_default(),
             is_user_configurable: row.try_get::<i32>("", "is_user_configurable").unwrap_or(1) == 1,
             in_app_enabled: row.try_get::<i32>("", "in_app_enabled").unwrap_or(1) == 1,
@@ -341,7 +355,7 @@ pub async fn update_notification_preference(
         .db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT is_user_configurable FROM notification_categories WHERE code = ?",
+            "SELECT is_user_configurable FROM notification_categories WHERE code = ? AND is_offered = 1",
             [payload.category_code.clone().into()],
         ))
         .await?
@@ -458,171 +472,6 @@ pub async fn update_notification_preference(
         .await?;
 
     Ok(())
-}
-
-#[tauri::command]
-pub async fn list_notification_rules(state: State<'_, AppState>) -> AppResult<Vec<NotificationRuleDetail>> {
-    let user = require_session!(state);
-    require_permission!(
-        state,
-        &user,
-        crate::rbac::permissions::ADM_SETTINGS,
-        PermissionScope::Global
-    );
-
-    let rows = state
-        .db
-        .query_all(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT
-                r.id,
-                r.category_code,
-                c.label AS category_label,
-                r.routing_mode,
-                r.requires_ack,
-                r.dedupe_window_minutes,
-                r.quiet_hours_policy_json,
-                r.escalation_policy_id,
-                p.name AS escalation_policy_name,
-                r.is_active
-             FROM notification_rules r
-             JOIN notification_categories c ON c.code = r.category_code
-             LEFT JOIN notification_escalation_policies p ON p.id = r.escalation_policy_id
-             ORDER BY r.category_code"
-                .to_string(),
-        ))
-        .await?;
-
-    let mut rules = Vec::with_capacity(rows.len());
-    for row in rows {
-        rules.push(NotificationRuleDetail {
-            id: row.try_get::<i64>("", "id").unwrap_or_default(),
-            category_code: row.try_get::<String>("", "category_code").unwrap_or_default(),
-            category_label: row.try_get::<String>("", "category_label").unwrap_or_default(),
-            routing_mode: row.try_get::<String>("", "routing_mode").unwrap_or_default(),
-            requires_ack: row.try_get::<i32>("", "requires_ack").unwrap_or(0) == 1,
-            dedupe_window_minutes: row.try_get::<i64>("", "dedupe_window_minutes").unwrap_or(60),
-            quiet_hours_policy_json: row
-                .try_get::<Option<String>>("", "quiet_hours_policy_json")
-                .unwrap_or(None),
-            escalation_policy_id: row.try_get::<Option<i64>>("", "escalation_policy_id").unwrap_or(None),
-            escalation_policy_name: row
-                .try_get::<Option<String>>("", "escalation_policy_name")
-                .unwrap_or(None),
-            is_active: row.try_get::<i32>("", "is_active").unwrap_or(1) == 1,
-        });
-    }
-
-    Ok(rules)
-}
-
-#[tauri::command]
-pub async fn update_notification_rule(
-    payload: UpdateNotificationRuleInput,
-    state: State<'_, AppState>,
-) -> AppResult<()> {
-    let user = require_session!(state);
-    require_permission!(
-        state,
-        &user,
-        crate::rbac::permissions::ADM_SETTINGS,
-        PermissionScope::Global
-    );
-
-    if let Some(ref routing_mode) = payload.routing_mode {
-        if !matches!(
-            routing_mode.as_str(),
-            "assignee" | "reviewer" | "role" | "team" | "entity_manager" | "watcher" | "manual"
-        ) {
-            return Err(AppError::ValidationFailed(vec![
-                "routing_mode must be one of: assignee/reviewer/role/team/entity_manager/watcher/manual".to_string(),
-            ]));
-        }
-    }
-
-    if let Some(v) = payload.dedupe_window_minutes {
-        if !(1..=10080).contains(&v) {
-            return Err(AppError::ValidationFailed(vec![
-                "dedupe_window_minutes must be within 1..=10080".to_string(),
-            ]));
-        }
-    }
-
-    let mut set_parts: Vec<String> = Vec::new();
-    let mut values: Vec<sea_orm::Value> = Vec::new();
-
-    if let Some(routing_mode) = payload.routing_mode {
-        set_parts.push("routing_mode = ?".to_string());
-        values.push(routing_mode.into());
-    }
-    if let Some(requires_ack) = payload.requires_ack {
-        set_parts.push("requires_ack = ?".to_string());
-        values.push((if requires_ack { 1 } else { 0 }).into());
-    }
-    if let Some(dedupe) = payload.dedupe_window_minutes {
-        set_parts.push("dedupe_window_minutes = ?".to_string());
-        values.push(dedupe.into());
-    }
-    if let Some(is_active) = payload.is_active {
-        set_parts.push("is_active = ?".to_string());
-        values.push((if is_active { 1 } else { 0 }).into());
-    }
-
-    if set_parts.is_empty() {
-        return Ok(());
-    }
-
-    values.push(payload.rule_id.into());
-    let sql = format!("UPDATE notification_rules SET {} WHERE id = ?", set_parts.join(", "));
-    let update_res = state
-        .db
-        .execute(Statement::from_sql_and_values(DbBackend::Sqlite, sql, values))
-        .await?;
-
-    if update_res.rows_affected() == 0 {
-        return Err(AppError::NotFound {
-            entity: "notification_rule".to_string(),
-            id: payload.rule_id.to_string(),
-        });
-    }
-
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn list_notification_categories(state: State<'_, AppState>) -> AppResult<Vec<NotificationCategory>> {
-    let user = require_session!(state);
-    require_permission!(
-        state,
-        &user,
-        crate::rbac::permissions::ADM_SETTINGS,
-        PermissionScope::Global
-    );
-
-    let rows = state
-        .db
-        .query_all(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT id, code, label, default_severity, default_requires_ack, is_user_configurable
-             FROM notification_categories
-             ORDER BY code"
-                .to_string(),
-        ))
-        .await?;
-
-    let mut categories = Vec::with_capacity(rows.len());
-    for row in rows {
-        categories.push(NotificationCategory {
-            id: row.try_get::<i64>("", "id").unwrap_or_default(),
-            code: row.try_get::<String>("", "code").unwrap_or_default(),
-            label: row.try_get::<String>("", "label").unwrap_or_default(),
-            default_severity: row.try_get::<String>("", "default_severity").unwrap_or_default(),
-            default_requires_ack: row.try_get::<i32>("", "default_requires_ack").unwrap_or(0) == 1,
-            is_user_configurable: row.try_get::<i32>("", "is_user_configurable").unwrap_or(1) == 1,
-        });
-    }
-
-    Ok(categories)
 }
 
 /// Notifications to toast for the signed-in user (see `notifications::os_toast`). Without

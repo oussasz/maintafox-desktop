@@ -61,3 +61,14 @@ describe("resolveNotificationLink", () => {
     expect(resolveNotificationLink("javascript:alert(1)")).toBeNull();
   });
 });
+
+describe("resolveNotificationLink — records raised by the condition watchers", () => {
+  it("keeps the deep links the pages read and the sync center link", () => {
+    expect(resolveNotificationLink("/inspections?openRound=5")?.path).toBe(
+      "/inspections?openRound=5",
+    );
+    expect(resolveNotificationLink("/inventory?articleId=9")?.path).toBe("/inventory?articleId=9");
+    expect(resolveNotificationLink("/permits?permit=3")?.path).toBe("/permits?permit=3");
+    expect(resolveNotificationLink("/sync-center")).toEqual({ path: "/sync-center", exact: true });
+  });
+});

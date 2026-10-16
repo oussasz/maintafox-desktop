@@ -303,7 +303,9 @@
       "articleFamilies": "Stock article families",
       "taxCategories": "Article VAT categories",
       "woStatuses": "Work-order statuses",
-      "urgencyScale": "Urgency scale (requests / work orders)"
+      "urgencyScale": "Urgency scale (requests / work orders)",
+      "notificationRules": "Notifications (recipients and escalation)",
+      "notificationCategories": "Notification categories"
     }
   },
   "combobox": {

@@ -17,6 +17,7 @@ import { useNavigate, Link } from "react-router-dom";
 
 import { MaintafoxWordmark } from "@/components/branding/MaintafoxWordmark";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
+import { OPEN_SYNC_CENTER_EVENT } from "@/components/notifications/notification-links";
 import { CommandPalette } from "@/components/shell/CommandPalette";
 import { SyncCenterModal } from "@/components/sync/SyncCenterModal";
 import { useDeviceTrustStatus } from "@/hooks/use-device-trust-status";
@@ -44,6 +45,13 @@ export function TopBar() {
   const rejectedOutbox = useSyncOrchestratorStore((s) => s.rejectedOutboxCount);
   const syncNeedsAttention = syncConflicts > 0 || rejectedOutbox > 0;
   const userMenuRef = useRef<HTMLDivElement>(null);
+
+  // A synchronisation-conflict notification opens the sync center (`notification-links`).
+  useEffect(() => {
+    const open = () => setSyncCenterOpen(true);
+    window.addEventListener(OPEN_SYNC_CENTER_EVENT, open);
+    return () => window.removeEventListener(OPEN_SYNC_CENTER_EVENT, open);
+  }, []);
 
   // Ctrl+K / ⌘K global shortcut for command palette
   useEffect(() => {

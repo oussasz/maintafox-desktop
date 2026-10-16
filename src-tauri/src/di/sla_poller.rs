@@ -6,7 +6,7 @@
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use tokio::time::{interval, Duration};
 
-use crate::notifications::emitter::{emit_device_event, NotificationEventInput};
+use crate::notifications::emitter::{emit_device_event_with, NotificationEventInput, NotificationMessage};
 
 use super::domain::{map_intervention_request, IR_COLS, IR_JOINS, IR_JOIN_COLS};
 use super::sla::{compute_sla_status, mark_resolution_breach_notified, mark_response_breach_notified};
@@ -148,7 +148,16 @@ async fn emit_breach(
         let identity = crate::sync::identity::optional_entity_sync_id(&txn, "intervention_requests", di.id)
             .await?
             .map(|sync_id| format!("di_sla_breach|{kind}|{sync_id}"));
-        emit_device_event(
+        let message = NotificationMessage::new(
+            if kind == "response" {
+                "di_sla_breach_response"
+            } else {
+                "di_sla_breach_resolution"
+            },
+            serde_json::json!({ "code": di.code, "title": di.title, "deadline": deadline }),
+        )
+        .with_urgency(super::notifications::di_urgency(di));
+        emit_device_event_with(
             &txn,
             NotificationEventInput {
                 source_module: "intervention_requests".into(),
@@ -160,9 +169,10 @@ async fn emit_breach(
                 payload_json: Some(payload.to_string()),
                 title,
                 body: Some(body),
-                action_url: Some(format!("/requests?di={}", di.id)),
+                action_url: Some(format!("/requests?openDi={}", di.id)),
             },
             identity.as_deref(),
+            Some(&message),
         )
         .await?;
         crate::sync::capture::end_suppression(&txn).await?;

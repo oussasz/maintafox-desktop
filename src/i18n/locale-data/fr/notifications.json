@@ -1,8 +1,15 @@
 {
   "bell": {
     "title": "Notifications",
-    "aria": "Notifications ({{count}})",
-    "unread": "{{count}} non lue(s)"
+    "aria": "Notifications ({{count}} non lues)",
+    "unread": "{{count}} non lue(s)",
+    "toAcknowledge": "{{count}} à acquitter",
+    "openInbox": "Ouvrir la boîte de réception"
+  },
+  "page": {
+    "title": "Notifications",
+    "description": "Ce qui demande votre attention : travaux affectés et en retard, demandes à examiner, PM et rondes manquées, stock et permis.",
+    "preferences": "Mes préférences"
   },
   "osToast": {
     "summaryTitle_one": "{{count}} nouvelle notification",
@@ -12,90 +19,333 @@
   },
   "preferences": {
     "title": "Préférences de notification",
+    "intro": "Choisissez ce que vous recevez et comment. Vos notifications sont dans la",
+    "openInbox": "boîte de réception",
     "loading": "Chargement des préférences…",
     "categories_one": "{{count}} catégorie",
     "categories_other": "{{count}} catégories",
-    "systemManaged": "Géré par le système",
+    "systemManaged": "Liée à la sécurité : toujours transmise",
     "col": {
       "category": "Catégorie",
-      "inApp": "Dans l'application",
-      "os": "Notification système",
+      "inApp": "Recevoir",
+      "os": "Alerte système",
       "email": "E-mail",
-      "sms": "SMS",
-      "digest": "Résumé",
+      "digest": "Envoi",
       "muteUntil": "Silence jusqu'au"
     },
     "digest": {
       "instant": "Immédiat",
       "daily_digest": "Résumé quotidien",
-      "off": "Dans l'application uniquement"
+      "off": "Dans l'application seulement"
     },
-    "digestHelp": "Immédiat : affiché et envoyé dès que l'événement se produit. Résumé quotidien : conservé dans la boîte de réception, puis un résumé des notifications non lues de la journée le lendemain (affiché et envoyé par e-mail comme la catégorie « Daily Digest »). Dans l'application uniquement : conservé dans la boîte de réception, sans alerte, e-mail ni résumé. Les journées suivent le fuseau horaire de cet ordinateur.",
+    "receiveHelp": "Recevoir : désactivez une catégorie pour ne plus la recevoir du tout. Les catégories marquées d'un cadenas concernent la sécurité et sont toujours transmises.",
+    "digestHelp": "Immédiat : affichée et envoyée dès qu'elle survient. Résumé quotidien : conservée dans la boîte de réception, puis un résumé des notifications non lues de chaque journée le lendemain (sur les 7 derniers jours au plus, affiché et envoyé par e-mail comme la catégorie « Résumé quotidien »). Dans l'application seulement : conservée dans la boîte de réception, sans alerte, e-mail ni résumé. Les journées suivent le fuseau horaire de cet ordinateur. Silence jusqu'au : pas d'alerte ni d'e-mail pour la catégorie jusqu'à cette date.",
     "emailUnavailable": {
       "server_endpoint_not_enabled": "L'e-mail n'est pas encore disponible : le serveur Maintafox n'a pas activé l'envoi d'e-mails pour votre organisation.",
-      "licence_blocked": "L'e-mail n'est pas disponible : votre licence ne l'autorise pas dans son état actuel.",
+      "licence_blocked": "L'e-mail n'est pas disponible : votre licence ne le permet pas dans son état actuel.",
       "device_not_activated": "L'e-mail n'est pas disponible : cet appareil n'est pas activé.",
       "unknown": "L'e-mail n'est pas disponible : {{message}}"
-    },
-    "smsUnavailable": "Les SMS ne sont pas disponibles dans cette version."
+    }
   },
   "inbox": {
-    "tabsAria": "Filtrer les notifications",
+    "tabsAria": "Vues des notifications",
+    "listAria": "Notifications",
     "tabs": {
-      "all": "Toutes",
+      "inbox": "Boîte de réception",
       "unread": "Non lues",
-      "escalated": "Escaladées",
-      "snoozed": "Reportées"
+      "to_acknowledge": "À acquitter",
+      "snoozed": "Reportées",
+      "archived": "Archivées"
     },
     "empty": {
-      "all": "Aucune notification pour le moment.",
+      "inbox": "Votre boîte de réception est vide.",
       "unread": "Aucune notification non lue.",
-      "escalated": "Aucune notification escaladée.",
-      "snoozed": "Aucune notification reportée."
+      "to_acknowledge": "Rien n'attend votre acquittement.",
+      "snoozed": "Aucune notification reportée.",
+      "archived": "Aucune notification archivée."
     },
+    "emptyFiltered": "Aucune notification ne correspond à ces filtres.",
     "loading": "Chargement des notifications…",
-    "loadError": "Les notifications n’ont pas pu être chargées",
-    "retryMore": "Charger la suite",
+    "loadError": "Les notifications n'ont pas pu être chargées",
+    "retryMore": "Réessayer",
+    "loadMore": "Afficher plus",
     "openAria": "Ouvrir la fiche de « {{title}} »",
+    "unreadMark": "Non lue :",
+    "newArrivals_one": "Nouvelle notification. {{count}} non lue(s).",
+    "newArrivals_other": "Nouvelles notifications. {{count}} non lue(s).",
+    "markedAll_one": "{{count}} notification marquée comme lue.",
+    "markedAll_other": "{{count}} notifications marquées comme lues.",
+    "urgencyTitle": "Urgence du travail (échelle commune DI / OT)",
+    "escalated": "Escaladée · niveau {{level}}",
+    "resolved": "Résolue",
+    "acknowledged": "Acquittée",
+    "acknowledgedBy": "Acquittée par {{name}}",
+    "ackRequired": "À acquitter",
+    "snoozedUntil": "Reportée jusqu'au {{when}}",
+    "groupByObject": "Regrouper par fiche",
+    "groupCount_one": "({{count}} notification)",
+    "groupCount_other": "({{count}} notifications)",
     "actions": {
       "markRead": "Marquer comme lue",
-      "acknowledge": "Accuser réception",
-      "snooze": "Reporter de {{hours}} h"
+      "markUnread": "Marquer comme non lue",
+      "acknowledge": "Acquitter",
+      "snooze": "Reporter",
+      "archive": "Archiver",
+      "unarchive": "Remettre dans la boîte",
+      "markAllRead": "Tout marquer comme lu"
+    },
+    "snooze": {
+      "oneHour": "Pendant 1 heure",
+      "fourHours": "Pendant 4 heures",
+      "tomorrow": "Jusqu'à demain 08:00"
     }
+  },
+  "filters": {
+    "module": "Module",
+    "allModules": "Tous les modules",
+    "severity": "Gravité",
+    "allSeverities": "Toutes les gravités",
+    "from": "Du",
+    "to": "Au",
+    "clear": "Effacer les filtres"
+  },
+  "module": {
+    "di": "Demandes d'intervention",
+    "ot": "Ordres de travail",
+    "pm": "Maintenance préventive",
+    "ins": "Inspections",
+    "inv": "Stock",
+    "ptw": "Permis de travail",
+    "per": "Personnel",
+    "plan": "Planification",
+    "fin": "Budget",
+    "sync": "Synchronisation",
+    "system": "Maintafox"
+  },
+  "severity": {
+    "info": "Information",
+    "warning": "Avertissement",
+    "critical": "Critique"
+  },
+  "reason": {
+    "assignee": "Vous êtes responsable de ce travail.",
+    "requester": "Vous avez demandé ce travail.",
+    "planner": "Vous planifiez ce travail.",
+    "reviewer": "Vous examinez cette demande.",
+    "submitter": "Vous avez émis cette demande.",
+    "watcher": "Vous suivez cette fiche.",
+    "team": "Votre équipe est affectée.",
+    "team_lead": "Vous dirigez l'équipe affectée.",
+    "supervisor": "Vous encadrez la personne concernée.",
+    "entity_manager": "Vous êtes responsable de ce site / secteur.",
+    "permission": "Vous détenez l'autorisation {{permission}}.",
+    "escalation": "Escaladée vers vous (niveau {{level}}) : non acquittée {{minutes}} min après l'alerte.",
+    "digest": "Votre résumé quotidien.",
+    "other": "Envoyée par une règle de notification."
   },
   "deliveryState": {
     "pending": "En attente",
     "delivered": "Nouvelle",
     "read": "Lue",
-    "acknowledged": "Prise en compte",
+    "acknowledged": "Acquittée",
     "escalated": "Escaladée",
     "snoozed": "Reportée",
     "expired": "Expirée",
-    "closed": "Close",
+    "closed": "Clôturée",
     "other": "Autre"
   },
   "category": {
     "other": "Autre",
-    "budget_control_alert": "Alerte budget",
-    "cert_expiry": "Expiration de certification",
-    "daily_digest": "Récapitulatif du jour",
+    "budget_control_alert": "Alerte budgétaire",
+    "cert_expiry": "Échéance d'habilitation",
+    "daily_digest": "Résumé quotidien",
     "di_approved": "Demande approuvée",
     "di_closed": "Demande clôturée",
     "di_converted": "Demande convertie en OT",
-    "di_deferred": "Demande reportée",
+    "di_deferred": "Demande différée",
     "di_pending_review": "Demande à examiner",
-    "di_returned": "Demande renvoyée pour précision",
-    "di_sla_breach": "Délai (SLA) de demande dépassé",
-    "integration_failure": "Échec d’intégration",
-    "personnel_critical_block": "Manque critique de personnel",
-    "pm_deferred": "PM reportée",
-    "pm_due": "PM bientôt due",
-    "pm_follow_up_created": "Suivi de PM créé",
+    "di_returned": "Demande renvoyée pour précisions",
+    "di_sla_breach": "Délai de demande dépassé",
+    "inspection_round_missed": "Ronde d'inspection manquée",
+    "integration_failure": "Échec d'intégration",
+    "personnel_critical_block": "Indisponibilité critique",
+    "planning": {
+      "schedule": "Programme de planification"
+    },
+    "pm_deferred": "PM différée",
+    "pm_due": "PM à réaliser",
+    "pm_follow_up_created": "Suite donnée à une PM",
     "pm_missed": "PM manquée",
-    "ptw_critical": "Événement critique de permis de travail",
-    "stock_critical": "Stock critique",
+    "ptw_critical": "Permis expiré encore ouvert",
+    "ptw_expiring": "Permis bientôt expiré",
+    "stock_critical": "Stock au seuil de réapprovisionnement",
     "support_response": "Réponse du support disponible",
-    "wo_assigned": "OT assigné",
+    "sync_conflict": "Conflit de synchronisation",
+    "wo_assigned": "OT affecté",
     "wo_overdue": "OT en retard"
+  },
+  "messages": {
+    "wo_assigned": {
+      "title": "OT {{code}} affecté",
+      "body": "{{title}} · responsable : {{assignee}}"
+    },
+    "wo_overdue": {
+      "title": "OT {{code}} en retard",
+      "body": "{{title}} · fin prévue {{planned_end}}"
+    },
+    "inspection_round_missed": {
+      "title": "Ronde d'inspection manquée — {{code}}",
+      "body": "{{title}} · fenêtre close le {{missed_at}}"
+    },
+    "stock_critical": {
+      "title": "{{code}} au seuil de réapprovisionnement",
+      "body": "{{title}} : {{available}} disponible(s), seuil {{reorder_point}}"
+    },
+    "ptw_expiring": {
+      "title": "Le permis {{code}} expire bientôt",
+      "body": "{{title}} · {{asset}} · expire le {{expires_at}}"
+    },
+    "ptw_expired": {
+      "title": "Permis {{code}} expiré mais encore ouvert",
+      "body": "{{title}} · {{asset}} · expiré le {{expires_at}} : le clôturer ou le revalider"
+    },
+    "sync_conflict": {
+      "title": "Conflit de synchronisation à examiner",
+      "body": "{{entity_type}} · {{conflict_type}} · depuis le {{created_at}}"
+    },
+    "di_pending_review": {
+      "title": "Demande {{code}} à examiner",
+      "body": "{{title}}"
+    },
+    "di_returned": {
+      "title": "Demande {{code}} renvoyée pour précisions",
+      "body": "{{title}} : le demandeur doit apporter des précisions"
+    },
+    "di_approved": {
+      "title": "Demande {{code}} approuvée",
+      "body": "{{title}} : conversion en OT possible"
+    },
+    "di_closed": {
+      "title": "Demande {{code}} clôturée",
+      "body": "{{title}}"
+    },
+    "di_converted": {
+      "title": "Demande {{code}} convertie en OT {{wo_code}}",
+      "body": "{{title}}"
+    },
+    "di_deferred": {
+      "title": "Demande {{code}} différée",
+      "body": "{{title}} · jusqu'au {{until}}"
+    },
+    "di_sla_breach_response": {
+      "title": "Délai de prise en charge dépassé — demande {{code}}",
+      "body": "{{title}} · échéance {{deadline}}"
+    },
+    "di_sla_breach_resolution": {
+      "title": "Délai de résolution dépassé — demande {{code}}",
+      "body": "{{title}} · échéance {{deadline}}"
+    },
+    "pm_due": {
+      "title": "PM à réaliser — {{code}}",
+      "body": "{{title}} · échéance {{due_at}}"
+    },
+    "pm_missed": {
+      "title": "PM manquée — {{code}}",
+      "body": "{{title}} · échéance {{due_at}}"
+    },
+    "pm_deferred": {
+      "title": "PM différée — {{code}}",
+      "body": "{{title}} · échéance {{due_at}}"
+    },
+    "pm_follow_up_created": {
+      "title": "Suite donnée à une PM — {{code}}",
+      "body": "{{title}} : un constat a créé une demande ou un OT"
+    },
+    "cert_expiry": {
+      "title": "Habilitation bientôt échue : {{person}}",
+      "body": "{{title}} arrive à échéance le {{expires_on}} : prévoir le recyclage"
+    },
+    "cert_expired": {
+      "title": "Habilitation échue : {{person}}",
+      "body": "{{title}} est échue depuis le {{expires_on}}"
+    },
+    "personnel_critical_block": {
+      "title": "Indisponibilité critique : {{person}}",
+      "body": "Indisponible du {{start_at}} au {{end_at}}"
+    },
+    "daily_digest": {
+      "title": "Résumé du {{date}} : {{total}} non lue(s)"
+    }
+  },
+  "audience": {
+    "assignee": "Responsable",
+    "requester": "Demandeur",
+    "planner": "Planificateur",
+    "reviewer": "Examinateur",
+    "submitter": "Émetteur",
+    "watcher": "Abonnés",
+    "team": "Membres de l'équipe",
+    "team_lead": "Chefs d'équipe",
+    "supervisor": "Supérieur hiérarchique",
+    "entity_manager": "Responsables du site / secteur",
+    "permission": "Détenteurs de {{permission}}",
+    "permissionPick": "Détenteurs d'une autorisation…"
+  },
+  "escalationTarget": {
+    "supervisor": "Supérieur des personnes notifiées",
+    "planner": "Planificateur de la fiche",
+    "team_lead": "Chefs de l'équipe de la fiche",
+    "entity_manager": "Responsables du site / secteur",
+    "permission": "Détenteurs d'une autorisation",
+    "role": "Membres d'un rôle",
+    "user": "Un utilisateur nommé"
+  },
+  "rules": {
+    "title": "Notifications — destinataires et escalade",
+    "companyList": "Réglage de l'entreprise",
+    "companyHint": "Les catégories sont fixées par Maintafox ; leurs destinataires, l'acquittement et l'escalade sont propres à votre site.",
+    "hint": "Chaque catégorie est émise par Maintafox quand sa condition survient (OT en retard, demande à examiner, PM manquée…). Choisissez qui la reçoit. Chacun ne voit que les notifications des modules qu'il est autorisé à consulter.",
+    "readOnly": "Lecture seule : modifier ces réglages demande l'autorisation ref.manage.",
+    "loading": "Chargement des réglages de notification…",
+    "loadError": "Les réglages de notification n'ont pas pu être chargés",
+    "recipientsTitle": "Catégories et destinataires",
+    "col": {
+      "category": "Catégorie",
+      "active": "Émise",
+      "recipients": "Destinataires",
+      "ack": "À acquitter",
+      "escalation": "Escalade",
+      "leadTime": "Préavis",
+      "level": "Niveau",
+      "delay": "Délai",
+      "target": "Escalade vers",
+      "reference": "Autorisation / rôle"
+    },
+    "noRecipient": "Personne ne la reçoit",
+    "addAudience": "Ajouter des destinataires",
+    "removeAudience": "Retirer {{audience}}",
+    "pickPermission": "Choisir une autorisation",
+    "pickTarget": "Choisir une cible",
+    "roleName": "Nom du rôle",
+    "noEscalation": "Pas d'escalade",
+    "escalationNeedsAck": "L'escalade ne s'applique qu'aux catégories à acquitter.",
+    "fixedRouting": {
+      "budget_control_alert": "Destinataire choisi dans les réglages des alertes budgétaires.",
+      "daily_digest": "Envoyé à chaque personne qui a choisi le résumé quotidien."
+    },
+    "minutes": "min",
+    "minutesAfterAlert": "min après l'alerte",
+    "escalationTitle": "Escalade — {{name}}",
+    "escalationHint": "Tant que personne n'a acquitté une notification et que sa condition persiste, chaque niveau prévient sa cible le nombre de minutes indiqué après l'alerte. Les délais croissent d'un niveau au suivant.",
+    "level": "Niveau {{level}}",
+    "newLevel": "Nouveau niveau {{level}}",
+    "addLevel": "Ajouter",
+    "removeLevel": "Supprimer le niveau {{level}}",
+    "save": "Enregistrer",
+    "retentionTitle": "Conservation",
+    "retentionHint": "Les notifications plus anciennes expirent (de {{min}} à {{max}} jours ; valeur livrée {{default}} jours).",
+    "retentionDays": "Conservation en jours",
+    "days": "jours",
+    "defaultValue": "Valeur livrée"
   }
 }

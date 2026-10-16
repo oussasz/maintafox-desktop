@@ -7,7 +7,9 @@ use tauri::{AppHandle, Manager, State};
 
 use crate::auth::rbac::PermissionScope;
 use crate::errors::{AppError, AppResult};
-use crate::notifications::emitter::{emit_event as emit_notification_event, NotificationEventInput};
+use crate::notifications::emitter::{
+    emit_event_with as emit_notification_event_with, NotificationEventInput, NotificationMessage,
+};
 use crate::personnel::domain::{
     CompanyListFilter, DeclareOwnSkillInput, ExternalCompany, ExternalCompanyContact, Personnel,
     PersonnelAssignmentHistoryEntry, PersonnelAuthorization, PersonnelAvailabilityBlock, PersonnelAvailabilityState,
@@ -734,6 +736,18 @@ pub async fn create_availability_block(
 
     let block = availability::create_availability_block(&state.db, input, i64::from(user.user_id)).await?;
     if block.is_critical {
+        let person = state
+            .db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT full_name FROM personnel WHERE id = ?",
+                [block.personnel_id.into()],
+            ))
+            .await
+            .ok()
+            .flatten()
+            .and_then(|r| r.try_get::<String>("", "full_name").ok())
+            .unwrap_or_default();
         let event_input = NotificationEventInput {
             source_module: "personnel".to_string(),
             source_record_id: Some(block.personnel_id.to_string()),
@@ -750,24 +764,18 @@ pub async fn create_availability_block(
             // that the person is unavailable, not why.
             body: Some(format!(
                 "{} is unavailable (critical block) from {} to {}.",
-                state
-                    .db
-                    .query_one(Statement::from_sql_and_values(
-                        DbBackend::Sqlite,
-                        "SELECT full_name FROM personnel WHERE id = ?",
-                        [block.personnel_id.into()],
-                    ))
-                    .await
-                    .ok()
-                    .flatten()
-                    .and_then(|r| r.try_get::<String>("", "full_name").ok())
-                    .unwrap_or_default(),
+                person,
                 block.start_at.chars().take(16).collect::<String>().replace('T', " "),
                 block.end_at.chars().take(16).collect::<String>().replace('T', " ")
             )),
             action_url: Some("/personnel".to_string()),
         };
-        if let Err(err) = emit_notification_event(&state.db, event_input).await {
+        // Same rule for the localised text: who and when, never the block type.
+        let message = NotificationMessage::new(
+            "personnel_critical_block",
+            serde_json::json!({ "person": person, "start_at": block.start_at, "end_at": block.end_at }),
+        );
+        if let Err(err) = emit_notification_event_with(&state.db, event_input, Some(&message)).await {
             tracing::warn!(error = %err, "failed to emit personnel critical block notification");
         }
     }

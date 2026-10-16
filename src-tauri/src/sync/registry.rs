@@ -524,6 +524,11 @@ pub const LOCAL_ONLY_TABLES: &[LocalOnlyTable] = &[
         table: "notification_deliveries",
         category: LocalOnlyCategory::JobQueue,
     },
+    // When each notification watcher started on this device (`notifications::watchers`).
+    LocalOnlyTable {
+        table: "notification_watch_state",
+        category: LocalOnlyCategory::SessionOrDevice,
+    },
     LocalOnlyTable {
         table: "stock_balances",
         category: LocalOnlyCategory::DerivedProjection,

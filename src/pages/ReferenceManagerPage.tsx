@@ -17,6 +17,7 @@ import { DomainBrowserPanel } from "@/components/lookups/DomainBrowserPanel";
 import { ReferenceValueEditor } from "@/components/lookups/ReferenceValueEditor";
 import { InventoryArticleFamilyHost } from "@/components/lookups/adapters/InventoryArticleFamilyHost";
 import { InventoryTaxCategoryHost } from "@/components/lookups/adapters/InventoryTaxCategoryHost";
+import { NotificationRulesHost } from "@/components/lookups/adapters/NotificationRulesHost";
 import { UrgencyScaleHost } from "@/components/lookups/adapters/UrgencyScaleHost";
 import { WorkOrderStatusesHost } from "@/components/lookups/adapters/WorkOrderStatusesHost";
 import {
@@ -38,6 +39,7 @@ import { createDraftReferenceSet } from "@/services/reference-service";
 import {
   INVENTORY_ARTICLE_FAMILY_DOMAIN_ID,
   INVENTORY_TAX_CATEGORY_DOMAIN_ID,
+  NOTIFICATION_RULES_DOMAIN_ID,
   URGENCY_SCALE_DOMAIN_ID,
   WORK_ORDER_STATUSES_DOMAIN_ID,
   useReferenceManagerStore,
@@ -57,6 +59,8 @@ function SyntheticDomainHost({ domainId }: { domainId: number }) {
       return <UrgencyScaleHost />;
     case WORK_ORDER_STATUSES_DOMAIN_ID:
       return <WorkOrderStatusesHost />;
+    case NOTIFICATION_RULES_DOMAIN_ID:
+      return <NotificationRulesHost />;
     default:
       return null;
   }

@@ -591,7 +591,16 @@ fn module_catalog_audiences() {
     );
     // OT types are a SYSTEM reference domain since migration 198, no longer a module table.
     assert_eq!(module_catalog_audience("WO.WORK_ORDER_TYPES"), None);
-    assert_eq!(MODULE_CATALOGS.len(), 4);
+    // Notification categories are the program's; their routing and escalation the plant's.
+    assert_eq!(
+        module_catalog_audience("NOTIFICATION.CATEGORIES"),
+        Some(DomainAudience::System)
+    );
+    assert_eq!(
+        module_catalog_audience("NOTIFICATION.RULES"),
+        Some(DomainAudience::Company)
+    );
+    assert_eq!(MODULE_CATALOGS.len(), 6);
 
     assert_gate(assert_module_catalog_editable("WO.WORK_ORDER_STATUSES"), "OT statuses");
     assert!(assert_module_catalog_editable("INVENTORY.ARTICLE_FAMILY").is_ok());

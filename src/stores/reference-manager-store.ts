@@ -38,6 +38,10 @@ export const URGENCY_SCALE_DOMAIN_ID = -104;
 export const URGENCY_SCALE_SET_ID = -104;
 export const WORK_ORDER_STATUSES_DOMAIN_ID = -105;
 export const WORK_ORDER_STATUSES_SET_ID = -105;
+/** The plant's notification settings: recipients, acknowledgement, escalation, retention. */
+export const NOTIFICATION_RULES_DOMAIN_ID = -106;
+/** Notification categories (SYSTEM: listed for the audience map only, never shown). */
+export const NOTIFICATION_CATEGORIES_DOMAIN_ID = -107;
 
 /**
  * Module tables shown in the tree next to the reference domains (no versions: one live set).
@@ -108,6 +112,22 @@ const SYNTHETIC_CATALOGS: readonly SyntheticCatalog[] = [
     WORK_ORDER_STATUSES_DOMAIN_ID,
     "WO.WORK_ORDER_STATUSES",
     "Statuts d'ordre de travail",
+    {
+      governance_level: "protected_analytical",
+      governance_category: "system_catalog",
+      is_extendable: false,
+    },
+  ),
+  syntheticCatalog(
+    NOTIFICATION_RULES_DOMAIN_ID,
+    "NOTIFICATION.RULES",
+    "Notifications (destinataires et escalade)",
+    TENANT_DICTIONARY,
+  ),
+  syntheticCatalog(
+    NOTIFICATION_CATEGORIES_DOMAIN_ID,
+    "NOTIFICATION.CATEGORIES",
+    "Catégories de notification",
     {
       governance_level: "protected_analytical",
       governance_category: "system_catalog",

@@ -2411,6 +2411,7 @@
     "machine_activation_lineage": "licensing",
     "machine_activation_state": "licensing",
     "notification_deliveries": "job_queue",
+    "notification_watch_state": "session_or_device",
     "permission_dependencies": "app_catalog",
     "permissions": "app_catalog",
     "personnel_import_batches": "import_staging",

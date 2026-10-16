@@ -53,6 +53,8 @@ const SYNTHETIC_DOMAIN_NAME_KEY: Record<string, string> = {
   "INVENTORY.TAX_CATEGORY": "synthetic.domains.taxCategories",
   "WORK.URGENCY_SCALE": "synthetic.domains.urgencyScale",
   "WO.WORK_ORDER_STATUSES": "synthetic.domains.woStatuses",
+  "NOTIFICATION.RULES": "synthetic.domains.notificationRules",
+  "NOTIFICATION.CATEGORIES": "synthetic.domains.notificationCategories",
 };
 
 /** Name shown for a domain: translated for the synthetic live tables, stored name otherwise. */

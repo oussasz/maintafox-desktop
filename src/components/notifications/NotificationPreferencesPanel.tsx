@@ -2,7 +2,9 @@ import { Lock } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { categoryLabel } from "@/components/notifications/notification-text";
 import { Badge } from "@/components/ui/badge";
+import { LoadingState } from "@/components/ui/data-state";
 import {
   Select,
   SelectContent,
@@ -74,14 +76,12 @@ export function NotificationPreferencesPanel() {
           in_app_enabled?: boolean;
           os_enabled?: boolean;
           email_enabled?: boolean;
-          sms_enabled?: boolean;
           digest_mode?: string;
           muted_until?: string | null;
         } = { category_code: row.category_code };
         if (changes.in_app_enabled !== undefined) payload.in_app_enabled = changes.in_app_enabled;
         if (changes.os_enabled !== undefined) payload.os_enabled = changes.os_enabled;
         if (changes.email_enabled !== undefined) payload.email_enabled = changes.email_enabled;
-        if (changes.sms_enabled !== undefined) payload.sms_enabled = changes.sms_enabled;
         if (changes.digest_mode !== undefined) payload.digest_mode = changes.digest_mode;
         if (changes.muted_until !== undefined) payload.muted_until = changes.muted_until;
 
@@ -95,7 +95,7 @@ export function NotificationPreferencesPanel() {
   );
 
   if (loading) {
-    return <div className="text-sm text-muted-foreground">{t("preferences.loading")}</div>;
+    return <LoadingState label={t("preferences.loading")} />;
   }
 
   const emailAvailable = channels?.email.available === true;
@@ -120,7 +120,7 @@ export function NotificationPreferencesPanel() {
           {emailUnavailableText}
         </div>
       )}
-      <div className="text-xs text-muted-foreground">{t("preferences.smsUnavailable")}</div>
+      <div className="text-xs text-muted-foreground">{t("preferences.receiveHelp")}</div>
       <div className="text-xs text-muted-foreground">{t("preferences.digestHelp")}</div>
 
       <Table>
@@ -130,7 +130,6 @@ export function NotificationPreferencesPanel() {
             <TableHead>{t("preferences.col.inApp")}</TableHead>
             <TableHead>{t("preferences.col.os")}</TableHead>
             <TableHead>{t("preferences.col.email")}</TableHead>
-            <TableHead>{t("preferences.col.sms")}</TableHead>
             <TableHead>{t("preferences.col.digest")}</TableHead>
             <TableHead>{t("preferences.col.muteUntil")}</TableHead>
           </TableRow>
@@ -145,7 +144,10 @@ export function NotificationPreferencesPanel() {
               >
                 <TableCell>
                   <div className="flex items-center gap-2">
-                    <span>{row.label}</span>
+                    <span>{categoryLabel(row.category_code, t)}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {t(`module.${row.module_code}`)}
+                    </span>
                     {disabled && (
                       <span title={t("preferences.systemManaged")}>
                         <Lock className="h-3.5 w-3.5" />
@@ -157,43 +159,38 @@ export function NotificationPreferencesPanel() {
                   <Switch
                     checked={row.in_app_enabled}
                     disabled={disabled}
+                    aria-label={`${t("preferences.col.inApp")} ${categoryLabel(row.category_code, t)}`}
                     onCheckedChange={(v) => void patchRow(row, { in_app_enabled: v })}
                   />
                 </TableCell>
                 <TableCell>
                   <Switch
                     checked={row.os_enabled}
-                    disabled={disabled}
+                    disabled={disabled || !row.in_app_enabled}
+                    aria-label={`${t("preferences.col.os")} ${categoryLabel(row.category_code, t)}`}
                     onCheckedChange={(v) => void patchRow(row, { os_enabled: v })}
                   />
                 </TableCell>
                 <TableCell>
                   <Switch
                     checked={row.email_enabled}
-                    disabled={disabled || !emailAvailable}
+                    disabled={disabled || !emailAvailable || !row.in_app_enabled}
                     aria-label={t("preferences.col.email")}
                     title={emailUnavailableText ?? undefined}
                     onCheckedChange={(v) => void patchRow(row, { email_enabled: v })}
                   />
                 </TableCell>
                 <TableCell>
-                  <Switch
-                    checked={row.sms_enabled}
-                    disabled
-                    aria-label={t("preferences.col.sms")}
-                    title={t("preferences.smsUnavailable")}
-                    onCheckedChange={(v) => void patchRow(row, { sms_enabled: v })}
-                  />
-                </TableCell>
-                <TableCell>
                   <Select
                     value={row.digest_mode}
-                    disabled={disabled || row.category_code === DIGEST_CATEGORY}
+                    disabled={
+                      disabled || !row.in_app_enabled || row.category_code === DIGEST_CATEGORY
+                    }
                     onValueChange={(v) => void patchRow(row, { digest_mode: v })}
                   >
                     <SelectTrigger
                       className="w-36"
-                      aria-label={`${t("preferences.col.digest")} ${row.label}`}
+                      aria-label={`${t("preferences.col.digest")} ${categoryLabel(row.category_code, t)}`}
                     >
                       <SelectValue />
                     </SelectTrigger>
@@ -210,6 +207,7 @@ export function NotificationPreferencesPanel() {
                   <input
                     type="datetime-local"
                     disabled={disabled}
+                    aria-label={`${t("preferences.col.muteUntil")} ${categoryLabel(row.category_code, t)}`}
                     className="h-9 rounded-md border bg-background px-2 text-sm"
                     value={toDatetimeLocalValue(row.muted_until)}
                     onChange={(e) =>
