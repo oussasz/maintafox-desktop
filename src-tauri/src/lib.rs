@@ -492,6 +492,7 @@ pub fn run() {
             commands::planning::create_schedule_break_in,
             commands::planning::freeze_schedule_period,
             commands::planning::get_weekly_schedule,
+            commands::planning::get_planning_kpis,
             commands::planning::list_crews_without_planning_site,
             commands::planning::approve_weekly_schedule,
             commands::planning::freeze_weekly_schedule,

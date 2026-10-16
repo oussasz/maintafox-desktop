@@ -2,6 +2,7 @@
 
 pub mod break_in_reasons;
 pub mod domain;
+pub mod kpis;
 pub mod lifecycle;
 pub mod load;
 pub mod person_load;

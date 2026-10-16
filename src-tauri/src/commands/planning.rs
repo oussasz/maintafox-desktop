@@ -473,3 +473,20 @@ pub async fn cancel_schedule_commitment(input: EndCommitmentInput, state: State<
     require_plan_confirm(&state, user.user_id).await?;
     lifecycle::end_commitment(&state.db, i64::from(user.user_id), input, lifecycle::STATUS_CANCELLED).await
 }
+
+/// Planning KPIs against the frozen weekly baseline (planning step E): loading, schedule
+/// compliance, break-ins, weeks frozen without approval or never frozen.
+#[tauri::command]
+pub async fn get_planning_kpis(
+    filter: crate::planning::kpis::PlanningKpiFilter,
+    state: State<'_, AppState>,
+) -> AppResult<crate::planning::kpis::PlanningKpis> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PLAN_VIEW,
+        PermissionScope::Global
+    );
+    crate::planning::kpis::planning_kpis(&state.db, &filter, chrono::Utc::now()).await
+}

@@ -4725,3 +4725,190 @@ fn the_planning_tick_waits_for_a_synchronisation_when_the_device_synchronises() 
         "a device that does not synchronise acts at once"
     );
 }
+
+// ── Planning KPIs against the frozen baseline (step E) ────────────────────────────────────
+
+#[tokio::test]
+async fn planning_kpis_measure_the_frozen_baseline() {
+    let db = setup_db().await;
+    let (site, team) = weekly_site(&db, "K").await;
+    // Two jobs in the week of 2026-05-03 (Sunday to Saturday).
+    let (wo_done, actor) = create_planning_wo(&db, "KPI done").await;
+    let (wo_missed, _) = create_planning_wo(&db, "KPI missed").await;
+    let done = scheduling::create_schedule_commitment(
+        &db,
+        actor,
+        commit_input(
+            insert_candidate(&db, "work_order", wo_done, "ready", 100.0).await,
+            team,
+            "2026-05-04T08:00",
+            "2026-05-04T10:00",
+        ),
+    )
+    .await
+    .expect("done job");
+    let missed = scheduling::create_schedule_commitment(
+        &db,
+        actor,
+        commit_input(
+            insert_candidate(&db, "work_order", wo_missed, "ready", 100.0).await,
+            team,
+            "2026-05-05T08:00",
+            "2026-05-05T11:00",
+        ),
+    )
+    .await
+    .expect("missed job");
+    crate::planning::weekly_schedule::freeze_weekly_schedule(&db, actor, week_ref(site, "2026-05-04", None))
+        .await
+        .expect("frozen");
+
+    // The first job's work is finished inside the week; the second never is.
+    exec_sql(
+        &db,
+        &format!("UPDATE work_orders SET mechanically_completed_at = '2026-05-06T12:00:00Z' WHERE id = {wo_done}"),
+    )
+    .await;
+    // An emergency job enters the frozen week (an `insert` break-in) …
+    let (wo_urgent, _) = create_planning_wo(&db, "KPI urgent").await;
+    let mut urgent = commit_input(
+        insert_candidate(&db, "work_order", wo_urgent, "ready", 100.0).await,
+        team,
+        "2026-05-07T08:00",
+        "2026-05-07T09:00",
+    );
+    urgent.frozen_week_break_in = Some(crate::planning::domain::CommitBreakIn {
+        reason: "emergency".to_string(),
+        approved_by_user_id: None,
+        dangerous_override_reason: Some("Line stopped".to_string()),
+    });
+    let urgent = scheduling::create_schedule_commitment(&db, actor, urgent)
+        .await
+        .expect("break-in");
+    // … and the missed job is moved inside the week after the freeze (displaced).
+    let rv = scalar(
+        &db,
+        &format!("SELECT row_version FROM schedule_commitments WHERE id = {}", missed.id),
+    )
+    .await;
+    scheduling::create_schedule_break_in(
+        &db,
+        actor,
+        CreateScheduleBreakInInput {
+            schedule_commitment_id: missed.id,
+            expected_commitment_row_version: rv,
+            break_in_reason: "other".to_string(),
+            approved_by_user_id: None,
+            new_slot_start: local("2026-05-06T08:00"),
+            new_slot_end: local("2026-05-06T11:00"),
+            new_assigned_team_id: Some(team),
+            new_assigned_personnel_id: None,
+            clear_assignee: None,
+            bypass_availability: Some(false),
+            override_reason: None,
+            acknowledged_assignee_issues: Vec::new(),
+            dangerous_override_reason: None,
+        },
+    )
+    .await
+    .expect("moved");
+
+    let hours = |id: i64| {
+        let db = db.clone();
+        async move {
+            db.query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                format!(
+                    "SELECT COALESCE(planned_labor_hours, (julianday(committed_end) - julianday(committed_start)) * 24.0) AS h \
+                       FROM schedule_commitments WHERE id = {id}"
+                ),
+            ))
+            .await
+            .expect("query")
+            .expect("row")
+            .try_get::<f64>("", "h")
+            .expect("h")
+        }
+    };
+    let (h_done, h_missed, h_urgent) = (hours(done.id).await, hours(missed.id).await, hours(urgent.id).await);
+    let round = |v: f64| (v * 10.0).round() / 10.0;
+
+    let filter = crate::planning::kpis::PlanningKpiFilter {
+        site_id: Some(site),
+        from_day: "2026-05-01".to_string(),
+        to_day: "2026-05-09".to_string(),
+        exclude_unapproved: false,
+    };
+    // During the week: loading and break-ins, compliance not judged yet.
+    let during = crate::planning::kpis::planning_kpis(&db, &filter, utc_at("2026-05-06T15:00"))
+        .await
+        .expect("kpis");
+    assert_eq!(during.weeks.len(), 1);
+    assert_eq!(during.weeks[0].compliance_pct, None, "not judged before the week ends");
+
+    let kpis = crate::planning::kpis::planning_kpis(&db, &filter, utc_at("2026-05-20T09:00"))
+        .await
+        .expect("kpis");
+    let week = &kpis.weeks[0];
+    assert_eq!(week.week_start, "2026-05-03");
+    assert_eq!(
+        week.baseline_jobs, 2,
+        "the baseline holds the two jobs frozen with the week"
+    );
+    assert_eq!(week.baseline_hours, round(h_done + h_missed));
+    assert_eq!(week.done_hours, Some(round(h_done)));
+    assert_eq!(week.compliance_pct, Some(round(h_done / (h_done + h_missed) * 100.0)));
+    assert_eq!(week.break_in_jobs, 1);
+    assert_eq!(week.break_in_hours, round(h_urgent));
+    assert_eq!(week.break_in_pct, Some(round(h_urgent / (h_done + h_missed) * 100.0)));
+    assert_eq!(week.displaced_jobs, 1);
+    assert!(week.available_hours > 0.0, "{week:?}");
+    assert_eq!(
+        week.loading_pct,
+        Some(round((h_done + h_missed) / week.available_hours * 100.0)),
+        "{week:?}"
+    );
+    assert!(!week.awaiting_approval, "frozen by a planner: approved");
+    assert_eq!(kpis.totals.weeks_judged, 1);
+    assert_eq!(kpis.totals.compliance_pct, week.compliance_pct);
+
+    // Analytics, the home dashboard and the monthly report read the same number.
+    let ratio = crate::analytics::smrp::schedule_compliance(
+        &db,
+        crate::analytics::smrp::SmrpWindow {
+            from: utc_at("2026-05-01T00:00"),
+            to: utc_at("2026-05-20T00:00"),
+        },
+        utc_at("2026-05-20T09:00"),
+        None,
+    )
+    .await
+    .expect("smrp");
+    assert_eq!(round(ratio.numerator), round(h_done));
+    assert_eq!(round(ratio.denominator), round(h_done + h_missed));
+}
+
+#[tokio::test]
+async fn weeks_frozen_without_approval_are_flagged_and_can_be_left_out() {
+    let db = setup_db().await;
+    let (site, _team) = weekly_site(&db, "U").await;
+    crate::planning::weekly_schedule::auto_freeze_due(&db, utc_at("2026-05-08T00:30"))
+        .await
+        .expect("tick");
+    let filter = |exclude: bool| crate::planning::kpis::PlanningKpiFilter {
+        site_id: Some(site),
+        from_day: "2026-05-01".to_string(),
+        to_day: "2026-05-16".to_string(),
+        exclude_unapproved: exclude,
+    };
+    let all = crate::planning::kpis::planning_kpis(&db, &filter(false), utc_at("2026-05-08T01:00"))
+        .await
+        .expect("kpis");
+    assert!(all.weeks.iter().all(|w| w.awaiting_approval), "{:?}", all.weeks);
+    assert_eq!(all.totals.weeks_awaiting_approval, all.totals.weeks);
+    assert!(all.totals.weeks >= 1);
+    let approved_only = crate::planning::kpis::planning_kpis(&db, &filter(true), utc_at("2026-05-08T01:00"))
+        .await
+        .expect("kpis");
+    assert!(approved_only.weeks.is_empty());
+}

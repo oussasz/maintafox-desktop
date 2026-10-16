@@ -82,8 +82,9 @@ pub struct WeekLoad {
     pub overloaded_team_days: i64,
 }
 
-/// SMRP schedule compliance (`analytics::smrp::schedule_compliance`): committed hours completed by
-/// the end of their committed day ÷ committed hours, commitments ending in the period.
+/// SMRP schedule compliance (`analytics::smrp::schedule_compliance`): baseline hours of the frozen
+/// weeks ended in the period whose work was finished by the end of their week ÷ baseline hours
+/// (`planning::kpis`, the same number as the planning KPIs).
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct ScheduleComplianceFigure {
     pub period_days: i64,
