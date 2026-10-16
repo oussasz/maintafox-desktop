@@ -122,6 +122,11 @@ pub async fn set_setting(payload: SetSettingPayload, state: State<'_, AppState>)
     if def.kind == settings::catalog::SettingKind::DocumentHeader {
         value_json = settings::branding::keep_stored_logo(&state.db, &value_json).await?;
     }
+    if def.kind == settings::catalog::SettingKind::CurrencyCode {
+        // The tenant currency is an active currency of Données de référence › Devises.
+        let code: String = serde_json::from_str(&value_json)?;
+        crate::reference::currencies::ensure_active_currency(&state.db, &code).await?;
+    }
 
     let summary = payload
         .change_summary
@@ -137,6 +142,16 @@ pub async fn set_setting(payload: SetSettingPayload, state: State<'_, AppState>)
         high_risk,
     )
     .await
+}
+
+/// The currencies of the published list (Données de référence › Devises): code, names, symbol,
+/// minor units, active flag. Any session (pickers and amount display read it).
+#[tauri::command]
+pub async fn list_reference_currencies(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::reference::currencies::CurrencyOption>> {
+    let _user = require_session!(state);
+    crate::reference::currencies::published_currencies(&state.db).await
 }
 
 /// Settings in use with their shipped and current values, lock state, last change and the roles

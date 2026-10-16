@@ -24,9 +24,11 @@
 //!   `urgency_scale` — shared DI / OT urgency scale (`WORK.URGENCY`) and its company attributes
 //!   `retirement` — moving links off a merged list and deleting it (data migrations)
 //!   `units`      — units of measure `MEASURE.UNITS` and their physical dimensions
+//!   `currencies` — ISO 4217 currencies `INVENTORY.CURRENCY` and their operational copy
 
 pub mod aliases;
 pub mod audience;
+pub mod currencies;
 pub mod domains;
 pub mod governance;
 pub mod impact;

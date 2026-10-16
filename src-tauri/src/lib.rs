@@ -226,6 +226,7 @@ pub fn run() {
             commands::settings::get_setting,
             commands::settings::set_setting,
             commands::settings::get_settings_overview,
+            commands::settings::list_reference_currencies,
             commands::settings::get_policy_snapshot,
             commands::settings::get_session_policy,
             commands::settings::list_setting_change_events,

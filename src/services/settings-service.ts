@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
 import type {
+  CurrencyOption,
   DocumentBrandingLogoPreview,
   DocumentBrandingLogoUploadResult,
   ActivatePolicyPayload,
@@ -177,6 +178,21 @@ export async function listSettingChangeEvents(
     settingKey,
   });
   return z.array(SettingsChangeEventSchema).parse(raw);
+}
+
+const CurrencyOptionSchema = z.object({
+  code: z.string(),
+  label: z.string(),
+  label_en: z.string().nullable(),
+  symbol: z.string().nullable(),
+  minor_units: z.number().nullable(),
+  is_active: z.boolean(),
+});
+
+/** Currencies of Données de référence › Devises (published list). Any session. */
+export async function listReferenceCurrencies(): Promise<CurrencyOption[]> {
+  const raw = await invoke<unknown>("list_reference_currencies");
+  return z.array(CurrencyOptionSchema).parse(raw);
 }
 
 /**

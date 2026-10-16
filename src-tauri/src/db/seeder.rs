@@ -1672,6 +1672,9 @@ pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
         let d = get_domain_id(db, "inventory.currency").await?;
         seed_value(db, d, "EUR", "EUR", "EUR", "EUR", None, 1, true).await?;
         seed_value(db, d, "USD", "USD", "USD", "USD", None, 2, true).await?;
+        // The governed list (Données de référence › Devises) is the source of this copy: it adds
+        // the other currencies and the French / English names (`reference::currencies`).
+        crate::reference::currencies::ensure_currency_catalog(db).await?;
     }
 
     // inventory.erp_reconcile_state

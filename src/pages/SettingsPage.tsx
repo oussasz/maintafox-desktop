@@ -43,9 +43,10 @@ import { i18n } from "@/i18n";
 import {
   ensureSettingsDefaults,
   getSettingsOverview,
+  listReferenceCurrencies,
   listSettingChangeEvents,
 } from "@/services/settings-service";
-import type { SettingsChangeEvent, SettingsOverview } from "@shared/ipc-types";
+import type { CurrencyOption, SettingsChangeEvent, SettingsOverview } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
 /** Sections of the General tab, in display order (settings come from the server catalog). */
@@ -76,6 +77,7 @@ export function SettingsPage() {
     parseSettingsTab(searchParams.get("tab")),
   );
   const [overview, setOverview] = useState<SettingsOverview | null>(null);
+  const [currencies, setCurrencies] = useState<CurrencyOption[]>([]);
   const [auditLog, setAuditLog] = useState<SettingsChangeEvent[]>([]);
   const [initialLoading, setInitialLoading] = useState(true);
   const [contentRefreshing, setContentRefreshing] = useState(false);
@@ -170,6 +172,7 @@ export function SettingsPage() {
       }
 
       setOverview(next);
+      setCurrencies(await listReferenceCurrencies().catch(() => [] as CurrencyOption[]));
       setAuditLog(events);
       setError(null);
     } catch (err) {
@@ -352,6 +355,7 @@ export function SettingsPage() {
                           <SettingsCatalogSections
                             categories={GENERAL_CATEGORIES}
                             definitions={definitions}
+                            currencies={currencies}
                             rolesAllowed={overview?.roles_allowed_to_change ?? []}
                             canEdit={canManageSettings}
                             onSaved={() => void loadAll({ silent: true, allowEnsure: false })}
@@ -383,6 +387,7 @@ export function SettingsPage() {
                           <SettingsCatalogSections
                             categories={BACKUP_CATEGORIES}
                             definitions={definitions}
+                            currencies={currencies}
                             rolesAllowed={overview?.roles_allowed_to_change ?? []}
                             canEdit={canManageSettings}
                             onSaved={() => void loadAll({ silent: true, allowEnsure: false })}

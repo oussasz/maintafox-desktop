@@ -14,11 +14,10 @@ import {
 } from "@/components/ui/select";
 import { StatusChip } from "@/components/ui/status-chip";
 import { useFormatters } from "@/hooks/use-formatters";
-import { CURRENCY_CODE_OPTIONS } from "@/lib/currency";
 import { applyI18nFallbackLanguage } from "@/lib/i18n-fallback";
 import { listSettingChangeEvents, setSetting } from "@/services/settings-service";
 import { useLocaleStore } from "@/stores/locale-store";
-import type { SettingDefinitionView, SettingsChangeEvent } from "@shared/ipc-types";
+import type { CurrencyOption, SettingDefinitionView, SettingsChangeEvent } from "@shared/ipc-types";
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
@@ -61,8 +60,16 @@ function toValueJson(def: SettingDefinitionView, input: string): string {
   return JSON.stringify(input);
 }
 
+/** "DZD — Dinar algérien (DA)" in the interface language, from Données de référence. */
+export function currencyOptionLabel(c: CurrencyOption, locale: string): string {
+  const name = locale === "en" ? (c.label_en ?? c.label) : c.label;
+  return `${c.code} — ${name}${c.symbol ? ` (${c.symbol})` : ""}`;
+}
+
 interface RowProps {
   def: SettingDefinitionView;
+  /** Currencies of Données de référence › Devises (the tenant currency picker). */
+  currencies: CurrencyOption[];
   canEdit: boolean;
   onSaved: () => void;
   onToast: (msg: {
@@ -72,12 +79,13 @@ interface RowProps {
   }) => void;
 }
 
-function SettingRow({ def, canEdit, onSaved, onToast }: RowProps) {
+function SettingRow({ def, currencies, canEdit, onSaved, onToast }: RowProps) {
   const { t: tTyped } = useTranslation("settings");
   const t = tTyped as unknown as Translate;
   const { formatDateTime } = useFormatters();
   const setLocale = useLocaleStore((s) => s.setLocale);
   const setCurrencyCode = useLocaleStore((s) => s.setCurrencyCode);
+  const activeLocale = useLocaleStore((s) => s.activeLocale);
   const [draft, setDraft] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [history, setHistory] = useState<SettingsChangeEvent[] | null>(null);
@@ -162,10 +170,9 @@ function SettingRow({ def, canEdit, onSaved, onToast }: RowProps) {
               value: String(i + 1),
               label: t(`options.month.${i + 1}`),
             }))
-          : [...new Set([...CURRENCY_CODE_OPTIONS, currentText].filter(Boolean))].map((c) => ({
-              value: c,
-              label: t(`options.currency.${c}`, { defaultValue: c }),
-            }));
+          : currencies
+              .filter((c) => c.is_active || c.code === currentText)
+              .map((c) => ({ value: c.code, label: currencyOptionLabel(c, activeLocale) }));
     control = (
       <Select
         value={currentText}
@@ -308,6 +315,7 @@ function SettingRow({ def, canEdit, onSaved, onToast }: RowProps) {
 interface SettingsCatalogSectionsProps {
   categories: readonly string[];
   definitions: SettingDefinitionView[];
+  currencies: CurrencyOption[];
   rolesAllowed: string[];
   canEdit: boolean;
   onSaved: () => void;
@@ -321,6 +329,7 @@ interface SettingsCatalogSectionsProps {
 export function SettingsCatalogSections({
   categories,
   definitions,
+  currencies,
   rolesAllowed,
   canEdit,
   onSaved,
@@ -351,6 +360,7 @@ export function SettingsCatalogSections({
                 {rows.map((def) => (
                   <SettingRow
                     key={def.key}
+                    currencies={currencies}
                     def={def}
                     canEdit={canEdit}
                     onSaved={onSaved}

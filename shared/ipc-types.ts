@@ -1111,6 +1111,17 @@ export interface SettingDefinitionView {
   last_modified_by: string | null;
 }
 
+/** A currency of Données de référence › Devises (`list_reference_currencies`). */
+export interface CurrencyOption {
+  code: string;
+  /** French name (primary label of the list). */
+  label: string;
+  label_en: string | null;
+  symbol: string | null;
+  minor_units: number | null;
+  is_active: boolean;
+}
+
 export interface SettingsOverview {
   definitions: SettingDefinitionView[];
   /** Roles whose holders may change settings (`adm.settings`). */

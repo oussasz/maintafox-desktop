@@ -191,18 +191,6 @@
       "monday": "Lundi",
       "sunday": "Dimanche"
     },
-    "currency": {
-      "DZD": "Dinar algérien (DZD)",
-      "MAD": "Dirham marocain (MAD)",
-      "TND": "Dinar tunisien (TND)",
-      "EUR": "Euro (EUR)",
-      "USD": "Dollar américain (USD)",
-      "GBP": "Livre sterling (GBP)",
-      "CHF": "Franc suisse (CHF)",
-      "CAD": "Dollar canadien (CAD)",
-      "SAR": "Riyal saoudien (SAR)",
-      "AED": "Dirham des Émirats (AED)"
-    },
     "colorMode": {
       "light": "Clair",
       "dark": "Sombre"
