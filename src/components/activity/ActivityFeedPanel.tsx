@@ -385,7 +385,6 @@ export function ActivityFeedPanel({ className }: ActivityFeedPanelProps) {
           items={timelineEntries}
           loading={loading}
           groupBy="day"
-          todayLabel="Today"
           aria-label="Activity feed"
           empty={
             <div className="rounded-md border p-4 text-center text-sm text-muted-foreground">

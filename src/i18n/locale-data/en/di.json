@@ -347,6 +347,7 @@
     "unknownAction": "Event: {{action}}"
   },
   "auditTimeline": {
+    "title": "Request history",
     "loadError": "Could not load activity log.",
     "empty": "No activity events for this request.",
     "rawAction": "Event code",
@@ -388,6 +389,7 @@
     "deleteTitle": "Delete attachment"
   },
   "kanban": {
+    "statusFromDetailHint": "Click a card to open the request: review steps are made from its detail, where each step asks what it needs (validated urgency, return or deferral reason, approval).",
     "colSubmitted": "Submitted / intake",
     "colPendingReview": "In review",
     "colAwaitingApproval": "Awaiting approval",

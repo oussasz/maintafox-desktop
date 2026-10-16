@@ -112,23 +112,32 @@ pub async fn record_wo_change_event(db: &DatabaseConnection, input: WoAuditInput
 // B) list_wo_change_events — per-WO timeline query
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Return audit events for a single WO, ordered chronologically (oldest first).
+/// Largest page of the per-WO history.
+pub const WO_CHANGE_EVENTS_MAX_LIMIT: i64 = 500;
+
+/// Return the `limit` MOST RECENT audit events of a single WO, ordered chronologically
+/// (oldest first). Capping keeps the latest events: the screen offers "show older" when the
+/// page is full, instead of silently hiding what happened last.
 pub async fn list_wo_change_events(
     db: &DatabaseConnection,
     wo_id: i64,
     limit: i64,
 ) -> crate::errors::AppResult<Vec<WoChangeEvent>> {
+    let limit = limit.clamp(1, WO_CHANGE_EVENTS_MAX_LIMIT);
     let rows = WoChangeEvent::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        r"SELECT e.id, e.wo_id, e.action, e.actor_id,
-                 COALESCE(ua.display_name, ua.username) AS actor_display_name,
-                 e.acted_at, e.summary, e.details_json,
-                 e.requires_step_up, e.apply_result
-            FROM wo_change_events e
-            LEFT JOIN user_accounts ua ON ua.id = e.actor_id
-           WHERE e.wo_id = ?
-           ORDER BY e.acted_at ASC, e.id ASC
-           LIMIT ?",
+        r"SELECT * FROM (
+            SELECT e.id, e.wo_id, e.action, e.actor_id,
+                   COALESCE(ua.display_name, ua.username) AS actor_display_name,
+                   e.acted_at, e.summary, e.details_json,
+                   e.requires_step_up, e.apply_result
+              FROM wo_change_events e
+              LEFT JOIN user_accounts ua ON ua.id = e.actor_id
+             WHERE e.wo_id = ?
+             ORDER BY e.acted_at DESC, e.id DESC
+             LIMIT ?
+          ) latest
+          ORDER BY latest.acted_at ASC, latest.id ASC",
         [wo_id.into(), limit.into()],
     ))
     .all(db)

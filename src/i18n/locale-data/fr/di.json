@@ -347,6 +347,7 @@
     "unknownAction": "Événement : {{action}}"
   },
   "auditTimeline": {
+    "title": "Historique de la demande",
     "loadError": "Impossible de charger le journal d'activité.",
     "empty": "Aucun événement d'activité pour cette demande.",
     "rawAction": "Code événement",
@@ -388,6 +389,7 @@
     "deleteTitle": "Supprimer la pièce jointe"
   },
   "kanban": {
+    "statusFromDetailHint": "Cliquez sur une carte pour ouvrir la demande : les étapes d’examen se font depuis sa fiche, où chaque étape demande ce qu’il lui faut (urgence validée, motif de retour ou de report, approbation).",
     "colSubmitted": "Soumises / entrée",
     "colPendingReview": "En examen",
     "colAwaitingApproval": "En attente d'approbation",

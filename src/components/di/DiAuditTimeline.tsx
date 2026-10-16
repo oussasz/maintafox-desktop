@@ -15,19 +15,23 @@ import {
   Clock,
   CornerUpLeft,
   Dot,
-  AlertCircle,
   ListFilter,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Timeline } from "@/components/timeline";
 import type { TimelineEntry, TimelineTone } from "@/components/timeline";
+import { mfTone } from "@/design-system/tone";
+import { useLatestHistory } from "@/hooks/use-latest-history";
 import { formatPersonLabel } from "@/lib/display";
 import { cn } from "@/lib/utils";
 import { listDiChangeEvents, type DiChangeEvent } from "@/services/di-audit-service";
-import { toErrorMessage } from "@/utils/errors";
 import { intlLocaleForLanguage } from "@/utils/format-date";
+
+/** Page of the history and backend maximum (`di::audit::DI_CHANGE_EVENTS_MAX_LIMIT`). */
+const HISTORY_PAGE = 50;
+const HISTORY_MAX = 500;
 
 interface DiAuditTimelineProps {
   diId: number;
@@ -38,26 +42,26 @@ function actionIcon(action: string) {
   switch (action) {
     case "submit":
     case "intake_submitted":
-      return <ArrowUp className={cn(cls, "text-blue-500")} />;
+      return <ArrowUp className={cn(cls, mfTone.info.text)} />;
     case "triage_submitted":
     case "triage_accept":
-      return <ListFilter className={cn(cls, "text-sky-600")} />;
+      return <ListFilter className={cn(cls, mfTone.info.text)} />;
     case "screened":
-      return <Eye className={cn(cls, "text-indigo-500")} />;
+      return <Eye className={cn(cls, mfTone.progress.text)} />;
     case "approved":
-      return <Check className={cn(cls, "text-green-600")} />;
+      return <Check className={cn(cls, mfTone.success.text)} />;
     case "rejected":
-      return <XCircle className={cn(cls, "text-red-500")} />;
+      return <XCircle className={cn(cls, mfTone.danger.text)} />;
     case "converted":
-      return <Zap className={cn(cls, "text-amber-500")} />;
+      return <Zap className={cn(cls, mfTone.success.text)} />;
     case "blocked":
-      return <ShieldX className={cn(cls, "text-red-600")} />;
+      return <ShieldX className={cn(cls, mfTone.danger.text)} />;
     case "deferred":
-      return <Clock className={cn(cls, "text-orange-500")} />;
+      return <Clock className={cn(cls, mfTone.neutral.text)} />;
     case "returned":
-      return <CornerUpLeft className={cn(cls, "text-yellow-600")} />;
+      return <CornerUpLeft className={cn(cls, mfTone.warning.text)} />;
     default:
-      return <Dot className={cn(cls, "text-muted-foreground")} />;
+      return <Dot className={cn(cls, mfTone.neutral.text)} />;
   }
 }
 
@@ -71,9 +75,12 @@ function resultTone(result: string): TimelineTone {
 export function DiAuditTimeline({ diId }: DiAuditTimelineProps) {
   const { t, i18n } = useTranslation("di");
   const locale = intlLocaleForLanguage(i18n.language);
-  const [events, setEvents] = useState<DiChangeEvent[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const fetchLatest = useCallback((limit: number) => listDiChangeEvents(diId, limit), [diId]);
+  const history = useLatestHistory<DiChangeEvent>(fetchLatest, {
+    pageSize: HISTORY_PAGE,
+    maxLimit: HISTORY_MAX,
+  });
+  const events = history.items;
 
   const actionLabel = (action: string) =>
     t(`auditTimeline.actionLabel.${action}` as "auditTimeline.actionLabel.screened", {
@@ -92,23 +99,6 @@ export function DiAuditTimeline({ diId }: DiAuditTimelineProps) {
         return result;
     }
   };
-
-  const loadEvents = useCallback(async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const items = await listDiChangeEvents(diId, 50);
-      setEvents(items);
-    } catch (err) {
-      setError(toErrorMessage(err));
-    } finally {
-      setLoading(false);
-    }
-  }, [diId]);
-
-  useEffect(() => {
-    void loadEvents();
-  }, [loadEvents]);
 
   const entries: TimelineEntry[] = useMemo(
     () =>
@@ -142,18 +132,15 @@ export function DiAuditTimeline({ diId }: DiAuditTimelineProps) {
   return (
     <Timeline
       items={entries}
-      loading={loading}
+      loading={history.loading}
       locale={locale}
-      aria-label={t("auditTimeline.title", { defaultValue: "DI audit timeline" })}
+      aria-label={t("auditTimeline.title")}
       empty={t("auditTimeline.empty")}
-      error={
-        error ? (
-          <div className="flex items-start gap-2 rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
-            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-            <span>{t("auditTimeline.loadError")}</span>
-          </div>
-        ) : null
-      }
+      error={history.error ?? undefined}
+      onRetry={history.reload}
+      hasOlder={history.hasOlder}
+      {...(history.canLoadOlder ? { onLoadOlder: history.loadOlder } : {})}
+      loadingOlder={history.loadingOlder}
     />
   );
 }

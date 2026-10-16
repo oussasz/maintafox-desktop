@@ -253,6 +253,7 @@
     }
   },
   "procurement": {
+    "boardMoveHint": "Glissez une carte vers la colonne suivante (ou utilisez Déplacer, ou Alt+flèches) pour la soumettre ou l’approuver. Le refus, l’annulation et la clôture se font depuis la fiche, qui demande le motif ou une confirmation.",
     "dashboard": {
       "title": "Vue d'ensemble achats",
       "openRequisitions": "Demandes ouvertes",

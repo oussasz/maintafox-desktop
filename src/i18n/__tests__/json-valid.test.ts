@@ -40,6 +40,7 @@ const COMMON_TOP_KEYS = [
   "kanban",
   "linkedEntity",
   "resourceTimeline",
+  "timeline",
   "smartFilter",
   // Design-system states, toolbar and confirmation labels (docs/DESIGN_SYSTEM.md).
   "ds",

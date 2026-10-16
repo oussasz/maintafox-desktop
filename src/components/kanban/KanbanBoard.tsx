@@ -1,13 +1,13 @@
 import { ArrowRightLeft, ChevronDown } from "lucide-react";
 import {
+  type DragEvent,
+  type KeyboardEvent,
   useCallback,
   useEffect,
   useId,
   useMemo,
   useRef,
   useState,
-  type DragEvent,
-  type KeyboardEvent,
 } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -24,6 +24,7 @@ import {
 import { StatusChip } from "@/components/ui/status-chip";
 import { mfKanban } from "@/design-system/tokens";
 import { mfTone } from "@/design-system/tone";
+import { describeAppError } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 
 import type {
@@ -33,6 +34,7 @@ import type {
   KanbanCardAction,
   KanbanColumn,
   KanbanMetaItem,
+  KanbanMoveOutcome,
   KanbanTone,
 } from "./types";
 
@@ -43,6 +45,13 @@ import type {
  */
 const DEFAULT_TONE: KanbanTone = "neutral";
 const DND_MIME = "application/x-maintafox-kanban";
+
+/** Normalizes an `onDrop` outcome: accepted, or refused with an optional localized reason. */
+function readOutcome(outcome: KanbanMoveOutcome): { ok: boolean; reason?: string | undefined } {
+  if (outcome === undefined || outcome === true) return { ok: true };
+  if (outcome === false) return { ok: false };
+  return outcome;
+}
 
 function cardName(card: KanbanCard): string {
   return card.ariaLabel ?? (card.code ? `${card.code}: ${card.title}` : card.title);
@@ -96,7 +105,7 @@ function CardMoveMenu({
 }: {
   card: KanbanCard;
   targets: KanbanColumn[];
-  onMove: (card: KanbanCard, toColumnId: string) => void;
+  onMove: (card: KanbanCard, toColumnId: string) => Promise<void>;
 }) {
   const { t } = useTranslation("common");
   return (
@@ -118,7 +127,7 @@ function CardMoveMenu({
       <DropdownMenuContent align="start" onClick={(e) => e.stopPropagation()}>
         <DropdownMenuLabel>{t("kanban.moveTo")}</DropdownMenuLabel>
         {targets.map((column) => (
-          <DropdownMenuItem key={column.id} onSelect={() => onMove(card, column.id)}>
+          <DropdownMenuItem key={column.id} onSelect={() => void onMove(card, column.id)}>
             <span
               className={cn(mfKanban.columnDot, mfTone[column.tone ?? DEFAULT_TONE].dot)}
               aria-hidden
@@ -151,7 +160,7 @@ function KanbanCardView({
   moveHintId: string;
   onCardClick?: ((card: KanbanCard) => void) | undefined;
   onDragStart: (e: DragEvent, card: KanbanCard) => void;
-  onMove: (card: KanbanCard, toColumnId: string) => void;
+  onMove: (card: KanbanCard, toColumnId: string) => Promise<void>;
   onKeyboardMove: (card: KanbanCard, direction: -1 | 1) => void;
 }) {
   const badges = card.badges ?? [];
@@ -281,7 +290,7 @@ function KanbanColumnView({
   onCardClick?: ((card: KanbanCard) => void) | undefined;
   onDragStart: (e: DragEvent, card: KanbanCard) => void;
   onColumnDrop: (e: DragEvent, toColumnId: string) => void;
-  onMove: (card: KanbanCard, toColumnId: string) => void;
+  onMove: (card: KanbanCard, toColumnId: string) => Promise<void>;
   onKeyboardMove: (card: KanbanCard, direction: -1 | 1) => void;
   pageSize: number;
   loadMoreLabel: (remaining: number) => string;
@@ -395,7 +404,10 @@ export function KanbanBoard<T = KanbanCard>({
   const { t } = useTranslation("common");
   const dragCardRef = useRef<KanbanCard | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
-  const focusAfterMoveRef = useRef<string | null>(null);
+  /** Card to focus in its new lane once the server accepted the move (set only on success). */
+  const [focusAfterMove, setFocusAfterMove] = useState<{ cardId: string; columnId: string } | null>(
+    null,
+  );
   const [announcement, setAnnouncement] = useState("");
   const moveHintId = useId();
 
@@ -430,13 +442,34 @@ export function KanbanBoard<T = KanbanCard>({
     [columns, accepts],
   );
 
+  /**
+   * One path for drag, menu and keyboard: run the adapter's transition, then announce the real
+   * outcome. Focus follows the card only once the server accepted the move.
+   */
   const moveCard = useCallback(
-    (card: KanbanCard, toColumnId: string) => {
-      if (!accepts(card, toColumnId)) return;
+    async (card: KanbanCard, toColumnId: string) => {
+      if (!accepts(card, toColumnId) || !onDrop) return;
       const target = columns.find((c) => c.id === toColumnId);
-      focusAfterMoveRef.current = card.id;
-      onDrop?.(card, card.columnId, toColumnId);
-      setAnnouncement(t("kanban.moved", { card: cardName(card), column: target?.label ?? "" }));
+      const name = cardName(card);
+      try {
+        const outcome = readOutcome(await onDrop(card, card.columnId, toColumnId));
+        if (outcome.ok) {
+          setFocusAfterMove({ cardId: card.id, columnId: toColumnId });
+          setAnnouncement(t("kanban.moved", { card: name, column: target?.label ?? "" }));
+        } else {
+          setFocusAfterMove(null);
+          setAnnouncement(
+            outcome.reason
+              ? t("kanban.refusedReason", { card: name, reason: outcome.reason })
+              : t("kanban.refused", { card: name }),
+          );
+        }
+      } catch (err) {
+        setFocusAfterMove(null);
+        setAnnouncement(
+          t("kanban.refusedReason", { card: name, reason: describeAppError(err).title }),
+        );
+      }
     },
     [accepts, columns, onDrop, t],
   );
@@ -447,7 +480,7 @@ export function KanbanBoard<T = KanbanCard>({
       for (let i = from + direction; i >= 0 && i < columns.length; i += direction) {
         const column = columns[i];
         if (column && accepts(card, column.id)) {
-          moveCard(card, column.id);
+          void moveCard(card, column.id);
           return;
         }
       }
@@ -457,13 +490,19 @@ export function KanbanBoard<T = KanbanCard>({
   );
 
   // Keep keyboard users on the card they moved once the adapter re-renders it in its new lane.
+  // Waits for the card to appear in the target lane (the adapter may reload after or before the
+  // transition resolves), then focuses it once.
   useEffect(() => {
-    const id = focusAfterMoveRef.current;
-    if (!id || !rootRef.current) return;
-    const el = rootRef.current.querySelector<HTMLElement>(`[data-card-id="${CSS.escape(id)}"]`);
-    if (el && document.activeElement !== el) el.focus();
-    focusAfterMoveRef.current = null;
-  }, [cards]);
+    if (!focusAfterMove || !rootRef.current) return;
+    const el = rootRef.current.querySelector<HTMLElement>(
+      `[data-column-id="${CSS.escape(focusAfterMove.columnId)}"] [data-card-id="${CSS.escape(
+        focusAfterMove.cardId,
+      )}"]`,
+    );
+    if (!el) return;
+    if (document.activeElement !== el) el.focus();
+    setFocusAfterMove(null);
+  }, [cards, focusAfterMove]);
 
   const handleDragStart = useCallback((e: DragEvent, card: KanbanCard) => {
     dragCardRef.current = card;
@@ -481,10 +520,9 @@ export function KanbanBoard<T = KanbanCard>({
       const card = dragCardRef.current;
       dragCardRef.current = null;
       if (!card) return;
-      if (!accepts(card, toColumnId)) return;
-      onDrop?.(card, card.columnId, toColumnId);
+      void moveCard(card, toColumnId);
     },
-    [accepts, onDrop],
+    [moveCard],
   );
 
   const boardLabel = ariaLabel ?? t("kanban.boardLabel");

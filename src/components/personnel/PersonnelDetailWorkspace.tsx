@@ -514,7 +514,6 @@ export function PersonnelDetailWorkspace({ detail }: PersonnelDetailWorkspacePro
             aria-label={t("detail.tabs.assignment")}
             empty={t("common.noData")}
             groupBy="day"
-            todayLabel={t("common.today", "Today")}
           />
         </DetailSectionCard>
       ) : null}
@@ -527,7 +526,6 @@ export function PersonnelDetailWorkspace({ detail }: PersonnelDetailWorkspacePro
             aria-label={t("detail.tabs.history")}
             empty={t("common.noData")}
             groupBy="day"
-            todayLabel={t("common.today", "Today")}
           />
         </DetailSectionCard>
       ) : null}

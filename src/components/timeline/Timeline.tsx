@@ -1,10 +1,14 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { useMemo, useState } from "react";
+import { isValidElement, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ErrorState } from "@/components/ui/data-state";
 import { mfTimeline } from "@/design-system/tokens";
+import { mfTone } from "@/design-system/tone";
 import { cn } from "@/lib/utils";
+import { formatDateTime, intlLocaleForLanguage } from "@/utils/format-date";
 
 import { groupItemsByDay } from "./groupByDay";
 import type {
@@ -17,13 +21,14 @@ import type {
   TimelineTone,
 } from "./types";
 
+/** Timeline badge tones on the design-system tone vocabulary (same chips as the lists). */
 const BADGE_TONE: Record<TimelineTone, string> = {
   default: "",
-  success: "bg-status-success/15 text-status-success border-status-success/30",
-  warning: "bg-status-warning/15 text-status-warning border-status-warning/30",
-  danger: "bg-status-danger/15 text-status-danger border-status-danger/30",
-  info: "bg-primary/15 text-primary border-primary/30",
-  muted: "bg-surface-3/70 text-text-secondary",
+  success: mfTone.success.chip,
+  warning: mfTone.warning.chip,
+  danger: mfTone.danger.chip,
+  info: mfTone.info.chip,
+  muted: mfTone.neutral.chip,
 };
 
 const STEP_MARKER: Record<TimelineStepState, string> = {
@@ -31,21 +36,12 @@ const STEP_MARKER: Record<TimelineStepState, string> = {
   complete: "bg-primary border-background",
   current: "bg-primary border-background ring-2 ring-primary/40",
   skipped: "bg-muted-foreground/20 border-background",
-  cancelled: "bg-status-danger border-background",
+  cancelled: "bg-tone-danger-fg border-background",
 };
 
-function formatTimeLabel(iso: string, locale?: string): string {
-  try {
-    return new Date(iso).toLocaleString(locale, {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  } catch {
-    return iso;
-  }
+/** `fr` / `en` (i18n language) → Intl locale; a full BCP 47 tag passes through. */
+function resolveLocale(locale: string): string {
+  return locale.includes("-") ? locale : intlLocaleForLanguage(locale);
 }
 
 function EntryBadges({ badges }: { badges?: TimelineBadge[] | undefined }) {
@@ -75,9 +71,10 @@ function TimelineItemRow({
   entry: TimelineEntry;
   isLast: boolean;
   density: TimelineDensity;
-  locale?: string | undefined;
+  locale: string;
   itemTestId?: string | undefined;
 }) {
+  const { t } = useTranslation("common");
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
   const controlled = entry.detailsExpanded !== undefined;
   const detailsOpen = controlled ? Boolean(entry.detailsExpanded) : uncontrolledOpen;
@@ -100,7 +97,7 @@ function TimelineItemRow({
         mfTimeline.item,
         rowPad,
         isLast && "pb-0",
-        entry.tone === "danger" && "rounded-md bg-status-danger/10 px-2 py-2",
+        entry.tone === "danger" && "rounded-md bg-tone-danger-bg px-2 py-2",
       )}
       data-testid={itemTestId}
     >
@@ -140,7 +137,7 @@ function TimelineItemRow({
             ) : null}
             <div className={mfTimeline.meta}>
               {entry.timestamp ? (
-                <time dateTime={entry.timestamp}>{formatTimeLabel(entry.timestamp, locale)}</time>
+                <time dateTime={entry.timestamp}>{formatDateTime(entry.timestamp, locale)}</time>
               ) : null}
               {entry.actor ? (
                 <>
@@ -181,7 +178,7 @@ function TimelineItemRow({
               ) : (
                 <ChevronRight className="h-3 w-3" aria-hidden />
               )}
-              {entry.detailsLabel ?? "Details"}
+              {entry.detailsLabel ?? t("timeline.details")}
             </button>
             {detailsOpen ? <div className="mt-1">{entry.details}</div> : null}
           </div>
@@ -218,33 +215,40 @@ export function Timeline<T = TimelineEntry>({
   getEntry,
   density = "comfortable",
   groupBy = "none",
-  todayLabel = "Today",
-  locale,
+  todayLabel,
+  locale: localeProp,
   loading,
   error,
+  onRetry,
+  hasOlder = false,
+  onLoadOlder,
+  loadingOlder = false,
   empty,
-  "aria-label": ariaLabel = "Timeline",
+  "aria-label": ariaLabelProp,
   className,
   itemTestId,
 }: TimelineProps<T>) {
+  const { t, i18n } = useTranslation("common");
+  const locale = resolveLocale(localeProp ?? i18n.language ?? "fr");
+  const ariaLabel = ariaLabelProp ?? t("timeline.label");
+  const today = todayLabel ?? t("timeline.today");
   const mapEntry = (getEntry ?? defaultGetEntry) as (item: T, index: number) => TimelineEntry;
 
   const entries = useMemo(() => items.map((item, i) => mapEntry(item, i)), [items, mapEntry]);
 
   const groups = useMemo(() => {
     if (groupBy === "day") {
-      return groupItemsByDay(
-        entries,
-        (e) => e.timestamp ?? e.id,
-        locale ?? (typeof navigator !== "undefined" ? navigator.language : "en"),
-        todayLabel,
-      ).map((g) => ({ key: g.key, label: g.label, items: g.items }));
+      return groupItemsByDay(entries, (e) => e.timestamp ?? e.id, locale, today).map((g) => ({
+        key: g.key,
+        label: g.label,
+        items: g.items,
+      }));
     }
     if (groupBy === "custom") {
       return groupCustom(entries);
     }
     return [{ key: "all", label: "", items: entries }];
-  }, [entries, groupBy, locale, todayLabel]);
+  }, [entries, groupBy, locale, today]);
 
   if (loading) {
     return (
@@ -262,24 +266,50 @@ export function Timeline<T = TimelineEntry>({
     );
   }
 
-  if (error) {
+  if (error !== undefined && error !== null && error !== false && error !== "") {
+    if (isValidElement(error)) {
+      return (
+        <div className={cn("py-2", className)} role="alert">
+          {error}
+        </div>
+      );
+    }
     return (
-      <div className={cn("py-2", className)} role="alert">
-        {error}
-      </div>
+      <ErrorState
+        error={error}
+        {...(onRetry ? { onRetry } : {})}
+        {...(className ? { className } : {})}
+      />
     );
   }
 
   if (entries.length === 0) {
     return (
-      <div className={cn("py-6 text-center text-sm text-muted-foreground", className)}>
-        {empty ?? "No events"}
+      <div className={cn("py-6 text-center text-sm text-text-muted", className)}>
+        {empty ?? t("timeline.empty")}
       </div>
     );
   }
 
   return (
     <div className={cn(mfTimeline.root, className)} role="region" aria-label={ariaLabel}>
+      {hasOlder ? (
+        <div role="status" className={mfTimeline.olderNotice}>
+          <span>{t("timeline.olderHidden", { count: entries.length })}</span>
+          {onLoadOlder ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-9"
+              onClick={onLoadOlder}
+              disabled={loadingOlder}
+            >
+              {loadingOlder ? t("timeline.loadingOlder") : t("timeline.loadOlder")}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
       {groups.map((group) => (
         <div key={group.key} className={group.label ? "space-y-2" : undefined}>
           {group.label ? <p className={mfTimeline.groupHeader}>{group.label}</p> : null}
@@ -290,7 +320,7 @@ export function Timeline<T = TimelineEntry>({
                 entry={entry}
                 isLast={idx === group.items.length - 1}
                 density={density}
-                {...(locale !== undefined ? { locale } : {})}
+                locale={locale}
                 {...(itemTestId ? { itemTestId } : {})}
               />
             ))}

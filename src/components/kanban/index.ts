@@ -7,5 +7,6 @@ export type {
   KanbanCardLink,
   KanbanColumn,
   KanbanMetaItem,
+  KanbanMoveOutcome,
   KanbanTone,
 } from "./types";

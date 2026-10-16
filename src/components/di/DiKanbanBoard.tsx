@@ -4,7 +4,8 @@
  * Data adapter for intervention-request lanes. Owns status→column mapping,
  * i18n, and reference labels only — all rendering belongs to KanbanBoard.
  *
- * Active operational stages only. Closed DIs live in DiArchivePanel.
+ * Active operational stages only. Closed DIs live in DiArchivePanel. Read-only: status changes
+ * go through the review dialogs (see the hint rendered above the board).
  */
 
 import { AlertTriangle, Calendar as CalendarIcon, Clock } from "lucide-react";
@@ -138,13 +139,22 @@ export function DiKanbanBoard({ items, onCardClick }: DiKanbanBoardProps) {
     [onCardClick],
   );
 
+  // Read-only board: every review step needs inputs of its own dialog (validated urgency, return
+  // or deferral reason, approval checks), so a drop could only bypass them.
   return (
-    <KanbanBoard
-      columns={columns}
-      cards={cards}
-      onCardClick={handleCardClick}
-      emptyColumnLabel={t("kanban.emptyColumn", { ns: "common" })}
-      aria-label={t("page.viewKanban")}
-    />
+    <div className="flex h-full min-h-0 flex-col gap-2">
+      <p className="px-1 text-xs text-text-muted" data-testid="di-kanban-status-hint">
+        {t("kanban.statusFromDetailHint")}
+      </p>
+      <div className="min-h-0 flex-1">
+        <KanbanBoard
+          columns={columns}
+          cards={cards}
+          onCardClick={handleCardClick}
+          emptyColumnLabel={t("kanban.emptyColumn", { ns: "common" })}
+          aria-label={t("page.viewKanban")}
+        />
+      </div>
+    </div>
   );
 }

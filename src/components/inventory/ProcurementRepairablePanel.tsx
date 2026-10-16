@@ -225,6 +225,20 @@ const PO_KANBAN_STATUSES = [
   "CANCELLED",
 ] as const;
 
+/**
+ * Board moves = the one-click lifecycle steps the row menu already offers (submit, approve),
+ * run through the same `transition_*` command and server guards. Reject (reason), cancel and
+ * close (confirmation) stay dialog-only and are never offered as a drop target.
+ */
+const BOARD_ONE_CLICK_MOVES: Record<string, string> = {
+  DRAFT: "SUBMITTED",
+  SUBMITTED: "APPROVED",
+};
+
+function isBoardOneClickMove(from: string, to: string): boolean {
+  return BOARD_ONE_CLICK_MOVES[from] === to;
+}
+
 const REPAIRABLE_STATUSES = [
   "REQUESTED",
   "RELEASED",
@@ -2104,9 +2118,20 @@ export const ProcurementRepairablePanel = forwardRef<
                   </div>
                   {reqView === "kanban" ? (
                     <div className="mb-3">
+                      {canProcure ? (
+                        <p className="mb-2 px-1 text-xs text-text-muted">
+                          {t("procurement.boardMoveHint")}
+                        </p>
+                      ) : null}
                       <KanbanBoard
                         columns={reqKanbanColumns}
                         cards={reqKanbanCards}
+                        enableDrag={canProcure}
+                        canDrop={(_card, from, to) => isBoardOneClickMove(from, to)}
+                        onDrop={(card, _from, to) => {
+                          const row = requisitions.find((r) => String(r.id) === card.id);
+                          return row ? runRequisitionTransition(row, to) : false;
+                        }}
                         onCardClick={(card) => openRequisitionDetails(Number(card.id))}
                         emptyColumnLabel={t("kanban.emptyColumn", { ns: "common" })}
                         aria-label={t("procurement.requisitions.boardLabel")}
@@ -2167,9 +2192,20 @@ export const ProcurementRepairablePanel = forwardRef<
                   </div>
                   {reqView === "kanban" ? (
                     <div className="mb-3">
+                      {canProcure ? (
+                        <p className="mb-2 px-1 text-xs text-text-muted">
+                          {t("procurement.boardMoveHint")}
+                        </p>
+                      ) : null}
                       <KanbanBoard
                         columns={poKanbanColumns}
                         cards={poKanbanCards}
+                        enableDrag={canProcure}
+                        canDrop={(_card, from, to) => isBoardOneClickMove(from, to)}
+                        onDrop={(card, _from, to) => {
+                          const row = purchaseOrders.find((r) => String(r.id) === card.id);
+                          return row ? runPurchaseOrderTransition(row, to) : false;
+                        }}
                         onCardClick={(card) => openPoDetails(Number(card.id))}
                         emptyColumnLabel={t("kanban.emptyColumn", { ns: "common" })}
                         aria-label={t("procurement.purchaseOrders.boardLabel")}

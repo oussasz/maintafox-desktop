@@ -137,6 +137,10 @@
     "noMoreOptions": "Plus d’options"
   },
   "assetPicker": {
+    "searchFailed": "La recherche a échoué :",
+    "retry": "Réessayer",
+    "legacyLabel": "Cette étiquette est d'un ancien format qui ne permet pas d'identifier l'équipement sûrement : réimprimez-la depuis la fiche de l'actif.",
+    "more": "{{shown}} sur {{total}} affichés : précisez la recherche",
     "searchPlaceholder": "Rechercher un actif par code, nom, série, QR…",
     "recent": "Récemment utilisés",
     "frequent": "Fréquemment utilisés",
@@ -156,7 +160,18 @@
     "moveCard": "Déplacer {{card}} vers une autre colonne",
     "moveHint": "Alt+flèche gauche ou Alt+flèche droite déplace cette carte vers la colonne voisine ; le bouton Déplacer propose toutes les colonnes possibles.",
     "moved": "{{card}} déplacé vers « {{column}} ».",
-    "noTarget": "Aucune autre colonne n’accepte {{card}} dans cette direction."
+    "noTarget": "Aucune autre colonne n’accepte {{card}} dans cette direction.",
+    "refused": "{{card}} n’a pas été déplacé : le changement a été refusé.",
+    "refusedReason": "{{card}} n’a pas été déplacé : {{reason}}"
+  },
+  "timeline": {
+    "label": "Historique",
+    "today": "Aujourd’hui",
+    "empty": "Aucun événement",
+    "details": "Détails",
+    "olderHidden": "Seuls les {{count}} derniers événements sont affichés.",
+    "loadOlder": "Afficher les événements plus anciens",
+    "loadingOlder": "Chargement…"
   },
   "resourceTimeline": {
     "loading": "Chargement du chronogramme…",

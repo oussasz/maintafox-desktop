@@ -1543,4 +1543,39 @@ mod tests {
         assert!(closed_count >= 1, "expected at least one 'closed' event");
         assert!(events.len() >= 10, "expected at least 10 events, got {}", events.len());
     }
+
+    /// A full history page keeps the LATEST events (oldest first on screen), not the first ones.
+    #[tokio::test]
+    async fn wo_change_events_page_keeps_latest_events_in_order() {
+        let db = setup().await;
+        let wo = create_wo_draft(&db, "history page").await;
+        let actor = admin_id(&db).await;
+        for action in ["e1", "e2", "e3"] {
+            audit::record_wo_change_event(
+                &db,
+                audit::WoAuditInput {
+                    wo_id: Some(wo.id),
+                    action: action.into(),
+                    actor_id: Some(actor),
+                    summary: None,
+                    details_json: None,
+                    requires_step_up: false,
+                    apply_result: "applied".into(),
+                },
+            )
+            .await;
+        }
+        let all = audit::list_wo_change_events(&db, wo.id, 500).await.expect("all");
+        let total = all.len();
+        assert!(total >= 3, "created + 3 recorded events");
+
+        let page = audit::list_wo_change_events(&db, wo.id, 2).await.expect("page");
+        let actions: Vec<&str> = page.iter().map(|e| e.action.as_str()).collect();
+        assert_eq!(actions, vec!["e2", "e3"], "latest two, chronological");
+
+        // Limit is clamped: 0 still returns one event, never an error or everything.
+        let one = audit::list_wo_change_events(&db, wo.id, 0).await.expect("clamped");
+        assert_eq!(one.len(), 1);
+        assert_eq!(one[0].action, "e3");
+    }
 }

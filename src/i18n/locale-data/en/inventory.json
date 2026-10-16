@@ -253,6 +253,7 @@
     }
   },
   "procurement": {
+    "boardMoveHint": "Drag a card to the next column (or use Move, or Alt+arrow keys) to submit or approve it. Rejecting, cancelling and closing are done from the record, which asks for the reason or a confirmation.",
     "dashboard": {
       "title": "Procurement overview",
       "openRequisitions": "Open requisitions",
