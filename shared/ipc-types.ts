@@ -6447,6 +6447,8 @@ export interface PersonnelAvailabilityBlock {
   created_by_id: number | null;
   created_by_label: string | null;
   created_at: string;
+  /** `reason_note` withheld (no per.sensitiveview, not the person's own record). */
+  reason_masked: boolean;
 }
 
 export interface PersonnelTeamAssignment {
