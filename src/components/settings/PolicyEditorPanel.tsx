@@ -89,13 +89,13 @@ interface PolicyField {
 }
 
 const POLICY_FIELDS: Record<string, PolicyField[]> = {
+  // `offline_grace_hours`, `max_failed_attempts` and `lockout_minutes` stay in the stored policy
+  // but the sign-in does not read them: the lockout is set in the Lockout panel (the values the
+  // sign-in applies) and offline grace comes from the device configuration.
   session: [
     { key: "idle_timeout_minutes", type: "number" },
     { key: "absolute_session_minutes", type: "number" },
-    { key: "offline_grace_hours", type: "number" },
     { key: "step_up_window_minutes", type: "number" },
-    { key: "max_failed_attempts", type: "number" },
-    { key: "lockout_minutes", type: "number" },
   ],
   password: [
     { key: "min_length", type: "number" },

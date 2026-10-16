@@ -8,6 +8,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   cloneRole,
   deactivateUser,
+  getLockoutPolicy,
+  setLockoutPolicy,
+  setPasswordPolicy,
   exportAdminEventsCsv,
   getRoleEditorCatalog,
   listActiveSessions,
@@ -312,6 +315,39 @@ describe("settings", () => {
     });
     await expect(readDocumentBrandingLogoPreview()).resolves.toMatchObject({
       mime_type: "image/png",
+    });
+  });
+});
+
+describe("security policies", () => {
+  it("saves the password policy as one validated change", async () => {
+    ipc.invoke.mockResolvedValueOnce(undefined);
+    const policy = {
+      max_age_days: 90,
+      warn_days_before_expiry: 14,
+      min_length: 12,
+      require_uppercase: true,
+      require_lowercase: true,
+      require_digit: true,
+      require_special: false,
+    };
+    await setPasswordPolicy(policy);
+    expect(ipc.invoke).toHaveBeenCalledWith("set_password_policy", { input: policy });
+  });
+
+  it("reads and saves the sign-in lockout", async () => {
+    ipc.invoke.mockResolvedValueOnce({ max_attempts: 5, lockout_minutes: 15, progressive: true });
+    await expect(getLockoutPolicy()).resolves.toEqual({
+      max_attempts: 5,
+      lockout_minutes: 15,
+      progressive: true,
+    });
+    ipc.invoke.mockResolvedValueOnce({ max_attempts: "5" });
+    await expect(getLockoutPolicy()).rejects.toThrow();
+    ipc.invoke.mockResolvedValueOnce(undefined);
+    await setLockoutPolicy({ max_attempts: 6, lockout_minutes: 30, progressive: false });
+    expect(ipc.invoke).toHaveBeenLastCalledWith("set_lockout_policy", {
+      input: { max_attempts: 6, lockout_minutes: 30, progressive: false },
     });
   });
 });

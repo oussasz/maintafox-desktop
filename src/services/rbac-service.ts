@@ -25,6 +25,7 @@ import type {
   GrantEmergencyElevationInput,
   IdPayload,
   ImportResult,
+  LockoutPolicySettings,
   MissingTenantScopeUser,
   PasswordPolicySettings,
   PermissionDependencyRow,
@@ -393,6 +394,28 @@ const PasswordPolicySchema = z.object({
 export async function getPasswordPolicy(): Promise<PasswordPolicySettings> {
   const raw = await invoke<unknown>("get_password_policy");
   return PasswordPolicySchema.parse(raw);
+}
+
+/** Replace the password policy (validated on the server, step-up, recorded in the history). */
+export async function setPasswordPolicy(input: PasswordPolicySettings): Promise<void> {
+  await invoke<void>("set_password_policy", { input });
+}
+
+const LockoutPolicySchema = z.object({
+  max_attempts: z.number(),
+  lockout_minutes: z.number(),
+  progressive: z.boolean(),
+});
+
+/** Sign-in lockout thresholds the login applies. */
+export async function getLockoutPolicy(): Promise<LockoutPolicySettings> {
+  const raw = await invoke<unknown>("get_lockout_policy");
+  return LockoutPolicySchema.parse(raw);
+}
+
+/** Replace the lockout thresholds (validated, step-up, recorded in the history). */
+export async function setLockoutPolicy(input: LockoutPolicySettings): Promise<void> {
+  await invoke<void>("set_lockout_policy", { input });
 }
 
 // â”€â”€ Permission catalog (SP06-F02) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

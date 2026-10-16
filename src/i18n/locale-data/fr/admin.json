@@ -305,7 +305,8 @@
     "save": "Enregistrer la politique",
     "saving": "Enregistrement...",
     "saved": "Politique enregistrée avec succès.",
-    "saveError": "Échec de l'enregistrement de la politique de mot de passe."
+    "saveError": "Échec de l'enregistrement de la politique de mot de passe.",
+    "minLengthHint": "8 caractères au minimum, 128 au maximum."
   },
   "permissions": {
     "domains": "Domaines",
@@ -754,5 +755,15 @@
       "onlyIn": "Seulement dans {{name}}",
       "common": "En commun"
     }
+  },
+  "lockoutPolicy": {
+    "title": "Verrouillage des comptes",
+    "hint": "Valeurs appliquées à la connexion : nombre d'échecs avant verrouillage, durée, verrouillage progressif (la durée augmente à chaque verrouillage).",
+    "maxAttempts": "Échecs avant verrouillage",
+    "lockoutMinutes": "Durée du verrouillage (minutes)",
+    "progressive": "Verrouillage progressif",
+    "save": "Enregistrer le verrouillage",
+    "saved": "Verrouillage enregistré.",
+    "saveError": "Échec de l'enregistrement du verrouillage."
   }
 }

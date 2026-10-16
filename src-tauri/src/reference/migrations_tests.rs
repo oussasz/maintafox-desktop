@@ -243,6 +243,19 @@ mod tests {
             .await
             .expect("create to value");
 
+        // The session's account exists and is active (`require_session!` checks the stored
+        // account on every command).
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            "INSERT OR IGNORE INTO user_accounts \
+             (id, entity_sync_id, username, identity_mode, password_hash, is_active, is_admin, \
+              force_password_change, failed_login_attempts, created_at, updated_at, row_version) \
+             VALUES (20, 'ref-s3-user-20', 'admin-s3', 'local', 'x', 1, 1, 0, 0, \
+                     '2026-10-16T00:00:00Z', '2026-10-16T00:00:00Z', 1)"
+                .to_string(),
+        ))
+        .await
+        .expect("session account");
         assign_role(&db, 20, "Administrator").await;
 
         let state = AppState::new(db.clone());

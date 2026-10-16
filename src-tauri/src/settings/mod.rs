@@ -420,6 +420,7 @@ pub async fn scrub_hash_only_history<C: ConnectionTrait>(db: &C) -> AppResult<u6
     let sql = format!(
         "UPDATE settings_change_events SET old_value_json = NULL, new_value_json = NULL \
          WHERE (old_value_json IS NOT NULL OR new_value_json IS NOT NULL) \
+           AND setting_key_or_domain NOT LIKE 'rbac.%' \
            AND setting_key_or_domain NOT IN ({placeholders})"
     );
     let values: Vec<sea_orm::Value> = allowed.iter().map(|k| (*k).into()).collect();

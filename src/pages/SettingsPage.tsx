@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
-import { PasswordPolicyPanel } from "@/components/admin/PasswordPolicyPanel";
+import { LockoutPolicyPanel, PasswordPolicyPanel } from "@/components/admin/PasswordPolicyPanel";
 import { DiagnosticsPanel } from "@/components/diagnostics/DiagnosticsPanel";
 import { LicenseEnforcementPanel } from "@/components/license/LicenseEnforcementPanel";
 import { ActivityLogSettingsSection } from "@/components/settings/ActivityLogSettingsSection";
@@ -369,6 +369,7 @@ export function SettingsPage() {
                           {t("tabs.securityHint")}
                         </p>
                         <PasswordPolicyPanel />
+                        <LockoutPolicyPanel />
                         <PolicyEditorPanel domain="session" onToast={onToast} />
                         <PermissionGate permission={P.LOG_VIEW}>
                           <ActivityLogSettingsSection />

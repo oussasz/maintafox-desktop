@@ -5599,6 +5599,13 @@ export interface PasswordPolicySettings {
   require_special: boolean;
 }
 
+/** Sign-in lockout thresholds (`get_lockout_policy` / `set_lockout_policy`). */
+export interface LockoutPolicySettings {
+  max_attempts: number;
+  lockout_minutes: number;
+  progressive: boolean;
+}
+
 export interface RbacSettingEntry {
   key: string;
   value: string;

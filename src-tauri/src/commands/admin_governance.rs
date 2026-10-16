@@ -1051,6 +1051,10 @@ pub async fn import_role_model(input: RoleImportPayload, state: State<'_, AppSta
                 ));
             }
         }
+        // An imported role carries no permission the importing administrator lacks.
+        if let Err(e) = crate::commands::admin_users::ensure_caller_holds(&state.db, &caller, &names).await {
+            errors.push(e.to_string());
+        }
 
         if !errors.is_empty() {
             skipped.push(SkippedRole {
@@ -1115,9 +1119,15 @@ pub async fn import_role_model(input: RoleImportPayload, state: State<'_, AppSta
         for perm_name in &entry.permissions {
             tx.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "INSERT OR IGNORE INTO role_permissions (role_id, permission_id) \
-                 SELECT ?, p.id FROM permissions p WHERE p.name = ?",
-                [new_role_id.into(), perm_name.clone().into()],
+                // `granted_at` is NOT NULL: without it OR IGNORE dropped every permission silently.
+                "INSERT OR IGNORE INTO role_permissions (role_id, permission_id, granted_at, granted_by_id) \
+                 SELECT ?, p.id, ?, ? FROM permissions p WHERE p.name = ?",
+                [
+                    new_role_id.into(),
+                    now.clone().into(),
+                    i64::from(caller.user_id).into(),
+                    perm_name.clone().into(),
+                ],
             ))
             .await?;
         }

@@ -513,7 +513,7 @@ async fn the_last_administrator_cannot_be_removed_by_any_path() {
     assert!(matches!(revoked, Err(AppError::ValidationFailed(_))), "{revoked:?}");
     assert_eq!(admin_assignment(&db).await, only, "nothing was withdrawn");
 
-    // Replacing it at the same scope with a lesser role is refused too.
+    // Replacing it at the same scope is refused too (and an own account is never re-assigned).
     let replaced = assign_role_scope_impl(
         &state,
         &caller,
@@ -659,4 +659,334 @@ async fn refusals_of_non_administrators_go_to_the_security_journal() {
         0,
         "no ledger row for someone without administration rights"
     );
+}
+
+// ── Anti-escalation, session revocation, forced password change ────────────────────────────
+
+/// A custom role holding exactly `permissions`, and an account holding it plant-wide.
+async fn account_with_permissions(db: &DatabaseConnection, username: &str, permissions: &[&str]) -> (i64, i64) {
+    let now = chrono::Utc::now().to_rfc3339();
+    let role_name = format!("{username}-role");
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO roles (entity_sync_id, name, role_type, status, is_system, created_at, updated_at, row_version) \
+         VALUES (?, ?, 'custom', 'active', 0, ?, ?, 1)",
+        [
+            format!("{role_name}-sync").into(),
+            role_name.clone().into(),
+            now.clone().into(),
+            now.clone().into(),
+        ],
+    ))
+    .await
+    .unwrap();
+    let role = role_id(db, &role_name).await;
+    for p in permissions {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO role_permissions (role_id, permission_id, granted_at) SELECT ?, id, ? FROM permissions WHERE name = ?",
+            [role.into(), now.clone().into(), (*p).into()],
+        ))
+        .await
+        .unwrap();
+    }
+    let user = insert_user(db, username).await;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO user_scope_assignments (entity_sync_id, user_id, role_id, scope_type, created_at, updated_at, row_version) \
+         VALUES (?, ?, ?, 'tenant', ?, ?, 1)",
+        [
+            format!("{username}-usa").into(),
+            user.into(),
+            role.into(),
+            now.clone().into(),
+            now.into(),
+        ],
+    ))
+    .await
+    .unwrap();
+    (user, role)
+}
+
+fn caller_for(user_id: i64, username: &str) -> AuthenticatedUser {
+    AuthenticatedUser {
+        user_id: i32::try_from(user_id).expect("fits"),
+        username: username.into(),
+        display_name: None,
+        is_admin: false,
+        force_password_change: false,
+        tenant_id: "tenant-test".into(),
+        token_tenant_id: "tenant-test".into(),
+    }
+}
+
+async fn open_session(state: &AppState, db: &DatabaseConnection, user: i64, name: &str) -> String {
+    let session_id = {
+        let mut sm = state.session.write().await;
+        sm.create_session(caller_for(user, name)).session_db_id.clone()
+    };
+    crate::auth::session_manager::create_session_record(
+        db,
+        &session_id,
+        i32::try_from(user).unwrap(),
+        &(chrono::Utc::now() + chrono::Duration::hours(8)).to_rfc3339(),
+    )
+    .await
+    .unwrap();
+    session_id
+}
+
+#[tokio::test]
+async fn a_user_administrator_cannot_escalate() {
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let (ops_id, ops_role) = account_with_permissions(&db, "ops_admin", &[crate::rbac::permissions::ADM_USERS]).await;
+    let ops = caller_for(ops_id, "ops_admin");
+    let admin = admin_caller(&db).await;
+    let admin_role = role_id(&db, "Administrator").await;
+    let readonly = role_id(&db, "Readonly").await;
+    let other = insert_user(&db, "escalation_target").await;
+    let denied = |r: &AppResult<IdPayload>| matches!(r, Err(AppError::PermissionDenied(_)));
+
+    // Administrator roles: plant administrators only.
+    let r = assign_role_scope_impl(&state, &ops, assign(other, admin_role, "tenant", None), false, None).await;
+    assert!(denied(&r), "{r:?}");
+    // No role for oneself, not even one already held.
+    let r = assign_role_scope_impl(&state, &ops, assign(ops_id, ops_role, "tenant", None), false, None).await;
+    assert!(denied(&r), "{r:?}");
+    // A role with permissions the caller lacks.
+    let r = assign_role_scope_impl(&state, &ops, assign(other, readonly, "tenant", None), false, None).await;
+    assert!(denied(&r), "{r:?}");
+    // A role within the caller's own permissions is fine.
+    assign_role_scope_impl(&state, &ops, assign(other, ops_role, "tenant", None), false, None)
+        .await
+        .expect("grant within own permissions");
+    // No self emergency grant.
+    let r = grant_emergency_elevation_impl(
+        &state,
+        &ops,
+        GrantEmergencyElevationInput {
+            user_id: ops_id,
+            role_id: admin_role,
+            scope_type: "tenant".into(),
+            scope_reference: None,
+            reason: "please".into(),
+            expires_at: (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
+        },
+    )
+    .await;
+    assert!(denied(&r), "{r:?}");
+
+    // Administrator accounts are managed by administrators only.
+    let admin_id = i64::from(admin.user_id);
+    let reset = admin_set_user_password_impl(
+        &state,
+        &ops,
+        AdminSetUserPasswordInput {
+            user_id: admin_id,
+            temporary_password: None,
+        },
+    )
+    .await;
+    assert!(matches!(reset, Err(AppError::PermissionDenied(_))), "{reset:?}");
+    assert!(matches!(
+        unlock_user_account_impl(&state, &ops, admin_id).await,
+        Err(AppError::PermissionDenied(_))
+    ));
+    let disable = set_user_active_impl(
+        &state,
+        &ops,
+        SetUserActiveInput {
+            user_id: admin_id,
+            reason: "takeover".into(),
+        },
+        false,
+    )
+    .await;
+    assert!(matches!(disable, Err(AppError::PermissionDenied(_))), "{disable:?}");
+
+    // A role editor cannot add a permission they do not hold.
+    let (editor_id, _) = account_with_permissions(&db, "role_editor", &[crate::rbac::permissions::ADM_ROLES]).await;
+    let editor = caller_for(editor_id, "role_editor");
+    let add = update_role_impl(
+        &state,
+        &editor,
+        UpdateRoleInput {
+            role_id: ops_role,
+            description: None,
+            add_permissions: Some(vec![crate::rbac::permissions::ADM_SETTINGS.to_string()]),
+            remove_permissions: None,
+        },
+    )
+    .await;
+    assert!(matches!(add, Err(AppError::PermissionDenied(_))), "{add:?}");
+
+    // The plant administrator may grant an administrator role, never to themselves.
+    assign_role_scope_impl(&state, &admin, assign(other, admin_role, "tenant", None), false, None)
+        .await
+        .expect("administrator grants an administrator role");
+    let own = assign_role_scope_impl(&state, &admin, assign(admin_id, readonly, "tenant", None), false, None).await;
+    assert!(denied(&own), "{own:?}");
+}
+
+#[tokio::test]
+async fn closed_sessions_and_disabled_accounts_stop_at_the_next_command() {
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let admin = admin_caller(&db).await;
+    let worker = insert_user(&db, "session_worker").await;
+    let session_id = open_session(&state, &db, worker, "session_worker").await;
+    let user = caller_for(worker, "session_worker");
+    crate::auth::session_manager::enforce_stored_session(&db, &state.session, &user, Some(&session_id))
+        .await
+        .expect("open session passes");
+
+    // Disabling the account closes the stored session and ends the in-memory one.
+    set_user_active_impl(
+        &state,
+        &admin,
+        SetUserActiveInput {
+            user_id: worker,
+            reason: "Contract ended".into(),
+        },
+        false,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT is_revoked AS v FROM app_sessions WHERE id = ?",
+            vec![session_id.clone().into()],
+        )
+        .await,
+        1
+    );
+    let refused =
+        crate::auth::session_manager::enforce_stored_session(&db, &state.session, &user, Some(&session_id)).await;
+    assert!(matches!(refused, Err(AppError::Auth(_))), "{refused:?}");
+    assert!(
+        state.session.read().await.current.is_none(),
+        "the in-memory session ended"
+    );
+}
+
+#[tokio::test]
+async fn a_revoked_session_row_ends_the_live_session() {
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let worker = insert_user(&db, "revoked_worker").await;
+    let session_id = open_session(&state, &db, worker, "revoked_worker").await;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE app_sessions SET is_revoked = 1 WHERE id = ?",
+        [session_id.clone().into()],
+    ))
+    .await
+    .unwrap();
+    let refused = crate::auth::session_manager::enforce_stored_session(
+        &db,
+        &state.session,
+        &caller_for(worker, "revoked_worker"),
+        Some(&session_id),
+    )
+    .await;
+    assert!(matches!(refused, Err(AppError::Auth(_))), "{refused:?}");
+    assert!(state.session.read().await.current.is_none());
+}
+
+#[tokio::test]
+async fn a_password_reset_closes_sessions_and_forces_the_change_first() {
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let admin = admin_caller(&db).await;
+    let worker = insert_user(&db, "reset_worker").await;
+    let session_id = open_session(&state, &db, worker, "reset_worker").await;
+    let result = admin_set_user_password_impl(
+        &state,
+        &admin,
+        AdminSetUserPasswordInput {
+            user_id: worker,
+            temporary_password: None,
+        },
+    )
+    .await
+    .expect("reset");
+    assert!(result.temporary_password.len() >= 16);
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT is_revoked AS v FROM app_sessions WHERE id = ?",
+            vec![session_id.into()],
+        )
+        .await,
+        1,
+        "the sessions opened with the old password are closed"
+    );
+
+    // A fresh session of an account that must change its password is refused everything.
+    let fresh = open_session(&state, &db, worker, "reset_worker").await;
+    let refused = crate::auth::session_manager::enforce_stored_session(
+        &db,
+        &state.session,
+        &caller_for(worker, "reset_worker"),
+        Some(&fresh),
+    )
+    .await;
+    match refused {
+        Err(AppError::Auth(message)) => {
+            assert!(message.starts_with(crate::auth::session_manager::PASSWORD_CHANGE_REQUIRED));
+        }
+        other => panic!("expected a password-change refusal, got {other:?}"),
+    }
+    assert!(
+        state
+            .session
+            .read()
+            .await
+            .current
+            .as_ref()
+            .is_some_and(|s| s.user.force_password_change),
+        "the shell is told to show the change-password screen"
+    );
+}
+
+#[tokio::test]
+async fn emergency_access_respects_the_configured_maximum() {
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let admin = admin_caller(&db).await;
+    let user = insert_user(&db, "long_emergency").await;
+    let readonly = role_id(&db, "Readonly").await;
+    let too_long = grant_emergency_elevation_impl(
+        &state,
+        &admin,
+        GrantEmergencyElevationInput {
+            user_id: user,
+            role_id: readonly,
+            scope_type: "tenant".into(),
+            scope_reference: None,
+            reason: "Weekend shutdown".into(),
+            expires_at: (chrono::Utc::now() + chrono::Duration::hours(9)).to_rfc3339(),
+        },
+    )
+    .await;
+    assert!(matches!(too_long, Err(AppError::ValidationFailed(_))), "{too_long:?}");
+}
+
+#[tokio::test]
+async fn admin_set_passwords_follow_the_plant_policy_too() {
+    let db = crate::db::test_db::seeded().await;
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "UPDATE rbac_settings SET value = '14' WHERE key = 'password_min_length'".to_string(),
+    ))
+    .await
+    .unwrap();
+    assert!(
+        validate_admin_set_password(&db, "ValidPass1").await.is_err(),
+        "the policy needs 14"
+    );
+    assert!(validate_admin_set_password(&db, "ValidPassword1234").await.is_ok());
+    assert!(validate_admin_set_password(&db, "short").await.is_err());
 }

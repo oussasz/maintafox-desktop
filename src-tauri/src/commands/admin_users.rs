@@ -667,7 +667,7 @@ pub async fn create_user(input: CreateUserInput, app: AppHandle, state: State<'_
             crate::rbac::permissions::ADM_USERS,
             PermissionScope::Global
         );
-        // TODO: re-enable require_step_up!(state) once StepUpDialog UI is built (SP06-F03)
+        require_step_up!(state);
         create_user_impl(&state, &caller, input).await
     }
     .await;
@@ -692,6 +692,7 @@ pub(crate) async fn create_user_impl(
     input: CreateUserInput,
 ) -> AppResult<IdPayload> {
     let username = normalize_username(&input.username)?;
+    ensure_may_grant_role(&state.db, caller, input.role_id, None).await?;
 
     // Validate identity_mode
     if !["local", "sso", "hybrid"].contains(&input.identity_mode.as_str()) {
@@ -706,7 +707,7 @@ pub(crate) async fn create_user_impl(
             let pw = input.initial_password.as_deref().ok_or_else(|| {
                 AppError::ValidationFailed(vec!["initial_password is required for local identity mode".into()])
             })?;
-            validate_password_strength(pw)?;
+            validate_admin_set_password(&state.db, pw).await?;
             Some(crate::auth::password::hash_password(pw)?)
         }
         "sso" => {
@@ -719,7 +720,7 @@ pub(crate) async fn create_user_impl(
         }
         "hybrid" => match input.initial_password.as_deref() {
             Some(pw) => {
-                validate_password_strength(pw)?;
+                validate_admin_set_password(&state.db, pw).await?;
                 Some(crate::auth::password::hash_password(pw)?)
             }
             None => None,
@@ -997,12 +998,14 @@ pub(crate) async fn update_user_impl(
     caller: &AuthenticatedUser,
     input: UpdateUserInput,
 ) -> AppResult<()> {
-    // Guard: cannot deactivate self
-    if input.is_active == Some(false) && i64::from(caller.user_id) == input.user_id {
+    // Enabling / disabling goes through `deactivate_user` / `reactivate_user` (step-up, mandatory
+    // reason, ledger); editing the account details cannot switch it on or off.
+    if input.is_active.is_some() {
         return Err(AppError::ValidationFailed(vec![
-            "Cannot deactivate your own account".into()
+            "Use Disable / Enable on the account to switch it off or on (a reason is required).".into(),
         ]));
     }
+    ensure_may_manage_account(&state.db, caller, input.user_id).await?;
 
     let old_row = state
         .db
@@ -1268,6 +1271,7 @@ pub(crate) async fn set_user_active_impl(
     };
     let reason = required_reason(&input.reason, what)?;
     let user_id = input.user_id;
+    ensure_may_manage_account(&state.db, caller, user_id).await?;
 
     let row = state
         .db
@@ -1310,6 +1314,13 @@ pub(crate) async fn set_user_active_impl(
     ))
     .await?;
     ensure_an_admin_remains(&tx, admins_before).await?;
+    // A disabled account keeps no open session: closed in the store, and the in-memory session
+    // of this device ends at its next command (`require_session!`).
+    let closed_sessions = if active {
+        0
+    } else {
+        crate::auth::session_manager::revoke_user_sessions(&tx, user_id).await?
+    };
     let action = if active { "user_reactivated" } else { "user_deactivated" };
     crate::commands::admin_governance::write_admin_event(
         &tx,
@@ -1322,6 +1333,7 @@ pub(crate) async fn set_user_active_impl(
                 "username": username,
                 "is_active": { "old": currently_active, "new": active },
                 "reason": reason,
+                "sessions_closed": closed_sessions,
             })),
             step_up_used: true,
             ..Default::default()
@@ -1465,6 +1477,8 @@ pub(crate) async fn assign_role_scope_impl(
 ) -> AppResult<IdPayload> {
     validate_assignment_scope(&state.db, &input.scope_type, input.scope_reference.as_deref()).await?;
     let (valid_from, valid_to) = normalize_validity(input.valid_from.as_deref(), input.valid_to.as_deref())?;
+    ensure_may_grant_role(&state.db, caller, input.role_id, Some(input.user_id)).await?;
+    ensure_may_manage_account(&state.db, caller, input.user_id).await?;
     let scope_reference_input = if input.scope_type == "tenant" {
         input.scope_reference.clone()
     } else {
@@ -1789,6 +1803,7 @@ pub(crate) async fn revoke_assignment_impl(
             "Assignment is not an emergency elevation — use revoke_role_scope instead".into(),
         ]));
     }
+    ensure_may_manage_account(&state.db, caller, user_id).await?;
 
     let now = now_utc_text();
     let tx = state.db.begin().await?;
@@ -2085,6 +2100,7 @@ async fn insert_custom_role(
 
     validate_permission_names_exist(&state.db, perm_set).await?;
     resolver::validate_hard_dependencies(&state.db, perm_set).await?;
+    ensure_caller_holds(&state.db, caller, perm_set).await?;
 
     let now = now_utc_text();
     let entity_sync_id = crate::sync::identity::new_entity_sync_id();
@@ -2224,6 +2240,8 @@ pub(crate) async fn update_role_impl(
             "System role permissions cannot be modified".into(),
         ));
     }
+    // A role editor cannot hand out (to this role, possibly their own) permissions they lack.
+    ensure_caller_holds(&state.db, user, &add.iter().cloned().collect()).await?;
 
     let new_description = input
         .description
@@ -2560,6 +2578,33 @@ pub async fn grant_emergency_elevation(
     result
 }
 
+/// The longest emergency elevation the plant allows (`rbac_settings.emergency_max_minutes`,
+/// seeded to 480). A missing or invalid value refuses the grant rather than guessing a limit.
+async fn ensure_emergency_within_limit(
+    db: &sea_orm::DatabaseConnection,
+    expires: chrono::DateTime<chrono::Utc>,
+) -> AppResult<()> {
+    let raw: Option<String> = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT value FROM rbac_settings WHERE key = 'emergency_max_minutes'",
+            [],
+        ))
+        .await?
+        .and_then(|r| r.try_get("", "value").ok());
+    let Some(max_minutes) = raw.and_then(|v| v.trim().parse::<i64>().ok()).filter(|m| *m > 0) else {
+        return Err(AppError::ValidationFailed(vec![
+            "The maximum emergency access duration (emergency_max_minutes) is not configured.".into(),
+        ]));
+    };
+    if expires > chrono::Utc::now() + chrono::Duration::minutes(max_minutes) {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "Emergency access may last at most {max_minutes} minutes."
+        )]));
+    }
+    Ok(())
+}
+
 /// Parse the expiry of an emergency grant (RFC 3339) and normalise it to UTC
 /// `YYYY-MM-DDTHH:MM:SSZ`, the text format the permission checks compare against.
 fn normalize_emergency_expiry(raw: &str) -> AppResult<chrono::DateTime<chrono::Utc>> {
@@ -2583,6 +2628,9 @@ pub(crate) async fn grant_emergency_elevation_impl(
 ) -> AppResult<IdPayload> {
     let reason = required_reason(&input.reason, "grant emergency access")?;
     let expires = normalize_emergency_expiry(&input.expires_at)?;
+    ensure_emergency_within_limit(&state.db, expires).await?;
+    ensure_may_grant_role(&state.db, caller, input.role_id, Some(input.user_id)).await?;
+    ensure_may_manage_account(&state.db, caller, input.user_id).await?;
     let expires_text = expires.format("%Y-%m-%dT%H:%M:%SZ").to_string();
     validate_assignment_scope(&state.db, &input.scope_type, input.scope_reference.as_deref()).await?;
     let scope_reference = if input.scope_type == "tenant" {
@@ -2779,6 +2827,7 @@ pub async fn unlock_user_account(user_id: i64, state: State<'_, AppState>) -> Ap
 }
 
 async fn unlock_user_account_impl(state: &AppState, admin: &AuthenticatedUser, user_id: i64) -> AppResult<()> {
+    ensure_may_manage_account(&state.db, admin, user_id).await?;
     // Verify user exists
     let exists = state
         .db
@@ -2844,14 +2893,23 @@ pub struct AdminSetUserPasswordResult {
     pub temporary_password: String,
 }
 
-fn generate_temporary_password() -> String {
+/// A password an administrator sets (new account, reset) meets both the fixed minimum of
+/// [`validate_password_strength`] and the plant password policy (Settings › Security), so the
+/// policy can only make it stronger.
+async fn validate_admin_set_password(db: &sea_orm::DatabaseConnection, password: &str) -> AppResult<()> {
+    validate_password_strength(password)?;
+    let policy = crate::auth::password_policy::PasswordPolicy::load(db).await;
+    crate::auth::password_policy::validate_password_strength(password, &policy).map_err(AppError::ValidationFailed)
+}
+
+fn generate_temporary_password(length: usize) -> String {
     use rand::Rng;
     const UPPER: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ";
     const LOWER: &[u8] = b"abcdefghijkmnopqrstuvwxyz";
     const DIGIT: &[u8] = b"23456789";
     const SPECIAL: &[u8] = b"!@#$%&*";
     let mut rng = rand::thread_rng();
-    let mut chars: Vec<u8> = Vec::with_capacity(16);
+    let mut chars: Vec<u8> = Vec::with_capacity(length.max(4));
     chars.push(UPPER[rng.gen_range(0..UPPER.len())]);
     chars.push(LOWER[rng.gen_range(0..LOWER.len())]);
     chars.push(DIGIT[rng.gen_range(0..DIGIT.len())]);
@@ -2863,7 +2921,7 @@ fn generate_temporary_password() -> String {
         .chain(SPECIAL.iter())
         .copied()
         .collect();
-    for _ in 0..12 {
+    for _ in 0..length.saturating_sub(4) {
         chars.push(alphabet[rng.gen_range(0..alphabet.len())]);
     }
     // Fisher–Yates shuffle
@@ -2911,6 +2969,7 @@ async fn admin_set_user_password_impl(
     admin: &AuthenticatedUser,
     input: AdminSetUserPasswordInput,
 ) -> AppResult<AdminSetUserPasswordResult> {
+    ensure_may_manage_account(&state.db, admin, input.user_id).await?;
     let row = state
         .db
         .query_one(Statement::from_sql_and_values(
@@ -2953,12 +3012,13 @@ async fn admin_set_user_password_impl(
         .filter(|s| !s.is_empty())
     {
         Some(pw) => {
-            validate_password_strength(pw)?;
+            validate_admin_set_password(&state.db, pw).await?;
             pw.to_string()
         }
         None => {
-            let generated = generate_temporary_password();
-            validate_password_strength(&generated)?;
+            let policy = crate::auth::password_policy::PasswordPolicy::load(&state.db).await;
+            let generated = generate_temporary_password(policy.min_length.max(16));
+            validate_admin_set_password(&state.db, &generated).await?;
             generated
         }
     };
@@ -2986,6 +3046,8 @@ async fn admin_set_user_password_impl(
         ],
     ))
     .await?;
+    // The old password's sessions end: the user signs in again and must change the password.
+    crate::auth::session_manager::revoke_user_sessions(&tx, input.user_id).await?;
 
     let username: String = row.try_get("", "username").unwrap_or_default();
     crate::commands::admin_governance::write_admin_event(
@@ -3317,6 +3379,145 @@ async fn validate_permission_names_exist(db: &impl ConnectionTrait, names: &Hash
     Ok(())
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+//  ANTI-ESCALATION (who may grant / manage what)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// A plant administrator: the bootstrap account (`is_admin`) or an active account holding an
+/// administrator role through a valid, non-emergency assignment (an emergency elevation is
+/// temporary and cannot make anything permanent).
+async fn is_plant_admin<C: ConnectionTrait>(conn: &C, user_id: i64) -> AppResult<bool> {
+    let now = now_utc_text();
+    let placeholders = vec!["?"; ADMIN_ROLE_NAMES.len()].join(",");
+    let sql = format!(
+        "SELECT CASE WHEN EXISTS (SELECT 1 FROM user_accounts WHERE id = ? AND is_admin = 1 \
+                                   AND is_active = 1 AND deleted_at IS NULL) \
+                  OR EXISTS (SELECT 1 FROM user_scope_assignments usa \
+                             INNER JOIN roles r ON r.id = usa.role_id \
+                             INNER JOIN user_accounts ua ON ua.id = usa.user_id \
+                             WHERE usa.user_id = ? AND ua.is_active = 1 AND ua.deleted_at IS NULL \
+                               AND usa.deleted_at IS NULL AND usa.is_emergency = 0 \
+                               AND (usa.valid_from IS NULL OR usa.valid_from <= ?) \
+                               AND (usa.valid_to IS NULL OR usa.valid_to >= ?) \
+                               AND r.deleted_at IS NULL AND r.name IN ({placeholders})) \
+                  THEN 1 ELSE 0 END AS v"
+    );
+    let mut values: Vec<sea_orm::Value> = vec![user_id.into(), user_id.into(), now.clone().into(), now.into()];
+    values.extend(ADMIN_ROLE_NAMES.iter().map(|n| (*n).into()));
+    Ok(conn
+        .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
+        .await?
+        .and_then(|r| r.try_get::<i32>("", "v").ok())
+        .unwrap_or(0)
+        == 1)
+}
+
+/// The account has (or may get back by re-enabling) administrator access: the bootstrap flag or
+/// any live assignment of an administrator role, emergency included, whatever the account state.
+async fn is_admin_account<C: ConnectionTrait>(conn: &C, user_id: i64) -> AppResult<bool> {
+    let placeholders = vec!["?"; ADMIN_ROLE_NAMES.len()].join(",");
+    let sql = format!(
+        "SELECT CASE WHEN EXISTS (SELECT 1 FROM user_accounts WHERE id = ? AND is_admin = 1) \
+                  OR EXISTS (SELECT 1 FROM user_scope_assignments usa \
+                             INNER JOIN roles r ON r.id = usa.role_id \
+                             WHERE usa.user_id = ? AND usa.deleted_at IS NULL \
+                               AND r.name IN ({placeholders})) \
+                  THEN 1 ELSE 0 END AS v"
+    );
+    let mut values: Vec<sea_orm::Value> = vec![user_id.into(), user_id.into()];
+    values.extend(ADMIN_ROLE_NAMES.iter().map(|n| (*n).into()));
+    Ok(conn
+        .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
+        .await?
+        .and_then(|r| r.try_get::<i32>("", "v").ok())
+        .unwrap_or(0)
+        == 1)
+}
+
+/// Permissions the caller holds plant-wide right now (roles and running emergency grants).
+async fn caller_permissions(
+    db: &sea_orm::DatabaseConnection,
+    caller: &AuthenticatedUser,
+) -> AppResult<HashSet<String>> {
+    resolver::effective_permissions(db, i64::from(caller.user_id), "tenant", None).await
+}
+
+/// The caller holds every permission of `wanted` (role editors cannot hand out more than they
+/// have); a plant administrator holds everything.
+pub(crate) async fn ensure_caller_holds(
+    db: &sea_orm::DatabaseConnection,
+    caller: &AuthenticatedUser,
+    wanted: &HashSet<String>,
+) -> AppResult<()> {
+    if wanted.is_empty() || is_plant_admin(db, i64::from(caller.user_id)).await? {
+        return Ok(());
+    }
+    let held = caller_permissions(db, caller).await?;
+    let mut missing: Vec<&String> = wanted.iter().filter(|p| !held.contains(*p)).collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    missing.sort();
+    let shown: Vec<&str> = missing.iter().take(10).map(|s| s.as_str()).collect();
+    Err(AppError::PermissionDenied(format!(
+        "You can only grant permissions you hold yourself; missing: {}{}",
+        shown.join(", "),
+        if missing.len() > shown.len() { ", …" } else { "" }
+    )))
+}
+
+/// Granting `role_id` to `target` (None for a new account): never to oneself; administrator
+/// roles only by a plant administrator; other roles only when the caller holds all their
+/// permissions.
+async fn ensure_may_grant_role(
+    db: &sea_orm::DatabaseConnection,
+    caller: &AuthenticatedUser,
+    role_id: i64,
+    target: Option<i64>,
+) -> AppResult<()> {
+    if target == Some(i64::from(caller.user_id)) {
+        return Err(AppError::PermissionDenied(
+            "You cannot give a role or emergency access to your own account.".into(),
+        ));
+    }
+    let role_name: Option<String> = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT name FROM roles WHERE id = ? AND deleted_at IS NULL",
+            [role_id.into()],
+        ))
+        .await?
+        .and_then(|r| r.try_get("", "name").ok());
+    let Some(role_name) = role_name else {
+        return Err(AppError::NotFound {
+            entity: "Role".into(),
+            id: role_id.to_string(),
+        });
+    };
+    if ADMIN_ROLE_NAMES.contains(&role_name.as_str()) && !is_plant_admin(db, i64::from(caller.user_id)).await? {
+        return Err(AppError::PermissionDenied(format!(
+            "Only a plant administrator can grant the role '{role_name}'."
+        )));
+    }
+    let perms: HashSet<String> = load_role_permission_names(db, role_id).await?.into_iter().collect();
+    ensure_caller_holds(db, caller, &perms).await
+}
+
+/// Managing an administrator account (disable, re-enable, unlock, password reset, roles,
+/// details) is reserved to plant administrators.
+async fn ensure_may_manage_account(
+    db: &sea_orm::DatabaseConnection,
+    caller: &AuthenticatedUser,
+    target: i64,
+) -> AppResult<()> {
+    if is_admin_account(db, target).await? && !is_plant_admin(db, i64::from(caller.user_id)).await? {
+        return Err(AppError::PermissionDenied(
+            "Only a plant administrator can change an administrator account.".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Role names that make an account a plant administrator (Phase 1 name `Administrator`).
 const ADMIN_ROLE_NAMES: &[&str] = &["Superadmin", "Administrator"];
 
@@ -3440,7 +3641,8 @@ mod admin_set_password_tests {
     #[test]
     fn generated_temporary_password_meets_strength_policy() {
         for _ in 0..20 {
-            let pw = generate_temporary_password();
+            let pw = generate_temporary_password(16);
+            assert_eq!(generate_temporary_password(24).len(), 24);
             assert!(pw.len() >= 8, "len={}", pw.len());
             assert!(
                 validate_password_strength(&pw).is_ok(),

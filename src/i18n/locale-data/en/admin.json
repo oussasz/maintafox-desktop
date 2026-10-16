@@ -305,7 +305,8 @@
     "save": "Save policy",
     "saving": "Saving...",
     "saved": "Policy saved successfully.",
-    "saveError": "Failed to save password policy."
+    "saveError": "Failed to save password policy.",
+    "minLengthHint": "At least 8 characters, at most 128."
   },
   "permissions": {
     "domains": "Domains",
@@ -754,5 +755,15 @@
       "onlyIn": "Only in {{name}}",
       "common": "In common"
     }
+  },
+  "lockoutPolicy": {
+    "title": "Account lockout",
+    "hint": "Values the sign-in applies: failed attempts before the account locks, lock duration, progressive locks (the duration grows with each lock).",
+    "maxAttempts": "Failed attempts before lock",
+    "lockoutMinutes": "Lock duration (minutes)",
+    "progressive": "Progressive lock",
+    "save": "Save lockout",
+    "saved": "Lockout saved.",
+    "saveError": "Failed to save the lockout."
   }
 }

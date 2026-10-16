@@ -1,8 +1,15 @@
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { getPasswordPolicy, updateRbacSetting } from "@/services/rbac-service";
-import type { PasswordPolicySettings } from "@shared/ipc-types";
+import { useStepUp } from "@/hooks/use-step-up";
+import {
+  getLockoutPolicy,
+  getPasswordPolicy,
+  setLockoutPolicy,
+  setPasswordPolicy,
+} from "@/services/rbac-service";
+import { toErrorMessage } from "@/utils/errors";
+import type { LockoutPolicySettings, PasswordPolicySettings } from "@shared/ipc-types";
 
 /**
  * Admin panel for configuring password policy settings.
@@ -10,6 +17,7 @@ import type { PasswordPolicySettings } from "@shared/ipc-types";
  */
 export function PasswordPolicyPanel() {
   const { t } = useTranslation("admin");
+  const { withStepUp, StepUpDialogElement } = useStepUp();
   const [policy, setPolicy] = useState<PasswordPolicySettings | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -37,19 +45,12 @@ export function PasswordPolicyPanel() {
     setSuccess(false);
 
     try {
-      await Promise.all([
-        updateRbacSetting("password_max_age_days", String(policy.max_age_days)),
-        updateRbacSetting("password_warn_days", String(policy.warn_days_before_expiry)),
-        updateRbacSetting("password_min_length", String(policy.min_length)),
-        updateRbacSetting("password_require_uppercase", policy.require_uppercase ? "1" : "0"),
-        updateRbacSetting("password_require_lowercase", policy.require_lowercase ? "1" : "0"),
-        updateRbacSetting("password_require_digit", policy.require_digit ? "1" : "0"),
-        updateRbacSetting("password_require_special", policy.require_special ? "1" : "0"),
-      ]);
+      // Saved as one validated change (step-up), recorded in the settings history.
+      await withStepUp(() => setPasswordPolicy(policy));
       setSuccess(true);
       setTimeout(() => setSuccess(false), 3000);
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("passwordPolicy.saveError"));
+      setError(toErrorMessage(err) || t("passwordPolicy.saveError"));
     } finally {
       setSaving(false);
     }
@@ -77,21 +78,22 @@ export function PasswordPolicyPanel() {
           value={policy.max_age_days}
           onChange={(v) => update("max_age_days", v)}
           min={0}
-          max={365}
+          max={3650}
         />
         <NumberField
           label={t("passwordPolicy.warnDays")}
           value={policy.warn_days_before_expiry}
           onChange={(v) => update("warn_days_before_expiry", v)}
           min={0}
-          max={90}
+          max={3650}
         />
         <NumberField
           label={t("passwordPolicy.minLength")}
+          hint={t("passwordPolicy.minLengthHint")}
           value={policy.min_length}
           onChange={(v) => update("min_length", v)}
-          min={4}
-          max={64}
+          min={8}
+          max={128}
         />
 
         <div className="space-y-2">
@@ -139,6 +141,78 @@ export function PasswordPolicyPanel() {
           {saving ? t("passwordPolicy.saving") : t("passwordPolicy.save")}
         </button>
       </form>
+      {StepUpDialogElement}
+    </div>
+  );
+}
+
+/**
+ * Sign-in lockout: failed attempts before the account locks, lock duration, progressive locks.
+ * These are the values the sign-in applies (`rbac_settings` lockout_*). Requires adm.settings.
+ */
+export function LockoutPolicyPanel() {
+  const { t } = useTranslation("admin");
+  const { withStepUp, StepUpDialogElement } = useStepUp();
+  const [policy, setPolicy] = useState<LockoutPolicySettings | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
+
+  useEffect(() => {
+    getLockoutPolicy()
+      .then(setPolicy)
+      .catch(() => setPolicy(null));
+  }, []);
+
+  if (!policy) return null;
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    setError(null);
+    setSuccess(false);
+    try {
+      await withStepUp(() => setLockoutPolicy(policy));
+      setSuccess(true);
+      setTimeout(() => setSuccess(false), 3000);
+    } catch (err) {
+      setError(toErrorMessage(err) || t("lockoutPolicy.saveError"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="rounded-lg border border-surface-border bg-surface-1 p-6">
+      <h2 className="text-lg font-semibold text-text-primary">{t("lockoutPolicy.title")}</h2>
+      <p className="mt-1 text-sm text-text-secondary">{t("lockoutPolicy.hint")}</p>
+      <form onSubmit={handleSubmit} className="mt-4 max-w-md space-y-4">
+        <NumberField
+          label={t("lockoutPolicy.maxAttempts")}
+          value={policy.max_attempts}
+          onChange={(v) => setPolicy({ ...policy, max_attempts: v })}
+          min={1}
+          max={20}
+        />
+        <NumberField
+          label={t("lockoutPolicy.lockoutMinutes")}
+          value={policy.lockout_minutes}
+          onChange={(v) => setPolicy({ ...policy, lockout_minutes: v })}
+          min={1}
+          max={1440}
+        />
+        <Toggle
+          label={t("lockoutPolicy.progressive")}
+          checked={policy.progressive}
+          onChange={(v) => setPolicy({ ...policy, progressive: v })}
+        />
+        {error && <p className="text-sm text-status-danger">{error}</p>}
+        {success && <p className="text-sm text-emerald-600">{t("lockoutPolicy.saved")}</p>}
+        <button type="submit" disabled={saving} className="btn-primary text-sm">
+          {saving ? t("passwordPolicy.saving") : t("lockoutPolicy.save")}
+        </button>
+      </form>
+      {StepUpDialogElement}
     </div>
   );
 }
