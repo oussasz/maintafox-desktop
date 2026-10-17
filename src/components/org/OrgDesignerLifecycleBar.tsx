@@ -9,6 +9,7 @@ import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { Button } from "@/components/ui/button";
+import { mfAlert } from "@/design-system/tokens";
 import { useStepUp } from "@/hooks/use-step-up";
 import { cn } from "@/lib/utils";
 import {
@@ -26,10 +27,9 @@ function AbandonDraftButton({ onClick }: { onClick: () => void }) {
   return (
     <PermissionGate permission={P.ORG_ADMIN}>
       <Button
-        size="sm"
         variant="outline"
         onClick={onClick}
-        className="text-status-danger border-status-danger/50 hover:bg-status-danger/10 hover:text-status-danger"
+        className="h-10 text-status-danger border-status-danger/50 hover:bg-status-danger/10 hover:text-status-danger"
       >
         {t("lifecycle.abandonDraft")}
       </Button>
@@ -64,16 +64,15 @@ function PublishDraftButton({ draftModelId }: { draftModelId: number }) {
   return (
     <>
       <Button
-        size="sm"
         disabled={!canPublish}
         onClick={() => void handlePublish()}
-        className="gap-1.5"
+        className="h-10 gap-1.5"
         data-testid="publish-button"
       >
         {validationLoading ? (
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
         ) : (
-          <Upload className="h-3.5 w-3.5" />
+          <Upload className="h-3.5 w-3.5" aria-hidden />
         )}
         {t("governance.publish")}
       </Button>
@@ -134,32 +133,42 @@ export function OrgDesignerLifecycleBar() {
           role="group"
           aria-label={t("lifecycle.modeGroupLabel")}
         >
-          <span className="text-xs text-text-muted px-1 shrink-0">{t("lifecycle.modeLabel")}:</span>
-          <div className="inline-flex rounded-md border border-surface-border bg-surface-0 p-0.5">
+          <span className="text-xs text-text-muted px-1 shrink-0" id="org-mode-label">
+            {t("lifecycle.modeLabel")}:
+          </span>
+          <div
+            role="radiogroup"
+            aria-labelledby="org-mode-label"
+            className="inline-flex rounded-md border border-surface-border bg-surface-0 p-0.5"
+          >
             <button
               type="button"
+              role="radio"
+              aria-checked={workspaceMode === "published"}
               onClick={() => onWorkspaceChange("published")}
               className={cn(
-                "inline-flex items-center gap-1.5 rounded-sm px-3 py-1.5 text-xs font-medium transition-colors",
+                "inline-flex min-h-10 items-center gap-1.5 rounded-sm px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 workspaceMode === "published"
                   ? "bg-primary text-primary-foreground"
                   : "text-text-muted hover:text-text-primary",
               )}
             >
-              <BookOpen className="h-3.5 w-3.5" />
+              <BookOpen className="h-3.5 w-3.5" aria-hidden />
               {t("lifecycle.modePublished")}
             </button>
             <button
               type="button"
+              role="radio"
+              aria-checked={workspaceMode === "draft"}
               onClick={() => onWorkspaceChange("draft")}
               className={cn(
-                "inline-flex items-center gap-1.5 rounded-sm px-3 py-1.5 text-xs font-medium transition-colors",
+                "inline-flex min-h-10 items-center gap-1.5 rounded-sm px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 workspaceMode === "draft"
                   ? "bg-primary text-primary-foreground"
                   : "text-text-muted hover:text-text-primary",
               )}
             >
-              <PenLine className="h-3.5 w-3.5" />
+              <PenLine className="h-3.5 w-3.5" aria-hidden />
               {t("lifecycle.modeDraft", { version: draftVersion ?? "—" })}
             </button>
           </div>
@@ -185,11 +194,11 @@ export function OrgDesignerLifecycleBar() {
       )}
 
       {!hasActive && !hasDraft && (
-        <div className="rounded-md border border-status-warning/30 bg-status-warning/10 p-3 flex flex-wrap items-center justify-between gap-2">
+        <div className={cn(mfAlert.warning, "flex flex-wrap items-center justify-between gap-2")}>
           <p className="text-sm text-text-primary">{t("lifecycle.noModelYet")}</p>
           <PermissionGate permission={P.ORG_ADMIN}>
-            <Button size="sm" className="gap-1.5" onClick={() => setBootstrapOpen(true)}>
-              <Plus className="h-3.5 w-3.5" />
+            <Button className="h-10 gap-1.5" onClick={() => setBootstrapOpen(true)}>
+              <Plus className="h-3.5 w-3.5" aria-hidden />
               {t("lifecycle.createInitialDraft")}
             </Button>
           </PermissionGate>
@@ -200,8 +209,8 @@ export function OrgDesignerLifecycleBar() {
         <div className="rounded-md border border-surface-border bg-surface-0 p-3 flex flex-wrap items-center justify-between gap-2">
           <p className="text-sm text-text-primary max-w-prose">{t("lifecycle.publishedNoDraft")}</p>
           <PermissionGate permission={P.ORG_ADMIN}>
-            <Button size="sm" className="gap-1.5" onClick={() => setForkOpen(true)}>
-              <Plus className="h-3.5 w-3.5" />
+            <Button className="h-10 gap-1.5" onClick={() => setForkOpen(true)}>
+              <Plus className="h-3.5 w-3.5" aria-hidden />
               {t("lifecycle.startVersionFromPublished")}
             </Button>
           </PermissionGate>

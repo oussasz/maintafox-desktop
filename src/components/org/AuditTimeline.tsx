@@ -5,19 +5,21 @@
  * Loads recent events from the backend via the governance store.
  */
 
-import { Clock, Loader2, RefreshCw } from "lucide-react";
+import { Clock, RefreshCw } from "lucide-react";
 import { useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Timeline } from "@/components/timeline";
 import type { TimelineEntry, TimelineTone } from "@/components/timeline";
 import { Button } from "@/components/ui/button";
+import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import { useOrgGovernanceStore } from "@/stores/org-governance-store";
 
 export function AuditTimeline() {
   const { t } = useTranslation("org");
   const auditEvents = useOrgGovernanceStore((s) => s.auditEvents);
   const auditLoading = useOrgGovernanceStore((s) => s.auditLoading);
+  const auditError = useOrgGovernanceStore((s) => s.auditError);
   const loadAuditEvents = useOrgGovernanceStore((s) => s.loadAuditEvents);
 
   useEffect(() => {
@@ -78,7 +80,7 @@ export function AuditTimeline() {
           size="sm"
           onClick={() => void loadAuditEvents()}
           disabled={auditLoading}
-          className="h-9 w-9 p-0"
+          className="h-10 w-10 p-0"
           aria-label={t("governance.refreshTimeline")}
           title={t("governance.refreshTimeline")}
         >
@@ -86,13 +88,18 @@ export function AuditTimeline() {
         </Button>
       </div>
 
-      {auditLoading && auditEvents.length === 0 && (
-        <div className="flex items-center justify-center py-8">
-          <Loader2 className="h-5 w-5 animate-spin text-text-muted" />
+      {auditError != null && !auditLoading ? (
+        // A failed load is never shown as "no change yet".
+        <div className="p-2">
+          <ErrorState
+            error={auditError}
+            title={t("governance.auditLoadError")}
+            onRetry={() => void loadAuditEvents()}
+          />
         </div>
-      )}
-
-      {!(auditLoading && auditEvents.length === 0) && (
+      ) : auditLoading && auditEvents.length === 0 ? (
+        <LoadingState />
+      ) : (
         <div className="flex-1 overflow-y-auto px-2 py-2">
           <Timeline
             items={entries}

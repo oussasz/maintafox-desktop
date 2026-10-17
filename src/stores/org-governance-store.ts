@@ -21,7 +21,13 @@ interface OrgGovernanceStoreState {
   reconcileLoading: boolean;
   auditEvents: OrgChangeEvent[];
   auditLoading: boolean;
+  /**
+   * Failure of publish validation / reconcile / publish (blocks Publish). Audit-history failures
+   * are kept apart in `auditError` so a history outage never disables publishing.
+   */
   error: string | null;
+  /** Failure of the last audit-history load (raw; render with ErrorState). */
+  auditError: unknown;
 
   loadPublishValidation: (modelId: number) => Promise<void>;
   reconcileDraftLineage: (draftModelId: number) => Promise<void>;
@@ -37,6 +43,7 @@ export const useOrgGovernanceStore = create<OrgGovernanceStoreState>()((set, get
   auditEvents: [],
   auditLoading: false,
   error: null,
+  auditError: null,
 
   loadPublishValidation: async (modelId) => {
     set({ validationLoading: true, error: null });
@@ -98,12 +105,12 @@ export const useOrgGovernanceStore = create<OrgGovernanceStoreState>()((set, get
   },
 
   loadAuditEvents: async (limit, entityKind, entityId) => {
-    set({ auditLoading: true, error: null });
+    set({ auditLoading: true, auditError: null });
     try {
       const auditEvents = await listOrgChangeEvents(limit, entityKind, entityId);
       set({ auditEvents });
     } catch (err) {
-      set({ error: formatOrgIpcError(err) });
+      set({ auditError: err });
     } finally {
       set({ auditLoading: false });
     }

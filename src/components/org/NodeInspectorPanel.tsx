@@ -24,7 +24,7 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 
@@ -48,6 +48,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ORG_NODE_STATUS_TONE, toneOf } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
 import { describeAppError } from "@/lib/app-error";
+import { createLatestRequestGuard } from "@/lib/latest-request";
 import {
   VersionConflictError,
   assignEquipmentToNode,
@@ -156,27 +157,37 @@ export function NodeInspectorPanel({ readOnly = false }: NodeInspectorPanelProps
     }
   }, [opsNodeId, hasAssetCapability]);
 
+  // Typing fast starts several searches: only the answer to the latest query may fill the list.
+  const equipSearchGuard = useRef(createLatestRequestGuard());
+
   useEffect(() => {
     void loadEquipment();
+    equipSearchGuard.current.invalidate();
     setEquipSearch("");
     setEquipResults([]);
+    setEquipSearching(false);
   }, [loadEquipment]);
 
   const handleEquipSearch = useCallback(
     async (query: string) => {
       setEquipSearch(query);
       setEquipSearchError(null);
+      const isCurrent = equipSearchGuard.current.begin();
       if (!canEditOps || query.trim().length < EQUIPMENT_SEARCH_MIN_CHARS) {
         setEquipResults([]);
+        setEquipSearching(false);
         return;
       }
       setEquipSearching(true);
       try {
-        setEquipResults(await searchUnassignedEquipment(query.trim(), EQUIPMENT_SEARCH_LIMIT));
+        const rows = await searchUnassignedEquipment(query.trim(), EQUIPMENT_SEARCH_LIMIT);
+        if (!isCurrent()) return;
+        setEquipResults(rows);
       } catch (err) {
+        if (!isCurrent()) return;
         setEquipSearchError(err);
       } finally {
-        setEquipSearching(false);
+        if (isCurrent()) setEquipSearching(false);
       }
     },
     [canEditOps],
@@ -449,6 +460,15 @@ export function NodeInspectorPanel({ readOnly = false }: NodeInspectorPanelProps
               <DetailRow label={t("designer.inspector.equipmentCount")}>
                 {equipmentLoading ? (
                   t("designer.inspector.searching")
+                ) : equipmentError != null ? (
+                  // A failed load is not "0 equipment".
+                  <button
+                    type="button"
+                    className="text-left text-tone-danger-fg underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded"
+                    onClick={() => setTab("equipment")}
+                  >
+                    {t("designer.inspector.equipmentCountUnavailable")}
+                  </button>
                 ) : (
                   <button
                     type="button"

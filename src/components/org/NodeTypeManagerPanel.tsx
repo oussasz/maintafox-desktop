@@ -3,8 +3,8 @@
  *
  * Dialog-based admin panel for managing org node types.
  * Uses the centered floating dialog pattern (like DI details).
- * Supports list, add, edit, and deactivate with visual icon picker,
- * color swatches, and capability toggles.
+ * Supports list, add, edit, and deactivate with a visual icon picker and capability toggles.
+ * The stored `color` is kept as is on edit: nothing in the app displays it, so no picker is offered.
  */
 
 import {
@@ -35,6 +35,8 @@ import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import {
   Dialog,
   DialogContent,
@@ -43,6 +45,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -92,23 +95,6 @@ function resolveIcon(key: string | null | undefined): LucideIcon {
   return ICON_OPTIONS.find((o) => o.key === key)?.Icon ?? Building2;
 }
 
-// ─── Color preset swatches (Tailwind palette) ────────────────────────────────
-
-const COLOR_SWATCHES = [
-  "#3b82f6", // blue-500
-  "#22c55e", // green-500
-  "#eab308", // yellow-500
-  "#a855f7", // purple-500
-  "#ef4444", // red-500
-  "#f97316", // orange-500
-  "#06b6d4", // cyan-500
-  "#ec4899", // pink-500
-  "#14b8a6", // teal-500
-  "#6366f1", // indigo-500
-  "#64748b", // slate-500
-  "#78716c", // stone-500
-];
-
 // ─── Capability flag definitions ─────────────────────────────────────────────
 
 const CAPABILITY_FLAGS = [
@@ -127,7 +113,6 @@ interface NodeTypeFormState {
   label: string;
   code: string;
   icon_key: string;
-  color: string;
   capabilities: Record<CapFlag, boolean>;
 }
 
@@ -135,7 +120,6 @@ const EMPTY_FORM: NodeTypeFormState = {
   label: "",
   code: "",
   icon_key: "",
-  color: COLOR_SWATCHES[0] ?? "#3b82f6",
   capabilities: {
     can_host_assets: false,
     can_own_work: false,
@@ -163,6 +147,8 @@ export function NodeTypeManagerPanel({
   const { t } = useTranslation("org");
   const [types, setTypes] = useState<OrgNodeType[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<unknown>(null);
+  const [deleteTarget, setDeleteTarget] = useState<OrgNodeType | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState<NodeTypeFormState>(EMPTY_FORM);
@@ -172,6 +158,7 @@ export function NodeTypeManagerPanel({
   const loadTypes = useCallback(async () => {
     if (!structureModelId) return;
     setLoading(true);
+    setLoadError(null);
     try {
       const list = await listOrgNodeTypes(structureModelId);
       setTypes(list);
@@ -183,6 +170,9 @@ export function NodeTypeManagerPanel({
         }),
       );
       setUsageCounts(Object.fromEntries(counts));
+    } catch (err) {
+      // Shown in place of the list: a failed load is never "no type yet".
+      setLoadError(err);
     } finally {
       setLoading(false);
     }
@@ -205,7 +195,6 @@ export function NodeTypeManagerPanel({
       label: nt.label,
       code: nt.code,
       icon_key: nt.icon_key ?? "",
-      color: nt.color ?? COLOR_SWATCHES[0] ?? "#3b82f6",
       capabilities: {
         can_host_assets: nt.can_host_assets,
         can_own_work: nt.can_own_work,
@@ -232,38 +221,42 @@ export function NodeTypeManagerPanel({
           code: form.code.trim() || form.label.trim().toLowerCase().replace(/\s+/g, "_"),
           label: form.label.trim(),
           ...(form.icon_key ? { icon_key: form.icon_key } : {}),
-          ...(form.color ? { color: form.color } : {}),
           ...form.capabilities,
           is_root_type: false,
         });
       } else if (editingId !== null) {
+        const current = types.find((nt) => nt.id === editingId);
         await updateOrgNodeType({
           id: editingId,
           label: form.label.trim(),
           icon_key: form.icon_key || null,
-          color: form.color || null,
+          // Unchanged: there is no colour picker (see header comment).
+          color: current?.color ?? null,
           ...form.capabilities,
         });
       }
       cancelForm();
       await loadTypes();
       onTypesChanged();
+    } catch {
+      // The global IPC toast reports the failure; the form stays open with the user's input.
     } finally {
       setSaving(false);
     }
   };
 
-  const handleDelete = async (nt: OrgNodeType) => {
-    const usage = usageCounts[nt.id] ?? 0;
-    if (usage > 0) return; // blocked — UI should not allow
+  /** Runs inside ConfirmDialog: a rejection keeps the dialog open (the toast reports it). */
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    if ((usageCounts[deleteTarget.id] ?? 0) > 0) return; // blocked — the button is disabled
     setSaving(true);
     try {
-      await deactivateOrgNodeType(nt.id);
-      await loadTypes();
-      onTypesChanged();
+      await deactivateOrgNodeType(deleteTarget.id);
     } finally {
       setSaving(false);
     }
+    await loadTypes();
+    onTypesChanged();
   };
 
   const setCapability = (flag: CapFlag, checked: boolean) => {
@@ -292,9 +285,15 @@ export function NodeTypeManagerPanel({
           {/* Type list */}
           {!isFormMode &&
             (loading ? (
-              <p className="text-sm text-text-muted">{t("nodeTypes.loading")}</p>
+              <LoadingState label={t("nodeTypes.loading")} />
+            ) : loadError != null ? (
+              <ErrorState
+                error={loadError}
+                title={t("nodeTypes.loadError")}
+                onRetry={() => void loadTypes()}
+              />
             ) : types.length === 0 ? (
-              <p className="text-sm text-text-muted">{t("nodeTypes.empty")}</p>
+              <EmptyState title={t("nodeTypes.empty")} />
             ) : (
               <div className="space-y-2">
                 {types.map((nt) => {
@@ -305,12 +304,8 @@ export function NodeTypeManagerPanel({
                       key={nt.id}
                       className="flex items-center gap-3 rounded-lg border border-surface-border p-3"
                     >
-                      {/* Color dot + icon */}
-                      <div
-                        className="flex h-8 w-8 items-center justify-center rounded-full shrink-0"
-                        style={{ backgroundColor: nt.color ?? "#64748b" }}
-                      >
-                        <RowIcon className="h-4 w-4 text-white" />
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary-bg text-primary">
+                        <RowIcon className="h-4 w-4" aria-hidden />
                       </div>
                       {/* Label + capabilities */}
                       <div className="flex-1 min-w-0">
@@ -328,24 +323,27 @@ export function NodeTypeManagerPanel({
                       {/* Actions */}
                       <div className="flex items-center gap-1">
                         <Button
-                          size="sm"
                           variant="ghost"
-                          className="h-7 w-7 p-0"
+                          className="h-10 w-10 p-0"
+                          aria-label={t("nodeTypes.editTypeNamed", { label: nt.label })}
+                          title={t("nodeTypes.editType")}
                           onClick={() => startEdit(nt)}
                         >
-                          <Pencil className="h-3.5 w-3.5" />
+                          <Pencil className="h-4 w-4" aria-hidden />
                         </Button>
                         <Button
-                          size="sm"
                           variant="ghost"
-                          className="h-7 w-7 p-0"
+                          className="h-10 w-10 p-0"
                           disabled={usage > 0 || saving}
+                          aria-label={t("nodeTypes.deactivateNamed", { label: nt.label })}
                           title={
-                            usage > 0 ? t("nodeTypes.deleteBlocked", { count: usage }) : undefined
+                            usage > 0
+                              ? t("nodeTypes.deleteBlocked", { count: usage })
+                              : t("nodeTypes.deactivate")
                           }
-                          onClick={() => void handleDelete(nt)}
+                          onClick={() => setDeleteTarget(nt)}
                         >
-                          <Trash2 className="h-3.5 w-3.5 text-status-danger" />
+                          <Trash2 className="h-4 w-4 text-tone-danger-fg" aria-hidden />
                         </Button>
                       </div>
                     </div>
@@ -361,8 +359,14 @@ export function NodeTypeManagerPanel({
                 <h3 className="text-sm font-semibold text-text-primary">
                   {creating ? t("nodeTypes.addType") : t("nodeTypes.editType")}
                 </h3>
-                <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={cancelForm}>
-                  <X className="h-4 w-4" />
+                <Button
+                  variant="ghost"
+                  className="h-10 w-10 p-0"
+                  onClick={cancelForm}
+                  aria-label={t("nodeTypes.cancel")}
+                  title={t("nodeTypes.cancel")}
+                >
+                  <X className="h-4 w-4" aria-hidden />
                 </Button>
               </div>
 
@@ -418,30 +422,6 @@ export function NodeTypeManagerPanel({
                 </Select>
               </div>
 
-              {/* Color picker */}
-              <div className="space-y-1.5">
-                <Label className="text-xs">{t("nodeTypes.colorField")}</Label>
-                <div className="flex flex-wrap gap-2">
-                  {COLOR_SWATCHES.map((c) => (
-                    <button
-                      key={c}
-                      type="button"
-                      className={`h-7 w-7 rounded-full border-2 transition-transform ${
-                        form.color === c ? "border-text-primary scale-110" : "border-transparent"
-                      }`}
-                      style={{ backgroundColor: c }}
-                      onClick={() => setForm((p) => ({ ...p, color: c }))}
-                    />
-                  ))}
-                </div>
-                <Input
-                  value={form.color}
-                  onChange={(e) => setForm((p) => ({ ...p, color: e.target.value }))}
-                  placeholder="#hex"
-                  className="mt-1 h-8 w-32 font-mono text-xs"
-                />
-              </div>
-
               {/* Capabilities */}
               <div className="space-y-1.5">
                 <Label className="text-xs">{t("nodeTypes.capabilitiesField")}</Label>
@@ -483,13 +463,22 @@ export function NodeTypeManagerPanel({
                 {t("nodeTypes.close")}
               </Button>
               <Button className="gap-2" onClick={startCreate}>
-                <Plus className="h-4 w-4" />
+                <Plus className="h-4 w-4" aria-hidden />
                 {t("nodeTypes.addType")}
               </Button>
             </>
           )}
         </DialogFooter>
       </DialogContent>
+      <ConfirmDialog
+        open={deleteTarget != null}
+        onOpenChange={(o) => !o && setDeleteTarget(null)}
+        title={t("nodeTypes.deactivateConfirmTitle")}
+        description={t("nodeTypes.deactivateConfirmBody", { label: deleteTarget?.label ?? "" })}
+        confirmLabel={t("nodeTypes.deactivate")}
+        destructive
+        onConfirm={confirmDelete}
+      />
     </Dialog>
   );
 }
