@@ -40,6 +40,7 @@ import {
 } from "@/components/inventory/RequisitionLinesEditor";
 import { SupplierArticleSourcesSection } from "@/components/inventory/SupplierArticleSourcesSection";
 import { SupplierContactsSection } from "@/components/inventory/SupplierContactsSection";
+import { isPoLate } from "@/components/inventory/po-late";
 import { riskBadgeVariant } from "@/components/inventory/supplier-sourcing";
 import { useLookupOptions } from "@/components/inventory/use-lookup-options";
 import { KanbanBoard } from "@/components/kanban";
@@ -1614,10 +1615,9 @@ export const ProcurementRepairablePanel = forwardRef<
       if (poStatusFilter === OPEN) {
         if (!(dashboard?.open_po_statuses ?? []).includes(row.status)) return false;
       } else if (poStatusFilter === LATE) {
-        // Same rule as the "late" tile: a late-able status and an expected delivery before now.
-        if (!(dashboard?.late_po_statuses ?? []).includes(row.status)) return false;
-        if (!row.expected_delivery_date) return false;
-        if (new Date(row.expected_delivery_date).getTime() >= Date.now()) return false;
+        // Same rule as the "late" tile, compared in UTC like the server (not the PC's clock zone).
+        if (!isPoLate(row.expected_delivery_date, row.status, dashboard?.late_po_statuses ?? []))
+          return false;
       } else if (poStatusFilter !== ALL && row.status !== poStatusFilter) return false;
       if (poSupplierFilter !== ALL && String(row.supplier_id) !== poSupplierFilter) return false;
       return includesTerm(term, row.po_number, row.supplier_company_name, row.supplier_name);
@@ -3236,6 +3236,7 @@ export const ProcurementRepairablePanel = forwardRef<
         }}
         onReload={loadAll}
         reloadToken={poReloadToken}
+        latePoStatuses={dashboard?.late_po_statuses ?? null}
         onReceiveGoods={openReceiveForPo}
         onOpenRequisition={(requisitionId) => {
           setPoDetailOpen(false);

@@ -11,6 +11,7 @@ import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
 import { printPoFiche } from "@/components/inventory/PoPrintFiche";
 import { isReceivablePurchaseOrder } from "@/components/inventory/ReceiveGoodsDialog";
 import { StockImpactPreview } from "@/components/inventory/StockImpactPreview";
+import { poLateDays } from "@/components/inventory/po-late";
 import { Timeline } from "@/components/timeline";
 import type { TimelineEntry, TimelineStepState } from "@/components/timeline";
 import { Badge } from "@/components/ui/badge";
@@ -84,17 +85,11 @@ export interface PurchaseOrderWorkspaceProps {
   onOpenGoodsReceipt?: (goodsReceiptId: number) => void;
   /** Incrementing token forces a detail refresh (e.g. after posting a receipt). */
   reloadToken?: number;
-}
-
-function lateByDays(expectedDelivery: string | null | undefined, status: string): number | null {
-  if (!expectedDelivery) return null;
-  if (status === "RECEIVED_CLOSED" || status === "CANCELLED") return null;
-  const expected = new Date(expectedDelivery);
-  if (Number.isNaN(expected.getTime())) return null;
-  const now = new Date();
-  const diffMs = now.getTime() - expected.getTime();
-  const days = Math.floor(diffMs / (24 * 60 * 60 * 1000));
-  return days > 0 ? days : null;
+  /**
+   * Statuses that can be late (server `late_po_statuses`); without them no "late by" is shown
+   * rather than a rule of the screen's own.
+   */
+  latePoStatuses?: readonly string[] | null;
 }
 
 function eventForStep(
@@ -134,6 +129,7 @@ export function PurchaseOrderWorkspace({
   onOpenRequisition,
   onOpenGoodsReceipt,
   reloadToken = 0,
+  latePoStatuses = null,
 }: PurchaseOrderWorkspaceProps) {
   const { t, i18n } = useTranslation("inventory");
   const locale = intlLocaleForLanguage(i18n.language);
@@ -222,7 +218,7 @@ export function PurchaseOrderWorkspace({
   };
 
   const lateDays = detail
-    ? lateByDays(detail.order.expected_delivery_date, detail.order.status)
+    ? poLateDays(detail.order.expected_delivery_date, detail.order.status, latePoStatuses ?? [])
     : null;
 
   /** Resolves to false when the transition failed (reported by the global IPC toast). */
