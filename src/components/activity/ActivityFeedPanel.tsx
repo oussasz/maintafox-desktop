@@ -48,6 +48,7 @@ import {
   ACTIVITY_MODULE_OPTIONS,
   ACTIVITY_SEVERITY_OPTIONS,
   eventClassLabel,
+  eventLabel,
   humanizeCode,
   moduleLabel,
   payloadLines,
@@ -222,7 +223,7 @@ export function ActivityFeedPanel({ className }: ActivityFeedPanelProps) {
         title: (
           <span>
             {moduleLabel(t, row.source_module)}
-            <span className="text-text-muted"> — {humanizeCode(row.event_code)}</span>
+            <span className="text-text-muted"> — {eventLabel(t, row.event_code)}</span>
           </span>
         ),
         timestamp: row.happened_at,
@@ -266,7 +267,7 @@ export function ActivityFeedPanel({ className }: ActivityFeedPanelProps) {
                 </span>
                 <span>{moduleLabel(t, line.module)}</span>
                 {line.code ? (
-                  <span className="text-text-secondary">{humanizeCode(line.code)}</span>
+                  <span className="text-text-secondary">{eventLabel(t, line.code)}</span>
                 ) : null}
                 <time className="text-text-muted" dateTime={line.at}>
                   {formatDateTime(line.at)}
