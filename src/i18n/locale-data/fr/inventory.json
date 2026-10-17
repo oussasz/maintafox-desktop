@@ -699,7 +699,6 @@
         "basis": "Rang prix {{price}} · délai {{lead}} · risque {{risk}}",
         "unknown": "inconnu",
         "title": "Comparaison fournisseurs",
-        "hint": "La note composite combine prix, délai et risque fournisseur.",
         "ratingValue": "{{stars}} sur {{max}}",
         "columns": {
           "supplier": "Fournisseur",
