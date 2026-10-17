@@ -772,7 +772,8 @@ pub(crate) async fn evaluate_candidate(db: &impl ConnectionTrait, candidate_id: 
     // Parts against stock and reservations (stock units), and the permit / LOTO state of the
     // work order (`planning::readiness`). A short part blocks the commitment; every other
     // finding warns. Permits and LOTO are hard-enforced when the OT starts or resumes
-    // (`permit::wo_gate`), so planning warns about them.
+    // (`permit::wo_gate`), so planning warns about them — except a permit whose type is missing,
+    // which can never start: it blocks.
     let mut required_parts_missing = false;
     for finding in super::readiness::parts_findings(db, &candidate.source_type, candidate.source_id).await? {
         let blocking = finding.reason_code == "PARTS_SHORT";
@@ -794,7 +795,12 @@ pub(crate) async fn evaluate_candidate(db: &impl ConnectionTrait, candidate_id: 
             reference_type: Some(candidate.source_type.clone()),
             reference_id: Some(candidate.source_id),
             reason_code: finding.reason_code.to_string(),
-            severity: SEVERITY_WARNING.to_string(),
+            severity: if finding.reason_code == "PERMIT_TYPE_MISSING" {
+                SEVERITY_BLOCKING
+            } else {
+                SEVERITY_WARNING
+            }
+            .to_string(),
             details_json: Some(finding.details.to_string()),
             dimension: "permits",
         });

@@ -325,6 +325,7 @@
     "PERMIT_ON_HOLD": "Permit {{permit_code}} is suspended ({{status}}); revalidate it before the work starts.",
     "PERMIT_EXPIRES_BEFORE_WORK": "Permit {{permit_code}} expires before the end of the work ({{expires_at}}).",
     "LOTO_NOT_VERIFIED": "LOTO on permit {{permit_code}}: {{verified}} of {{isolations}} isolation points verified; all must be before the work starts.",
+    "PERMIT_TYPE_MISSING": "Permit {{permit_code}} refers to a permit type that no longer exists: it cannot start. Fix its type in the permits module.",
     "LOCATION_UNKNOWN": "Location unknown: site windows not checked."
   },
   "reasonParts": {

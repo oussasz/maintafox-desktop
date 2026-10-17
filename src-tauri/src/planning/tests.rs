@@ -5226,6 +5226,8 @@ async fn only_moves_recorded_while_the_baseline_held_count_as_displaced() {
         ("KPI DW before", "2026-05-04"),
         ("KPI DW during", "2026-05-05"),
         ("KPI DW after", "2026-05-06"),
+        ("KPI DW at freeze", "2026-05-03"),
+        ("KPI DW at unfreeze", "2026-05-07"),
     ] {
         let (wo, actor) = create_planning_wo(&db, title).await;
         let job = scheduling::create_schedule_commitment(
@@ -5285,8 +5287,16 @@ async fn only_moves_recorded_while_the_baseline_held_count_as_displaced() {
         ),
     )
     .await;
-    // Each job is moved once inside the week: before the freeze, while frozen, after the unfreeze.
-    let moved_at = ["2026-04-30T10:00:00Z", "2026-05-03T10:00:00Z", "2026-05-06T10:00:00Z"];
+    // Each job is moved once inside the week: before the freeze, while frozen, after the unfreeze,
+    // exactly at the freeze (counted: the window is [freeze, unfreeze)) and exactly at the
+    // unfreeze (not counted).
+    let moved_at = [
+        "2026-04-30T10:00:00Z",
+        "2026-05-03T10:00:00Z",
+        "2026-05-06T10:00:00Z",
+        "2026-05-01T00:00:00Z",
+        "2026-05-05T12:00:00Z",
+    ];
     for (n, ((job, day), at)) in jobs.iter().zip(moved_at).enumerate() {
         exec_sql(
             &db,
@@ -5319,8 +5329,8 @@ async fn only_moves_recorded_while_the_baseline_held_count_as_displaced() {
     let week = &kpis.weeks[0];
     assert!(week.reopened);
     assert_eq!(
-        week.displaced_jobs, 1,
-        "only the move recorded while the baseline held counts: {week:?}"
+        week.displaced_jobs, 2,
+        "only the moves recorded in [freeze, unfreeze) count: {week:?}"
     );
 }
 
@@ -5393,4 +5403,33 @@ async fn planning_requires_an_isolation_for_every_permit_type_flagged_for_energy
         1,
         "a flagged non-LOTO type without isolation is not ready"
     );
+
+    // A permit whose type row is gone can never start (the OT gate refuses it): planning reports
+    // it as blocking, never as "no isolation needed".
+    let candidate = insert_candidate(&db, "work_order", hot_wo, "ready", 100.0).await;
+    re_evaluate(&db).await;
+    let before = open_conflicts(&db, candidate).await;
+    assert!(
+        before.contains(&("LOTO_NOT_VERIFIED".to_string(), "warning".to_string())),
+        "{before:?}"
+    );
+    assert!(!before.iter().any(|(code, _)| code == "PERMIT_TYPE_MISSING"));
+    exec_sql(&db, "PRAGMA foreign_keys = OFF").await;
+    exec_sql(
+        &db,
+        &format!("UPDATE work_permits SET permit_type_id = 999999 WHERE id = {}", hot.id),
+    )
+    .await;
+    exec_sql(&db, "PRAGMA foreign_keys = ON").await;
+    re_evaluate(&db).await;
+    let after = open_conflicts(&db, candidate).await;
+    assert!(
+        after.contains(&("PERMIT_TYPE_MISSING".to_string(), "blocking".to_string())),
+        "{after:?}"
+    );
+    assert!(
+        !after.iter().any(|(code, _)| code == "LOTO_NOT_VERIFIED"),
+        "never read as a type without isolation: {after:?}"
+    );
+    assert_eq!(readiness_of(&db, candidate).await, "blocked");
 }
