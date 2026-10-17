@@ -694,7 +694,7 @@ pub(crate) async fn unlock_session_with_pin_internal(
     let user_id = match &sm.current {
         Some(s) if !s.is_expired() && s.is_idle_locked() => {
             if s.pin_unlock_disabled {
-                return Err(AppError::Auth("PIN désactivé, utilisez le mot de passe.".into()));
+                return Err(AppError::PinDisabled);
             }
             s.user.user_id
         }
@@ -718,7 +718,7 @@ pub(crate) async fn unlock_session_with_pin_internal(
             s.pin_failed_attempts = s.pin_failed_attempts.saturating_add(1);
             if s.pin_failed_attempts >= 3 {
                 s.pin_unlock_disabled = true;
-                return Err(AppError::Auth("PIN désactivé, utilisez le mot de passe.".into()));
+                return Err(AppError::PinDisabled);
             }
         }
 
@@ -762,7 +762,7 @@ pub async fn unlock_session_with_pin(
         match &sm.current {
             Some(s) if !s.is_expired() && s.is_idle_locked() => {
                 if s.pin_unlock_disabled {
-                    return Err(AppError::Auth("PIN désactivé, utilisez le mot de passe.".into()));
+                    return Err(AppError::PinDisabled);
                 }
                 s.user.user_id
             }
@@ -788,7 +788,7 @@ pub async fn unlock_session_with_pin(
         match &sm.current {
             Some(s) if !s.is_expired() && s.is_idle_locked() => {
                 if s.pin_unlock_disabled {
-                    return Err(AppError::Auth("PIN désactivé, utilisez le mot de passe.".into()));
+                    return Err(AppError::PinDisabled);
                 }
             }
             Some(_) => {
@@ -806,7 +806,7 @@ pub async fn unlock_session_with_pin(
                 s.pin_failed_attempts = s.pin_failed_attempts.saturating_add(1);
                 if s.pin_failed_attempts >= 3 {
                     s.pin_unlock_disabled = true;
-                    return Err(AppError::Auth("PIN désactivé, utilisez le mot de passe.".into()));
+                    return Err(AppError::PinDisabled);
                 }
             }
 

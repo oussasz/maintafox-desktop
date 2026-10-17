@@ -58,6 +58,7 @@
     "PERMISSION_DENIED": "Permission refus\u00e9e.",
     "LICENSE_DENIED": "Licence refus\u00e9e.",
     "STEP_UP_REQUIRED": "V\u00e9rification renforc\u00e9e requise.",
+    "PIN_DISABLED": "D\u00e9verrouillage par PIN d\u00e9sactiv\u00e9 apr\u00e8s trop de PIN erron\u00e9s. D\u00e9verrouillez avec votre mot de passe.",
     "ACCOUNT_LOCKED": "Compte verrouill\u00e9.",
     "SESSION_LOCKED": "Session verrouill\u00e9e pour inactivit\u00e9.",
     "INTERNAL_ERROR": "Une erreur interne s'est produite."
