@@ -3,7 +3,7 @@
  */
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { GanttChart, LayoutGrid, List, Plus, RefreshCw, Users } from "lucide-react";
+import { GanttChart, LayoutGrid, List, Plus, Users } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router-dom";
@@ -12,6 +12,8 @@ import { PermissionGate } from "@/components/PermissionGate";
 import { DataTable } from "@/components/data/DataTable";
 import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
 import type { SmartFilterDef } from "@/components/filters/smart-filter-types";
+import { RefreshButton, ViewToggle } from "@/components/layout/ModuleHeaderControls";
+import { ModulePageShell } from "@/components/layout/ModulePageShell";
 import {
   AvailabilityCalendar,
   type AvailabilityCalendarHandle,
@@ -30,13 +32,12 @@ import {
 import { WorkCalendarPanel } from "@/components/personnel/WorkCalendarPanel";
 import { WorkforceReportPanel } from "@/components/personnel/WorkforceReportPanel";
 import type { AvailabilityViewMode } from "@/components/personnel/availability-model";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ErrorState, TruncationNotice } from "@/components/ui/data-state";
 import { StatusChip } from "@/components/ui/status-chip";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { mfLayout } from "@/design-system/tokens";
 import { type Tone, toneOf } from "@/design-system/tone";
-import { cn } from "@/lib/utils";
 import { getOrgDesignerSnapshot } from "@/services/org-designer-service";
 import { listPositions } from "@/services/personnel-service";
 import { usePersonnelStore } from "@/stores/personnel-store";
@@ -78,7 +79,10 @@ export function PersonnelPage() {
   const items = usePersonnelStore((s) => s.items);
   const total = usePersonnelStore((s) => s.total);
   const loading = usePersonnelStore((s) => s.loading);
-  const error = usePersonnelStore((s) => s.error);
+  const loadError = usePersonnelStore((s) => s.loadError);
+  const detailError = usePersonnelStore((s) => s.detailError);
+  const loadingMore = usePersonnelStore((s) => s.loadingMore);
+  const loadMore = usePersonnelStore((s) => s.loadMore);
   const filter = usePersonnelStore((s) => s.filter);
   const setFilter = usePersonnelStore((s) => s.setFilter);
   const loadPersonnel = usePersonnelStore((s) => s.loadPersonnel);
@@ -86,9 +90,13 @@ export function PersonnelPage() {
   const openCreateForm = usePersonnelStore((s) => s.openCreateForm);
   const activePersonnel = usePersonnelStore((s) => s.activePersonnel);
 
-  const [view, setView] = useState<PersonnelViewMode>(
-    () => (localStorage.getItem(VIEW_STORAGE_KEY) as PersonnelViewMode) || "list",
-  );
+  const [view, setView] = useState<PersonnelViewMode>(() => {
+    try {
+      return localStorage.getItem(VIEW_STORAGE_KEY) === "cards" ? "cards" : "list";
+    } catch {
+      return "list";
+    }
+  });
   const [availabilityView, setAvailabilityView] = useState<AvailabilityViewMode>("chronology");
   const [searchParams] = useSearchParams();
   const requestedTab = searchParams.get("tab");
@@ -144,7 +152,11 @@ export function PersonnelPage() {
 
   const switchView = useCallback((v: PersonnelViewMode) => {
     setView(v);
-    localStorage.setItem(VIEW_STORAGE_KEY, v);
+    try {
+      localStorage.setItem(VIEW_STORAGE_KEY, v);
+    } catch {
+      // Remembering the view is a convenience only.
+    }
   }, []);
 
   const selectedStatuses = useMemo(
@@ -373,148 +385,86 @@ export function PersonnelPage() {
     [t],
   );
 
-  return (
-    <div className={mfLayout.moduleRoot}>
-      {/* ── Page header (same shell as DI / OT) ───────────────────────── */}
-      <div className={mfLayout.moduleHeader}>
-        <div className={mfLayout.moduleTitleRow}>
-          <Users className={mfLayout.moduleHeaderIcon} aria-hidden />
-          <h1 className={mfLayout.moduleTitle}>{t("page.title")}</h1>
-          <Badge variant="secondary" className="text-xs">
-            {total}
-          </Badge>
-        </div>
+  /** One refresh button: it reloads what the open tab shows. */
+  const refreshActiveTab = () => {
+    if (isDirectoryTab) void loadPersonnel();
+    else if (isAvailabilityTab) availabilityRef.current?.refresh();
+    else if (isTeamsTab) teamsRef.current?.refresh();
+  };
+  const canRefreshTab = isDirectoryTab || isAvailabilityTab || isTeamsTab;
 
-        <div className={mfLayout.moduleHeaderActions}>
-          {isDirectoryTab ? (
-            <>
-              <PermissionGate permission={P.PER_MANAGE}>
-                <Button size="sm" onClick={() => openCreateForm()} className="gap-1.5">
-                  <Plus className="h-3.5 w-3.5" />
-                  {t("action.create")}
-                </Button>
-              </PermissionGate>
-              <PersonnelImportWizard />
-              <PersonnelExportMenu />
-
-              <div className={mfLayout.viewToggleGroup}>
-                <Button
-                  variant={view === "list" ? "default" : "ghost"}
-                  size="sm"
-                  className={mfLayout.viewToggleButton}
-                  onClick={() => switchView("list")}
-                  title={t("view.list")}
-                >
-                  <List className="h-3.5 w-3.5" />
-                </Button>
-                <Button
-                  variant={view === "cards" ? "default" : "ghost"}
-                  size="sm"
-                  className={mfLayout.viewToggleButton}
-                  onClick={() => switchView("cards")}
-                  title={t("view.cards")}
-                >
-                  <LayoutGrid className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-            </>
-          ) : null}
-
-          {isAvailabilityTab ? (
-            <>
-              <PermissionGate permission={P.PER_MANAGE}>
-                <Button
-                  size="sm"
-                  className="gap-1.5"
-                  onClick={() => availabilityRef.current?.openCreateBlock()}
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  {t("availability.actions.createBlock")}
-                </Button>
-              </PermissionGate>
-              <div className={mfLayout.viewToggleGroup}>
-                <Button
-                  variant={availabilityView === "chronology" ? "default" : "ghost"}
-                  size="sm"
-                  className={mfLayout.viewToggleButton}
-                  onClick={() => setAvailabilityView("chronology")}
-                  title={t("availability.views.chronology")}
-                  aria-label={t("availability.views.chronology")}
-                >
-                  <GanttChart className="h-3.5 w-3.5" />
-                </Button>
-                <Button
-                  variant={availabilityView === "list" ? "default" : "ghost"}
-                  size="sm"
-                  className={mfLayout.viewToggleButton}
-                  onClick={() => setAvailabilityView("list")}
-                  title={t("availability.views.list")}
-                  aria-label={t("availability.views.list")}
-                >
-                  <List className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-            </>
-          ) : null}
-
-          {isDirectoryTab ? (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => void loadPersonnel()}
-              disabled={loading}
-              className="gap-1.5"
-              title={t("action.refresh")}
-            >
-              <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
+  const headerActions = (
+    <>
+      {isDirectoryTab ? (
+        <>
+          <PermissionGate permission={P.PER_MANAGE}>
+            <Button className={mfLayout.primaryAction} onClick={() => openCreateForm()}>
+              <Plus className="h-4 w-4" aria-hidden />
+              {t("action.create")}
             </Button>
-          ) : null}
-
-          {isAvailabilityTab ? (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => availabilityRef.current?.refresh()}
-              className="gap-1.5"
-              title={t("availability.actions.refresh")}
-            >
-              <RefreshCw className="h-3.5 w-3.5" />
-            </Button>
-          ) : null}
-
-          {isTeamsTab ? (
-            <PermissionGate permission={P.PER_MANAGE}>
-              <Button size="sm" className="gap-1.5" onClick={() => teamsRef.current?.openCreate()}>
-                <Plus className="h-3.5 w-3.5" />
-                {t("crews.actions.create")}
-              </Button>
-            </PermissionGate>
-          ) : null}
-
-          {isTeamsTab ? (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => teamsRef.current?.refresh()}
-              className="gap-1.5"
-              title={t("action.refresh")}
-            >
-              <RefreshCw className="h-3.5 w-3.5" />
-            </Button>
-          ) : null}
-        </div>
-      </div>
-
-      {error ? (
-        <div className="border-b border-destructive/20 bg-destructive/5 px-6 py-2 text-sm text-destructive">
-          {error}
-        </div>
+          </PermissionGate>
+          <PersonnelImportWizard />
+          <PersonnelExportMenu />
+          <ViewToggle
+            value={view}
+            onChange={switchView}
+            options={[
+              { value: "list", label: t("view.list"), icon: List },
+              { value: "cards", label: t("view.cards"), icon: LayoutGrid },
+            ]}
+          />
+        </>
       ) : null}
 
-      {/* ── Main workspace: Header → Tabs → tab-owned filters/content ─ */}
-      <div className={mfLayout.moduleWorkspace}>
-        <div className={mfLayout.moduleWorkspaceInner}>
-          <div className={mfLayout.moduleWorkspaceBody}>
+      {isAvailabilityTab ? (
+        <>
+          <PermissionGate permission={P.PER_MANAGE}>
+            <Button
+              className={mfLayout.primaryAction}
+              onClick={() => availabilityRef.current?.openCreateBlock()}
+            >
+              <Plus className="h-4 w-4" aria-hidden />
+              {t("availability.actions.createBlock")}
+            </Button>
+          </PermissionGate>
+          <ViewToggle
+            value={availabilityView}
+            onChange={setAvailabilityView}
+            options={[
+              { value: "chronology", label: t("availability.views.chronology"), icon: GanttChart },
+              { value: "list", label: t("availability.views.list"), icon: List },
+            ]}
+          />
+        </>
+      ) : null}
+
+      {isTeamsTab ? (
+        <PermissionGate permission={P.PER_MANAGE}>
+          <Button className={mfLayout.primaryAction} onClick={() => teamsRef.current?.openCreate()}>
+            <Plus className="h-4 w-4" aria-hidden />
+            {t("crews.actions.create")}
+          </Button>
+        </PermissionGate>
+      ) : null}
+
+      {canRefreshTab ? (
+        <RefreshButton onRefresh={refreshActiveTab} loading={isDirectoryTab && loading} />
+      ) : null}
+    </>
+  );
+
+  return (
+    <ModulePageShell
+      icon={Users}
+      title={t("page.title")}
+      count={loadError != null && items.length === 0 ? null : total}
+      actions={headerActions}
+      bodyClassName={null}
+    >
+      {/* ── Tabs → tab-owned filters/content ─ */}
+      <div className={mfLayout.moduleWorkspaceBody}>
+        <div>
+          <div>
             <Tabs
               value={activeTab}
               onValueChange={(v) => setActiveTab(v as PersonnelTab)}
@@ -545,40 +495,65 @@ export function PersonnelPage() {
                 <div className={mfLayout.moduleWorkspaceSplit}>
                   <div className="flex w-[55%] min-w-[400px] flex-col border-r border-surface-border">
                     <div className="min-h-0 flex-1 overflow-auto p-1">
-                      {view === "list" && (
-                        <DataTable
-                          columns={columns}
-                          data={items}
-                          searchable={false}
-                          pageSize={20}
-                          isLoading={loading}
-                          skeletonRows={8}
-                          onRowClick={(row) => void openPersonnel(row.id)}
-                          isRowSelected={(row) => row.id === activePersonnel?.personnel.id}
+                      {loadError != null && !loading ? (
+                        <ErrorState
+                          className="mb-2"
+                          error={loadError}
+                          title={t("page.loadError")}
+                          onRetry={() => void (items.length > 0 ? loadMore() : loadPersonnel())}
+                        />
+                      ) : null}
+                      {loadError != null && items.length === 0 ? null : (
+                        <TruncationNotice
+                          className="mb-2"
+                          shown={items.length}
+                          total={total}
+                          onLoadMore={() => void loadMore()}
+                          loadingMore={loadingMore}
                         />
                       )}
-                      {view === "cards" && (
-                        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                          {loading
-                            ? Array.from({ length: 6 }, (_, i) => (
-                                <div
-                                  key={i}
-                                  className="h-48 animate-pulse rounded-lg border border-surface-border bg-muted/40"
-                                />
-                              ))
-                            : items.map((p) => (
-                                <PersonnelCard
-                                  key={p.id}
-                                  personnel={p}
-                                  onViewDetails={() => void openPersonnel(p.id)}
-                                />
-                              ))}
-                        </div>
-                      )}
+                      {loadError != null && items.length === 0
+                        ? null
+                        : view === "list" && (
+                            <DataTable
+                              columns={columns}
+                              data={items}
+                              searchable={false}
+                              pageSize={20}
+                              isLoading={loading}
+                              skeletonRows={8}
+                              onRowClick={(row) => void openPersonnel(row.id)}
+                              isRowSelected={(row) => row.id === activePersonnel?.personnel.id}
+                            />
+                          )}
+                      {loadError != null && items.length === 0
+                        ? null
+                        : view === "cards" && (
+                            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                              {loading
+                                ? Array.from({ length: 6 }, (_, i) => (
+                                    <div
+                                      key={i}
+                                      className="h-48 animate-pulse rounded-lg border border-surface-border bg-muted/40"
+                                    />
+                                  ))
+                                : items.map((p) => (
+                                    <PersonnelCard
+                                      key={p.id}
+                                      personnel={p}
+                                      onViewDetails={() => void openPersonnel(p.id)}
+                                    />
+                                  ))}
+                            </div>
+                          )}
                     </div>
                   </div>
                   <div className="min-w-[300px] flex-1 overflow-hidden">
-                    {activePersonnel ? (
+                    {detailError != null ? (
+                      <div className="p-4">
+                        <ErrorState error={detailError} title={t("detail.loadError")} />
+                      </div>
+                    ) : activePersonnel ? (
                       <PersonnelDetailWorkspace detail={activePersonnel} />
                     ) : (
                       <div className="flex h-full items-center justify-center p-6">
@@ -608,6 +583,8 @@ export function PersonnelPage() {
                   entityId={filter.entity_id ?? null}
                   openTeamId={openTeamId}
                   onOpenPersonnel={(personnelId) => {
+                    // The person's record lives in the directory tab: show it there.
+                    setActiveTab("directory");
                     void openPersonnel(personnelId);
                   }}
                 />
@@ -636,6 +613,6 @@ export function PersonnelPage() {
       <PersonnelArchivePanel />
 
       <PersonnelCreateDialog />
-    </div>
+    </ModulePageShell>
   );
 }
