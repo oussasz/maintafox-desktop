@@ -246,10 +246,10 @@ mod tests {
         .await
         .expect("create_di");
 
-        // Forcibly set status to 'screened' (a non-draft state)
+        // Forcibly set status to 'awaiting_approval' (a non-draft state)
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "UPDATE intervention_requests SET status = 'screened' WHERE id = ?",
+            "UPDATE intervention_requests SET status = 'awaiting_approval' WHERE id = ?",
             [di.id.into()],
         ))
         .await
@@ -275,9 +275,12 @@ mod tests {
         )
         .await;
 
-        assert!(result.is_err(), "Should reject update on screened DI");
+        assert!(result.is_err(), "Should reject update on a DI awaiting approval");
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("screened"), "Error should mention current status: {err}");
+        assert!(
+            err.contains("awaiting_approval"),
+            "Error should mention current status: {err}"
+        );
     }
 
     #[tokio::test]
@@ -559,20 +562,20 @@ mod tests {
             .await
             .expect("di2");
 
-        // Set di1 to screened
+        // Set di1 to awaiting approval
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "UPDATE intervention_requests SET status = 'screened' WHERE id = ?",
+            "UPDATE intervention_requests SET status = 'awaiting_approval' WHERE id = ?",
             [di1.id.into()],
         ))
         .await
         .expect("force status");
 
-        // Filter by screened
+        // Filter by awaiting approval
         let result = list_intervention_requests(
             &db,
             DiListFilter {
-                status: Some(vec!["screened".to_string()]),
+                status: Some(vec!["awaiting_approval".to_string()]),
                 limit: 50,
                 offset: 0,
                 ..Default::default()
@@ -582,7 +585,7 @@ mod tests {
         .expect("filter");
 
         assert_eq!(result.total, 1);
-        assert_eq!(result.items[0].status, "screened");
+        assert_eq!(result.items[0].status, "awaiting_approval");
     }
 
     #[tokio::test]

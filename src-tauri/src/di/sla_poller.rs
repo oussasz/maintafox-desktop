@@ -13,14 +13,8 @@ use super::sla::{compute_sla_status, mark_resolution_breach_notified, mark_respo
 
 const DEFAULT_POLL_INTERVAL_SECS: u64 = 300;
 
-const OPEN_STATUSES: &str = "(\
-    'submitted', \
-    'in_review', \
-    'returned_for_clarification', \
-    'awaiting_approval', \
-    'approved', \
-    'deferred'\
-)";
+/// Open requests: the DI module's one rule (`di::stats::OPEN_SQL`).
+const OPEN_SQL: &str = super::stats::OPEN_SQL;
 
 pub async fn start_di_sla_poller(db: DatabaseConnection) {
     let mut secs = read_poll_interval_secs(&db).await;
@@ -76,7 +70,7 @@ pub async fn run_sla_poll_tick(db: &DatabaseConnection) -> Result<(), String> {
                 "SELECT {IR_COLS}, {IR_JOIN_COLS} \
                  FROM intervention_requests ir \
                  {IR_JOINS} \
-                 WHERE ir.status IN {OPEN_STATUSES} \
+                 WHERE {OPEN_SQL} \
                    AND ( \
                      (ir.screened_at IS NULL \
                       AND ir.sla_response_deadline IS NOT NULL \

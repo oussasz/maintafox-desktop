@@ -125,8 +125,28 @@ pub struct DiStatsPayload {
     pub avg_conversion_hours: Option<f64>,
 }
 
-/// Open requests: not closed and not yet turned into a work order.
-pub const OPEN_SQL: &str = "(ir.status <> 'closed' AND ir.converted_at IS NULL)";
+/// The terminal DI statuses, as an SQL list: `closed`, plus the legacy terminal codes that
+/// migration 139 folded into `closed` (still read as closed for rows restored from older backups).
+/// A macro so the one list can be spliced into `const` SQL (`concat!`): [`OPEN_SQL`] and
+/// `analytics::as_of` (when a request stopped being open) read it.
+#[macro_export]
+macro_rules! di_terminal_statuses_sql {
+    () => {
+        "('closed','rejected','converted_to_work_order','closed_as_non_executable','archived')"
+    };
+}
+
+/// [`di_terminal_statuses_sql!`] as a value.
+pub const TERMINAL_STATUSES_SQL: &str = di_terminal_statuses_sql!();
+
+/// Open requests (alias `ir`): not in a terminal status and not yet turned into a work order. The
+/// one rule of the DI page, the home page, the asset counts, the list's `open_only` filter and,
+/// at now, `analytics::as_of::di_open_at`.
+pub const OPEN_SQL: &str = concat!(
+    "(ir.status NOT IN ",
+    di_terminal_statuses_sql!(),
+    " AND ir.converted_at IS NULL)"
+);
 
 /// Requests waiting since a given instant (alias `ir`, one bind: [`waiting_since`]): submitted (or,
 /// for a draft, created) at or before it. With [`OPEN_SQL`], the "waiting more than N days" rule of
@@ -210,14 +230,7 @@ pub async fn get_di_stats(db: &DatabaseConnection, filter: DiStatsFilter) -> App
             "SELECT COUNT(*) AS value
              FROM intervention_requests ir
              WHERE {base_where}
-             AND ir.status IN (
-               'submitted',
-               'in_review',
-               'returned_for_clarification',
-               'awaiting_approval',
-               'approved',
-               'deferred'
-             )"
+             AND {OPEN_SQL}"
         ),
         binds.to_vec(),
     )
@@ -455,14 +468,7 @@ pub async fn get_di_stats(db: &DatabaseConnection, filter: DiStatsFilter) -> App
                        COALESCE(MAX(julianday('now') - julianday(ir.submitted_at)), 0.0) AS max_age_days
                      FROM intervention_requests ir
                      WHERE {base_where}
-                     AND ir.status IN (
-                       'submitted',
-                       'in_review',
-                       'returned_for_clarification',
-                       'awaiting_approval',
-                       'approved',
-                       'deferred'
-                     )"
+                     AND {OPEN_SQL}"
                 ),
                 binds.to_vec(),
             ))

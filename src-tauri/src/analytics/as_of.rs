@@ -30,17 +30,19 @@ pub fn days_before(at: DateTime<Utc>, days: i64) -> DateTime<Utc> {
 }
 
 /// SQL expression: when the DI stopped being open (NULL while open). Open is the DI module's
-/// definition (`di::stats::OPEN_SQL`: not closed and not turned into a work order), so at `now`
-/// the count is the DI page's: it ends at the earlier of the conversion and the closing. The legacy
-/// terminal codes (`rejected`, …) were migrated to `closed` (migration 139); they are still read as
-/// closed for rows restored from older backups.
-const DI_END: &str = "CASE \
-WHEN ir.status IN ('closed','rejected','converted_to_work_order','closed_as_non_executable','archived') \
- AND ir.converted_at IS NOT NULL THEN MIN(datetime(ir.converted_at), \
- datetime(COALESCE(ir.closed_at, ir.declined_at, ir.archived_at, ir.updated_at))) \
-WHEN ir.status IN ('closed','rejected','converted_to_work_order','closed_as_non_executable','archived') \
- THEN COALESCE(ir.closed_at, ir.declined_at, ir.archived_at, ir.updated_at) \
-WHEN ir.converted_at IS NOT NULL THEN ir.converted_at END";
+/// definition (`di::stats::OPEN_SQL`: not in a terminal status and not turned into a work order;
+/// one terminal list, `di_terminal_statuses_sql!`), so at `now` the count is the DI page's: it
+/// ends at the earlier of the conversion and the closing.
+const DI_END: &str = concat!(
+    "CASE WHEN ir.status IN ",
+    crate::di_terminal_statuses_sql!(),
+    " AND ir.converted_at IS NOT NULL THEN MIN(datetime(ir.converted_at), \
+     datetime(COALESCE(ir.closed_at, ir.declined_at, ir.archived_at, ir.updated_at))) \
+     WHEN ir.status IN ",
+    crate::di_terminal_statuses_sql!(),
+    " THEN COALESCE(ir.closed_at, ir.declined_at, ir.archived_at, ir.updated_at) \
+     WHEN ir.converted_at IS NOT NULL THEN ir.converted_at END"
+);
 
 /// SQL expression: when the WO stopped being open (closed / cancelled).
 const WO_END_OPEN: &str = "CASE WHEN s.code IN ('closed','cancelled') \

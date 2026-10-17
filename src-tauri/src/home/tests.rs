@@ -729,3 +729,83 @@ async fn the_di_list_scopes_list_what_the_open_and_waiting_counts_count() {
     codes.sort_unstable();
     assert_eq!(codes, ["W-OLD", "W-OLD-INFO"]);
 }
+
+/// A legacy terminal request (`rejected`, … folded into `closed` by migration 139, still found in
+/// restored backups) is closed everywhere: not open on the home page, not in the open list, not in
+/// "my requests", not on the asset card, and the as-of count agrees.
+#[tokio::test]
+async fn a_legacy_rejected_request_is_never_open() {
+    let db = setup().await;
+    let me = admin_id(&db).await;
+    request(&db, "LG-OPEN", "submitted", me, false).await;
+    for (code, status) in [
+        ("LG-REJ", "rejected"),
+        ("LG-CONV", "converted_to_work_order"),
+        ("LG-NONEX", "closed_as_non_executable"),
+        ("LG-ARCH", "archived"),
+    ] {
+        request(&db, code, status, me, false).await;
+    }
+    let now = Utc::now();
+    let as_of = crate::analytics::as_of::di_open_at(&db, now, None, None)
+        .await
+        .expect("as of");
+    let list = crate::di::queries::list_intervention_requests(&db, di_scope(true, None))
+        .await
+        .expect("open list");
+    let module = scalar(
+        &db,
+        &format!(
+            "SELECT COUNT(*) FROM intervention_requests ir WHERE {}",
+            crate::di::stats::OPEN_SQL
+        ),
+    )
+    .await;
+    assert_eq!((as_of, list.total, module), (1, 1, 1), "only LG-OPEN is open");
+    assert_eq!(list.items[0].code, "LG-OPEN");
+
+    let mine = my_requests(&db, me).await.expect("my requests");
+    assert_eq!(mine.open, 1);
+
+    // The dashboard summary report counts the same open requests as the home page.
+    let report = crate::reports::queries::fetch_dashboard_summary(&db)
+        .await
+        .expect("report summary");
+    assert_eq!(report.open_di, as_of, "report open DI == home open DI");
+
+    let rejected_asset = scalar(
+        &db,
+        "SELECT equipment_id FROM intervention_requests WHERE code = 'LG-REJ'",
+    )
+    .await;
+    assert_eq!(
+        crate::assets::bindings::count_open_di(&db, rejected_asset)
+            .await
+            .expect("asset open di"),
+        0
+    );
+    // Waiting since long ago: still never open.
+    exec(
+        &db,
+        "UPDATE intervention_requests SET submitted_at = datetime('now', '-30 days')",
+    )
+    .await;
+    let waiting = crate::di::queries::list_intervention_requests(&db, di_scope(false, Some(7)))
+        .await
+        .expect("waiting list");
+    assert_eq!(waiting.total, 1);
+}
+
+#[test]
+fn one_terminal_list_for_the_open_rule_and_the_as_of_counts() {
+    let terminal = crate::di::stats::TERMINAL_STATUSES_SQL;
+    assert!(crate::di::stats::OPEN_SQL.contains(terminal));
+    for legacy in [
+        "'rejected'",
+        "'converted_to_work_order'",
+        "'closed_as_non_executable'",
+        "'archived'",
+    ] {
+        assert!(terminal.contains(legacy), "{legacy}");
+    }
+}

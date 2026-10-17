@@ -347,7 +347,7 @@ pub async fn seed_demo_data(db: &DatabaseConnection) -> AppResult<()> {
             line_1,
             "normal",
             "technician",
-            "pending_review",
+            "in_review",
             false,
         ),
         (
@@ -357,7 +357,7 @@ pub async fn seed_demo_data(db: &DatabaseConnection) -> AppResult<()> {
             line_1,
             "high",
             "operator",
-            "screened",
+            "awaiting_approval",
             false,
         ),
         (
@@ -367,7 +367,7 @@ pub async fn seed_demo_data(db: &DatabaseConnection) -> AppResult<()> {
             bat_a,
             "emergency",
             "operator",
-            "approved_for_planning",
+            "approved",
             true,
         ),
         (
@@ -387,7 +387,7 @@ pub async fn seed_demo_data(db: &DatabaseConnection) -> AppResult<()> {
             line_1,
             "high",
             "technician",
-            "pending_review",
+            "in_review",
             true,
         ),
         (
@@ -397,7 +397,7 @@ pub async fn seed_demo_data(db: &DatabaseConnection) -> AppResult<()> {
             line_2,
             "emergency",
             "quality",
-            "approved_for_planning",
+            "approved",
             false,
         ),
         (
@@ -417,7 +417,7 @@ pub async fn seed_demo_data(db: &DatabaseConnection) -> AppResult<()> {
             bat_util,
             "low",
             "inspection",
-            "screened",
+            "awaiting_approval",
             false,
         ),
         (
@@ -437,7 +437,7 @@ pub async fn seed_demo_data(db: &DatabaseConnection) -> AppResult<()> {
             bat_util,
             "high",
             "inspection",
-            "pending_review",
+            "in_review",
             false,
         ),
         (
@@ -1079,14 +1079,15 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
         .unwrap_or(1);
 
     // Pre-resolve status IDs
+    // Current lifecycle codes only (`wo::statuses`); the pre-130 codes are retired rows.
     let s_draft = status_id(db, "draft").await?;
-    let s_planned = status_id(db, "planned").await?;
-    let s_ready = status_id(db, "ready_to_schedule").await?;
-    let s_assigned = status_id(db, "assigned").await?;
+    let s_planned = status_id(db, "planning").await?;
+    let s_ready = status_id(db, "ready").await?;
+    let s_assigned = s_ready;
     let s_in_progress = status_id(db, "in_progress").await?;
-    let s_paused = status_id(db, "paused").await?;
-    let s_mech_complete = status_id(db, "mechanically_complete").await?;
-    let s_tech_verified = status_id(db, "technically_verified").await?;
+    let s_paused = status_id(db, "on_hold").await?;
+    let s_mech_complete = status_id(db, "completed").await?;
+    let s_tech_verified = s_mech_complete;
     let s_closed = status_id(db, "closed").await?;
 
     // WO definitions:
@@ -1622,4 +1623,58 @@ async fn insert_di(
     ))
     .await?;
     last_insert_id(db).await
+}
+
+#[cfg(test)]
+mod tests {
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+
+    async fn codes(db: &sea_orm::DatabaseConnection, sql: &str) -> Vec<String> {
+        db.query_all(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
+            .await
+            .expect(sql)
+            .iter()
+            .map(|r| r.try_get_by_index::<String>(0).expect("code"))
+            .collect()
+    }
+
+    /// The demo plant only uses the current status and code sets: a request or a work order seeded
+    /// with a retired code (pre-139 DI, pre-130 OT) would be invisible to every list and figure.
+    #[tokio::test]
+    async fn every_seeded_status_and_code_is_in_its_current_set() {
+        let db = crate::db::test_db::seeded().await;
+        super::seed_demo_data(&db).await.expect("demo data");
+        super::seed_demo_work_orders(&db).await.expect("demo work orders");
+
+        let di = codes(&db, "SELECT DISTINCT status FROM intervention_requests").await;
+        assert!(!di.is_empty(), "the demo seeds requests");
+        for s in &di {
+            assert!(
+                crate::di::domain::DiStatus::try_from_str(s).is_ok(),
+                "seeded DI status '{s}' is not a current status"
+            );
+        }
+        for u in codes(&db, "SELECT DISTINCT reported_urgency FROM intervention_requests").await {
+            assert!(
+                crate::reference::urgency_scale::UrgencyCode::parse(&u).is_some(),
+                "seeded DI urgency '{u}'"
+            );
+        }
+        for o in codes(&db, "SELECT DISTINCT origin_type FROM intervention_requests").await {
+            crate::di::reference_catalog::validate_di_origin_code(&db, &o)
+                .await
+                .unwrap_or_else(|e| panic!("seeded DI origin '{o}': {e}"));
+        }
+
+        // Current OT statuses are the system rows (`wo::statuses`); the retired ones are not.
+        let wo = codes(
+            &db,
+            "SELECT DISTINCT s.code FROM work_orders wo JOIN work_order_statuses s ON s.id = wo.status_id \
+             WHERE s.is_system = 0",
+        )
+        .await;
+        assert!(wo.is_empty(), "seeded OT with retired statuses: {wo:?}");
+        let seeded_wo = codes(&db, "SELECT DISTINCT title FROM work_orders").await;
+        assert!(!seeded_wo.is_empty(), "the demo seeds work orders");
+    }
 }

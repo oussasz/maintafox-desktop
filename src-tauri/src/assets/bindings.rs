@@ -37,21 +37,15 @@ fn available_count(n: i64) -> DomainBindingEntry {
     }
 }
 
-/// Open DI = not closed and not archived (terminal workflow states excluded via closed_at).
+/// Open DI: the DI page's open rule (`di::stats::OPEN_SQL`).
 pub async fn count_open_di(db: &DatabaseConnection, asset_id: i64) -> AppResult<i64> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT COUNT(*) AS cnt FROM intervention_requests \
-             WHERE equipment_id = ? \
-               AND closed_at IS NULL \
-               AND archived_at IS NULL \
-               AND status NOT IN ( \
-                 'converted_to_work_order', \
-                 'closed_as_non_executable', \
-                 'archived', \
-                 'rejected' \
-               )",
+            format!(
+                "SELECT COUNT(*) AS cnt FROM intervention_requests ir WHERE ir.equipment_id = ? AND {}",
+                crate::di::stats::OPEN_SQL
+            ),
             [asset_id.into()],
         ))
         .await?
@@ -94,22 +88,15 @@ pub async fn get_asset_binding_summary(db: &DatabaseConnection, asset_id: i64) -
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            r"SELECT
+            format!(
+                r"SELECT
                 (SELECT COUNT(*) FROM intervention_requests WHERE equipment_id = ?) AS di_cnt,
                 (SELECT COUNT(*) FROM work_orders WHERE equipment_id = ?) AS wo_cnt,
                 (SELECT COUNT(*) FROM pm_plans
                  WHERE LOWER(asset_scope_type) = 'equipment' AND asset_scope_id = ?) AS pm_cnt,
                 (SELECT COUNT(*) FROM failure_events WHERE equipment_id = ?) AS fe_cnt,
-                (SELECT COUNT(*) FROM intervention_requests
-                 WHERE equipment_id = ?
-                   AND closed_at IS NULL
-                   AND archived_at IS NULL
-                   AND status NOT IN (
-                     'converted_to_work_order',
-                     'closed_as_non_executable',
-                     'archived',
-                     'rejected'
-                   )) AS open_di_cnt,
+                (SELECT COUNT(*) FROM intervention_requests ir
+                 WHERE ir.equipment_id = ? AND {di_open}) AS open_di_cnt,
                 (SELECT COUNT(*) FROM work_orders
                  WHERE equipment_id = ?
                    AND closed_at IS NULL
@@ -126,6 +113,8 @@ pub async fn get_asset_binding_summary(db: &DatabaseConnection, asset_id: i64) -
                    FROM equipment WHERE id = ?),
                   0
                 ) AS erp_cnt",
+                di_open = crate::di::stats::OPEN_SQL
+            ),
             [
                 asset_id.into(),
                 asset_id.into(),

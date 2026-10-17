@@ -451,7 +451,7 @@ async fn create_and_close_corrective_wo(db: &DatabaseConnection, ctx: CreateWoSe
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE work_orders SET \
-         status_id = (SELECT id FROM work_order_statuses WHERE code = 'ready_to_schedule'), \
+         status_id = (SELECT id FROM work_order_statuses WHERE code = 'planning'), \
          row_version = row_version + 1, \
          updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') \
          WHERE id = ?",

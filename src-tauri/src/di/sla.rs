@@ -378,12 +378,17 @@ pub const SLA_RESPONSE_ELAPSED_SQL: &str = concat!(di_response_elapsed_sql!(), d
 /// SQL (alias `ir`): elapsed resolution hours, pauses excluded.
 pub const SLA_RESOLUTION_ELAPSED_SQL: &str = concat!(di_resolution_elapsed_sql!(), di_paused_hours_sql!(), ")");
 
-/// Open requests whose clock runs: not closed, no work order, not paused, with a frozen target.
+/// Open requests whose clock runs: open (`di::stats::OPEN_SQL`: no terminal status, no work
+/// order), not paused, with a frozen target.
 macro_rules! di_sla_running_sql {
     () => {
-        "ir.status NOT IN ('closed', 'returned_for_clarification', 'deferred') \
-         AND ir.converted_at IS NULL \
-         AND ir.sla_target_response_hours IS NOT NULL AND ir.sla_response_deadline IS NOT NULL"
+        concat!(
+            "ir.status NOT IN ",
+            crate::di_terminal_statuses_sql!(),
+            " AND ir.status NOT IN ('returned_for_clarification', 'deferred') \
+             AND ir.converted_at IS NULL \
+             AND ir.sla_target_response_hours IS NOT NULL AND ir.sla_response_deadline IS NOT NULL"
+        )
     };
 }
 

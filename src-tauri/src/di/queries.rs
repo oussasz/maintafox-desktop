@@ -80,7 +80,7 @@ fn queue_predicate(queue: &str) -> AppResult<Option<String>> {
              AND date(ir.deferred_until) <= date('now'))"
             .to_string(),
         "sla_at_risk" => super::sla::SLA_AT_RISK_OR_BREACHED_SQL.to_string(),
-        "mine" => "ir.status <> 'closed'".to_string(),
+        "mine" => format!("ir.status NOT IN {}", super::stats::TERMINAL_STATUSES_SQL),
         other => {
             return Err(AppError::ValidationFailed(vec![format!(
                 "File de travail inconnue : '{other}'."

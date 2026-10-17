@@ -5,14 +5,13 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use crate::errors::{AppError, AppResult};
 use crate::reports::domain::{ReportRun, ReportSchedule, ReportTemplate, UpsertReportScheduleInput};
 
-async fn count_scalar(db: &DatabaseConnection, sql: &str) -> i64 {
-    let result = db
+/// `COUNT(*) AS cnt`: a failed query, a missing row or an unreadable count is an error, never 0.
+async fn count_scalar(db: &DatabaseConnection, sql: &str) -> AppResult<i64> {
+    let row = db
         .query_one(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
-        .await;
-    match result {
-        Ok(Some(row)) => i64::try_get(&row, "", "cnt").unwrap_or(0),
-        _ => 0,
-    }
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("report count returned no row")))?;
+    i64::try_get(&row, "", "cnt").map_err(|e| AppError::Internal(anyhow::anyhow!("report count decode: {e:?}")))
 }
 
 /// Report templates added after the original seed (migration 096). Inserted once per database
@@ -381,17 +380,21 @@ pub struct DashboardSummaryFigures {
 
 /// KPI-style counts for dashboard summary report.
 pub async fn fetch_dashboard_summary(db: &DatabaseConnection) -> AppResult<DashboardSummaryFigures> {
+    // Open requests: the DI page's / home page's one rule (`di::stats::OPEN_SQL`).
     let open_di = count_scalar(
         db,
-        "SELECT COUNT(*) AS cnt FROM intervention_requests          WHERE status NOT IN ('rejected','converted_to_work_order','closed_as_non_executable','archived')",
+        &format!(
+            "SELECT COUNT(*) AS cnt FROM intervention_requests ir WHERE {}",
+            crate::di::stats::OPEN_SQL
+        ),
     )
-    .await;
+    .await?;
     let open_wo = count_scalar(
         db,
         "SELECT COUNT(*) AS cnt FROM work_orders wo          JOIN work_order_statuses s ON s.id = wo.status_id WHERE s.code NOT IN ('closed','cancelled')",
     )
-    .await;
-    let assets = count_scalar(db, "SELECT COUNT(*) AS cnt FROM equipment WHERE deleted_at IS NULL").await;
+    .await?;
+    let assets = count_scalar(db, "SELECT COUNT(*) AS cnt FROM equipment WHERE deleted_at IS NULL").await?;
     // Pooled fleet ratios over the latest snapshot per equipment (never mean of ratios).
     let fleet = crate::reliability::fleet::pooled_fleet_kpis(
         db,
