@@ -27,8 +27,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { mfInput } from "@/design-system/tokens";
 import { usePermissions } from "@/hooks/use-permissions";
 import { describeAppError } from "@/lib/app-error";
+import { cn } from "@/lib/utils";
 import { getOrgDesignerSnapshot } from "@/services/org-designer-service";
 import {
   listActiveTeams,
@@ -678,7 +680,7 @@ export function PersonnelCreateDialog() {
                   </div>
                   <select
                     id="per-company"
-                    className="h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm"
+                    className={mfInput.nativeSelect}
                     value={externalCompanyId ?? ""}
                     onChange={(e) =>
                       setExternalCompanyId(e.target.value ? Number(e.target.value) : null)
@@ -738,7 +740,7 @@ export function PersonnelCreateDialog() {
               <div className="space-y-1.5">
                 <Label>{t("field.entity")} *</Label>
                 <select
-                  className="h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm"
+                  className={mfInput.nativeSelect}
                   value={entityId ?? ""}
                   onChange={(e) =>
                     void handleEntityChange(e.target.value ? Number(e.target.value) : null)
@@ -755,7 +757,7 @@ export function PersonnelCreateDialog() {
               <div className="space-y-1.5">
                 <Label>{t("field.team")} *</Label>
                 <select
-                  className="h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm"
+                  className={mfInput.nativeSelect}
                   value={teamId ?? ""}
                   disabled={entityId == null || crewsLoading}
                   onChange={(e) => setTeamId(e.target.value ? Number(e.target.value) : null)}
@@ -889,7 +891,7 @@ export function PersonnelCreateDialog() {
                           />
                         </div>
                         <select
-                          className="h-9 w-20 rounded-md border border-input bg-background px-2 text-sm shadow-sm"
+                          className={cn(mfInput.nativeSelect, "w-20 px-2")}
                           value={skill.proficiency}
                           onChange={(e) => updateSkillProf(skill.key, e.target.value)}
                           aria-label={t("create.skill.proficiency", "Proficiency")}
@@ -937,7 +939,7 @@ export function PersonnelCreateDialog() {
                     {certs.map((cert) => (
                       <div key={cert.key} className="flex items-center gap-2">
                         <select
-                          className="h-9 flex-1 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm"
+                          className={cn(mfInput.nativeSelect, "w-auto flex-1")}
                           value={cert.certTypeId ?? ""}
                           onChange={(e) => updateCertType(cert.key, e.target.value)}
                         >

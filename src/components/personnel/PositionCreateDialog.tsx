@@ -20,6 +20,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { mfInput } from "@/design-system/tokens";
+import { describeAppError } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import { upsertPosition } from "@/services/personnel-service";
 import { listCertificationTypes } from "@/services/qualification-service";
@@ -138,7 +140,7 @@ export function PositionCreateDialog({ open, onClose, onCreated }: PositionCreat
       const created = await upsertPosition(input);
       onCreated(created);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(describeAppError(err).title);
     } finally {
       setSaving(false);
     }
@@ -291,10 +293,7 @@ export function PositionCreateDialog({ open, onClose, onCreated }: PositionCreat
                 {certs.map((cert) => (
                   <div key={cert.key} className="flex items-center gap-2">
                     <select
-                      className={cn(
-                        "h-9 flex-1 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm",
-                        "focus:outline-none focus:ring-1 focus:ring-ring",
-                      )}
+                      className={cn(mfInput.nativeSelect, "w-auto flex-1")}
                       value={cert.certTypeId ?? ""}
                       onChange={(e) => updateCertType(cert.key, e.target.value)}
                     >

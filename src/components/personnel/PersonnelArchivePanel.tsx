@@ -13,7 +13,7 @@ import { listPersonnel } from "@/services/personnel-service";
 import { usePersonnelStore } from "@/stores/personnel-store";
 import type { Personnel } from "@shared/ipc-types";
 
-const INACTIVE_TABLE_BADGE = "bg-slate-100 text-slate-700";
+const INACTIVE_TABLE_BADGE = "bg-tone-neutral-bg text-tone-neutral-fg";
 
 export function PersonnelArchivePanel() {
   const { t } = useTranslation("personnel");

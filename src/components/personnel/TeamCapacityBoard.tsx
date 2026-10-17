@@ -22,9 +22,10 @@ import {
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { mfLayout } from "@/design-system/tokens";
+import { mfInput, mfLayout } from "@/design-system/tokens";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
+import { describeAppError } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import { getOrgDesignerSnapshot } from "@/services/org-designer-service";
 import {
@@ -291,7 +292,7 @@ export const TeamCapacityBoard = forwardRef<TeamCapacityBoardHandle, TeamCapacit
         setDialogOpen(false);
         refresh();
       } catch (err) {
-        setFormError(err instanceof Error ? err.message : String(err));
+        setFormError(describeAppError(err).title);
       } finally {
         setFormSaving(false);
       }
@@ -519,7 +520,7 @@ export const TeamCapacityBoard = forwardRef<TeamCapacityBoardHandle, TeamCapacit
               <div className="space-y-1.5">
                 <Label>{t("crews.form.type")}</Label>
                 <select
-                  className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+                  className={mfInput.nativeSelect}
                   value={formType}
                   onChange={(e) => setFormType(e.target.value)}
                 >
@@ -533,7 +534,7 @@ export const TeamCapacityBoard = forwardRef<TeamCapacityBoardHandle, TeamCapacit
               <div className="space-y-1.5">
                 <Label>{t("crews.form.site")}</Label>
                 <select
-                  className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+                  className={mfInput.nativeSelect}
                   value={formNodeId ?? ""}
                   onChange={(e) => setFormNodeId(e.target.value ? Number(e.target.value) : null)}
                 >
@@ -548,7 +549,7 @@ export const TeamCapacityBoard = forwardRef<TeamCapacityBoardHandle, TeamCapacit
               <div className="space-y-1.5">
                 <Label>{t("crews.form.status")}</Label>
                 <select
-                  className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+                  className={mfInput.nativeSelect}
                   value={formStatus}
                   onChange={(e) => setFormStatus(e.target.value)}
                 >

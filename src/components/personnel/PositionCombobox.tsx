@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 
 import { PositionCreateDialog } from "@/components/personnel/PositionCreateDialog";
 import { Button } from "@/components/ui/button";
+import { mfInput } from "@/design-system/tokens";
 import { usePermissions } from "@/hooks/use-permissions";
 import { listPositionsFiltered } from "@/services/personnel-service";
 import type { Position } from "@shared/ipc-types";
@@ -85,7 +86,7 @@ export function PositionCombobox({
             aria-label={t("field.position")}
           />
           <select
-            className="h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+            className={mfInput.nativeSelect}
             value={value ?? ""}
             onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
             disabled={disabled}
