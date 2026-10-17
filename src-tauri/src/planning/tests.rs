@@ -129,7 +129,7 @@ async fn insert_approved_di(db: &DatabaseConnection, code: &str) {
             submitter_id,
             created_at,
             updated_at
-         ) VALUES (?, 1, 1, 'approved_for_planning', ?, ?, 'manual', 'medium', 'medium', ?, 1, ?, ?)",
+         ) VALUES (?, 1, 1, 'approved', ?, ?, 'manual', 'medium', 'medium', ?, 1, ?, ?)",
         [
             code.into(),
             format!("DI {code}").into(),
@@ -507,6 +507,13 @@ async fn snapshot_decomposes_readiness_dimensions() {
 async fn refresh_from_approved_di_creates_schedule_candidates() {
     let db = setup_db().await;
     insert_approved_di(&db, "DI-PLAN-001").await;
+    // A request still under review is not planned.
+    insert_approved_di(&db, "DI-PLAN-002").await;
+    exec_sql(
+        &db,
+        "UPDATE intervention_requests SET status = 'in_review' WHERE code = 'DI-PLAN-002'",
+    )
+    .await;
 
     let result = queries::refresh_schedule_candidates(
         &db,
@@ -535,8 +542,10 @@ async fn refresh_from_approved_di_creates_schedule_candidates() {
     )
     .await
     .expect("list candidates");
-    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates.len(), 1, "only the approved request: {candidates:?}");
     assert_eq!(candidates[0].source_di_id, Some(candidates[0].source_id));
+    let approved = scalar(&db, "SELECT id FROM intervention_requests WHERE code = 'DI-PLAN-001'").await;
+    assert_eq!(candidates[0].source_id, approved);
 }
 
 #[tokio::test]
@@ -5204,4 +5213,223 @@ async fn capacity_rule_edits_are_checked_and_a_stale_edit_is_refused_with_a_code
         format!("{stale:?}").contains("PLANNING_CAPACITY_RULE_STALE"),
         "{stale:?}"
     );
+}
+
+#[tokio::test]
+async fn only_moves_recorded_while_the_baseline_held_count_as_displaced() {
+    let db = setup_db().await;
+    let (site, team) = weekly_site(&db, "DW").await;
+    let planner = ensure_personnel_with_rate(&db, "PLN-WK-DW").await;
+    ensure_approver_user(&db, 58, planner).await;
+    let mut jobs = Vec::new();
+    for (title, day) in [
+        ("KPI DW before", "2026-05-04"),
+        ("KPI DW during", "2026-05-05"),
+        ("KPI DW after", "2026-05-06"),
+        ("KPI DW at freeze", "2026-05-03"),
+        ("KPI DW at unfreeze", "2026-05-07"),
+    ] {
+        let (wo, actor) = create_planning_wo(&db, title).await;
+        let job = scheduling::create_schedule_commitment(
+            &db,
+            actor,
+            commit_input(
+                insert_candidate(&db, "work_order", wo, "ready", 100.0).await,
+                team,
+                &format!("{day}T08:00"),
+                &format!("{day}T10:00"),
+            ),
+        )
+        .await
+        .expect("job");
+        jobs.push((job.id, day));
+    }
+    crate::planning::weekly_schedule::freeze_weekly_schedule(&db, 1, week_ref(site, "2026-05-04", None))
+        .await
+        .expect("frozen");
+    let requested = crate::planning::weekly_schedule::request_unfreeze(
+        &db,
+        1,
+        crate::planning::weekly_schedule::UnfreezeRequestInput {
+            site_id: site,
+            day: "2026-05-04".to_string(),
+            expected_row_version: None,
+            reason: "Shutdown moved".to_string(),
+        },
+    )
+    .await
+    .expect("requested");
+    crate::planning::weekly_schedule::decide_unfreeze(
+        &db,
+        58,
+        crate::planning::weekly_schedule::UnfreezeDecisionInput {
+            site_id: site,
+            day: "2026-05-04".to_string(),
+            expected_row_version: requested.schedule.map(|s| s.row_version),
+            approve: true,
+            comment: None,
+        },
+    )
+    .await
+    .expect("unfrozen");
+    // The baseline held from 2026-05-01 00:00 to 2026-05-05 12:00 (UTC).
+    let schedule = scalar(
+        &db,
+        &format!("SELECT id FROM weekly_schedules WHERE entity_id = {site} AND week_start = '2026-05-03'"),
+    )
+    .await;
+    exec_sql(
+        &db,
+        &format!(
+            "UPDATE weekly_schedule_events SET created_at = CASE action \
+               WHEN 'unfrozen' THEN '2026-05-05T12:00:00Z' ELSE '2026-05-01T00:00:00Z' END \
+             WHERE weekly_schedule_id = {schedule} AND action IN ('frozen', 'auto_frozen', 'unfrozen')"
+        ),
+    )
+    .await;
+    // Each job is moved once inside the week: before the freeze, while frozen, after the unfreeze,
+    // exactly at the freeze (counted: the window is [freeze, unfreeze)) and exactly at the
+    // unfreeze (not counted).
+    let moved_at = [
+        "2026-04-30T10:00:00Z",
+        "2026-05-03T10:00:00Z",
+        "2026-05-06T10:00:00Z",
+        "2026-05-01T00:00:00Z",
+        "2026-05-05T12:00:00Z",
+    ];
+    for (n, ((job, day), at)) in jobs.iter().zip(moved_at).enumerate() {
+        exec_sql(
+            &db,
+            &format!(
+                "INSERT INTO schedule_break_ins
+                    (schedule_commitment_id, break_in_reason, kind, old_slot_start, old_slot_end,
+                     new_slot_start, new_slot_end, notification_dedupe_key, created_by_id, created_at)
+                 VALUES ({job}, 'other', 'move', '{old_start}', '{old_end}', '{new_start}', '{new_end}',
+                         'dw-move-{n}', 1, '{at}')",
+                old_start = local(&format!("{day}T08:00")),
+                old_end = local(&format!("{day}T10:00")),
+                new_start = local(&format!("{day}T13:00")),
+                new_end = local(&format!("{day}T15:00")),
+            ),
+        )
+        .await;
+    }
+    let kpis = crate::planning::kpis::planning_kpis(
+        &db,
+        &crate::planning::kpis::PlanningKpiFilter {
+            site_id: Some(site),
+            from_day: "2026-05-03".to_string(),
+            to_day: "2026-05-03".to_string(),
+            exclude_unapproved: false,
+        },
+        utc_at("2026-05-20T09:00"),
+    )
+    .await
+    .expect("kpis");
+    let week = &kpis.weeks[0];
+    assert!(week.reopened);
+    assert_eq!(
+        week.displaced_jobs, 2,
+        "only the moves recorded in [freeze, unfreeze) count: {week:?}"
+    );
+}
+
+#[tokio::test]
+async fn planning_requires_an_isolation_for_every_permit_type_flagged_for_energy_isolation() {
+    let db = setup_db().await;
+    let loto_reasons = |wo_id: i64| {
+        let db = db.clone();
+        async move {
+            super::readiness::permit_findings(&db, "work_order", wo_id, None)
+                .await
+                .expect("findings")
+                .into_iter()
+                .filter(|f| f.reason_code == "LOTO_NOT_VERIFIED")
+                .count()
+        }
+    };
+    let permit_on = |wo_id: i64, type_code: &'static str| {
+        let db = db.clone();
+        async move {
+            let type_id = scalar(&db, &format!("SELECT id FROM permit_types WHERE code = '{type_code}'")).await;
+            crate::permit::queries::create_work_permit(
+                &db,
+                crate::permit::domain::WorkPermitCreateInput {
+                    permit_type_id: type_id,
+                    asset_id: None,
+                    entity_id: None,
+                    linked_work_order_id: Some(wo_id),
+                    expires_at: Some((chrono::Utc::now() + chrono::Duration::hours(8)).to_rfc3339()),
+                },
+            )
+            .await
+            .expect("permit")
+        }
+    };
+    let job = |title: &'static str| {
+        let db = db.clone();
+        async move {
+            let (wo, _) = create_planning_wo(&db, title).await;
+            exec_sql(
+                &db,
+                &format!("UPDATE work_orders SET requires_permit = 1 WHERE id = {wo}"),
+            )
+            .await;
+            wo
+        }
+    };
+
+    // LOTO (flagged by migration 225) without any isolation point: not ready.
+    let loto_wo = job("Readiness LOTO").await;
+    let loto = permit_on(loto_wo, "loto").await;
+    assert!(loto.permit_type_requires_energy_isolation);
+    assert_eq!(loto_reasons(loto_wo).await, 1, "LOTO still needs an isolation");
+
+    // Hot work, not flagged: no isolation needed.
+    let hot_wo = job("Readiness hot work").await;
+    let hot = permit_on(hot_wo, "hot_work").await;
+    assert!(!hot.permit_type_requires_energy_isolation);
+    assert_eq!(loto_reasons(hot_wo).await, 0);
+
+    // The same non-LOTO type once flagged for energy isolation: an isolation is needed at planning,
+    // whatever the type is called.
+    exec_sql(
+        &db,
+        "UPDATE permit_types SET requires_energy_isolation = 1 WHERE code = 'hot_work'",
+    )
+    .await;
+    assert_eq!(
+        loto_reasons(hot_wo).await,
+        1,
+        "a flagged non-LOTO type without isolation is not ready"
+    );
+
+    // A permit whose type row is gone can never start (the OT gate refuses it): planning reports
+    // it as blocking, never as "no isolation needed".
+    let candidate = insert_candidate(&db, "work_order", hot_wo, "ready", 100.0).await;
+    re_evaluate(&db).await;
+    let before = open_conflicts(&db, candidate).await;
+    assert!(
+        before.contains(&("LOTO_NOT_VERIFIED".to_string(), "warning".to_string())),
+        "{before:?}"
+    );
+    assert!(!before.iter().any(|(code, _)| code == "PERMIT_TYPE_MISSING"));
+    exec_sql(&db, "PRAGMA foreign_keys = OFF").await;
+    exec_sql(
+        &db,
+        &format!("UPDATE work_permits SET permit_type_id = 999999 WHERE id = {}", hot.id),
+    )
+    .await;
+    exec_sql(&db, "PRAGMA foreign_keys = ON").await;
+    re_evaluate(&db).await;
+    let after = open_conflicts(&db, candidate).await;
+    assert!(
+        after.contains(&("PERMIT_TYPE_MISSING".to_string(), "blocking".to_string())),
+        "{after:?}"
+    );
+    assert!(
+        !after.iter().any(|(code, _)| code == "LOTO_NOT_VERIFIED"),
+        "never read as a type without isolation: {after:?}"
+    );
+    assert_eq!(readiness_of(&db, candidate).await, "blocked");
 }

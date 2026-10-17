@@ -325,6 +325,7 @@
     "PERMIT_ON_HOLD": "Le permis {{permit_code}} est suspendu ({{status}}) ; revalidez-le avant le démarrage.",
     "PERMIT_EXPIRES_BEFORE_WORK": "Le permis {{permit_code}} expire avant la fin du travail ({{expires_at}}).",
     "LOTO_NOT_VERIFIED": "LOTO du permis {{permit_code}} : {{verified}} points d'isolement vérifiés sur {{isolations}} ; tous doivent l'être avant le démarrage.",
+    "PERMIT_TYPE_MISSING": "Le permis {{permit_code}} renvoie à un type de permis qui n'existe plus : il ne peut pas démarrer. Corrigez son type dans le module permis.",
     "LOCATION_UNKNOWN": "Lieu inconnu : fenêtres du site non vérifiées."
   },
   "reasonParts": {

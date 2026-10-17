@@ -144,23 +144,36 @@ async fn one_permit_findings(
             }
         }
     }
-    // LOTO: every isolation point applied and verified (two-person) before the work starts.
+    // LOTO: every isolation point applied and verified (two-person) before the work starts; a
+    // permit type that requires energy isolation (`permit_types.requires_energy_isolation`, set
+    // for LOTO) needs at least one. Read with the OT start gate's own function: a permit whose
+    // type is missing can never start, so it is reported (blocking), never taken as "no isolation".
+    let requires_isolation =
+        match crate::permit::queries::permit_type_requires_energy_isolation(db, permit.permit_type_id).await {
+            Ok(requires) => requires,
+            Err(AppError::NotFound { .. }) => {
+                out.push(Finding {
+                    conflict_type: "permit_not_ready",
+                    reason_code: "PERMIT_TYPE_MISSING",
+                    details: base,
+                });
+                return Ok(out);
+            }
+            Err(err) => return Err(err),
+        };
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT pt.code AS type_code, \
-                    (SELECT COUNT(*) FROM permit_isolations pi WHERE pi.permit_id = wp.id) AS isolations, \
-                    (SELECT COUNT(*) FROM permit_isolations pi WHERE pi.permit_id = wp.id \
-                        AND pi.verified_at IS NOT NULL AND pi.removal_verified_at IS NULL) AS verified \
-               FROM work_permits wp JOIN permit_types pt ON pt.id = wp.permit_type_id WHERE wp.id = ?",
-            [permit.id.into()],
+            "SELECT (SELECT COUNT(*) FROM permit_isolations pi WHERE pi.permit_id = ?) AS isolations, \
+                    (SELECT COUNT(*) FROM permit_isolations pi WHERE pi.permit_id = ? \
+                        AND pi.verified_at IS NOT NULL AND pi.removal_verified_at IS NULL) AS verified",
+            [permit.id.into(), permit.id.into()],
         ))
         .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("permit {} vanished", permit.id)))?;
-    let type_code: String = row.try_get("", "type_code").map_err(|e| decode_err("type_code", e))?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("permit {} isolation counts missing", permit.id)))?;
     let isolations: i64 = row.try_get("", "isolations").map_err(|e| decode_err("isolations", e))?;
     let verified: i64 = row.try_get("", "verified").map_err(|e| decode_err("verified", e))?;
-    if (type_code == "loto" && isolations == 0) || verified < isolations {
+    if (requires_isolation && isolations == 0) || verified < isolations {
         out.push(Finding {
             conflict_type: "permit_not_ready",
             reason_code: "LOTO_NOT_VERIFIED",
