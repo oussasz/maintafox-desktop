@@ -604,7 +604,8 @@ async fn refresh_from_approved_di(db: &impl ConnectionTrait, limit: i64) -> AppR
                 NULL AS estimated_duration_hours,
                 ir.deferred_until
              FROM intervention_requests ir
-             WHERE ir.status = 'approved_for_planning'
+             -- Approved and not converted yet (`approved_for_planning` became `approved`, migration 139).
+             WHERE ir.status = 'approved'
                AND ir.converted_to_wo_id IS NULL
              ORDER BY ir.updated_at DESC
              LIMIT ?",

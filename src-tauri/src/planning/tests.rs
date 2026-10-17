@@ -129,7 +129,7 @@ async fn insert_approved_di(db: &DatabaseConnection, code: &str) {
             submitter_id,
             created_at,
             updated_at
-         ) VALUES (?, 1, 1, 'approved_for_planning', ?, ?, 'manual', 'medium', 'medium', ?, 1, ?, ?)",
+         ) VALUES (?, 1, 1, 'approved', ?, ?, 'manual', 'medium', 'medium', ?, 1, ?, ?)",
         [
             code.into(),
             format!("DI {code}").into(),
@@ -507,6 +507,13 @@ async fn snapshot_decomposes_readiness_dimensions() {
 async fn refresh_from_approved_di_creates_schedule_candidates() {
     let db = setup_db().await;
     insert_approved_di(&db, "DI-PLAN-001").await;
+    // A request still under review is not planned.
+    insert_approved_di(&db, "DI-PLAN-002").await;
+    exec_sql(
+        &db,
+        "UPDATE intervention_requests SET status = 'in_review' WHERE code = 'DI-PLAN-002'",
+    )
+    .await;
 
     let result = queries::refresh_schedule_candidates(
         &db,
@@ -535,8 +542,10 @@ async fn refresh_from_approved_di_creates_schedule_candidates() {
     )
     .await
     .expect("list candidates");
-    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates.len(), 1, "only the approved request: {candidates:?}");
     assert_eq!(candidates[0].source_di_id, Some(candidates[0].source_id));
+    let approved = scalar(&db, "SELECT id FROM intervention_requests WHERE code = 'DI-PLAN-001'").await;
+    assert_eq!(candidates[0].source_id, approved);
 }
 
 #[tokio::test]
