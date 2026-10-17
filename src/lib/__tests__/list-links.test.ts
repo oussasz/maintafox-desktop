@@ -8,6 +8,7 @@ import {
   natureInMix,
   scopeParam,
   textParam,
+  waitingDaysParam,
   withoutParams,
 } from "../list-links";
 
@@ -20,6 +21,8 @@ describe("list links", () => {
     expect(listLinks.requests({ queue: "to_review", scope: "open" })).toBe(
       "/requests?queue=to_review&scope=open",
     );
+    expect(listLinks.workOrders({ scope: "overdue" })).toBe("/work-orders?scope=overdue");
+    expect(listLinks.requests({ waitingDays: 7 })).toBe("/requests?waiting=7");
     expect(listLinks.pmDue("overdue")).toBe("/pm?due=overdue");
     expect(listLinks.inventory({ belowReorder: true })).toBe("/inventory?stock=below_reorder");
     expect(listLinks.equipment()).toBe("/equipment");
@@ -33,7 +36,11 @@ describe("list links", () => {
     expect(textParam("  ")).toBeNull();
     expect(textParam(" draft ")).toBe("draft");
     expect(scopeParam("open")).toBe("open");
+    expect(scopeParam("overdue")).toBe("overdue");
     expect(scopeParam("all")).toBeNull();
+    expect(waitingDaysParam("7")).toBe(7);
+    expect(waitingDaysParam("0")).toBeNull();
+    expect(waitingDaysParam("99999")).toBeNull();
     expect(dueWindowParam("next7")).toBe("next7");
     expect(dueWindowParam("later")).toBeNull();
   });

@@ -505,7 +505,7 @@ export function AnalyticsDashboardsPage() {
                 <Button
                   variant="outline"
                   className="h-auto min-h-11 w-full flex-col items-start gap-0.5 py-2 text-start"
-                  onClick={() => navigate(listLinks.workOrders({ scope: "open" }))}
+                  onClick={() => navigate(listLinks.workOrders({ scope: "overdue" }))}
                 >
                   <span>{td("overdueChooser.wo")}</span>
                   <span className="text-xs font-normal text-text-muted">
@@ -519,7 +519,7 @@ export function AnalyticsDashboardsPage() {
                 <Button
                   variant="outline"
                   className="h-auto min-h-11 w-full flex-col items-start gap-0.5 py-2 text-start"
-                  onClick={() => navigate(listLinks.requests({ scope: "open" }))}
+                  onClick={() => navigate(listLinks.requests({ waitingDays: 7 }))}
                 >
                   <span>{td("overdueChooser.di")}</span>
                   <span className="text-xs font-normal text-text-muted">

@@ -24,8 +24,11 @@
       "nextStep": "Next step"
     },
     "filters": {
+      "waiting": "Waiting",
+      "waitingValue_one": "Being handled, submitted {{count}} day ago or more",
+      "waitingValue_other": "Being handled, submitted {{count}} days ago or more",
       "scope": "Scope",
-      "scopeOpen": "Being handled (not closed)",
+      "scopeOpen": "Being handled (not closed or converted)",
       "equipment": "Equipment",
       "status": "Status",
       "reviewQueue": "Validation queue",

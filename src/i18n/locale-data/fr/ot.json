@@ -59,6 +59,7 @@
       "closedAt": "Date clôture"
     },
     "filters": {
+      "scopeOverdue": "En retard (ouverts, fin prévue dépassée)",
       "mix": "Nature des travaux",
       "mixValue": {
         "planned": "Planifiés (préventif et amélioration)",
@@ -66,7 +67,7 @@
         "emergency": "Urgents (correctif immédiat)"
       },
       "scope": "Périmètre",
-      "scopeOpen": "Ouverts (ni clôturés ni annulés)",
+      "scopeOpen": "Ouverts (travail restant à faire)",
       "equipment": "Équipement",
       "lifecycle": "Cycle de vie",
       "status": "Statut",

@@ -62,9 +62,16 @@ import { mfLayout } from "@/design-system/tokens";
 import { DI_STATUS_TONE, toneOf } from "@/design-system/tone";
 import { usePermissions } from "@/hooks/use-permissions";
 import { formatPersonLabel } from "@/lib/display";
-import { LIST_PARAM, idParam, scopeParam, textParam, withoutParams } from "@/lib/list-links";
+import {
+  LIST_PARAM,
+  idParam,
+  scopeParam,
+  textParam,
+  waitingDaysParam,
+  withoutParams,
+} from "@/lib/list-links";
 import { getAssetByIdSilent } from "@/services/asset-service";
-import { DI_OPEN_STATUSES, triageSubmittedDi } from "@/services/di-service";
+import { triageSubmittedDi } from "@/services/di-service";
 import { useDiReviewStore } from "@/stores/di-review-store";
 import { useDiStore } from "@/stores/di-store";
 import { toErrorMessage } from "@/utils/errors";
@@ -144,6 +151,8 @@ export function RequestsPage() {
   const [dispositionFilter, setDispositionFilter] = useState<string | null>(null);
   /** From a dashboard link: requests still being handled (chip, clearable). */
   const [scopeFilter, setScopeFilter] = useState<"open" | null>(null);
+  /** From the overdue figure: open requests waiting at least this many days (chip, clearable). */
+  const [waitingFilter, setWaitingFilter] = useState<number | null>(null);
   /** From an equipment link: one asset (chip shows its code). */
   const [equipmentFilter, setEquipmentFilter] = useState<{ id: number; label: string } | null>(
     null,
@@ -294,6 +303,7 @@ export function RequestsPage() {
     setPriorityFilter(null);
     setDispositionFilter(null);
     setScopeFilter(null);
+    setWaitingFilter(null);
     setEquipmentFilter(null);
     setFilter({
       search: null,
@@ -301,6 +311,8 @@ export function RequestsPage() {
       urgency: null,
       disposition_code: null,
       equipment_id: null,
+      open_only: null,
+      waiting_days: null,
       offset: 0,
     });
     void loadDis();
@@ -310,8 +322,17 @@ export function RequestsPage() {
     (val: string | null) => {
       const scope = val === "open" ? "open" : null;
       setScopeFilter(scope);
-      setStatusFilter(null);
-      setFilter({ status: scope ? [...DI_OPEN_STATUSES] : null, offset: 0 });
+      setFilter({ open_only: scope === "open" || null, offset: 0 });
+      void loadDis();
+    },
+    [loadDis, setFilter],
+  );
+
+  const handleWaitingFilter = useCallback(
+    (val: string | null) => {
+      if (val) return; // only clearing is offered: the waiting time comes from the link
+      setWaitingFilter(null);
+      setFilter({ waiting_days: null, offset: 0 });
       void loadDis();
     },
     [loadDis, setFilter],
@@ -332,20 +353,25 @@ export function RequestsPage() {
   // address (the queue stays: the queue bar shows it).
   useEffect(() => {
     if (permissionsLoading) return;
-    const scope = scopeParam(searchParams.get(LIST_PARAM.scope));
+    const scope = scopeParam(searchParams.get(LIST_PARAM.scope)) === "open" ? "open" : null;
+    const waitingDays = waitingDaysParam(searchParams.get(LIST_PARAM.waiting));
     const status = textParam(searchParams.get(LIST_PARAM.status));
     const urgency = textParam(searchParams.get(LIST_PARAM.urgency));
     const equipmentId = idParam(searchParams.get(LIST_PARAM.equipment));
-    if (!scope && !status && !urgency && equipmentId == null) return;
+    if (!scope && waitingDays == null && !status && !urgency && equipmentId == null) return;
     setSearchInput("");
     setStatusFilter(status);
     setPriorityFilter(urgency);
     setDispositionFilter(null);
-    setScopeFilter(status ? null : scope);
+    setScopeFilter(scope);
+    setWaitingFilter(waitingDays);
     setEquipmentFilter(equipmentId != null ? { id: equipmentId, label: `#${equipmentId}` } : null);
     setFilter({
       search: null,
-      status: status ? [status] : scope ? [...DI_OPEN_STATUSES] : null,
+      status: status ? [status] : null,
+      // The list applies the same rules as the counts the link came from.
+      open_only: scope === "open" || null,
+      waiting_days: waitingDays,
       urgency,
       disposition_code: null,
       equipment_id: equipmentId,
@@ -366,6 +392,7 @@ export function RequestsPage() {
       withoutParams(
         searchParams,
         LIST_PARAM.scope,
+        LIST_PARAM.waiting,
         LIST_PARAM.status,
         LIST_PARAM.urgency,
         LIST_PARAM.equipment,
@@ -412,6 +439,23 @@ export function RequestsPage() {
             },
           ]
         : []),
+      ...(waitingFilter != null
+        ? [
+            {
+              id: "waiting",
+              kind: "select" as const,
+              label: t("list.filters.waiting"),
+              options: [
+                {
+                  value: String(waitingFilter),
+                  label: t("list.filters.waitingValue", { count: waitingFilter }),
+                },
+              ],
+              value: String(waitingFilter),
+              onChange: handleWaitingFilter,
+            },
+          ]
+        : []),
       ...(equipmentFilter
         ? [
             {
@@ -437,8 +481,10 @@ export function RequestsPage() {
       handlePriorityFilter,
       handleDispositionFilter,
       scopeFilter,
+      waitingFilter,
       equipmentFilter,
       handleScopeFilter,
+      handleWaitingFilter,
       handleEquipmentFilter,
     ],
   );

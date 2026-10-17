@@ -395,6 +395,7 @@ function WoBacklogSection({ wo }: { wo: HomeSupervisionWorkOrders }) {
           label={t("home.supervision.wo.overdue")}
           value={formatNumber(wo.overdue)}
           tone={wo.overdue > 0 ? "danger" : undefined}
+          to={listLinks.workOrders({ scope: "overdue" })}
         />
         <HomeFigure
           label={t("home.supervision.wo.planned")}

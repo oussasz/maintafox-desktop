@@ -7,8 +7,12 @@
  */
 import type { DiQueue } from "@shared/ipc-types";
 
-/** `scope=open`: records still being handled (the dashboards' "open" counts). */
-export type ListScope = "open";
+/**
+ * `scope=open`: records still being handled (the dashboards' "open" counts).
+ * `scope=overdue` (work orders): still open with the planned end passed (the "overdue" count).
+ * Each is applied by the list's own backend filter, the same rule as the count.
+ */
+export type ListScope = "open" | "overdue";
 
 /** SMRP work mix, from the EN 13306 nature of the work-order type (backend `MaintenanceNature`). */
 export type WorkMix = "planned" | "reactive" | "emergency";
@@ -26,7 +30,9 @@ export interface WoListLinkFilter {
 
 export interface DiListLinkFilter {
   queue?: DiQueue;
-  scope?: ListScope;
+  scope?: "open";
+  /** Open requests submitted at least this many days ago (the overdue figure uses 7). */
+  waitingDays?: number;
   status?: string;
   urgency?: string;
   equipmentId?: number;
@@ -44,6 +50,7 @@ export const LIST_PARAM = {
   stock: "stock",
   type: "type",
   mix: "mix",
+  waiting: "waiting",
 } as const;
 
 function query(entries: Array<[string, string | number | undefined]>): string {
@@ -69,6 +76,7 @@ export const listLinks = {
     `/requests${query([
       [LIST_PARAM.queue, f.queue],
       [LIST_PARAM.scope, f.scope],
+      [LIST_PARAM.waiting, f.waitingDays],
       [LIST_PARAM.status, f.status],
       [LIST_PARAM.urgency, f.urgency],
       [LIST_PARAM.equipment, f.equipmentId],
@@ -93,7 +101,13 @@ export function textParam(raw: string | null): string | null {
 }
 
 export function scopeParam(raw: string | null): ListScope | null {
-  return raw === "open" ? "open" : null;
+  return raw === "open" || raw === "overdue" ? raw : null;
+}
+
+/** Waiting time in whole days (1 to 3650) from a query value, else null. */
+export function waitingDaysParam(raw: string | null): number | null {
+  const n = idParam(raw);
+  return n != null && n <= 3650 ? n : null;
 }
 
 export function dueWindowParam(raw: string | null): PmDueLinkWindow | null {

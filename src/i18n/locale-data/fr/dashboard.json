@@ -4,10 +4,10 @@
     "description": "Le chiffre « En retard » additionne trois listes. Choisissez celle à ouvrir.",
     "pm": "Échéances préventives en retard",
     "pmHint": "File des échéances, filtrée sur « en retard ».",
-    "wo": "Ordres de travail ouverts",
-    "woHint": "La liste ne sait pas encore filtrer sur la date de fin prévue dépassée : elle montre tous les OT ouverts.",
-    "di": "Demandes en cours de traitement",
-    "diHint": "La liste ne sait pas encore filtrer sur « en attente depuis plus de 7 jours » : elle montre toutes les demandes en cours."
+    "wo": "Ordres de travail en retard",
+    "woHint": "OT ouverts dont la date de fin prévue est dépassée.",
+    "di": "Demandes en attente depuis 7 jours ou plus",
+    "diHint": "Demandes en cours de traitement soumises il y a au moins 7 jours."
   },
   "page": {
     "title": "Vue d'ensemble",
@@ -360,7 +360,7 @@
       "planned": "OT de nature préventive ou d'amélioration (travail planifié au sens SMRP).",
       "reactive": "OT de nature corrective (immédiate ou différée).",
       "emergency": "OT de maintenance corrective immédiate (sous-ensemble du réactif).",
-      "stockReorder": "Lignes article × magasin dont le disponible est au plus le point de commande (ou sous le stock minimum) — la règle de réapprovisionnement du module Stock.",
+      "stockReorder": "Articles dont au moins un magasin a un disponible au plus égal au point de commande (ou sous le stock minimum) — la règle de réapprovisionnement du module Stock. La ligne en dessous donne les lignes article × magasin concernées.",
       "stockOut": "Parmi ces lignes, celles sans aucun disponible.",
       "permitsOpen": "Permis délivrés, actifs, suspendus ou à revalider, et non expirés.",
       "permitsExpiring": "Permis ouverts dont l'expiration tombe dans le délai d'alerte de la règle « Permis bientôt expiré » (Données de référence → Notifications) ; aucun lorsque la règle est désactivée.",

@@ -53,6 +53,7 @@ import { WO_STATUS_TONE, toneOf } from "@/design-system/tone";
 import { usePermissions } from "@/hooks/use-permissions";
 import {
   LIST_PARAM,
+  type ListScope,
   type WorkMix,
   idParam,
   mixParam,
@@ -86,7 +87,6 @@ const WO_FILTER_STATUSES = [
 ] as const;
 
 /** "Open" work orders of the dashboards: every lifecycle state except closed and cancelled. */
-const WO_OPEN_LIFECYCLE = WO_LIFECYCLE_STATES.filter((s) => s !== "closed" && s !== "cancelled");
 
 // ── Component ───────────────────────────────────────────────────────────────
 
@@ -175,7 +175,7 @@ export function WorkOrdersPage() {
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
   const [priorityFilter, setPriorityFilter] = useState<string | null>(null);
   /** From a dashboard link: open work orders only (shown as a chip, clearable). */
-  const [scopeFilter, setScopeFilter] = useState<"open" | null>(null);
+  const [scopeFilter, setScopeFilter] = useState<ListScope | null>(null);
   /** From a work-mix link (SMRP / home): every type of that nature group (chip, clearable). */
   const [mixFilter, setMixFilter] = useState<WorkMix | null>(null);
   /** From an equipment link: one asset (chip shows its code). */
@@ -248,16 +248,17 @@ export function WorkOrdersPage() {
       type_codes: null,
       urgency_code: null,
       equipment_id: null,
+      open_only: null,
+      overdue_only: null,
     });
     void loadWos();
   }, [setFilter, loadWos]);
 
   const handleScopeFilter = useCallback(
     (val: string | null) => {
-      const scope = val === "open" ? "open" : null;
+      const scope = scopeParam(val);
       setScopeFilter(scope);
-      setLifecycleFilter(null);
-      setFilter({ lifecycle_states: scope ? [...WO_OPEN_LIFECYCLE] : null });
+      setFilter({ open_only: scope === "open" || null, overdue_only: scope === "overdue" || null });
       void loadWos();
     },
     [setFilter, loadWos],
@@ -310,7 +311,10 @@ export function WorkOrdersPage() {
     setFilter({
       search: null,
       status_codes: status ? [status] : null,
-      lifecycle_states: scope ? [...WO_OPEN_LIFECYCLE] : null,
+      lifecycle_states: null,
+      // The list applies the same rule as the count the link came from.
+      open_only: scope === "open" || null,
+      overdue_only: scope === "overdue" || null,
       // A mix with no matching type matches no work order (never "all types").
       type_codes: mixCodes ? (mixCodes.length > 0 ? mixCodes : ["__none__"]) : type ? [type] : null,
       urgency_code: urgency ? (urgency as UrgencyCode) : null,
@@ -381,7 +385,15 @@ export function WorkOrdersPage() {
               id: "scope",
               kind: "select" as const,
               label: t("list.filters.scope"),
-              options: [{ value: "open", label: t("list.filters.scopeOpen") }],
+              options: [
+                {
+                  value: scopeFilter,
+                  label:
+                    scopeFilter === "overdue"
+                      ? t("list.filters.scopeOverdue")
+                      : t("list.filters.scopeOpen"),
+                },
+              ],
               value: scopeFilter,
               onChange: handleScopeFilter,
             },

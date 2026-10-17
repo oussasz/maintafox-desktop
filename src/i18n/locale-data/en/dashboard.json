@@ -4,10 +4,10 @@
     "description": "The \"Overdue\" figure adds up three lists. Choose the one to open.",
     "pm": "Overdue PM occurrences",
     "pmHint": "Due queue, filtered on \"overdue\".",
-    "wo": "Open work orders",
-    "woHint": "The list cannot yet filter on a passed planned end: it shows all open work orders.",
-    "di": "Requests being handled",
-    "diHint": "The list cannot yet filter on \"waiting more than 7 days\": it shows all requests being handled."
+    "wo": "Overdue work orders",
+    "woHint": "Open work orders whose planned end has passed.",
+    "di": "Requests waiting 7 days or more",
+    "diHint": "Requests being handled that were submitted at least 7 days ago."
   },
   "page": {
     "title": "Overview",
@@ -360,7 +360,7 @@
       "planned": "Work orders of a preventive or improvement nature (SMRP planned work).",
       "reactive": "Work orders of a corrective nature (immediate or deferred).",
       "emergency": "Immediate corrective maintenance work orders (part of reactive).",
-      "stockReorder": "Article × warehouse lines whose available quantity is at or below the reorder point (or under minimum stock) — the Inventory replenishment rule.",
+      "stockReorder": "Articles with at least one store whose available quantity is at or below the reorder point (or under minimum stock) — the Inventory replenishment rule. The line below gives the article × store lines concerned.",
       "stockOut": "Of those lines, the ones with nothing available.",
       "permitsOpen": "Permits issued, active, suspended or awaiting revalidation, and not expired.",
       "permitsExpiring": "Open permits expiring within the lead time of the “Permit expiring” rule (Reference data → Notifications); none when the rule is switched off.",

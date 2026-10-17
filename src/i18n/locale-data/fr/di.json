@@ -24,8 +24,11 @@
       "nextStep": "Prochaine étape"
     },
     "filters": {
+      "waiting": "Attente",
+      "waitingValue_one": "En cours, soumises il y a {{count}} jour ou plus",
+      "waitingValue_other": "En cours, soumises il y a {{count}} jours ou plus",
       "scope": "Périmètre",
-      "scopeOpen": "En cours de traitement (non clôturées)",
+      "scopeOpen": "En cours de traitement (ni clôturées ni converties)",
       "equipment": "Équipement",
       "status": "Statut",
       "reviewQueue": "File de validation",
