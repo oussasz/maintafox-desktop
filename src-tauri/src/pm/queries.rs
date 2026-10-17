@@ -1445,6 +1445,13 @@ pub async fn transition_pm_occurrence(
             "reason_code is required for deferred, missed, and cancelled transitions.".to_string(),
         ]));
     }
+    // The reason of a deferral, miss or cancellation is a value of `PM.DEFERRAL_REASONS`.
+    let mut input = input;
+    if matches!(next_status.as_str(), "deferred" | "missed" | "cancelled") {
+        if let Some(code) = input.reason_code.as_deref() {
+            input.reason_code = Some(crate::pm::reason_catalog::checked_reason(db, "reason_code", code).await?);
+        }
+    }
 
     let mut linked_work_order_id = current.linked_work_order_id;
     if input.generate_work_order == Some(true) && linked_work_order_id.is_none() {
@@ -2246,8 +2253,21 @@ pub async fn execute_pm_occurrence(
         ]));
     }
 
-    let defer_reason = normalize_optional_reason(input.defer_reason_code.clone());
-    let miss_reason = normalize_optional_reason(input.miss_reason_code.clone());
+    // Reasons and severities are values of the governed lists (`pm::reason_catalog`), checked
+    // before anything is written.
+    let defer_reason = match normalize_optional_reason(input.defer_reason_code.clone()) {
+        Some(code) => Some(crate::pm::reason_catalog::checked_reason(db, "defer_reason_code", &code).await?),
+        None => None,
+    };
+    let miss_reason = match normalize_optional_reason(input.miss_reason_code.clone()) {
+        Some(code) => Some(crate::pm::reason_catalog::checked_reason(db, "miss_reason_code", &code).await?),
+        None => None,
+    };
+    for finding in &findings_input {
+        if let Some(severity) = finding.severity.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            crate::pm::reason_catalog::checked_severity(db, severity).await?;
+        }
+    }
 
     if execution_result == "deferred" && defer_reason.is_none() {
         return Err(AppError::ValidationFailed(vec![

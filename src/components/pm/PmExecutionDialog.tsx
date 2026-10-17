@@ -27,8 +27,9 @@ import type { ExecutePmOccurrenceInput } from "@shared/ipc-types";
 
 import { formatPmAsset } from "./pm-cells";
 import { pmUnreportedErrorText } from "./pm-errors";
-import { PM_EXECUTION_RESULTS, PM_FINDING_SEVERITIES, PM_REASON_CODES } from "./pm-labels";
+import { PM_EXECUTION_RESULTS } from "./pm-labels";
 import { allowedExecutionResults } from "./pm-model";
+import { usePmExecutionOptions } from "./use-pm-execution-options";
 
 interface PmExecutionDialogProps {
   open: boolean;
@@ -46,6 +47,8 @@ export function PmExecutionDialog({
   onSubmit,
 }: PmExecutionDialogProps) {
   const { t } = useTranslation("pm");
+  // Reasons and severities come from Données de référence (PM.DEFERRAL_REASONS, PM.FINDING_SEVERITY).
+  const pmOptions = usePmExecutionOptions(open);
   const results = useMemo(
     () => (occurrence ? allowedExecutionResults(occurrence.status, PM_EXECUTION_RESULTS) : []),
     [occurrence],
@@ -160,13 +163,21 @@ export function PmExecutionDialog({
                     <SelectValue placeholder={t("errors.reasonRequired")} />
                   </SelectTrigger>
                   <SelectContent>
-                    {PM_REASON_CODES.map((r) => (
-                      <SelectItem key={r} value={r}>
-                        {t(`reasons.${r}`)}
+                    {pmOptions.reasons.map((r) => (
+                      <SelectItem key={r.code} value={r.code}>
+                        {pmOptions.label(r)}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+                {pmOptions.error != null ? (
+                  <p role="alert" className="flex items-center gap-2 text-xs text-tone-danger-fg">
+                    {t("errors.optionsLoad")}
+                    <Button type="button" size="sm" variant="outline" onClick={pmOptions.reload}>
+                      {t("actions.retry")}
+                    </Button>
+                  </p>
+                ) : null}
               </div>
             ) : null}
             <div className="grid gap-1">
@@ -198,9 +209,9 @@ export function PmExecutionDialog({
                       <SelectValue placeholder={t("labels.none")} />
                     </SelectTrigger>
                     <SelectContent>
-                      {PM_FINDING_SEVERITIES.map((s) => (
-                        <SelectItem key={s} value={s}>
-                          {t(`severity.${s}`)}
+                      {pmOptions.severities.map((s) => (
+                        <SelectItem key={s.code} value={s.code}>
+                          {pmOptions.label(s)}
                         </SelectItem>
                       ))}
                     </SelectContent>

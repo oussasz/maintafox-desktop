@@ -461,6 +461,7 @@ pub fn run() {
             commands::pm::get_pm_due_metrics,
             commands::pm::list_pm_planning_readiness,
             commands::pm::get_pm_governance_kpi_report,
+            commands::pm::list_pm_execution_options,
             commands::pm::execute_pm_occurrence,
             commands::pm::list_pm_executions,
             commands::pm::list_pm_findings,

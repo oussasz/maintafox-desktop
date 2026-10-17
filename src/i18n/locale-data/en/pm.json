@@ -439,6 +439,7 @@
     "horizonDays": "Horizon (days)"
   },
   "errors": {
+    "optionsLoad": "The reasons and severities could not be loaded.",
     "assetRequired": "Select an asset when scope is equipment.",
     "eventCodeRequired": "Event code is required for event strategies.",
     "conditionCodeRequired": "Condition code is required for condition strategies.",

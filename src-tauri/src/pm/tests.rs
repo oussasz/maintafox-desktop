@@ -2251,3 +2251,56 @@ async fn governance_overdue_respects_the_tolerance_window() {
     assert_eq!(report.overdue_risk.denominator, 2);
     assert_eq!(report.overdue_risk.numerator, 1, "only the one past its window");
 }
+
+/// Reasons and finding severities of the PM dialogs are governed lists: shipped values listed,
+/// unknown codes refused before anything is written, known ones stored as the list code.
+#[tokio::test]
+async fn pm_reasons_and_severities_come_from_the_reference_lists() {
+    let db = setup_db().await;
+    let options = crate::pm::reason_catalog::list_pm_execution_options(&db)
+        .await
+        .expect("options");
+    let reasons: Vec<&str> = options.reasons.iter().map(|o| o.code.as_str()).collect();
+    assert!(reasons.contains(&"capacity_constraint") && reasons.contains(&"other"));
+    assert_eq!(
+        options.severities.iter().map(|o| o.code.as_str()).collect::<Vec<_>>(),
+        vec!["low", "medium", "high", "critical"]
+    );
+    assert!(options.reasons.iter().all(|o| o.label_en.is_some()));
+
+    seed_execution_asset(&db).await;
+    let (plan_id, _) = create_plan_with_published_version(
+        &db,
+        "PM-REASONS-001",
+        "fixed",
+        r#"{"interval_unit":"day","interval_value":1}"#,
+    )
+    .await;
+    let occ = occurrence_in_progress(&db, plan_id).await;
+
+    // Unknown miss reason / severity: coded refusal, nothing written.
+    let mut missed = execute_input(&occ, Vec::new());
+    missed.execution_result = "missed".to_string();
+    missed.findings = None;
+    missed.miss_reason_code = Some("forgot".to_string());
+    let err = queries::execute_pm_occurrence(&db, missed.clone())
+        .await
+        .expect_err("unknown reason");
+    assert!(format!("{err:?}").contains("PM_CODE_NOT_IN_LIST"), "{err:?}");
+    let mut bad_finding = finding("leak", false, false, None);
+    bad_finding.severity = Some("catastrophic".to_string());
+    let err = queries::execute_pm_occurrence(&db, execute_input(&occ, vec![bad_finding]))
+        .await
+        .expect_err("unknown severity");
+    assert!(format!("{err:?}").contains("PM_CODE_NOT_IN_LIST"), "{err:?}");
+
+    // A known reason (any case) is stored as the list code (deferral: allowed from in progress).
+    let mut deferred = missed;
+    deferred.execution_result = "deferred".to_string();
+    deferred.miss_reason_code = None;
+    deferred.defer_reason_code = Some("MATERIAL_MISSING".to_string());
+    let done = queries::execute_pm_occurrence(&db, deferred)
+        .await
+        .expect("known reason");
+    assert_eq!(done.occurrence.deferral_reason.as_deref(), Some("material_missing"));
+}

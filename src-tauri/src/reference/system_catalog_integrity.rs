@@ -40,6 +40,8 @@ pub async fn ensure_system_reference_catalog_integrity(db: &DatabaseConnection) 
     // links (replayed history) are linked from their typed texts.
     crate::permit::energy_reference::ensure_permit_energy_catalogs(db).await?;
     crate::permit::energy_reference::map_isolation_texts(db).await?;
+    // PM deferral / miss reasons (COMPANY) and finding severities (SYSTEM).
+    crate::pm::reason_catalog::ensure_pm_reason_catalogs(db).await?;
     Ok(())
 }
 

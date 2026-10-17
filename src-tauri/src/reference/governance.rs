@@ -94,7 +94,9 @@ fn category_for_known_code(code: &str) -> Option<GovernanceCategory> {
         // Physical dimensions of the units: the conversion guard depends on them (`units`).
         | "MEASURE.DIMENSIONS"
         // LOTO energy sources (ISO 14118 / OSHA 1910.147), `permit::energy_reference`.
-        | "PERMIT.ENERGY_TYPES" => Some(GovernanceCategory::SystemCatalog),
+        | "PERMIT.ENERGY_TYPES"
+        // Severity of a PM finding: mapped to the follow-up urgency (`pm::reason_catalog`).
+        | "PM.FINDING_SEVERITY" => Some(GovernanceCategory::SystemCatalog),
 
         "EQUIPMENT.FAMILY"
         | "EQUIPMENT.SUBFAMILY"
@@ -108,7 +110,9 @@ fn category_for_known_code(code: &str) -> Option<GovernanceCategory> {
         | "WORK.DELAY_REASONS"
         | "WORK.PART_UNUSED_REASON"
         // How a plant isolates an energy for LOTO (`permit::energy_reference`).
-        | "PERMIT.ISOLATION_METHODS" => Some(GovernanceCategory::OperationalDictionary),
+        | "PERMIT.ISOLATION_METHODS"
+        // Why a PM is deferred, missed or cancelled (`pm::reason_catalog`).
+        | "PM.DEFERRAL_REASONS" => Some(GovernanceCategory::OperationalDictionary),
 
         // Equipment classes (ISO 14224 taxonomy): the product seeds the baseline classes, each plant
         // adds its own (presses, boilers, transformers, packaging lines, …) through draft → publish.

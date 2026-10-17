@@ -439,6 +439,7 @@
     "horizonDays": "Horizon (jours)"
   },
   "errors": {
+    "optionsLoad": "Les motifs et gravités n’ont pas pu être chargés.",
     "assetRequired": "Sélectionnez un équipement lorsque la portée est « équipement ».",
     "eventCodeRequired": "Le code événement est requis pour une stratégie sur événement.",
     "conditionCodeRequired": "Le code condition est requis pour une stratégie conditionnelle.",
