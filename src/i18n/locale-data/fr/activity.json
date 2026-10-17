@@ -1,5 +1,7 @@
 {
   "filters": {
+    "orgUnit": "Unité d'organisation",
+    "orgUnitUnlisted": "Unité n° {{id}}",
     "any": "Tous",
     "module": "Module",
     "severity": "Gravité",
@@ -7,7 +9,6 @@
     "dateFrom": "Du",
     "dateTo": "Au",
     "advanced": "Filtres avancés",
-    "orgUnitNumber": "N° d'unité d'organisation",
     "correlation": "Référence de chaîne d'événements",
     "apply": "Appliquer",
     "reset": "Réinitialiser"

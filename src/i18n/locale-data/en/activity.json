@@ -1,5 +1,7 @@
 {
   "filters": {
+    "orgUnit": "Organisation unit",
+    "orgUnitUnlisted": "Unit no. {{id}}",
     "any": "Any",
     "module": "Module",
     "severity": "Severity",
@@ -7,7 +9,6 @@
     "dateFrom": "From",
     "dateTo": "To",
     "advanced": "Advanced filters",
-    "orgUnitNumber": "Organisation unit number",
     "correlation": "Event chain reference",
     "apply": "Apply",
     "reset": "Reset"

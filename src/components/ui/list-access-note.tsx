@@ -5,11 +5,13 @@
 import { Lock } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
-import type { ReadableList } from "@/lib/list-access";
+import { type ReadableList, usePermissionsLoading } from "@/lib/list-access";
 import { cn } from "@/lib/utils";
 
 export function ListAccessNote({ list, className }: { list: ReadableList; className?: string }) {
   const { t } = useTranslation("common");
+  // Rights not known yet: say nothing rather than a restriction that may not apply.
+  if (usePermissionsLoading()) return null;
   return (
     <p
       role="note"

@@ -15,9 +15,10 @@ import type { TimelineEntry, TimelineTone } from "@/components/timeline";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-import { LoadingState } from "@/components/ui/data-state";
+import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ListAccessNote } from "@/components/ui/list-access-note";
 import {
   Select,
   SelectContent,
@@ -28,6 +29,7 @@ import {
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
 import { describeAppError } from "@/lib/app-error";
+import { useCanReadList } from "@/lib/list-access";
 import {
   type ActivityEventSummary,
   type ActivityFilter,
@@ -37,6 +39,7 @@ import {
   listSavedActivityFilters,
   saveActivityFilter,
 } from "@/services/activity-service";
+import { listOrgTree } from "@/services/org-node-service";
 import { pushAppToast } from "@/store/app-toast-store";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -87,6 +90,34 @@ export function ActivityFeedPanel({ className }: ActivityFeedPanelProps) {
   const [sourceModule, setSourceModule] = useState<string>("");
   const [severity, setSeverity] = useState<string>("");
   const [entityScopeId, setEntityScopeId] = useState<string>("");
+  // Organisation units to filter on, picked from the organisation tree (the filter matches one unit).
+  // Without the organisation view right the tree is not requested and the field says why.
+  const canReadOrg = useCanReadList("orgNodes");
+  const [orgNodes, setOrgNodes] = useState<{ id: string; label: string }[]>([]);
+  const [orgNodesError, setOrgNodesError] = useState<unknown>(null);
+  const [orgNodesReload, setOrgNodesReload] = useState(0);
+
+  useEffect(() => {
+    if (!canReadOrg) return;
+    let cancelled = false;
+    setOrgNodesError(null);
+    listOrgTree()
+      .then((rows) => {
+        if (cancelled) return;
+        setOrgNodes(
+          rows.map((r) => ({
+            id: String(r.node.id),
+            label: `${"  ".repeat(Math.max(0, r.node.depth))}${r.node.code} — ${r.node.name}`,
+          })),
+        );
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setOrgNodesError(err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [canReadOrg, orgNodesReload]);
   const [correlationId, setCorrelationId] = useState<string>("");
   const [dateFrom, setDateFrom] = useState<string>("");
   const [dateTo, setDateTo] = useState<string>("");
@@ -417,21 +448,26 @@ export function ActivityFeedPanel({ className }: ActivityFeedPanelProps) {
               {t("filters.advanced")}
             </summary>
             <div className="mt-1 space-y-2">
-              <div className="space-y-1">
-                <Label
-                  htmlFor="activity-filter-entity-scope-id"
-                  className="text-xs text-text-muted"
-                >
-                  {t("filters.orgUnitNumber")}
-                </Label>
-                <Input
-                  id="activity-filter-entity-scope-id"
-                  inputMode="numeric"
-                  className="h-10"
-                  value={entityScopeId}
-                  onChange={(e) => setEntityScopeId(e.target.value)}
+              {canReadOrg || entityScopeId
+                ? selectFilter(
+                    "activity-filter-entity-scope-id",
+                    t("filters.orgUnit"),
+                    entityScopeId,
+                    setEntityScopeId,
+                    orgNodes.map((n) => n.id),
+                    (id) =>
+                      orgNodes.find((n) => n.id === id)?.label ??
+                      t("filters.orgUnitUnlisted", { id }),
+                  )
+                : null}
+              {!canReadOrg ? <ListAccessNote list="orgNodes" /> : null}
+              {orgNodesError != null ? (
+                <ErrorState
+                  className="py-3"
+                  error={orgNodesError}
+                  onRetry={() => setOrgNodesReload((n) => n + 1)}
                 />
-              </div>
+              ) : null}
               <div className="space-y-1">
                 <Label htmlFor="activity-filter-correlation-id" className="text-xs text-text-muted">
                   {t("filters.correlation")}
