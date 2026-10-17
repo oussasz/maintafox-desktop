@@ -10843,6 +10843,8 @@ export interface WeekKpi {
   week_end: string;
   status: string;
   awaiting_approval: boolean;
+  /** Unfrozen for editing since its last freeze: measured on that last baseline. */
+  reopened: boolean;
   baseline_no: number;
   baseline_jobs: number;
   baseline_hours: number;
@@ -10864,6 +10866,7 @@ export interface PlanningKpiTotals {
   weeks: number;
   weeks_judged: number;
   weeks_awaiting_approval: number;
+  weeks_reopened: number;
   weeks_not_frozen: number;
   baseline_hours: number;
   baseline_released_jobs: number;

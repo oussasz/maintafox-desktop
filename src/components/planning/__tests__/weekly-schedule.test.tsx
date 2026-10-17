@@ -113,6 +113,7 @@ const kpisFixture = {
       week_end: "2026-10-17",
       status: "frozen",
       awaiting_approval: true,
+      reopened: true,
       baseline_no: 1,
       baseline_jobs: 2,
       baseline_hours: 5,
@@ -132,6 +133,7 @@ const kpisFixture = {
     weeks: 1,
     weeks_judged: 1,
     weeks_awaiting_approval: 1,
+    weeks_reopened: 1,
     weeks_not_frozen: 2,
     baseline_hours: 5,
     baseline_released_jobs: 1,
@@ -332,6 +334,7 @@ describe("WeeklySchedulePanel", () => {
     expect(kpis).toHaveTextContent(enPlanning.kpis.notFrozen);
     expect(kpis).toHaveTextContent(enPlanning.weekly.frozenWithoutApproval);
     expect(kpis).toHaveTextContent("1 later released or cancelled");
+    expect(kpis).toHaveTextContent(enPlanning.kpis.reopened);
   });
 
   it("shows the crews' week and marks a week frozen without approval", async () => {

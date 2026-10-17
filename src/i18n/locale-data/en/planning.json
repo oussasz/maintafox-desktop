@@ -451,6 +451,8 @@
     "hours": "{{hours}} h",
     "inProgress": "in progress",
     "notMeasured": "not measured",
-    "noJudgedWeek": "no frozen week ended in the period"
+    "noJudgedWeek": "no frozen week ended in the period",
+    "reopened": "reopened",
+    "reopenedHint": "Week unfrozen for editing: measured on its last frozen baseline until it is frozen again."
   }
 }

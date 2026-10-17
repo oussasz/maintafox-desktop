@@ -451,6 +451,8 @@
     "hours": "{{hours}} h",
     "inProgress": "en cours",
     "notMeasured": "non mesuré",
-    "noJudgedWeek": "aucune semaine gelée terminée sur la période"
+    "noJudgedWeek": "aucune semaine gelée terminée sur la période",
+    "reopened": "rouverte",
+    "reopenedHint": "Semaine dégelée pour modification : mesurée sur sa dernière référence gelée jusqu'au prochain gel."
   }
 }

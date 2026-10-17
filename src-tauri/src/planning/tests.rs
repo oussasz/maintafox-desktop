@@ -4912,3 +4912,296 @@ async fn weeks_frozen_without_approval_are_flagged_and_can_be_left_out() {
         .expect("kpis");
     assert!(approved_only.weeks.is_empty());
 }
+
+/// Hours a commitment weighs in the KPIs (its planned labour, else its slot length), rounded.
+async fn kpi_hours(db: &DatabaseConnection, commitment_id: i64) -> f64 {
+    let h: f64 = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT COALESCE(planned_labor_hours, (julianday(committed_end) - julianday(committed_start)) * 24.0) AS h \
+                   FROM schedule_commitments WHERE id = {commitment_id}"
+            ),
+        ))
+        .await
+        .expect("query")
+        .expect("row")
+        .try_get("", "h")
+        .expect("h");
+    (h * 10.0).round() / 10.0
+}
+
+#[tokio::test]
+async fn released_and_cancelled_baseline_jobs_are_not_done_and_a_reopened_week_stays_measured() {
+    let db = setup_db().await;
+    let (site, team) = weekly_site(&db, "R").await;
+    let (other_site, _) = weekly_site(&db, "R2").await;
+    // The site sits under a plant node: compliance scoped to the plant includes it.
+    exec_sql(
+        &db,
+        "INSERT INTO org_nodes (entity_sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status,
+            created_at, updated_at, row_version, structure_model_id)
+         SELECT 'wk-plant-R', 'WK-PLANT-R', 'Plant R', node_type_id, NULL, '/', 0, 'active',
+                '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 1, structure_model_id
+           FROM org_nodes WHERE entity_sync_id = 'wk-node-R'",
+    )
+    .await;
+    let plant = scalar(&db, "SELECT id FROM org_nodes WHERE entity_sync_id = 'wk-plant-R'").await;
+    exec_sql(
+        &db,
+        &format!("UPDATE org_nodes SET parent_id = {plant} WHERE id = {site}"),
+    )
+    .await;
+
+    let planner = ensure_personnel_with_rate(&db, "PLN-WK-R").await;
+    ensure_approver_user(&db, 58, planner).await;
+    let mut jobs = Vec::new();
+    for (title, day) in [
+        ("KPI R done", "2026-05-04"),
+        ("KPI R released", "2026-05-05"),
+        ("KPI R cancelled", "2026-05-06"),
+    ] {
+        let (wo, actor) = create_planning_wo(&db, title).await;
+        let commitment = scheduling::create_schedule_commitment(
+            &db,
+            actor,
+            commit_input(
+                insert_candidate(&db, "work_order", wo, "ready", 100.0).await,
+                team,
+                &format!("{day}T08:00"),
+                &format!("{day}T10:00"),
+            ),
+        )
+        .await
+        .expect("job");
+        jobs.push((wo, commitment.id));
+    }
+    crate::planning::weekly_schedule::freeze_weekly_schedule(&db, 1, week_ref(site, "2026-05-04", None))
+        .await
+        .expect("frozen");
+    // Every work order is finished inside the week, but: the second job's slot was released
+    // (scheduled, then given back) and the third work order was cancelled.
+    for (wo, _) in &jobs {
+        exec_sql(
+            &db,
+            &format!("UPDATE work_orders SET mechanically_completed_at = '2026-05-06T12:00:00Z' WHERE id = {wo}"),
+        )
+        .await;
+    }
+    exec_sql(
+        &db,
+        &format!(
+            "UPDATE schedule_commitments SET status = 'released' WHERE id = {}",
+            jobs[1].1
+        ),
+    )
+    .await;
+    exec_sql(
+        &db,
+        &format!(
+            "UPDATE work_orders SET cancelled_at = '2026-05-06T13:00:00Z' WHERE id = {}",
+            jobs[2].0
+        ),
+    )
+    .await;
+    let h_done = kpi_hours(&db, jobs[0].1).await;
+    let h_all = h_done + kpi_hours(&db, jobs[1].1).await + kpi_hours(&db, jobs[2].1).await;
+
+    let filter = crate::planning::kpis::PlanningKpiFilter {
+        site_id: Some(site),
+        from_day: "2026-05-03".to_string(),
+        to_day: "2026-05-03".to_string(),
+        exclude_unapproved: false,
+    };
+    let now = utc_at("2026-05-20T09:00");
+    let kpis = crate::planning::kpis::planning_kpis(&db, &filter, now)
+        .await
+        .expect("kpis");
+    let week = &kpis.weeks[0];
+    assert_eq!(week.baseline_jobs, 3);
+    assert_eq!(week.baseline_released_jobs, 1);
+    assert_eq!(
+        week.done_hours,
+        Some(h_done),
+        "a released job and a cancelled work order are not done, even with the work finished"
+    );
+    assert!(!week.reopened);
+
+    // Compliance scoped by organisation: the plant above the site includes it, another site not.
+    let window = |org: Option<i64>| {
+        let db = db.clone();
+        async move {
+            crate::planning::kpis::baseline_schedule_compliance(
+                &db,
+                utc_at("2026-05-01T00:00"),
+                utc_at("2026-05-20T00:00"),
+                org,
+                now,
+            )
+            .await
+            .expect("compliance")
+        }
+    };
+    let under_plant = window(Some(plant)).await;
+    assert_eq!(under_plant.weeks, 1);
+    assert_eq!((under_plant.done_hours * 10.0).round() / 10.0, h_done);
+    assert_eq!(
+        (under_plant.baseline_hours * 10.0).round() / 10.0,
+        (h_all * 10.0).round() / 10.0
+    );
+    assert_eq!(under_plant.released_jobs, 1);
+    assert_eq!(
+        window(Some(other_site)).await.weeks,
+        0,
+        "another site's scope leaves it out"
+    );
+
+    // Unfrozen for editing: still measured on its last baseline, flagged reopened.
+    let requested = crate::planning::weekly_schedule::request_unfreeze(
+        &db,
+        1,
+        crate::planning::weekly_schedule::UnfreezeRequestInput {
+            site_id: site,
+            day: "2026-05-04".to_string(),
+            expected_row_version: None,
+            reason: "Shutdown moved".to_string(),
+        },
+    )
+    .await
+    .expect("requested");
+    crate::planning::weekly_schedule::decide_unfreeze(
+        &db,
+        58,
+        crate::planning::weekly_schedule::UnfreezeDecisionInput {
+            site_id: site,
+            day: "2026-05-04".to_string(),
+            expected_row_version: requested.schedule.map(|s| s.row_version),
+            approve: true,
+            comment: None,
+        },
+    )
+    .await
+    .expect("unfrozen");
+    let reopened = crate::planning::kpis::planning_kpis(&db, &filter, now)
+        .await
+        .expect("kpis");
+    assert_eq!(reopened.weeks.len(), 1, "a reopened week does not drop out");
+    assert!(reopened.weeks[0].reopened);
+    assert_eq!(reopened.weeks[0].done_hours, Some(h_done));
+    assert_eq!(reopened.totals.weeks_reopened, 1);
+    assert_eq!(
+        reopened.totals.weeks_not_frozen, 0,
+        "it has a baseline: not counted as never frozen"
+    );
+    assert_eq!(window(Some(plant)).await.weeks, 1, "analytics keeps reading it");
+}
+
+#[tokio::test]
+async fn a_week_never_frozen_counts_once_its_freeze_falls_due_and_current_weeks_read_the_frozen_one() {
+    let db = setup_db().await;
+    let (site, _team) = weekly_site(&db, "NF").await;
+    let week = super::weekly::site_week(&db, site, day("2026-05-04"))
+        .await
+        .expect("week");
+    let due = crate::planning::weekly_schedule::freeze_due_at(&db, &week)
+        .await
+        .expect("due");
+    assert!(
+        due < utc_at("2026-05-03T00:00"),
+        "the freeze falls due before the week starts: {due}"
+    );
+    let filter = crate::planning::kpis::PlanningKpiFilter {
+        site_id: Some(site),
+        from_day: "2026-05-03".to_string(),
+        to_day: "2026-05-03".to_string(),
+        exclude_unapproved: false,
+    };
+    let not_frozen = |now: chrono::DateTime<chrono::Utc>| {
+        let db = db.clone();
+        let filter = filter.clone();
+        async move {
+            crate::planning::kpis::planning_kpis(&db, &filter, now)
+                .await
+                .expect("kpis")
+                .totals
+                .weeks_not_frozen
+        }
+    };
+    assert_eq!(not_frozen(due - chrono::Duration::minutes(1)).await, 0, "not due yet");
+    assert_eq!(
+        not_frozen(due).await,
+        1,
+        "due and never frozen, before the week even starts"
+    );
+
+    // Frozen: measured, no longer counted apart, and it is the site's current week.
+    crate::planning::weekly_schedule::freeze_weekly_schedule(&db, 1, week_ref(site, "2026-05-04", None))
+        .await
+        .expect("frozen");
+    assert_eq!(not_frozen(utc_at("2026-05-05T10:00")).await, 0);
+    let (current, sites) = crate::planning::kpis::current_weeks(&db, utc_at("2026-05-05T10:00"))
+        .await
+        .expect("current");
+    assert!(sites >= 1);
+    assert!(
+        current
+            .iter()
+            .any(|w| w.site_id == site && w.week_start == "2026-05-03"),
+        "{current:?}"
+    );
+    let (later, _) = crate::planning::kpis::current_weeks(&db, utc_at("2026-05-12T10:00"))
+        .await
+        .expect("current");
+    assert!(
+        !later.iter().any(|w| w.site_id == site),
+        "next week was never frozen: {later:?}"
+    );
+}
+
+#[tokio::test]
+async fn capacity_rule_edits_are_checked_and_a_stale_edit_is_refused_with_a_code() {
+    let db = setup_db().await;
+    let team_id = get_any_team_id(&db).await;
+    let rule = scheduling::create_capacity_rule(
+        &db,
+        CreateCapacityRuleInput {
+            entity_id: None,
+            team_id,
+            effective_start: "2026-07-01".to_string(),
+            effective_end: Some("2026-07-31".to_string()),
+            available_hours_per_day: Some(8.0),
+            max_overtime_hours_per_day: 2.0,
+        },
+    )
+    .await
+    .expect("rule");
+    let edit = |end: Option<&str>, clear: bool| crate::planning::domain::UpdateCapacityRuleInput {
+        effective_start: None,
+        effective_end: end.map(str::to_string),
+        clear_effective_end: clear,
+        available_hours_per_day: None,
+        max_overtime_hours_per_day: None,
+    };
+
+    let refused = scheduling::update_capacity_rule(&db, rule.id, rule.row_version, edit(Some("2026-06-30"), false))
+        .await
+        .expect_err("ends before it starts");
+    assert!(
+        format!("{refused:?}").contains("PLANNING_CAPACITY_RULE_END_BEFORE_START"),
+        "{refused:?}"
+    );
+
+    let open = scheduling::update_capacity_rule(&db, rule.id, rule.row_version, edit(None, true))
+        .await
+        .expect("end removed");
+    assert_eq!(open.effective_end, None, "the rule applies with no end again");
+    assert_eq!(open.row_version, rule.row_version + 1);
+
+    let stale = scheduling::update_capacity_rule(&db, rule.id, rule.row_version, edit(Some("2026-08-31"), false))
+        .await
+        .expect_err("read before the last edit");
+    assert!(
+        format!("{stale:?}").contains("PLANNING_CAPACITY_RULE_STALE"),
+        "{stale:?}"
+    );
+}

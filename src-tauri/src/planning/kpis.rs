@@ -4,7 +4,8 @@
 //! (`weekly_schedule_baseline_items` of the schedule's current `baseline_no`). A week that was never
 //! frozen has no baseline: it is not measured and is counted apart ("not frozen") once its freeze
 //! fell due — never guessed from live commitments. A week frozen without approval (and not
-//! approved since) is measured, flagged, counted, and can be left out.
+//! approved since) is measured, flagged, counted, and can be left out. A week unfrozen for editing
+//! keeps being measured on its last baseline, flagged "reopened", until it is frozen again.
 //!
 //! - **Schedule compliance (SMRP 5.4.2, hours)**: baseline hours whose work was finished by the end
 //!   of the baseline week ÷ baseline hours. A job's hours are its planned labour hours (else its slot
@@ -67,6 +68,8 @@ pub struct WeekKpi {
     pub status: String,
     /// Frozen without approval and not approved since.
     pub awaiting_approval: bool,
+    /// Unfrozen for editing since its last freeze: measured on that last baseline, flagged.
+    pub reopened: bool,
     pub baseline_no: i64,
     pub baseline_jobs: i64,
     pub baseline_hours: f64,
@@ -91,6 +94,8 @@ pub struct PlanningKpiTotals {
     /// Of them, weeks over (compliance judged).
     pub weeks_judged: i64,
     pub weeks_awaiting_approval: i64,
+    /// Of them, weeks unfrozen for editing since their last freeze (measured on that baseline).
+    pub weeks_reopened: i64,
     /// Weeks whose freeze fell due and that were never frozen: no baseline, not measured.
     pub weeks_not_frozen: i64,
     pub baseline_hours: f64,
@@ -161,7 +166,8 @@ async fn baseline(db: &impl ConnectionTrait, schedule: &WeeklySchedule, week_end
                      JOIN schedule_commitments sc ON sc.id = bi.schedule_commitment_id \
                     WHERE bi.weekly_schedule_id = ? AND bi.baseline_no = ?) \
                  SELECT COUNT(*) AS jobs, TOTAL(hours) AS hours, \
-                        TOTAL(CASE WHEN done_at IS NOT NULL AND julianday(done_at) <= julianday(?) \
+                        TOTAL(CASE WHEN NOT released AND done_at IS NOT NULL \
+                                        AND julianday(done_at) <= julianday(?) \
                                    THEN hours ELSE 0 END) AS done, \
                         COALESCE(SUM(released), 0) AS released \
                    FROM b"
@@ -178,14 +184,47 @@ async fn baseline(db: &impl ConnectionTrait, schedule: &WeeklySchedule, week_end
     })
 }
 
+/// When the week's current baseline held: from its freeze until it was unfrozen for editing
+/// (`None`: still frozen). A week frozen or published reads its own `frozen_at`; a reopened one
+/// reads the freeze and unfreeze events of that baseline.
+async fn frozen_span(
+    db: &impl ConnectionTrait,
+    schedule: &WeeklySchedule,
+) -> AppResult<(Option<String>, Option<String>)> {
+    if matches!(schedule.status.as_str(), STATUS_FROZEN | STATUS_PUBLISHED) {
+        return Ok((schedule.frozen_at.clone(), None));
+    }
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT (SELECT MAX(created_at) FROM weekly_schedule_events \
+                      WHERE weekly_schedule_id = ? AND baseline_no = ? AND action IN ('frozen', 'auto_frozen')) AS since, \
+                    (SELECT MAX(created_at) FROM weekly_schedule_events \
+                      WHERE weekly_schedule_id = ? AND baseline_no = ? AND action = 'unfrozen') AS until",
+            [
+                schedule.id.into(),
+                schedule.baseline_no.into(),
+                schedule.id.into(),
+                schedule.baseline_no.into(),
+            ],
+        ))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("freeze span missing")))?;
+    Ok((
+        row.try_get("", "since").map_err(|e| decode_err("since", e))?,
+        row.try_get("", "until").map_err(|e| decode_err("until", e))?,
+    ))
+}
+
 /// Break-ins of the site's crews touching the week: `insert` jobs and their hours, and displaced
-/// jobs (`move` break-ins recorded after the freeze).
+/// jobs (`move` break-ins recorded while the baseline held, `[frozen_since, frozen_until)`).
 async fn break_ins(
     db: &impl ConnectionTrait,
     crews: &[i64],
     week_start_at: &str,
     week_end_at: &str,
-    frozen_at: Option<&str>,
+    frozen_since: Option<&str>,
+    frozen_until: Option<&str>,
 ) -> AppResult<(i64, f64, i64)> {
     if crews.is_empty() {
         return Ok((0, 0.0, 0));
@@ -210,7 +249,8 @@ async fn break_ins(
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("break-in aggregate missing")))?;
 
     // A week never frozen has no displacement; the bound below excludes every move then.
-    let since = frozen_at.unwrap_or("9999-12-31T00:00:00Z");
+    let since = frozen_since.unwrap_or("9999-12-31T00:00:00Z");
+    let until = frozen_until.unwrap_or("9999-12-31T00:00:00Z");
     let mut moved_values = crew_values();
     moved_values.extend([
         week_start_at.into(),
@@ -218,6 +258,7 @@ async fn break_ins(
         week_start_at.into(),
         week_end_at.into(),
         since.into(),
+        until.into(),
     ]);
     let displaced = db
         .query_one(Statement::from_sql_and_values(
@@ -228,7 +269,7 @@ async fn break_ins(
                   WHERE sb.kind = 'move' AND sc.assigned_team_id IN ({marks}) \
                     AND ((julianday(sb.new_slot_start) >= julianday(?) AND julianday(sb.new_slot_start) < julianday(?)) \
                       OR (julianday(sb.old_slot_start) >= julianday(?) AND julianday(sb.old_slot_start) < julianday(?))) \
-                    AND julianday(sb.created_at) >= julianday(?)"
+                    AND julianday(sb.created_at) >= julianday(?) AND julianday(sb.created_at) < julianday(?)"
             ),
             moved_values,
         ))
@@ -254,7 +295,7 @@ async fn capacity(db: &impl ConnectionTrait, crews: &[i64], from: NaiveDate, to:
     Ok((available, overtime))
 }
 
-/// Measures one frozen or published week.
+/// Measures one week on its latest baseline (frozen, published, or reopened since).
 async fn week_kpi(
     db: &impl ConnectionTrait,
     schedule: &WeeklySchedule,
@@ -272,8 +313,16 @@ async fn week_kpi(
         .map(|c| c.team_id)
         .collect();
     let base = baseline(db, schedule, &end_at).await?;
-    let (break_in_jobs, break_in_hours, displaced_jobs) =
-        break_ins(db, &crews, &start_at, &end_at, schedule.frozen_at.as_deref()).await?;
+    let (frozen_since, frozen_until) = frozen_span(db, schedule).await?;
+    let (break_in_jobs, break_in_hours, displaced_jobs) = break_ins(
+        db,
+        &crews,
+        &start_at,
+        &end_at,
+        frozen_since.as_deref(),
+        frozen_until.as_deref(),
+    )
+    .await?;
     let (available, overtime) = capacity(db, &crews, start, end).await?;
     let over = end_instant <= now;
     Ok(WeekKpi {
@@ -284,6 +333,7 @@ async fn week_kpi(
         week_end: schedule.week_end.clone(),
         status: schedule.status.clone(),
         awaiting_approval: schedule.frozen_without_approval == 1 && schedule.approved_at.is_none(),
+        reopened: !matches!(schedule.status.as_str(), STATUS_FROZEN | STATUS_PUBLISHED),
         baseline_no: schedule.baseline_no,
         baseline_jobs: base.jobs,
         baseline_hours: round1(base.hours),
@@ -300,7 +350,8 @@ async fn week_kpi(
     })
 }
 
-/// The frozen or published weeks of `sites` whose first day is in `[from, to]`.
+/// The weeks of `sites` whose first day is in `[from, to]` and that have a baseline: frozen,
+/// published, or unfrozen for editing since (still measured on their last baseline).
 async fn frozen_schedules(
     db: &impl ConnectionTrait,
     sites: &[i64],
@@ -312,12 +363,7 @@ async fn frozen_schedules(
     }
     let marks = vec!["?"; sites.len()].join(",");
     let mut values: Vec<sea_orm::Value> = sites.iter().map(|s| (*s).into()).collect();
-    values.extend([
-        from.to_string().into(),
-        to.to_string().into(),
-        STATUS_FROZEN.into(),
-        STATUS_PUBLISHED.into(),
-    ]);
+    values.extend([from.to_string().into(), to.to_string().into()]);
     let cols = SCHEDULE_COLS
         .split(',')
         .map(|c| format!("ws.{}", c.trim()))
@@ -329,7 +375,7 @@ async fn frozen_schedules(
             format!(
                 "SELECT {cols}, n.name AS site_name FROM weekly_schedules ws JOIN org_nodes n ON n.id = ws.entity_id \
                   WHERE ws.entity_id IN ({marks}) AND ws.week_start >= ? AND ws.week_start <= ? \
-                    AND ws.status IN (?, ?) AND ws.baseline_no > 0 \
+                    AND ws.baseline_no > 0 \
                   ORDER BY ws.week_start, n.name, ws.id"
             ),
             values,
@@ -364,13 +410,20 @@ async fn weeks_not_frozen(
     to: NaiveDate,
     now: DateTime<Utc>,
 ) -> AppResult<i64> {
-    let today = now.with_timezone(&Local).date_naive();
+    // Every week of the range is looked at: a freeze can fall due before its week starts.
     let mut count = 0;
     for site in sites {
         let mut day = from;
-        while day <= to.min(today) {
-            let Ok(week) = site_week(db, *site, day).await else {
-                break; // No planning week for this site: nothing to freeze.
+        while day <= to {
+            let week = match site_week(db, *site, day).await {
+                Ok(week) => week,
+                // No planning week for this site (no weekend set): nothing to freeze.
+                Err(AppError::OrgValidationFailed(issues))
+                    if issues.iter().any(|i| i.code == "PLANNING_WEEK_NO_WEEKEND") =>
+                {
+                    break;
+                }
+                Err(err) => return Err(err),
             };
             day = week.week_end + Duration::days(1);
             if week.week_start < from || week.week_start > to {
@@ -416,6 +469,7 @@ pub async fn planning_kpis(
     for w in &weeks {
         t.weeks += 1;
         t.weeks_awaiting_approval += i64::from(w.awaiting_approval);
+        t.weeks_reopened += i64::from(w.reopened);
         t.baseline_hours += w.baseline_hours;
         t.baseline_released_jobs += w.baseline_released_jobs;
         t.break_in_hours += w.break_in_hours;

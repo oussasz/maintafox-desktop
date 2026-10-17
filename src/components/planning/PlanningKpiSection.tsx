@@ -154,6 +154,15 @@ export function PlanningKpiSection({ siteId, weekStart }: { siteId: number; week
                             {t("weekly.frozenWithoutApproval")}
                           </Badge>
                         ) : null}
+                        {w.reopened ? (
+                          <Badge
+                            variant="outline"
+                            className={cn("ml-2", mfTone.warning.chip)}
+                            title={t("kpis.reopenedHint")}
+                          >
+                            {t("kpis.reopened")}
+                          </Badge>
+                        ) : null}
                       </td>
                       <td className="py-1.5 text-right tabular-nums">
                         {t("kpis.jobsHours", {

@@ -1254,6 +1254,15 @@ pub async fn create_capacity_rule(db: &DatabaseConnection, input: CreateCapacity
     map_capacity_rule(&row)
 }
 
+/// The rule was changed elsewhere since it was read: refused, never applied over it.
+fn capacity_rule_stale(rule_id: i64) -> AppError {
+    crate::errors::org_validation_failed(
+        "PLANNING_CAPACITY_RULE_STALE",
+        "This capacity rule was changed elsewhere: reload it and try again.",
+        std::collections::HashMap::from([("rule_id".to_string(), rule_id.to_string())]),
+    )
+}
+
 pub async fn update_capacity_rule(
     db: &DatabaseConnection,
     rule_id: i64,
@@ -1273,9 +1282,7 @@ pub async fn update_capacity_rule(
         })?;
     let current = map_capacity_rule(&current)?;
     if current.row_version != expected_row_version {
-        return Err(AppError::ValidationFailed(vec![
-            "Capacity rule was modified elsewhere (stale row_version).".to_string(),
-        ]));
+        return Err(capacity_rule_stale(rule_id));
     }
     let effective_start = input.effective_start.unwrap_or_else(|| current.effective_start.clone());
     let effective_end = if input.clear_effective_end {
@@ -1317,9 +1324,7 @@ pub async fn update_capacity_rule(
         .await?;
     // Changed elsewhere between the read and the write: refused, never applied over it.
     if updated.rows_affected() == 0 {
-        return Err(AppError::ValidationFailed(vec![
-            "Capacity rule was modified elsewhere (stale row_version).".to_string(),
-        ]));
+        return Err(capacity_rule_stale(rule_id));
     }
     let row = db
         .query_one(Statement::from_sql_and_values(
