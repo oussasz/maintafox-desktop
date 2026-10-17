@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/dialog";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
+import { useCanReadList } from "@/lib/list-access";
 import { listLinks } from "@/lib/list-links";
 import { isSessionActiveForBackgroundWork } from "@/lib/session-ready";
 import {
@@ -82,6 +83,9 @@ export function AnalyticsDashboardsPage() {
   const [horizon, setHorizon] = useState<Horizon>(30);
   const [orgNodeId, setOrgNodeId] = useState<number | null>(null);
   const [orgRows, setOrgRows] = useState<OrgTreeRow[]>([]);
+  // The organisation scope filter needs the organisation view right: without it the tree is not
+  // requested and the filter is hidden (the dashboard stays plant-wide).
+  const canReadOrg = useCanReadList("orgNodes");
   const [data, setData] = useState<AnalyticsExecutiveDashboardWithSmrp | null>(null);
   const [layout, setLayout] = useState<AnalyticsDashboardLayoutV1 | null>(null);
   const [layoutSaved, setLayoutSaved] = useState(false);
@@ -135,9 +139,11 @@ export function AnalyticsDashboardsPage() {
     if (!sessionAuthenticated || sessionLocked) {
       return;
     }
-    void listOrgTree()
-      .then(setOrgRows)
-      .catch(() => setOrgRows([]));
+    if (canReadOrg) {
+      void listOrgTree()
+        .then(setOrgRows)
+        .catch(() => setOrgRows([]));
+    }
     void getAnalyticsDashboardLayout()
       .then((p) => {
         const parsed = parseAnalyticsDashboardLayoutJson(p.layout_json);
@@ -150,7 +156,7 @@ export function AnalyticsDashboardsPage() {
         setLayout(null);
         setLayoutSaved(false);
       });
-  }, [sessionAuthenticated, sessionLocked]);
+  }, [sessionAuthenticated, sessionLocked, canReadOrg]);
 
   useEffect(() => {
     if (!sessionAuthenticated || sessionLocked) {
@@ -445,15 +451,19 @@ export function AnalyticsDashboardsPage() {
             allLabel: t("hub.dashboards.filters.days30"),
             onChange: (v) => setHorizon((v ? Number(v) : 30) as Horizon),
           },
-          {
-            id: "org",
-            kind: "select",
-            label: t("hub.dashboards.filters.orgScope"),
-            options: orgOptions.map((o) => ({ value: String(o.id), label: o.label })),
-            value: orgNodeId === null ? null : String(orgNodeId),
-            allLabel: t("hub.dashboards.filters.allOrgs"),
-            onChange: (v) => setOrgNodeId(v ? Number(v) : null),
-          },
+          ...(canReadOrg
+            ? [
+                {
+                  id: "org",
+                  kind: "select" as const,
+                  label: t("hub.dashboards.filters.orgScope"),
+                  options: orgOptions.map((o) => ({ value: String(o.id), label: o.label })),
+                  value: orgNodeId === null ? null : String(orgNodeId),
+                  allLabel: t("hub.dashboards.filters.allOrgs"),
+                  onChange: (v: string | null) => setOrgNodeId(v ? Number(v) : null),
+                },
+              ]
+            : []),
         ]}
         onReset={() => {
           setHorizon(30);
