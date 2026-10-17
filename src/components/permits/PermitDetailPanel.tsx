@@ -27,7 +27,7 @@ import { StatusChip } from "@/components/ui/status-chip";
 import { PERMIT_STATUS_TONE, toneOf } from "@/design-system/tone";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useSession } from "@/hooks/use-session";
-import { describeAppError } from "@/lib/app-error";
+import { appErrorReason } from "@/lib/app-error";
 import {
   type IsolationOption,
   type IsolationOptions,
@@ -185,7 +185,7 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
       await loadChildren();
       return true;
     } catch (e) {
-      setError(describeAppError(e).title);
+      setError(appErrorReason(e));
       return false;
     } finally {
       setBusy(false);
@@ -286,7 +286,7 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
     try {
       setCardView(await getLotoCardView(permit.id, iso.id));
     } catch (e) {
-      setError(describeAppError(e).title);
+      setError(appErrorReason(e));
     }
   };
 
@@ -694,7 +694,7 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
                   className="flex flex-wrap items-center gap-2 text-xs text-tone-danger-fg"
                 >
                   <span>
-                    {t("isolation.optionsError")} {describeAppError(optionsError).title}
+                    {t("isolation.optionsError")} {appErrorReason(optionsError)}
                   </span>
                   <Button
                     type="button"

@@ -86,6 +86,16 @@ const PERMIT_SUSPENSION_SELECT: &str = "SELECT ps.id, ps.entity_sync_id, ps.perm
      LEFT JOIN user_accounts us ON us.id = ps.suspended_by_id \
      LEFT JOIN user_accounts ur ON ur.id = ps.reinstated_by_id";
 
+/// A coded refusal of a permit rule: the code is translated on screen (`training:errors`), the
+/// message stays for logs and tests.
+fn refused(code: &str, message: impl Into<String>, params: &[(&str, String)]) -> AppError {
+    crate::errors::org_validation_failed(
+        code,
+        message,
+        params.iter().map(|(k, v)| ((*k).to_string(), v.clone())).collect(),
+    )
+}
+
 fn decode_err(field: &str, err: impl std::fmt::Display) -> AppError {
     AppError::SyncError(format!("Failed to decode permit field '{field}': {err}"))
 }
@@ -427,9 +437,11 @@ async fn ensure_wo_asset_aligned(
         .try_get("", "equipment_id")
         .map_err(|e| decode_err("equipment_id", e))?;
     let Some(eq) = equipment_id else {
-        return Err(AppError::ValidationFailed(vec![
-            "Work order has no equipment_id; cannot align permit asset.".into(),
-        ]));
+        return Err(refused(
+            "PERMIT_WO_NO_EQUIPMENT",
+            "Work order has no equipment_id; cannot align permit asset.",
+            &[],
+        ));
     };
     if eq != asset_id {
         return Err(AppError::ValidationFailed(vec![format!(
@@ -576,30 +588,36 @@ pub(crate) async fn activation_ready(db: &impl ConnectionTrait, wp: &WorkPermit)
 async fn close_ready(db: &impl ConnectionTrait, permit_id: i64) -> AppResult<()> {
     let pending = count_isolations_where(db, permit_id, "removal_verified_at IS NULL").await?;
     if pending > 0 {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "{pending} isolation(s) still need verified lock removal before the permit can be closed."
-        )]));
+        return Err(refused(
+            "PERMIT_REMOVAL_PENDING",
+            format!("{pending} isolation(s) still need verified lock removal before the permit can be closed."),
+            &[("pending", pending.to_string())],
+        ));
     }
     Ok(())
 }
 
 fn assert_transition_set_status(from: &str, to: &str) -> AppResult<()> {
     if from == to {
-        return Err(AppError::ValidationFailed(vec!["Status is already applied.".into()]));
+        return Err(refused("PERMIT_STATUS_UNCHANGED", "Status is already applied.", &[]));
     }
     if from == "handed_back" && to != "cancelled" {
-        return Err(AppError::ValidationFailed(vec![
-            "Only transition from handed_back is to cancelled.".into(),
-        ]));
+        return Err(refused(
+            "PERMIT_TRANSITION_NOT_ALLOWED",
+            "Only transition from handed_back is to cancelled.",
+            &[("from", from.to_string()), ("to", to.to_string())],
+        ));
     }
     if to == "cancelled" {
         if from == "handed_back" {
             return Ok(());
         }
         if matches!(from, "closed" | "handed_back" | "cancelled" | "expired") {
-            return Err(AppError::ValidationFailed(vec![
-                "Cancellation is not allowed from this status.".into(),
-            ]));
+            return Err(refused(
+                "PERMIT_CANCEL_NOT_ALLOWED",
+                "Cancellation is not allowed from this status.",
+                &[("status", from.to_string())],
+            ));
         }
         return Ok(());
     }
@@ -618,9 +636,13 @@ fn assert_transition_set_status(from: &str, to: &str) -> AppResult<()> {
     if ok {
         Ok(())
     } else {
-        Err(AppError::ValidationFailed(vec![format!(
-            "Transition {from} -> {to} is not allowed for set_work_permit_status (use suspend_work_permit for active -> suspended)."
-        )]))
+        Err(refused(
+            "PERMIT_TRANSITION_NOT_ALLOWED",
+            format!(
+                "Transition {from} -> {to} is not allowed for set_work_permit_status (use suspend_work_permit for active -> suspended)."
+            ),
+            &[("from", from.to_string()), ("to", to.to_string())],
+        ))
     }
 }
 
@@ -1031,10 +1053,11 @@ async fn create_work_permit_in(db: &impl ConnectionTrait, input: WorkPermitCreat
     if let Some(wo_id) = input.linked_work_order_id {
         if let Some(existing) = get_work_permit_linked_to_work_order(db, wo_id).await? {
             if !WP_TERMINAL_STATUSES.contains(&existing.status.as_str()) {
-                return Err(AppError::ValidationFailed(vec![format!(
-                    "Work order already has an open permit ({}).",
-                    existing.code
-                )]));
+                return Err(refused(
+                    "PERMIT_WO_ALREADY_HAS_OPEN",
+                    format!("Work order already has an open permit ({}).", existing.code),
+                    &[("permit", existing.code.clone())],
+                ));
             }
         }
     }
@@ -1090,14 +1113,26 @@ async fn update_work_permit_in(db: &impl ConnectionTrait, input: WorkPermitUpdat
         ]));
     }
     if !WP_EDITABLE_STATUSES.contains(&current.status.as_str()) {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "Permit details cannot be edited in status '{}'.",
-            current.status
-        )]));
+        return Err(refused(
+            "PERMIT_NOT_EDITABLE",
+            format!("Permit details cannot be edited in status '{}'.", current.status),
+            &[("status", current.status.clone())],
+        ));
     }
     let asset_id = input.asset_id.unwrap_or(current.asset_id);
     let entity_id = input.entity_id.unwrap_or(current.entity_id);
     let linked = input.linked_work_order_id.or(current.linked_work_order_id);
+    // Same rule as creation: a work order has at most one open permit.
+    if let Some(wo_id) = linked.filter(|w| Some(*w) != current.linked_work_order_id) {
+        let others = list_live_permits_linked_to_work_order(db, wo_id).await?;
+        if let Some(existing) = others.iter().find(|p| p.id != current.id) {
+            return Err(refused(
+                "PERMIT_WO_ALREADY_HAS_OPEN",
+                format!("Work order already has an open permit ({}).", existing.code),
+                &[("permit", existing.code.clone())],
+            ));
+        }
+    }
     ensure_wo_asset_aligned(db, linked, asset_id).await?;
     // The permit keeps an expiry: a new one is checked like on creation; an update that leaves it
     // unchanged needs one already (permits created before the rule must be given one).
@@ -1166,9 +1201,11 @@ async fn set_work_permit_status_in(
     match (from, to) {
         ("draft", "pending_review") => {
             if !draft_fields_complete(&current) {
-                return Err(AppError::ValidationFailed(vec![
-                    "Draft permit must have a code and asset before review.".into(),
-                ]));
+                return Err(refused(
+                    "PERMIT_DRAFT_INCOMPLETE",
+                    "Draft permit must have a code and asset before review.",
+                    &[],
+                ));
             }
         }
         ("issued", "active") => {
@@ -1187,9 +1224,11 @@ async fn set_work_permit_status_in(
         }
         ("closed", "handed_back") => {
             if count_handover_logs(db, input.id).await? < 1 {
-                return Err(AppError::ValidationFailed(vec![
-                    "At least one permit_handover_logs row is required before handed_back.".into(),
-                ]));
+                return Err(refused(
+                    "PERMIT_HANDOVER_REQUIRED",
+                    "At least one permit_handover_logs row is required before handed_back.",
+                    &[],
+                ));
             }
         }
         _ => {}
@@ -1259,9 +1298,11 @@ async fn suspend_work_permit_in(
     }
     let current = require_work_permit(db, input.permit_id).await?;
     if current.status != "active" {
-        return Err(AppError::ValidationFailed(vec![
-            "Only active permits can be suspended.".into(),
-        ]));
+        return Err(refused(
+            "PERMIT_SUSPEND_NOT_ACTIVE",
+            "Only active permits can be suspended.",
+            &[("status", current.status.clone())],
+        ));
     }
     if input.expected_row_version != current.row_version {
         return Err(AppError::ValidationFailed(vec![
@@ -1330,12 +1371,14 @@ async fn append_permit_handover_log_in(
 ) -> AppResult<PermitHandoverLog> {
     let current = require_work_permit(db, input.permit_id).await?;
     if current.status != "closed" {
-        return Err(AppError::ValidationFailed(vec![
-            "Handover logs can only be recorded when permit status is closed.".into(),
-        ]));
+        return Err(refused(
+            "PERMIT_HANDOVER_NOT_CLOSED",
+            "Handover logs can only be recorded when permit status is closed.",
+            &[],
+        ));
     }
     if input.handed_from_role.trim().is_empty() || input.handed_to_role.trim().is_empty() {
-        return Err(AppError::ValidationFailed(vec!["Roles are required.".into()]));
+        return Err(refused("PERMIT_HANDOVER_ROLES_REQUIRED", "Roles are required.", &[]));
     }
     let signed = now_ts();
     let sync_id = Uuid::new_v4().to_string();
@@ -1442,10 +1485,11 @@ fn ensure_permit_status_in(wp: &WorkPermit, allowed: &[&str], action: &str) -> A
     if allowed.contains(&wp.status.as_str()) {
         Ok(())
     } else {
-        Err(AppError::ValidationFailed(vec![format!(
-            "Cannot {action} while the permit is '{}'.",
-            wp.status
-        )]))
+        Err(refused(
+            "PERMIT_ISOLATION_WRONG_STATUS",
+            format!("Cannot {action} while the permit is '{}'.", wp.status),
+            &[("status", wp.status.clone())],
+        ))
     }
 }
 
@@ -1470,7 +1514,11 @@ async fn upsert_permit_isolation_in(
 
     let point = input.isolation_point.trim().to_string();
     if point.is_empty() {
-        return Err(AppError::ValidationFailed(vec!["isolation_point is required.".into()]));
+        return Err(refused(
+            "PERMIT_ISOLATION_POINT_REQUIRED",
+            "isolation_point is required.",
+            &[],
+        ));
     }
     // Links only (migration 225): the energy type from the SYSTEM list, the method from the
     // plant's list, both active. The texts typed before stay on migrated rows as history.
@@ -1502,9 +1550,11 @@ async fn upsert_permit_isolation_in(
             });
         }
         if current.applied_at.is_some() {
-            return Err(AppError::ValidationFailed(vec![
-                "An applied isolation cannot be edited.".into(),
-            ]));
+            return Err(refused(
+                "PERMIT_ISOLATION_APPLIED_LOCKED",
+                "An applied isolation cannot be edited.",
+                &[],
+            ));
         }
         let new_rv = current.row_version + 1;
         let affected = db
@@ -1626,9 +1676,11 @@ async fn ensure_linked_work_not_running(db: &impl ConnectionTrait, permit: &Work
         .try_get("", "status_code")
         .map_err(|e| decode_err("status_code", e))?;
     if crate::wo::domain::WoStatus::try_from_str(&status).is_ok_and(|s| s == crate::wo::domain::WoStatus::InProgress) {
-        return Err(AppError::ValidationFailed(vec![
-            "Work on the linked work order is still in progress; pause or complete it before removing locks.".into(),
-        ]));
+        return Err(refused(
+            "PERMIT_REMOVAL_WORK_IN_PROGRESS",
+            "Work on the linked work order is still in progress; pause or complete it before removing locks.",
+            &[],
+        ));
     }
     Ok(())
 }
@@ -1654,7 +1706,11 @@ async fn apply_permit_isolation_in(
     ensure_permit_status_in(&permit, ISOLATION_SETUP_STATUSES, "apply isolations")?;
     enforce_loto_role(db, actor_id, permit.id, "isolation_apply").await?;
     if iso.applied_at.is_some() {
-        return Err(AppError::ValidationFailed(vec!["Isolation is already applied.".into()]));
+        return Err(refused(
+            "PERMIT_ISOLATION_ALREADY_APPLIED",
+            "Isolation is already applied.",
+            &[],
+        ));
     }
     let lock_number = input
         .lock_number
@@ -1716,9 +1772,11 @@ async fn verify_permit_isolation_in(
     ensure_permit_status_in(&permit, ISOLATION_SETUP_STATUSES, "verify isolations")?;
     enforce_loto_role(db, actor_id, permit.id, "isolation_verify").await?;
     let Some(applied_by) = iso.applied_by_id.filter(|_| iso.applied_at.is_some()) else {
-        return Err(AppError::ValidationFailed(vec![
-            "Isolation must be applied before it can be verified.".into(),
-        ]));
+        return Err(refused(
+            "PERMIT_ISOLATION_NOT_APPLIED",
+            "Isolation must be applied before it can be verified.",
+            &[],
+        ));
     };
     if iso.verified_at.is_some() {
         return Err(AppError::ValidationFailed(
@@ -1726,9 +1784,11 @@ async fn verify_permit_isolation_in(
         ));
     }
     if applied_by == actor_id {
-        return Err(AppError::ValidationFailed(vec![
-            "Two-person rule: the person who applied an isolation cannot verify it.".into(),
-        ]));
+        return Err(refused(
+            "PERMIT_TWO_PERSON_VERIFY",
+            "Two-person rule: the person who applied an isolation cannot verify it.",
+            &[],
+        ));
     }
     write_isolation_action(
         db,
@@ -1761,19 +1821,25 @@ async fn verify_permit_isolation_removal_in(
     ensure_permit_status_in(&permit, ISOLATION_REMOVAL_STATUSES, "verify isolation removal")?;
     enforce_loto_role(db, actor_id, permit.id, "removal_verify").await?;
     if iso.verified_at.is_none() {
-        return Err(AppError::ValidationFailed(vec![
-            "Only a verified isolation can have its removal verified.".into(),
-        ]));
+        return Err(refused(
+            "PERMIT_REMOVAL_NOT_VERIFIABLE",
+            "Only a verified isolation can have its removal verified.",
+            &[],
+        ));
     }
     if iso.removal_verified_at.is_some() {
-        return Err(AppError::ValidationFailed(vec![
-            "Isolation removal is already verified.".into(),
-        ]));
+        return Err(refused(
+            "PERMIT_REMOVAL_ALREADY_VERIFIED",
+            "Isolation removal is already verified.",
+            &[],
+        ));
     }
     if iso.applied_by_id == Some(actor_id) {
-        return Err(AppError::ValidationFailed(vec![
-            "Two-person rule: the person who applied an isolation cannot verify its removal.".into(),
-        ]));
+        return Err(refused(
+            "PERMIT_TWO_PERSON_REMOVAL",
+            "Two-person rule: the person who applied an isolation cannot verify its removal.",
+            &[],
+        ));
     }
     ensure_linked_work_not_running(db, &permit).await?;
     write_isolation_action(
@@ -1898,9 +1964,11 @@ async fn record_loto_card_print_in(
         })?;
     let verified_at: Option<String> = iso.try_get("", "verified_at").ok().flatten();
     if verified_at.is_none() {
-        return Err(AppError::ValidationFailed(vec![
-            "Isolation must be verified before LOTO card print.".into(),
-        ]));
+        return Err(refused(
+            "PERMIT_CARD_NOT_VERIFIED",
+            "Isolation must be verified before LOTO card print.",
+            &[],
+        ));
     }
     let sync_id = Uuid::new_v4().to_string();
     let printed_at = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();

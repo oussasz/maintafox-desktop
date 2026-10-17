@@ -88,7 +88,7 @@ import {
 } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
-import { describeAppError } from "@/lib/app-error";
+import { appErrorReason } from "@/lib/app-error";
 import { formatAssetLabel, formatEntityCode, formatOrDash } from "@/lib/display";
 import { cn } from "@/lib/utils";
 import {
@@ -770,7 +770,7 @@ export const ProcurementRepairablePanel = forwardRef<
       try {
         await work();
       } catch (err) {
-        lastSaveErrorRef.current = describeAppError(err).title;
+        lastSaveErrorRef.current = appErrorReason(err);
         return false;
       } finally {
         setSaving(false);

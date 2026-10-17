@@ -18,7 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui";
-import { describeAppError } from "@/lib/app-error";
+import { appErrorReason } from "@/lib/app-error";
 import {
   createWorkPermit,
   type PermitTypeRecord,
@@ -103,7 +103,7 @@ export function PermitCreateDialog({
       onCreated(created);
       onOpenChange(false);
     } catch (err) {
-      setError(describeAppError(err).title);
+      setError(appErrorReason(err));
     } finally {
       setBusy(false);
     }

@@ -14,7 +14,7 @@ import {
 } from "@/components/ui";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useStepUp } from "@/hooks/use-step-up";
-import { describeAppError } from "@/lib/app-error";
+import { appErrorReason } from "@/lib/app-error";
 import { upsertPermitType, type PermitTypeRecord } from "@/services/permit-service";
 
 interface PermitTypesDialogProps {
@@ -130,7 +130,7 @@ export function PermitTypesDialog({ open, onOpenChange, types, onSaved }: Permit
       setSubmitted(false);
       onSaved();
     } catch (err) {
-      setError(describeAppError(err).title);
+      setError(appErrorReason(err));
     } finally {
       setBusy(false);
     }

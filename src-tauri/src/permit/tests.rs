@@ -1164,3 +1164,46 @@ async fn a_permit_always_has_a_bounded_future_expiry() {
         .expect("permit");
     assert_validation(set_status(&db, &wp, "active").await, "PERMIT_EXPIRY_MISSING");
 }
+
+/// Editing a permit cannot link it to a work order that already has an open permit (same rule
+/// as creation); refusals of the permit rules are coded.
+#[tokio::test]
+async fn editing_a_permit_cannot_link_a_second_open_permit_to_a_work_order() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-PTW-80").await;
+    let (wo_id, _) = assigned_wo_requiring_permit(&db, asset).await;
+    let first = create_from_wo(&db, "loto", wo_id).await.expect("first permit");
+    let other = create_permit(&db, "hot_work", asset).await;
+    let res = queries::update_work_permit(
+        &db,
+        WorkPermitUpdateInput {
+            id: other.id,
+            linked_work_order_id: Some(wo_id),
+            asset_id: None,
+            entity_id: None,
+            expires_at: None,
+            expected_row_version: other.row_version,
+        },
+    )
+    .await;
+    assert_validation(res, "PERMIT_WO_ALREADY_HAS_OPEN");
+
+    // The permit already on the work order can still be edited (it is not "another" permit).
+    queries::update_work_permit(
+        &db,
+        WorkPermitUpdateInput {
+            id: first.id,
+            linked_work_order_id: Some(wo_id),
+            asset_id: None,
+            entity_id: None,
+            expires_at: None,
+            expected_row_version: first.row_version,
+        },
+    )
+    .await
+    .expect("same permit, same work order");
+
+    // Lifecycle refusals carry their code.
+    assert_validation(set_status(&db, &other, "draft").await, "PERMIT_STATUS_UNCHANGED");
+    assert_validation(set_status(&db, &other, "active").await, "PERMIT_TRANSITION_NOT_ALLOWED");
+}

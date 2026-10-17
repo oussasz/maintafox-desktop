@@ -24,7 +24,7 @@ import {
 import { StatusChip } from "@/components/ui/status-chip";
 import { mfKanban } from "@/design-system/tokens";
 import { mfTone } from "@/design-system/tone";
-import { describeAppError } from "@/lib/app-error";
+import { appErrorReason } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 
 import type {
@@ -466,9 +466,7 @@ export function KanbanBoard<T = KanbanCard>({
         }
       } catch (err) {
         setFocusAfterMove(null);
-        setAnnouncement(
-          t("kanban.refusedReason", { card: name, reason: describeAppError(err).title }),
-        );
+        setAnnouncement(t("kanban.refusedReason", { card: name, reason: appErrorReason(err) }));
       }
     },
     [accepts, columns, onDrop, t],
