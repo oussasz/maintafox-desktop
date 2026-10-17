@@ -33,7 +33,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useStepUp } from "@/hooks/use-step-up";
-import { useToast } from "@/hooks/use-toast";
+import { describeAppError } from "@/lib/app-error";
 import {
   grantEmergencyElevation,
   listEmergencyGrants,
@@ -42,6 +42,7 @@ import {
   listUsers,
   revokeEmergencyElevation,
 } from "@/services/rbac-service";
+import { pushAppToast } from "@/store/app-toast-store";
 import type {
   AssignableRoleSummary,
   AssignableScopeNode,
@@ -108,7 +109,8 @@ function Countdown({
 export function EmergencyElevationPanel() {
   const { t } = useTranslation("admin");
   const { can } = usePermissions();
-  const { toast } = useToast();
+  // The global toast host shows them (a local useToast list was never rendered here).
+  const toast = pushAppToast;
   const { withStepUp, StepUpDialogElement } = useStepUp();
 
   const [grants, setGrants] = useState<EmergencyGrantView[]>([]);
@@ -198,7 +200,7 @@ export function EmergencyElevationPanel() {
       void fetchData();
     } catch (err) {
       toast({
-        title: err instanceof Error ? err.message : t("emergency.errors.grantFailed"),
+        title: describeAppError(err).title,
         variant: "destructive",
       });
     }

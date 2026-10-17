@@ -39,7 +39,6 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useStepUp } from "@/hooks/use-step-up";
-import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {
   cloneRole,
@@ -51,6 +50,7 @@ import {
   updateRole,
   validateRolePermissions,
 } from "@/services/rbac-service";
+import { pushAppToast } from "@/store/app-toast-store";
 import type {
   PermissionDependencyRow,
   PermissionWithSystem,
@@ -542,7 +542,8 @@ function PermissionMatrix({
 export function RoleEditorPanel() {
   const { t } = useTranslation("admin");
   const { can } = usePermissions();
-  const { toast } = useToast();
+  // The global toast host shows them (a local useToast list was never rendered here).
+  const toast = pushAppToast;
   const { withStepUp, StepUpDialogElement } = useStepUp();
   const canEdit = can(P.ADM_ROLES);
 

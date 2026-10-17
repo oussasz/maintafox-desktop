@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { useFormatters } from "@/hooks/use-formatters";
+import { describeAppError } from "@/lib/app-error";
 import {
   listConnectionProfiles,
   type ConnectionProfile,
@@ -39,7 +40,7 @@ export function ConnectionProfilesPanel({ onToast }: ConnectionProfilesPanelProp
         if (!cancelled) {
           onToast({
             title: t("integrations.profilesLoadError"),
-            description: String(err),
+            description: describeAppError(err).title,
             variant: "destructive",
           });
         }

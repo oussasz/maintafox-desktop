@@ -18,8 +18,9 @@ vi.mock("@/hooks/use-permissions", () => ({
 }));
 
 const toast = vi.hoisted(() => vi.fn());
-vi.mock("@/hooks/use-toast", () => ({
-  useToast: () => ({ toast, toasts: [], dismiss: vi.fn() }),
+// Toasts go to the global host (a local list was never rendered on the admin screens).
+vi.mock("@/store/app-toast-store", () => ({
+  pushAppToast: toast,
 }));
 
 const svc = vi.hoisted(() => ({

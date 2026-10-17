@@ -24,13 +24,13 @@ import {
 } from "@/components/ui/table";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useStepUp } from "@/hooks/use-step-up";
-import { useToast } from "@/hooks/use-toast";
 import {
   exportRoleModel,
   importRoleModel,
   listRoles,
   validateRolePermissions,
 } from "@/services/rbac-service";
+import { pushAppToast } from "@/store/app-toast-store";
 import type {
   ImportResult,
   RoleImportEntry,
@@ -50,7 +50,8 @@ interface ImportPreviewRow {
 export function RoleImportExportPanel() {
   const { t } = useTranslation("admin");
   const { can } = usePermissions();
-  const { toast } = useToast();
+  // The global toast host shows them (a local useToast list was never rendered here).
+  const toast = pushAppToast;
   const { withStepUp, StepUpDialogElement } = useStepUp();
 
   const [roles, setRoles] = useState<RoleWithPermissions[]>([]);

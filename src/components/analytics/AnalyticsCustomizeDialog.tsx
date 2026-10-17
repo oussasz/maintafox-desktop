@@ -1,3 +1,4 @@
+import { ArrowDown, ArrowUp } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -10,6 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { describeAppError } from "@/lib/app-error";
 import { saveAnalyticsDashboardLayout } from "@/services/analytics-dashboard-service";
 import {
   ANALYTICS_DASHBOARD_WIDGET_IDS,
@@ -96,7 +98,7 @@ export function AnalyticsCustomizeDialog(props: {
       props.onSaved(next);
       props.onOpenChange(false);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(describeAppError(e).title);
     } finally {
       setSaving(false);
     }
@@ -133,8 +135,11 @@ export function AnalyticsCustomizeDialog(props: {
               <div className="flex shrink-0 gap-1">
                 <Button
                   type="button"
-                  size="sm"
                   variant="ghost"
+                  className="h-11 w-11 p-0"
+                  aria-label={t("hub.customize.moveUp", {
+                    widget: t(LABEL_KEYS[w.id] ?? w.id, { defaultValue: w.id }),
+                  })}
                   onClick={() =>
                     setDraft((prev) => ({
                       ...prev,
@@ -142,12 +147,15 @@ export function AnalyticsCustomizeDialog(props: {
                     }))
                   }
                 >
-                  ↑
+                  <ArrowUp className="h-4 w-4" aria-hidden />
                 </Button>
                 <Button
                   type="button"
-                  size="sm"
                   variant="ghost"
+                  className="h-11 w-11 p-0"
+                  aria-label={t("hub.customize.moveDown", {
+                    widget: t(LABEL_KEYS[w.id] ?? w.id, { defaultValue: w.id }),
+                  })}
                   onClick={() =>
                     setDraft((prev) => ({
                       ...prev,
@@ -155,7 +163,7 @@ export function AnalyticsCustomizeDialog(props: {
                     }))
                   }
                 >
-                  ↓
+                  <ArrowDown className="h-4 w-4" aria-hidden />
                 </Button>
               </div>
             </div>

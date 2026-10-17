@@ -283,7 +283,17 @@
     "issuesTitle": "{{count}} problème(s) détecté(s)",
     "autoRepairable": "(réparable)",
     "recheck": "Revérifier",
-    "repairBtn": "Réparer les données"
+    "repairBtn": "Réparer les données",
+    "technicalDetails": "Détails techniques",
+    "repairConfirmTitle": "Réparer les données de référence initiales ?",
+    "repairConfirmBody": "Les listes et valeurs de référence Maintafox manquantes sont réécrites. Les listes et valeurs ajoutées par votre site sont conservées.",
+    "issue": {
+      "INSUFFICIENT_VALUES": "Une liste de référence a moins de valeurs que Maintafox n'en exige.",
+      "MISSING_DOMAIN": "Une liste de référence Maintafox est absente.",
+      "MISSING_TABLE": "Une table de la base de données est absente.",
+      "SEED_NOT_APPLIED": "Les données de référence initiales n'ont pas été appliquées.",
+      "other": "Un contrôle d'intégrité a échoué."
+    }
   },
   "nav": {
     "groups": {

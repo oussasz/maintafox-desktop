@@ -271,7 +271,7 @@
     },
     "resetTitle": "Factory reset",
     "resetDescription": "Erases all data on this device and restarts into first-time setup. A final backup is saved to the backups folder first. Data not yet synchronized to the server exists only in that backup.",
-    "resetPhraseLabel": "Confirmation phrase",
+    "resetPhraseLabel": "Type “ERASE ALL DATA” (or “EFFACER TOUTES LES DONNÉES”) to confirm",
     "resetPhrasePlaceholder": "Type the confirmation phrase",
     "resetAction": "Erase all data and restart",
     "resetError": "Factory reset failed",

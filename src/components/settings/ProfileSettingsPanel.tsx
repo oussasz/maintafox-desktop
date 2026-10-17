@@ -139,14 +139,13 @@ export function ProfileSettingsPanel() {
         setSelectedSkillRef(null);
       }
     } catch (err) {
-      const msg =
-        err instanceof Error ? err.message : t("profile.loadError", "Failed to load profile.");
+      const msg = describeAppError(err).title;
       setLoadError(msg);
       setProfile(null);
     } finally {
       setLoading(false);
     }
-  }, [t]);
+  }, []);
 
   useEffect(() => {
     void loadData();
@@ -162,7 +161,7 @@ export function ProfileSettingsPanel() {
       setEditing(false);
       setToast({ type: "success", message: t("profile.saveSuccess", "Changes saved.") });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : t("profile.saveError", "Save failed.");
+      const msg = describeAppError(err).title;
       setToast({ type: "error", message: msg });
     } finally {
       setSaving(false);
@@ -185,10 +184,7 @@ export function ProfileSettingsPanel() {
       });
       setMySkills(refreshed);
     } catch (err) {
-      const msg =
-        err instanceof Error
-          ? err.message
-          : t("profile.skillDeclareError", "Skill declaration failed.");
+      const msg = describeAppError(err).title;
       setToast({ type: "error", message: msg });
     } finally {
       setDeclaringSkill(false);

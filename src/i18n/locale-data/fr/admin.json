@@ -418,7 +418,8 @@
     "errors": {
       "loadFailed": "Erreur de chargement des sessions",
       "revokeFailed": "Erreur lors de la révocation"
-    }
+    },
+    "refresh": "Actualiser"
   },
   "delegation": {
     "title": "Politiques de délégation",

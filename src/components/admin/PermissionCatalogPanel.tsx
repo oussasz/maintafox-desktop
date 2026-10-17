@@ -26,7 +26,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { mfChip, mfPermissionDomainChip } from "@/design-system/tokens";
 import { usePermissions } from "@/hooks/use-permissions";
-import { useToast } from "@/hooks/use-toast";
 import { describeAppError } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import {
@@ -34,6 +33,7 @@ import {
   getPermissionDependencies,
   listPermissions,
 } from "@/services/rbac-service";
+import { pushAppToast } from "@/store/app-toast-store";
 import type { PermissionDependencyRow, PermissionWithSystem } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -112,7 +112,8 @@ function CreatePermissionDialog({
   onCreated: () => void;
 }) {
   const { t } = useTranslation("admin");
-  const { toast } = useToast();
+  // The global toast host shows them (a local useToast list was never rendered here).
+  const toast = pushAppToast;
   const [name, setName] = useState("cst.");
   const [description, setDescription] = useState("");
   const [submitting, setSubmitting] = useState(false);

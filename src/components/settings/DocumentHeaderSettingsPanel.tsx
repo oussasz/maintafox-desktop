@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { DocumentHeaderEditor } from "@/components/editor/DocumentHeaderEditor";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { describeAppError } from "@/lib/app-error";
 import {
   isDocumentHeaderHtmlEmpty,
   sanitizeDocumentHeaderHtml,
@@ -103,7 +104,7 @@ export function DocumentHeaderSettingsPanel({
       console.error("[DocumentHeaderSettingsPanel] logo upload failed:", err);
       onToast({
         title: t("documentHeader.logoUploadError"),
-        description: String(err),
+        description: describeAppError(err).title,
         variant: "destructive",
       });
     } finally {
@@ -121,7 +122,7 @@ export function DocumentHeaderSettingsPanel({
       console.error("[DocumentHeaderSettingsPanel] logo clear failed:", err);
       onToast({
         title: t("documentHeader.logoClearError"),
-        description: String(err),
+        description: describeAppError(err).title,
         variant: "destructive",
       });
     } finally {
@@ -153,7 +154,7 @@ export function DocumentHeaderSettingsPanel({
       console.error("[DocumentHeaderSettingsPanel] save failed:", err);
       onToast({
         title: t("documentHeader.saveError"),
-        description: String(err),
+        description: describeAppError(err).title,
         variant: "destructive",
       });
     } finally {

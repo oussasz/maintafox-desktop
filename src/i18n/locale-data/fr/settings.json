@@ -271,7 +271,7 @@
     },
     "resetTitle": "Réinitialisation usine",
     "resetDescription": "Efface toutes les données de cet appareil et redémarre sur la configuration initiale. Une dernière sauvegarde est d'abord enregistrée dans le dossier « backups ». Les données non encore synchronisées avec le serveur n'existent que dans cette sauvegarde.",
-    "resetPhraseLabel": "Phrase de confirmation",
+    "resetPhraseLabel": "Saisissez « EFFACER TOUTES LES DONNÉES » (ou « ERASE ALL DATA ») pour confirmer",
     "resetPhrasePlaceholder": "Saisir la phrase de confirmation",
     "resetAction": "Tout effacer et redémarrer",
     "resetError": "Échec de la réinitialisation",

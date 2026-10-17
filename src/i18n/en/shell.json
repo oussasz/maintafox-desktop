@@ -283,7 +283,17 @@
     "issuesTitle": "{{count}} issue(s) detected",
     "autoRepairable": "(repairable)",
     "recheck": "Re-check",
-    "repairBtn": "Repair seed data"
+    "repairBtn": "Repair seed data",
+    "technicalDetails": "Technical details",
+    "repairConfirmTitle": "Repair the reference seed data?",
+    "repairConfirmBody": "The missing Maintafox reference lists and values are written again. Lists and values your site added are kept.",
+    "issue": {
+      "INSUFFICIENT_VALUES": "A reference list has fewer values than Maintafox requires.",
+      "MISSING_DOMAIN": "A Maintafox reference list is missing.",
+      "MISSING_TABLE": "A database table is missing.",
+      "SEED_NOT_APPLIED": "The initial reference data was not applied.",
+      "other": "An integrity check failed."
+    }
   },
   "nav": {
     "groups": {

@@ -418,7 +418,8 @@
     "errors": {
       "loadFailed": "Failed to load sessions",
       "revokeFailed": "Failed to revoke session"
-    }
+    },
+    "refresh": "Refresh"
   },
   "delegation": {
     "title": "Delegation Policies",
