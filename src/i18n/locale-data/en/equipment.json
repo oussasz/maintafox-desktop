@@ -288,7 +288,8 @@
     "referenceCatalogLoadFailed": "Could not load reference data.",
     "validation": {
       "referenceRequired": "Select class, criticality, and status from the catalog.",
-      "orgRequired": "Select an organization node."
+      "orgRequired": "Select an organization node.",
+      "utilizationRange": "Enter a factor between 0.01 and 1.50."
     },
     "sections": {
       "identification": "Identification",
@@ -322,7 +323,8 @@
     "selectSubfamilyOptional": "Subfamily (optional)",
     "selectScheduleClass": "Select schedule class",
     "fields": {
-      "ramsScheduleClass": "Operating schedule (schedule class)"
+      "ramsScheduleClass": "Operating schedule (schedule class)",
+      "utilizationHint": "Usually 1.00. A lower value models equipment that runs only part of its schedule."
     },
     "selectStatus": "Select lifecycle status",
     "selectOrg": "Select organization node",
@@ -348,6 +350,12 @@
     "unsavedTitle": "Unsaved changes",
     "unsavedDescription": "You have unsaved changes. Do you want to keep editing or discard them?",
     "keepEditing": "Keep editing",
+    "retireHint": "To retire this asset, use Decommission: it checks open work and records the reason.",
+    "retiredHint": "This asset is retired: its status was set by Decommission.",
+    "photoDeleteTitle": "Delete the photo?",
+    "photoDeleteBody_one": "The photo is deleted now, even if you then cancel the form.",
+    "photoDeleteBody_other": "The {{count}} photos are deleted now, even if you then cancel the form.",
+    "photoDeleteConfirm": "Delete",
     "discardChanges": "Discard changes",
     "imagesEmpty": "No photos yet",
     "imagesHint": "Upload photos for this asset. Drag-and-drop may fall back to the file dialog on desktop."
