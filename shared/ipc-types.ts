@@ -4729,45 +4729,41 @@ export interface HomePlanningBacklog {
   truncated: boolean;
 }
 
-/** The site work week used (`site_work_weeks`; starts the day after the rest days). */
-export interface HomeWorkWeekBasis {
-  /** ISO weekdays, 1 = Monday … 7 = Sunday. */
-  rest_days: number[];
-  /** `all_sites`: every configured site has this week; `own_site`: the user's own site. */
-  scope: "all_sites" | "own_site";
-  site_name: string | null;
-}
-
 /** Why the week figure cannot be given. */
-export type HomeWorkWeekUnavailable =
-  | "WORK_WEEK_NOT_CONFIGURED"
-  | "WORK_WEEK_SITE_AMBIGUOUS"
-  | "WORK_WEEK_NO_REST_DAY"
-  | "WORK_WEEK_SPLIT_REST";
+export type HomeWeekUnavailable = "WEEK_NO_PLANNING_SITE" | "WEEK_NOT_FROZEN";
 
+/** This week's load on the planning KPIs' definition (frozen weekly baseline). */
 export interface HomeWeekLoad {
   week_start: string;
   week_end: string;
-  basis: HomeWorkWeekBasis;
-  teams: number;
-  capacity_hours: number;
-  committed_hours: number;
+  /** Planning sites whose current week is frozen (measured) / not frozen (not measured). */
+  sites: number;
+  sites_not_frozen: number;
+  baseline_hours: number;
+  available_hours: number;
+  overtime_hours: number;
+  /** baseline ÷ available × 100, without the overtime ceiling. */
   load_pct: number | null;
-  overloaded_team_days: number;
+  relies_on_overtime: boolean;
+  weeks_awaiting_approval: number;
 }
 
 export interface HomeScheduleCompliance {
   period_days: number;
   scheduled_hours: number;
   done_hours: number;
+  /** Baseline jobs later released or cancelled (counted as not done). */
+  released_jobs: number;
   value_pct: number | null;
+  /** Why there is no value. */
+  unavailable: "NO_FROZEN_BASELINE" | null;
 }
 
 export interface HomePlanning {
   as_of: string;
   backlog: HomePlanningBacklog;
   week: HomeWeekLoad | null;
-  week_unavailable: HomeWorkWeekUnavailable | null;
+  week_unavailable: HomeWeekUnavailable | null;
   schedule_compliance: HomeScheduleCompliance;
 }
 
@@ -8863,7 +8859,10 @@ export interface CreateCapacityRuleInput {
 
 export interface UpdateCapacityRuleInput {
   effective_start?: string | null;
+  /** A new end; omit to keep the current one. */
   effective_end?: string | null;
+  /** The rule applies with no end again. */
+  clear_effective_end?: boolean;
   available_hours_per_day?: number | null;
   max_overtime_hours_per_day?: number | null;
 }
@@ -8939,6 +8938,10 @@ export interface ScheduleCommitment {
   has_blocking_conflict: number;
   /** The job's open conflicts (JSON array of ConflictReason): why the bar is critical. */
   conflict_reasons_json: string | null;
+  /** committed | released | cancelled | closed */
+  status: string;
+  status_reason: string | null;
+  status_changed_at: string | null;
   nearest_feasible_window: string | null;
   /** Labour hours the commitment books; null for one from before they were stored. */
   planned_labor_hours: number | null;
@@ -8972,6 +8975,8 @@ export interface CreateScheduleCommitmentInput {
   budget_threshold?: number | null;
   /** Assignee refusals (`PLANNING_ASSIGNEE_*`) the planner saw and overrides with the reason. */
   acknowledged_assignee_issues?: string[];
+  /** Committing into a frozen week: only as a recorded break-in. */
+  frozen_week_break_in?: CommitBreakIn | null;
 }
 
 export interface RescheduleCommitmentInput {
@@ -9017,8 +9022,10 @@ export interface ScheduleBreakIn {
   approved_by_user_id: number | null;
   approved_by_personnel_id: number | null;
   override_reason: string | null;
-  old_slot_start: string;
-  old_slot_end: string;
+  /** `move`: a held slot moved; `insert`: new work entering a frozen week (no old slot). */
+  kind: string;
+  old_slot_start: string | null;
+  old_slot_end: string | null;
   new_slot_start: string;
   new_slot_end: string;
   old_assignee_id: number | null;
@@ -10752,4 +10759,158 @@ export interface CriticalityAssessment {
 export interface AssessCriticalityResult {
   assessment: CriticalityAssessment;
   asset: Asset;
+}
+
+// ── Planning: weekly schedule (step D) ───────────────────────────────────────────────────
+
+/** Why new work enters a frozen week (a code of PLANNING.BREAK_IN_REASONS) and its evidence. */
+export interface CommitBreakIn {
+  reason: string;
+  approved_by_user_id?: number | null;
+  dangerous_override_reason?: string | null;
+}
+
+/** Releases a slot (back to the backlog) or cancels a job, with its reason. */
+export interface EndCommitmentInput {
+  commitment_id: number;
+  expected_row_version: number;
+  reason: string;
+}
+
+export interface SiteWeek {
+  entity_id: number;
+  week_start: string;
+  week_end: string;
+  working_days: string[];
+  last_working_day: string | null;
+}
+
+export interface WeeklySchedule {
+  id: number;
+  entity_id: number;
+  week_start: string;
+  week_end: string;
+  /** draft | approved | frozen | published */
+  status: string;
+  approved_by_id: number | null;
+  approved_at: string | null;
+  frozen_at: string | null;
+  /** null with frozen_at set: frozen automatically */
+  frozen_by_id: number | null;
+  frozen_without_approval: number;
+  baseline_no: number;
+  published_by_id: number | null;
+  published_at: string | null;
+  unfreeze_requested_by_id: number | null;
+  unfreeze_requested_at: string | null;
+  unfreeze_reason: string | null;
+  row_version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WeeklyScheduleEvent {
+  id: number;
+  action: string;
+  actor_id: number | null;
+  actor_name: string | null;
+  approver_id: number | null;
+  approver_name: string | null;
+  reason: string | null;
+  baseline_no: number | null;
+  created_at: string;
+}
+
+export interface WeeklyCrew {
+  team_id: number;
+  team_code: string;
+  team_name: string;
+}
+
+export interface WeeklyScheduleView {
+  week: SiteWeek;
+  site_name: string;
+  schedule: WeeklySchedule | null;
+  /** Frozen without approval and not approved after the fact yet. */
+  awaiting_approval: boolean;
+  freeze_due_at: string;
+  crews: WeeklyCrew[];
+  commitments: ScheduleCommitment[];
+  events: WeeklyScheduleEvent[];
+}
+
+export interface WeeklyScheduleRef {
+  site_id: number;
+  day: string;
+  expected_row_version?: number | null;
+}
+
+export interface UnfreezeRequestInput extends WeeklyScheduleRef {
+  reason: string;
+}
+
+/** Planning KPIs against the frozen weekly baseline (planning step E). */
+export interface PlanningKpiFilter {
+  site_id?: number | null;
+  /** Weeks whose first day is in `[from_day, to_day]` (`YYYY-MM-DD`). */
+  from_day: string;
+  to_day: string;
+  /** Leave out the weeks frozen without approval and not approved since. */
+  exclude_unapproved?: boolean;
+}
+
+export interface WeekKpi {
+  weekly_schedule_id: number;
+  site_id: number;
+  site_name: string;
+  week_start: string;
+  week_end: string;
+  status: string;
+  awaiting_approval: boolean;
+  /** Unfrozen for editing since its last freeze: measured on that last baseline. */
+  reopened: boolean;
+  baseline_no: number;
+  baseline_jobs: number;
+  baseline_hours: number;
+  /** Baseline jobs later released or cancelled (counted as not done). */
+  baseline_released_jobs: number;
+  /** null while the week is not over. */
+  done_hours: number | null;
+  compliance_pct: number | null;
+  break_in_jobs: number;
+  break_in_hours: number;
+  break_in_pct: number | null;
+  displaced_jobs: number;
+  available_hours: number;
+  overtime_hours: number;
+  loading_pct: number | null;
+}
+
+export interface PlanningKpiTotals {
+  weeks: number;
+  weeks_judged: number;
+  weeks_awaiting_approval: number;
+  weeks_reopened: number;
+  weeks_not_frozen: number;
+  baseline_hours: number;
+  baseline_released_jobs: number;
+  judged_baseline_hours: number;
+  done_hours: number;
+  compliance_pct: number | null;
+  break_in_hours: number;
+  break_in_pct: number | null;
+  displaced_jobs: number;
+  available_hours: number;
+  overtime_hours: number;
+  loading_pct: number | null;
+}
+
+export interface PlanningKpis {
+  weeks: WeekKpi[];
+  totals: PlanningKpiTotals;
+}
+
+export interface UnfreezeDecisionInput extends WeeklyScheduleRef {
+  approve: boolean;
+  comment?: string | null;
 }

@@ -1,6 +1,7 @@
 {
   "page": {
     "loadError": "Impossible de charger le personnel",
+    "filterLookupError": "Impossible de charger les listes de filtres (postes, organisation)",
     "title": "Personnel",
     "titleNew": "Nouveau personnel",
     "titleEdit": "Modifier personnel"
@@ -936,5 +937,22 @@
       "end": "Terminer",
       "remove": "Supprimer"
     }
+  },
+  "overtimeCeiling": {
+    "title": "Plafond d'heures supplémentaires",
+    "hint": "Heures que la planification peut ajouter chaque jour au-delà des classes horaires des membres de l'équipe. Une règle s'applique à partir d'un jour, jusqu'à un jour ou sans fin ; les périodes ne se chevauchent pas.",
+    "none": "Aucun plafond : la planification n'ajoute pas d'heures supplémentaires pour cette équipe.",
+    "from": "À partir du",
+    "to": "Jusqu'au",
+    "toOptional": "Jusqu'au (facultatif)",
+    "noEnd": "Sans fin",
+    "hoursPerDay": "Heures sup. / jour",
+    "hours": "{{hours}} h",
+    "add": "Ajouter",
+    "edit": "Modifier",
+    "save": "Enregistrer",
+    "cancel": "Annuler",
+    "created": "Plafond d'heures supplémentaires ajouté",
+    "saved": "Plafond d'heures supplémentaires enregistré"
   }
 }

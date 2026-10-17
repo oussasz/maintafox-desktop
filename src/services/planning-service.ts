@@ -1,6 +1,7 @@
 import { ZodError, z } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
+import type { PlanningKpiFilter, PlanningKpis } from "@shared/ipc-types";
 import type {
   AssigneeCapacity,
   AssigneeCapacityInput,
@@ -33,6 +34,12 @@ import type {
   TeamCapacityLoad,
   UpdateCapacityRuleInput,
   UpdatePlanningWindowInput,
+  EndCommitmentInput,
+  UnfreezeDecisionInput,
+  UnfreezeRequestInput,
+  WeeklyCrew,
+  WeeklyScheduleRef,
+  WeeklyScheduleView,
 } from "@shared/ipc-types";
 
 const ScheduleCandidateSchema = z.object({
@@ -169,6 +176,9 @@ const ScheduleCommitmentSchema = z.object({
   cost_variance_warning: z.number(),
   has_blocking_conflict: z.number(),
   conflict_reasons_json: z.string().nullable(),
+  status: z.string(),
+  status_reason: z.string().nullable(),
+  status_changed_at: z.string().nullable(),
   nearest_feasible_window: z.string().nullable(),
   planned_labor_hours: z.number().nullable(),
   planned_person_hours: z.number().nullable(),
@@ -204,8 +214,9 @@ const ScheduleBreakInSchema = z.object({
   approved_by_user_id: z.number().nullable(),
   approved_by_personnel_id: z.number().nullable(),
   override_reason: z.string().nullable(),
-  old_slot_start: z.string(),
-  old_slot_end: z.string(),
+  kind: z.string(),
+  old_slot_start: z.string().nullable(),
+  old_slot_end: z.string().nullable(),
   new_slot_start: z.string(),
   new_slot_end: z.string(),
   old_assignee_id: z.number().nullable(),
@@ -476,4 +487,150 @@ export function exportPlanningGanttPdf(
 
 export function notifyScheduleTeams(input: NotifyTeamsInput): Promise<NotifyTeamsResult> {
   return invokeParsed("notify_schedule_teams", { input }, NotifyTeamsResultSchema);
+}
+
+// ── Weekly schedule (planning step D) ────────────────────────────────────────────────────
+
+const WeeklyScheduleSchema = z.object({
+  id: z.number(),
+  entity_id: z.number(),
+  week_start: z.string(),
+  week_end: z.string(),
+  status: z.string(),
+  approved_by_id: z.number().nullable(),
+  approved_at: z.string().nullable(),
+  frozen_at: z.string().nullable(),
+  frozen_by_id: z.number().nullable(),
+  frozen_without_approval: z.number(),
+  baseline_no: z.number(),
+  published_by_id: z.number().nullable(),
+  published_at: z.string().nullable(),
+  unfreeze_requested_by_id: z.number().nullable(),
+  unfreeze_requested_at: z.string().nullable(),
+  unfreeze_reason: z.string().nullable(),
+  row_version: z.number(),
+  created_at: z.string(),
+  updated_at: z.string(),
+});
+
+const WeeklyCrewSchema = z.object({
+  team_id: z.number(),
+  team_code: z.string(),
+  team_name: z.string(),
+});
+
+const WeeklyScheduleViewSchema = z.object({
+  week: z.object({
+    entity_id: z.number(),
+    week_start: z.string(),
+    week_end: z.string(),
+    working_days: z.array(z.string()),
+    last_working_day: z.string().nullable(),
+  }),
+  site_name: z.string(),
+  schedule: WeeklyScheduleSchema.nullable(),
+  awaiting_approval: z.boolean(),
+  freeze_due_at: z.string(),
+  crews: z.array(WeeklyCrewSchema),
+  commitments: z.array(ScheduleCommitmentSchema),
+  events: z.array(
+    z.object({
+      id: z.number(),
+      action: z.string(),
+      actor_id: z.number().nullable(),
+      actor_name: z.string().nullable(),
+      approver_id: z.number().nullable(),
+      approver_name: z.string().nullable(),
+      reason: z.string().nullable(),
+      baseline_no: z.number().nullable(),
+      created_at: z.string(),
+    }),
+  ),
+});
+
+export function getWeeklySchedule(siteId: number, day: string): Promise<WeeklyScheduleView> {
+  return invokeParsed("get_weekly_schedule", { siteId, day }, WeeklyScheduleViewSchema);
+}
+
+export function listCrewsWithoutPlanningSite(): Promise<WeeklyCrew[]> {
+  return invokeParsed("list_crews_without_planning_site", {}, z.array(WeeklyCrewSchema));
+}
+
+export function approveWeeklySchedule(input: WeeklyScheduleRef): Promise<WeeklyScheduleView> {
+  return invokeParsed("approve_weekly_schedule", { input }, WeeklyScheduleViewSchema);
+}
+
+export function freezeWeeklySchedule(input: WeeklyScheduleRef): Promise<WeeklyScheduleView> {
+  return invokeParsed("freeze_weekly_schedule", { input }, WeeklyScheduleViewSchema);
+}
+
+export function requestWeeklyUnfreeze(input: UnfreezeRequestInput): Promise<WeeklyScheduleView> {
+  return invokeParsed("request_weekly_unfreeze", { input }, WeeklyScheduleViewSchema);
+}
+
+export function decideWeeklyUnfreeze(input: UnfreezeDecisionInput): Promise<WeeklyScheduleView> {
+  return invokeParsed("decide_weekly_unfreeze", { input }, WeeklyScheduleViewSchema);
+}
+
+export function publishWeeklySchedule(input: WeeklyScheduleRef): Promise<WeeklyScheduleView> {
+  return invokeParsed("publish_weekly_schedule", { input }, WeeklyScheduleViewSchema);
+}
+
+const WeekKpiSchema = z.object({
+  weekly_schedule_id: z.number(),
+  site_id: z.number(),
+  site_name: z.string(),
+  week_start: z.string(),
+  week_end: z.string(),
+  status: z.string(),
+  awaiting_approval: z.boolean(),
+  reopened: z.boolean(),
+  baseline_no: z.number(),
+  baseline_jobs: z.number(),
+  baseline_hours: z.number(),
+  baseline_released_jobs: z.number(),
+  done_hours: z.number().nullable(),
+  compliance_pct: z.number().nullable(),
+  break_in_jobs: z.number(),
+  break_in_hours: z.number(),
+  break_in_pct: z.number().nullable(),
+  displaced_jobs: z.number(),
+  available_hours: z.number(),
+  overtime_hours: z.number(),
+  loading_pct: z.number().nullable(),
+});
+
+const PlanningKpisSchema = z.object({
+  weeks: z.array(WeekKpiSchema),
+  totals: z.object({
+    weeks: z.number(),
+    weeks_judged: z.number(),
+    weeks_awaiting_approval: z.number(),
+    weeks_reopened: z.number(),
+    weeks_not_frozen: z.number(),
+    baseline_hours: z.number(),
+    baseline_released_jobs: z.number(),
+    judged_baseline_hours: z.number(),
+    done_hours: z.number(),
+    compliance_pct: z.number().nullable(),
+    break_in_hours: z.number(),
+    break_in_pct: z.number().nullable(),
+    displaced_jobs: z.number(),
+    available_hours: z.number(),
+    overtime_hours: z.number(),
+    loading_pct: z.number().nullable(),
+  }),
+});
+
+/** Planning KPIs against the frozen weekly baseline (planning step E). */
+export function getPlanningKpis(filter: PlanningKpiFilter): Promise<PlanningKpis> {
+  return invokeParsed("get_planning_kpis", { filter }, PlanningKpisSchema);
+}
+
+export function releaseScheduleCommitment(input: EndCommitmentInput): Promise<void> {
+  return invokeParsed("release_schedule_commitment", { input }, z.null()).then(() => undefined);
+}
+
+export function cancelScheduleCommitment(input: EndCommitmentInput): Promise<void> {
+  return invokeParsed("cancel_schedule_commitment", { input }, z.null()).then(() => undefined);
 }

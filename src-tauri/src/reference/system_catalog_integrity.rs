@@ -45,6 +45,8 @@ pub async fn ensure_system_reference_catalog_integrity(db: &DatabaseConnection) 
     // FMECA placeholder rows (former root-cause promotion) that arrived by sync from a device that
     // had not run migration 221 yet are flagged "to review" (exact signature only).
     crate::reliability::study::fmeca::flag_placeholder_rows(db).await?;
+    // Break-in reasons (COMPANY list: each plant extends it).
+    crate::planning::break_in_reasons::ensure_break_in_reason_catalog(db).await?;
     Ok(())
 }
 

@@ -38,6 +38,7 @@ import { StatusChip } from "@/components/ui/status-chip";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { mfLayout } from "@/design-system/tokens";
 import { type Tone, toneOf } from "@/design-system/tone";
+import { usePermissions } from "@/hooks/use-permissions";
 import { getOrgDesignerSnapshot } from "@/services/org-designer-service";
 import { listPositions } from "@/services/personnel-service";
 import { usePersonnelStore } from "@/stores/personnel-store";
@@ -114,25 +115,40 @@ export function PersonnelPage() {
   const availabilityRef = useRef<AvailabilityCalendarHandle>(null);
   const teamsRef = useRef<TeamCapacityBoardHandle>(null);
 
+  const { can } = usePermissions();
+  // The position filter is offered only to users who may read positions (per.position.view).
+  const canViewPositions = can(P.PER_POSITION_VIEW);
   const [positions, setPositions] = useState<{ id: number; code: string; name: string }[]>([]);
   const [entityNodes, setEntityNodes] = useState<OrgDesignerNodeRow[]>([]);
+  const [lookupError, setLookupError] = useState<unknown>(null);
 
   const loadLookups = useCallback(async () => {
-    try {
-      const [pos, snap] = await Promise.all([listPositions(), getOrgDesignerSnapshot()]);
+    setLookupError(null);
+    const [pos, snap] = await Promise.allSettled([
+      canViewPositions ? listPositions() : Promise.resolve([]),
+      getOrgDesignerSnapshot(),
+    ]);
+    if (pos.status === "fulfilled") {
       setPositions(
-        pos.filter((p) => p.is_active !== 0).map((p) => ({ id: p.id, code: p.code, name: p.name })),
+        pos.value
+          .filter((p) => p.is_active !== 0)
+          .map((p) => ({ id: p.id, code: p.code, name: p.name })),
       );
-      const nodes = snap.nodes.filter((n) => n.status === "active");
+    } else {
+      setPositions([]);
+      setLookupError(pos.reason);
+    }
+    if (snap.status === "fulfilled") {
+      const nodes = snap.value.nodes.filter((n) => n.status === "active");
       const entityCandidates = nodes.filter((n) => n.active_binding_count > 0);
       setEntityNodes(
         entityCandidates.length > 0 ? entityCandidates : nodes.filter((n) => n.can_own_work),
       );
-    } catch {
-      setPositions([]);
+    } else {
       setEntityNodes([]);
+      setLookupError(snap.reason);
     }
-  }, []);
+  }, [canViewPositions]);
 
   useEffect(() => {
     void loadPersonnel();
@@ -248,17 +264,21 @@ export function PersonnelPage() {
         value: entityValue,
         onChange: handleEntityFilter,
       },
-      {
-        id: "position",
-        kind: "select",
-        label: t("filters.position"),
-        options: positions.map((p) => ({
-          value: String(p.id),
-          label: `${p.code} — ${p.name}`,
-        })),
-        value: positionValue,
-        onChange: handlePositionFilter,
-      },
+      ...(canViewPositions
+        ? [
+            {
+              id: "position",
+              kind: "select" as const,
+              label: t("filters.position"),
+              options: positions.map((p) => ({
+                value: String(p.id),
+                label: `${p.code} — ${p.name}`,
+              })),
+              value: positionValue,
+              onChange: handlePositionFilter,
+            },
+          ]
+        : []),
       {
         id: "status",
         kind: "multi-select",
@@ -306,6 +326,7 @@ export function PersonnelPage() {
     ],
     [
       t,
+      canViewPositions,
       entityNodes,
       positions,
       entityValue,
@@ -492,6 +513,14 @@ export function PersonnelPage() {
                   resultCount={total}
                   onReset={clearAllFilters}
                 />
+                {lookupError != null ? (
+                  <ErrorState
+                    className="mx-3 mb-2"
+                    error={lookupError}
+                    title={t("page.filterLookupError")}
+                    onRetry={() => void loadLookups()}
+                  />
+                ) : null}
                 <div className={mfLayout.moduleWorkspaceSplit}>
                   <div className="flex w-[55%] min-w-[400px] flex-col border-r border-surface-border">
                     <div className="min-h-0 flex-1 overflow-auto p-1">

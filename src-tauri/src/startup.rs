@@ -370,6 +370,15 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
     }
 
     {
+        let planning_db = app_state.db.clone();
+        let planning_sync = app_state.sync_worker.clone();
+        tauri::async_runtime::spawn(async move {
+            crate::planning::scheduler::start_planning_scheduler(planning_db, planning_sync).await;
+        });
+        info!("startup: planning scheduler started (finished commitments, weekly auto-freeze)");
+    }
+
+    {
         let inspection_db = app_state.db.clone();
         tauri::async_runtime::spawn(async move {
             crate::inspection::scheduler::start_inspection_round_scheduler(inspection_db).await;

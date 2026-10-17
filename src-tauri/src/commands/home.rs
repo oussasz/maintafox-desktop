@@ -53,21 +53,14 @@ pub async fn get_home_my_work(state: State<'_, AppState>) -> AppResult<HomeMyWor
     build_my_work(&state.db, user.user_id, access, chrono::Utc::now()).await
 }
 
-/// Planner panel: backlog by readiness, this week's load vs capacity, schedule compliance over
-/// `period_days` (7 or 30).
+/// Planner panel: backlog by readiness, this week's load and schedule compliance against the frozen
+/// weekly baseline (`planning::kpis`), compliance over `period_days` (7 or 30).
 #[tauri::command]
 pub async fn get_home_planning(period_days: i64, state: State<'_, AppState>) -> AppResult<HomePlanning> {
     let user = require_session!(state);
     require_permission!(state, &user, p::PLAN_VIEW, PermissionScope::Global);
     let period = checked_period(period_days)?;
-    build_planning(
-        &state.db,
-        i64::from(user.user_id),
-        period,
-        chrono::Utc::now(),
-        chrono::Local::now().date_naive(),
-    )
-    .await
+    build_planning(&state.db, period, chrono::Utc::now()).await
 }
 
 /// Supervisor / manager panel; compliance figures over `period_days` (7 or 30).

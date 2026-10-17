@@ -248,9 +248,9 @@
     "unitPercentYear": "Pourcentage de la valeur de remplacement par an (%)",
     "schedule": {
       "title": "Respect du planning",
-      "none": "Aucun travail planifié ne s’est terminé sur la période.",
-      "detail": "{{done}} réalisées comme planifié sur {{total}} engagées",
-      "formula": "Heures des engagements de planning dont l’OT a été terminé au plus tard le jour engagé ÷ heures engagées. Les engagements qui se terminent plus tard ne sont pas encore comptés."
+      "none": "Aucune semaine gelée ne s'est terminée sur la période : le respect du planning se mesure sur la référence gelée.",
+      "detail": "{{done}} réalisées sur {{total}} planifiées dans la référence gelée",
+      "formula": "Heures de la référence gelée des semaines terminées dans la période dont le travail a été réalisé avant la fin de sa semaine ÷ heures de la référence. Un travail ensuite libéré ou annulé compte comme non réalisé ; les semaines jamais gelées ne sont pas mesurées."
     },
     "mix": {
       "basisHours": "Sur les heures de main-d’œuvre saisies",

@@ -28,16 +28,6 @@ export const PLANNING_UTILIZATION_CRITICAL = 1;
 
 export const PLANNING_UNASSIGNED_GROUP_ID = "unassigned";
 
-export const PLANNING_BREAK_IN_REASONS = [
-  "emergency",
-  "safety",
-  "production_loss",
-  "regulatory",
-  "other",
-] as const;
-
-export type PlanningBreakInReason = (typeof PLANNING_BREAK_IN_REASONS)[number];
-
 export type SuggestedAssignee = {
   personnel_id: number;
   full_name: string;
@@ -150,7 +140,8 @@ export const PLANNING_PAGE_VIEW_STORAGE_PREFIX = "maintafox.planning.pageView";
 
 export type PlanningBoardScope = { kind: "all" } | { kind: "crew"; teamId: number };
 
-export type PlanningPageView = "gantt" | "calendar";
+/** "week": the site's weekly schedule (approve, freeze, publish). */
+export type PlanningPageView = "gantt" | "calendar" | "week";
 
 export type PlanningCalendarMode = "month" | "week" | "day";
 
@@ -283,7 +274,7 @@ export function planningPageViewStorageKey(userId: number | null | undefined): s
 export function readStoredPageView(userId: number | null | undefined): PlanningPageView {
   try {
     const raw = localStorage.getItem(planningPageViewStorageKey(userId));
-    if (raw === "calendar" || raw === "gantt") return raw;
+    if (raw === "calendar" || raw === "gantt" || raw === "week") return raw;
   } catch {
     /* ignore */
   }
@@ -914,24 +905,22 @@ export const ASSIGNEE_OVERRIDABLE_CODES = [
   "PLANNING_ASSIGNEE_NOT_IN_CREW",
   "PLANNING_ASSIGNEE_NOT_WORKING",
   "PLANNING_ASSIGNEE_OVERLOADED",
+  "PLANNING_DOUBLE_BOOKING",
 ] as const;
 
 /** A refusal about the technician (crew, shift, hours left, double booking): overridable with a reason. */
-export function isAssigneeOverridableError(codes: string[], message: string): boolean {
-  return (
-    codes.some((c) => (ASSIGNEE_OVERRIDABLE_CODES as readonly string[]).includes(c)) ||
-    isDoubleBookingErrorMessage(message)
-  );
+export function isAssigneeOverridableError(codes: string[]): boolean {
+  return codes.some((c) => (ASSIGNEE_OVERRIDABLE_CODES as readonly string[]).includes(c));
 }
 
-export function isDoubleBookingErrorMessage(message: string): boolean {
-  const lower = message.toLowerCase();
-  return lower.includes("double-booking") || lower.includes("double booking");
+/** The overridable refusals among `codes` (shown in the override dialog, acknowledged on retry). */
+export function overridableCodes(codes: string[]): string[] {
+  return codes.filter((c) => (ASSIGNEE_OVERRIDABLE_CODES as readonly string[]).includes(c));
 }
 
-export function isCapacityGateErrorMessage(message: string): boolean {
-  const lower = message.toLowerCase();
-  return lower.includes("capacity gate") || lower.includes("exceeds capacity");
+/** The crew's load would exceed its capacity plus overtime ceiling (`PLANNING_CAPACITY_EXCEEDED`). */
+export function isCapacityGateError(codes: string[]): boolean {
+  return codes.includes("PLANNING_CAPACITY_EXCEEDED");
 }
 
 export function parseLaborCostRange(

@@ -218,27 +218,31 @@
         "prerequisites": "Prerequisites"
       },
       "week": {
-        "title": "Work week {{from}} to {{to}}",
-        "load": "Load / capacity",
-        "overloaded": "Overloaded crew-days",
-        "hoursOf": "{{committed}} committed of {{capacity}}",
-        "noCapacity": "No hours",
-        "noTeams": "No active crew: capacity cannot be computed.",
-        "titleNoWeek": "Work week",
-        "ownSite": "Sites have different work weeks: your site's ({{site}}) is used.",
+        "title": "Week {{from}} to {{to}}",
+        "load": "Loading",
+        "hoursOf": "{{baseline}} planned / {{available}} available",
+        "noCapacity": "No available hours",
+        "titleNoWeek": "Current week",
+        "overtime": "Overtime possible",
+        "reliesOnOvertime": "Above 100 %: this week's schedule relies on overtime.",
+        "awaitingApproval_one": "{{count}} current week frozen without approval.",
+        "awaitingApproval_other": "{{count}} current weeks frozen without approval.",
+        "sitesNotFrozen_one": "{{count}} site has no frozen current week: it is not counted.",
+        "sitesNotFrozen_other": "{{count}} sites have no frozen current week: they are not counted.",
         "unavailable": {
-          "WORK_WEEK_NOT_CONFIGURED": "No work week is set (Reference data → Calendar): this week's load cannot be computed.",
-          "WORK_WEEK_SITE_AMBIGUOUS": "Sites have different work weeks and your account is linked to no site that sets one: this week's load is not computed. Link your account to a personnel record and its site.",
-          "WORK_WEEK_NO_REST_DAY": "The work week has no rest day, so no day starts it. Fix it in Reference data → Calendar.",
-          "WORK_WEEK_SPLIT_REST": "The week's rest days are not consecutive, so no single day starts it. Fix it in Reference data → Calendar."
+          "WEEK_NO_PLANNING_SITE": "No planning site has a crew: there is no week to load.",
+          "WEEK_NOT_FROZEN": "The current week is frozen at no site: loading is measured on the frozen baseline."
         }
       },
       "compliance": {
         "title": "Schedule compliance",
         "value": "Compliance (hours)",
-        "hint": "{{done}} done of {{scheduled}} committed, last {{count}} days",
-        "none_one": "No scheduled commitment ended in the last day.",
-        "none_other": "No scheduled commitment ended in the last {{count}} days."
+        "hint": "{{done}} done of {{scheduled}} planned, last {{count}} days",
+        "released_one": "{{count}} baseline job was later released or cancelled (counted as not done).",
+        "released_other": "{{count}} baseline jobs were later released or cancelled (counted as not done).",
+        "unavailable": {
+          "NO_FROZEN_BASELINE": "No frozen week ended in the period: schedule compliance is measured on the frozen baseline."
+        }
       }
     },
     "supervision": {
@@ -345,9 +349,8 @@
       "unread": "Unread notifications in your inbox (the bell's figure).",
       "backlogReady": "Planning board jobs with no blocker.",
       "backlogBlocked": "Planning board jobs with at least one blocker (parts, skills, permits, windows, prerequisites).",
-      "weekLoad": "Labour hours committed over the site's work week (from the day after its rest days, Reference data → Calendar) ÷ available + overtime hours of the active crews, over the whole week (never a mean of daily ratios).",
-      "weekOverloaded": "Crew-days of the week whose committed hours exceed their available hours (days with no hours at all included).",
-      "scheduleCompliance": "SMRP indicator: committed hours whose work order was done by the end of the committed day ÷ committed hours, for commitments ending in the period. Period: the last N days, today included.",
+      "weekLoad": "Hours planned in the frozen baseline of each site's current week (Planning → weekly schedule) ÷ the site crews' available hours over the week (timetables, site calendar, absences), without the overtime ceiling. Same definition as the planning KPIs.",
+      "scheduleCompliance": "SMRP indicator: baseline hours of the frozen weeks that ended in the period whose work was finished by the end of its week ÷ baseline hours. A baseline job later released or cancelled counts as not done. Period: the last N days, today included.",
       "slaBreached": "Open requests past a target (response or resolution), paused time excluded (same rule as the request lists).",
       "slaAtRisk": "Open requests past the escalation threshold, not yet past their target.",
       "slaPaused": "Open requests waiting for the requester or deferred: the clock is paused.",
@@ -367,7 +370,8 @@
       "diOpenByStatus": "Requests neither closed nor turned into a work order, by status, with their average age since submission (the request page's figure).",
       "chartDi": "Requests submitted that day.",
       "chartWo": "Work orders closed that day.",
-      "chartPm": "PM occurrences due that day, cancelled excluded."
+      "chartPm": "PM occurrences due that day, cancelled excluded.",
+      "weekOvertime": "Overtime hours planning may still add over the week (the crews' overtime ceiling). Above 100 %, the schedule relies on them."
     },
     "more_one": "+{{count}} more — full list in the module",
     "more_other": "+{{count}} more — full list in the module"

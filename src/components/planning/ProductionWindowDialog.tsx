@@ -34,7 +34,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { mfTone } from "@/design-system/tone";
+import { useFormatters } from "@/hooks/use-formatters";
 import { formatOrDash } from "@/lib/display";
+import { cn } from "@/lib/utils";
 import { listOrgTree } from "@/services/org-node-service";
 import { listPublishedReferenceValuesByDomainCode } from "@/services/reference-service";
 import type {
@@ -76,6 +79,7 @@ export function ProductionWindowDialog({
   onSubmit,
 }: ProductionWindowDialogProps) {
   const { t, i18n } = useTranslation("planning");
+  const { formatDateTime } = useFormatters();
   const [types, setTypes] = useState<ReferenceValue[]>([]);
   const [sites, setSites] = useState<OrgTreeRow[]>([]);
   const [windowType, setWindowType] = useState<string>("");
@@ -244,18 +248,14 @@ export function ProductionWindowDialog({
                   {typeLabel(window.window_type)}
                 </span>{" "}
                 · {windowScopeLabel(window, t("windows.plantWide"))} ·{" "}
-                {new Date(window.start_datetime).toLocaleString()} –{" "}
-                {new Date(window.end_datetime).toLocaleString()}
+                {formatDateTime(window.start_datetime)} – {formatDateTime(window.end_datetime)}
                 {window.is_locked === 1 && (
                   <Badge className="ml-2" variant="secondary">
                     {t("windows.locked")}
                   </Badge>
                 )}
                 {window.scope_review_required === 1 && (
-                  <Badge
-                    className="ml-2 border-amber-200 bg-amber-50 text-amber-800"
-                    variant="outline"
-                  >
+                  <Badge className={cn("ml-2", mfTone.warning.chip)} variant="outline">
                     {t("windows.scopeReview")}
                   </Badge>
                 )}

@@ -559,6 +559,7 @@ async fn commitment_requires_all_three_gates() {
             allow_double_booking_override: Some(false),
             override_reason: None,
             acknowledged_assignee_issues: Vec::new(),
+            frozen_week_break_in: None,
             budget_threshold: None,
         },
     )
@@ -593,12 +594,13 @@ async fn commitment_requires_all_three_gates() {
             allow_double_booking_override: Some(false),
             override_reason: None,
             acknowledged_assignee_issues: Vec::new(),
+            frozen_week_break_in: None,
             budget_threshold: None,
         },
     )
     .await
     .expect_err("capacity gate must reject");
-    assert!(format!("{overloaded:?}").contains("Capacity gate failed"));
+    assert!(format!("{overloaded:?}").contains("PLANNING_CAPACITY_EXCEEDED"));
 }
 
 #[tokio::test]
@@ -629,6 +631,7 @@ async fn assignee_unavailable_is_hard_rejected() {
             allow_double_booking_override: Some(true),
             override_reason: Some("Force it".to_string()),
             acknowledged_assignee_issues: Vec::new(),
+            frozen_week_break_in: None,
             budget_threshold: None,
         },
     )
@@ -660,6 +663,7 @@ async fn double_booking_requires_override_audit() {
             allow_double_booking_override: Some(false),
             override_reason: None,
             acknowledged_assignee_issues: Vec::new(),
+            frozen_week_break_in: None,
             budget_threshold: Some(50.0),
         },
     )
@@ -679,12 +683,13 @@ async fn double_booking_requires_override_audit() {
             allow_double_booking_override: Some(false),
             override_reason: None,
             acknowledged_assignee_issues: Vec::new(),
+            frozen_week_break_in: None,
             budget_threshold: Some(50.0),
         },
     )
     .await
     .expect_err("double-booking should reject without override");
-    assert!(format!("{rejected:?}").contains("Double-booking detected"));
+    assert!(format!("{rejected:?}").contains("PLANNING_DOUBLE_BOOKING"));
 
     let overridden = scheduling::create_schedule_commitment(
         &db,
@@ -699,6 +704,7 @@ async fn double_booking_requires_override_audit() {
             allow_double_booking_override: Some(true),
             override_reason: Some("Emergency overlap approved".to_string()),
             acknowledged_assignee_issues: Vec::new(),
+            frozen_week_break_in: None,
             budget_threshold: Some(50.0),
         },
     )
@@ -730,6 +736,7 @@ async fn freeze_blocks_reschedule_and_preserves_integrity() {
             allow_double_booking_override: Some(false),
             override_reason: None,
             acknowledged_assignee_issues: Vec::new(),
+            frozen_week_break_in: None,
             budget_threshold: None,
         },
     )
@@ -812,6 +819,7 @@ async fn break_in_requires_approval_or_dangerous_override() {
             allow_double_booking_override: Some(false),
             override_reason: None,
             acknowledged_assignee_issues: Vec::new(),
+            frozen_week_break_in: None,
             budget_threshold: None,
         },
     )
@@ -839,7 +847,7 @@ async fn break_in_requires_approval_or_dangerous_override() {
     )
     .await
     .expect_err("emergency break-in should require approval");
-    assert!(format!("{rejected:?}").contains("require approver evidence"));
+    assert!(format!("{rejected:?}").contains("PLANNING_BREAK_IN_APPROVAL_REQUIRED"));
 
     let created = scheduling::create_schedule_break_in(
         &db,
@@ -899,6 +907,7 @@ async fn freeze_breach_notifications_are_deduped_and_notify_teams_emits_payloads
             allow_double_booking_override: Some(false),
             override_reason: None,
             acknowledged_assignee_issues: Vec::new(),
+            frozen_week_break_in: None,
             budget_threshold: None,
         },
     )
@@ -1010,6 +1019,7 @@ async fn gantt_snapshot_and_pdf_export_use_real_commitments() {
             allow_double_booking_override: Some(false),
             override_reason: None,
             acknowledged_assignee_issues: Vec::new(),
+            frozen_week_break_in: None,
             budget_threshold: None,
         },
     )
@@ -1212,6 +1222,7 @@ async fn commitment_write_back_updates_work_order_fields() {
             allow_double_booking_override: Some(false),
             override_reason: None,
             acknowledged_assignee_issues: Vec::new(),
+            frozen_week_break_in: None,
             budget_threshold: None,
         },
     )
@@ -1327,6 +1338,7 @@ async fn break_in_write_back_updates_work_order_slot() {
             allow_double_booking_override: Some(false),
             override_reason: None,
             acknowledged_assignee_issues: Vec::new(),
+            frozen_week_break_in: None,
             budget_threshold: None,
         },
     )
@@ -1380,6 +1392,7 @@ async fn frozen_reschedule_leaves_work_order_unchanged() {
             allow_double_booking_override: Some(false),
             override_reason: None,
             acknowledged_assignee_issues: Vec::new(),
+            frozen_week_break_in: None,
             budget_threshold: None,
         },
     )
@@ -1456,6 +1469,7 @@ async fn commitment_rejects_when_work_order_not_planning_or_ready() {
             allow_double_booking_override: Some(false),
             override_reason: None,
             acknowledged_assignee_issues: Vec::new(),
+            frozen_week_break_in: None,
             budget_threshold: None,
         },
     )
@@ -1505,6 +1519,7 @@ fn commit_input(candidate_id: i64, team_id: i64, start: &str, end: &str) -> Crea
         allow_double_booking_override: Some(false),
         override_reason: None,
         acknowledged_assignee_issues: Vec::new(),
+        frozen_week_break_in: None,
         budget_threshold: None,
     }
 }
@@ -3517,4 +3532,1676 @@ async fn an_expired_emergency_grant_gives_no_planning_approval_right() {
     scheduling::create_schedule_break_in(&db, 1, emergency_break_in(&commitment))
         .await
         .expect("emergency grant in force");
+}
+
+// ── Step D: weekly schedule per site, freeze / unfreeze, break-ins, commitment lifecycle ─────
+
+/// A planning site (a node whose type can own work) and a crew attached to it, with roster
+/// capacity. The site's week follows the seeded all-sites weekend (Friday-Saturday): Sunday to
+/// Saturday.
+async fn weekly_site(db: &DatabaseConnection, code: &str) -> (i64, i64) {
+    let _ = get_any_team_id(db).await;
+    exec_sql(
+        db,
+        &format!(
+            "INSERT INTO org_node_types (entity_sync_id, structure_model_id, code, label, can_host_assets, can_own_work,
+                can_carry_cost_center, can_aggregate_kpis, can_receive_permits, is_root_type, is_active, created_at, updated_at)
+             SELECT 'wk-type-{code}', structure_model_id, 'WKSITE{code}', 'Site', 1, 1, 0, 1, 0, 0, 1,
+                    '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z' FROM org_nodes ORDER BY id LIMIT 1"
+        ),
+    )
+    .await;
+    exec_sql(
+        db,
+        &format!(
+            "INSERT INTO org_nodes (entity_sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status,
+                created_at, updated_at, row_version, structure_model_id)
+             SELECT 'wk-node-{code}', 'WK-{code}', 'Site {code}', t.id, NULL, '/', 0, 'active',
+                    '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 1, t.structure_model_id
+               FROM org_node_types t WHERE t.entity_sync_id = 'wk-type-{code}'"
+        ),
+    )
+    .await;
+    let site = scalar(
+        db,
+        &format!("SELECT id FROM org_nodes WHERE entity_sync_id = 'wk-node-{code}'"),
+    )
+    .await;
+    exec_sql(
+        db,
+        &format!(
+            "INSERT INTO teams (entity_sync_id, code, name, team_type, primary_node_id, status, created_at, updated_at)
+             VALUES ('wk-team-{code}', 'CREW-{code}', 'Equipe {code}', 'maintenance', {site}, 'active',
+                     '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+        ),
+    )
+    .await;
+    let team = scalar(
+        db,
+        &format!("SELECT id FROM teams WHERE entity_sync_id = 'wk-team-{code}'"),
+    )
+    .await;
+    give_team_roster_capacity(db, team).await;
+    (site, team)
+}
+
+fn week_ref(site: i64, day: &str, rv: Option<i64>) -> crate::planning::weekly_schedule::WeeklyScheduleRef {
+    crate::planning::weekly_schedule::WeeklyScheduleRef {
+        site_id: site,
+        day: day.to_string(),
+        expected_row_version: rv,
+    }
+}
+
+fn utc_at(local_at: &str) -> chrono::DateTime<chrono::Utc> {
+    chrono::DateTime::parse_from_rfc3339(&local(local_at))
+        .expect("instant")
+        .with_timezone(&chrono::Utc)
+}
+
+async fn commitment_status(db: &DatabaseConnection, id: i64) -> String {
+    db.query_one(Statement::from_string(
+        DbBackend::Sqlite,
+        format!("SELECT status FROM schedule_commitments WHERE id = {id}"),
+    ))
+    .await
+    .expect("query")
+    .expect("row")
+    .try_get("", "status")
+    .expect("status")
+}
+
+#[tokio::test]
+async fn a_site_week_runs_from_the_day_after_its_weekend_and_needs_a_weekend() {
+    let db = setup_db().await;
+    let (site, team) = weekly_site(&db, "A").await;
+    let view = crate::planning::weekly_schedule::get_weekly_schedule(&db, site, "2026-05-06")
+        .await
+        .expect("week");
+    assert_eq!(
+        view.week.week_start,
+        day("2026-05-03"),
+        "Sunday after a Friday-Saturday weekend"
+    );
+    assert_eq!(view.week.week_end, day("2026-05-09"));
+    assert_eq!(view.week.last_working_day, Some(day("2026-05-07")), "Thursday");
+    assert!(view.schedule.is_none(), "nothing done yet: a draft");
+    assert!(
+        view.crews.iter().any(|c| c.team_id == team),
+        "the site's crews are its rows"
+    );
+
+    // A holiday on the Thursday moves the last working day, not the week.
+    exec_sql(
+        &db,
+        "INSERT INTO work_calendar_holidays (entity_sync_id, holiday_date, label, entity_id, is_active, created_at, updated_at)
+         VALUES ('wk-holiday', '2026-05-07', 'Fête', NULL, 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+    )
+    .await;
+    let view = crate::planning::weekly_schedule::get_weekly_schedule(&db, site, "2026-05-06")
+        .await
+        .expect("week");
+    assert_eq!(view.week.week_start, day("2026-05-03"));
+    assert_eq!(view.week.last_working_day, Some(day("2026-05-06")));
+
+    // A site whose calendar has no weekend has no planning week: a coded refusal.
+    exec_sql(
+        &db,
+        &format!(
+            "INSERT INTO site_work_weeks (entity_sync_id, entity_id, effective_from, weekend_days, created_at, updated_at)
+             VALUES ('wk-noweekend', {site}, '2026-01-01', '', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+        ),
+    )
+    .await;
+    let refused = crate::planning::weekly_schedule::get_weekly_schedule(&db, site, "2026-05-06")
+        .await
+        .expect_err("no weekend");
+    assert!(
+        format!("{refused:?}").contains("PLANNING_WEEK_NO_WEEKEND"),
+        "{refused:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_frozen_week_changes_only_through_break_ins_and_a_four_eyes_unfreeze() {
+    let db = setup_db().await;
+    let (site, team) = weekly_site(&db, "B").await;
+    let candidate = insert_candidate(&db, "manual_test", 7901, "ready", 100.0).await;
+    let commitment = scheduling::create_schedule_commitment(
+        &db,
+        1,
+        commit_input(candidate, team, "2026-05-04T08:00", "2026-05-04T09:00"),
+    )
+    .await
+    .expect("committed");
+
+    let approved =
+        crate::planning::weekly_schedule::approve_weekly_schedule(&db, 1, week_ref(site, "2026-05-04", None))
+            .await
+            .expect("approved");
+    let schedule = approved.schedule.expect("schedule");
+    assert_eq!(schedule.status, "approved");
+    let frozen = crate::planning::weekly_schedule::freeze_weekly_schedule(
+        &db,
+        1,
+        week_ref(site, "2026-05-04", Some(schedule.row_version)),
+    )
+    .await
+    .expect("frozen");
+    let schedule = frozen.schedule.expect("schedule");
+    assert_eq!(schedule.status, "frozen");
+    assert_eq!(schedule.baseline_no, 1);
+    assert_eq!(schedule.frozen_without_approval, 0);
+    assert_eq!(
+        scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM weekly_schedule_baseline_items WHERE weekly_schedule_id = {}",
+                schedule.id
+            )
+        )
+        .await,
+        1,
+        "the baseline holds the week's commitment"
+    );
+
+    // Releasing a frozen commitment is refused; new work needs a break-in reason.
+    let frozen_rv = scalar(
+        &db,
+        &format!(
+            "SELECT row_version FROM schedule_commitments WHERE id = {}",
+            commitment.id
+        ),
+    )
+    .await;
+    let release = crate::planning::lifecycle::end_commitment(
+        &db,
+        1,
+        crate::planning::lifecycle::EndCommitmentInput {
+            commitment_id: commitment.id,
+            expected_row_version: frozen_rv,
+            reason: "Parts late".to_string(),
+        },
+        crate::planning::lifecycle::STATUS_RELEASED,
+    )
+    .await
+    .expect_err("frozen");
+    assert!(
+        format!("{release:?}").contains("PLANNING_COMMITMENT_FROZEN"),
+        "{release:?}"
+    );
+
+    let urgent = insert_candidate(&db, "manual_test", 7902, "ready", 100.0).await;
+    let refused = scheduling::create_schedule_commitment(
+        &db,
+        1,
+        commit_input(urgent, team, "2026-05-05T08:00", "2026-05-05T09:00"),
+    )
+    .await
+    .expect_err("frozen week");
+    assert!(format!("{refused:?}").contains("PLANNING_WEEK_FROZEN"), "{refused:?}");
+    // Moving a job of another week into the frozen week is refused the same way.
+    let later = insert_candidate(&db, "manual_test", 7903, "ready", 100.0).await;
+    let later = scheduling::create_schedule_commitment(
+        &db,
+        1,
+        commit_input(later, team, "2026-05-12T08:00", "2026-05-12T09:00"),
+    )
+    .await
+    .expect("next week is open");
+    let moved = scheduling::reschedule_schedule_commitment(
+        &db,
+        1,
+        RescheduleCommitmentInput {
+            commitment_id: later.id,
+            expected_row_version: later.row_version,
+            committed_start: local("2026-05-06T08:00"),
+            committed_end: local("2026-05-06T09:00"),
+            assigned_team_id: team,
+            assigned_personnel_id: None,
+            allow_double_booking_override: Some(false),
+            override_reason: None,
+            acknowledged_assignee_issues: Vec::new(),
+            budget_threshold: None,
+        },
+    )
+    .await
+    .expect_err("frozen target week");
+    assert!(format!("{moved:?}").contains("PLANNING_WEEK_FROZEN"), "{moved:?}");
+    let mut emergency = commit_input(urgent, team, "2026-05-05T08:00", "2026-05-05T09:00");
+    emergency.frozen_week_break_in = Some(crate::planning::domain::CommitBreakIn {
+        reason: "emergency".to_string(),
+        approved_by_user_id: None,
+        dangerous_override_reason: None,
+    });
+    let refused = scheduling::create_schedule_commitment(&db, 1, emergency.clone())
+        .await
+        .expect_err("urgent needs evidence");
+    assert!(
+        format!("{refused:?}").contains("PLANNING_BREAK_IN_APPROVAL_REQUIRED"),
+        "{refused:?}"
+    );
+    emergency.frozen_week_break_in = Some(crate::planning::domain::CommitBreakIn {
+        reason: "emergency".to_string(),
+        approved_by_user_id: None,
+        dangerous_override_reason: Some("Pump seized on line 2".to_string()),
+    });
+    let inserted = scheduling::create_schedule_commitment(&db, 1, emergency)
+        .await
+        .expect("emergency break-in");
+    assert_eq!(
+        scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM schedule_break_ins WHERE schedule_commitment_id = {} AND break_in_reason = 'emergency'",
+                inserted.id
+            )
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM schedule_commitments WHERE id = {} AND frozen_at IS NOT NULL",
+                inserted.id
+            )
+        )
+        .await,
+        1,
+        "the inserted job is part of the frozen week"
+    );
+    assert_eq!(
+        scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM schedule_break_ins WHERE schedule_commitment_id = {} AND kind = 'insert' \
+                   AND old_slot_start IS NULL AND old_slot_end IS NULL AND approved_by_user_id IS NULL \
+                   AND override_reason = 'Pump seized on line 2'",
+                inserted.id
+            )
+        )
+        .await,
+        1,
+        "an inserted job has no old slot and no approver it did not have"
+    );
+    assert_eq!(
+        scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM notification_events WHERE event_code = 'planning.break_in.created' \
+                   AND source_record_id = '{}'",
+                inserted.id
+            )
+        )
+        .await,
+        1,
+        "the break-in is announced to the crew"
+    );
+
+    // Unfreeze: requested with a reason, decided by someone else.
+    let other_person = ensure_personnel_with_rate(&db, "PLN-WK-APPROVER").await;
+    ensure_approver_user(&db, 58, other_person).await;
+    let view = crate::planning::weekly_schedule::get_weekly_schedule(&db, site, "2026-05-04")
+        .await
+        .expect("view");
+    let rv = view.schedule.expect("schedule").row_version;
+    let requested = crate::planning::weekly_schedule::request_unfreeze(
+        &db,
+        1,
+        crate::planning::weekly_schedule::UnfreezeRequestInput {
+            site_id: site,
+            day: "2026-05-04".to_string(),
+            expected_row_version: Some(rv),
+            reason: "Line stop moved by production".to_string(),
+        },
+    )
+    .await
+    .expect("requested");
+    let rv = requested.schedule.expect("schedule").row_version;
+    let decision = |actor: i64, rv: i64| {
+        crate::planning::weekly_schedule::decide_unfreeze(
+            &db,
+            actor,
+            crate::planning::weekly_schedule::UnfreezeDecisionInput {
+                site_id: site,
+                day: "2026-05-04".to_string(),
+                expected_row_version: Some(rv),
+                approve: true,
+                comment: None,
+            },
+        )
+    };
+    let same = decision(1, rv).await.expect_err("same person");
+    assert!(
+        format!("{same:?}").contains("PLANNING_UNFREEZE_SAME_PERSON"),
+        "{same:?}"
+    );
+    let unfrozen = decision(58, rv).await.expect("unfrozen by another planner");
+    let schedule = unfrozen.schedule.expect("schedule");
+    assert_eq!(schedule.status, "approved");
+    assert!(unfrozen
+        .events
+        .iter()
+        .any(|e| e.action == "unfrozen" && e.approver_id == Some(58)));
+    assert_eq!(
+        scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM schedule_commitments WHERE id = {} AND frozen_at IS NULL",
+                commitment.id
+            )
+        )
+        .await,
+        1,
+        "the baseline's commitments are no longer frozen"
+    );
+    assert_eq!(
+        scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM schedule_commitments WHERE id = {} AND frozen_at IS NULL",
+                inserted.id
+            )
+        )
+        .await,
+        1,
+        "a job that entered as a break-in is unfrozen with the week"
+    );
+    // The automatic freeze never undoes an approved unfreeze: the week stays open.
+    let ticked = crate::planning::weekly_schedule::auto_freeze_due(&db, utc_at("2026-05-08T00:30"))
+        .await
+        .expect("tick");
+    assert!(!ticked.contains(&(site, day("2026-05-03"))), "{ticked:?}");
+    let still_open = crate::planning::weekly_schedule::get_weekly_schedule(&db, site, "2026-05-04")
+        .await
+        .expect("view")
+        .schedule
+        .expect("schedule");
+    assert_eq!(still_open.status, "approved");
+
+    // Frozen again (new baseline), then published.
+    let refrozen = crate::planning::weekly_schedule::freeze_weekly_schedule(
+        &db,
+        1,
+        week_ref(site, "2026-05-04", Some(schedule.row_version)),
+    )
+    .await
+    .expect("frozen again");
+    let schedule = refrozen.schedule.expect("schedule");
+    assert_eq!(schedule.baseline_no, 2);
+    let published = crate::planning::weekly_schedule::publish_weekly_schedule(
+        &db,
+        1,
+        week_ref(site, "2026-05-04", Some(schedule.row_version)),
+    )
+    .await
+    .expect("published");
+    assert_eq!(published.schedule.expect("schedule").status, "published");
+}
+
+#[tokio::test]
+async fn the_next_week_freezes_itself_but_never_counts_as_approved() {
+    let db = setup_db().await;
+    ensure_planning_notification_rule(&db).await;
+    let (site, team) = weekly_site(&db, "C").await;
+    let candidate = insert_candidate(&db, "manual_test", 7911, "ready", 100.0).await;
+    scheduling::create_schedule_commitment(
+        &db,
+        1,
+        commit_input(candidate, team, "2026-05-11T08:00", "2026-05-11T09:00"),
+    )
+    .await
+    .expect("next week's work");
+
+    // Thursday 2026-05-07 is the last working day of the week of 2026-05-03. Before its end, only
+    // the current week is caught up (its own freeze fell due last week, no desktop ran then);
+    // after, the week of 2026-05-10 freezes without approval.
+    let frozen = crate::planning::weekly_schedule::auto_freeze_due(&db, utc_at("2026-05-07T20:00"))
+        .await
+        .expect("tick");
+    assert!(frozen.contains(&(site, day("2026-05-03"))), "{frozen:?}");
+    assert!(!frozen.contains(&(site, day("2026-05-10"))), "{frozen:?}");
+    let frozen = crate::planning::weekly_schedule::auto_freeze_due(&db, utc_at("2026-05-08T00:30"))
+        .await
+        .expect("tick");
+    assert!(frozen.contains(&(site, day("2026-05-10"))), "{frozen:?}");
+    let view = crate::planning::weekly_schedule::get_weekly_schedule(&db, site, "2026-05-11")
+        .await
+        .expect("view");
+    let schedule = view.schedule.clone().expect("schedule");
+    assert_eq!(schedule.status, "frozen");
+    assert_eq!(schedule.frozen_without_approval, 1);
+    assert!(schedule.frozen_by_id.is_none(), "frozen by the system");
+    crate::planning::weekly_schedule::remind_unapproved_weeks(&db, utc_at("2026-05-08T00:31"))
+        .await
+        .expect("remind");
+    let notified = scalar(
+        &db,
+        &format!(
+            "SELECT COUNT(*) FROM notification_events WHERE category_code = 'planning.week_unapproved' \
+               AND source_record_id = '{}'",
+            schedule.id
+        ),
+    )
+    .await;
+    assert_eq!(notified, 1, "planners are told the week froze without approval");
+    assert!(view.awaiting_approval);
+    assert!(view
+        .events
+        .iter()
+        .any(|e| e.action == "auto_frozen" && e.actor_id.is_none()));
+    assert_eq!(
+        scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM weekly_schedule_baseline_items WHERE weekly_schedule_id = {}",
+                schedule.id
+            )
+        )
+        .await,
+        1,
+        "the baseline is taken anyway"
+    );
+
+    // Approved after the fact: the mark clears, the baseline does not move.
+    let approved = crate::planning::weekly_schedule::approve_weekly_schedule(
+        &db,
+        1,
+        week_ref(site, "2026-05-11", Some(schedule.row_version)),
+    )
+    .await
+    .expect("approved after the fact");
+    let after_fact = approved.schedule.expect("schedule");
+    assert_eq!(after_fact.status, "frozen");
+    assert_eq!(after_fact.baseline_no, 1);
+    assert_eq!(after_fact.frozen_without_approval, 1, "the history stays");
+    assert!(!approved.awaiting_approval);
+    assert!(approved.events.iter().any(|e| e.action == "approved_after_freeze"));
+
+    // A week approved in time freezes as approved.
+    crate::planning::weekly_schedule::approve_weekly_schedule(&db, 1, week_ref(site, "2026-05-18", None))
+        .await
+        .expect("approved ahead");
+    crate::planning::weekly_schedule::auto_freeze_due(&db, utc_at("2026-05-15T01:00"))
+        .await
+        .expect("tick");
+    let view = crate::planning::weekly_schedule::get_weekly_schedule(&db, site, "2026-05-18")
+        .await
+        .expect("view");
+    let schedule = view.schedule.expect("schedule");
+    assert_eq!(schedule.status, "frozen");
+    assert_eq!(schedule.frozen_without_approval, 0);
+    assert!(!view.awaiting_approval);
+}
+
+#[tokio::test]
+async fn a_released_slot_returns_the_job_to_the_backlog_and_finished_work_closes_its_commitment() {
+    let db = setup_db().await;
+    let team_id = get_any_team_id(&db).await;
+    let (wo_id, actor_id) = create_planning_wo(&db, "Lifecycle WO").await;
+    let candidate = insert_candidate(&db, "work_order", wo_id, "ready", 100.0).await;
+    let commitment = scheduling::create_schedule_commitment(
+        &db,
+        actor_id,
+        commit_input(candidate, team_id, "2026-10-05T08:00", "2026-10-05T10:00"),
+    )
+    .await
+    .expect("committed");
+    let in_backlog = |db: DatabaseConnection| async move {
+        queries::list_schedule_candidates(
+            &db,
+            ScheduleCandidateFilter {
+                source_type: Some("work_order".to_string()),
+                readiness_status: None,
+                assigned_personnel_id: None,
+                include_resolved_conflicts: Some(true),
+                limit: Some(50),
+            },
+        )
+        .await
+        .expect("backlog")
+        .iter()
+        .any(|c| c.id == candidate)
+    };
+    assert!(
+        !in_backlog(db.clone()).await,
+        "a job holding a slot is not in the backlog"
+    );
+    let again = scheduling::create_schedule_commitment(
+        &db,
+        actor_id,
+        commit_input(candidate, team_id, "2026-10-06T08:00", "2026-10-06T10:00"),
+    )
+    .await
+    .expect_err("one slot at a time");
+    assert!(format!("{again:?}").contains("PLANNING_ALREADY_COMMITTED"), "{again:?}");
+
+    let rv = scalar(
+        &db,
+        &format!(
+            "SELECT row_version FROM schedule_commitments WHERE id = {}",
+            commitment.id
+        ),
+    )
+    .await;
+    let missing_reason = crate::planning::lifecycle::end_commitment(
+        &db,
+        actor_id,
+        crate::planning::lifecycle::EndCommitmentInput {
+            commitment_id: commitment.id,
+            expected_row_version: rv,
+            reason: "  ".to_string(),
+        },
+        crate::planning::lifecycle::STATUS_RELEASED,
+    )
+    .await
+    .expect_err("reason");
+    assert!(format!("{missing_reason:?}").contains("PLANNING_COMMITMENT_REASON_REQUIRED"));
+    crate::planning::lifecycle::end_commitment(
+        &db,
+        actor_id,
+        crate::planning::lifecycle::EndCommitmentInput {
+            commitment_id: commitment.id,
+            expected_row_version: rv,
+            reason: "Spare part delayed".to_string(),
+        },
+        crate::planning::lifecycle::STATUS_RELEASED,
+    )
+    .await
+    .expect("released");
+    assert_eq!(commitment_status(&db, commitment.id).await, "released");
+    let (start, end, _, _) = load_wo_planning_fields(&db, wo_id).await;
+    assert_eq!((start, end), (None, None), "the work order's slot is given back");
+    assert!(in_backlog(db.clone()).await, "the job is back in the backlog");
+
+    // Committed again, then the work order is cancelled: its commitment closes with it.
+    let second = scheduling::create_schedule_commitment(
+        &db,
+        actor_id,
+        commit_input(candidate, team_id, "2026-10-06T08:00", "2026-10-06T10:00"),
+    )
+    .await
+    .expect("committed again");
+    let wo_rv = scalar(&db, &format!("SELECT row_version FROM work_orders WHERE id = {wo_id}")).await;
+    crate::wo::queries::cancel_work_order(
+        &db,
+        crate::wo::domain::WoCancelInput {
+            id: wo_id,
+            expected_row_version: wo_rv,
+            actor_id,
+            cancel_reason: "Equipment replaced".to_string(),
+        },
+    )
+    .await
+    .expect("cancelled");
+    assert_eq!(commitment_status(&db, second.id).await, "closed");
+    let logged = scalar(
+        &db,
+        &format!(
+            "SELECT COUNT(*) FROM schedule_change_log WHERE commitment_id = {}                AND action_type = 'close_commitment' AND reason_code = 'work_finished'",
+            second.id
+        ),
+    )
+    .await;
+    assert_eq!(logged, 1, "the job's history says why its slot ended");
+
+    // The sweep closes commitments of work finished elsewhere (a work order completed outside
+    // this path, here by its date).
+    let (other_wo, _) = create_planning_wo(&db, "Lifecycle WO 2").await;
+    let other_candidate = insert_candidate(&db, "work_order", other_wo, "ready", 100.0).await;
+    let third = scheduling::create_schedule_commitment(
+        &db,
+        actor_id,
+        commit_input(other_candidate, team_id, "2026-10-07T08:00", "2026-10-07T10:00"),
+    )
+    .await
+    .expect("committed");
+    exec_sql(
+        &db,
+        &format!("UPDATE work_orders SET mechanically_completed_at = '2026-10-07T10:00:00Z' WHERE id = {other_wo}"),
+    )
+    .await;
+    let closed = crate::planning::lifecycle::close_finished_commitments(&db)
+        .await
+        .expect("sweep");
+    assert!(closed >= 1);
+    assert_eq!(commitment_status(&db, third.id).await, "closed");
+}
+
+#[tokio::test]
+async fn break_in_reasons_are_the_plants_own_list() {
+    let db = setup_db().await;
+    let reason = crate::planning::break_in_reasons::resolve_break_in_reason(&db, " Emergency ")
+        .await
+        .expect("starter reason");
+    assert_eq!(reason.code, "emergency");
+    assert!(reason.urgent);
+    // A reason the plant adds is accepted; a deactivated one is refused.
+    exec_sql(
+        &db,
+        "INSERT INTO reference_values (entity_sync_id, set_id, code, label, sort_order, semantic_tag, is_active)
+         SELECT 'plant-outage-reason', rs.id, 'customer_outage', 'Arrêt client', 9, 'planning_break_in', 1
+           FROM reference_sets rs JOIN reference_domains d ON d.id = rs.domain_id
+          WHERE d.code = 'PLANNING.BREAK_IN_REASONS' AND rs.status = 'published'",
+    )
+    .await;
+    let added = crate::planning::break_in_reasons::resolve_break_in_reason(&db, "customer_outage")
+        .await
+        .expect("plant reason");
+    assert!(!added.urgent);
+    exec_sql(
+        &db,
+        "UPDATE reference_values SET is_active = 0 WHERE code = 'customer_outage'",
+    )
+    .await;
+    let refused = crate::planning::break_in_reasons::resolve_break_in_reason(&db, "customer_outage")
+        .await
+        .expect_err("inactive");
+    assert!(format!("{refused:?}").contains("PLANNING_BREAK_IN_REASON_UNKNOWN"));
+}
+
+// ── Planning step D review (#34) ──────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn a_week_frozen_without_approval_is_recalled_to_planners_until_approved() {
+    let db = setup_db().await;
+    let (site, _team) = weekly_site(&db, "N").await;
+    let planner = ensure_personnel_with_rate(&db, "PLN-WK-NOTIFY").await;
+    ensure_approver_user(&db, 58, planner).await;
+    let frozen = crate::planning::weekly_schedule::auto_freeze_due(&db, utc_at("2026-05-08T00:30"))
+        .await
+        .expect("tick");
+    assert!(frozen.contains(&(site, day("2026-05-10"))), "{frozen:?}");
+    let schedule = crate::planning::weekly_schedule::get_weekly_schedule(&db, site, "2026-05-11")
+        .await
+        .expect("view")
+        .schedule
+        .expect("schedule");
+
+    crate::planning::weekly_schedule::remind_unapproved_weeks(&db, utc_at("2026-05-08T00:31"))
+        .await
+        .expect("remind");
+    let event = scalar(
+        &db,
+        &format!(
+            "SELECT id FROM notification_events WHERE category_code = 'planning.week_unapproved' \
+               AND source_record_id = '{}' AND resolved_at IS NULL",
+            schedule.id
+        ),
+    )
+    .await;
+    assert_eq!(
+        scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM notification_events WHERE id = {event} \
+                   AND json_extract(payload_json, '$.org_node_id') = {site}"
+            )
+        )
+        .await,
+        1,
+        "routed by the site"
+    );
+    assert_eq!(
+        scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM notifications WHERE notification_event_id = {event} AND recipient_user_id = 58"
+            )
+        )
+        .await,
+        1,
+        "a holder of the planning confirm right is told"
+    );
+
+    // Read a day ago and still not approved: recalled (unread again).
+    exec_sql(
+        &db,
+        &format!(
+            "UPDATE notifications SET delivery_state = 'read', read_at = '2000-01-01T00:00:00Z' \
+              WHERE notification_event_id = {event}"
+        ),
+    )
+    .await;
+    crate::planning::weekly_schedule::remind_unapproved_weeks(&db, utc_at("2026-05-08T00:40"))
+        .await
+        .expect("remind");
+    assert_eq!(
+        scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM notifications WHERE notification_event_id = {event} AND delivery_state = 'read'"
+            )
+        )
+        .await,
+        0,
+        "recalled"
+    );
+    // Read just now: not recalled within the rule's window.
+    let read_at = utc_at("2026-05-08T00:41").format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    exec_sql(
+        &db,
+        &format!(
+            "UPDATE notifications SET delivery_state = 'read', read_at = '{read_at}' WHERE notification_event_id = {event}"
+        ),
+    )
+    .await;
+    crate::planning::weekly_schedule::remind_unapproved_weeks(&db, utc_at("2026-05-08T00:42"))
+        .await
+        .expect("remind");
+    assert_eq!(
+        scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM notifications WHERE notification_event_id = {event} AND delivery_state <> 'read'"
+            )
+        )
+        .await,
+        0,
+        "not recalled before the window"
+    );
+
+    // Approved after the fact: the notification is resolved, never recalled again.
+    crate::planning::weekly_schedule::approve_weekly_schedule(
+        &db,
+        1,
+        week_ref(site, "2026-05-11", Some(schedule.row_version)),
+    )
+    .await
+    .expect("approved after the fact");
+    crate::planning::weekly_schedule::remind_unapproved_weeks(&db, utc_at("2026-05-09T09:00"))
+        .await
+        .expect("remind");
+    assert_eq!(
+        scalar(
+            &db,
+            &format!("SELECT COUNT(*) FROM notification_events WHERE id = {event} AND resolved_at IS NOT NULL")
+        )
+        .await,
+        1,
+        "resolved once approved"
+    );
+}
+
+#[tokio::test]
+async fn two_devices_freezing_the_same_week_offline_make_the_same_rows() {
+    use crate::sync::test_support::{started_device_db, TestServer};
+    let a = started_device_db().await;
+    let b = started_device_db().await;
+    let mut server = TestServer::new();
+    let (_site, team) = weekly_site(&a, "S").await;
+    // A real job (a work order), so that it synchronises like any planned work.
+    let (wo_id, actor_id) = create_planning_wo(&a, "Two-device WO").await;
+    let candidate = insert_candidate(&a, "work_order", wo_id, "ready", 100.0).await;
+    scheduling::create_schedule_commitment(
+        &a,
+        actor_id,
+        commit_input(candidate, team, "2026-05-11T08:00", "2026-05-11T09:00"),
+    )
+    .await
+    .expect("committed on A");
+    server.exchange("A", &a).await;
+    let received = server.exchange("B", &b).await;
+    assert!(
+        received.materialized.errors.is_empty()
+            && received.materialized.deferred == 0
+            && received.materialized.conflicts == 0,
+        "{received:?} {:?}",
+        b.query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT entity_type || ' ' || apply_status || ' ' || COALESCE(rejection_code, '') || ' ' || COALESCE(rejection_message, '') AS v \
+               FROM sync_inbox WHERE apply_status <> 'applied'"
+                .to_string()
+        ))
+        .await
+        .expect("inbox")
+        .iter()
+        .map(|r| r.try_get::<String>("", "v").unwrap_or_default())
+        .collect::<Vec<_>>()
+    );
+
+    // Both offline at the deadline: each freezes the week by itself.
+    for db in [&a, &b] {
+        let frozen = crate::planning::weekly_schedule::auto_freeze_due(db, utc_at("2026-05-08T00:30"))
+            .await
+            .expect("tick");
+        assert!(frozen.iter().any(|(_, w)| *w == day("2026-05-10")), "{frozen:?}");
+    }
+    async fn ids(db: &DatabaseConnection) -> Vec<String> {
+        let mut out = Vec::new();
+        for sql in [
+            "SELECT ws.entity_sync_id AS v FROM weekly_schedules ws JOIN org_nodes n ON n.id = ws.entity_id \
+              WHERE n.entity_sync_id = 'wk-node-S' AND ws.week_start = '2026-05-10'",
+            "SELECT bi.entity_sync_id AS v FROM weekly_schedule_baseline_items bi \
+               JOIN weekly_schedules ws ON ws.id = bi.weekly_schedule_id \
+               JOIN org_nodes n ON n.id = ws.entity_id WHERE n.entity_sync_id = 'wk-node-S' AND ws.week_start = '2026-05-10'",
+            "SELECT e.entity_sync_id AS v FROM weekly_schedule_events e \
+               JOIN weekly_schedules ws ON ws.id = e.weekly_schedule_id \
+               JOIN org_nodes n ON n.id = ws.entity_id \
+              WHERE n.entity_sync_id = 'wk-node-S' AND ws.week_start = '2026-05-10' AND e.action = 'auto_frozen'",
+        ] {
+            let rows = db
+                .query_all(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
+                .await
+                .expect("ids");
+            let mut found: Vec<String> = rows.iter().map(|r| r.try_get("", "v").expect("v")).collect();
+            assert_eq!(found.len(), 1, "{sql}");
+            out.append(&mut found);
+        }
+        out
+    }
+    assert_eq!(
+        ids(&a).await,
+        ids(&b).await,
+        "same schedule, baseline item and event ids"
+    );
+
+    // Exchanged afterwards: the same rows meet, nothing clashes.
+    for (device, db) in [("A", &a), ("B", &b), ("A", &a)] {
+        let report = server.exchange(device, db).await;
+        assert!(
+            report.materialized.errors.is_empty(),
+            "{device}: {:?}",
+            report.materialized.errors
+        );
+    }
+    for db in [&a, &b] {
+        assert_eq!(
+            scalar(
+                db,
+                "SELECT COUNT(*) FROM weekly_schedules ws JOIN org_nodes n ON n.id = ws.entity_id \
+                  WHERE n.entity_sync_id = 'wk-node-S' AND ws.week_start = '2026-05-10'"
+            )
+            .await,
+            1
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_received_week_never_goes_back_in_its_lifecycle() {
+    let db = setup_db().await;
+    let (site, _team) = weekly_site(&db, "L").await;
+    crate::planning::weekly_schedule::freeze_weekly_schedule(&db, 1, week_ref(site, "2026-05-04", None))
+        .await
+        .expect("frozen");
+    let payload = |status: &str, baseline: i64| {
+        serde_json::json!({
+            "entity_id": "wk-node-L",
+            "week_start": "2026-05-03",
+            "status": status,
+            "baseline_no": baseline,
+        })
+        .as_object()
+        .cloned()
+        .expect("object")
+    };
+    let check = |status: &'static str, baseline: i64| {
+        let db = db.clone();
+        let p = payload(status, baseline);
+        async move {
+            crate::planning::weekly_schedule::inbound_lifecycle_conflict(&db, &p)
+                .await
+                .expect("check")
+        }
+    };
+    assert!(
+        check("draft", 0).await.is_some(),
+        "frozen here, draft received: refused"
+    );
+    assert!(
+        check("approved", 0).await.is_some(),
+        "frozen here, approved received: refused"
+    );
+    assert!(check("frozen", 1).await.is_none(), "the same state");
+    assert!(check("published", 1).await.is_none(), "published after the freeze");
+    assert!(
+        check("approved", 1).await.is_none(),
+        "unfrozen after the freeze (four-eyes)"
+    );
+    assert!(check("frozen", 2).await.is_none(), "frozen again");
+}
+
+#[tokio::test]
+async fn unfreezing_a_week_keeps_a_job_running_into_another_frozen_week_frozen() {
+    let db = setup_db().await;
+    let (site, team) = weekly_site(&db, "M").await;
+    let planner = ensure_personnel_with_rate(&db, "PLN-WK-M").await;
+    ensure_approver_user(&db, 58, planner).await;
+    let first = insert_candidate(&db, "manual_test", 7961, "ready", 100.0).await;
+    let inside = scheduling::create_schedule_commitment(
+        &db,
+        1,
+        commit_input(first, team, "2026-05-05T08:00", "2026-05-05T09:00"),
+    )
+    .await
+    .expect("inside week 1");
+    let second = insert_candidate(&db, "manual_test", 7962, "ready", 100.0).await;
+    let spanning = scheduling::create_schedule_commitment(
+        &db,
+        1,
+        commit_input(second, team, "2026-05-09T22:00", "2026-05-10T02:00"),
+    )
+    .await
+    .expect("across both weeks");
+    for day_of_week in ["2026-05-04", "2026-05-11"] {
+        crate::planning::weekly_schedule::freeze_weekly_schedule(&db, 1, week_ref(site, day_of_week, None))
+            .await
+            .expect("frozen");
+    }
+    let requested = crate::planning::weekly_schedule::request_unfreeze(
+        &db,
+        1,
+        crate::planning::weekly_schedule::UnfreezeRequestInput {
+            site_id: site,
+            day: "2026-05-04".to_string(),
+            expected_row_version: None,
+            reason: "Shutdown moved".to_string(),
+        },
+    )
+    .await
+    .expect("requested");
+    crate::planning::weekly_schedule::decide_unfreeze(
+        &db,
+        58,
+        crate::planning::weekly_schedule::UnfreezeDecisionInput {
+            site_id: site,
+            day: "2026-05-04".to_string(),
+            expected_row_version: requested.schedule.map(|s| s.row_version),
+            approve: true,
+            comment: None,
+        },
+    )
+    .await
+    .expect("unfrozen");
+    let frozen = |id: i64| {
+        let db = db.clone();
+        async move {
+            scalar(
+                &db,
+                &format!("SELECT COUNT(*) FROM schedule_commitments WHERE id = {id} AND frozen_at IS NOT NULL"),
+            )
+            .await
+        }
+    };
+    assert_eq!(frozen(inside.id).await, 0, "week 1 is open again");
+    assert_eq!(frozen(spanning.id).await, 1, "still in the frozen week 2");
+}
+
+#[test]
+fn a_midnight_lost_to_daylight_saving_starts_the_day_at_the_end_of_the_gap() {
+    use crate::planning::weekly_schedule::first_instant_of_day as first;
+    use chrono::{LocalResult, TimeZone, Timelike};
+    let as_utc = |local: chrono::NaiveDateTime| chrono::Utc.from_utc_datetime(&local);
+    // Clocks jump from 00:00 to 01:00: the day starts at 01:00.
+    let gap = first(day("2026-03-29"), |local: chrono::NaiveDateTime| {
+        if local.hour() == 0 {
+            LocalResult::None
+        } else {
+            LocalResult::Single(as_utc(local))
+        }
+    })
+    .expect("instant");
+    assert_eq!(gap, chrono::Utc.with_ymd_and_hms(2026, 3, 29, 1, 0, 0).unwrap());
+    // Midnight happens twice: the first one.
+    let twice = first(day("2026-10-25"), |local: chrono::NaiveDateTime| {
+        LocalResult::Ambiguous(as_utc(local), as_utc(local) + chrono::Duration::hours(1))
+    })
+    .expect("instant");
+    assert_eq!(twice, chrono::Utc.with_ymd_and_hms(2026, 10, 25, 0, 0, 0).unwrap());
+}
+
+#[tokio::test]
+async fn a_site_without_a_planning_week_does_not_stop_the_automatic_freeze_of_the_others() {
+    let db = setup_db().await;
+    let (good, _) = weekly_site(&db, "G").await;
+    let (broken, _) = weekly_site(&db, "H").await;
+    exec_sql(
+        &db,
+        &format!(
+            "INSERT INTO site_work_weeks (entity_sync_id, entity_id, effective_from, weekend_days, created_at, updated_at)
+             VALUES ('wk-broken', {broken}, '2026-01-01', '', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+        ),
+    )
+    .await;
+    let frozen = crate::planning::weekly_schedule::auto_freeze_due(&db, utc_at("2026-05-08T00:30"))
+        .await
+        .expect("the tick goes on");
+    assert!(frozen.contains(&(good, day("2026-05-10"))), "{frozen:?}");
+    assert!(!frozen.iter().any(|(site, _)| *site == broken), "{frozen:?}");
+}
+
+#[tokio::test]
+async fn finished_work_closes_its_slot_at_the_moment_it_ended() {
+    let db = setup_db().await;
+    let team_id = get_any_team_id(&db).await;
+    let (wo_id, actor_id) = create_planning_wo(&db, "Finish time WO").await;
+    let candidate = insert_candidate(&db, "work_order", wo_id, "ready", 100.0).await;
+    let commitment = scheduling::create_schedule_commitment(
+        &db,
+        actor_id,
+        commit_input(candidate, team_id, "2026-09-29T08:00", "2026-09-29T10:00"),
+    )
+    .await
+    .expect("committed");
+    exec_sql(
+        &db,
+        &format!("UPDATE work_orders SET mechanically_completed_at = '2026-09-29T09:45:00Z' WHERE id = {wo_id}"),
+    )
+    .await;
+    let closed_at = |db: DatabaseConnection| async move {
+        db.query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT status_changed_at FROM schedule_commitments WHERE id = {} AND status = 'closed'",
+                commitment.id
+            ),
+        ))
+        .await
+        .expect("query")
+        .map(|r| r.try_get::<String>("", "status_changed_at").expect("time"))
+    };
+
+    // The live sweep records when the work ended, not when the sweep ran.
+    crate::planning::lifecycle::close_finished_commitments(&db)
+        .await
+        .expect("sweep");
+    assert_eq!(closed_at(db.clone()).await.as_deref(), Some("2026-09-29T09:45:00Z"));
+
+    // The upgrade closes the same way (migration 212), on every device alike.
+    exec_sql(
+        &db,
+        &format!(
+            "UPDATE schedule_commitments SET status = 'committed', status_changed_at = NULL WHERE id = {}",
+            commitment.id
+        ),
+    )
+    .await;
+    exec_sql(
+        &db,
+        crate::migrations::m20261017_000212_weekly_schedules::CLOSE_FINISHED_SQL,
+    )
+    .await;
+    assert_eq!(closed_at(db.clone()).await.as_deref(), Some("2026-09-29T09:45:00Z"));
+}
+
+#[tokio::test]
+async fn work_entering_a_week_whose_freeze_is_due_needs_a_break_in_even_before_the_freeze_runs() {
+    let db = setup_db().await;
+    let (_site, team) = weekly_site(&db, "D").await;
+    // The current week froze at the end of the previous week's last working day; the automatic
+    // freeze has not run here (it waits for the first synchronisation).
+    let today = chrono::Local::now().date_naive();
+    let at = |hour: &str| format!("{}T{hour}", today.format("%Y-%m-%d"));
+    let candidate = insert_candidate(&db, "manual_test", 7971, "ready", 100.0).await;
+    let refused =
+        scheduling::create_schedule_commitment(&db, 1, commit_input(candidate, team, &at("10:00"), &at("11:00")))
+            .await
+            .expect_err("due week");
+    assert!(format!("{refused:?}").contains("PLANNING_WEEK_FROZEN"), "{refused:?}");
+}
+
+#[tokio::test]
+async fn only_a_held_slot_is_moved_or_broken_into() {
+    let db = setup_db().await;
+    let team_id = get_any_team_id(&db).await;
+    let candidate = insert_candidate(&db, "manual_test", 7981, "ready", 100.0).await;
+    let commitment = scheduling::create_schedule_commitment(
+        &db,
+        1,
+        commit_input(candidate, team_id, "2026-09-22T08:00", "2026-09-22T09:00"),
+    )
+    .await
+    .expect("committed");
+    let rv = |db: DatabaseConnection| async move {
+        scalar(
+            &db,
+            &format!(
+                "SELECT row_version FROM schedule_commitments WHERE id = {}",
+                commitment.id
+            ),
+        )
+        .await
+    };
+    crate::planning::lifecycle::end_commitment(
+        &db,
+        1,
+        crate::planning::lifecycle::EndCommitmentInput {
+            commitment_id: commitment.id,
+            expected_row_version: rv(db.clone()).await,
+            reason: "Not needed".to_string(),
+        },
+        crate::planning::lifecycle::STATUS_CANCELLED,
+    )
+    .await
+    .expect("cancelled");
+    let moved = scheduling::reschedule_schedule_commitment(
+        &db,
+        1,
+        RescheduleCommitmentInput {
+            commitment_id: commitment.id,
+            expected_row_version: rv(db.clone()).await,
+            committed_start: local("2026-09-23T08:00"),
+            committed_end: local("2026-09-23T09:00"),
+            assigned_team_id: team_id,
+            assigned_personnel_id: None,
+            allow_double_booking_override: Some(false),
+            override_reason: None,
+            acknowledged_assignee_issues: Vec::new(),
+            budget_threshold: None,
+        },
+    )
+    .await
+    .expect_err("cancelled");
+    assert!(
+        format!("{moved:?}").contains("PLANNING_COMMITMENT_NOT_ACTIVE"),
+        "{moved:?}"
+    );
+}
+
+#[test]
+fn the_planning_tick_waits_for_a_synchronisation_when_the_device_synchronises() {
+    use crate::planning::scheduler::shared_actions_allowed;
+    let started = chrono::Utc::now();
+    let mut status = crate::sync::transport::worker::SyncWorkerHandle::new().status();
+    assert!(!shared_actions_allowed(&status, started), "starting: wait");
+    status.last_success_at = Some("2000-01-01T00:00:00Z".to_string());
+    assert!(
+        !shared_actions_allowed(&status, started),
+        "a success before this start does not count"
+    );
+    status.last_success_at = Some(
+        (started + chrono::Duration::seconds(5))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string(),
+    );
+    assert!(shared_actions_allowed(&status, started), "synced since the start");
+    let mut not_syncing = crate::sync::transport::worker::SyncWorkerHandle::new().status();
+    not_syncing.blocker = Some(crate::sync::transport::worker::BLOCKER_NOT_CONFIGURED.to_string());
+    assert!(
+        shared_actions_allowed(&not_syncing, started),
+        "a device that does not synchronise acts at once"
+    );
+}
+
+// ── Planning KPIs against the frozen baseline (step E) ────────────────────────────────────
+
+#[tokio::test]
+async fn planning_kpis_measure_the_frozen_baseline() {
+    let db = setup_db().await;
+    let (site, team) = weekly_site(&db, "K").await;
+    // Two jobs in the week of 2026-05-03 (Sunday to Saturday).
+    let (wo_done, actor) = create_planning_wo(&db, "KPI done").await;
+    let (wo_missed, _) = create_planning_wo(&db, "KPI missed").await;
+    let done = scheduling::create_schedule_commitment(
+        &db,
+        actor,
+        commit_input(
+            insert_candidate(&db, "work_order", wo_done, "ready", 100.0).await,
+            team,
+            "2026-05-04T08:00",
+            "2026-05-04T10:00",
+        ),
+    )
+    .await
+    .expect("done job");
+    let missed = scheduling::create_schedule_commitment(
+        &db,
+        actor,
+        commit_input(
+            insert_candidate(&db, "work_order", wo_missed, "ready", 100.0).await,
+            team,
+            "2026-05-05T08:00",
+            "2026-05-05T11:00",
+        ),
+    )
+    .await
+    .expect("missed job");
+    crate::planning::weekly_schedule::freeze_weekly_schedule(&db, actor, week_ref(site, "2026-05-04", None))
+        .await
+        .expect("frozen");
+
+    // The first job's work is finished inside the week; the second never is.
+    exec_sql(
+        &db,
+        &format!("UPDATE work_orders SET mechanically_completed_at = '2026-05-06T12:00:00Z' WHERE id = {wo_done}"),
+    )
+    .await;
+    // An emergency job enters the frozen week (an `insert` break-in) …
+    let (wo_urgent, _) = create_planning_wo(&db, "KPI urgent").await;
+    let mut urgent = commit_input(
+        insert_candidate(&db, "work_order", wo_urgent, "ready", 100.0).await,
+        team,
+        "2026-05-07T08:00",
+        "2026-05-07T09:00",
+    );
+    urgent.frozen_week_break_in = Some(crate::planning::domain::CommitBreakIn {
+        reason: "emergency".to_string(),
+        approved_by_user_id: None,
+        dangerous_override_reason: Some("Line stopped".to_string()),
+    });
+    let urgent = scheduling::create_schedule_commitment(&db, actor, urgent)
+        .await
+        .expect("break-in");
+    // … and the missed job is moved inside the week after the freeze (displaced).
+    let rv = scalar(
+        &db,
+        &format!("SELECT row_version FROM schedule_commitments WHERE id = {}", missed.id),
+    )
+    .await;
+    scheduling::create_schedule_break_in(
+        &db,
+        actor,
+        CreateScheduleBreakInInput {
+            schedule_commitment_id: missed.id,
+            expected_commitment_row_version: rv,
+            break_in_reason: "other".to_string(),
+            approved_by_user_id: None,
+            new_slot_start: local("2026-05-06T08:00"),
+            new_slot_end: local("2026-05-06T11:00"),
+            new_assigned_team_id: Some(team),
+            new_assigned_personnel_id: None,
+            clear_assignee: None,
+            bypass_availability: Some(false),
+            override_reason: None,
+            acknowledged_assignee_issues: Vec::new(),
+            dangerous_override_reason: None,
+        },
+    )
+    .await
+    .expect("moved");
+
+    let hours = |id: i64| {
+        let db = db.clone();
+        async move {
+            db.query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                format!(
+                    "SELECT COALESCE(planned_labor_hours, (julianday(committed_end) - julianday(committed_start)) * 24.0) AS h \
+                       FROM schedule_commitments WHERE id = {id}"
+                ),
+            ))
+            .await
+            .expect("query")
+            .expect("row")
+            .try_get::<f64>("", "h")
+            .expect("h")
+        }
+    };
+    let (h_done, h_missed, h_urgent) = (hours(done.id).await, hours(missed.id).await, hours(urgent.id).await);
+    let round = |v: f64| (v * 10.0).round() / 10.0;
+
+    let filter = crate::planning::kpis::PlanningKpiFilter {
+        site_id: Some(site),
+        from_day: "2026-05-01".to_string(),
+        to_day: "2026-05-09".to_string(),
+        exclude_unapproved: false,
+    };
+    // During the week: loading and break-ins, compliance not judged yet.
+    let during = crate::planning::kpis::planning_kpis(&db, &filter, utc_at("2026-05-06T15:00"))
+        .await
+        .expect("kpis");
+    assert_eq!(during.weeks.len(), 1);
+    assert_eq!(during.weeks[0].compliance_pct, None, "not judged before the week ends");
+
+    let kpis = crate::planning::kpis::planning_kpis(&db, &filter, utc_at("2026-05-20T09:00"))
+        .await
+        .expect("kpis");
+    let week = &kpis.weeks[0];
+    assert_eq!(week.week_start, "2026-05-03");
+    assert_eq!(
+        week.baseline_jobs, 2,
+        "the baseline holds the two jobs frozen with the week"
+    );
+    assert_eq!(week.baseline_hours, round(h_done + h_missed));
+    assert_eq!(week.done_hours, Some(round(h_done)));
+    assert_eq!(week.compliance_pct, Some(round(h_done / (h_done + h_missed) * 100.0)));
+    assert_eq!(week.break_in_jobs, 1);
+    assert_eq!(week.break_in_hours, round(h_urgent));
+    assert_eq!(week.break_in_pct, Some(round(h_urgent / (h_done + h_missed) * 100.0)));
+    assert_eq!(week.displaced_jobs, 1);
+    assert!(week.available_hours > 0.0, "{week:?}");
+    assert_eq!(
+        week.loading_pct,
+        Some(round((h_done + h_missed) / week.available_hours * 100.0)),
+        "{week:?}"
+    );
+    assert!(!week.awaiting_approval, "frozen by a planner: approved");
+    assert_eq!(kpis.totals.weeks_judged, 1);
+    assert_eq!(kpis.totals.compliance_pct, week.compliance_pct);
+
+    // Analytics, the home dashboard and the monthly report read the same number.
+    let ratio = crate::analytics::smrp::schedule_compliance(
+        &db,
+        crate::analytics::smrp::SmrpWindow {
+            from: utc_at("2026-05-01T00:00"),
+            to: utc_at("2026-05-20T00:00"),
+        },
+        utc_at("2026-05-20T09:00"),
+        None,
+    )
+    .await
+    .expect("smrp");
+    assert_eq!(round(ratio.numerator), round(h_done));
+    assert_eq!(round(ratio.denominator), round(h_done + h_missed));
+}
+
+#[tokio::test]
+async fn weeks_frozen_without_approval_are_flagged_and_can_be_left_out() {
+    let db = setup_db().await;
+    let (site, _team) = weekly_site(&db, "U").await;
+    crate::planning::weekly_schedule::auto_freeze_due(&db, utc_at("2026-05-08T00:30"))
+        .await
+        .expect("tick");
+    let filter = |exclude: bool| crate::planning::kpis::PlanningKpiFilter {
+        site_id: Some(site),
+        from_day: "2026-05-01".to_string(),
+        to_day: "2026-05-16".to_string(),
+        exclude_unapproved: exclude,
+    };
+    let all = crate::planning::kpis::planning_kpis(&db, &filter(false), utc_at("2026-05-08T01:00"))
+        .await
+        .expect("kpis");
+    assert!(all.weeks.iter().all(|w| w.awaiting_approval), "{:?}", all.weeks);
+    assert_eq!(all.totals.weeks_awaiting_approval, all.totals.weeks);
+    assert!(all.totals.weeks >= 1);
+    let approved_only = crate::planning::kpis::planning_kpis(&db, &filter(true), utc_at("2026-05-08T01:00"))
+        .await
+        .expect("kpis");
+    assert!(approved_only.weeks.is_empty());
+}
+
+/// Hours a commitment weighs in the KPIs (its planned labour, else its slot length), rounded.
+async fn kpi_hours(db: &DatabaseConnection, commitment_id: i64) -> f64 {
+    let h: f64 = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT COALESCE(planned_labor_hours, (julianday(committed_end) - julianday(committed_start)) * 24.0) AS h \
+                   FROM schedule_commitments WHERE id = {commitment_id}"
+            ),
+        ))
+        .await
+        .expect("query")
+        .expect("row")
+        .try_get("", "h")
+        .expect("h");
+    (h * 10.0).round() / 10.0
+}
+
+#[tokio::test]
+async fn released_and_cancelled_baseline_jobs_are_not_done_and_a_reopened_week_stays_measured() {
+    let db = setup_db().await;
+    let (site, team) = weekly_site(&db, "R").await;
+    let (other_site, _) = weekly_site(&db, "R2").await;
+    // The site sits under a plant node: compliance scoped to the plant includes it.
+    exec_sql(
+        &db,
+        "INSERT INTO org_nodes (entity_sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status,
+            created_at, updated_at, row_version, structure_model_id)
+         SELECT 'wk-plant-R', 'WK-PLANT-R', 'Plant R', node_type_id, NULL, '/', 0, 'active',
+                '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 1, structure_model_id
+           FROM org_nodes WHERE entity_sync_id = 'wk-node-R'",
+    )
+    .await;
+    let plant = scalar(&db, "SELECT id FROM org_nodes WHERE entity_sync_id = 'wk-plant-R'").await;
+    exec_sql(
+        &db,
+        &format!("UPDATE org_nodes SET parent_id = {plant} WHERE id = {site}"),
+    )
+    .await;
+
+    let planner = ensure_personnel_with_rate(&db, "PLN-WK-R").await;
+    ensure_approver_user(&db, 58, planner).await;
+    let mut jobs = Vec::new();
+    for (title, day) in [
+        ("KPI R done", "2026-05-04"),
+        ("KPI R released", "2026-05-05"),
+        ("KPI R cancelled", "2026-05-06"),
+    ] {
+        let (wo, actor) = create_planning_wo(&db, title).await;
+        let commitment = scheduling::create_schedule_commitment(
+            &db,
+            actor,
+            commit_input(
+                insert_candidate(&db, "work_order", wo, "ready", 100.0).await,
+                team,
+                &format!("{day}T08:00"),
+                &format!("{day}T10:00"),
+            ),
+        )
+        .await
+        .expect("job");
+        jobs.push((wo, commitment.id));
+    }
+    crate::planning::weekly_schedule::freeze_weekly_schedule(&db, 1, week_ref(site, "2026-05-04", None))
+        .await
+        .expect("frozen");
+    // Every work order is finished inside the week, but: the second job's slot was released
+    // (scheduled, then given back) and the third work order was cancelled.
+    for (wo, _) in &jobs {
+        exec_sql(
+            &db,
+            &format!("UPDATE work_orders SET mechanically_completed_at = '2026-05-06T12:00:00Z' WHERE id = {wo}"),
+        )
+        .await;
+    }
+    exec_sql(
+        &db,
+        &format!(
+            "UPDATE schedule_commitments SET status = 'released' WHERE id = {}",
+            jobs[1].1
+        ),
+    )
+    .await;
+    exec_sql(
+        &db,
+        &format!(
+            "UPDATE work_orders SET cancelled_at = '2026-05-06T13:00:00Z' WHERE id = {}",
+            jobs[2].0
+        ),
+    )
+    .await;
+    let h_done = kpi_hours(&db, jobs[0].1).await;
+    let h_all = h_done + kpi_hours(&db, jobs[1].1).await + kpi_hours(&db, jobs[2].1).await;
+
+    let filter = crate::planning::kpis::PlanningKpiFilter {
+        site_id: Some(site),
+        from_day: "2026-05-03".to_string(),
+        to_day: "2026-05-03".to_string(),
+        exclude_unapproved: false,
+    };
+    let now = utc_at("2026-05-20T09:00");
+    let kpis = crate::planning::kpis::planning_kpis(&db, &filter, now)
+        .await
+        .expect("kpis");
+    let week = &kpis.weeks[0];
+    assert_eq!(week.baseline_jobs, 3);
+    assert_eq!(week.baseline_released_jobs, 1);
+    assert_eq!(
+        week.done_hours,
+        Some(h_done),
+        "a released job and a cancelled work order are not done, even with the work finished"
+    );
+    assert!(!week.reopened);
+
+    // Compliance scoped by organisation: the plant above the site includes it, another site not.
+    let window = |org: Option<i64>| {
+        let db = db.clone();
+        async move {
+            crate::planning::kpis::baseline_schedule_compliance(
+                &db,
+                utc_at("2026-05-01T00:00"),
+                utc_at("2026-05-20T00:00"),
+                org,
+                now,
+            )
+            .await
+            .expect("compliance")
+        }
+    };
+    let under_plant = window(Some(plant)).await;
+    assert_eq!(under_plant.weeks, 1);
+    assert_eq!((under_plant.done_hours * 10.0).round() / 10.0, h_done);
+    assert_eq!(
+        (under_plant.baseline_hours * 10.0).round() / 10.0,
+        (h_all * 10.0).round() / 10.0
+    );
+    assert_eq!(under_plant.released_jobs, 1);
+    assert_eq!(
+        window(Some(other_site)).await.weeks,
+        0,
+        "another site's scope leaves it out"
+    );
+
+    // Unfrozen for editing: still measured on its last baseline, flagged reopened.
+    let requested = crate::planning::weekly_schedule::request_unfreeze(
+        &db,
+        1,
+        crate::planning::weekly_schedule::UnfreezeRequestInput {
+            site_id: site,
+            day: "2026-05-04".to_string(),
+            expected_row_version: None,
+            reason: "Shutdown moved".to_string(),
+        },
+    )
+    .await
+    .expect("requested");
+    crate::planning::weekly_schedule::decide_unfreeze(
+        &db,
+        58,
+        crate::planning::weekly_schedule::UnfreezeDecisionInput {
+            site_id: site,
+            day: "2026-05-04".to_string(),
+            expected_row_version: requested.schedule.map(|s| s.row_version),
+            approve: true,
+            comment: None,
+        },
+    )
+    .await
+    .expect("unfrozen");
+    let reopened = crate::planning::kpis::planning_kpis(&db, &filter, now)
+        .await
+        .expect("kpis");
+    assert_eq!(reopened.weeks.len(), 1, "a reopened week does not drop out");
+    assert!(reopened.weeks[0].reopened);
+    assert_eq!(reopened.weeks[0].done_hours, Some(h_done));
+    assert_eq!(reopened.totals.weeks_reopened, 1);
+    assert_eq!(
+        reopened.totals.weeks_not_frozen, 0,
+        "it has a baseline: not counted as never frozen"
+    );
+    assert_eq!(window(Some(plant)).await.weeks, 1, "analytics keeps reading it");
+}
+
+#[tokio::test]
+async fn a_week_never_frozen_counts_once_its_freeze_falls_due_and_current_weeks_read_the_frozen_one() {
+    let db = setup_db().await;
+    let (site, _team) = weekly_site(&db, "NF").await;
+    let week = super::weekly::site_week(&db, site, day("2026-05-04"))
+        .await
+        .expect("week");
+    let due = crate::planning::weekly_schedule::freeze_due_at(&db, &week)
+        .await
+        .expect("due");
+    assert!(
+        due < utc_at("2026-05-03T00:00"),
+        "the freeze falls due before the week starts: {due}"
+    );
+    let filter = crate::planning::kpis::PlanningKpiFilter {
+        site_id: Some(site),
+        from_day: "2026-05-03".to_string(),
+        to_day: "2026-05-03".to_string(),
+        exclude_unapproved: false,
+    };
+    let not_frozen = |now: chrono::DateTime<chrono::Utc>| {
+        let db = db.clone();
+        let filter = filter.clone();
+        async move {
+            crate::planning::kpis::planning_kpis(&db, &filter, now)
+                .await
+                .expect("kpis")
+                .totals
+                .weeks_not_frozen
+        }
+    };
+    assert_eq!(not_frozen(due - chrono::Duration::minutes(1)).await, 0, "not due yet");
+    assert_eq!(
+        not_frozen(due).await,
+        1,
+        "due and never frozen, before the week even starts"
+    );
+
+    // Frozen: measured, no longer counted apart, and it is the site's current week.
+    crate::planning::weekly_schedule::freeze_weekly_schedule(&db, 1, week_ref(site, "2026-05-04", None))
+        .await
+        .expect("frozen");
+    assert_eq!(not_frozen(utc_at("2026-05-05T10:00")).await, 0);
+    let (current, sites) = crate::planning::kpis::current_weeks(&db, utc_at("2026-05-05T10:00"))
+        .await
+        .expect("current");
+    assert!(sites >= 1);
+    assert!(
+        current
+            .iter()
+            .any(|w| w.site_id == site && w.week_start == "2026-05-03"),
+        "{current:?}"
+    );
+    let (later, _) = crate::planning::kpis::current_weeks(&db, utc_at("2026-05-12T10:00"))
+        .await
+        .expect("current");
+    assert!(
+        !later.iter().any(|w| w.site_id == site),
+        "next week was never frozen: {later:?}"
+    );
+}
+
+#[tokio::test]
+async fn capacity_rule_edits_are_checked_and_a_stale_edit_is_refused_with_a_code() {
+    let db = setup_db().await;
+    let team_id = get_any_team_id(&db).await;
+    let rule = scheduling::create_capacity_rule(
+        &db,
+        CreateCapacityRuleInput {
+            entity_id: None,
+            team_id,
+            effective_start: "2026-07-01".to_string(),
+            effective_end: Some("2026-07-31".to_string()),
+            available_hours_per_day: Some(8.0),
+            max_overtime_hours_per_day: 2.0,
+        },
+    )
+    .await
+    .expect("rule");
+    let edit = |end: Option<&str>, clear: bool| crate::planning::domain::UpdateCapacityRuleInput {
+        effective_start: None,
+        effective_end: end.map(str::to_string),
+        clear_effective_end: clear,
+        available_hours_per_day: None,
+        max_overtime_hours_per_day: None,
+    };
+
+    let refused = scheduling::update_capacity_rule(&db, rule.id, rule.row_version, edit(Some("2026-06-30"), false))
+        .await
+        .expect_err("ends before it starts");
+    assert!(
+        format!("{refused:?}").contains("PLANNING_CAPACITY_RULE_END_BEFORE_START"),
+        "{refused:?}"
+    );
+
+    let open = scheduling::update_capacity_rule(&db, rule.id, rule.row_version, edit(None, true))
+        .await
+        .expect("end removed");
+    assert_eq!(open.effective_end, None, "the rule applies with no end again");
+    assert_eq!(open.row_version, rule.row_version + 1);
+
+    let stale = scheduling::update_capacity_rule(&db, rule.id, rule.row_version, edit(Some("2026-08-31"), false))
+        .await
+        .expect_err("read before the last edit");
+    assert!(
+        format!("{stale:?}").contains("PLANNING_CAPACITY_RULE_STALE"),
+        "{stale:?}"
+    );
 }

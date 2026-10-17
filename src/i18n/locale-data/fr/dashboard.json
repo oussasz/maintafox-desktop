@@ -218,27 +218,31 @@
         "prerequisites": "Prérequis"
       },
       "week": {
-        "title": "Semaine de travail du {{from}} au {{to}}",
-        "load": "Charge / capacité",
-        "overloaded": "Jours-équipe surchargés",
-        "hoursOf": "{{committed}} engagées sur {{capacity}}",
-        "noCapacity": "Aucune heure",
-        "noTeams": "Aucune équipe active : la capacité ne peut pas être calculée.",
-        "titleNoWeek": "Semaine de travail",
-        "ownSite": "Les sites n'ont pas la même semaine de travail : celle de votre site ({{site}}) est utilisée.",
+        "title": "Semaine du {{from}} au {{to}}",
+        "load": "Chargement",
+        "hoursOf": "{{baseline}} planifiées / {{available}} disponibles",
+        "noCapacity": "Aucune heure disponible",
+        "titleNoWeek": "Semaine en cours",
+        "overtime": "Heures sup. possibles",
+        "reliesOnOvertime": "Au-delà de 100 % : le planning de la semaine compte sur des heures supplémentaires.",
+        "awaitingApproval_one": "{{count}} semaine en cours gelée sans approbation.",
+        "awaitingApproval_other": "{{count}} semaines en cours gelées sans approbation.",
+        "sitesNotFrozen_one": "{{count}} site n'a pas de semaine en cours gelée : il n'est pas compté.",
+        "sitesNotFrozen_other": "{{count}} sites n'ont pas de semaine en cours gelée : ils ne sont pas comptés.",
         "unavailable": {
-          "WORK_WEEK_NOT_CONFIGURED": "Aucune semaine de travail n'est définie (Données de référence → Calendrier) : la charge de la semaine ne peut pas être calculée.",
-          "WORK_WEEK_SITE_AMBIGUOUS": "Les sites n'ont pas la même semaine de travail et votre compte n'est relié à aucun site qui en définit une : la charge de la semaine n'est pas calculée. Reliez votre compte à une fiche du personnel et à son site.",
-          "WORK_WEEK_NO_REST_DAY": "La semaine de travail n'a aucun jour de repos : aucun jour ne la commence. Corrigez-la dans Données de référence → Calendrier.",
-          "WORK_WEEK_SPLIT_REST": "Les jours de repos de la semaine ne se suivent pas : aucun jour unique ne la commence. Corrigez-la dans Données de référence → Calendrier."
+          "WEEK_NO_PLANNING_SITE": "Aucun site de planification n'a d'équipe : il n'y a pas de semaine à charger.",
+          "WEEK_NOT_FROZEN": "La semaine en cours n'est gelée sur aucun site : le chargement se mesure sur la référence gelée."
         }
       },
       "compliance": {
         "title": "Respect du planning",
         "value": "Respect (heures)",
-        "hint": "{{done}} réalisées sur {{scheduled}} engagées, {{count}} derniers jours",
-        "none_one": "Aucun engagement planifié ne s'est terminé le dernier jour.",
-        "none_other": "Aucun engagement planifié ne s'est terminé ces {{count}} derniers jours."
+        "hint": "{{done}} réalisées sur {{scheduled}} planifiées, {{count}} derniers jours",
+        "released_one": "{{count}} travail de la référence a ensuite été libéré ou annulé (compté non réalisé).",
+        "released_other": "{{count}} travaux de la référence ont ensuite été libérés ou annulés (comptés non réalisés).",
+        "unavailable": {
+          "NO_FROZEN_BASELINE": "Aucune semaine gelée ne s'est terminée sur la période : le respect du planning se mesure sur la référence gelée."
+        }
       }
     },
     "supervision": {
@@ -345,9 +349,8 @@
       "unread": "Notifications de votre boîte non lues (le chiffre de la cloche).",
       "backlogReady": "Travaux du tableau de planification sans blocage.",
       "backlogBlocked": "Travaux du tableau de planification ayant au moins un blocage (pièces, compétences, permis, créneaux, prérequis).",
-      "weekLoad": "Heures de main-d'œuvre engagées sur la semaine de travail du site (du lendemain des jours de repos, Données de référence → Calendrier) ÷ heures disponibles + heures supplémentaires des équipes actives, sur la semaine entière (jamais une moyenne de ratios journaliers).",
-      "weekOverloaded": "Jours-équipe de la semaine dont les heures engagées dépassent les heures disponibles (y compris les jours sans aucune heure).",
-      "scheduleCompliance": "Indicateur SMRP : heures engagées dont l'OT a été réalisé au plus tard le jour engagé ÷ heures engagées, pour les engagements finissant dans la période. Période : les N derniers jours, aujourd'hui compris.",
+      "weekLoad": "Heures planifiées dans la référence gelée de la semaine en cours de chaque site (Planification → programme hebdomadaire) ÷ heures disponibles des équipes du site sur la semaine (classes horaires, calendrier du site, absences), sans le plafond d'heures supplémentaires. Même définition que les indicateurs du planning.",
+      "scheduleCompliance": "Indicateur SMRP : heures de la référence gelée des semaines terminées dans la période dont le travail a été réalisé avant la fin de sa semaine ÷ heures de la référence. Un travail de la référence ensuite libéré ou annulé compte comme non réalisé. Période : les N derniers jours, aujourd'hui inclus.",
       "slaBreached": "Demandes ouvertes dont un délai (réponse ou résolution) est dépassé, temps en pause exclu (même règle que les listes DI).",
       "slaAtRisk": "Demandes ouvertes ayant atteint le seuil d'escalade sans avoir dépassé le délai.",
       "slaPaused": "Demandes ouvertes en attente du demandeur ou reportées : le délai est suspendu.",
@@ -367,7 +370,8 @@
       "diOpenByStatus": "Demandes ni clôturées ni transformées en OT, par statut, avec leur âge moyen depuis la soumission (le chiffre de la page DI).",
       "chartDi": "Demandes soumises ce jour-là.",
       "chartWo": "OT clôturés ce jour-là.",
-      "chartPm": "Occurrences de MP dues ce jour-là, annulées exclues."
+      "chartPm": "Occurrences de MP dues ce jour-là, annulées exclues.",
+      "weekOvertime": "Heures supplémentaires que la planification peut encore ajouter sur la semaine (plafond d'heures supplémentaires des équipes). Au-delà de 100 %, le planning compte sur elles."
     },
     "more_one": "+{{count}} autre — liste complète dans le module",
     "more_other": "+{{count}} autres — liste complète dans le module"

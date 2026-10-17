@@ -1,5 +1,6 @@
 import {
   Bell,
+  CalendarCheck,
   CalendarDays,
   CalendarRange,
   ChevronDown,
@@ -22,6 +23,7 @@ import { AssigneeCapacityDetails } from "@/components/planning/AssigneeCapacityD
 import { BreakInDialog } from "@/components/planning/BreakInDialog";
 import { CommitDialog } from "@/components/planning/CommitDialog";
 import { CommitmentInspectorDialog } from "@/components/planning/CommitmentInspectorDialog";
+import { CrewsWithoutSiteBanner } from "@/components/planning/CrewsWithoutSiteBanner";
 import { FreezeConfirmDialog } from "@/components/planning/FreezeConfirmDialog";
 import { OverrideReasonDialog } from "@/components/planning/OverrideReasonDialog";
 import { PlanningBacklogRail } from "@/components/planning/PlanningBacklogRail";
@@ -29,6 +31,7 @@ import { PlanningBoard } from "@/components/planning/PlanningBoard";
 import { PlanningCalendarView } from "@/components/planning/PlanningCalendarView";
 import { PlanningWindowDetailDialog } from "@/components/planning/PlanningWindowDetailDialog";
 import { ProductionWindowDialog } from "@/components/planning/ProductionWindowDialog";
+import { WeeklySchedulePanel } from "@/components/planning/WeeklySchedulePanel";
 import {
   addDaysIso,
   candidateDisplayCode,
@@ -51,6 +54,7 @@ import {
   type PlanningBoardScope,
   type PlanningPageView,
   isAssigneeOverridableError,
+  overridableCodes,
 } from "@/components/planning/planning-model";
 import { useAssigneeCapacity } from "@/components/planning/use-assignee-capacity";
 import { Badge } from "@/components/ui/badge";
@@ -72,13 +76,17 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { mfLayout } from "@/design-system/tokens";
+import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
+import { useToast } from "@/hooks/use-toast";
+import { appErrorText } from "@/lib/app-error";
 import { formatPersonLabel } from "@/lib/display";
 import { listActiveTeams, listPersonnel } from "@/services/personnel-service";
+import { cancelScheduleCommitment, releaseScheduleCommitment } from "@/services/planning-service";
 import { listUsers } from "@/services/rbac-service";
 import { useSessionStore } from "@/store/session-store";
 import { usePlanningStore } from "@/stores/planning-store";
-import { extractIpcValidationDetails, toErrorMessage } from "@/utils/errors";
+import { extractIpcValidationDetails } from "@/utils/errors";
 import type {
   CreateScheduleBreakInInput,
   CreateScheduleCommitmentInput,
@@ -86,6 +94,7 @@ import type {
   PlanningWindow,
   RescheduleCommitmentInput,
   ScheduleCandidate,
+  ScheduleCommitment,
 } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -105,6 +114,10 @@ export function PlanningPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const { can } = usePermissions();
+  const { toast } = useToast();
+  const { formatDateTime } = useFormatters();
+  /** Confirms a planning action that went through (failures already have their toast). */
+  const done = (key: string) => toast({ title: t(`feedback.${key}`), variant: "success" });
 
   const backlog = usePlanningStore((s) => s.backlog);
   const commitments = usePlanningStore((s) => s.commitments);
@@ -289,7 +302,7 @@ export function PlanningPage() {
         setBoardScope({ kind: "all" });
         writeStoredBoardScope(userId, { kind: "all" });
       } catch (err) {
-        setPageError(toErrorMessage(err));
+        setPageError(appErrorText(err));
       }
     })();
   }, []);
@@ -464,10 +477,11 @@ export function PlanningPage() {
     setPageError(null);
     try {
       await createCommitment(input);
+      done("committed");
       await refreshBacklog();
       await reloadBoard();
     } catch (err) {
-      setPageError(toErrorMessage(err));
+      setPageError(appErrorText(err));
       throw err;
     }
   }
@@ -478,13 +492,13 @@ export function PlanningPage() {
       await rescheduleCommitment(input);
       await reloadBoard();
     } catch (err) {
-      const text = toErrorMessage(err);
+      const text = appErrorText(err);
       const codes = extractIpcValidationDetails(err).map((d) => d.code);
-      const assigneeCodes = codes.filter((c) => c.startsWith("PLANNING_ASSIGNEE_"));
+      const assigneeCodes = overridableCodes(codes);
       const acknowledged = input.acknowledged_assignee_issues ?? [];
       const unacknowledged = assigneeCodes.some((c) => !acknowledged.includes(c));
       if (
-        isAssigneeOverridableError(codes, text) &&
+        isAssigneeOverridableError(codes) &&
         (!input.allow_double_booking_override || unacknowledged)
       ) {
         const pending = { input, needsOverride: true, codes: assigneeCodes };
@@ -530,9 +544,10 @@ export function PlanningPage() {
     setPageError(null);
     try {
       await createPlanningWindow(input);
+      done("windowCreated");
       await reloadBoard();
     } catch (err) {
-      setPageError(toErrorMessage(err));
+      setPageError(appErrorText(err));
       throw err;
     }
   }
@@ -541,11 +556,29 @@ export function PlanningPage() {
     setPageError(null);
     try {
       await createBreakIn(input);
+      done("breakInRecorded");
       await reloadBoard();
     } catch (err) {
-      setPageError(toErrorMessage(err));
+      setPageError(appErrorText(err));
       throw err;
     }
+  }
+
+  /** Releases (gives the slot back, the job returns to the backlog) or cancels a committed slot. */
+  async function handleEndCommitment(
+    commitment: ScheduleCommitment,
+    to: "released" | "cancelled",
+    reason: string,
+  ) {
+    const input = {
+      commitment_id: commitment.id,
+      expected_row_version: commitment.row_version,
+      reason,
+    };
+    await (to === "released" ? releaseScheduleCommitment(input) : cancelScheduleCommitment(input));
+    done(to === "released" ? "slotReleased" : "commitmentCancelled");
+    setInspectorOpen(false);
+    await Promise.all([loadBacklog(), reloadBoard()]);
   }
 
   async function handleFreeze(reason: string) {
@@ -556,9 +589,10 @@ export function PlanningPage() {
         period_end: periodEndIso,
         reason,
       });
+      done("periodFrozen");
       await reloadBoard();
     } catch (err) {
-      setPageError(toErrorMessage(err));
+      setPageError(appErrorText(err));
       throw err;
     }
   }
@@ -572,8 +606,9 @@ export function PlanningPage() {
         team_id: teamId,
         include_break_ins: true,
       });
+      done("teamsNotified");
     } catch (err) {
-      setPageError(toErrorMessage(err));
+      setPageError(appErrorText(err));
     }
   }
 
@@ -582,7 +617,7 @@ export function PlanningPage() {
       <div className={mfLayout.moduleHeader}>
         <div className={mfLayout.moduleTitleRow}>
           <CalendarRange className={mfLayout.moduleHeaderIcon} aria-hidden />
-          <h1 className={mfLayout.moduleTitle}>{t("page.title", "Planning")}</h1>
+          <h1 className={mfLayout.moduleTitle}>{t("page.title")}</h1>
           <Badge variant="secondary" className="text-xs">
             {backlog?.candidate_count ?? commitments.length}
           </Badge>
@@ -676,6 +711,15 @@ export function PlanningPage() {
               title={t("views.calendar")}
             >
               <CalendarDays className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              variant={pageView === "week" ? "default" : "ghost"}
+              size="sm"
+              className={mfLayout.viewToggleButton}
+              onClick={() => selectPageView("week")}
+              title={t("views.week")}
+            >
+              <CalendarCheck className="h-3.5 w-3.5" />
             </Button>
           </div>
 
@@ -821,6 +865,8 @@ export function PlanningPage() {
         </div>
       )}
 
+      <CrewsWithoutSiteBanner />
+
       {(pageError || storeError) && (
         <div className="border-b border-destructive/20 bg-destructive/5 px-6 py-2 text-sm text-destructive">
           {pageError ?? storeError}
@@ -876,11 +922,13 @@ export function PlanningPage() {
                 onReschedule={handleBoardReschedule}
                 loading={loading && !ganttSnapshot}
                 error={null}
-                canDrag
+                canDrag={can(P.PLAN_CONFIRM)}
                 laneMode={boardScope.kind === "all" ? "crew" : "technician"}
                 remountKey={`${dateFrom}_${dateTo}_${boardScope.kind === "all" ? "all" : boardScope.teamId}`}
                 maxZoom={PLANNING_TIMELINE_MAX_ZOOM_MS}
               />
+            ) : pageView === "week" ? (
+              <WeeklySchedulePanel />
             ) : (
               <PlanningCalendarView
                 key={`planning-calendar-${calendarSessionKey}`}
@@ -926,6 +974,7 @@ export function PlanningPage() {
         visibleEnd={visibleEnd}
         saving={saving}
         onSubmit={handleCreateCommitment}
+        approvers={approvers}
       />
       <ProductionWindowDialog
         open={windowOpen}
@@ -952,8 +1001,8 @@ export function PlanningPage() {
       <FreezeConfirmDialog
         open={freezeOpen}
         onOpenChange={setFreezeOpen}
-        periodStartLabel={new Date(periodStartIso).toLocaleString()}
-        periodEndLabel={new Date(periodEndIso).toLocaleString()}
+        periodStartLabel={formatDateTime(periodStartIso)}
+        periodEndLabel={formatDateTime(periodEndIso)}
         saving={saving}
         onConfirm={handleFreeze}
       />
@@ -966,12 +1015,17 @@ export function PlanningPage() {
         onLoadChangeLog={(id) => {
           void loadChangeLog(id);
         }}
-        onRequestBreakIn={() => {
-          setInspectorOpen(false);
-          setBreakInCommitmentId(selectedCommitment?.id ?? null);
-          setBreakInOpen(true);
-        }}
+        {...(can(P.PLAN_CONFIRM)
+          ? {
+              onRequestBreakIn: () => {
+                setInspectorOpen(false);
+                setBreakInCommitmentId(selectedCommitment?.id ?? null);
+                setBreakInOpen(true);
+              },
+            }
+          : {})}
         {...(pageView === "calendar" ? { onOpenOnBoard: handleOpenOnBoard } : {})}
+        {...(can(P.PLAN_CONFIRM) ? { onEndCommitment: handleEndCommitment } : {})}
       />
       <PlanningWindowDetailDialog
         open={windowDetailOpen}

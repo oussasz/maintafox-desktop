@@ -186,6 +186,10 @@ pub struct ScheduleCommitment {
     #[serde(default)]
     pub conflict_reasons_json: Option<String>,
     pub nearest_feasible_window: Option<String>,
+    /// `committed` | `released` | `cancelled` | `closed` (`planning::lifecycle`).
+    pub status: String,
+    pub status_reason: Option<String>,
+    pub status_changed_at: Option<String>,
     /// Labour hours the commitment books (`planning::load`); `None` for a commitment from before
     /// migration 205 without an estimate (its slot length then counts).
     #[serde(default)]
@@ -228,8 +232,11 @@ pub struct ScheduleBreakIn {
     pub approved_by_user_id: Option<i64>,
     pub approved_by_personnel_id: Option<i64>,
     pub override_reason: Option<String>,
-    pub old_slot_start: String,
-    pub old_slot_end: String,
+    /// `move`: a held slot moved (its old slot recorded); `insert`: new work entering a frozen
+    /// week (no old slot).
+    pub kind: String,
+    pub old_slot_start: Option<String>,
+    pub old_slot_end: Option<String>,
     pub new_slot_start: String,
     pub new_slot_end: String,
     pub old_assignee_id: Option<i64>,
@@ -345,7 +352,11 @@ pub struct CreateCapacityRuleInput {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateCapacityRuleInput {
     pub effective_start: Option<String>,
+    /// A new end; leave `None` to keep the current one (see `clear_effective_end`).
     pub effective_end: Option<String>,
+    /// The rule applies with no end again (an end date set by mistake is removed).
+    #[serde(default)]
+    pub clear_effective_end: bool,
     pub available_hours_per_day: Option<f64>,
     pub max_overtime_hours_per_day: Option<f64>,
 }
@@ -418,6 +429,18 @@ pub struct CreateScheduleCommitmentInput {
     /// each refusal must be listed, so a reason given for one never covers another.
     #[serde(default)]
     pub acknowledged_assignee_issues: Vec<String>,
+    /// Committing into a frozen week: only as a recorded break-in (`planning::weekly_schedule`).
+    #[serde(default)]
+    pub frozen_week_break_in: Option<CommitBreakIn>,
+}
+
+/// Why new work enters a frozen week, and the evidence an urgent reason needs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommitBreakIn {
+    /// A code of the COMPANY list `PLANNING.BREAK_IN_REASONS`.
+    pub reason: String,
+    pub approved_by_user_id: Option<i64>,
+    pub dangerous_override_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

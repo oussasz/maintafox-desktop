@@ -106,17 +106,26 @@ const planning = {
     truncated: false,
   },
   week: {
-    week_start: "2026-10-12",
-    week_end: "2026-10-18",
-    basis: { rest_days: [6, 7], scope: "all_sites", site_name: null },
-    teams: 2,
-    capacity_hours: 160,
-    committed_hours: 120,
+    week_start: "2026-10-11",
+    week_end: "2026-10-17",
+    sites: 1,
+    sites_not_frozen: 0,
+    baseline_hours: 120,
+    available_hours: 160,
+    overtime_hours: 16,
     load_pct: 75,
-    overloaded_team_days: 1,
+    relies_on_overtime: false,
+    weeks_awaiting_approval: 0,
   },
   week_unavailable: null,
-  schedule_compliance: { period_days: 7, scheduled_hours: 0, done_hours: 0, value_pct: null },
+  schedule_compliance: {
+    period_days: 7,
+    scheduled_hours: 0,
+    done_hours: 0,
+    released_jobs: 0,
+    value_pct: null,
+    unavailable: "NO_FROZEN_BASELINE",
+  },
 };
 
 const supervision = {
@@ -223,8 +232,8 @@ describe("home service", () => {
     await expect(getHomeMyWork()).rejects.toThrow();
   });
 
-  it("keeps a missing work week as its coded reason, never a guessed week", async () => {
-    const noWeek = { ...planning, week: null, week_unavailable: "WORK_WEEK_NOT_CONFIGURED" };
+  it("keeps a missing week as its coded reason, never a guessed week", async () => {
+    const noWeek = { ...planning, week: null, week_unavailable: "WEEK_NOT_FROZEN" };
     mockInvoke.mockResolvedValueOnce(noWeek);
     await expect(getHomePlanning(7)).resolves.toEqual(noWeek);
     mockInvoke.mockResolvedValueOnce({ ...planning, week: null, week_unavailable: "MONDAY" });
