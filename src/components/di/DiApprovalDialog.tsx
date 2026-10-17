@@ -372,9 +372,9 @@ export function DiApprovalDialog() {
 
           <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
             {/* Conversion notice — WO code is assigned only on convert */}
-            <div className="rounded-lg bg-green-50 border border-green-200 py-3 px-4 space-y-1">
-              <p className="text-center font-mono font-bold text-green-800">{di.code}</p>
-              <p className="text-center text-sm text-green-700">
+            <div className="rounded-lg bg-tone-success-bg border border-tone-success-border py-3 px-4 space-y-1">
+              <p className="text-center font-mono font-bold text-tone-success-fg">{di.code}</p>
+              <p className="text-center text-sm text-tone-success-fg">
                 {t("review.woCodeAssignedOnConvert")}
               </p>
             </div>
@@ -394,7 +394,7 @@ export function DiApprovalDialog() {
                   />
                   <Badge
                     variant="outline"
-                    className={`text-[10px] border-0 ml-auto ${DI_STATUS_STYLE[di.status] ?? "bg-gray-100"}`}
+                    className={`text-[10px] border-0 ml-auto ${DI_STATUS_STYLE[di.status] ?? "bg-tone-neutral-bg"}`}
                   >
                     {t(`status.${diStatusToI18nKey(di.status)}` as const)}
                   </Badge>
@@ -500,7 +500,7 @@ export function DiApprovalDialog() {
             {conversionResult?.woCode && !conversionResult.conversionError && (
               <div
                 role="status"
-                className="rounded-md bg-green-100 border border-green-300 px-4 py-3 text-sm text-green-800 flex items-center gap-2"
+                className="rounded-md bg-tone-success-bg border border-tone-success-border px-4 py-3 text-sm text-tone-success-fg flex items-center gap-2"
               >
                 <CheckCircle2 className="h-4 w-4 shrink-0" />
                 <span>
@@ -512,7 +512,7 @@ export function DiApprovalDialog() {
             {conversionResult?.conversionError && (
               <div
                 role="alert"
-                className="rounded-md bg-amber-100 border border-amber-300 px-4 py-3 text-sm text-amber-800 flex items-start gap-2"
+                className="rounded-md bg-tone-warning-bg border border-tone-warning-border px-4 py-3 text-sm text-tone-warning-fg flex items-start gap-2"
               >
                 <TriangleAlert className="h-4 w-4 shrink-0 mt-0.5" />
                 <div>
@@ -553,7 +553,7 @@ export function DiApprovalDialog() {
                   size="sm"
                   onClick={handleApproveClick}
                   disabled={saving}
-                  className="gap-1.5 bg-green-600 hover:bg-green-700 text-white"
+                  className="gap-1.5"
                 >
                   {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                   {t("action.approve")}
@@ -564,7 +564,7 @@ export function DiApprovalDialog() {
                   size="sm"
                   onClick={handleConvertClick}
                   disabled={saving}
-                  className="gap-1.5 bg-green-600 hover:bg-green-700 text-white"
+                  className="gap-1.5"
                 >
                   {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                   {t("review.convertToWo")}

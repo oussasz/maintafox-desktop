@@ -63,7 +63,6 @@ import { cn } from "@/lib/utils";
 import { getSlaStatus } from "@/services/di-conversion-service";
 import { useDiReviewStore } from "@/stores/di-review-store";
 import { useDiStore } from "@/stores/di-store";
-import { toErrorMessage } from "@/utils/errors";
 import { formatDate as formatDiDate, intlLocaleForLanguage } from "@/utils/format-date";
 import type {
   DiSlaStatus,
@@ -224,7 +223,7 @@ export function DiDetailDialog({
   const handlePrint = useCallback(() => {
     if (!di) return;
     setActionError(null);
-    printDiFiche(di).catch((err: unknown) => setActionError(toErrorMessage(err)));
+    printDiFiche(di).catch((err: unknown) => setActionError(describeAppError(err).title));
   }, [di]);
 
   const returned = useMemo(

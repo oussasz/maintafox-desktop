@@ -122,7 +122,7 @@ export function DiReviewTimeline({ diId }: DiReviewTimelineProps) {
                   : formatOrDash(null)}
               </div>
               {breached ? (
-                <div className="col-span-2 font-medium text-red-700">
+                <div className="col-span-2 font-medium text-tone-danger-fg">
                   {t("reviewTimeline.breachHint")}
                 </div>
               ) : null}

@@ -94,7 +94,7 @@ function RelatedDiPicker({
         onFocus={() => setOpen(true)}
         placeholder={t("close.relatedDiPlaceholder")}
         autoComplete="off"
-        className={error ? "border-red-500" : ""}
+        className={error ? "border-tone-danger-border" : ""}
       />
       {resolvedId != null && valueCode.trim() && (
         <p className="text-[11px] text-muted-foreground">
@@ -130,7 +130,7 @@ function RelatedDiPicker({
           ))}
         </div>
       )}
-      {error && <p className="text-[11px] text-red-600">{error}</p>}
+      {error && <p className="text-[11px] text-tone-danger-fg">{error}</p>}
       {exactMatch && resolvedId == null && (
         <Button
           type="button"
@@ -247,7 +247,7 @@ export function DiCloseDialog() {
 
           <div className="space-y-1.5">
             <Label>
-              {t("close.disposition")} <span className="text-red-500">*</span>
+              {t("close.disposition")} <span className="text-tone-danger-fg">*</span>
             </Label>
             <ReferenceCombobox
               referenceType="di.disposition"
@@ -276,7 +276,7 @@ export function DiCloseDialog() {
           <div className="space-y-1.5">
             <Label htmlFor="close-notes">
               {t("close.notes")}
-              {needsNotes && <span className="text-red-500"> *</span>}
+              {needsNotes && <span className="text-tone-danger-fg"> *</span>}
             </Label>
             <Textarea
               id="close-notes"
@@ -284,11 +284,11 @@ export function DiCloseDialog() {
               onChange={(e) => setNotes(e.target.value)}
               rows={3}
               maxLength={2000}
-              className={touched && needsNotes && !notes.trim() ? "border-red-500" : ""}
+              className={touched && needsNotes && !notes.trim() ? "border-tone-danger-border" : ""}
             />
           </div>
 
-          <div className="flex items-center gap-2 rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
+          <div className="flex items-center gap-2 rounded-md bg-tone-warning-bg border border-tone-warning-border px-3 py-2 text-xs text-tone-warning-fg">
             <AlertTriangle className="h-4 w-4 shrink-0" />
             <span>{t("close.warning")}</span>
           </div>

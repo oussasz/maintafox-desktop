@@ -45,6 +45,7 @@ import { PERMIT_STATUS_TONE, toneOf } from "@/design-system/tone";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useSession } from "@/hooks/use-session";
 import { useStepUp } from "@/hooks/use-step-up";
+import { describeAppError } from "@/lib/app-error";
 import { formatPersonLabel } from "@/lib/display";
 import { getSetting } from "@/services/settings-service";
 import {
@@ -60,7 +61,6 @@ import {
 } from "@/services/wo-closeout-service";
 import { evaluateWoCompletionGates } from "@/services/wo-service";
 import { useWoStore } from "@/stores/wo-store";
-import { toErrorMessage } from "@/utils/errors";
 import type { WoCompletionGate, WorkOrder } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -104,7 +104,7 @@ function ErrorBanner({ message }: { message: string }) {
 
 function SuccessBanner({ message }: { message: string }) {
   return (
-    <div className="flex items-center gap-2 rounded-md border border-green-500/50 bg-green-50 p-3 text-sm text-green-700">
+    <div className="flex items-center gap-2 rounded-md border border-tone-success-border bg-tone-success-bg p-3 text-sm text-tone-success-fg">
       <CheckCircle2 className="h-4 w-4 shrink-0" />
       <span>{message}</span>
     </div>
@@ -226,7 +226,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
         if (snap.service_cost > 0) setServiceCost(String(snap.service_cost));
       })
       .catch((err: unknown) => {
-        if (!cancelled) setDetailError(toErrorMessage(err));
+        if (!cancelled) setDetailError(describeAppError(err).title);
       });
     return () => {
       cancelled = true;
@@ -297,7 +297,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
         /* keep previous gates */
       }
     } catch (err) {
-      setDetailError(toErrorMessage(err));
+      setDetailError(describeAppError(err).title);
     } finally {
       setSavingDetails(false);
     }
@@ -342,7 +342,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
         setVerificationNotes("");
         await refreshActiveWo();
       })
-      .catch((err: unknown) => setVerificationError(toErrorMessage(err)))
+      .catch((err: unknown) => setVerificationError(describeAppError(err).title))
       .finally(() => setSavingVerification(false));
   }, [
     canEdit,
@@ -382,7 +382,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
         if (err instanceof CloseoutBlockingError) {
           setBlockingErrors(err.blockingErrors);
         } else {
-          setCloseError(toErrorMessage(err));
+          setCloseError(describeAppError(err).title);
         }
       })
       .finally(() => setClosing(false));
@@ -422,7 +422,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
         setReopenReason("");
         await refreshActiveWo();
       })
-      .catch((err: unknown) => setReopenError(toErrorMessage(err)))
+      .catch((err: unknown) => setReopenError(describeAppError(err).title))
       .finally(() => setReopening(false));
   }, [
     canEdit,
@@ -457,7 +457,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
         }
       })
       .catch((err: unknown) => {
-        if (!cancelled) setReopenWindowError(toErrorMessage(err));
+        if (!cancelled) setReopenWindowError(describeAppError(err).title);
       });
     return () => {
       cancelled = true;
@@ -769,9 +769,13 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
               <div className="flex gap-4">
                 {(
                   [
-                    { value: "pass", label: t("closeout.resultPass"), cls: "text-green-700" },
+                    { value: "pass", label: t("closeout.resultPass"), cls: "text-tone-success-fg" },
                     { value: "fail", label: t("closeout.resultFail"), cls: "text-destructive" },
-                    { value: "monitor", label: t("closeout.resultMonitor"), cls: "text-amber-600" },
+                    {
+                      value: "monitor",
+                      label: t("closeout.resultMonitor"),
+                      cls: "text-tone-warning-fg",
+                    },
                   ] as const
                 ).map(({ value, label, cls }) => (
                   <label key={value} className="flex cursor-pointer items-center gap-1.5">

@@ -44,7 +44,7 @@ export function WoDiManagementPanel() {
   }
 
   return (
-    <Card className="mx-4 mt-4 border-amber-200 bg-amber-50/30">
+    <Card className="mx-4 mt-4 border-tone-warning-border bg-tone-warning-bg">
       <button
         type="button"
         className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-medium"
@@ -85,7 +85,7 @@ export function WoDiManagementPanel() {
                 </span>
                 <Badge
                   variant="outline"
-                  className="text-[10px] border-0 bg-gray-100 text-gray-600 shrink-0"
+                  className="text-[10px] border-0 bg-tone-neutral-bg text-tone-neutral-fg shrink-0"
                 >
                   {t(`status.${wo.status_code ?? "draft"}`)}
                 </Badge>
@@ -102,10 +102,10 @@ export function WoDiManagementPanel() {
             ))}
           </div>
           {hiddenInPreview > 0 && (
-            <div className="border-t border-amber-200/60 bg-amber-50/40 px-4 py-2.5 text-center">
+            <div className="border-t border-tone-warning-border bg-tone-warning-bg px-4 py-2.5 text-center">
               <Link
                 to="/work-orders"
-                className="inline-flex items-center justify-center gap-1.5 text-xs font-medium text-amber-900/90 hover:text-amber-950 hover:underline"
+                className="inline-flex items-center justify-center gap-1.5 text-xs font-medium text-tone-warning-fg hover:underline"
               >
                 <ListTree className="h-3.5 w-3.5 shrink-0 opacity-80" />
                 {t("kanban.loadMore", { count: hiddenInPreview })}

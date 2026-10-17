@@ -194,7 +194,9 @@ function FindingRow({
   }, [onRefresh, repairKind, row.id, row.row_version]);
 
   const severityClass =
-    row.severity === "error" ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-900";
+    row.severity === "error"
+      ? "bg-tone-danger-bg text-tone-danger-fg"
+      : "bg-tone-warning-bg text-tone-warning-fg";
 
   return (
     <div className="rounded-md border border-surface-border p-2 text-xs space-y-2 bg-background">

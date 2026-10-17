@@ -86,7 +86,7 @@ export function WoContextMenu({
         {/* Start */}
         {canStart && onStart && (
           <DropdownMenuItem onClick={() => onStart(wo)} className="gap-2">
-            <Play className="h-3.5 w-3.5 text-green-600" />
+            <Play className="h-3.5 w-3.5 text-tone-success-fg" />
             {t("contextMenu.start")}
           </DropdownMenuItem>
         )}
@@ -94,7 +94,7 @@ export function WoContextMenu({
         {/* Complete */}
         {canComplete && onComplete && (
           <DropdownMenuItem onClick={() => onComplete(wo)} className="gap-2">
-            <CheckCircle className="h-3.5 w-3.5 text-amber-600" />
+            <CheckCircle className="h-3.5 w-3.5 text-tone-warning-fg" />
             {t("contextMenu.complete")}
           </DropdownMenuItem>
         )}
