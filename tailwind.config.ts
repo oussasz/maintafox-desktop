@@ -1,11 +1,40 @@
 import type { Config } from "tailwindcss";
 
+/**
+ * Colours defined as CSS variables cannot take Tailwind's `/<alpha>` modifier on their own (on
+ * Tailwind 3 `bg-muted/50`, `bg-tone-danger-bg/40` … generated no CSS at all). Each variable colour
+ * becomes a function: unmodified it stays `var(--x)`; with a modifier it is mixed with transparent
+ * (`color-mix`, supported by WebView2), so the theme switch keeps working.
+ */
+type ColorFn = (opts: { opacityValue?: string }) => string;
+type ColorTree = { [key: string]: string | ColorFn | ColorTree };
+
+export function cssVarColor(value: string): ColorFn {
+  return ({ opacityValue }) => {
+    if (opacityValue === undefined || opacityValue === "1" || !/^[0-9.]+$/.test(opacityValue)) {
+      return value;
+    }
+    const pct = Math.round(Number(opacityValue) * 1000) / 10;
+    return `color-mix(in srgb, ${value} ${pct}%, transparent)`;
+  };
+}
+
+function withAlpha(tree: ColorTree): ColorTree {
+  const out: ColorTree = {};
+  for (const [key, value] of Object.entries(tree)) {
+    if (typeof value === "string") out[key] = value.startsWith("var(") ? cssVarColor(value) : value;
+    else if (typeof value === "function") out[key] = value;
+    else out[key] = withAlpha(value);
+  }
+  return out;
+}
+
 export default {
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
   darkMode: "class",
   theme: {
     extend: {
-      colors: {
+      colors: withAlpha({
         /* ── Shadcn/ui semantic tokens (resolve via CSS custom properties) ── */
         background: "var(--background)",
         foreground: "var(--foreground)",
@@ -113,7 +142,8 @@ export default {
           success: "var(--text-success)",
           warning: "var(--text-warning)",
         },
-      },
+        // Colour functions are supported by Tailwind 3 but not described by its types.
+      }) as unknown as Record<string, string>,
       fontFamily: {
         sans: [
           "Inter",

@@ -177,7 +177,7 @@ export function SupportBundleDialog({ open, onClose }: Props) {
           {error && (
             <p
               role="alert"
-              className="rounded-lg bg-status-error/10 border border-status-error/30 p-3 text-sm text-status-error"
+              className="rounded-lg border border-tone-danger-border bg-tone-danger-bg p-3 text-sm text-tone-danger-fg"
             >
               {error}
             </p>

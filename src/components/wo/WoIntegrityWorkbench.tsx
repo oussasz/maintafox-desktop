@@ -91,7 +91,7 @@ export function WoIntegrityWorkbench() {
 
   return (
     <PermissionGate permission={P.INTEGRITY_REPAIR}>
-      <div className="border-b border-surface-border bg-surface-elevated/40 px-6 py-3">
+      <div className="border-b border-surface-border bg-surface-1/40 px-6 py-3">
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-2 min-w-0">
             <Shield className="h-4 w-4 text-text-muted shrink-0" />
@@ -212,7 +212,7 @@ function FindingRow({
           })}
         </span>
       </div>
-      <pre className="text-[10px] bg-surface-muted/50 p-2 rounded overflow-x-auto max-h-32">
+      <pre className="text-[10px] bg-surface-2/50 p-2 rounded overflow-x-auto max-h-32">
         {row.details_json}
       </pre>
       <div className="flex flex-wrap gap-2 items-end">

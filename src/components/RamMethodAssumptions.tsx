@@ -48,7 +48,7 @@ export function RamMethodAssumptions() {
       <p className="mb-3 text-xs text-fg-2">{t("ramAssumptions.disclaimer")}</p>
       <ul className="space-y-1">
         {BLOCKS.map((b) => (
-          <li key={b.id} className="rounded border border-border-1/60 bg-bg-0">
+          <li key={b.id} className="rounded border border-surface-border/60 bg-bg-0">
             <button
               type="button"
               className="flex w-full items-center justify-between px-2 py-1.5 text-left text-xs font-medium text-fg-1"

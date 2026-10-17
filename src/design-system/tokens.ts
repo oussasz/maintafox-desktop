@@ -260,8 +260,8 @@ export const mfVisualMetric = {
   unit: "font-mono text-sm font-medium text-text-muted",
   badge:
     "inline-flex shrink-0 items-center rounded-md px-1.5 py-0.5 font-mono text-[10px] font-medium tabular-nums text-text-secondary",
-  badgeUp: "bg-status-success/12 text-status-success",
-  badgeDown: "bg-status-danger/12 text-status-danger",
+  badgeUp: "bg-status-success/10 text-status-success",
+  badgeDown: "bg-status-danger/10 text-status-danger",
   vizWrap:
     "flex h-[3.25rem] min-h-[3.25rem] min-w-[7rem] flex-1 basis-[48%] items-center justify-center self-stretch",
   viz: "h-full w-full min-h-[3.25rem]",
@@ -339,7 +339,7 @@ export const mfPermissionDomainChip: Record<string, string> = {
   fin: "border border-green-500/35 bg-green-500/10 text-green-200",
   ins: "border border-purple-500/35 bg-purple-500/10 text-purple-200",
   cfg: "border border-surface-border bg-surface-3/70 text-text-secondary",
-  adm: "border border-red-500/40 bg-red-500/12 text-red-200",
+  adm: "border border-red-500/40 bg-red-500/10 text-red-200",
   cst: "border border-surface-border bg-surface-3/70 text-text-secondary",
 };
 

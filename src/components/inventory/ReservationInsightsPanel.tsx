@@ -78,7 +78,7 @@ export function ReservationInsightsPanel({ reservations }: ReservationInsightsPa
           </div>
           <div className="space-y-2">
             {group.rows.map((r) => (
-              <div key={r.id} className="rounded bg-surface-muted/40 p-2 text-sm">
+              <div key={r.id} className="rounded bg-surface-2/40 p-2 text-sm">
                 <div className="flex flex-wrap items-center gap-2">
                   <StatusChip
                     label={t(`detail.reservationStatuses.${r.status}`, { defaultValue: r.status })}

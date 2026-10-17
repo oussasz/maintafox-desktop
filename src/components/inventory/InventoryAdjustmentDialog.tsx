@@ -505,7 +505,7 @@ export function InventoryAdjustmentDialog({
 
           {currentStock != null && delta !== 0 && Number.isFinite(qtyNumber) ? (
             <div className="space-y-2">
-              <div className="rounded-md border border-surface-border bg-surface-muted/40 p-3 text-sm">
+              <div className="rounded-md border border-surface-border bg-surface-2/40 p-3 text-sm">
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-text-muted">{t("adjustStock.preview.current")}</span>
                   <span className="font-medium tabular-nums">{formatQty(currentStock)}</span>

@@ -71,7 +71,7 @@ export function StockImpactPreview({
   return (
     <div
       className={cn(
-        "rounded-md border border-surface-border bg-surface-muted/30 p-3 text-sm",
+        "rounded-md border border-surface-border bg-surface-2/30 p-3 text-sm",
         className,
       )}
     >
