@@ -10,6 +10,7 @@ import type {
   PermitTypeRecord,
   WorkPermitRecord,
 } from "@/services/permit-service";
+import { P } from "@shared/rbac/permissions.generated";
 
 // Resolve keys against the real English catalogues so a missing key fails the test.
 function lookup(catalog: unknown, key: string): string | undefined {
@@ -481,7 +482,7 @@ describe("PermitsPage", () => {
   });
 
   it("lets a permit issuer without Données de référence edit the types here", async () => {
-    perms.denied = new Set(["ref.view"]);
+    perms.denied = new Set<string>([P.REF_VIEW]);
     svc.listPermitTypes.mockResolvedValue([LOTO_TYPE]);
     renderPage();
     fireEvent.click(await screen.findByRole("button", { name: enPermits.actions.manageTypes }));

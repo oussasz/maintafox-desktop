@@ -6,6 +6,7 @@ import enCommon from "@/i18n/en/common.json";
 import enPermits from "@/i18n/locale-data/en/permits.json";
 import enReference from "@/i18n/locale-data/en/reference.json";
 import type { PermitTypeRecord } from "@/services/permit-service";
+import { P } from "@shared/rbac/permissions.generated";
 
 // Resolve keys against the real English catalogues so a missing key fails the test.
 function lookup(catalog: unknown, key: string): string | undefined {
@@ -81,7 +82,7 @@ const HOT_WORK: PermitTypeRecord = {
 describe("PermitTypesHost (Données de référence)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    perms.granted = new Set(["ptw.view", "ptw.issue"]);
+    perms.granted = new Set<string>([P.PTW_VIEW, P.PTW_ISSUE]);
     svc.listPermitTypes.mockResolvedValue([LOTO_TYPE, HOT_WORK]);
     svc.upsertPermitType.mockResolvedValue(HOT_WORK);
   });
@@ -118,7 +119,7 @@ describe("PermitTypesHost (Données de référence)", () => {
   });
 
   it("is read-only without the permit issuer right", async () => {
-    perms.granted = new Set(["ptw.view"]);
+    perms.granted = new Set<string>([P.PTW_VIEW]);
     render(<PermitTypesHost />);
     expect(await screen.findByText("Hot work")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: enPermits.actions.edit })).not.toBeInTheDocument();
