@@ -18,9 +18,11 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState } from "@/components/ui/data-state";
 import { Input } from "@/components/ui/input";
+import { mfInput } from "@/design-system/tokens";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
 import { describeAppError } from "@/lib/app-error";
+import { cn } from "@/lib/utils";
 import {
   type ConvertedQuantity,
   type UnitConversion,
@@ -32,7 +34,7 @@ import {
 import type { InventoryArticle, ReferenceValue } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
-const selectClass = "h-9 rounded-md border border-surface-border bg-surface-1 px-2 text-sm";
+const selectClass = cn(mfInput.nativeSelect, "h-9 w-auto");
 
 /** Positive finite number from a text field (comma or dot), or null. */
 export function parseFactor(raw: string): number | null {

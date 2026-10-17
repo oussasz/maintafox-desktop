@@ -252,6 +252,14 @@
     "emptyHint": "Aucune habilitation n'arrive à échéance sous {{count}} jours et aucune n'attend de vérification."
   },
   "sessions": {
+    "peopleRestricted": "Lire la liste du personnel demande le droit de consultation du personnel : ce choix n'est pas disponible pour vous.",
+    "belowPassMark": "Sous le seuil de réussite {{score}} : sera enregistré comme échoué",
+    "recordedAsFailedTitle": "Enregistré comme échoué",
+    "recordedAsFailed": "{{person}} : note {{score}}, sous le seuil de réussite {{passMark}}. Le résultat sera enregistré comme échoué (pas de certification).",
+    "recordAsFailed": "Enregistrer comme échoué",
+    "issueCertificateTitle": "Délivrer la certification ?",
+    "issueCertificate": "Enregistrer la réussite de {{person}} délivre la certification de cette session, valable pour sa durée prévue.",
+    "recordPassed": "Enregistrer la réussite",
     "title": "Sessions",
     "add": "Nouvelle session",
     "addTitle": "Nouvelle session de formation",

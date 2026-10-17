@@ -61,6 +61,15 @@ export function RatingScalesDialog({
     }));
 
   const levels = [...draft[kind]].sort((a, b) => b.score - a.score);
+  /** A threshold typed as text that is not a number: saving would keep the previous value. */
+  const badThreshold = Object.values(thresholdText).some((text) => {
+    const v = Number(text.replace(",", "."));
+    return text.trim() === "" || !Number.isFinite(v) || v < 0;
+  });
+  const emptyDefinition = (["severity", "occurrence", "detection"] as Kind[]).some((k) =>
+    draft[k].some((l) => l[labelKey].trim() === ""),
+  );
+  const blocked = badThreshold || emptyDefinition;
   return (
     <Dialog open={open} onOpenChange={(o) => !saving && onOpenChange(o)}>
       <DialogContent className="max-w-3xl">
@@ -68,6 +77,14 @@ export function RatingScalesDialog({
           <DialogTitle>{t("rams.scales.title")}</DialogTitle>
           <DialogDescription>{t("rams.scales.hint")}</DialogDescription>
         </DialogHeader>
+        {editable ? (
+          <p
+            role="note"
+            className="rounded-md border border-surface-border bg-surface-2 px-3 py-2 text-xs text-text-secondary"
+          >
+            {t("rams.scales.plantWide")}
+          </p>
+        ) : null}
         <div
           role="tablist"
           aria-label={t("rams.scales.title")}
@@ -140,10 +157,12 @@ export function RatingScalesDialog({
                           inputMode="decimal"
                           aria-label={t("rams.scales.thresholdOf", { score: l.score })}
                           value={thresholdText[l.score] ?? String(l.min_per_year ?? 0)}
-                          aria-invalid={
-                            thresholdText[l.score] != null &&
-                            !Number.isFinite(Number(thresholdText[l.score]?.replace(",", ".")))
-                          }
+                          aria-invalid={(() => {
+                            const text = thresholdText[l.score];
+                            if (text == null) return false;
+                            const v = Number(text.replace(",", "."));
+                            return text.trim() === "" || !Number.isFinite(v) || v < 0;
+                          })()}
                           onChange={(e) => {
                             const text = e.target.value;
                             setThresholdText((m) => ({ ...m, [l.score]: text }));
@@ -177,6 +196,11 @@ export function RatingScalesDialog({
             </tbody>
           </table>
         </div>
+        {editable && blocked ? (
+          <p role="alert" className="text-xs text-text-danger">
+            {badThreshold ? t("rams.scales.thresholdInvalid") : t("rams.scales.definitionRequired")}
+          </p>
+        ) : null}
         <DialogFooter className="gap-2">
           <Button
             variant="outline"
@@ -189,7 +213,7 @@ export function RatingScalesDialog({
           {editable ? (
             <Button
               className="h-11"
-              disabled={saving}
+              disabled={saving || blocked}
               onClick={async () => {
                 setSaving(true);
                 try {

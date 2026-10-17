@@ -699,7 +699,6 @@
         "basis": "Rank price {{price}} · lead time {{lead}} · risk {{risk}}",
         "unknown": "unknown",
         "title": "Supplier comparison",
-        "hint": "Composite rating combines price, lead time and supplier risk.",
         "ratingValue": "{{stars}} out of {{max}}",
         "columns": {
           "supplier": "Supplier",

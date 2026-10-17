@@ -52,8 +52,8 @@ const SIZE_MAP = {
 };
 
 const STATUS_COLORS: Record<string, string> = {
-  active: "bg-emerald-500",
-  idle: "bg-amber-400",
+  active: "bg-tone-success-fg",
+  idle: "bg-tone-warning-fg",
   offline: "bg-surface-3",
 };
 

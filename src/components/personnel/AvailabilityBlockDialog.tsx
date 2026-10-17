@@ -11,6 +11,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { mfInput } from "@/design-system/tokens";
+import { describeAppError } from "@/lib/app-error";
 import {
   createAvailabilityBlock,
   isAvailabilityOverlapConfirmError,
@@ -171,7 +173,7 @@ export function AvailabilityBlockDialog({
         setError(t("availability.form.errors.overlapConfirm"));
       } else {
         setOverlapConfirmPending(false);
-        setError(err instanceof Error ? err.message : String(err));
+        setError(describeAppError(err).title);
       }
     } finally {
       setSaving(false);
@@ -190,7 +192,7 @@ export function AvailabilityBlockDialog({
             <label className="text-sm">
               <span className="mb-1 block text-text-muted">{t("availability.form.personnel")}</span>
               <select
-                className="h-9 w-full rounded border bg-background px-2"
+                className={mfInput.nativeSelect}
                 value={personnelId ?? ""}
                 onChange={(e) => setPersonnelId(Number(e.target.value))}
               >
@@ -206,7 +208,7 @@ export function AvailabilityBlockDialog({
           <label className="text-sm">
             <span className="mb-1 block text-text-muted">{t("availability.form.blockType")}</span>
             <select
-              className="h-9 w-full rounded border bg-background px-2"
+              className={mfInput.nativeSelect}
               value={blockType}
               onChange={(e) => setBlockType(e.target.value)}
             >

@@ -7,12 +7,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
+import { describeAppError } from "@/lib/app-error";
 import {
   getWorkforceKpiReport,
   getWorkforceSkillsGapReport,
   getWorkforceSummaryReport,
 } from "@/services/personnel-service";
-import { toErrorMessage } from "@/utils/errors";
 import type {
   WorkforceKpiReport,
   WorkforceSkillsGapRow,
@@ -41,7 +41,7 @@ export function WorkforceReportPanel() {
       setKpi(nextKpi);
       setSkillsGap(nextSkills.slice(0, 8));
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(describeAppError(err).title);
     } finally {
       setLoading(false);
     }

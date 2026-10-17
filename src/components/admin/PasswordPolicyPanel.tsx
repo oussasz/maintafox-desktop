@@ -164,7 +164,7 @@ export function PasswordPolicyPanel() {
         </div>
 
         {error && <p className="text-sm text-status-danger">{error}</p>}
-        {success && <p className="text-sm text-emerald-600">{t("passwordPolicy.saved")}</p>}
+        {success && <p className="text-sm text-tone-success-fg">{t("passwordPolicy.saved")}</p>}
 
         <button type="submit" disabled={saving} className="btn-primary text-sm">
           {saving ? t("passwordPolicy.saving") : t("passwordPolicy.save")}
@@ -253,7 +253,7 @@ export function LockoutPolicyPanel() {
           onChange={(v) => setPolicy({ ...policy, progressive: v })}
         />
         {error && <p className="text-sm text-status-danger">{error}</p>}
-        {success && <p className="text-sm text-emerald-600">{t("lockoutPolicy.saved")}</p>}
+        {success && <p className="text-sm text-tone-success-fg">{t("lockoutPolicy.saved")}</p>}
         <button type="submit" disabled={saving} className="btn-primary text-sm">
           {saving ? t("passwordPolicy.saving") : t("lockoutPolicy.save")}
         </button>

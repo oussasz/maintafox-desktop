@@ -4215,6 +4215,10 @@ export interface DiListFilter {
   disposition_code?: string | null;
   /** Work queue; `mine` is always the signed-in user's requests. */
   queue?: DiQueue | null;
+  /** Only open requests: the "open DI" count's rule (`di::stats::OPEN_SQL`). */
+  open_only?: boolean | null;
+  /** Only open requests submitted at least this many days ago (the overdue figure uses 7). */
+  waiting_days?: number | null;
   limit: number;
   offset: number;
 }
@@ -5270,6 +5274,10 @@ export interface WoListFilter {
   search?: string | null;
   date_from?: string | null;
   date_to?: string | null;
+  /** Only work still ahead: the "open OT" count's rule (`wo::backlog::OPEN_STATUS_SQL`). */
+  open_only?: boolean | null;
+  /** Only overdue work: the "overdue OT" count's rule (`wo::backlog::WO_OVERDUE_SQL`). */
+  overdue_only?: boolean | null;
   limit: number;
   offset: number;
 }

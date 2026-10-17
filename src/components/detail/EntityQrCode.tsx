@@ -28,8 +28,8 @@ import {
 } from "@/components/ui/toast";
 import { isExportCancelled, revealInFolder } from "@/export";
 import { useToast } from "@/hooks/use-toast";
+import { describeAppError } from "@/lib/app-error";
 import { getActivationLicenseMetadata } from "@/services/product-license-service";
-import { toErrorMessage } from "@/utils/errors";
 import type { PermissionName } from "@shared/rbac/permissions.generated";
 
 export interface EntityQrCodeProps {
@@ -168,7 +168,7 @@ export function EntityQrCode({
       }
     } catch (err) {
       if (isExportCancelled(err)) return;
-      const msg = toErrorMessage(err);
+      const msg = describeAppError(err).title;
       setExportError(msg);
       toast({ title: L.exportFailedTitle, description: msg, variant: "destructive" });
     } finally {
@@ -192,7 +192,7 @@ export function EntityQrCode({
         variant: "default",
       });
     } catch (err) {
-      const msg = toErrorMessage(err);
+      const msg = describeAppError(err).title;
       setExportError(msg);
       toast({ title: L.exportFailedTitle, description: msg, variant: "destructive" });
     } finally {
@@ -215,7 +215,7 @@ export function EntityQrCode({
       } catch (err) {
         toast({
           title: L.exportFailedTitle,
-          description: toErrorMessage(err),
+          description: describeAppError(err).title,
           variant: "destructive",
         });
       }

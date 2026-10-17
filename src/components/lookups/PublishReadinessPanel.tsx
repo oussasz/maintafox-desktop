@@ -20,7 +20,7 @@ import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import { LoadingState } from "@/components/ui/data-state";
+import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import {
   Dialog,
   DialogContent,
@@ -87,6 +87,7 @@ export function PublishReadinessPanel({
 
   const readiness = useReferenceGovernanceStore((s) => s.readiness);
   const readinessLoading = useReferenceGovernanceStore((s) => s.readinessLoading);
+  const governanceError = useReferenceGovernanceStore((s) => s.error);
   const impactSummary = useReferenceGovernanceStore((s) => s.impactSummary);
   const impactLoading = useReferenceGovernanceStore((s) => s.impactLoading);
   const loadReadiness = useReferenceGovernanceStore((s) => s.loadReadiness);
@@ -181,6 +182,13 @@ export function PublishReadinessPanel({
         </p>
         {!mayPublish ? (
           <p className="mt-1 text-xs text-text-secondary">{t("publish.noPublishPermission")}</p>
+        ) : null}
+        {!readinessLoading && currentReadiness == null && governanceError ? (
+          <ErrorState
+            className="mt-2 py-4"
+            error={governanceError}
+            onRetry={() => void loadReadiness(setId)}
+          />
         ) : null}
 
         {blockers.length > 0 ? (

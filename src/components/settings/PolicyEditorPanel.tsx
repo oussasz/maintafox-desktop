@@ -435,12 +435,12 @@ export function PolicyEditorPanel({
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium">{t("policy.governedTitle")}</span>
             {hasActiveSnapshot && (
-              <Badge variant="outline" className="bg-green-50 text-xs text-green-700">
+              <Badge variant="outline" className="bg-tone-success-bg text-xs text-tone-success-fg">
                 {t("policy.active")}
               </Badge>
             )}
             {draftPolicy && (
-              <Badge className="bg-amber-100 text-xs text-amber-800">
+              <Badge className="bg-tone-warning-bg text-xs text-tone-warning-fg">
                 {t("policy.draftPending")}
               </Badge>
             )}
@@ -505,13 +505,13 @@ export function PolicyEditorPanel({
           <h3 className="text-sm font-medium">{t("policy.draftConfig")}</h3>
           {editing ? (
             /* Edit form */
-            <div className="space-y-1 rounded-lg border border-amber-200 bg-amber-50/30 px-4 py-1 dark:bg-amber-950/20">
+            <div className="space-y-1 rounded-lg border border-tone-warning-border bg-tone-warning-bg px-4 py-1">
               {fields.map((field) => {
                 const val = draftValues[field.key];
                 return (
                   <div
                     key={field.key}
-                    className="flex items-center justify-between gap-4 border-b border-amber-200/60 py-3 last:border-b-0"
+                    className="flex items-center justify-between gap-4 border-b border-tone-warning-border py-3 last:border-b-0"
                   >
                     <Label
                       htmlFor={`draft-${field.key}`}
@@ -565,7 +565,7 @@ export function PolicyEditorPanel({
             </div>
           ) : draftPolicy ? (
             /* Read-only draft diff */
-            <div className="rounded-lg border border-amber-200 bg-card">
+            <div className="rounded-lg border border-tone-warning-border bg-card">
               <ul className="divide-y divide-border px-4">
                 {Object.entries(draftSnapshotValues)
                   .filter(([key]) => shownKeys.has(key))
@@ -574,7 +574,7 @@ export function PolicyEditorPanel({
                     return (
                       <li
                         key={key}
-                        className={`flex items-center justify-between gap-4 py-3 first:pt-3 last:pb-3 ${changed ? "bg-amber-50/80 dark:bg-amber-950/30" : ""}`}
+                        className={`flex items-center justify-between gap-4 py-3 first:pt-3 last:pb-3 ${changed ? "bg-tone-warning-bg" : ""}`}
                       >
                         <span className="min-w-0 flex-1 text-sm font-medium leading-snug text-text-primary">
                           {t(`policy.fields.${key}` as never, {
@@ -583,12 +583,12 @@ export function PolicyEditorPanel({
                         </span>
                         <div className="flex shrink-0 flex-col items-end gap-0.5">
                           <span
-                            className={`text-sm tabular-nums ${changed ? "font-semibold text-amber-900 dark:text-amber-200" : "text-text-muted"}`}
+                            className={`text-sm tabular-nums ${changed ? "font-semibold text-tone-warning-fg" : "text-text-muted"}`}
                           >
                             {String(val)}
                           </span>
                           {changed ? (
-                            <span className="text-xs text-amber-600">
+                            <span className="text-xs text-tone-warning-fg">
                               {String(activeValues[key] ?? "—")}
                             </span>
                           ) : null}
@@ -597,7 +597,7 @@ export function PolicyEditorPanel({
                     );
                   })}
               </ul>
-              <p className="border-t border-amber-200 px-4 py-2 text-xs text-text-muted">
+              <p className="border-t border-tone-warning-border px-4 py-2 text-xs text-text-muted">
                 {t("policy.version", {
                   version: draftPolicy.version_no,
                 })}
@@ -662,10 +662,10 @@ export function PolicyEditorPanel({
             {testResults.map((result) => (
               <div key={result.rule_name} className="flex items-start gap-2 text-sm">
                 {result.severity === "pass" && (
-                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-green-600" />
+                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-tone-success-fg" />
                 )}
                 {result.severity === "warn" && (
-                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-tone-warning-fg" />
                 )}
                 {result.severity === "fail" && (
                   <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
@@ -706,7 +706,7 @@ export function PolicyEditorPanel({
                           {String(parsed)}
                         </span>
                         {s.validation_status === "draft" && (
-                          <Badge className="bg-amber-100 text-xs text-amber-800">
+                          <Badge className="bg-tone-warning-bg text-xs text-tone-warning-fg">
                             {t("policy.draftPending")}
                           </Badge>
                         )}

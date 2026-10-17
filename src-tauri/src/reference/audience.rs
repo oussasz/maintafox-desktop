@@ -217,6 +217,10 @@ pub const MODULE_CATALOGS: &[ModuleCatalog] = &[
         code: MODULE_CATALOG_NOTIFICATION_CATEGORIES,
         audience: DomainAudience::System,
     },
+    ModuleCatalog {
+        code: MODULE_CATALOG_PERMIT_TYPES,
+        audience: DomainAudience::Company,
+    },
 ];
 
 pub const MODULE_CATALOG_URGENCY_SCALE: &str = "WORK.URGENCY_SCALE";
@@ -226,6 +230,10 @@ pub const MODULE_CATALOG_WORK_ORDER_STATUSES: &str = "WO.WORK_ORDER_STATUSES";
 pub const MODULE_CATALOG_NOTIFICATION_RULES: &str = "NOTIFICATION.RULES";
 /// The notification categories (event types), their module and severity: fixed by Maintafox.
 pub const MODULE_CATALOG_NOTIFICATION_CATEGORIES: &str = "NOTIFICATION.CATEGORIES";
+/// The plant's work-permit types (`permit_types`, edited through `upsert_permit_type`: permit
+/// issuer, and administrator + step-up to switch the energy-isolation rule off; the LOTO type
+/// keeps it whatever the editor).
+pub const MODULE_CATALOG_PERMIT_TYPES: &str = "PERMIT.TYPES";
 
 /// Audience of a module catalog, `None` for an unknown code.
 pub fn module_catalog_audience(code: &str) -> Option<DomainAudience> {

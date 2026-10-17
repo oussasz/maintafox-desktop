@@ -556,6 +556,19 @@ pub async fn search_assets_page(
     search::search_assets_page(&state.db, filters).await
 }
 
+/// One level of the equipment tree (roots, or the children of `parent_id`) read from the
+/// hierarchy, within the registry filters. Same permission as the registry list.
+#[tauri::command]
+pub async fn list_asset_tree_level(
+    filters: AssetSearchFilters,
+    parent_id: Option<i64>,
+    state: State<'_, AppState>,
+) -> AppResult<crate::assets::tree::AssetTreeLevel> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
+    crate::assets::tree::list_asset_tree_level(&state.db, filters, parent_id).await
+}
+
 #[tauri::command]
 pub async fn update_asset_commercial(
     asset_id: i64,

@@ -13,6 +13,8 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { mfInput } from "@/design-system/tokens";
+import { cn } from "@/lib/utils";
 import { listPublishedReferenceValuesByDomainCode } from "@/services/reference-service";
 import type { ReferenceValue } from "@shared/ipc-types";
 
@@ -166,8 +168,7 @@ interface MeasureUnitSelectProps {
   className?: string;
 }
 
-const SELECT_CLASS =
-  "h-9 w-full rounded-md border border-surface-border bg-surface-0 px-2 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60";
+const SELECT_CLASS = cn(mfInput.nativeSelect, "h-9");
 
 /** Native select of the governed units (keyboard and screen-reader friendly). */
 export function MeasureUnitSelect({

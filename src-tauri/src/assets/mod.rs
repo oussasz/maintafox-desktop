@@ -34,6 +34,7 @@ pub mod registry_metrics;
 pub mod search;
 pub mod spare_parts;
 pub mod taxonomy_reference;
+pub mod tree;
 
 #[cfg(test)]
 mod decommission_tests;
@@ -51,6 +52,8 @@ mod lifecycle_tests;
 mod meters_tests;
 #[cfg(test)]
 mod upgrade_tests;
+#[cfg(test)]
+mod tree_tests;
 
 // Re-export most-used types at module root for clean import in command handlers.
 pub use bindings::AssetBindingSummary;

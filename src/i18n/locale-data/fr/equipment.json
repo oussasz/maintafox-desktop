@@ -288,7 +288,8 @@
     "referenceCatalogLoadFailed": "Impossible de charger les données de référence.",
     "validation": {
       "referenceRequired": "Sélectionnez la classe, la criticité et le statut dans le référentiel.",
-      "orgRequired": "Sélectionnez un nœud d'organisation."
+      "orgRequired": "Sélectionnez un nœud d'organisation.",
+      "utilizationRange": "Saisissez un facteur entre 0,01 et 1,50."
     },
     "sections": {
       "identification": "Identification",
@@ -322,7 +323,8 @@
     "selectSubfamilyOptional": "Sous-famille (optionnel)",
     "selectScheduleClass": "Sélectionner la classe horaire",
     "fields": {
-      "ramsScheduleClass": "Horaire d'exploitation (classe horaire)"
+      "ramsScheduleClass": "Horaire d'exploitation (classe horaire)",
+      "utilizationHint": "Habituellement 1,00. Une valeur plus basse modélise un équipement qui ne fonctionne qu'une partie de son horaire."
     },
     "selectStatus": "Sélectionner le statut de cycle de vie",
     "selectOrg": "Sélectionner le nœud d'organisation",
@@ -348,6 +350,12 @@
     "unsavedTitle": "Modifications non enregistrées",
     "unsavedDescription": "Vous avez des modifications non enregistrées. Voulez-vous continuer l'édition ou les abandonner ?",
     "keepEditing": "Continuer l'édition",
+    "retireHint": "Pour retirer cet équipement, utilisez Déclasser : le déclassement vérifie les travaux ouverts et enregistre le motif.",
+    "retiredHint": "Cet équipement est retiré : son statut a été fixé par le déclassement.",
+    "photoDeleteTitle": "Supprimer la photo ?",
+    "photoDeleteBody_one": "La photo est supprimée immédiatement, même si vous annulez ensuite le formulaire.",
+    "photoDeleteBody_other": "Les {{count}} photos sont supprimées immédiatement, même si vous annulez ensuite le formulaire.",
+    "photoDeleteConfirm": "Supprimer",
     "discardChanges": "Abandonner les modifications",
     "imagesEmpty": "Aucune photo",
     "imagesHint": "Téléversez des photos pour cet actif. Le glisser-déposer peut basculer vers le sélecteur de fichiers sur le bureau."
@@ -356,6 +364,12 @@
     "fieldRequired": "Ce champ est obligatoire."
   },
   "tree": {
+    "loadError": "L’arborescence des équipements n’a pas pu être chargée",
+    "loadingChildren": "Chargement…",
+    "childrenError": "Cette branche n’a pas pu être chargée :",
+    "retry": "Réessayer",
+    "showMore": "Afficher {{count}} de plus",
+    "contextRow": "Affiché parce qu’un équipement en dessous correspond aux filtres",
     "loading": "Chargement des équipements…",
     "search": "Rechercher dans l'arbre",
     "empty": "Aucun actif correspondant dans l'arbre.",
@@ -411,10 +425,35 @@
     }
   },
   "import": {
+    "action": {
+      "create": "Création",
+      "update": "Mise à jour",
+      "conflict": "Conflit : non importé",
+      "unknown": "Action inconnue"
+    },
+    "messageDetail": "Détail",
+    "category": {
+      "duplicate_asset_code": "Code déjà utilisé par un équipement",
+      "duplicate_asset_code_in_batch": "Code en double dans le fichier",
+      "unknown_class_code": "Classe inconnue ou inactive",
+      "unknown_family_code": "Famille inconnue ou inactive",
+      "family_class_mismatch": "Famille incompatible avec la classe",
+      "unknown_criticality_code": "Criticité inconnue",
+      "unknown_status_code": "Statut inconnu",
+      "org_node_missing": "Emplacement introuvable",
+      "org_node_inactive": "Emplacement inactif",
+      "hierarchy_cycle_risk": "Le parent créerait une boucle dans la hiérarchie",
+      "forbidden_status_transition": "Changement de statut interdit",
+      "reclassification_requires_review": "Reclassement à valider",
+      "missing_required_field": "Champ obligatoire manquant",
+      "invalid_asset_code_format": "Format de code invalide",
+      "other": "Autre contrôle"
+    },
     "page": {
       "title": "Import d'équipements"
     },
     "steps": {
+      "label": "Étapes de l'import",
       "upload": "Téléverser",
       "validate": "Valider",
       "preview": "Aperçu",
@@ -422,6 +461,7 @@
       "done": "Terminé"
     },
     "status": {
+      "unknown": "Statut inconnu",
       "valid": "Valide",
       "warning": "Avertissement",
       "error": "Erreur"
@@ -453,6 +493,8 @@
       "includeWarnings": "Inclure les lignes avec avertissements"
     },
     "apply": {
+      "confirmTitle": "Appliquer l'import ?",
+      "confirmBody": "{{valid}} ligne(s) valide(s) et {{warning}} avec avertissement seront créées ou mises à jour dans le registre ; {{error}} ligne(s) en erreur ne seront pas importées. Les équipements modifiés ne reviennent pas automatiquement à leur état précédent.",
       "run": "Appliquer l'import"
     },
     "done": {

@@ -288,7 +288,8 @@
     "referenceCatalogLoadFailed": "Could not load reference data.",
     "validation": {
       "referenceRequired": "Select class, criticality, and status from the catalog.",
-      "orgRequired": "Select an organization node."
+      "orgRequired": "Select an organization node.",
+      "utilizationRange": "Enter a factor between 0.01 and 1.50."
     },
     "sections": {
       "identification": "Identification",
@@ -322,7 +323,8 @@
     "selectSubfamilyOptional": "Subfamily (optional)",
     "selectScheduleClass": "Select schedule class",
     "fields": {
-      "ramsScheduleClass": "Operating schedule (schedule class)"
+      "ramsScheduleClass": "Operating schedule (schedule class)",
+      "utilizationHint": "Usually 1.00. A lower value models equipment that runs only part of its schedule."
     },
     "selectStatus": "Select lifecycle status",
     "selectOrg": "Select organization node",
@@ -348,6 +350,12 @@
     "unsavedTitle": "Unsaved changes",
     "unsavedDescription": "You have unsaved changes. Do you want to keep editing or discard them?",
     "keepEditing": "Keep editing",
+    "retireHint": "To retire this asset, use Decommission: it checks open work and records the reason.",
+    "retiredHint": "This asset is retired: its status was set by Decommission.",
+    "photoDeleteTitle": "Delete the photo?",
+    "photoDeleteBody_one": "The photo is deleted now, even if you then cancel the form.",
+    "photoDeleteBody_other": "The {{count}} photos are deleted now, even if you then cancel the form.",
+    "photoDeleteConfirm": "Delete",
     "discardChanges": "Discard changes",
     "imagesEmpty": "No photos yet",
     "imagesHint": "Upload photos for this asset. Drag-and-drop may fall back to the file dialog on desktop."
@@ -356,6 +364,12 @@
     "fieldRequired": "This field is required."
   },
   "tree": {
+    "loadError": "The equipment tree could not be loaded",
+    "loadingChildren": "Loading…",
+    "childrenError": "This branch could not be loaded:",
+    "retry": "Retry",
+    "showMore": "Show {{count}} more",
+    "contextRow": "Shown because equipment below it matches the filters",
     "loading": "Loading equipment…",
     "search": "Search in tree",
     "empty": "No matching assets in tree.",
@@ -411,10 +425,35 @@
     }
   },
   "import": {
+    "action": {
+      "create": "Create",
+      "update": "Update",
+      "conflict": "Conflict: not imported",
+      "unknown": "Unknown action"
+    },
+    "messageDetail": "Detail",
+    "category": {
+      "duplicate_asset_code": "Code already used by an asset",
+      "duplicate_asset_code_in_batch": "Code repeated in the file",
+      "unknown_class_code": "Unknown or inactive class",
+      "unknown_family_code": "Unknown or inactive family",
+      "family_class_mismatch": "Family does not match the class",
+      "unknown_criticality_code": "Unknown criticality",
+      "unknown_status_code": "Unknown status",
+      "org_node_missing": "Location not found",
+      "org_node_inactive": "Location inactive",
+      "hierarchy_cycle_risk": "The parent would create a loop in the hierarchy",
+      "forbidden_status_transition": "Status change not allowed",
+      "reclassification_requires_review": "Reclassification needs review",
+      "missing_required_field": "Required field missing",
+      "invalid_asset_code_format": "Invalid code format",
+      "other": "Other check"
+    },
     "page": {
       "title": "Equipment Import"
     },
     "steps": {
+      "label": "Import steps",
       "upload": "Upload",
       "validate": "Validate",
       "preview": "Preview",
@@ -422,6 +461,7 @@
       "done": "Done"
     },
     "status": {
+      "unknown": "Unknown status",
       "valid": "Valid",
       "warning": "Warning",
       "error": "Error"
@@ -453,6 +493,8 @@
       "includeWarnings": "Include rows with warnings"
     },
     "apply": {
+      "confirmTitle": "Apply the import?",
+      "confirmBody": "{{valid}} valid row(s) and {{warning}} with warnings will be created or updated in the register; {{error}} row(s) in error are not imported. Changed assets do not return to their previous state automatically.",
       "run": "Apply Import"
     },
     "done": {

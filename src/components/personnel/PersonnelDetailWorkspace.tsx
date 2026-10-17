@@ -348,7 +348,7 @@ export function PersonnelDetailWorkspace({ detail }: PersonnelDetailWorkspacePro
       />
 
       {isContractor && isExternal ? (
-        <div className="rounded border border-amber-400/50 bg-amber-100/40 px-3 py-2 text-sm text-amber-900">
+        <div className="rounded border border-tone-warning-border bg-tone-warning-bg px-3 py-2 text-sm text-tone-warning-fg">
           {t("detail.contractorBanner", {
             company: p.company_name ?? "—",
           })}

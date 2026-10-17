@@ -140,7 +140,7 @@ fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
     ))
 }
 
-fn map_search_result(row: &QueryResult) -> AppResult<AssetSearchResult> {
+pub(crate) fn map_search_result(row: &QueryResult) -> AppResult<AssetSearchResult> {
     Ok(AssetSearchResult {
         id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
         entity_sync_id: row
@@ -229,7 +229,7 @@ fn map_suggestion(row: &QueryResult) -> AppResult<AssetSuggestion> {
 }
 
 /// Resolve org paths for the returned result set only (bounded by result count).
-async fn enrich_org_paths(db: &DatabaseConnection, results: &mut [AssetSearchResult]) -> AppResult<()> {
+pub(crate) async fn enrich_org_paths(db: &DatabaseConnection, results: &mut [AssetSearchResult]) -> AppResult<()> {
     let mut node_ids: Vec<i64> = results.iter().filter_map(|r| r.org_node_id).collect();
     node_ids.sort_unstable();
     node_ids.dedup();
@@ -471,7 +471,7 @@ pub(crate) fn ids_json(ids: &[i64]) -> String {
 
 /// Enriched SELECT for search results. Class / family / subfamily / criticality /
 /// status expressions match `ASSET_SELECT` in identity.rs so List and Details share SSOT.
-const SEARCH_SELECT: &str = concat!(
+pub(crate) const SEARCH_SELECT: &str = concat!(
     r"
     e.id,
     e.entity_sync_id,
@@ -504,7 +504,7 @@ const SEARCH_SELECT: &str = concat!(
 "
 );
 
-const SEARCH_FROM: &str = r"
+pub(crate) const SEARCH_FROM: &str = r"
     FROM equipment e
     LEFT JOIN equipment_classes ec ON ec.id = e.class_id
     LEFT JOIN reference_values rs_class ON rs_class.id = e.equipment_class_ref_id

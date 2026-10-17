@@ -7,8 +7,8 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { EntityPortrait } from "@/components/detail/EntityPortrait";
+import { describeAppError } from "@/lib/app-error";
 import { readPersonnelPhotoPreview } from "@/services/personnel-service";
-import { toErrorMessage } from "@/utils/errors";
 
 export interface PersonnelPortraitProps {
   personnelId: number;
@@ -57,7 +57,7 @@ export function PersonnelPortrait({
           console.error("[PersonnelPortrait] read_personnel_photo_preview failed", {
             personnelId,
             photoPath,
-            error: toErrorMessage(err),
+            error: describeAppError(err).title,
           });
         }
         if (!cancelled) {

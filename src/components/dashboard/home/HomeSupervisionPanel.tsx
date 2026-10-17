@@ -184,9 +184,9 @@ function SupervisionBody({ data }: { data: HomeSupervision }) {
           <div className="grid grid-cols-2 gap-2">
             <HomeFigure
               label={t("home.supervision.stock.toReorder")}
-              value={n(stock.lines_to_reorder)}
-              hint={t("home.supervision.stock.articles", { count: stock.articles_to_reorder })}
-              tone={stock.lines_to_reorder > 0 ? "warning" : undefined}
+              value={n(stock.articles_to_reorder)}
+              hint={t("home.supervision.stock.lines", { count: stock.lines_to_reorder })}
+              tone={stock.articles_to_reorder > 0 ? "warning" : undefined}
               to={listLinks.inventory({ belowReorder: true })}
             />
             <HomeFigure

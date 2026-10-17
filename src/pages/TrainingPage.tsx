@@ -95,6 +95,7 @@ export function TrainingPage() {
               <QualificationMatrixView
                 teams={lookups.teams}
                 companies={lookups.companies}
+                peopleRestricted={lookups.peopleRestricted}
                 refreshKey={refreshKey}
               />
             </TabsContent>
@@ -104,6 +105,7 @@ export function TrainingPage() {
             <TabsContent value="sessions">
               <TrainingSessionsPanel
                 people={lookups.people}
+                peopleRestricted={lookups.peopleRestricted}
                 certTypes={lookups.certTypes}
                 presetCertificationTypeId={presetCertType}
                 onPresetConsumed={() => setPresetCertType(null)}

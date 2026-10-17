@@ -250,7 +250,10 @@ export function DelegationManagerPanel() {
         header: t("delegation.columns.stepUp", "Step-up"),
         cell: ({ row }) =>
           row.original.requires_step_up_for_publish ? (
-            <Badge variant="outline" className="border-orange-300 text-orange-600 text-[10px]">
+            <Badge
+              variant="outline"
+              className="border-tone-attention-border text-tone-attention-fg text-[10px]"
+            >
               Step-up
             </Badge>
           ) : (

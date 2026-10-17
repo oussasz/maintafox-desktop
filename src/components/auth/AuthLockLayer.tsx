@@ -3,7 +3,7 @@ import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } fro
 import { useTranslation } from "react-i18next";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 
-import { AuthButton } from "@/components/auth/shell/AuthPrimitives";
+import { AuthAlert, AuthButton } from "@/components/auth/shell/AuthPrimitives";
 import { MaintafoxWordmark } from "@/components/branding/MaintafoxWordmark";
 import { mfAuth, mfInput } from "@/design-system/tokens";
 import { useSession } from "@/hooks/use-session";
@@ -124,7 +124,10 @@ export function AuthLockLayer() {
 
         <div className="mb-4 flex items-start gap-3">
           {mode === "permission" ? (
-            <ShieldAlert className="mt-0.5 h-5 w-5 text-amber-700" aria-hidden="true" />
+            <ShieldAlert
+              className="mt-0.5 h-5 w-5 text-[var(--mfa-orange-dark)]"
+              aria-hidden="true"
+            />
           ) : (
             <Lock className="mt-0.5 h-5 w-5 text-primary" aria-hidden="true" />
           )}
@@ -143,12 +146,9 @@ export function AuthLockLayer() {
         </div>
 
         {session.error ? (
-          <div
-            role="alert"
-            className="mb-4 rounded-md bg-status-danger/10 px-3 py-2 text-sm text-status-danger"
-          >
-            {session.error}
-          </div>
+          <AuthAlert tone="danger" className="mb-4">
+            <p>{session.error}</p>
+          </AuthAlert>
         ) : null}
 
         {canTryPasswordResume && preInterrupt?.username ? (

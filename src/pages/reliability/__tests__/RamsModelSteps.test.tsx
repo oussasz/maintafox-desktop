@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { RatingScalesDialog } from "@/components/reliability/study/RatingScalesDialog";
 import { StudyFmecaStep } from "@/components/reliability/study/StudyFmecaStep";
 import { StudyRcmStep } from "@/components/reliability/study/StudyRcmStep";
 import { StudySystemStep } from "@/components/reliability/study/StudySystemStep";
@@ -60,12 +61,17 @@ vi.mock("@/components/reliability/IshikawaDiagramCanvas", () => ({
   IshikawaDiagramCanvas: ({
     equipmentId,
     onPromoteToFmeca,
+    onDirtyChange,
   }: {
     equipmentId: number;
     onPromoteToFmeca?: (p: { cause: string; diagramId: number; nodeId: string }) => void;
+    onDirtyChange?: (dirty: boolean) => void;
   }) => (
     <div data-testid="ishikawa">
       {equipmentId}
+      <button type="button" onClick={() => onDirtyChange?.(true)}>
+        move a cause
+      </button>
       {onPromoteToFmeca ? (
         <button
           type="button"
@@ -163,7 +169,7 @@ const fmeca: FmecaWorksheet = {
       failure_mode_id: 5,
       mode_code: "BRD",
       mode_label: "Bearing seizure",
-      functional_failure: "",
+      functional_failure: "Low flow",
       failure_effect: "Pump stops",
       failure_mechanism_id: 70,
       mechanism_label: "Wear",
@@ -232,6 +238,32 @@ beforeEach(() => {
 });
 
 describe("StudyFmecaStep", () => {
+  it("asks before another equipment's diagram replaces unsaved diagram changes", async () => {
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_reliability_study_fmeca") return fmeca;
+      throw new Error(`unexpected ${cmd}`);
+    });
+    render(<StudyFmecaStep study={study} editable onGoRcm={() => undefined} />);
+    await screen.findByRole("table", { name: /FMECA: Centrifugal pump/ });
+    const picker = screen.getByRole("combobox", { name: /Equipment/ });
+
+    // Nothing unsaved: the switch is immediate.
+    fireEvent.change(picker, { target: { value: "11" } });
+    expect(screen.getByTestId("ishikawa")).toHaveTextContent("11");
+
+    fireEvent.click(screen.getByRole("button", { name: "move a cause" }));
+    fireEvent.change(picker, { target: { value: "10" } });
+    const ask = await screen.findByRole("dialog", { name: "Discard the diagram changes?" });
+    fireEvent.click(within(ask).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.getByTestId("ishikawa")).toHaveTextContent("11");
+
+    fireEvent.change(picker, { target: { value: "10" } });
+    const again = await screen.findByRole("dialog", { name: "Discard the diagram changes?" });
+    fireEvent.click(within(again).getByRole("button", { name: "Discard changes" }));
+    await waitFor(() => expect(screen.getByTestId("ishikawa")).toHaveTextContent("10"));
+  });
+
   it("shows the worksheet with the occurrence basis and adds an observed mode", async () => {
     mockInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === "get_reliability_study_fmeca") return fmeca;
@@ -246,6 +278,7 @@ describe("StudyFmecaStep", () => {
     if (!row) throw new Error("FMECA row missing");
     expect(within(row).getByText("140")).toBeInTheDocument();
     expect(within(row).getByText("Wear · Contamination")).toBeInTheDocument();
+    expect(within(row).getByText("Function lost: Low flow")).toBeInTheDocument();
     // The proposed occurrence shows where it comes from (life analysis).
     expect(within(row).getByText("Weibull").parentElement).toHaveAttribute(
       "title",
@@ -265,6 +298,9 @@ describe("StudyFmecaStep", () => {
     fireEvent.change(within(dialog).getByLabelText("Severity"), { target: { value: "6" } });
     fireEvent.change(within(dialog).getByLabelText("Detection"), { target: { value: "3" } });
     expect(within(dialog).getByText("RPN = 72")).toBeInTheDocument();
+    fireEvent.change(within(dialog).getByLabelText("Functional failure"), {
+      target: { value: "Delivers less than 40 m³/h" },
+    });
     fireEvent.click(save);
 
     await waitFor(() =>
@@ -280,6 +316,7 @@ describe("StudyFmecaStep", () => {
           detectability: 3,
           occurrence_source: "history",
           occurrence_events_per_year: 0.5,
+          functional_failure: "Delivers less than 40 m³/h",
         }),
       }),
     );
@@ -731,5 +768,34 @@ describe("RamsDataQualityPage", () => {
       }),
     );
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+});
+
+describe("RatingScalesDialog", () => {
+  it("says the grids are plant-wide and refuses to save a threshold that is not a number", () => {
+    render(
+      <RatingScalesDialog
+        open
+        onOpenChange={() => undefined}
+        scales={scales}
+        editable
+        onSaved={() => undefined}
+      />,
+    );
+    expect(screen.getByRole("note")).toHaveTextContent(/shared by every FMECA study/);
+    fireEvent.click(screen.getByRole("tab", { name: "Occurrence" }));
+    const threshold = screen.getByRole("textbox", {
+      name: "Threshold of rating 3 (failures per year)",
+    });
+    fireEvent.change(threshold, { target: { value: "0,5x" } });
+    expect(threshold).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByRole("alert")).toHaveTextContent(/must be a number of 0 or more/);
+    expect(screen.getByRole("button", { name: "Save the grids" })).toBeDisabled();
+
+    // A decimal with a comma is accepted.
+    fireEvent.change(threshold, { target: { value: "0,5" } });
+    expect(threshold).toHaveAttribute("aria-invalid", "false");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save the grids" })).toBeEnabled();
   });
 });

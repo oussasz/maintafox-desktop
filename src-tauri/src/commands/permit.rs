@@ -35,6 +35,10 @@ pub async fn upsert_permit_type(input: PermitTypeUpsertInput, state: State<'_, A
         crate::rbac::permissions::PTW_ISSUE,
         PermissionScope::Global
     );
+    // Also the Données de référence catalog `PERMIT.TYPES`: one write path, same rules.
+    crate::reference::audience::assert_module_catalog_editable(
+        crate::reference::audience::MODULE_CATALOG_PERMIT_TYPES,
+    )?;
     // Switching the energy-isolation rule off weakens the start gate: administrator + step-up
     // (the query refuses it otherwise, needs a reason and audits it; the LOTO type stays locked).
     let mut may_relax_isolation = false;

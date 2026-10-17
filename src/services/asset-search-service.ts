@@ -66,6 +66,34 @@ export async function searchAssets(filters: AssetSearchFilters): Promise<AssetSe
   return z.array(AssetSearchResultSchema).parse(raw) as AssetSearchResult[];
 }
 
+const AssetTreeLevelSchema = z.object({
+  parent_id: z.number().nullable(),
+  items: z.array(
+    AssetSearchResultSchema.extend({ child_count: z.number(), is_match: z.boolean() }),
+  ),
+  total: z.number(),
+});
+
+/** One asset of an equipment tree level: the asset, its visible children, whether it matches. */
+export type AssetTreeRow = AssetSearchResult & { child_count: number; is_match: boolean };
+export interface AssetTreeLevel {
+  parent_id: number | null;
+  items: AssetTreeRow[];
+  total: number;
+}
+
+/**
+ * One level of the equipment tree read from the hierarchy (roots when `parentId` is null),
+ * within the registry filters: matching assets and their ancestors (`assets::tree`).
+ */
+export async function listAssetTreeLevel(
+  filters: AssetSearchFilters,
+  parentId: number | null,
+): Promise<AssetTreeLevel> {
+  const raw = await invoke<unknown>("list_asset_tree_level", { filters, parentId });
+  return AssetTreeLevelSchema.parse(raw) as AssetTreeLevel;
+}
+
 /** One page of the registry list plus the number of assets matching the same filters. */
 export async function searchAssetsPage(filters: AssetSearchFilters): Promise<AssetSearchPage> {
   const raw = await invoke<unknown>("search_assets_page", { filters });

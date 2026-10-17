@@ -649,7 +649,7 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
             : t("activation.showTechnicalDetails")}
         </button>
         {showErrorDetails ? (
-          <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap rounded-md bg-white/70 p-2 font-mono text-xs text-text-secondary">
+          <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap rounded-md bg-surface-0/70 p-2 font-mono text-xs text-text-secondary">
             {error.technicalDetails}
           </pre>
         ) : null}

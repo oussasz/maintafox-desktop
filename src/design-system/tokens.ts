@@ -91,6 +91,12 @@ export const mfInput = {
   authFieldWithTrailing:
     "h-11 w-full rounded-lg border border-[var(--mfa-border-strong)] bg-white pl-10 pr-10 text-[15px] text-text-primary placeholder:text-text-muted transition-[border-color,box-shadow] focus:border-[var(--mfa-blue)] focus:outline-none focus:ring-[3px] focus:ring-[var(--mfa-blue)]/20 disabled:cursor-not-allowed disabled:bg-surface-2 disabled:opacity-70 aria-[invalid=true]:border-[var(--mfa-danger)]",
   authLabel: "mb-1.5 block text-[13px] font-medium text-text-primary",
+  /**
+   * A native `<select>` that stays in a form (long or dynamic option lists): same height, border,
+   * surface and focus ring as the design-system `Select` trigger.
+   */
+  nativeSelect:
+    "h-10 w-full rounded-md border border-surface-border bg-surface-0 px-3 text-sm text-text-primary shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60",
 } as const;
 
 /**

@@ -177,8 +177,8 @@ function LaborMetricRow({
             variance == null
               ? "font-medium tabular-nums"
               : variance > 0
-                ? "font-medium tabular-nums text-amber-700"
-                : "font-medium tabular-nums text-green-700"
+                ? "font-medium tabular-nums text-tone-warning-fg"
+                : "font-medium tabular-nums text-tone-success-fg"
           }
         >
           {variance == null
@@ -193,8 +193,8 @@ function LaborMetricRow({
             efficiency == null
               ? "font-medium tabular-nums"
               : efficiency >= 100
-                ? "font-medium tabular-nums text-green-700"
-                : "font-medium tabular-nums text-amber-700"
+                ? "font-medium tabular-nums text-tone-success-fg"
+                : "font-medium tabular-nums text-tone-warning-fg"
           }
         >
           {efficiency != null ? `${efficiency} %` : "—"}
@@ -891,7 +891,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
     return (
       <div className="space-y-8">
         {error && (
-          <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          <div className="rounded-md border border-tone-danger-border bg-tone-danger-bg px-3 py-2 text-sm text-tone-danger-fg">
             {error}
           </div>
         )}
@@ -906,7 +906,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
 
         {/* Delay form (pause / hold) */}
         {delayIntent && (
-          <div className="space-y-3 rounded-md border border-amber-200 bg-amber-50/40 p-3">
+          <div className="space-y-3 rounded-md border border-tone-warning-border bg-tone-warning-bg p-3">
             <h3 className="text-sm font-semibold">
               {delayIntent === "pause" ? t("execution.pauseTitle") : t("execution.holdTitle")}
             </h3>
@@ -932,7 +932,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                 />
               </div>
             </div>
-            {delayError && <div className="text-sm text-red-700">{delayError}</div>}
+            {delayError && <div className="text-sm text-tone-danger-fg">{delayError}</div>}
             <div className="flex items-center gap-2">
               <Button onClick={() => void submitDelayAction()} disabled={busy || !actorId}>
                 {t("execution.submit")}
@@ -1193,7 +1193,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
             {wo.parts_actuals_confirmed &&
             plannedParts.length === 0 &&
             actuallyUsedParts.length === 0 ? (
-              <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-green-200 bg-green-50/50 px-4 py-3 text-sm text-green-800">
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-tone-success-border bg-tone-success-bg px-4 py-3 text-sm text-tone-success-fg">
                 <span className="font-medium">{t("execution.parts.noneConfirmed")}</span>
                 <Button
                   size="sm"
@@ -1764,7 +1764,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                     : "—"}
                 </span>
               </p>
-              {laborFormError && <p className="text-sm text-red-700">{laborFormError}</p>}
+              {laborFormError && <p className="text-sm text-tone-danger-fg">{laborFormError}</p>}
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setShowLaborDialog(false)}>
@@ -1818,7 +1818,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                   placeholder={t("execution.addContext")}
                 />
               </div>
-              {notUsedError && <p className="text-sm text-red-700">{notUsedError}</p>}
+              {notUsedError && <p className="text-sm text-tone-danger-fg">{notUsedError}</p>}
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setNotUsedPartId(null)}>
@@ -1862,7 +1862,9 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                   placeholder={t("execution.tools.codePlaceholder")}
                 />
               </div>
-              {addToolDialogError && <p className="text-sm text-red-700">{addToolDialogError}</p>}
+              {addToolDialogError && (
+                <p className="text-sm text-tone-danger-fg">{addToolDialogError}</p>
+              )}
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setShowAddToolDialog(false)}>

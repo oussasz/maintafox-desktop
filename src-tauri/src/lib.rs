@@ -752,6 +752,7 @@ pub fn run() {
             commands::assets::apply_asset_import_batch,
             commands::assets::list_asset_import_batches,
             commands::assets::search_assets_page,
+            commands::assets::list_asset_tree_level,
             commands::assets::update_asset_commercial,
             commands::assets::get_asset_maintenance_profile,
             commands::assets::list_asset_spare_parts,

@@ -11,6 +11,8 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { mfInput } from "@/design-system/tokens";
+import { cn } from "@/lib/utils";
 import { listPublishedReferenceValuesByDomainCode } from "@/services/reference-service";
 import type { ReferenceValue } from "@shared/ipc-types";
 
@@ -75,7 +77,7 @@ export function MaintenanceNatureSelect({
       aria-label={t("maintenanceNature.column")}
       title={t("maintenanceNature.fallbackHint")}
       disabled={disabled}
-      className="h-9 w-full rounded-md border border-surface-border bg-surface-0 px-2 text-sm"
+      className={cn(mfInput.nativeSelect, "h-9")}
     >
       <option value="">{t("maintenanceNature.fallback")}</option>
       {natures.map((n) => (

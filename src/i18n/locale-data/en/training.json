@@ -252,6 +252,14 @@
     "emptyHint": "No certification expires within {{count}} days and none waits for verification."
   },
   "sessions": {
+    "peopleRestricted": "Reading people requires the personnel view right: this choice is not available to you.",
+    "belowPassMark": "Below pass mark {{score}}: will be recorded as failed",
+    "recordedAsFailedTitle": "Recorded as failed",
+    "recordedAsFailed": "{{person}}: score {{score}}, below the pass mark {{passMark}}. The result is recorded as failed (no certification).",
+    "recordAsFailed": "Record as failed",
+    "issueCertificateTitle": "Issue the certification?",
+    "issueCertificate": "Recording {{person}} as passed issues this session's certification, valid for its set period.",
+    "recordPassed": "Record as passed",
     "title": "Sessions",
     "add": "New session",
     "addTitle": "New training session",

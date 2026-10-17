@@ -37,8 +37,8 @@ import {
 import { mfIdentification } from "@/design-system/tokens";
 import { ExportActions, isExportCancelled, revealInFolder } from "@/export";
 import { useToast } from "@/hooks/use-toast";
+import { describeAppError } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
-import { toErrorMessage } from "@/utils/errors";
 
 export function IdentificationLabelDialog({
   open,
@@ -74,7 +74,7 @@ export function IdentificationLabelDialog({
       if (isExportCancelled(err)) {
         return;
       }
-      const msg = toErrorMessage(err);
+      const msg = describeAppError(err).title;
       setExportError(msg);
       toast({ title: t("qr.export.failedTitle"), description: msg, variant: "destructive" });
     } finally {
@@ -98,7 +98,7 @@ export function IdentificationLabelDialog({
         variant: "default",
       });
     } catch (err) {
-      const msg = toErrorMessage(err);
+      const msg = describeAppError(err).title;
       setExportError(msg);
       toast({ title: t("qr.export.failedTitle"), description: msg, variant: "destructive" });
     } finally {
@@ -113,7 +113,7 @@ export function IdentificationLabelDialog({
       } catch (err) {
         toast({
           title: t("qr.export.failedTitle"),
-          description: toErrorMessage(err),
+          description: describeAppError(err).title,
           variant: "destructive",
         });
       }

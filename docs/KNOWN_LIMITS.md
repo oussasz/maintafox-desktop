@@ -132,6 +132,7 @@ Last updated: 2026-10-17 (step 5 in progress; planning steps A–E merged, LOTO 
 | A password change arriving by sync does not end sessions started up to 2 minutes before it (clock-skew tolerance); local resets end them at once. | Safety | Accepted |
 | Printouts with an invalid stored document header print without a letterhead, with no warning on the print path. | UX | Step 5 |
 | Roles limited to a site grant nothing in the modules yet (only plant-wide roles count); approved as its own step. | Data | Step 6 |
+| A picker that is empty because the user lacks the right to read its list says so only on the training and qualification screens; other modules' pickers have not been checked for this case yet. | UX | Step 6 (with site-scoped roles) |
 | No separation-of-duties pairs are defined in the permission registry, so none are warned. | Safety | After pilot |
 | The role editor warns before discarding unsaved changes when switching role or closing the app, but not when switching to another Administration tab. | UX | Step 7 |
 | Settings shows its confirmations through its own message area, not the app-wide one. | UX | Step 7 |
@@ -159,8 +160,9 @@ Last updated: 2026-10-17 (step 5 in progress; planning steps A–E merged, LOTO 
 
 | Limit | Impact | Handled in |
 |---|---|---|
-| The equipment tree is built from the equipment page already loaded, not the whole register; with more equipment than one page, branches can be missing from the tree (the list and search are complete). | Data | Step 7 (needs a tree read from the database) |
+| The equipment tree reads each branch from the database when opened. It follows active hierarchy links only; equipment with several active parents appears under each; "Expand all" opens only branches already loaded. | UX | Accepted |
 | IoT and ERP "linked records" are yes/no flags, not counts. | UX | After pilot |
+| The asset edit form no longer offers a retired status or an end-of-life date (retirement goes through Déclasser), but the server still accepts them on an identity update from another path. Server check being added. | Data | Step 5 |
 
 ## App frame, sync centre, documents, organisation, budget
 
@@ -174,6 +176,7 @@ Last updated: 2026-10-17 (step 5 in progress; planning steps A–E merged, LOTO 
 | Budget drill-down lists at most 2,000 lines and gives no total. | Data | Step 7 |
 | The sync centre names about 40 record types; others show as "Other record" with their number. | UX | Accepted |
 | The lock screen recognises a disabled PIN from the server's message text, not a code. | UX | Step 7 |
+| In Reference data, when the publish-readiness check cannot load, the error box shows the most recent reference-data error, which may come from another action on the same screen. | UX | Step 7 |
 
 ## Activity feed and audit log
 

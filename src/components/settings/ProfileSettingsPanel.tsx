@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { mfAlert, mfTable } from "@/design-system/tokens";
+import { mfAlert, mfInput, mfTable } from "@/design-system/tokens";
 import { describeAppError } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import { clearPin, setPin } from "@/services/auth-service";
@@ -349,7 +349,8 @@ export function ProfileSettingsPanel() {
                 placeholder={t("profile.selectSkill", "Select a skill")}
               />
               <select
-                className="h-9 rounded-md border border-surface-border bg-surface-1 px-2 text-sm"
+                aria-label={t("profile.level", "Level")}
+                className={cn(mfInput.nativeSelect, "h-9 w-auto")}
                 value={selectedSkillLevel}
                 onChange={(e) => setSelectedSkillLevel(Number(e.target.value))}
               >

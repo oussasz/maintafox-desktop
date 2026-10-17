@@ -24,6 +24,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useSession } from "@/hooks/use-session";
+import { describeAppError } from "@/lib/app-error";
 import { formatOrDash, formatPersonLabel } from "@/lib/display";
 import {
   checkWoPartStockAvailability,
@@ -49,7 +50,6 @@ import {
   setWoPermitRequirement,
 } from "@/services/wo-service";
 import { useWoStore } from "@/stores/wo-store";
-import { toErrorMessage } from "@/utils/errors";
 import type {
   InventoryArticle,
   StockLocation,
@@ -572,7 +572,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
         setReadinessReport(null);
         setReadinessBlocking([]);
         onReadinessChange?.(null);
-        setError(toErrorMessage(e));
+        setError(describeAppError(e).title);
         return null;
       }
     }, [statusCode, wo.id, onReadinessChange]);
@@ -628,7 +628,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
           await loadReadiness();
         }
       } catch (e) {
-        setError(toErrorMessage(e));
+        setError(describeAppError(e).title);
       } finally {
         setBusy(false);
       }
@@ -741,7 +741,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
             await loadReadiness();
           }
         } catch (e) {
-          setError(toErrorMessage(e));
+          setError(describeAppError(e).title);
         } finally {
           setEmergencyBusy(false);
         }
@@ -804,7 +804,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
             prev.map((task) => (task.localId === row.localId ? toTaskDraft(created) : task)),
           );
         } catch (e) {
-          setError(toErrorMessage(e));
+          setError(describeAppError(e).title);
         } finally {
           setBusy(false);
         }
@@ -875,7 +875,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
             prev.map((part) => (part.localId === row.localId ? toPartDraft(created) : part)),
           );
         } catch (e) {
-          setError(toErrorMessage(e));
+          setError(describeAppError(e).title);
         } finally {
           setBusy(false);
         }
@@ -903,7 +903,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
         setNewToolLabel("");
         setNewToolCode("");
       } catch (e) {
-        setError(toErrorMessage(e));
+        setError(describeAppError(e).title);
       } finally {
         setBusy(false);
       }
@@ -958,7 +958,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
     return (
       <div className="space-y-6">
         {error && (
-          <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          <div className="rounded-md border border-tone-danger-border bg-tone-danger-bg px-3 py-2 text-sm text-tone-danger-fg">
             {error}
           </div>
         )}
@@ -1091,9 +1091,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
           <h3 className="text-sm font-semibold">3. {t("planning.assignment")}</h3>
           <p className="text-xs text-muted-foreground">{t("planning.scheduleLockedHint")}</p>
           {scheduleFrozen ? (
-            <p className="text-xs text-amber-700 dark:text-amber-400">
-              {t("planning.scheduleFrozenHint")}
-            </p>
+            <p className="text-xs text-tone-warning-fg">{t("planning.scheduleFrozenHint")}</p>
           ) : null}
 
           <div className="rounded-md border bg-muted/30 p-3 space-y-2">
@@ -1469,7 +1467,9 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                       <p className="text-xs text-muted-foreground">{t("planning.stockReserved")}</p>
                     ) : null}
                     {part.persisted && part.reservation_id == null ? (
-                      <p className="text-xs text-amber-800">{t("planning.noStockReservation")}</p>
+                      <p className="text-xs text-tone-warning-fg">
+                        {t("planning.noStockReservation")}
+                      </p>
                     ) : null}
                   </div>
                   <div className="flex items-end text-sm font-medium">
@@ -1605,28 +1605,30 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
         {materialReadiness &&
         !materialReadiness.is_fully_available &&
         materialReadiness.shortages.length > 0 ? (
-          <section className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3">
-            <h3 className="text-sm font-semibold text-amber-800">{t("planning.shortage.title")}</h3>
-            <p className="text-xs text-amber-700">{t("planning.shortage.description")}</p>
+          <section className="space-y-2 rounded-md border border-tone-warning-border bg-tone-warning-bg p-3">
+            <h3 className="text-sm font-semibold text-tone-warning-fg">
+              {t("planning.shortage.title")}
+            </h3>
+            <p className="text-xs text-tone-warning-fg">{t("planning.shortage.description")}</p>
             <div className="space-y-1.5">
               {materialReadiness.shortages.map((shortage) => {
                 const wasCreated = shortageSuccessIds.includes(shortage.article_id);
                 return (
                   <div
                     key={shortage.article_id}
-                    className="flex flex-wrap items-center gap-2 rounded border border-amber-200 bg-white p-2 text-xs"
+                    className="flex flex-wrap items-center gap-2 rounded border border-tone-warning-border bg-surface-0 p-2 text-xs"
                   >
                     <span className="font-medium">{shortage.article_code}</span>
                     <span className="text-muted-foreground">— {shortage.article_name}</span>
-                    <span className="ml-auto tabular-nums text-amber-700">
+                    <span className="ml-auto tabular-nums text-tone-warning-fg">
                       {t("planning.shortage.columns.requested")}: {shortage.requested_qty} ·{" "}
                       {t("planning.shortage.columns.available")}: {shortage.available_qty} ·{" "}
-                      <span className="font-semibold text-red-700">
+                      <span className="font-semibold text-tone-danger-fg">
                         {t("planning.shortage.columns.shortage")}: {shortage.shortage_qty}
                       </span>
                     </span>
                     {wasCreated ? (
-                      <span className="text-xs font-medium text-green-700">
+                      <span className="text-xs font-medium text-tone-success-fg">
                         ✓ {t("planning.shortage.requisitionCreated")}
                       </span>
                     ) : (
@@ -1647,7 +1649,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                               setShortageSuccessIds((prev) => [...prev, shortage.article_id]);
                             })
                             .catch((err) => {
-                              setError(toErrorMessage(err));
+                              setError(describeAppError(err).title);
                             })
                             .finally(() => {
                               setShortageReqCreating(null);
@@ -1675,11 +1677,11 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                   <span
                     className={
                       check.outcome === "pass"
-                        ? "text-green-700"
+                        ? "text-tone-success-fg"
                         : check.outcome === "na"
                           ? "text-muted-foreground"
                           : check.blocking
-                            ? "text-amber-800"
+                            ? "text-tone-warning-fg"
                             : "text-muted-foreground"
                     }
                   >
@@ -1702,7 +1704,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
         )}
 
         {readinessBlocking.length > 0 && statusCode === "planning" && (
-          <div className="w-full rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          <div className="w-full rounded-md border border-tone-warning-border bg-tone-warning-bg px-3 py-2 text-sm text-tone-warning-fg">
             <p className="mb-1 font-medium">{t("planning.readinessBlocking")}</p>
             <ul className="list-disc list-inside space-y-0.5">
               {readinessBlocking.map((msg, i) => (
