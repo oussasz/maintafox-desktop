@@ -132,7 +132,10 @@ Last updated: 2026-10-17 (step 5 in progress; planning steps A–E merged, LOTO 
 |---|---|---|
 | A password change arriving by sync does not end sessions started up to 2 minutes before it (clock-skew tolerance); local resets end them at once. | Safety | Accepted |
 | Printouts with an invalid stored document header print without a letterhead, with no warning on the print path. | UX | Step 5 |
-| Roles limited to a site grant nothing in the modules yet (only plant-wide roles count); approved as its own step. | Data | Step 6 |
+| Site-scoped roles (step 6, `docs/SITE_SCOPED_ROLES.md`) are delivered stage by stage. Stage 1 (shared check, sign-in, user creation, rights per site for the screens) is done: a user may now hold roles on a site only, and an administrator chooses at creation where the role applies. Until a module is converted (requests, work orders and permits next; then PM, planning, equipment, inspections, personnel, finance, inventory; then analytics, reports and exports), it still counts plant-wide roles only, so a site-only user is refused in it — never shown another site's data. | Data | Step 6 (stages 2–4) |
+| A site-only user sees a module in the menu when they hold its right on a site; a module not yet converted then refuses its screens with "permission required". | UX | Step 6 (stages 2–4) |
+| Administrator roles are plant-wide only: giving one on a site (also as emergency access) is refused with a message. | Safety | Accepted |
+| Role assignments arriving by sync from another PC are not re-checked on arrival (a site-limited administrator role could only come from a modified PC; it would not make anyone an administrator). Re-checking every synced change against its author's rights is the last stage of step 6, built with step 7's re-validation on arrival. | Safety | Step 6 (sync stage) / Step 7 |
 | A picker that is empty because the user lacks the right to read its list says so only on the training and qualification screens; other modules' pickers have not been checked for this case yet. | UX | Step 6 (with site-scoped roles) |
 | No separation-of-duties pairs are defined in the permission registry, so none are warned. | Safety | After pilot |
 | The role editor warns before discarding unsaved changes when switching role or closing the app, but not when switching to another Administration tab. | UX | Step 7 |

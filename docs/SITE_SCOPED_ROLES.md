@@ -1,6 +1,8 @@
 # Site-scoped roles (step 6) — design
 
-Status: **design, for review** (no module code yet). Branch `claude/site-scoped-roles`.
+Status: **approved** (owner, 2026-10-17: every proposal of §6 as written; O4 built last, together
+with the Step 7 re-validation on arrival, its server part deployed only after the owner's separate
+OK). Delivered stage by stage (§5); stage 1 = resolver, sign-in, user creation, rights per node.
 This is the "transitive scope resolution" left for Phase 2 in `RBAC_CONTRACTS.md` §Scope Resolution.
 
 ## 1. Today

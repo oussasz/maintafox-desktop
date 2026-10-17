@@ -5822,11 +5822,24 @@ export interface UserPresence {
   last_activity_at: string | null;
 }
 
+/** Where the current user holds each permission (step 6, `get_my_access`). */
+export interface MyAccess {
+  /** Every permission (administrator). */
+  all: boolean;
+  /** Permissions held plant-wide. */
+  everywhere: string[];
+  /** Org node id → permissions held on that node and below only. */
+  by_node: Record<string, string[]>;
+}
+
 export interface CreateUserInput {
   username: string;
   identity_mode: string;
-  /** Tenant-scoped role assigned at creation (required). */
+  /** Role assigned at creation (required). */
   role_id: number;
+  /** Where the role applies: absent / null plant-wide, else that org node and below (site-only
+   * user, step 6). Administrator roles are plant-wide only. */
+  scope_node_id?: number | null;
   personnel_id?: number | null;
   initial_password?: string | null;
   force_password_change?: boolean;

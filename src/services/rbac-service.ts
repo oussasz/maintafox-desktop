@@ -20,6 +20,7 @@ import type {
   CreateDelegationInput,
   CreateRoleInput,
   CreateUserInput,
+  MyAccess,
   DelegationPolicyView,
   EmergencyGrantView,
   GrantEmergencyElevationInput,
@@ -86,6 +87,27 @@ export const StepUpResponseSchema = z.object({
 export async function getMyPermissions(): Promise<PermissionRecord[]> {
   const raw = await invokeSilent<unknown[]>("get_my_permissions");
   return z.array(PermissionRecordSchema).parse(raw);
+}
+
+const MyAccessSchema = z.object({
+  all: z.boolean(),
+  everywhere: z.array(z.string()),
+  by_node: z.record(z.string(), z.array(z.string())),
+});
+
+/** Where the current user holds each permission: plant-wide, or only on some org nodes (step 6). */
+export async function getMyAccess(): Promise<MyAccess> {
+  const raw = await invokeSilent<unknown>("get_my_access");
+  return MyAccessSchema.parse(raw);
+}
+
+/**
+ * The permissions that apply to the current user at one org node (plant-wide ones plus those held
+ * on the node or above it); `null` for an administrator, who holds every permission.
+ */
+export async function getMyAccessAt(orgNodeId: number): Promise<string[] | null> {
+  const raw = await invokeSilent<unknown>("get_my_access_at", { orgNodeId });
+  return z.array(z.string()).nullable().parse(raw);
 }
 
 /**

@@ -22,6 +22,8 @@ const DEFAULT_MAX_AGE_SECS: u64 = 120;
 #[derive(Debug)]
 pub struct PermissionCache {
     entries: HashMap<(i64, String), CachedSet>,
+    /// Site-aware access per user (`auth::scope`), under the same freshness rules.
+    access: HashMap<i64, CachedAccess>,
     max_age: Duration,
 }
 
@@ -30,8 +32,35 @@ impl PermissionCache {
     pub fn new(max_age_secs: u64) -> Self {
         Self {
             entries: HashMap::new(),
+            access: HashMap::new(),
             max_age: Duration::from_secs(max_age_secs),
         }
+    }
+
+    /// The user's site-aware access map, while fresh (same rules as [`Self::get`]).
+    pub fn get_access(&self, user_id: i64) -> Option<&crate::auth::scope::AccessMap> {
+        let now = chrono::Utc::now();
+        self.access.get(&user_id).and_then(|entry| {
+            let fresh = entry.stored_at.elapsed() < self.max_age && entry.valid_until.is_none_or(|until| now < until);
+            fresh.then_some(&entry.map)
+        })
+    }
+
+    /// Store the user's site-aware access map until `valid_until` (next assignment change).
+    pub fn put_access(
+        &mut self,
+        user_id: i64,
+        map: crate::auth::scope::AccessMap,
+        valid_until: Option<chrono::DateTime<chrono::Utc>>,
+    ) {
+        self.access.insert(
+            user_id,
+            CachedAccess {
+                map,
+                stored_at: Instant::now(),
+                valid_until,
+            },
+        );
     }
 
     /// Get cached permissions for `(user_id, scope_key)`.
@@ -73,6 +102,7 @@ impl PermissionCache {
     /// Called when a role assignment is changed for that user.
     pub fn invalidate_user(&mut self, user_id: i64) {
         self.entries.retain(|(uid, _), _| *uid != user_id);
+        self.access.remove(&user_id);
     }
 
     /// Invalidate **all** entries regardless of user.
@@ -81,7 +111,15 @@ impl PermissionCache {
     /// because any number of users may hold that role.
     pub fn invalidate_all(&mut self) {
         self.entries.clear();
+        self.access.clear();
     }
+}
+
+#[derive(Debug)]
+struct CachedAccess {
+    map: crate::auth::scope::AccessMap,
+    stored_at: Instant,
+    valid_until: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Debug)]
