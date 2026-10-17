@@ -768,7 +768,9 @@
       "colData": "Data",
       "noStudy": "None",
       "selectAsset": "Select {{code}}",
-      "shareLabel": "{{share}} of fleet downtime"
+      "shareLabel": "{{share}} of fleet downtime",
+      "handedError": "The equipment handed over could not be loaded",
+      "handedSelected": "{{code}} is selected for a study."
     },
     "dataQuality": {
       "complete": "Complete",
@@ -817,7 +819,8 @@
       "competingModes": "Other failure modes",
       "competingIgnore": "Other modes: ignored",
       "competingSuspend": "Other modes: suspensions",
-      "competingNeedsMode": "Choose a failure mode first"
+      "competingNeedsMode": "Choose a failure mode first",
+      "periodOrder": "The period must start before it ends."
     },
     "data": {
       "title": "Failures and suspensions",

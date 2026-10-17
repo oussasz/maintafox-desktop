@@ -768,7 +768,9 @@
       "colData": "Données",
       "noStudy": "Aucune",
       "selectAsset": "Sélectionner {{code}}",
-      "shareLabel": "{{share}} de l'arrêt du parc"
+      "shareLabel": "{{share}} de l'arrêt du parc",
+      "handedError": "L'équipement transmis n'a pas pu être chargé",
+      "handedSelected": "{{code}} est sélectionné pour une étude."
     },
     "dataQuality": {
       "complete": "Complètes",
@@ -817,7 +819,8 @@
       "competingModes": "Autres modes de défaillance",
       "competingIgnore": "Autres modes : ignorés",
       "competingSuspend": "Autres modes : suspensions",
-      "competingNeedsMode": "Choisissez d'abord un mode de défaillance"
+      "competingNeedsMode": "Choisissez d'abord un mode de défaillance",
+      "periodOrder": "La période doit commencer avant de se terminer."
     },
     "data": {
       "title": "Défaillances et suspensions",

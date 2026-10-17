@@ -27,7 +27,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { useSession } from "@/hooks/use-session";
 import { describeAppError } from "@/lib/app-error";
 import { assetToSearchResult } from "@/lib/asset-to-search-result";
-import { getStoredRamsEquipmentId } from "@/pages/reliability/rams-equipment-context";
 import { getAssetByIdSilent } from "@/services/asset-service";
 import { listWorkOrderSubtypes } from "@/services/wo-service";
 import { useUrgencyScaleStore } from "@/stores/urgency-scale-store";
@@ -206,7 +205,8 @@ export function WoCreateForm({
     };
   }, [initial?.id, initial?.equipment_id]);
 
-  // ── New WO: one-shot pre-fill from asset context, id hint, or RAMS ────────
+  // ── New WO: one-shot pre-fill only from what the caller passes ────────────
+  // (an asset or an equipment id); never from a selection left over by another screen.
 
   useEffect(() => {
     if (isEdit) return;
@@ -218,7 +218,7 @@ export function WoCreateForm({
       return;
     }
 
-    const hint = prefillEquipmentId ?? getStoredRamsEquipmentId();
+    const hint = prefillEquipmentId;
     if (hint == null || hint <= 0) {
       return;
     }
