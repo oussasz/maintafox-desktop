@@ -695,6 +695,9 @@
         }
       },
       "comparison": {
+        "hint": "Note relative aux autres fournisseurs de cet article : prix, délai et risque comptent à parts égales (5 étoiles = meilleur des candidats, pas une note absolue).",
+        "basis": "Rang prix {{price}} · délai {{lead}} · risque {{risk}}",
+        "unknown": "inconnu",
         "title": "Comparaison fournisseurs",
         "hint": "La note composite combine prix, délai et risque fournisseur.",
         "ratingValue": "{{stars}} sur {{max}}",
@@ -1334,6 +1337,13 @@
     "plantUnitGeneral": "Le facteur général d'une unité de l'usine se règle sur l'unité, dans les Données de référence. Ici, choisissez un article pour une conversion qui lui est propre."
   },
   "page": {
+    "tabGroups": {
+      "daily": "Au quotidien",
+      "setup": "Périodique et paramétrage"
+    },
+    "stockValueTotal": "Valeur du stock : {{value}}",
+    "stockValueUnavailable": "Valeur du stock indisponible",
+    "stockValueSomeUnvalued": "une partie du stock n'a pas de coût",
     "title": "Magasin & achats",
     "tabs": {
       "master": "Articles",
@@ -1580,6 +1590,9 @@
     }
   },
   "valuation": {
+    "unvaluedPresent": "Stock sans coût",
+    "unvaluedNone": "Aucun",
+    "unvaluedByArticle": "Les quantités sans coût sont détaillées par article (vue « Par article ») : elles ne s'additionnent pas entre unités différentes.",
     "title": "Valorisation du stock",
     "description": "Valeur du stock en {{currency}} au coût moyen pondéré, par article, magasin ou famille, à une date.",
     "groupBy": {

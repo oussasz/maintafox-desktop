@@ -57,6 +57,7 @@ import {
   articleToInput,
   calculateInventoryAbc,
   calculateInventoryXyz,
+  getInventoryValuationReport,
   isBelowReorderPoint,
 } from "@/services/inventory-service";
 import { getLookupValues } from "@/services/lookup-service";
@@ -391,22 +392,50 @@ export function InventoryPage() {
     [formatCurrency, formatQty, t],
   );
 
-  /** Stock value of the listed articles (valued locations only). */
+  /**
+   * Stock value of the whole store, from the valuation report (backend total, same figure as the
+   * Valuation tab) — not a sum over the articles the search happens to show. When it cannot be
+   * read the header says so instead of showing a partial figure.
+   */
+  const [stockValue, setStockValue] = useState<{
+    total: number;
+    currency: string;
+    unvalued: boolean;
+  } | null>(null);
+  const [stockValueFailed, setStockValueFailed] = useState(false);
+  const [stockValueVersion, setStockValueVersion] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    setStockValueFailed(false);
+    getInventoryValuationReport("family")
+      .then((r) => {
+        if (!cancelled) {
+          setStockValue({
+            total: r.total_value,
+            currency: r.currency_code,
+            unvalued: r.unvalued_qty > 0,
+          });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setStockValue(null);
+          setStockValueFailed(true);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [stockValueVersion]);
+
   const stockValueSummary = useMemo(() => {
-    let total = 0;
-    let valued = 0;
-    let unvalued = 0;
-    for (const a of articles) {
-      if (a.stock_value != null) {
-        total += a.stock_value;
-        valued += 1;
-      }
-      if (a.unvalued_qty > 0) unvalued += 1;
-    }
-    if (valued === 0 && unvalued === 0) return null;
-    const value = t("page.stockValue", { value: formatCurrency(total) });
-    return unvalued > 0 ? `${value} · ${t("page.unvaluedArticles", { count: unvalued })}` : value;
-  }, [articles, formatCurrency, t]);
+    if (stockValueFailed) return t("page.stockValueUnavailable");
+    if (!stockValue) return null;
+    const value = t("page.stockValueTotal", {
+      value: formatCurrency(stockValue.total, stockValue.currency),
+    });
+    return stockValue.unvalued ? `${value} · ${t("page.stockValueSomeUnvalued")}` : value;
+  }, [stockValue, stockValueFailed, formatCurrency, t]);
 
   const resetArticleForm = () => {
     setArticleForm(EMPTY_ARTICLE_FORM);
@@ -670,6 +699,7 @@ export function InventoryPage() {
   );
 
   const refresh = () => {
+    setStockValueVersion((v) => v + 1);
     if (invTab === "procurement") {
       void procurementPanelRef.current?.reload();
     }
@@ -771,7 +801,8 @@ export function InventoryPage() {
     <ModulePageShell
       icon={PackageSearch}
       title={t("page.title")}
-      count={articles.length}
+      // The count belongs to the article list: other tabs list other things.
+      count={invTab === "master" ? articles.length : null}
       description={stockValueSummary}
       bodyClassName={null}
       actions={headerActions}
@@ -781,13 +812,21 @@ export function InventoryPage() {
         onValueChange={(value) => setInvTab(value as InventoryTab)}
         className="flex min-h-0 flex-1 flex-col px-4 py-4"
       >
-        <TabsList className="w-fit flex-wrap">
+        {/* Daily work first, then periodic / setup screens, with a visible separation. */}
+        <TabsList className="h-auto w-fit flex-wrap gap-y-1">
+          <span className="px-2 text-xs font-medium text-text-muted" aria-hidden>
+            {t("page.tabGroups.daily")}
+          </span>
           <TabsTrigger value="master">{t("page.tabs.master")}</TabsTrigger>
           <TabsTrigger value="issueDesk">{t("page.tabs.issueDesk")}</TabsTrigger>
-          <TabsTrigger value="topology">{t("page.tabs.topology")}</TabsTrigger>
           <TabsTrigger value="procurement">{t("page.tabs.procurement")}</TabsTrigger>
           <TabsTrigger value="controls">{t("page.tabs.controls")}</TabsTrigger>
+          <span className="mx-1 h-6 w-px bg-surface-border" aria-hidden />
+          <span className="px-2 text-xs font-medium text-text-muted" aria-hidden>
+            {t("page.tabGroups.setup")}
+          </span>
           <TabsTrigger value="valuation">{t("page.tabs.valuation")}</TabsTrigger>
+          <TabsTrigger value="topology">{t("page.tabs.topology")}</TabsTrigger>
           <TabsTrigger value="rules">{t("page.tabs.rules")}</TabsTrigger>
           <TabsTrigger value="units">{t("unitConversions.tab")}</TabsTrigger>
         </TabsList>
