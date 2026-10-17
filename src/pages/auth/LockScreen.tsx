@@ -5,7 +5,17 @@ import { useTranslation } from "react-i18next";
 import { AuthAlert, AuthButton } from "@/components/auth/shell/AuthPrimitives";
 import { MaintafoxWordmark } from "@/components/branding/MaintafoxWordmark";
 import { mfAuth } from "@/design-system/tokens";
+import { describeAppError } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
+
+/**
+ * Text shown for a failed unlock: the translated error when the failure carries a code (or is an
+ * Error), otherwise the screen's own fallback. Display only — the unlock flow is unchanged.
+ */
+function unlockErrorText(err: unknown, fallback: string): string {
+  const described = describeAppError(err);
+  return described.code || err instanceof Error ? described.title : fallback;
+}
 
 interface LockScreenProps {
   displayName: string | null;
@@ -94,7 +104,7 @@ export function LockScreen({
 
         setPinValue("");
         pinInputRef.current?.focus();
-        setError(message);
+        setError(unlockErrorText(err, message));
       } finally {
         setLoading(false);
       }
@@ -147,7 +157,7 @@ export function LockScreen({
     try {
       await onUnlock(password);
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("session.idleLocked.unlockAction"));
+      setError(unlockErrorText(err, t("session.idleLocked.unlockAction")));
       setPassword("");
     } finally {
       setLoading(false);
