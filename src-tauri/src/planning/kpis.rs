@@ -160,9 +160,9 @@ async fn baseline(db: &impl ConnectionTrait, schedule: &WeeklySchedule, week_end
                      FROM weekly_schedule_baseline_items bi \
                      JOIN schedule_commitments sc ON sc.id = bi.schedule_commitment_id \
                     WHERE bi.weekly_schedule_id = ? AND bi.baseline_no = ?) \
-                 SELECT COUNT(*) AS jobs, COALESCE(SUM(hours), 0) AS hours, \
-                        COALESCE(SUM(CASE WHEN done_at IS NOT NULL AND julianday(done_at) <= julianday(?) \
-                                          THEN hours ELSE 0 END), 0) AS done, \
+                 SELECT COUNT(*) AS jobs, TOTAL(hours) AS hours, \
+                        TOTAL(CASE WHEN done_at IS NOT NULL AND julianday(done_at) <= julianday(?) \
+                                   THEN hours ELSE 0 END) AS done, \
                         COALESCE(SUM(released), 0) AS released \
                    FROM b"
             ),
@@ -199,7 +199,7 @@ async fn break_ins(
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             format!(
-                "SELECT COUNT(*) AS jobs, COALESCE(SUM(COALESCE(sc.planned_labor_hours, {SLOT_HOURS_SQL})), 0) AS hours \
+                "SELECT COUNT(*) AS jobs, TOTAL(COALESCE(sc.planned_labor_hours, {SLOT_HOURS_SQL})) AS hours \
                    FROM schedule_break_ins sb JOIN schedule_commitments sc ON sc.id = sb.schedule_commitment_id \
                   WHERE sb.kind = 'insert' AND sc.assigned_team_id IN ({marks}) \
                     AND julianday(sb.new_slot_start) >= julianday(?) AND julianday(sb.new_slot_start) < julianday(?)"
