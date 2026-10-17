@@ -105,6 +105,9 @@ pub struct FmecaRow {
     pub rcm_tactic: Option<String>,
     pub decision_id: Option<i64>,
     pub decision_status: Option<String>,
+    /// Ratings nobody chose (former root-cause promotion placeholder, migration 221): listed, but
+    /// not counted in the matrix, the RPN ranking or the RCM candidates until a person saves it.
+    pub review_required: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -130,6 +133,8 @@ pub struct FmecaWorksheet {
     pub mechanisms: Vec<ReferenceOption>,
     pub causes: Vec<ReferenceOption>,
     pub editable: bool,
+    /// Rows to review, left out of the matrix and the ranking.
+    pub rows_to_review: i64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -161,6 +166,11 @@ pub struct SaveFmecaItemInput {
     pub occurrence_source: String,
     #[serde(default)]
     pub occurrence_events_per_year: Option<f64>,
+    /// Root-cause diagram cause this new row comes from (traceability; ignored on update).
+    #[serde(default)]
+    pub source_ram_ishikawa_diagram_id: Option<i64>,
+    #[serde(default)]
+    pub source_ishikawa_flow_node_id: Option<String>,
 }
 
 pub async fn reference_options(db: &impl ConnectionTrait, domain: &str) -> AppResult<Vec<ReferenceOption>> {
@@ -450,13 +460,14 @@ pub async fn get_worksheet(db: &DatabaseConnection, study_id: i64) -> AppResult<
                         (SELECT x.id FROM reliability_study_decisions x WHERE x.fmeca_item_id = i.id
                           ORDER BY x.created_at DESC, x.id DESC LIMIT 1) AS decision_id,
                         (SELECT x.status FROM reliability_study_decisions x WHERE x.fmeca_item_id = i.id
-                          ORDER BY x.created_at DESC, x.id DESC LIMIT 1) AS decision_status
+                          ORDER BY x.created_at DESC, x.id DESC LIMIT 1) AS decision_status,
+                        i.review_required
                  FROM fmeca_items i
                  LEFT JOIN reference_values m ON m.id = i.failure_mode_id
                  LEFT JOIN reference_values mech ON mech.id = i.failure_mechanism_id
                  LEFT JOIN reference_values c ON c.id = i.failure_cause_id
                  WHERE i.analysis_id = ?
-                 ORDER BY i.rpn DESC, i.id ASC",
+                 ORDER BY i.review_required ASC, i.rpn DESC, i.id ASC",
                 [analysis_id.into()],
             ))
             .await?;
@@ -493,6 +504,7 @@ pub async fn get_worksheet(db: &DatabaseConnection, study_id: i64) -> AppResult<
                 rcm_tactic: get(r, "rcm_tactic")?,
                 decision_id: get(r, "decision_id")?,
                 decision_status: get(r, "decision_status")?,
+                review_required: get::<i64>(r, "review_required")? != 0,
             });
         }
     }
@@ -504,7 +516,7 @@ pub async fn get_worksheet(db: &DatabaseConnection, study_id: i64) -> AppResult<
         for oc in 1..=scales.matrix.classes {
             let count = rows
                 .iter()
-                .filter(|r| r.severity_class == sc && r.occurrence_class == oc)
+                .filter(|r| !r.review_required && r.severity_class == sc && r.occurrence_class == oc)
                 .count() as i64;
             // Zone of the class pair: highest scores of the classes.
             let s_score = (sc * 10 / scales.matrix.classes).clamp(1, 10);
@@ -520,6 +532,7 @@ pub async fn get_worksheet(db: &DatabaseConnection, study_id: i64) -> AppResult<
     let mut class_names: Vec<String> = study.assets.iter().filter_map(|a| a.class_name.clone()).collect();
     class_names.sort();
     class_names.dedup();
+    let rows_to_review = rows.iter().filter(|r| r.review_required).count() as i64;
 
     Ok(FmecaWorksheet {
         study_id,
@@ -534,8 +547,25 @@ pub async fn get_worksheet(db: &DatabaseConnection, study_id: i64) -> AppResult<
         mechanisms: reference_options(db, DOMAIN_MECHANISMS).await?,
         causes: reference_options(db, DOMAIN_CAUSES).await?,
         editable: study.status == STUDY_ACTIVE,
+        rows_to_review,
         scales,
     })
+}
+
+/// FMECA rows of the study still to review (ratings nobody chose, migration 221).
+pub async fn rows_to_review(db: &impl ConnectionTrait, study_id: i64) -> AppResult<i64> {
+    let Some(analysis_id) = study_fmeca_analysis_id(db, study_id).await? else {
+        return Ok(0);
+    };
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS n FROM fmeca_items WHERE analysis_id = ? AND review_required = 1",
+            [analysis_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("fmeca rows to review count returned no row")))?;
+    get(&row, "n")
 }
 
 /// FMECA analysis linked to a study (none until the first row is saved).
@@ -658,15 +688,22 @@ pub async fn save_item(db: &DatabaseConnection, input: SaveFmecaItemInput, actor
             linked_pm_plan_id: None,
             linked_work_order_id: None,
             revised_rpn: None,
-            source_ram_ishikawa_diagram_id: None,
-            source_ishikawa_flow_node_id: None,
+            // Used on creation only (the update keeps the row's link).
+            source_ram_ishikawa_diagram_id: input.source_ram_ishikawa_diagram_id,
+            source_ishikawa_flow_node_id: input
+                .source_ishikawa_flow_node_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string),
         },
     )
     .await?;
+    // A person rated and saved the row: it is no longer "to review".
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE fmeca_items SET component_label = ?, failure_mechanism_id = ?, failure_cause_id = ?,
-            occurrence_source = ?, occurrence_events_per_year = ? WHERE id = ?",
+            occurrence_source = ?, occurrence_events_per_year = ?, review_required = 0 WHERE id = ?",
         [
             opt_str(
                 input

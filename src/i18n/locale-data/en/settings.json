@@ -359,5 +359,80 @@
     "currencyLoadError": "The currency list (Reference data › Currencies) could not be loaded: the currency cannot be changed.",
     "currencyLoading": "Loading currencies…",
     "historyLoadError": "The history of this setting could not be loaded."
+  },
+  "license": {
+    "title": "Licence",
+    "loadError": "The licence state could not be loaded",
+    "entitlement": "Licence",
+    "activation": "Activation",
+    "trust": "This device",
+    "policySyncPending": "Policy synchronisation pending",
+    "edition": "Edition {{edition}}",
+    "pendingWrites": "Changes waiting to be sent:",
+    "lastAction": "Last administrator action:",
+    "traces_one": "{{count}} recent licence event (technical details)",
+    "traces_other": "{{count}} recent licence events (technical details)",
+    "reason": "Reason",
+    "reasonHint": "At least {{min}} characters. Kept in the licence audit trail.",
+    "states": {
+      "active": "active",
+      "suspended": "suspended",
+      "revoked": "revoked",
+      "trusted": "trusted",
+      "untrusted": "not trusted",
+      "verified": "verified",
+      "soft_accepted": "accepted",
+      "not_activated": "not activated",
+      "pending_online_validation": "awaiting online validation",
+      "degraded_api_unavailable": "degraded (server unreachable)",
+      "denied_revoked": "refused (revoked)",
+      "denied_expired": "refused (expired)",
+      "denied_slot_limit": "refused (device limit reached)",
+      "denied_force_update_required": "refused (update required)",
+      "denied_invalid": "refused (invalid)",
+      "denied_offline_grace_expired": "refused (offline period exceeded)",
+      "other": "other state"
+    },
+    "advice": {
+      "policySync": "Policy synchronisation is pending: refresh the policy before making changes.",
+      "revoked": "The licence is revoked. Ask your administrator to reactivate it, then refresh the policy.",
+      "suspended": "The licence is suspended: the application is read-only until it is reactivated.",
+      "activationDenied": "Product activation was refused. Activate again or contact support.",
+      "activationDegraded": "Activation is degraded: the licence server cannot be reached. Refresh when online.",
+      "activationPending": "Product activation is awaiting online validation.",
+      "machinePendingRevocation": "This device's activation will be revoked at the next connection.",
+      "machineRevoked": "This device's activation is revoked. Ask your administrator to re-activate it.",
+      "untrusted": "This device is not trusted yet. Complete the online first start on a trusted device.",
+      "healthy": "The licence is in order: every operation is allowed.",
+      "activationIncomplete": "Activation is not complete. Finish activating the product."
+    },
+    "actions": {
+      "other": "other action",
+      "suspend": {
+        "label": "Suspend the licence",
+        "confirmTitle": "Suspend the licence?",
+        "confirmBody": "Every user of this site switches to read-only until the licence is reactivated. Changes not yet sent stay on this device.",
+        "confirm": "Suspend the licence"
+      },
+      "revoke": {
+        "label": "Revoke the licence",
+        "confirmTitle": "Revoke the licence?",
+        "confirmBody": "The licence stops being valid for this site. Only a reactivation by an administrator restores it.",
+        "confirm": "Revoke the licence"
+      },
+      "reactivate": {
+        "label": "Reactivate the licence",
+        "confirmTitle": "Reactivate the licence?",
+        "confirmBody": "Users get back the operations their licence allows.",
+        "confirm": "Reactivate the licence"
+      },
+      "compromise": {
+        "label": "Declare the signing key compromised",
+        "confirmTitle": "Declare the signing key compromised?",
+        "confirmBody": "The key that signed the current licence is marked compromised and the licence is revoked at once. Use it only if the key leaked.",
+        "confirm": "Declare compromised",
+        "noEnvelope": "No signed licence is active: there is no signing key to declare compromised."
+      }
+    }
   }
 }

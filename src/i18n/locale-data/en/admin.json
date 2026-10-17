@@ -244,7 +244,6 @@
     "pinMismatch": "PINs do not match.",
     "pinFormat": "PIN must be 4 to 6 digits.",
     "pinError": "PIN setup failed.",
-    "enterPasswordToClearPin": "Enter your password to remove PIN",
     "trustedDevices": "Trusted Devices",
     "viewDevices": "View / Revoke",
     "trustedDevicesTitle": "Trusted Devices",
@@ -281,7 +280,13 @@
     "recentWorkHistory": "Recent work history",
     "noHistory": "No history found.",
     "skillDeclared": "Skill declared.",
-    "skillDeclareError": "Skill declaration failed."
+    "skillDeclareError": "Skill declaration failed.",
+    "removePinTitle": "Remove the unlock PIN",
+    "removePinDescription": "Enter your account password to remove the PIN. You will then unlock the app with your password.",
+    "removePinConfirm": "Remove the PIN",
+    "removingPin": "Removing…",
+    "passwordRequired": "Enter your password.",
+    "pinRemoved": "PIN removed."
   },
   "passwordPolicy": {
     "title": "Password Policy",

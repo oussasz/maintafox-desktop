@@ -37,7 +37,13 @@ import { P } from "@shared/rbac/permissions.generated";
 
 import { type FmecaDraft, FmecaItemDialog } from "./FmecaItemDialog";
 import { RatingScalesDialog } from "./RatingScalesDialog";
-import { RAMS_SELECT_CLASS, RAMS_TABLE_FRAME, RamsCard, useScaleLabel } from "./rams-ui";
+import {
+  RAMS_SELECT_CLASS,
+  RAMS_TABLE_FRAME,
+  RamsCallout,
+  RamsCard,
+  useScaleLabel,
+} from "./rams-ui";
 
 export function StudyFmecaStep({
   study,
@@ -100,6 +106,7 @@ export function StudyFmecaStep({
     occurrenceSource: p.occurrence.source as FmecaDraft["occurrenceSource"],
     occurrenceEventsPerYear: p.occurrence.events_per_year,
     proposal: p.occurrence,
+    rootCause: null,
   });
 
   const fromRow = (r: FmecaRow): FmecaDraft => ({
@@ -119,7 +126,30 @@ export function StudyFmecaStep({
     occurrenceSource: (r.occurrence_source ?? "analyst") as FmecaDraft["occurrenceSource"],
     occurrenceEventsPerYear: r.occurrence_events_per_year,
     proposal: r.occurrence_proposal,
+    rootCause: null,
   });
+
+  /** Empty row: nothing is rated until the analyst chooses (no default rating). */
+  const blankDraft = (rootCause: FmecaDraft["rootCause"]): FmecaDraft => ({
+    itemId: null,
+    rowVersion: null,
+    failureModeId: null,
+    componentLabel: "",
+    functionalFailure: "",
+    effect: "",
+    mechanismId: null,
+    causeId: null,
+    severity: null,
+    occurrence: null,
+    detectability: null,
+    currentControl: "",
+    recommendedAction: "",
+    occurrenceSource: "analyst",
+    occurrenceEventsPerYear: null,
+    proposal: null,
+    rootCause,
+  });
+  const canAnalyze = canEdit && can(P.RAM_ANALYZE);
 
   const basisText = (p: {
     source: string;
@@ -230,11 +260,19 @@ export function StudyFmecaStep({
                           {r.detectability}
                         </td>
                         <td className="px-3 py-2 text-end">
-                          <StatusChip
-                            tone={toneOf(RELIABILITY_ZONE_TONE, r.zone)}
-                            label={String(r.rpn)}
-                            title={t(`rams.fmeca.zone.${r.zone}`)}
-                          />
+                          {r.review_required ? (
+                            <StatusChip
+                              tone="attention"
+                              label={t("rams.fmeca.toReview")}
+                              title={t("rams.fmeca.toReviewHint")}
+                            />
+                          ) : (
+                            <StatusChip
+                              tone={toneOf(RELIABILITY_ZONE_TONE, r.zone)}
+                              label={String(r.rpn)}
+                              title={t(`rams.fmeca.zone.${r.zone}`)}
+                            />
+                          )}
                         </td>
                         <td className="px-3 py-2">
                           {r.decision_status ? (
@@ -286,32 +324,19 @@ export function StudyFmecaStep({
               </div>
             </div>
           )}
+          {ws.rows_to_review > 0 ? (
+            <div className="mt-3">
+              <RamsCallout
+                tone="attention"
+                title={t("rams.fmeca.rowsToReview", { count: ws.rows_to_review })}
+              >
+                {t("rams.fmeca.rowsToReviewBody")}
+              </RamsCallout>
+            </div>
+          ) : null}
           <div className="mt-3 flex flex-wrap justify-between gap-2">
             {canEdit && can(P.RAM_ANALYZE) ? (
-              <Button
-                variant="outline"
-                className="h-11"
-                onClick={() =>
-                  setDraft({
-                    itemId: null,
-                    rowVersion: null,
-                    failureModeId: null,
-                    componentLabel: "",
-                    functionalFailure: "",
-                    effect: "",
-                    mechanismId: null,
-                    causeId: null,
-                    severity: null,
-                    occurrence: null,
-                    detectability: null,
-                    currentControl: "",
-                    recommendedAction: "",
-                    occurrenceSource: "analyst",
-                    occurrenceEventsPerYear: null,
-                    proposal: null,
-                  })
-                }
-              >
+              <Button variant="outline" className="h-11" onClick={() => setDraft(blankDraft(null))}>
                 <Plus className="h-4 w-4" aria-hidden />
                 {t("rams.fmeca.addOther")}
               </Button>
@@ -392,6 +417,11 @@ export function StudyFmecaStep({
             <p className="mt-2 text-xs text-text-muted">
               {t("rams.fmeca.rpnThreshold", { threshold: ws.rpn_threshold })}
             </p>
+            {ws.rows_to_review > 0 ? (
+              <p className="mt-1 text-xs font-medium text-tone-attention-fg">
+                {t("rams.fmeca.rowsToReview", { count: ws.rows_to_review })}
+              </p>
+            ) : null}
           </RamsCard>
 
           <RamsCard title={t("rams.fmeca.proposalsTitle")} subtitle={t("rams.fmeca.proposalsHint")}>
@@ -435,7 +465,15 @@ export function StudyFmecaStep({
         </div>
       </div>
 
-      <RootCausePanel study={study} />
+      <RootCausePanel
+        study={study}
+        {...(canAnalyze
+          ? {
+              onPromoteToFmeca: (link: NonNullable<FmecaDraft["rootCause"]>) =>
+                setDraft(blankDraft(link)),
+            }
+          : {})}
+      />
 
       {draft ? (
         <FmecaItemDialog
@@ -473,7 +511,14 @@ export function StudyFmecaStep({
 }
 
 /** Ishikawa root-cause diagrams of the study equipment (former governance screen). */
-function RootCausePanel({ study }: { study: ReliabilityStudy }) {
+function RootCausePanel({
+  study,
+  onPromoteToFmeca,
+}: {
+  study: ReliabilityStudy;
+  /** Opens this study's FMECA form for a diagram cause; absent without the right to analyse. */
+  onPromoteToFmeca?: (link: NonNullable<FmecaDraft["rootCause"]>) => void;
+}) {
   const { t } = useTranslation("reliability");
   const [equipmentId, setEquipmentId] = useState<number | null>(
     study.assets[0]?.equipment_id ?? null,
@@ -503,8 +548,12 @@ function RootCausePanel({ study }: { study: ReliabilityStudy }) {
       }
     >
       {equipmentId != null ? (
-        <div className="h-[420px] overflow-hidden rounded-md border border-surface-border">
-          <IshikawaDiagramCanvas key={equipmentId} equipmentId={equipmentId} />
+        <div className="h-[900px] overflow-hidden rounded-md border border-surface-border">
+          <IshikawaDiagramCanvas
+            key={equipmentId}
+            equipmentId={equipmentId}
+            {...(onPromoteToFmeca ? { onPromoteToFmeca } : {})}
+          />
         </div>
       ) : null}
     </RamsCard>

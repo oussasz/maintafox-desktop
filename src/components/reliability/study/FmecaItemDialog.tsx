@@ -25,6 +25,13 @@ import {
 
 import { RAMS_SELECT_CLASS, RamsCallout, useScaleLabel } from "./rams-ui";
 
+/** A cause of the root-cause (Ishikawa) diagram turned into a new row: shown, and linked on save. */
+export interface FmecaRootCauseLink {
+  cause: string;
+  diagramId: number;
+  nodeId: string;
+}
+
 export interface FmecaDraft {
   itemId: number | null;
   rowVersion: number | null;
@@ -42,6 +49,8 @@ export interface FmecaDraft {
   occurrenceSource: "weibull" | "history" | "analyst";
   occurrenceEventsPerYear: number | null;
   proposal: OccurrenceProposal | null;
+  /** New row from a root-cause diagram cause (no rating is preset: the analyst rates it). */
+  rootCause: FmecaRootCauseLink | null;
 }
 
 export function FmecaItemDialog({
@@ -98,6 +107,9 @@ export function FmecaItemDialog({
           occurrence_source: d.occurrenceSource,
           occurrence_events_per_year:
             d.occurrenceSource === "analyst" ? null : d.occurrenceEventsPerYear,
+          source_ram_ishikawa_diagram_id:
+            d.itemId == null ? (d.rootCause?.diagramId ?? null) : null,
+          source_ishikawa_flow_node_id: d.itemId == null ? (d.rootCause?.nodeId ?? null) : null,
         }),
       );
     } catch {
@@ -143,6 +155,11 @@ export function FmecaItemDialog({
           </DialogTitle>
           <DialogDescription>{t("rams.fmeca.dialogHint")}</DialogDescription>
         </DialogHeader>
+        {d.rootCause ? (
+          <RamsCallout tone="info" title={t("rams.fmeca.fromRootCause")}>
+            {t("rams.fmeca.fromRootCauseBody", { cause: d.rootCause.cause })}
+          </RamsCallout>
+        ) : null}
         <div className="grid gap-3 sm:grid-cols-2">
           <label className={field}>
             {t("rams.fmeca.colElement")}

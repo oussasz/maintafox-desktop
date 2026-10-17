@@ -359,5 +359,80 @@
     "currencyLoadError": "La liste des devises (Données de référence › Devises) n'a pas pu être chargée : la devise ne peut pas être modifiée.",
     "currencyLoading": "Chargement des devises…",
     "historyLoadError": "L'historique de ce paramètre n'a pas pu être chargé."
+  },
+  "license": {
+    "title": "Licence",
+    "loadError": "L'état de la licence n'a pas pu être chargé",
+    "entitlement": "Licence",
+    "activation": "Activation",
+    "trust": "Ce poste",
+    "policySyncPending": "Synchronisation de la politique en attente",
+    "edition": "Édition {{edition}}",
+    "pendingWrites": "Modifications en attente d'envoi :",
+    "lastAction": "Dernière action d'administration :",
+    "traces_one": "{{count}} événement de licence récent (détails techniques)",
+    "traces_other": "{{count}} événements de licence récents (détails techniques)",
+    "reason": "Motif",
+    "reasonHint": "Au moins {{min}} caractères. Conservé dans la piste d'audit de la licence.",
+    "states": {
+      "active": "active",
+      "suspended": "suspendue",
+      "revoked": "révoquée",
+      "trusted": "de confiance",
+      "untrusted": "non approuvé",
+      "verified": "vérifiée",
+      "soft_accepted": "acceptée",
+      "not_activated": "non activée",
+      "pending_online_validation": "en attente de validation en ligne",
+      "degraded_api_unavailable": "dégradée (serveur injoignable)",
+      "denied_revoked": "refusée (révoquée)",
+      "denied_expired": "refusée (expirée)",
+      "denied_slot_limit": "refusée (nombre de postes atteint)",
+      "denied_force_update_required": "refusée (mise à jour requise)",
+      "denied_invalid": "refusée (invalide)",
+      "denied_offline_grace_expired": "refusée (durée hors ligne dépassée)",
+      "other": "autre état"
+    },
+    "advice": {
+      "policySync": "La synchronisation de la politique est en attente : actualisez la politique avant toute modification.",
+      "revoked": "La licence est révoquée. Demandez à votre administrateur de la réactiver, puis actualisez la politique.",
+      "suspended": "La licence est suspendue : l'application est en lecture seule jusqu'à sa réactivation.",
+      "activationDenied": "L'activation du produit a été refusée. Réactivez ou contactez le support.",
+      "activationDegraded": "L'activation est dégradée : le serveur de licences est injoignable. Actualisez une fois en ligne.",
+      "activationPending": "L'activation du produit attend une validation en ligne.",
+      "machinePendingRevocation": "L'activation de ce poste sera révoquée à la prochaine connexion.",
+      "machineRevoked": "L'activation de ce poste est révoquée. Demandez à votre administrateur de le réactiver.",
+      "untrusted": "Ce poste n'est pas encore approuvé. Terminez le premier démarrage en ligne sur un poste de confiance.",
+      "healthy": "La licence est en règle : toutes les opérations sont autorisées.",
+      "activationIncomplete": "L'activation n'est pas terminée. Finalisez l'activation du produit."
+    },
+    "actions": {
+      "other": "autre action",
+      "suspend": {
+        "label": "Suspendre la licence",
+        "confirmTitle": "Suspendre la licence ?",
+        "confirmBody": "Tous les utilisateurs du site passent en lecture seule jusqu'à la réactivation. Les modifications non envoyées restent sur ce poste.",
+        "confirm": "Suspendre la licence"
+      },
+      "revoke": {
+        "label": "Révoquer la licence",
+        "confirmTitle": "Révoquer la licence ?",
+        "confirmBody": "La licence cesse d'être valable pour ce site. Seule une réactivation par un administrateur la rétablit.",
+        "confirm": "Révoquer la licence"
+      },
+      "reactivate": {
+        "label": "Réactiver la licence",
+        "confirmTitle": "Réactiver la licence ?",
+        "confirmBody": "Les utilisateurs retrouvent les opérations que leur licence autorise.",
+        "confirm": "Réactiver la licence"
+      },
+      "compromise": {
+        "label": "Déclarer la clé de signature compromise",
+        "confirmTitle": "Déclarer la clé de signature compromise ?",
+        "confirmBody": "La clé qui a signé la licence en cours est marquée compromise et la licence est révoquée immédiatement. À utiliser uniquement en cas de fuite de la clé.",
+        "confirm": "Déclarer compromise",
+        "noEnvelope": "Aucune licence signée n'est active : il n'y a pas de clé de signature à déclarer compromise."
+      }
+    }
   }
 }

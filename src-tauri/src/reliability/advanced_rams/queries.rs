@@ -1420,7 +1420,7 @@ pub async fn get_fmeca_severity_occurrence_matrix(
             "SELECT fi.severity, fi.occurrence, COUNT(*) AS c
              FROM fmeca_items fi
              INNER JOIN fmeca_analyses fa ON fa.id = fi.analysis_id
-             WHERE fa.equipment_id = ?
+             WHERE fa.equipment_id = ? AND fi.review_required = 0
              GROUP BY fi.severity, fi.occurrence",
             [equipment_id.into()],
         ))

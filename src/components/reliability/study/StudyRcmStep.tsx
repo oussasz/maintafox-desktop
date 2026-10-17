@@ -83,60 +83,76 @@ export function StudyRcmStep({
   if (error != null && ws == null)
     return <ErrorState error={error} onRetry={() => void load()} retrying={loading} />;
   if (ws == null) return <LoadingState />;
+  // FMECA rows whose ratings nobody chose are not offered here until they are rated.
+  const toReview =
+    ws.rows_to_review > 0 ? (
+      <RamsCallout
+        tone="attention"
+        title={t("rams.fmeca.rowsToReview", { count: ws.rows_to_review })}
+      >
+        {t("rams.rcm.rowsToReviewBody")}
+      </RamsCallout>
+    ) : null;
   if (ws.rows.length === 0)
     return (
-      <EmptyState
-        title={t("rams.rcm.emptyTitle")}
-        description={t("rams.rcm.emptyBody")}
-        actionLabel={t("rams.rcm.toFmeca")}
-        onAction={onGoFmeca}
-      />
+      <div className="grid gap-4">
+        {toReview}
+        <EmptyState
+          title={t("rams.rcm.emptyTitle")}
+          description={t("rams.rcm.emptyBody")}
+          actionLabel={t("rams.rcm.toFmeca")}
+          onAction={onGoFmeca}
+        />
+      </div>
     );
   const row = ws.rows.find((r) => r.item_id === selected) ?? ws.rows[0];
   if (!row) return null;
   return (
-    <div className="grid gap-4 xl:grid-cols-[minmax(0,16rem)_minmax(0,1.4fr)_minmax(0,1fr)]">
-      <RamsCard title={t("rams.rcm.modesTitle")}>
-        <ul className="grid gap-1.5" role="listbox" aria-label={t("rams.rcm.modesTitle")}>
-          {ws.rows.map((r) => (
-            <li key={r.item_id}>
-              <button
-                type="button"
-                role="option"
-                aria-selected={r.item_id === row.item_id}
-                onClick={() => setSelected(r.item_id)}
-                className={cn(
-                  "w-full min-h-[44px] rounded-md border px-3 py-2 text-start text-sm",
-                  r.item_id === row.item_id
-                    ? "border-primary bg-primary-bg text-primary"
-                    : "border-surface-border hover:bg-surface-2",
-                )}
-              >
-                <span className="block font-medium">{r.component_label || r.mode_label}</span>
-                <span className="block text-xs text-text-muted">
-                  {r.mode_code} · {t("rams.rcm.rpn", { rpn: r.rpn })}
-                </span>
-                {r.saved ? (
-                  <StatusChip
-                    className="mt-1"
-                    tone={toneOf(RELIABILITY_TACTIC_TONE, r.saved.selected_tactic)}
-                    label={t(`rams.rcm.tactic.${r.saved.selected_tactic}`)}
-                  />
-                ) : null}
-              </button>
-            </li>
-          ))}
-        </ul>
-      </RamsCard>
-      <RcmEditor
-        key={row.item_id}
-        study={study}
-        row={row}
-        timeBasis={ws.time_basis}
-        editable={editable && ws.editable}
-        onSaved={setWs}
-        onDecide={onDecide}
-      />
+    <div className="grid gap-4">
+      {toReview}
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,16rem)_minmax(0,1.4fr)_minmax(0,1fr)]">
+        <RamsCard title={t("rams.rcm.modesTitle")}>
+          <ul className="grid gap-1.5" role="listbox" aria-label={t("rams.rcm.modesTitle")}>
+            {ws.rows.map((r) => (
+              <li key={r.item_id}>
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={r.item_id === row.item_id}
+                  onClick={() => setSelected(r.item_id)}
+                  className={cn(
+                    "w-full min-h-[44px] rounded-md border px-3 py-2 text-start text-sm",
+                    r.item_id === row.item_id
+                      ? "border-primary bg-primary-bg text-primary"
+                      : "border-surface-border hover:bg-surface-2",
+                  )}
+                >
+                  <span className="block font-medium">{r.component_label || r.mode_label}</span>
+                  <span className="block text-xs text-text-muted">
+                    {r.mode_code} · {t("rams.rcm.rpn", { rpn: r.rpn })}
+                  </span>
+                  {r.saved ? (
+                    <StatusChip
+                      className="mt-1"
+                      tone={toneOf(RELIABILITY_TACTIC_TONE, r.saved.selected_tactic)}
+                      label={t(`rams.rcm.tactic.${r.saved.selected_tactic}`)}
+                    />
+                  ) : null}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </RamsCard>
+        <RcmEditor
+          key={row.item_id}
+          study={study}
+          row={row}
+          timeBasis={ws.time_basis}
+          editable={editable && ws.editable}
+          onSaved={setWs}
+          onDecide={onDecide}
+        />
+      </div>
     </div>
   );
 }

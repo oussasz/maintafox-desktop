@@ -35,6 +35,7 @@ const LicenseStatusViewSchema = z.object({
   license_edition: z.string().nullable(),
   entitlement_tier: z.string().nullable(),
   envelope_id: z.string().nullable(),
+  envelope_issuer: z.string().nullable(),
   envelope_key_id: z.string().nullable(),
   verification_result: z.string().nullable(),
   policy_sync_pending: z.boolean(),

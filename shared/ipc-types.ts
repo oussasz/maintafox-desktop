@@ -255,6 +255,8 @@ export interface LicenseStatusView {
   license_edition: string | null;
   entitlement_tier: string | null;
   envelope_id: string | null;
+  /** Issuer of the active envelope's signing key (target of compromise responses). */
+  envelope_issuer: string | null;
   /** Signing key of the active envelope (target of compromise responses). */
   envelope_key_id: string | null;
   verification_result: string | null;

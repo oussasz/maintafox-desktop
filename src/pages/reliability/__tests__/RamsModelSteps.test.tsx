@@ -57,8 +57,24 @@ vi.mock("@/hooks/use-permissions", () => ({
 }));
 // The Ishikawa canvas has its own tests; here only its placement in step 3 matters.
 vi.mock("@/components/reliability/IshikawaDiagramCanvas", () => ({
-  IshikawaDiagramCanvas: ({ equipmentId }: { equipmentId: number }) => (
-    <div data-testid="ishikawa">{equipmentId}</div>
+  IshikawaDiagramCanvas: ({
+    equipmentId,
+    onPromoteToFmeca,
+  }: {
+    equipmentId: number;
+    onPromoteToFmeca?: (p: { cause: string; diagramId: number; nodeId: string }) => void;
+  }) => (
+    <div data-testid="ishikawa">
+      {equipmentId}
+      {onPromoteToFmeca ? (
+        <button
+          type="button"
+          onClick={() => onPromoteToFmeca({ cause: "Loose bolt", diagramId: 9, nodeId: "cause_x" })}
+        >
+          promote cause
+        </button>
+      ) : null}
+    </div>
   ),
 }));
 
@@ -169,6 +185,7 @@ const fmeca: FmecaWorksheet = {
       rcm_tactic: null,
       decision_id: null,
       decision_status: null,
+      review_required: false,
     },
   ],
   proposals: [
@@ -206,6 +223,7 @@ const fmeca: FmecaWorksheet = {
   ],
   causes: [{ id: 80, code: "C1", label: "Contamination" }],
   editable: true,
+  rows_to_review: 0,
 };
 
 beforeEach(() => {
@@ -268,6 +286,66 @@ describe("StudyFmecaStep", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /RCM decision/ }));
     expect(onGoRcm).toHaveBeenCalled();
+  });
+
+  it("flags rows whose ratings nobody chose and says they are not counted", async () => {
+    const rated = fmeca.rows[0];
+    if (!rated) throw new Error("fixture row missing");
+    const placeholder = {
+      ...rated,
+      item_id: 32,
+      component_label: "Coupling",
+      severity: 5,
+      occurrence: 5,
+      detectability: 5,
+      rpn: 125,
+      review_required: true,
+    };
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_reliability_study_fmeca")
+        return { ...fmeca, rows: [...fmeca.rows, placeholder], rows_to_review: 1 };
+      throw new Error(`unexpected ${cmd}`);
+    });
+    render(<StudyFmecaStep study={study} editable onGoRcm={() => undefined} />);
+    const table = await screen.findByRole("table", { name: /FMECA: Centrifugal pump/ });
+    const row = within(table).getByText("Coupling").closest("tr");
+    if (!row) throw new Error("placeholder row missing");
+    expect(within(row).getByText("To review")).toBeInTheDocument();
+    expect(within(row).queryByText("125")).not.toBeInTheDocument();
+    expect(screen.getAllByText("1 row to review not counted").length).toBeGreaterThan(0);
+  });
+
+  it("turns a diagram cause into a row the analyst rates, linked to the diagram", async () => {
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_reliability_study_fmeca") return fmeca;
+      if (cmd === "save_reliability_study_fmeca_item") return fmeca;
+      throw new Error(`unexpected ${cmd}`);
+    });
+    render(<StudyFmecaStep study={study} editable onGoRcm={() => undefined} />);
+    fireEvent.click(await screen.findByRole("button", { name: "promote cause" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/Cause: Loose bolt/)).toBeInTheDocument();
+    // Nothing is preset: no mode and no rating, so the row cannot be saved yet.
+    const save = within(dialog).getByRole("button", { name: "Save the row" });
+    expect(save).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText("Failure mode"), { target: { value: "5" } });
+    fireEvent.change(within(dialog).getByLabelText("Severity"), { target: { value: "6" } });
+    fireEvent.change(within(dialog).getByLabelText("Occurrence"), { target: { value: "3" } });
+    fireEvent.change(within(dialog).getByLabelText("Detection"), { target: { value: "4" } });
+    fireEvent.click(save);
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith("save_reliability_study_fmeca_item", {
+        input: expect.objectContaining({
+          item_id: null,
+          failure_mode_id: 5,
+          severity: 6,
+          occurrence: 3,
+          detectability: 4,
+          source_ram_ishikawa_diagram_id: 9,
+          source_ishikawa_flow_node_id: "cause_x",
+        }),
+      }),
+    );
   });
 
   it("marks an analyst override when the proposed occurrence is changed", async () => {
@@ -356,6 +434,7 @@ const rcm: RcmWorksheet = {
   rows: [rcmRow],
   editable: true,
   time_basis: "operating",
+  rows_to_review: 0,
 };
 
 describe("StudyRcmStep", () => {

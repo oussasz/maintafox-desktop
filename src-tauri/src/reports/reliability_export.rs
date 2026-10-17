@@ -158,7 +158,7 @@ async fn load_sections(db: &impl ConnectionTrait, equipment_id: i64) -> AppResul
             "SELECT a.title, i.functional_failure, i.failure_effect, i.severity, i.occurrence, i.detectability, \
              i.rpn, i.criticality_number, i.recommended_action FROM fmeca_items i \
              JOIN fmeca_analyses a ON a.id = i.analysis_id WHERE a.equipment_id = ? \
-             ORDER BY i.rpn DESC, i.id",
+             AND i.review_required = 0 ORDER BY i.rpn DESC, i.id",
             [equipment_id.into()],
         ))
         .await?;
@@ -177,6 +177,29 @@ async fn load_sections(db: &impl ConnectionTrait, equipment_id: i64) -> AppResul
             n("rpn")?.to_string(),
             opt(cm),
             s("recommended_action")?,
+        ]);
+    }
+    // Rows whose ratings nobody chose (migration 221) are not ranked: say how many were left out.
+    let to_review: i64 = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS n FROM fmeca_items i JOIN fmeca_analyses a ON a.id = i.analysis_id \
+             WHERE a.equipment_id = ? AND i.review_required = 1",
+            [equipment_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("fmeca rows to review count returned no row")))?
+        .try_get("", "n")
+        .map_err(|e| decode_err("n", e))?;
+    if to_review > 0 {
+        fm_rows.push(vec![
+            format!("{to_review} row(s) to review not counted (ratings not yet chosen)"),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
         ]);
     }
     sections.push(Section {

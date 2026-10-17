@@ -302,12 +302,17 @@ pub async fn create_decision(
         let row = db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT i.rpn, m.label FROM fmeca_items i LEFT JOIN reference_values m ON m.id = i.failure_mode_id
+                "SELECT i.rpn, m.label, i.review_required FROM fmeca_items i
+                 LEFT JOIN reference_values m ON m.id = i.failure_mode_id
                  WHERE i.id = ? AND i.analysis_id = ?",
                 [item.into(), analysis.unwrap_or(-1).into()],
             ))
             .await?
             .ok_or_else(|| invalid("DECISION_FMECA_ITEM_NOT_IN_STUDY"))?;
+        if get::<i64>(&row, "review_required")? != 0 {
+            // A decision never rests on ratings nobody chose (migration 221).
+            return Err(invalid("FMECA_ITEM_REVIEW_REQUIRED"));
+        }
         rpn = get::<Option<i64>>(&row, "rpn")?;
         fmeca_mode_label = get::<Option<String>>(&row, "label")?;
     }

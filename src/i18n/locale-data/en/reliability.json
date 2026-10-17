@@ -220,14 +220,22 @@
     "promoteMenu": "Promote to corrective action",
     "promoteTitle": "Create corrective action from cause",
     "promoteBody": "Creates a traceable link to this Ishikawa diagram. Save the diagram first if you have not already.",
-    "promoteTargetWo": "Work order (corrective)",
+    "promoteTargetWo": "Corrective work order",
     "promoteTargetFmeca": "FMECA row",
     "promoteNeedSave": "Save the diagram before promoting a cause.",
     "promoteNeedUser": "You must be signed in to create a work order.",
-    "promoteNeedFmecaAnalysis": "Create an FMECA analysis for this equipment first.",
     "promoteSubmit": "Create",
     "promoteSuccessWo": "Work order created from RCA cause.",
-    "promoteSuccessFmeca": "FMECA row created from RCA cause."
+    "promoteSuccessFmeca": "FMECA row created from the root cause.",
+    "unreadable": "The saved diagram cannot be read. It is kept as stored; nothing is saved over it.",
+    "diagramTitle": "Root-cause diagram",
+    "promoteTarget": "Turn the cause into",
+    "promoteWoType": "Work order type",
+    "promoteWoTypePlaceholder": "Choose a corrective type",
+    "promoteWoTitle": "Root cause: {{cause}}",
+    "promoteFmecaHint": "The study's FMECA form opens with this cause: choose the failure mode and rate severity, occurrence and detection.",
+    "promoteOpenFmeca": "Open the FMECA form",
+    "promoteBusy": "Saving…"
   },
   "foundation": {
     "title": "Asset foundation",
@@ -288,10 +296,10 @@
     "criticality": "Criticality number (MIL-STD-1629A)",
     "beta": "Effect probability β",
     "betaOptions": {
+      "0": "0 — no effect",
       "1": "1.0 — actual loss",
       "0.5": "0.5 — probable loss",
-      "0.1": "0.1 — possible loss",
-      "0": "0 — no effect"
+      "0.1": "0.1 — possible loss"
     },
     "alpha": "Failure mode ratio α",
     "lambda": "Failure rate λp (per hour)",
@@ -1204,7 +1212,14 @@
       "save": "Save the row",
       "rootCauseTitle": "Root causes (Ishikawa)",
       "rootCauseHint": "Cause diagram per equipment: add causes under each branch, save, and turn a cause into a work order or an FMECA row.",
-      "rootCauseEquipment": "Equipment"
+      "rootCauseEquipment": "Equipment",
+      "toReview": "To review",
+      "toReviewHint": "Ratings were not chosen by a person (former automatic entry). Open the row, rate it and save: until then it is not counted.",
+      "rowsToReview_one": "{{count}} row to review not counted",
+      "rowsToReview_other": "{{count}} rows to review not counted",
+      "rowsToReviewBody": "Their ratings were set automatically, not chosen. They stay listed but are left out of the matrix, the RPN ranking, RCM and decisions until they are rated and saved.",
+      "fromRootCause": "From the root-cause diagram",
+      "fromRootCauseBody": "Cause: {{cause}}. Choose the failure mode and rate the row; nothing is preset."
     },
     "scales": {
       "title": "Plant rating grids",
@@ -1338,7 +1353,8 @@
       "decisionTimeBased": "Replace {{element}} every {{interval}} {{unit}}",
       "decisionCondition": "Set up monitoring of {{element}} every {{interval}} {{unit}}",
       "decisionFailureFinding": "Periodic failure-finding test: {{element}}",
-      "decisionRedesign": "Modification: {{element}}"
+      "decisionRedesign": "Modification: {{element}}",
+      "rowsToReviewBody": "Rate them in the FMECA step to analyse them here."
     },
     "system": {
       "tool": "Modelling tool",

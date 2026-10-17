@@ -31,6 +31,8 @@ pub struct LicenseStatusView {
     pub license_edition: Option<String>,
     pub entitlement_tier: Option<String>,
     pub envelope_id: Option<String>,
+    /// Issuer of the active envelope's signing key (target of compromise responses).
+    pub envelope_issuer: Option<String>,
     /// Signing key of the active envelope (target of compromise responses).
     pub envelope_key_id: Option<String>,
     pub verification_result: Option<String>,
