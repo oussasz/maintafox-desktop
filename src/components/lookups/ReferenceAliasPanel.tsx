@@ -18,6 +18,7 @@ import {
 } from "@/components/lookups/reference-table-ui";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { LoadingState } from "@/components/ui/data-state";
 import {
   Dialog,
   DialogContent,
@@ -34,7 +35,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { mfTable } from "@/design-system/tokens";
 import { usePermissions } from "@/hooks/use-permissions";
+import { cn } from "@/lib/utils";
 import {
   createReferenceAlias,
   deleteReferenceAlias,
@@ -211,38 +214,32 @@ export function ReferenceAliasPanel({ value, canMutate, onClose }: ReferenceAlia
             title={String(t("editor.cancel"))}
             variant="ghost"
             size="icon"
-            className="h-6 w-6"
+            className="h-9 w-9"
             onClick={onClose}
           >
-            <X className="h-3.5 w-3.5" />
+            <X className="h-4 w-4" aria-hidden />
           </Button>
         </div>
       </div>
 
-      {error && <p className="text-xs text-status-danger">{error}</p>}
+      {error && (
+        <p role="alert" className="text-xs text-tone-danger-fg">
+          {error}
+        </p>
+      )}
 
       {loading ? (
-        <div className="flex items-center justify-center py-4">
-          <div className="h-4 w-4 animate-spin rounded-full border border-surface-3 border-t-primary" />
-        </div>
+        <LoadingState className="py-4" />
       ) : aliases.length === 0 && !newRow ? (
         <p className="text-xs text-text-muted italic">{t("alias.empty")}</p>
       ) : (
         <table className="w-full text-xs">
           <thead>
-            <tr className="border-b border-surface-border">
-              <th className="px-2 py-1 text-left font-medium text-text-muted">
-                {t("alias.colAlias")}
-              </th>
-              <th className="px-2 py-1 text-left font-medium text-text-muted">
-                {t("alias.colLocale")}
-              </th>
-              <th className="px-2 py-1 text-left font-medium text-text-muted">
-                {t("alias.colType")}
-              </th>
-              <th className="px-2 py-1 text-left font-medium text-text-muted">
-                {t("alias.colPreferred")}
-              </th>
+            <tr className={cn("border-b border-surface-border", mfTable.header)}>
+              <th className="px-2 py-1 text-start">{t("alias.colAlias")}</th>
+              <th className="px-2 py-1 text-start">{t("alias.colLocale")}</th>
+              <th className="px-2 py-1 text-start">{t("alias.colType")}</th>
+              <th className="px-2 py-1 text-start">{t("alias.colPreferred")}</th>
               <th className="px-2 py-1 text-right align-middle font-medium text-text-muted">
                 {t("alias.colActions")}
               </th>
