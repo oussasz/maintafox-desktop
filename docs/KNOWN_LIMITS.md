@@ -162,6 +162,7 @@ Last updated: 2026-10-17 (step 5 in progress; planning steps A–E merged, LOTO 
 |---|---|---|
 | The equipment tree is built from the equipment page already loaded, not the whole register; with more equipment than one page, branches can be missing from the tree (the list and search are complete). | Data | Step 7 (needs a tree read from the database) |
 | IoT and ERP "linked records" are yes/no flags, not counts. | UX | After pilot |
+| The asset edit form no longer offers a retired status or an end-of-life date (retirement goes through Déclasser), but the server still accepts them on an identity update from another path. Server check being added. | Data | Step 5 |
 
 ## App frame, sync centre, documents, organisation, budget
 
