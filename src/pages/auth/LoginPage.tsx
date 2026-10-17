@@ -8,6 +8,7 @@ import { formatLicenseDate } from "@/components/auth/activation/OrganizationLice
 import { AuthField } from "@/components/auth/shell/AuthField";
 import { AuthAlert, AuthButton, AuthStatusChip } from "@/components/auth/shell/AuthPrimitives";
 import { AuthShell } from "@/components/auth/shell/AuthShell";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   useProductLicenseGate,
   useProductLicenseGateReconcile,
@@ -16,6 +17,7 @@ import {
 import { mfAuth, mfAuthAlert } from "@/design-system/tokens";
 import { useSession } from "@/hooks/use-session";
 import { i18n } from "@/i18n";
+import { describeAppError } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import {
   clearProductLicenseBrowserState,
@@ -45,6 +47,7 @@ export function LoginPage() {
   const [activationCheckLoading, setActivationCheckLoading] = useState(true);
   const [resettingActivation, setResettingActivation] = useState(false);
   const [resetActivationError, setResetActivationError] = useState<string | null>(null);
+  const [confirmResetOpen, setConfirmResetOpen] = useState(false);
   const [capsLockOn, setCapsLockOn] = useState(false);
   const usernameRef = useRef<HTMLInputElement | null>(null);
   const mountedRef = useRef(true);
@@ -103,13 +106,9 @@ export function LoginPage() {
       }
       navigate("/", { replace: true });
     } catch (e) {
-      const message =
-        e instanceof Error
-          ? e.message
-          : typeof e === "object" && e !== null && "message" in e
-            ? String((e as { message: unknown }).message)
-            : t("login.resetActivation.errorFallback");
-      setResetActivationError(message);
+      setResetActivationError(
+        describeAppError(e).title || t("login.resetActivation.errorFallback"),
+      );
     } finally {
       if (mountedRef.current) {
         setResettingActivation(false);
@@ -213,10 +212,10 @@ export function LoginPage() {
           </AuthButton>
           <AuthButton
             variant="ghost"
-            onClick={() => void handleResetActivation()}
+            onClick={() => setConfirmResetOpen(true)}
             disabled={resettingActivation}
           >
-            {resettingActivation ? t("activation.activating") : t("activation.changeKey")}
+            {resettingActivation ? t("login.resetActivation.resetting") : t("activation.changeKey")}
           </AuthButton>
         </div>
       ) : null}
@@ -290,7 +289,7 @@ export function LoginPage() {
             <AuthButton
               variant="secondary"
               className="mt-2"
-              onClick={() => void handleResetActivation()}
+              onClick={() => setConfirmResetOpen(true)}
               disabled={resettingActivation}
             >
               {resettingActivation
@@ -326,6 +325,15 @@ export function LoginPage() {
       </form>
 
       <ForgotPasswordDialog open={forgotOpen} onOpenChange={setForgotOpen} />
+      <ConfirmDialog
+        open={confirmResetOpen}
+        onOpenChange={setConfirmResetOpen}
+        title={t("login.resetActivation.confirmTitle")}
+        description={t("login.resetActivation.confirmBody")}
+        confirmLabel={t("login.resetActivation.confirmAction")}
+        destructive
+        onConfirm={handleResetActivation}
+      />
 
       <div className="mt-6 border-t border-surface-border pt-5 text-center">
         <p className="mb-2 text-xs text-text-muted">{t("login.resetActivation.hint")}</p>
@@ -336,7 +344,7 @@ export function LoginPage() {
         ) : null}
         <button
           type="button"
-          onClick={() => void handleResetActivation()}
+          onClick={() => setConfirmResetOpen(true)}
           disabled={resettingActivation || activationCheckLoading}
           className={mfAuth.linkPrimary}
         >
