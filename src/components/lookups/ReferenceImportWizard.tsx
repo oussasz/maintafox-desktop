@@ -343,8 +343,23 @@ export function ReferenceImportWizard({
                         </td>
                         <td className="px-2 py-1 text-text-muted">
                           {row.messages.map((m) => (
-                            <span key={`${row.id}-${m.category}-${m.severity}`} className="block">
-                              {m.message}
+                            <span
+                              key={`${row.id}-${m.category}-${m.severity}`}
+                              className="block"
+                              data-testid="import-message"
+                            >
+                              {/* Translated reason; the server's own text stays under Detail. */}
+                              <span className="font-medium text-text-secondary">
+                                {t(`import.category.${m.category}`, {
+                                  defaultValue: t("import.category.other"),
+                                })}
+                              </span>
+                              <details>
+                                <summary className="cursor-pointer select-none">
+                                  {t("import.messageDetail")}
+                                </summary>
+                                {m.message}
+                              </details>
                             </span>
                           ))}
                         </td>

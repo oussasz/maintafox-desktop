@@ -634,6 +634,16 @@
     }
   },
   "import": {
+    "messageDetail": "Détail",
+    "category": {
+      "CreateOnly": "Fiche existante : ignorée en mode création seule",
+      "RequiredField": "Champ obligatoire manquant",
+      "FieldRule_CreateAndUpdate": "Valeur non autorisée",
+      "FieldRule_CreateOnly": "Champ pris seulement à la création : non modifié sur une fiche existante",
+      "FieldRule_Protected": "Champ protégé : ignoré par l'import",
+      "FieldRule_Mapped": "Code de référence inconnu (poste, entité, équipe, responsable ou entreprise)",
+      "other": "Autre contrôle"
+    },
     "rowStatus": {
       "valid": "Valide",
       "warning": "Avertissement",

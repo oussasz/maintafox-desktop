@@ -190,6 +190,21 @@
     }
   },
   "import": {
+    "messageDetail": "Détail",
+    "category": {
+      "MissingCode": "Code manquant",
+      "InvalidCodeFormat": "Format de code invalide",
+      "DuplicateInBatch": "Code en double dans le fichier",
+      "ProtectedDomainUpdate": "Liste protégée : la mise à jour de cette valeur sera tracée",
+      "MissingLabel": "Libellé manquant",
+      "BlankLabel": "Libellé vide",
+      "MissingParent": "Parent manquant (obligatoire pour cette liste)",
+      "InvalidParent": "Parent introuvable",
+      "InvalidNatureTag": "Nature de maintenance invalide",
+      "InvalidUnit": "Unité invalide",
+      "InvalidCurrency": "Devise invalide",
+      "other": "Autre contrôle"
+    },
     "title": "Importer des valeurs de référence",
     "description": "Importez un fichier CSV (colonnes code, label, description…) dans le brouillon ouvert. Le fichier exporté par « Exporter (CSV) » peut être réimporté après modification.",
     "stepUpload": "Télécharger",

@@ -251,8 +251,23 @@ export function PersonnelImportWizard() {
                         </TableCell>
                         <TableCell className="max-w-[350px]">
                           {row.messages.map((msg, idx) => (
-                            <div key={`${row.id}-${idx}`} className="text-xs text-muted-foreground">
-                              [{msg.category}] {msg.message}
+                            <div
+                              key={`${row.id}-${idx}`}
+                              className="text-xs text-text-secondary"
+                              data-testid="import-message"
+                            >
+                              {/* Translated reason; the server's own text stays under Detail. */}
+                              <span className="font-medium">
+                                {t(`import.category.${msg.category.replace(/\./g, "_")}`, {
+                                  defaultValue: t("import.category.other"),
+                                })}
+                              </span>
+                              <details className="text-text-muted">
+                                <summary className="cursor-pointer select-none">
+                                  {t("import.messageDetail")}
+                                </summary>
+                                {msg.message}
+                              </details>
                             </div>
                           ))}
                         </TableCell>

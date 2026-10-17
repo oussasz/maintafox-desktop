@@ -634,6 +634,16 @@
     }
   },
   "import": {
+    "messageDetail": "Detail",
+    "category": {
+      "CreateOnly": "Existing record: skipped in create-only mode",
+      "RequiredField": "Required field missing",
+      "FieldRule_CreateAndUpdate": "Value not allowed",
+      "FieldRule_CreateOnly": "Field used only on creation: not changed on an existing record",
+      "FieldRule_Protected": "Protected field: ignored by the import",
+      "FieldRule_Mapped": "Unknown reference code (position, entity, team, supervisor or company)",
+      "other": "Other check"
+    },
     "rowStatus": {
       "valid": "Valid",
       "warning": "Warning",

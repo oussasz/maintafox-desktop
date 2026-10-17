@@ -190,6 +190,21 @@
     }
   },
   "import": {
+    "messageDetail": "Detail",
+    "category": {
+      "MissingCode": "Code missing",
+      "InvalidCodeFormat": "Invalid code format",
+      "DuplicateInBatch": "Code repeated in the file",
+      "ProtectedDomainUpdate": "Protected list: updating this value will be logged",
+      "MissingLabel": "Label missing",
+      "BlankLabel": "Label is blank",
+      "MissingParent": "Parent missing (required for this list)",
+      "InvalidParent": "Parent not found",
+      "InvalidNatureTag": "Invalid maintenance nature",
+      "InvalidUnit": "Invalid unit",
+      "InvalidCurrency": "Invalid currency",
+      "other": "Other check"
+    },
     "title": "Import Reference Values",
     "description": "Import a CSV file (columns code, label, description…) into the open draft. The file written by \"Export (CSV)\" can be imported back after editing.",
     "stepUpload": "Upload",
