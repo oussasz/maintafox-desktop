@@ -3,7 +3,7 @@
 // - Top-level keys match the defined schema
 // - All leaf values are non-empty strings (no stale nulls or objects)
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 
 // ── Imports ─────────────────────────────────────────────────────
 import enAuth from "../en/auth.json";
@@ -56,6 +56,7 @@ const AUTH_TOP_KEYS = [
   "logout",
   "passwordExpiry",
   "session",
+  "setupAdmin",
   "stepUp",
   "unauthorized",
 ];

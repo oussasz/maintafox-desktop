@@ -132,6 +132,7 @@ Last updated: 2026-10-17 (step 5 in progress; planning steps A–E merged, LOTO 
 | A password change arriving by sync does not end sessions started up to 2 minutes before it (clock-skew tolerance); local resets end them at once. | Safety | Accepted |
 | Printouts with an invalid stored document header print without a letterhead, with no warning on the print path. | UX | Step 5 |
 | Roles limited to a site grant nothing in the modules yet (only plant-wide roles count); approved as its own step. | Data | Step 6 |
+| A picker that is empty because the user lacks the right to read its list says so only on the training and qualification screens; other modules' pickers have not been checked for this case yet. | UX | Step 6 (with site-scoped roles) |
 | No separation-of-duties pairs are defined in the permission registry, so none are warned. | Safety | After pilot |
 | The role editor warns before discarding unsaved changes when switching role or closing the app, but not when switching to another Administration tab. | UX | Step 7 |
 | Settings shows its confirmations through its own message area, not the app-wide one. | UX | Step 7 |
