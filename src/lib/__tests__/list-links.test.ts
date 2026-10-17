@@ -4,6 +4,8 @@ import {
   dueWindowParam,
   idParam,
   listLinks,
+  mixParam,
+  natureInMix,
   scopeParam,
   textParam,
   withoutParams,
@@ -43,5 +45,26 @@ describe("list links", () => {
       "scope",
     );
     expect(next.toString()).toBe("queue=mine");
+  });
+});
+
+describe("work mix", () => {
+  it("links a work mix and reads it back", () => {
+    expect(listLinks.workOrders({ scope: "open", mix: "emergency" })).toBe(
+      "/work-orders?scope=open&mix=emergency",
+    );
+    expect(mixParam("reactive")).toBe("reactive");
+    expect(mixParam("other")).toBeNull();
+  });
+
+  it("groups natures like the backend (planned / reactive / emergency)", () => {
+    expect(natureInMix("corrective_immediate", "emergency")).toBe(true);
+    expect(natureInMix("corrective_deferred", "emergency")).toBe(false);
+    expect(natureInMix("corrective_deferred", "reactive")).toBe(true);
+    expect(natureInMix("corrective_immediate", "reactive")).toBe(true);
+    expect(natureInMix("preventive_predictive", "planned")).toBe(true);
+    expect(natureInMix("improvement", "planned")).toBe(true);
+    expect(natureInMix("improvement", "reactive")).toBe(false);
+    expect(natureInMix(null, "planned")).toBe(false);
   });
 });

@@ -10,11 +10,18 @@ import type { DiQueue } from "@shared/ipc-types";
 /** `scope=open`: records still being handled (the dashboards' "open" counts). */
 export type ListScope = "open";
 
+/** SMRP work mix, from the EN 13306 nature of the work-order type (backend `MaintenanceNature`). */
+export type WorkMix = "planned" | "reactive" | "emergency";
+
 export interface WoListLinkFilter {
   scope?: ListScope;
   status?: string;
   urgency?: string;
   equipmentId?: number;
+  /** One work-order type code. */
+  type?: string;
+  /** Every type whose nature belongs to this mix. */
+  mix?: WorkMix;
 }
 
 export interface DiListLinkFilter {
@@ -35,6 +42,8 @@ export const LIST_PARAM = {
   queue: "queue",
   due: "due",
   stock: "stock",
+  type: "type",
+  mix: "mix",
 } as const;
 
 function query(entries: Array<[string, string | number | undefined]>): string {
@@ -53,6 +62,8 @@ export const listLinks = {
       [LIST_PARAM.status, f.status],
       [LIST_PARAM.urgency, f.urgency],
       [LIST_PARAM.equipment, f.equipmentId],
+      [LIST_PARAM.type, f.type],
+      [LIST_PARAM.mix, f.mix],
     ])}`,
   requests: (f: DiListLinkFilter = {}) =>
     `/requests${query([
@@ -94,4 +105,20 @@ export function withoutParams(params: URLSearchParams, ...keys: string[]): URLSe
   const next = new URLSearchParams(params);
   for (const k of keys) next.delete(k);
   return next;
+}
+
+export function mixParam(raw: string | null): WorkMix | null {
+  return raw === "planned" || raw === "reactive" || raw === "emergency" ? raw : null;
+}
+
+/**
+ * Whether a maintenance nature belongs to a work mix — the same rule as the backend
+ * (`MaintenanceNature::is_planned / is_corrective / is_emergency`): planned = preventive natures
+ * and improvement; reactive = corrective natures; emergency = immediate corrective.
+ */
+export function natureInMix(nature: string | null | undefined, mix: WorkMix): boolean {
+  if (!nature) return false;
+  if (mix === "emergency") return nature === "corrective_immediate";
+  if (mix === "reactive") return nature.startsWith("corrective_");
+  return nature.startsWith("preventive_") || nature === "improvement";
 }

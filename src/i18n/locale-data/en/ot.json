@@ -59,6 +59,12 @@
       "closedAt": "Closed on"
     },
     "filters": {
+      "mix": "Work mix",
+      "mixValue": {
+        "planned": "Planned (preventive and improvement)",
+        "reactive": "Reactive (corrective)",
+        "emergency": "Emergency (immediate corrective)"
+      },
       "scope": "Scope",
       "scopeOpen": "Open (not closed or cancelled)",
       "equipment": "Equipment",

@@ -59,6 +59,12 @@
       "closedAt": "Date clôture"
     },
     "filters": {
+      "mix": "Nature des travaux",
+      "mixValue": {
+        "planned": "Planifiés (préventif et amélioration)",
+        "reactive": "Réactifs (correctif)",
+        "emergency": "Urgents (correctif immédiat)"
+      },
       "scope": "Périmètre",
       "scopeOpen": "Ouverts (ni clôturés ni annulés)",
       "equipment": "Équipement",

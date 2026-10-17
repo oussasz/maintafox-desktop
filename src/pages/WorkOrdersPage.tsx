@@ -51,7 +51,16 @@ import { useWoTypeLabels } from "@/components/wo/use-wo-type-labels";
 import { mfLayout } from "@/design-system/tokens";
 import { WO_STATUS_TONE, toneOf } from "@/design-system/tone";
 import { usePermissions } from "@/hooks/use-permissions";
-import { LIST_PARAM, idParam, scopeParam, textParam, withoutParams } from "@/lib/list-links";
+import {
+  LIST_PARAM,
+  type WorkMix,
+  idParam,
+  mixParam,
+  natureInMix,
+  scopeParam,
+  textParam,
+  withoutParams,
+} from "@/lib/list-links";
 import { getAssetByIdSilent } from "@/services/asset-service";
 import { useWoStore } from "@/stores/wo-store";
 import { useWorkOrderTypesCatalog } from "@/stores/work-order-types-catalog-store";
@@ -167,6 +176,8 @@ export function WorkOrdersPage() {
   const [priorityFilter, setPriorityFilter] = useState<string | null>(null);
   /** From a dashboard link: open work orders only (shown as a chip, clearable). */
   const [scopeFilter, setScopeFilter] = useState<"open" | null>(null);
+  /** From a work-mix link (SMRP / home): every type of that nature group (chip, clearable). */
+  const [mixFilter, setMixFilter] = useState<WorkMix | null>(null);
   /** From an equipment link: one asset (chip shows its code). */
   const [equipmentFilter, setEquipmentFilter] = useState<{ id: number; label: string } | null>(
     null,
@@ -229,6 +240,7 @@ export function WorkOrdersPage() {
     setPriorityFilter(null);
     setScopeFilter(null);
     setEquipmentFilter(null);
+    setMixFilter(null);
     setFilter({
       search: null,
       status_codes: null,
@@ -246,6 +258,16 @@ export function WorkOrdersPage() {
       setScopeFilter(scope);
       setLifecycleFilter(null);
       setFilter({ lifecycle_states: scope ? [...WO_OPEN_LIFECYCLE] : null });
+      void loadWos();
+    },
+    [setFilter, loadWos],
+  );
+
+  const handleMixFilter = useCallback(
+    (val: string | null) => {
+      if (val) return; // only clearing is offered: the mix comes from the link
+      setMixFilter(null);
+      setFilter({ type_codes: null });
       void loadWos();
     },
     [setFilter, loadWos],
@@ -269,11 +291,19 @@ export function WorkOrdersPage() {
     const status = textParam(searchParams.get(LIST_PARAM.status));
     const urgency = textParam(searchParams.get(LIST_PARAM.urgency));
     const equipmentId = idParam(searchParams.get(LIST_PARAM.equipment));
-    if (!scope && !status && !urgency && equipmentId == null) return;
+    const type = textParam(searchParams.get(LIST_PARAM.type));
+    const mix = mixParam(searchParams.get(LIST_PARAM.mix));
+    if (!scope && !status && !urgency && equipmentId == null && !type && !mix) return;
+    // The mix is resolved through the type catalogue: wait for it before applying the link.
+    if (mix && woTypes.length === 0) return;
+    const mixCodes = mix
+      ? woTypes.filter((wt) => natureInMix(wt.nature, mix)).map((wt) => wt.code)
+      : null;
     setSearchInput("");
     setStatusFilter(status);
     setLifecycleFilter(null);
-    setTypeFilter(null);
+    setTypeFilter(mix ? null : type);
+    setMixFilter(mix);
     setPriorityFilter(urgency);
     setScopeFilter(scope);
     setEquipmentFilter(equipmentId != null ? { id: equipmentId, label: `#${equipmentId}` } : null);
@@ -281,7 +311,8 @@ export function WorkOrdersPage() {
       search: null,
       status_codes: status ? [status] : null,
       lifecycle_states: scope ? [...WO_OPEN_LIFECYCLE] : null,
-      type_codes: null,
+      // A mix with no matching type matches no work order (never "all types").
+      type_codes: mixCodes ? (mixCodes.length > 0 ? mixCodes : ["__none__"]) : type ? [type] : null,
       urgency_code: urgency ? (urgency as UrgencyCode) : null,
       equipment_id: equipmentId,
     });
@@ -303,10 +334,12 @@ export function WorkOrdersPage() {
         LIST_PARAM.status,
         LIST_PARAM.urgency,
         LIST_PARAM.equipment,
+        LIST_PARAM.type,
+        LIST_PARAM.mix,
       ),
       { replace: true },
     );
-  }, [searchParams, setSearchParams, setFilter, loadWos]);
+  }, [searchParams, setSearchParams, setFilter, loadWos, woTypes]);
 
   const filterDefs = useMemo<SmartFilterDef[]>(
     () => [
@@ -354,6 +387,18 @@ export function WorkOrdersPage() {
             },
           ]
         : []),
+      ...(mixFilter
+        ? [
+            {
+              id: "mix",
+              kind: "select" as const,
+              label: t("list.filters.mix"),
+              options: [{ value: mixFilter, label: t(`list.filters.mixValue.${mixFilter}`) }],
+              value: mixFilter,
+              onChange: handleMixFilter,
+            },
+          ]
+        : []),
       ...(equipmentFilter
         ? [
             {
@@ -383,8 +428,10 @@ export function WorkOrdersPage() {
       handlePriorityFilter,
       scopeFilter,
       equipmentFilter,
+      mixFilter,
       handleScopeFilter,
       handleEquipmentFilter,
+      handleMixFilter,
     ],
   );
 
@@ -393,7 +440,14 @@ export function WorkOrdersPage() {
   useEffect(() => {
     // A link carrying list filters loads the list itself (with those filters), once.
     const p = new URLSearchParams(window.location.search);
-    const linked = [LIST_PARAM.scope, LIST_PARAM.status, LIST_PARAM.urgency, LIST_PARAM.equipment];
+    const linked = [
+      LIST_PARAM.scope,
+      LIST_PARAM.status,
+      LIST_PARAM.urgency,
+      LIST_PARAM.equipment,
+      LIST_PARAM.type,
+      LIST_PARAM.mix,
+    ];
     if (linked.some((k) => p.has(k))) return;
     void loadWos();
   }, [loadWos]);

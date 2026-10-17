@@ -396,12 +396,21 @@ function WoBacklogSection({ wo }: { wo: HomeSupervisionWorkOrders }) {
           value={formatNumber(wo.overdue)}
           tone={wo.overdue > 0 ? "danger" : undefined}
         />
-        <HomeFigure label={t("home.supervision.wo.planned")} value={formatNumber(wo.planned)} />
-        <HomeFigure label={t("home.supervision.wo.reactive")} value={formatNumber(wo.reactive)} />
+        <HomeFigure
+          label={t("home.supervision.wo.planned")}
+          value={formatNumber(wo.planned)}
+          to={listLinks.workOrders({ scope: "open", mix: "planned" })}
+        />
+        <HomeFigure
+          label={t("home.supervision.wo.reactive")}
+          value={formatNumber(wo.reactive)}
+          to={listLinks.workOrders({ scope: "open", mix: "reactive" })}
+        />
         <HomeFigure
           label={t("home.supervision.wo.emergency")}
           value={formatNumber(wo.emergency)}
           tone={wo.emergency > 0 ? "attention" : undefined}
+          to={listLinks.workOrders({ scope: "open", mix: "emergency" })}
         />
       </div>
       {wo.cells.length === 0 ? (

@@ -234,7 +234,7 @@ export function SmrpIndicatorsSection({ smrp }: { smrp: SmrpKpis | null }) {
           formula={t(`smrp.mix.${key}.formula`)}
           unit={t("smrp.unitPercent")}
           period={period}
-          onOpen={() => navigate("/work-orders")}
+          onOpen={() => navigate(listLinks.workOrders({ mix: key }))}
         />,
       );
     }

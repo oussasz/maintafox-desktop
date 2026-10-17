@@ -10,6 +10,7 @@
  */
 
 import { render, screen, waitFor, act } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 import { mockInvoke } from "@/test/mocks/tauri";
@@ -79,7 +80,7 @@ describe("AssetBindingSummary — S3 Supervisor Verification", () => {
   describe("V1 — Placeholder tolerance", () => {
     it("renders all 7 domain cards when most are not_implemented", async () => {
       setupMock(makeSummary());
-      render(<AssetBindingSummary assetId={1} />);
+      render(<AssetBindingSummary assetId={1} />, { wrapper: MemoryRouter });
 
       await waitFor(() => {
         expect(screen.getByText("Cross-Module Bindings")).toBeInTheDocument();
@@ -97,7 +98,7 @@ describe("AssetBindingSummary — S3 Supervisor Verification", () => {
 
     it("shows 'Not yet available' badges for WO and PM domains", async () => {
       setupMock(makeSummary());
-      render(<AssetBindingSummary assetId={1} />);
+      render(<AssetBindingSummary assetId={1} />, { wrapper: MemoryRouter });
 
       await waitFor(() => {
         expect(screen.getByText("Cross-Module Bindings")).toBeInTheDocument();
@@ -121,7 +122,7 @@ describe("AssetBindingSummary — S3 Supervisor Verification", () => {
       });
 
       setupMock(allAvailable);
-      render(<AssetBindingSummary assetId={1} />);
+      render(<AssetBindingSummary assetId={1} />, { wrapper: MemoryRouter });
 
       await waitFor(() => {
         expect(screen.getByText("Cross-Module Bindings")).toBeInTheDocument();
@@ -136,7 +137,7 @@ describe("AssetBindingSummary — S3 Supervisor Verification", () => {
   describe("V2 — Implemented-domain counts", () => {
     it("displays actual document link count from backend", async () => {
       setupMock(makeSummary({ linked_document_count: { status: "available", count: 7 } }));
-      render(<AssetBindingSummary assetId={1} />);
+      render(<AssetBindingSummary assetId={1} />, { wrapper: MemoryRouter });
 
       await waitFor(() => {
         expect(screen.getByText("7")).toBeInTheDocument();
@@ -145,7 +146,7 @@ describe("AssetBindingSummary — S3 Supervisor Verification", () => {
 
     it("displays zero count without error for available domains with 0 links", async () => {
       setupMock(makeSummary({ linked_document_count: { status: "available", count: 0 } }));
-      render(<AssetBindingSummary assetId={1} />);
+      render(<AssetBindingSummary assetId={1} />, { wrapper: MemoryRouter });
 
       await waitFor(() => {
         expect(screen.getByText("Cross-Module Bindings")).toBeInTheDocument();
@@ -162,7 +163,7 @@ describe("AssetBindingSummary — S3 Supervisor Verification", () => {
           linked_document_count: { status: "available", count: null },
         }),
       );
-      render(<AssetBindingSummary assetId={1} />);
+      render(<AssetBindingSummary assetId={1} />, { wrapper: MemoryRouter });
 
       await waitFor(() => {
         expect(screen.getByText("Cross-Module Bindings")).toBeInTheDocument();
@@ -194,11 +195,11 @@ describe("AssetBindingSummary — S3 Supervisor Verification", () => {
         return null;
       });
 
-      const { rerender } = render(<AssetBindingSummary assetId={1} />);
+      const { rerender } = render(<AssetBindingSummary assetId={1} />, { wrapper: MemoryRouter });
 
       // Rapidly switch to asset 2, then 3
-      rerender(<AssetBindingSummary assetId={2} />);
-      rerender(<AssetBindingSummary assetId={3} />);
+      rerender(<AssetBindingSummary assetId={2} />, { wrapper: MemoryRouter });
+      rerender(<AssetBindingSummary assetId={3} />, { wrapper: MemoryRouter });
 
       // Wait for final render to settle
       await waitFor(() => {
@@ -223,7 +224,7 @@ describe("AssetBindingSummary — S3 Supervisor Verification", () => {
         return null;
       });
 
-      render(<AssetBindingSummary assetId={1} />);
+      render(<AssetBindingSummary assetId={1} />, { wrapper: MemoryRouter });
 
       // Initially shows loading (no error)
       expect(screen.queryByText(/error|failed|échec/i)).not.toBeInTheDocument();
@@ -247,7 +248,7 @@ describe("AssetBindingSummary — S3 Supervisor Verification", () => {
         return null;
       });
 
-      const { rerender } = render(<AssetBindingSummary assetId={1} />);
+      const { rerender } = render(<AssetBindingSummary assetId={1} />, { wrapper: MemoryRouter });
 
       // First load fails
       await waitFor(() => {
@@ -257,7 +258,7 @@ describe("AssetBindingSummary — S3 Supervisor Verification", () => {
       // Backend recovers
       shouldFail = false;
       await act(async () => {
-        rerender(<AssetBindingSummary assetId={2} />);
+        rerender(<AssetBindingSummary assetId={2} />, { wrapper: MemoryRouter });
       });
 
       // Should recover and show data
@@ -266,5 +267,23 @@ describe("AssetBindingSummary — S3 Supervisor Verification", () => {
       });
       expect(screen.queryByText("db locked")).not.toBeInTheDocument();
     });
+  });
+});
+
+describe("AssetBindingSummary — counts open their lists", () => {
+  it("links the work-order and request counts to the lists filtered on the asset", async () => {
+    setupMock(
+      makeSummary({
+        linked_wo_count: { status: "available", count: 5 },
+        linked_di_count: { status: "available", count: 3 },
+      }),
+    );
+    render(<AssetBindingSummary assetId={7} />, { wrapper: MemoryRouter });
+    await waitFor(() => {
+      expect(screen.getByText("Cross-Module Bindings")).toBeInTheDocument();
+    });
+    const hrefs = screen.getAllByRole("link").map((a) => a.getAttribute("href"));
+    expect(hrefs).toContain("/work-orders?equipment=7");
+    expect(hrefs).toContain("/requests?equipment=7");
   });
 });

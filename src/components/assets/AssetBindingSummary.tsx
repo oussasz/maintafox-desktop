@@ -18,11 +18,13 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Link } from "react-router-dom";
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import { useFormatters } from "@/hooks/use-formatters";
+import { listLinks } from "@/lib/list-links";
 import { getAssetBindingSummary } from "@/services/asset-lifecycle-service";
 import type {
   AssetBindingSummary as AssetBindingSummaryType,
@@ -160,6 +162,11 @@ export function AssetBindingSummary({ assetId }: AssetBindingSummaryProps) {
               label={t(d.labelKey)}
               icon={d.icon}
               unavailableLabel={t("binding.notImplemented")}
+              {...(d.key === "linked_wo_count"
+                ? { to: listLinks.workOrders({ equipmentId: assetId }) }
+                : d.key === "linked_di_count"
+                  ? { to: listLinks.requests({ equipmentId: assetId }) }
+                  : {})}
             />
           ))}
         </div>
@@ -173,11 +180,14 @@ function DomainCard({
   label,
   icon,
   unavailableLabel,
+  to,
 }: {
   entry: DomainBindingEntry;
   label: string;
   icon: React.ReactNode;
   unavailableLabel: string;
+  /** List of these records for the asset (shown as a link on the count). */
+  to?: string;
 }) {
   const { formatNumber } = useFormatters();
   const isAvailable = entry.status === "available";
@@ -188,9 +198,19 @@ function DomainCard({
       <div className="flex flex-1 flex-col min-w-0">
         <span className="text-xs font-medium truncate">{label}</span>
         {isAvailable ? (
-          <span className="text-xs text-text-muted">
-            {entry.count == null ? "—" : formatNumber(entry.count)}
-          </span>
+          to && entry.count != null ? (
+            <Link
+              to={to}
+              aria-label={`${label} — ${formatNumber(entry.count)}`}
+              className="w-fit rounded text-xs text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {formatNumber(entry.count)}
+            </Link>
+          ) : (
+            <span className="text-xs text-text-muted">
+              {entry.count == null ? "—" : formatNumber(entry.count)}
+            </span>
+          )
         ) : (
           <Badge variant="outline" className="mt-0.5 w-fit text-xs text-text-muted">
             {unavailableLabel}
