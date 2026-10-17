@@ -15,8 +15,12 @@ import {
   unitSymbol,
 } from "@/components/lookups/MeasureUnitPicker";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { ErrorState } from "@/components/ui/data-state";
 import { Input } from "@/components/ui/input";
+import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
+import { describeAppError } from "@/lib/app-error";
 import {
   type ConvertedQuantity,
   type UnitConversion,
@@ -25,7 +29,6 @@ import {
   deactivateUnitConversion,
   listUnitConversions,
 } from "@/services/unit-conversion-service";
-import { toErrorMessage } from "@/utils/errors";
 import type { InventoryArticle, ReferenceValue } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -47,9 +50,13 @@ interface Props {
 export function UnitConversionsPanel({ unitOptions, articles }: Props) {
   const { t } = useTranslation("inventory");
   const { can } = usePermissions();
+  const { formatNumber } = useFormatters();
   const canManage = can(P.INV_MANAGE);
   const [rows, setRows] = useState<UnitConversion[]>([]);
+  /** The list could not be read (never shown as "no conversion"). */
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pendingDeactivate, setPendingDeactivate] = useState<UnitConversion | null>(null);
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [article, setArticle] = useState("");
@@ -61,11 +68,11 @@ export function UnitConversionsPanel({ unitOptions, articles }: Props) {
   const [convertError, setConvertError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    setError(null);
+    setLoadError(null);
     try {
       setRows(await listUnitConversions(null));
     } catch (e) {
-      setError(toErrorMessage(e));
+      setLoadError(e);
     }
   }, []);
 
@@ -108,20 +115,17 @@ export function UnitConversionsPanel({ unitOptions, articles }: Props) {
       setNotes("");
       await load();
     } catch (e) {
-      setError(toErrorMessage(e));
+      setError(describeAppError(e).title);
     } finally {
       setBusy(false);
     }
   };
 
+  /** Rejects on failure so the confirmation stays open (the global toast explains why). */
   const onDeactivate = async (row: UnitConversion) => {
     setError(null);
-    try {
-      await deactivateUnitConversion(row.id, row.row_version);
-      await load();
-    } catch (e) {
-      setError(toErrorMessage(e));
-    }
+    await deactivateUnitConversion(row.id, row.row_version);
+    await load();
   };
 
   const onConvert = async () => {
@@ -132,7 +136,7 @@ export function UnitConversionsPanel({ unitOptions, articles }: Props) {
     try {
       setResult(await convertUnitQuantity(q, Number(from), Number(to), articleId));
     } catch (e) {
-      setConvertError(toErrorMessage(e));
+      setConvertError(describeAppError(e).title);
     }
   };
 
@@ -145,7 +149,7 @@ export function UnitConversionsPanel({ unitOptions, articles }: Props) {
     <div className="space-y-4 text-sm">
       <p className="text-xs text-text-muted">{t("unitConversions.help")}</p>
       {error ? (
-        <p role="alert" className="text-xs text-text-danger">
+        <p role="alert" className="text-xs text-tone-danger-fg">
           {error}
         </p>
       ) : null}
@@ -213,7 +217,7 @@ export function UnitConversionsPanel({ unitOptions, articles }: Props) {
           {t("unitConversions.preview", {
             from: unitCode(from),
             to: unitCode(to),
-            factor: factorValue,
+            factor: formatNumber(factorValue, { maximumFractionDigits: 6 }),
           })}
         </p>
       ) : null}
@@ -239,20 +243,28 @@ export function UnitConversionsPanel({ unitOptions, articles }: Props) {
         {result ? (
           <span data-testid="conversion-result" className="text-xs">
             {t("unitConversions.result", {
-              quantity: result.quantity,
+              quantity: formatNumber(result.quantity, { maximumFractionDigits: 6 }),
               unit: unitCode(to),
               path: t(`unitConversions.path.${result.path}`),
             })}
           </span>
         ) : null}
         {convertError ? (
-          <span role="alert" className="text-xs text-text-danger">
+          <span role="alert" className="text-xs text-tone-danger-fg">
             {convertError}
           </span>
         ) : null}
       </div>
 
-      <table className="w-full text-left text-xs">
+      {loadError != null ? (
+        <ErrorState
+          error={loadError}
+          title={t("unitConversions.loadError")}
+          onRetry={() => void load()}
+          className="py-4"
+        />
+      ) : null}
+      <table className={loadError != null ? "hidden" : "w-full text-left text-xs"}>
         <thead className="text-text-muted">
           <tr>
             <th className="py-1">{t("unitConversions.rule")}</th>
@@ -272,13 +284,19 @@ export function UnitConversionsPanel({ unitOptions, articles }: Props) {
             rows.map((r) => (
               <tr key={r.id} className="border-t border-surface-border">
                 <td className="py-1 font-mono">
-                  1 {r.from_unit_code} = {r.factor} {r.to_unit_code}
+                  1 {r.from_unit_code} = {formatNumber(r.factor, { maximumFractionDigits: 6 })}{" "}
+                  {r.to_unit_code}
                 </td>
                 <td className="py-1">{r.article_code ?? t("unitConversions.allArticles")}</td>
                 <td className="py-1">{r.notes ?? ""}</td>
                 <td className="py-1 text-right">
                   {canManage ? (
-                    <Button size="sm" variant="ghost" onClick={() => void onDeactivate(r)}>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-9"
+                      onClick={() => setPendingDeactivate(r)}
+                    >
                       {t("unitConversions.deactivate")}
                     </Button>
                   ) : null}
@@ -288,6 +306,25 @@ export function UnitConversionsPanel({ unitOptions, articles }: Props) {
           )}
         </tbody>
       </table>
+      <ConfirmDialog
+        open={pendingDeactivate != null}
+        onOpenChange={(open) => {
+          if (!open) setPendingDeactivate(null);
+        }}
+        title={t("unitConversions.deactivateTitle")}
+        description={t("unitConversions.deactivateDescription", {
+          rule: pendingDeactivate
+            ? `1 ${pendingDeactivate.from_unit_code} = ${formatNumber(pendingDeactivate.factor, {
+                maximumFractionDigits: 6,
+              })} ${pendingDeactivate.to_unit_code}`
+            : "",
+        })}
+        confirmLabel={t("unitConversions.deactivate")}
+        destructive
+        onConfirm={async () => {
+          if (pendingDeactivate) await onDeactivate(pendingDeactivate);
+        }}
+      />
     </div>
   );
 }

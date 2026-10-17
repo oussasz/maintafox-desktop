@@ -253,6 +253,10 @@
     }
   },
   "procurement": {
+    "filters": {
+      "open": "Ouvertes (comme la tuile)",
+      "late": "En retard (livraison attendue dépassée)"
+    },
     "boardMoveHint": "Glissez une carte vers la colonne suivante (ou utilisez Déplacer, ou Alt+flèches) pour la soumettre ou l’approuver. Le refus, l’annulation et la clôture se font depuis la fiche, qui demande le motif ou une confirmation.",
     "dashboard": {
       "title": "Vue d'ensemble achats",
@@ -277,7 +281,14 @@
         "CRITICAL_STOCK": "Stock critique",
         "LATE_PO": "BC en retard",
         "SUPPLIER_DELAY": "Risque fournisseur",
-        "REPAIRABLE_OVERDUE": "Réparation en retard"
+        "REPAIRABLE_OVERDUE": "Réparation en retard",
+        "other": "Alerte"
+      },
+      "messages": {
+        "CRITICAL_STOCK": "{{code}} {{name}} — magasin {{warehouse}} : {{available}} disponible(s), seuil {{threshold}}",
+        "LATE_PO": "{{code}} — attendu le {{date}}",
+        "REPAIRABLE_OVERDUE": "{{code}} ({{article}}) — délai de réparation de {{days}} jours dépassé",
+        "SUPPLIER_DELAY": "{{code}} {{name}} — historique de livraison à risque"
       }
     },
     "recommendations": {
@@ -294,7 +305,15 @@
       "surplusFrom": "Surplus depuis",
       "transferHint": "Préférer un transfert interne",
       "createRequisition": "Créer une demande",
-      "creating": "Création…"
+      "creating": "Création…",
+      "loadError": "Les recommandations de réapprovisionnement n’ont pas pu être chargées",
+      "showAll": "Tout afficher ({{count}})",
+      "showFewer": "Afficher moins",
+      "trigger": {
+        "reorder_point": "Au point de commande ou en dessous dans {{warehouse}}",
+        "min_stock": "Sous le stock minimum dans {{warehouse}}",
+        "other": "Réapprovisionnement nécessaire dans {{warehouse}}"
+      }
     },
     "statuses": {
       "DRAFT": "Brouillon",
@@ -641,6 +660,8 @@
         }
       },
       "contacts": {
+        "deleteTitle": "Supprimer ce contact ?",
+        "deleteDescription": "{{name}} sera retiré des contacts du fournisseur. Cette action est irréversible.",
         "title": "Contacts",
         "add": "Ajouter un contact",
         "edit": "Modifier le contact",
@@ -784,6 +805,7 @@
       "postingDate": "Date de réception",
       "postingDateHint": "Les réceptions antidatées sont refusées dans une période de valorisation clôturée.",
       "rate": {
+        "readFailed": "Le taux de change enregistré n’a pas pu être lu : saisissez le taux de la date de réception.",
         "label": "Taux de change : 1 {{from}} = ? {{to}}",
         "stored": "Laisser vide pour utiliser le taux enregistré {{rate}} (valable à partir du {{date}}).",
         "none": "Aucun taux enregistré à cette date : saisissez le taux du jour."
@@ -1284,6 +1306,9 @@
     }
   },
   "unitConversions": {
+    "loadError": "Les conversions d’unités n’ont pas pu être chargées",
+    "deactivateTitle": "Désactiver cette conversion ?",
+    "deactivateDescription": "{{rule}} ne servira plus à convertir les quantités. Les enregistrements déjà convertis gardent leurs valeurs.",
     "tab": "Unités et conversions",
     "help": "1 unité de gauche = facteur × unité de droite ; le sens inverse est calculé. Ordre appliqué : la conversion propre à l'article, puis le facteur général d'une unité de l'usine (réglé sur l'unité dans les Données de référence, ex. 1 sac = 25 kg), puis une conversion générale entre unités standard.",
     "from": "Unité de départ",

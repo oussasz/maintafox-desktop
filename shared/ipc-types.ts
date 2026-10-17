@@ -3540,18 +3540,17 @@ export interface InventoryReplenishmentRecommendation {
   suggested_supplier_name: string | null;
   estimated_cost: number | null;
   expected_arrival: string | null;
-  reason: string | null;
   transfer_options: ReplenishmentTransferOption[];
 }
 
+/** Coded alert: the screen words it from `kind` and `params` in the UI language. */
 export interface ProcurementAlert {
   kind: string;
   severity: string;
-  title: string;
-  detail: string | null;
   entity_type: string | null;
   entity_id: number | null;
   entity_code: string | null;
+  params: Record<string, string>;
 }
 
 export interface ArticleConsumptionMonth {
@@ -3584,6 +3583,11 @@ export interface ProcurementDashboardSummary {
   repairables_in_repair: number;
   active_suppliers_count: number;
   receiving_today_count: number;
+  /** Statuses each count covers, so a tile opens exactly the list it counts. */
+  open_requisition_statuses: string[];
+  open_po_statuses: string[];
+  /** Late = one of these statuses and an expected delivery before now. */
+  late_po_statuses: string[];
 }
 
 export interface ArticleRepairableHistory {

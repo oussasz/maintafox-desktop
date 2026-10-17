@@ -228,12 +228,8 @@ export function InventoryPage() {
         setStockingTypeOptions(activeStockingTypes);
         setTaxCategoryOptions(activeTaxCategories);
         setProcurementCategoryOptions(procurementCategories.filter((item) => item.is_active !== 0));
-        // New articles start on the first active value of each required list (backend order).
-        setArticleForm((prev) => ({
-          ...prev,
-          stocking_type_value_id: prev.stocking_type_value_id || activeStockingTypes[0]?.id || 0,
-          tax_category_value_id: prev.tax_category_value_id || activeTaxCategories[0]?.id || 0,
-        }));
+        // No value is pre-chosen: the unit, stocking type and tax category of a new article are
+        // picked by the person (Save stays disabled with the reason until they are).
       })
       .catch((err: unknown) => {
         if (!cancelled) setLookupError(err);
@@ -243,12 +239,6 @@ export function InventoryPage() {
     };
   }, [lookupVersion]);
 
-  // New articles start on the first unit of the published list (the list's own order).
-  useEffect(() => {
-    const first = unitOptions[0]?.id;
-    if (first == null) return;
-    setArticleForm((prev) => (prev.unit_value_id ? prev : { ...prev, unit_value_id: first }));
-  }, [unitOptions]);
   useEffect(() => {
     if (unitsError) setLookupError(unitsError);
   }, [unitsError]);
@@ -408,12 +398,7 @@ export function InventoryPage() {
   }, [articles, formatCurrency, t]);
 
   const resetArticleForm = () => {
-    setArticleForm((prev) => ({
-      ...EMPTY_ARTICLE_FORM,
-      unit_value_id: prev.unit_value_id || unitOptions[0]?.id || 0,
-      stocking_type_value_id: prev.stocking_type_value_id || stockingTypeOptions[0]?.id || 0,
-      tax_category_value_id: prev.tax_category_value_id || taxCategoryOptions[0]?.id || 0,
-    }));
+    setArticleForm(EMPTY_ARTICLE_FORM);
   };
 
   const openArticleDetails = (article: InventoryArticleRow) => {

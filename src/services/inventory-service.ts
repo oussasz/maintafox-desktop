@@ -189,6 +189,7 @@ const InventoryArticleSchema = z.object({
   unvalued_qty: z.number(),
   barcode: z.string().nullable(),
   requires_serial_tracking: z.number(),
+  reorder_trigger: z.string().nullable(),
 });
 
 /**
@@ -210,6 +211,11 @@ export type InventoryArticleRow = InventoryArticle & {
   barcode: string | null;
   /** 1 when each unit carries its own serial number. */
   requires_serial_tracking: number;
+  /**
+   * Why the article needs replenishing in at least one store (`reorder_point` / `min_stock`),
+   * from the backend's `evaluate_reorder` — the same rule as the procurement dashboard.
+   */
+  reorder_trigger: string | null;
 };
 
 /** Article payload with the scan and serial-tracking fields. */
@@ -225,15 +231,14 @@ export function isLotTracked(
   return article.requires_batch_tracking === 1 || article.requires_serial_tracking === 1;
 }
 
-/** True when the article has a reorder point and its available stock is at or below it. */
+/**
+ * True when the article needs replenishing in at least one store — the backend's one low-stock
+ * definition (`evaluate_reorder`), shared with the procurement dashboard and its alerts.
+ */
 export function isBelowReorderPoint(
-  article: Pick<InventoryArticleRow, "reorder_point" | "available_qty" | "is_active">,
+  article: Pick<InventoryArticleRow, "reorder_trigger" | "is_active">,
 ): boolean {
-  return (
-    article.is_active === 1 &&
-    article.reorder_point > 0 &&
-    article.available_qty <= article.reorder_point
-  );
+  return article.is_active === 1 && article.reorder_trigger != null;
 }
 
 const InventoryArticleInputSchema = z.object({
@@ -600,7 +605,6 @@ const InventoryReplenishmentRecommendationSchema = z.object({
   suggested_supplier_name: z.string().nullable(),
   estimated_cost: z.number().nullable(),
   expected_arrival: z.string().nullable(),
-  reason: z.string().nullable(),
   transfer_options: z.array(
     z.object({
       warehouse_id: z.number(),
@@ -613,11 +617,10 @@ const InventoryReplenishmentRecommendationSchema = z.object({
 const ProcurementAlertSchema = z.object({
   kind: z.string(),
   severity: z.string(),
-  title: z.string(),
-  detail: z.string().nullable(),
   entity_type: z.string().nullable(),
   entity_id: z.number().nullable(),
   entity_code: z.string().nullable(),
+  params: z.record(z.string()),
 });
 
 const ArticleConsumptionMonthSchema = z.object({
@@ -648,6 +651,9 @@ const ProcurementDashboardSummarySchema = z.object({
   repairables_in_repair: z.number(),
   active_suppliers_count: z.number(),
   receiving_today_count: z.number(),
+  open_requisition_statuses: z.array(z.string()),
+  open_po_statuses: z.array(z.string()),
+  late_po_statuses: z.array(z.string()),
 });
 
 const ArticleRepairableHistorySchema = z.object({

@@ -145,6 +145,7 @@ function article(overrides: Partial<InventoryArticleRow> = {}): InventoryArticle
     unvalued_qty: 0,
     barcode: null,
     requires_serial_tracking: 0,
+    reorder_trigger: null,
     ...overrides,
   };
 }
