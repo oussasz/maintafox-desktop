@@ -30,8 +30,10 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { TimeInput } from "@/components/ui/time-input";
+import { mfTable } from "@/design-system/tokens";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
+import { cn } from "@/lib/utils";
 import {
   deleteMyReportSchedule,
   listMyReportSchedules,
@@ -321,17 +323,17 @@ export function AnalyticsSchedulesPage() {
                 description={t("schedule.emptyHint")}
               />
             ) : (
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto rounded-md border border-surface-border">
                 <table className="w-full border-collapse text-left text-sm">
                   <thead>
-                    <tr className="border-b border-surface-border text-xs text-text-muted">
-                      <th className="py-2 pr-3 font-medium">{t("schedule.template")}</th>
-                      <th className="py-2 pr-3 font-medium">{t("schedule.when")}</th>
-                      <th className="py-2 pr-3 font-medium">{t("schedule.format")}</th>
-                      <th className="py-2 pr-3 font-medium">{t("schedule.next")}</th>
-                      <th className="py-2 pr-3 font-medium">{t("schedule.last")}</th>
-                      <th className="py-2 pr-3 font-medium">{t("schedule.enabled")}</th>
-                      <th className="py-2 font-medium">
+                    <tr className={cn("border-b border-surface-border", mfTable.header)}>
+                      <th className="px-3 py-2">{t("schedule.template")}</th>
+                      <th className="px-3 py-2">{t("schedule.when")}</th>
+                      <th className="px-3 py-2">{t("schedule.format")}</th>
+                      <th className="px-3 py-2">{t("schedule.next")}</th>
+                      <th className="px-3 py-2">{t("schedule.last")}</th>
+                      <th className="px-3 py-2">{t("schedule.enabled")}</th>
+                      <th className="px-3 py-2">
                         <span className="sr-only">{t("schedule.delete")}</span>
                       </th>
                     </tr>
@@ -343,8 +345,8 @@ export function AnalyticsSchedulesPage() {
                       const parsed = parseScheduleCron(s.cron_expr, offset);
                       return (
                         <tr key={s.id} className="border-b border-surface-border/60 align-top">
-                          <td className="py-2 pr-3 text-text-primary">{name}</td>
-                          <td className="py-2 pr-3">
+                          <td className="px-3 py-2 text-text-primary">{name}</td>
+                          <td className="px-3 py-2">
                             {parsed ? (
                               describe(parsed)
                             ) : (
@@ -356,14 +358,14 @@ export function AnalyticsSchedulesPage() {
                               </details>
                             )}
                           </td>
-                          <td className="py-2 pr-3">{reportFormatLabel(t, s.export_format)}</td>
-                          <td className="whitespace-nowrap py-2 pr-3 text-xs">
+                          <td className="px-3 py-2">{reportFormatLabel(t, s.export_format)}</td>
+                          <td className="whitespace-nowrap px-3 py-2 text-xs">
                             {s.enabled ? formatDateTime(s.next_run_at) : t("schedule.paused")}
                           </td>
-                          <td className="whitespace-nowrap py-2 pr-3 text-xs">
+                          <td className="whitespace-nowrap px-3 py-2 text-xs">
                             {s.last_run_at ? formatDateTime(s.last_run_at) : t("schedule.never")}
                           </td>
-                          <td className="py-2 pr-3">
+                          <td className="px-3 py-2">
                             <Switch
                               checked={s.enabled}
                               disabled={togglingId === s.id}
@@ -371,7 +373,7 @@ export function AnalyticsSchedulesPage() {
                               onCheckedChange={(next) => void onToggle(s, next)}
                             />
                           </td>
-                          <td className="py-2 text-right">
+                          <td className="px-3 py-2 text-right">
                             <Button
                               type="button"
                               variant="ghost"

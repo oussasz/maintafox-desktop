@@ -12,9 +12,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import { EmptyState } from "@/components/ui/empty-state";
 import { StatusChip } from "@/components/ui/status-chip";
+import { mfTable } from "@/design-system/tokens";
 import { REPORT_RUN_STATUS_TONE, toneOf } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
+import { cn } from "@/lib/utils";
 import {
   downloadReportRunArtifact,
   listMyReportRuns,
@@ -93,16 +95,16 @@ export function AnalyticsHistoryPage() {
             description={t("runs.emptyHint")}
           />
         ) : (
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto rounded-md border border-surface-border">
             <table className="w-full border-collapse text-left text-sm">
               <thead>
-                <tr className="border-b border-surface-border text-xs text-text-muted">
-                  <th className="py-2 pr-3 font-medium">{t("runs.report")}</th>
-                  <th className="py-2 pr-3 font-medium">{t("runs.origin")}</th>
-                  <th className="py-2 pr-3 font-medium">{t("runs.status")}</th>
-                  <th className="py-2 pr-3 font-medium">{t("runs.format")}</th>
-                  <th className="py-2 pr-3 font-medium">{t("runs.started")}</th>
-                  <th className="py-2 font-medium">
+                <tr className={cn("border-b border-surface-border", mfTable.header)}>
+                  <th className="px-3 py-2">{t("runs.report")}</th>
+                  <th className="px-3 py-2">{t("runs.origin")}</th>
+                  <th className="px-3 py-2">{t("runs.status")}</th>
+                  <th className="px-3 py-2">{t("runs.format")}</th>
+                  <th className="px-3 py-2">{t("runs.started")}</th>
+                  <th className="px-3 py-2">
                     <span className="sr-only">{t("runs.download")}</span>
                   </th>
                 </tr>
@@ -112,12 +114,18 @@ export function AnalyticsHistoryPage() {
                   const downloadable =
                     canExport && r.has_downloadable_artifact && r.status === "success";
                   return (
-                    <tr key={r.id} className="border-b border-surface-border/60 align-top">
-                      <td className="py-2 pr-3 text-text-primary">{templateName(r.template_id)}</td>
-                      <td className="py-2 pr-3 text-xs text-text-muted">
+                    <tr
+                      key={r.id}
+                      className={cn(
+                        "border-b border-surface-border/60 align-top",
+                        mfTable.rowHover,
+                      )}
+                    >
+                      <td className="px-3 py-2 text-text-primary">{templateName(r.template_id)}</td>
+                      <td className="px-3 py-2 text-xs text-text-muted">
                         {r.schedule_id != null ? t("runs.originScheduled") : t("runs.originManual")}
                       </td>
-                      <td className="py-2 pr-3">
+                      <td className="px-3 py-2">
                         <StatusChip
                           label={t(`runs.statusValues.${r.status}`, {
                             defaultValue: t("runs.statusValues.unknown"),
@@ -138,11 +146,11 @@ export function AnalyticsHistoryPage() {
                           </details>
                         ) : null}
                       </td>
-                      <td className="py-2 pr-3">{reportFormatLabel(t, r.export_format)}</td>
-                      <td className="whitespace-nowrap py-2 pr-3 text-xs">
+                      <td className="px-3 py-2">{reportFormatLabel(t, r.export_format)}</td>
+                      <td className="whitespace-nowrap px-3 py-2 text-xs">
                         {formatDateTime(r.started_at)}
                       </td>
-                      <td className="py-2 text-right">
+                      <td className="px-3 py-2 text-right">
                         {downloadable ? (
                           <Button
                             type="button"
