@@ -364,6 +364,12 @@
     "fieldRequired": "This field is required."
   },
   "tree": {
+    "loadError": "The equipment tree could not be loaded",
+    "loadingChildren": "Loading…",
+    "childrenError": "This branch could not be loaded:",
+    "retry": "Retry",
+    "showMore": "Show {{count}} more",
+    "contextRow": "Shown because equipment below it matches the filters",
     "loading": "Loading equipment…",
     "search": "Search in tree",
     "empty": "No matching assets in tree.",

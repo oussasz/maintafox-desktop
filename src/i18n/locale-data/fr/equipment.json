@@ -364,6 +364,12 @@
     "fieldRequired": "Ce champ est obligatoire."
   },
   "tree": {
+    "loadError": "L’arborescence des équipements n’a pas pu être chargée",
+    "loadingChildren": "Chargement…",
+    "childrenError": "Cette branche n’a pas pu être chargée :",
+    "retry": "Réessayer",
+    "showMore": "Afficher {{count}} de plus",
+    "contextRow": "Affiché parce qu’un équipement en dessous correspond aux filtres",
     "loading": "Chargement des équipements…",
     "search": "Rechercher dans l'arbre",
     "empty": "Aucun actif correspondant dans l'arbre.",
