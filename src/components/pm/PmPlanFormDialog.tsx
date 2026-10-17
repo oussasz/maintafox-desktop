@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ListAccessNote } from "@/components/ui/list-access-note";
 import {
   Select,
   SelectContent,
@@ -23,6 +24,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { useCanReadList } from "@/lib/list-access";
 import { listActiveTeams } from "@/services/personnel-service";
 import {
   type PmPlanRow as PmPlan,
@@ -57,6 +59,8 @@ export function PmPlanFormDialog({
   onUpdate,
 }: PmPlanFormDialogProps) {
   const { t } = useTranslation("pm");
+  // Crews are personnel teams: without the personnel view right they are not requested.
+  const canReadTeams = useCanReadList("teams");
   const [code, setCode] = useState("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -83,13 +87,14 @@ export function PmPlanFormDialog({
   useEffect(() => {
     if (!open) return;
     setTeamsFailed(false);
+    if (!canReadTeams) return;
     void listActiveTeams()
       .then((rows) => setTeams(rows.map((r) => ({ id: r.id, code: r.code, name: r.name }))))
       .catch(() => {
         setTeams([]);
         setTeamsFailed(true);
       });
-  }, [open, listAttempt]);
+  }, [open, listAttempt, canReadTeams]);
 
   // Values of a fanned-out scope (family, location, criticality group).
   // biome-ignore lint/correctness/useExhaustiveDependencies: listAttempt = explicit retry
@@ -346,6 +351,7 @@ export function PmPlanFormDialog({
             <Select
               value={crewId || "__none"}
               onValueChange={(v) => setCrewId(v === "__none" ? "" : v)}
+              disabled={!canReadTeams}
             >
               <SelectTrigger>
                 <SelectValue placeholder={t("labels.none")} />
@@ -359,6 +365,7 @@ export function PmPlanFormDialog({
                 ))}
               </SelectContent>
             </Select>
+            {!canReadTeams ? <ListAccessNote list="teams" /> : null}
             {teamsFailed ? <ListLoadFailed onRetry={retryLists} /> : null}
           </div>
           <div className="grid gap-1">

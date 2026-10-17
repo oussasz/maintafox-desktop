@@ -30,11 +30,16 @@ export const LIST_READ_RIGHT = {
   orgNodes: P.ORG_VIEW,
   /** `list_users` */
   users: P.ADM_USERS,
-  /** `list_work_order_types` */
-  woTypes: P.REF_VIEW,
-} as const satisfies Record<string, PermissionName>;
+  /** `list_work_order_types`: reference view, work-order view or work-order creation. */
+  woTypes: [P.REF_VIEW, P.OT_VIEW, P.OT_CREATE],
+} as const satisfies Record<string, PermissionName | readonly PermissionName[]>;
 
 export type ReadableList = keyof typeof LIST_READ_RIGHT;
+
+function rightsOf(list: ReadableList): readonly PermissionName[] {
+  const right: PermissionName | readonly PermissionName[] = LIST_READ_RIGHT[list];
+  return typeof right === "string" ? [right] : right;
+}
 
 /**
  * Whether the signed-in user may read `list`. Outside a permission provider (unit tests) and while
@@ -43,7 +48,7 @@ export type ReadableList = keyof typeof LIST_READ_RIGHT;
 export function useCanReadList(list: ReadableList): boolean {
   const permissions = useContext(PermissionContext);
   if (!permissions || permissions.isLoading) return true;
-  return permissions.can(LIST_READ_RIGHT[list]);
+  return permissions.canAny(...rightsOf(list));
 }
 
 /** Same as `useCanReadList` for several lists at once. */
@@ -52,7 +57,7 @@ export function useReadableLists<K extends ReadableList>(lists: readonly K[]): R
   const out = {} as Record<K, boolean>;
   for (const list of lists) {
     out[list] =
-      !permissions || permissions.isLoading ? true : permissions.can(LIST_READ_RIGHT[list]);
+      !permissions || permissions.isLoading ? true : permissions.canAny(...rightsOf(list));
   }
   return out;
 }

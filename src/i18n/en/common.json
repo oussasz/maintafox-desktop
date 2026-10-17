@@ -9,7 +9,7 @@
     "costCentres": "Reading cost centres requires the finance view right.",
     "orgNodes": "Reading the organisation (sites, areas) requires the organisation view right.",
     "users": "Reading user accounts requires the user administration right.",
-    "woTypes": "Reading work-order types requires the reference data view right."
+    "woTypes": "Reading work-order types requires the work-order view, work-order creation or reference data view right."
   },
   "app": {
     "name": "Maintafox",

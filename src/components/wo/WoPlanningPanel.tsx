@@ -16,6 +16,7 @@ import { OverrideReasonDialog } from "@/components/planning/OverrideReasonDialog
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ListAccessNote } from "@/components/ui/list-access-note";
 import {
   Select,
   SelectContent,
@@ -26,6 +27,7 @@ import {
 import { useSession } from "@/hooks/use-session";
 import { describeAppError } from "@/lib/app-error";
 import { formatOrDash, formatPersonLabel } from "@/lib/display";
+import { useReadableLists } from "@/lib/list-access";
 import {
   checkWoPartStockAvailability,
   createProcurementRequisitionFromWoPart,
@@ -181,6 +183,11 @@ function blockingMessagesFromReport(result: WoReadinessResult): string[] {
 export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanelProps>(
   function WoPlanningPanel({ wo, canEdit, onReadinessChange }, ref) {
     const { t } = useTranslation("ot");
+    // Teams come from the personnel module and parts from the inventory: lists the user may not
+    // read are not requested, and the planning form says which right is missing.
+    const lists = useReadableLists(["teams", "articles"] as const);
+    const canReadTeams = lists.teams;
+    const canReadArticles = lists.articles;
     const { typeLabel } = useWoTypeLabels();
     const navigate = useNavigate();
     const { info } = useSession();
@@ -302,12 +309,12 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
         }
       }
 
-      void loadGroupOptions();
+      if (canReadTeams) void loadGroupOptions();
 
       return () => {
         cancelled = true;
       };
-    }, []);
+    }, [canReadTeams]);
 
     const applyTeamRoster = useCallback(async (teamId: string, autofillLead: boolean) => {
       if (!teamId) {
@@ -439,11 +446,11 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
           setLocationOptions([]);
         }
       }
-      void loadInventoryData();
+      if (canReadArticles) void loadInventoryData();
       return () => {
         cancelled = true;
       };
-    }, []);
+    }, [canReadArticles]);
 
     useEffect(() => {
       let cancelled = false;
@@ -1199,7 +1206,9 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                     </Select>
                   </div>
                 </div>
-                {groupOptions.length === 0 ? (
+                {!canReadTeams ? (
+                  <ListAccessNote list="teams" />
+                ) : groupOptions.length === 0 ? (
                   <p className="text-xs text-muted-foreground">{t("planning.noTeams")}</p>
                 ) : null}
                 {noTeamLeadUser ? (
@@ -1341,6 +1350,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
           </div>
 
           <div className="space-y-2">
+            {!canReadArticles ? <ListAccessNote list="articles" /> : null}
             {parts.length === 0 && (
               <div className="text-sm text-muted-foreground">{t("planning.noPlannedParts")}</div>
             )}

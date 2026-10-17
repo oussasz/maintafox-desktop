@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ListAccessNote } from "@/components/ui/list-access-note";
 import {
   Select,
   SelectContent,
@@ -18,6 +19,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useFormatters } from "@/hooks/use-formatters";
+import { useCanReadList } from "@/lib/list-access";
 import { type InventoryArticleRow, listInventoryArticles } from "@/services/inventory-service";
 import { getLookupValues } from "@/services/lookup-service";
 import { type PmAssetMeter, listPmAssetMeters } from "@/services/pm-service";
@@ -304,6 +306,9 @@ export function PmPartsPicker({
 }) {
   const { t } = useTranslation("pm");
   const { formatNumber } = useFormatters();
+  // Articles come from the inventory: without its view right the search is not offered and the
+  // listed parts keep their codes (names are not looked up).
+  const canReadArticles = useCanReadList("articles");
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<InventoryArticleRow[]>([]);
   /** The search failed (not "no article matches"). */
@@ -313,7 +318,7 @@ export function PmPartsPicker({
   useEffect(() => {
     const q = query.trim();
     setSearchFailed(false);
-    if (q.length < 2) {
+    if (q.length < 2 || !canReadArticles) {
       setResults([]);
       return;
     }
@@ -335,12 +340,12 @@ export function PmPartsPicker({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [query]);
+  }, [query, canReadArticles]);
 
   // Names of parts already on the version (looked up once by code).
   useEffect(() => {
     const missing = value.map((p) => p.articleCode).filter((code) => !(code in names));
-    if (missing.length === 0) return;
+    if (missing.length === 0 || !canReadArticles) return;
     let cancelled = false;
     Promise.all(missing.map((code) => listInventoryArticles({ search: code }).catch(() => [])))
       .then((lists) => {
@@ -355,7 +360,7 @@ export function PmPartsPicker({
     return () => {
       cancelled = true;
     };
-  }, [value, names]);
+  }, [value, names, canReadArticles]);
 
   const add = (row: InventoryArticleRow) => {
     setNames((prev) => ({ ...prev, [row.article_code]: row }));
@@ -437,7 +442,9 @@ export function PmPartsPicker({
           value={query}
           placeholder={t("fields.articleSearchPlaceholder")}
           onChange={(e) => setQuery(e.target.value)}
+          disabled={!canReadArticles}
         />
+        {!canReadArticles ? <ListAccessNote list="articles" /> : null}
         {searchFailed ? (
           <p role="alert" className="text-xs text-tone-danger-fg">
             {t("errors.articleSearchFailed")}

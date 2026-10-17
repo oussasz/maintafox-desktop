@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ListAccessNote } from "@/components/ui/list-access-note";
 import {
   Select,
   SelectContent,
@@ -30,6 +31,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useFormatters } from "@/hooks/use-formatters";
+import { useCanReadList } from "@/lib/list-access";
 import { cn } from "@/lib/utils";
 import {
   type InventoryArticleRow,
@@ -61,6 +63,8 @@ export function WoAddExecutionPartDialog({
 }: WoAddExecutionPartDialogProps) {
   const { t } = useTranslation("ot");
   const { formatNumber } = useFormatters();
+  // Stock parts come from the inventory: without its view right only non-stock parts are offered.
+  const canReadArticles = useCanReadList("articles");
   const [mode, setMode] = useState<PartMode>("stock");
   const [articles, setArticles] = useState<InventoryArticleRow[]>([]);
   const [articlesState, setArticlesState] = useState<"loading" | "ready" | "error">("loading");
@@ -76,7 +80,7 @@ export function WoAddExecutionPartDialog({
 
   useEffect(() => {
     if (!open) return;
-    setMode("stock");
+    setMode(canReadArticles ? "stock" : "non_stock");
     setSearch("");
     setArticleId("");
     setBalances([]);
@@ -85,6 +89,7 @@ export function WoAddExecutionPartDialog({
     setQty("1");
     setFormError(null);
     let cancelled = false;
+    if (!canReadArticles) return;
     setArticlesState("loading");
     listInventoryArticles({ search: null })
       .then((rows) => {
@@ -98,7 +103,7 @@ export function WoAddExecutionPartDialog({
     return () => {
       cancelled = true;
     };
-  }, [open]);
+  }, [open, canReadArticles]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -248,7 +253,9 @@ export function WoAddExecutionPartDialog({
             ))}
           </div>
 
-          {mode === "stock" ? (
+          {mode === "stock" && !canReadArticles ? (
+            <ListAccessNote list="articles" />
+          ) : mode === "stock" ? (
             <>
               <div className="space-y-1">
                 <Label htmlFor="wo-exec-part-search">

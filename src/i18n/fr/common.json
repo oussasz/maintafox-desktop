@@ -9,7 +9,7 @@
     "costCentres": "Lire les centres de coût demande le droit de consultation des finances.",
     "orgNodes": "Lire l'organisation (sites, zones) demande le droit de consultation de l'organisation.",
     "users": "Lire les comptes utilisateurs demande le droit d'administration des utilisateurs.",
-    "woTypes": "Lire les types d'ordre de travail demande le droit de consultation des données de référence."
+    "woTypes": "Lire les types d'ordre de travail demande le droit de consultation ou de création des OT, ou de consultation des données de référence."
   },
   "app": {
     "name": "Maintafox",
