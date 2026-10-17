@@ -117,14 +117,15 @@ pub const SETTINGS_CATALOG: &[SettingDefinition] = &[
         editor: SettingEditor::Section,
         risk: "low",
     },
-    // Plant FMECA rating grids (severity / occurrence / detection, criticality matrix).
+    // Former home of the FMECA rating grids: read once to seed Données de référence
+    // (`reliability::study::scales::ensure_fmeca_rating_scales`), then no longer used.
     SettingDefinition {
         key: crate::reliability::study::scales::SETTING_KEY,
         category: "reliability",
         scope: "tenant",
         shipped_value_json: crate::reliability::study::scales::DEFAULT_RATING_SCALES_JSON,
         kind: SettingKind::ModuleManaged,
-        editor: SettingEditor::Dedicated,
+        editor: SettingEditor::NotInUse,
         risk: "low",
     },
     // ── Backups (grandfather-father-son retention of scheduled backups) ──────────────────────

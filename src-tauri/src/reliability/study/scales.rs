@@ -1,19 +1,39 @@
-//! FMECA rating scales of the plant (setting `ram.fmeca_rating_scales`, tenant): severity,
-//! occurrence and detection on 1–10, and the 5 × 5 criticality matrix zones.
+//! FMECA rating grids of the plant, kept in Données de référence: severity, occurrence and
+//! detection on 1–10, and the criticality matrix zones.
 //!
-//! The setting is seeded with the scales below (maintenance FMECA practice: severity by
-//! consequence class, occurrence by failures per equipment-year, detection by the chance of
-//! seeing the failure coming) and edited by a reliability manager. Each severity level carries
-//! its RCM consequence class and each detection level says whether the failure is hidden, so an
-//! FMECA row pre-answers the RCM questions.
+//! Four SYSTEM domains (fixed codes: the FMECA arithmetic depends on them), on the model of the
+//! shared urgency scale (`reference::urgency_scale`):
+//! - `RELIABILITY.FMECA_SEVERITY` / `_OCCURRENCE` / `_DETECTION`: codes `1`…`10`; the French
+//!   definition is the value's label, `metadata_json` holds the English one and the level's
+//!   attribute — the RCM consequence class (severity), the lowest failures per equipment-year
+//!   (occurrence), whether the failure is hidden (detection);
+//! - `RELIABILITY.FMECA_CRITICALITY_ZONE`: codes `unacceptable` / `reduce` / `monitor` /
+//!   `acceptable` with their lowest class product; the matrix class count is the domain's
+//!   `validation_rules_json` (`{"matrix_classes":5}`).
+//!
+//! The domains are seeded on every device (seeded identities agree across machines) from the
+//! plant's former setting `ram.fmeca_rating_scales`, else from the product grids below; existing
+//! values are never overwritten. When the former setting exists but cannot be read (malformed or
+//! incomplete), the product grids are put in place FLAGGED for review (`RatingScales::review`):
+//! the grids screen (Données de référence › Échelles AMDEC) says so until a reliability manager
+//! reviews and saves them. The grids are edited in
+//! Données de référence › Échelles AMDEC (`ram.manage`, as before) and read here by the FMECA
+//! and RCM steps.
 
-use sea_orm::DatabaseConnection;
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
 use crate::errors::{AppError, AppResult};
+use crate::reference::audience::DomainAudience;
 use crate::settings;
 
+/// Former home of the grids (tenant setting): read once to seed the reference domains.
 pub const SETTING_KEY: &str = "ram.fmeca_rating_scales";
+
+pub const SEVERITY_DOMAIN: &str = "RELIABILITY.FMECA_SEVERITY";
+pub const OCCURRENCE_DOMAIN: &str = "RELIABILITY.FMECA_OCCURRENCE";
+pub const DETECTION_DOMAIN: &str = "RELIABILITY.FMECA_DETECTION";
+pub const ZONE_DOMAIN: &str = "RELIABILITY.FMECA_CRITICALITY_ZONE";
 
 /// Seeded value of [`SETTING_KEY`] (`db::seeder::DEFAULT_SETTINGS`).
 pub const DEFAULT_RATING_SCALES_JSON: &str = r#"{"version":1,
@@ -88,6 +108,10 @@ pub struct MatrixSpec {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RatingScales {
     pub version: i64,
+    /// Set when the grids must be reviewed: `former_grids_unreadable` — the plant's former setting
+    /// could not be read, so the product grids were put in place; saving the grids clears it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review: Option<String>,
     pub severity: Vec<RatingLevel>,
     pub occurrence: Vec<RatingLevel>,
     pub detection: Vec<RatingLevel>,
@@ -107,21 +131,17 @@ impl RatingScales {
     /// Scales must rate every score 1–10 once, occurrence thresholds must fall with the score,
     /// and every severity level must name an RCM consequence class.
     pub fn validate(&self) -> AppResult<()> {
-        for (name, levels) in [
-            ("severity", &self.severity),
-            ("occurrence", &self.occurrence),
-            ("detection", &self.detection),
-        ] {
+        for levels in [&self.severity, &self.occurrence, &self.detection] {
             let mut scores: Vec<i64> = levels.iter().map(|l| l.score).collect();
             scores.sort_unstable();
             if scores != (1..=10).collect::<Vec<_>>() {
-                return Err(invalid(&format!("RATING_SCALE_SCORES:{name}")));
+                return Err(invalid("RATING_SCALE_SCORES"));
             }
             if levels
                 .iter()
                 .any(|l| l.label_fr.trim().is_empty() || l.label_en.trim().is_empty())
             {
-                return Err(invalid(&format!("RATING_SCALE_LABEL:{name}")));
+                return Err(invalid("RATING_SCALE_LABEL"));
             }
         }
         if self.severity.iter().any(|l| {
@@ -201,29 +221,347 @@ pub fn default_scales() -> RatingScales {
     serde_json::from_str(DEFAULT_RATING_SCALES_JSON).expect("seeded FMECA rating scales parse")
 }
 
-/// Scales of the plant: the tenant setting, or the seeded value while the setting is absent.
-pub async fn load_scales(db: &DatabaseConnection) -> AppResult<RatingScales> {
-    let Some(s) = settings::get_setting(db, SETTING_KEY, "tenant").await? else {
+// ── Storage in Données de référence ────────────────────────────────────────────────────
+
+/// What a level keeps besides its French label.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct LevelMeta {
+    #[serde(default)]
+    label_en: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    consequence: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    min_per_year: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    hidden: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    min_product: Option<i64>,
+}
+
+const LEVEL_DOMAINS: [(&str, &str); 3] = [
+    (SEVERITY_DOMAIN, "Gravité AMDEC (1–10)"),
+    (OCCURRENCE_DOMAIN, "Occurrence AMDEC (1–10)"),
+    (DETECTION_DOMAIN, "Détection AMDEC (1–10)"),
+];
+
+const ZONE_LABELS: [(&str, &str, &str); 4] = [
+    (ZONE_UNACCEPTABLE, "Inacceptable", "Unacceptable"),
+    (ZONE_REDUCE, "À réduire", "Reduce"),
+    (ZONE_MONITOR, "À surveiller", "Monitor"),
+    (ZONE_ACCEPTABLE, "Acceptable", "Acceptable"),
+];
+
+fn decode(e: impl std::fmt::Display) -> AppError {
+    AppError::Internal(anyhow::anyhow!("FMECA rating grid row: {e}"))
+}
+
+fn seeded_value_id(domain: &str, code: &str) -> String {
+    crate::sync::identity::seeded_entity_sync_id("reference_values", &format!("{domain}:{code}"))
+}
+
+/// Review flag: the former setting could not be read; the product grids stand in until reviewed.
+pub const REVIEW_FORMER_GRIDS_UNREADABLE: &str = "former_grids_unreadable";
+
+/// Grids to seed: the former setting (the plant's edits); the product grids when there is none;
+/// the product grids flagged for review when it cannot be read.
+async fn seed_source(conn: &impl ConnectionTrait) -> AppResult<RatingScales> {
+    let Some(stored) = settings::get_setting(conn, SETTING_KEY, "tenant").await? else {
         return Ok(default_scales());
     };
-    let scales: RatingScales =
-        serde_json::from_str(&s.setting_value_json).map_err(|_| invalid("RATING_SCALE_SETTING_INVALID"))?;
+    match serde_json::from_str::<RatingScales>(&stored.setting_value_json) {
+        Ok(grids) if grids.validate().is_ok() => Ok(grids),
+        _ => {
+            tracing::warn!("ram.fmeca_rating_scales cannot be read: product grids seeded, flagged for review");
+            Ok(RatingScales {
+                review: Some(REVIEW_FORMER_GRIDS_UNREADABLE.to_string()),
+                ..default_scales()
+            })
+        }
+    }
+}
+
+/// The zone domain's rules: the matrix class count, and the review flag while one stands.
+fn zone_rules(classes: i64, review: Option<&str>) -> String {
+    match review {
+        Some(r) => serde_json::json!({ "matrix_classes": classes, "review": r }),
+        None => serde_json::json!({ "matrix_classes": classes }),
+    }
+    .to_string()
+}
+
+async fn insert_value_if_missing(
+    conn: &impl ConnectionTrait,
+    domain: &str,
+    code: &str,
+    label: &str,
+    sort_order: i64,
+    meta: &LevelMeta,
+) -> AppResult<()> {
+    conn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT OR IGNORE INTO reference_values \
+         (entity_sync_id, set_id, parent_id, code, label, description, sort_order, color_hex, icon_name, \
+          semantic_tag, external_code, is_active, metadata_json) \
+         SELECT ?, rs.id, NULL, ?, ?, NULL, ?, NULL, NULL, 'fmeca_rating', NULL, 1, ? \
+           FROM reference_domains d \
+           JOIN reference_sets rs ON rs.domain_id = d.id AND rs.status = 'published' \
+          WHERE d.code = ? \
+            AND NOT EXISTS ( \
+                SELECT 1 FROM reference_values rv JOIN reference_sets s2 ON s2.id = rv.set_id \
+                 WHERE s2.domain_id = d.id AND rv.code = ?) \
+          ORDER BY rs.version_no DESC LIMIT 1",
+        [
+            seeded_value_id(domain, code).into(),
+            code.into(),
+            label.into(),
+            sort_order.into(),
+            serde_json::to_string(meta)?.into(),
+            domain.into(),
+            code.into(),
+        ],
+    ))
+    .await?;
+    Ok(())
+}
+
+/// Ensures the four SYSTEM domains, their published sets and every level (startup integrity).
+/// Missing levels come from the former setting or the product grids; existing ones are kept.
+pub async fn ensure_fmeca_rating_scales(conn: &impl ConnectionTrait) -> AppResult<()> {
+    let source = seed_source(conn).await?;
+    for (domain, name) in LEVEL_DOMAINS
+        .iter()
+        .chain([(ZONE_DOMAIN, "Zones de criticité AMDEC")].iter())
+    {
+        crate::reference::system_catalog_integrity::ensure_domain(
+            conn,
+            domain,
+            name,
+            "flat",
+            "system_seeded",
+            0,
+            DomainAudience::System,
+        )
+        .await?;
+        crate::reference::system_catalog_integrity::ensure_published_set(conn, domain).await?;
+    }
+    for (domain, levels) in [
+        (SEVERITY_DOMAIN, &source.severity),
+        (OCCURRENCE_DOMAIN, &source.occurrence),
+        (DETECTION_DOMAIN, &source.detection),
+    ] {
+        for l in levels {
+            let meta = LevelMeta {
+                label_en: l.label_en.clone(),
+                consequence: l.consequence.clone(),
+                min_per_year: l.min_per_year,
+                hidden: l.hidden,
+                min_product: None,
+            };
+            insert_value_if_missing(conn, domain, &l.score.to_string(), &l.label_fr, 11 - l.score, &meta).await?;
+        }
+    }
+    for (rank, (code, label_fr, label_en)) in ZONE_LABELS.iter().enumerate() {
+        let min_product = source
+            .matrix
+            .zones
+            .iter()
+            .find(|z| z.zone == *code)
+            .map(|z| z.min_product);
+        let Some(min_product) = min_product else { continue };
+        let meta = LevelMeta {
+            label_en: (*label_en).to_string(),
+            min_product: Some(min_product),
+            ..LevelMeta::default()
+        };
+        insert_value_if_missing(
+            conn,
+            ZONE_DOMAIN,
+            code,
+            label_fr,
+            i64::try_from(rank).unwrap_or(0) + 1,
+            &meta,
+        )
+        .await?;
+    }
+    conn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE reference_domains SET validation_rules_json = ? WHERE code = ? AND validation_rules_json IS NULL",
+        [
+            zone_rules(source.matrix.classes, source.review.as_deref()).into(),
+            ZONE_DOMAIN.into(),
+        ],
+    ))
+    .await?;
+    Ok(())
+}
+
+const VALUES_SELECT: &str = "SELECT rv.id, rv.code, rv.label, rv.metadata_json FROM reference_values rv \
+       JOIN reference_sets rs ON rs.id = rv.set_id AND rs.status = 'published' \
+       JOIN reference_domains d ON d.id = rs.domain_id \
+      WHERE d.code = ? AND rv.is_active = 1";
+
+struct StoredValue {
+    id: i64,
+    code: String,
+    label: String,
+    meta: LevelMeta,
+}
+
+async fn stored_values(conn: &impl ConnectionTrait, domain: &str) -> AppResult<Vec<StoredValue>> {
+    let rows = conn
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            VALUES_SELECT,
+            [domain.into()],
+        ))
+        .await?;
+    rows.iter()
+        .map(|r: &QueryResult| {
+            let raw: Option<String> = r.try_get("", "metadata_json").map_err(decode)?;
+            Ok(StoredValue {
+                id: r.try_get("", "id").map_err(decode)?,
+                code: r.try_get("", "code").map_err(decode)?,
+                label: r.try_get("", "label").map_err(decode)?,
+                meta: match raw.as_deref() {
+                    Some(m) => serde_json::from_str(m).map_err(|_| invalid("RATING_SCALE_SETTING_INVALID"))?,
+                    None => LevelMeta::default(),
+                },
+            })
+        })
+        .collect()
+}
+
+/// The plant's grids, from Données de référence. A missing or unreadable grid is refused (never
+/// replaced by product values without saying so).
+pub async fn load_scales(db: &DatabaseConnection) -> AppResult<RatingScales> {
+    let mut grids = Vec::with_capacity(3);
+    for (domain, _) in LEVEL_DOMAINS {
+        let mut levels = Vec::new();
+        for v in stored_values(db, domain).await? {
+            let score: i64 = v
+                .code
+                .trim()
+                .parse()
+                .map_err(|_| invalid("RATING_SCALE_SETTING_INVALID"))?;
+            levels.push(RatingLevel {
+                score,
+                label_fr: v.label,
+                label_en: v.meta.label_en,
+                consequence: v.meta.consequence,
+                min_per_year: v.meta.min_per_year,
+                hidden: v.meta.hidden,
+            });
+        }
+        levels.sort_by_key(|l| std::cmp::Reverse(l.score));
+        grids.push(levels);
+    }
+    let mut zones = stored_values(db, ZONE_DOMAIN)
+        .await?
+        .into_iter()
+        .map(|v| {
+            Ok(MatrixZone {
+                min_product: v.meta.min_product.ok_or_else(|| invalid("RATING_SCALE_MATRIX"))?,
+                zone: v.code,
+            })
+        })
+        .collect::<AppResult<Vec<_>>>()?;
+    // Highest threshold first, as the product grids list them.
+    zones.sort_by_key(|z| std::cmp::Reverse(z.min_product));
+    let rules = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT validation_rules_json FROM reference_domains WHERE code = ?",
+            [ZONE_DOMAIN.into()],
+        ))
+        .await?
+        .and_then(|r| r.try_get::<Option<String>>("", "validation_rules_json").ok().flatten())
+        .and_then(|j| serde_json::from_str::<serde_json::Value>(&j).ok())
+        .ok_or_else(|| invalid("RATING_SCALE_MATRIX"))?;
+    let classes = rules
+        .get("matrix_classes")
+        .and_then(serde_json::Value::as_i64)
+        .ok_or_else(|| invalid("RATING_SCALE_MATRIX"))?;
+    let review = rules
+        .get("review")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string);
+    let mut it = grids.into_iter();
+    let scales = RatingScales {
+        version: 1,
+        review,
+        severity: it.next().unwrap_or_default(),
+        occurrence: it.next().unwrap_or_default(),
+        detection: it.next().unwrap_or_default(),
+        matrix: MatrixSpec { classes, zones },
+    };
     scales.validate()?;
     Ok(scales)
 }
 
-pub async fn save_scales(db: &DatabaseConnection, scales: &RatingScales, actor_id: i32) -> AppResult<RatingScales> {
+/// Saves the grids' company attributes (labels, consequence, thresholds, hidden flag, zone
+/// thresholds). Scores, zone codes and the class count are fixed by the product.
+pub async fn save_scales(db: &DatabaseConnection, scales: &RatingScales, _actor_id: i32) -> AppResult<RatingScales> {
     scales.validate()?;
-    let json = serde_json::to_string(scales)?;
-    settings::set_setting(
-        db,
-        SETTING_KEY,
-        "tenant",
-        &json,
-        Some(actor_id),
-        "FMECA rating scales updated from the reliability module",
-    )
+    let current = load_scales(db).await?;
+    if scales.matrix.classes != current.matrix.classes {
+        return Err(invalid("RATING_SCALE_MATRIX"));
+    }
+    let tx = db.begin().await?;
+    for (domain, levels) in [
+        (SEVERITY_DOMAIN, &scales.severity),
+        (OCCURRENCE_DOMAIN, &scales.occurrence),
+        (DETECTION_DOMAIN, &scales.detection),
+    ] {
+        let stored = stored_values(&tx, domain).await?;
+        for l in levels {
+            let v = stored
+                .iter()
+                .find(|v| v.code.trim() == l.score.to_string())
+                .ok_or_else(|| invalid("RATING_SCALE_SETTING_INVALID"))?;
+            let meta = LevelMeta {
+                label_en: l.label_en.trim().to_string(),
+                consequence: l.consequence.clone(),
+                min_per_year: l.min_per_year,
+                hidden: l.hidden,
+                min_product: None,
+            };
+            tx.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "UPDATE reference_values SET label = ?, metadata_json = ? WHERE id = ?",
+                [
+                    l.label_fr.trim().into(),
+                    serde_json::to_string(&meta)?.into(),
+                    v.id.into(),
+                ],
+            ))
+            .await?;
+        }
+    }
+    let stored_zones = stored_values(&tx, ZONE_DOMAIN).await?;
+    for z in &scales.matrix.zones {
+        let v = stored_zones
+            .iter()
+            .find(|v| v.code == z.zone)
+            .ok_or_else(|| invalid("RATING_SCALE_MATRIX"))?;
+        let meta = LevelMeta {
+            min_product: Some(z.min_product),
+            ..v.meta.clone()
+        };
+        tx.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE reference_values SET metadata_json = ? WHERE id = ?",
+            [serde_json::to_string(&meta)?.into(), v.id.into()],
+        ))
+        .await?;
+    }
+    // Saved by a reliability manager: the grids are reviewed.
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE reference_domains SET validation_rules_json = ? WHERE code = ?",
+        [zone_rules(current.matrix.classes, None).into(), ZONE_DOMAIN.into()],
+    ))
     .await?;
+    tx.commit().await?;
     load_scales(db).await
 }
 
@@ -254,6 +592,97 @@ mod tests {
             Some("safety")
         );
         assert_eq!(s.detection_level(9).and_then(|l| l.hidden), Some(true));
+    }
+
+    async fn fresh_db() -> DatabaseConnection {
+        let db = crate::db::test_db::seeded().await;
+        // Startup integrity may already have seeded the grids: start from empty domains.
+        db.execute_unprepared(
+            "DELETE FROM reference_values WHERE set_id IN (SELECT rs.id FROM reference_sets rs              JOIN reference_domains d ON d.id = rs.domain_id WHERE d.code LIKE 'RELIABILITY.FMECA_%')",
+        )
+        .await
+        .expect("clear");
+        db.execute_unprepared(
+            "UPDATE reference_domains SET validation_rules_json = NULL WHERE code LIKE 'RELIABILITY.FMECA_%'",
+        )
+        .await
+        .expect("clear rules");
+        db
+    }
+
+    #[tokio::test]
+    async fn grids_live_in_reference_data_seeded_from_the_former_setting() {
+        let db = fresh_db().await;
+        // The plant had edited its grids in the former setting: they are kept.
+        let mut edited = default_scales();
+        edited.severity[0].label_fr = "Accident mortel possible".into();
+        settings::set_setting(
+            &db,
+            SETTING_KEY,
+            "tenant",
+            &serde_json::to_string(&edited).unwrap(),
+            None,
+            "test",
+        )
+        .await
+        .expect("setting");
+        ensure_fmeca_rating_scales(&db).await.expect("ensure");
+        ensure_fmeca_rating_scales(&db).await.expect("idempotent");
+        let loaded = load_scales(&db).await.expect("load");
+        assert_eq!(
+            loaded.severity_level(10).map(|l| l.label_fr.as_str()),
+            Some("Accident mortel possible")
+        );
+        assert_eq!(loaded.occurrence_score(1.0), 6);
+        assert_eq!(loaded.matrix, default_scales().matrix);
+        assert_eq!(loaded.zone(8, 6), ZONE_REDUCE);
+    }
+
+    #[tokio::test]
+    async fn saved_grids_are_read_back_and_the_class_count_is_fixed() {
+        let db = fresh_db().await;
+        ensure_fmeca_rating_scales(&db).await.expect("ensure");
+        let mut s = load_scales(&db).await.expect("load");
+        s.detection[0].label_en = "Hidden until it fails".into();
+        let six = s.occurrence.iter_mut().find(|l| l.score == 6).expect("level 6");
+        six.min_per_year = Some(0.8);
+        let saved = save_scales(&db, &s, 1).await.expect("save");
+        assert_eq!(
+            saved.detection_level(10).map(|l| l.label_en.as_str()),
+            Some("Hidden until it fails")
+        );
+        assert_eq!(saved.occurrence_score(0.75), 5);
+        let mut other = saved.clone();
+        other.matrix.classes = 4;
+        assert!(save_scales(&db, &other, 1).await.is_err(), "the class count is fixed");
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_former_setting_seeds_product_grids_flagged_for_review() {
+        let db = fresh_db().await;
+        settings::set_setting(
+            &db,
+            SETTING_KEY,
+            "tenant",
+            r#"{"version":1,"severity":[]}"#,
+            None,
+            "test",
+        )
+        .await
+        .expect("setting");
+        ensure_fmeca_rating_scales(&db).await.expect("ensure");
+        let loaded = load_scales(&db).await.expect("load");
+        assert_eq!(loaded.review.as_deref(), Some(REVIEW_FORMER_GRIDS_UNREADABLE));
+        assert_eq!(loaded.severity, default_scales().severity);
+        // A reliability manager reviews and saves: the flag is cleared.
+        let saved = save_scales(&db, &loaded, 1).await.expect("save");
+        assert_eq!(saved.review, None);
+    }
+
+    #[tokio::test]
+    async fn a_missing_grid_is_refused_not_replaced() {
+        let db = fresh_db().await;
+        assert!(load_scales(&db).await.is_err());
     }
 
     #[test]

@@ -45,6 +45,8 @@ export const NOTIFICATION_CATEGORIES_DOMAIN_ID = -107;
 /** Work-permit types (`permit_types`, edited through `upsert_permit_type`). */
 export const PERMIT_TYPES_DOMAIN_ID = -108;
 export const PERMIT_TYPES_CATALOG_CODE = "PERMIT.TYPES";
+/** FMECA rating grids (`RELIABILITY.FMECA_*`, edited with `ram.manage`). */
+export const FMECA_RATING_SCALES_DOMAIN_ID = -109;
 
 /**
  * Module tables shown in the tree next to the reference domains (no versions: one live set).
@@ -137,6 +139,11 @@ const SYNTHETIC_CATALOGS: readonly SyntheticCatalog[] = [
       is_extendable: true,
     },
   ),
+  syntheticCatalog(FMECA_RATING_SCALES_DOMAIN_ID, "RELIABILITY.FMECA_SCALES", "Échelles AMDEC", {
+    governance_level: "protected_analytical",
+    governance_category: "system_catalog",
+    is_extendable: false,
+  }),
   syntheticCatalog(
     NOTIFICATION_CATEGORIES_DOMAIN_ID,
     "NOTIFICATION.CATEGORIES",

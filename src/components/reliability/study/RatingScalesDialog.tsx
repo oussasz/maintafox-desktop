@@ -77,6 +77,9 @@ export function RatingScalesDialog({
           <DialogTitle>{t("rams.scales.title")}</DialogTitle>
           <DialogDescription>{t("rams.scales.hint")}</DialogDescription>
         </DialogHeader>
+        {!editable ? (
+          <p className="text-xs text-text-muted">{t("rams.scales.managedInReference")}</p>
+        ) : null}
         {editable ? (
           <p
             role="note"

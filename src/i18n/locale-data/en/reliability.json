@@ -1260,7 +1260,15 @@
       "perYear": "{{value}} per year",
       "hidden": "Hidden",
       "evident": "Evident",
-      "save": "Save the grids"
+      "save": "Save the grids",
+      "loadError": "The FMECA rating grids could not be loaded",
+      "hostHint": "Definitions of the FMECA ratings used by every study of the plant. Scores (1–10) and zones are fixed; their definitions and attributes are the plant's.",
+      "whoEdits": "Edited by holders of the reliability manage right (ram.manage).",
+      "readOnly": "Read only: editing needs the reliability manage right (ram.manage).",
+      "edit": "Edit the grids",
+      "view": "View the grids",
+      "managedInReference": "These grids are edited in Données de référence › Échelles AMDEC.",
+      "reviewFormerUnreadable": "To review: the former rating grids could not be read, so the Maintafox grids are in place. Check each grid and save it."
     },
     "rcm": {
       "emptyTitle": "No mode to decide",
@@ -1673,6 +1681,8 @@
     "STUDY_TIME_BASIS_INVALID": "Unknown time basis.",
     "STUDY_TOO_MANY_ASSETS": "The study has more equipment than allowed.",
     "SYSTEM_MISSION_INVALID": "The mission time must be a positive number.",
-    "SYSTEM_MODEL_INCOMPLETE": "The system model is incomplete: fix the blocks flagged in the diagram."
+    "SYSTEM_MODEL_INCOMPLETE": "The system model is incomplete: fix the blocks flagged in the diagram.",
+    "RATING_SCALE_SCORES": "Each grid must rate every score from 1 to 10 exactly once.",
+    "RATING_SCALE_LABEL": "Every rating needs a definition in French and in English."
   }
 }

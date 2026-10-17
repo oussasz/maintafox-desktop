@@ -24,6 +24,8 @@ const RatingLevelSchema = z.object({
 
 const RatingScalesSchema = z.object({
   version: num,
+  /** Set while the grids must be reviewed (former grids unreadable: Maintafox grids in place). */
+  review: z.string().nullable().optional(),
   severity: z.array(RatingLevelSchema),
   occurrence: z.array(RatingLevelSchema),
   detection: z.array(RatingLevelSchema),
