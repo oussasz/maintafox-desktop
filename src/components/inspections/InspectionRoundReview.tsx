@@ -10,6 +10,7 @@ import { useTranslation } from "react-i18next";
 import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
 import { Button, Label, Textarea } from "@/components/ui";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { ErrorState } from "@/components/ui/data-state";
 import { StatusChip } from "@/components/ui/status-chip";
 import { toneOf } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
@@ -54,6 +55,8 @@ export function InspectionRoundReview({ runner, onChanged }: InspectionRoundRevi
   const [created, setCreated] = useState<FollowUpCreated | null>(null);
   const [deferTarget, setDeferTarget] = useState<InspectionAnomaly | null>(null);
   const [decided, setDecided] = useState<InspectionAnomalyRow[]>([]);
+  /** The decided findings could not be read: said so, never shown as "none decided". */
+  const [decidedError, setDecidedError] = useState<unknown>(null);
   const round = runner.summary.round;
 
   const loadDecided = useCallback(async () => {
@@ -63,8 +66,10 @@ export function InspectionRoundReview({ runner, onChanged }: InspectionRoundRevi
         statuses: ["triaged", "deferred", "resolved"],
       });
       setDecided(page.items);
-    } catch {
-      // Reported by the global IPC toast; the open findings stay usable.
+      setDecidedError(null);
+    } catch (err) {
+      // The open findings stay usable; the decided list says it could not be read.
+      setDecidedError(err);
     }
   }, [round.id]);
 
@@ -189,6 +194,14 @@ export function InspectionRoundReview({ runner, onChanged }: InspectionRoundRevi
         </ul>
       )}
 
+      {decidedError != null ? (
+        <ErrorState
+          className="py-4"
+          title={t("review.decidedLoadError")}
+          error={decidedError}
+          onRetry={() => void loadDecided()}
+        />
+      ) : null}
       {decided.length > 0 ? (
         <div className="space-y-2" data-testid="review-decided">
           <h4 className="text-sm font-semibold text-text-primary">{t("review.decided")}</h4>

@@ -73,12 +73,23 @@ vi.mock("@/services/personnel-service", () => ({
   listActiveTeams: vi.fn().mockResolvedValue([]),
   listPersonnel: vi.fn().mockResolvedValue({ items: [], total: 0 }),
 }));
-vi.mock("@/services/asset-lifecycle-service", () => ({
-  listAssetMeters: vi.fn().mockResolvedValue([]),
-}));
+const lifecycle = vi.hoisted(() => ({ listAssetMeters: vi.fn() }));
+vi.mock("@/services/asset-lifecycle-service", () => lifecycle);
 vi.mock("@/services/asset-service", () => ({ getAssetByIdSilent: vi.fn() }));
 vi.mock("@/components/assets/AssetPicker", () => ({
-  AssetPicker: () => <div data-testid="asset-picker" />,
+  AssetPicker: ({
+    onChange,
+  }: {
+    onChange: (a: { id: number; asset_code: string; asset_name: string } | null) => void;
+  }) => (
+    <button
+      type="button"
+      data-testid="asset-picker"
+      onClick={() => onChange({ id: 10, asset_code: "P-101", asset_name: "Feed pump" })}
+    >
+      pick asset
+    </button>
+  ),
 }));
 vi.mock("@/hooks/use-permissions", () => ({
   usePermissions: () => ({ can: () => true, canAny: () => true, isLoading: false }),
@@ -149,6 +160,7 @@ function anomalyRow(partial: Partial<InspectionAnomalyRow> = {}): InspectionAnom
 
 beforeEach(() => {
   vi.clearAllMocks();
+  lifecycle.listAssetMeters.mockResolvedValue([]);
   svc.getInspectionKpis.mockResolvedValue(kpis);
   svc.listInspectionRoundPage.mockResolvedValue({ items: [], total: 0 });
   svc.listInspectionAnomalyRows.mockResolvedValue({ items: [], total: 0 });
@@ -424,5 +436,27 @@ describe("InspectionScheduleDialog", () => {
     fireEvent.click(screen.getByRole("radio", { name: "Meter" }));
     expect(screen.getByText("Choose the meter.")).toBeInTheDocument();
     expect(screen.getByText("Enter an interval greater than zero.")).toBeInTheDocument();
+  });
+
+  it("says the asset's meters could not be read instead of 'no meter', and retries", async () => {
+    lifecycle.listAssetMeters
+      .mockRejectedValueOnce(new Error("db locked"))
+      .mockResolvedValue([
+        { id: 4, asset_id: 10, name: "Run hours", unit: "h", is_active: true } as never,
+      ]);
+    render(<InspectionScheduleDialog target="new" onClose={vi.fn()} onSaved={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("radio", { name: "Meter" }));
+    fireEvent.click(screen.getByTestId("asset-picker"));
+
+    const title = await screen.findByText(enInspections.schedules.metersLoadError);
+    expect(screen.queryByText(enInspections.schedules.noMeter)).not.toBeInTheDocument();
+    const box = title.closest("[role=alert]") as HTMLElement;
+    fireEvent.click(within(box).getByRole("button"));
+
+    await waitFor(() => expect(lifecycle.listAssetMeters).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(screen.queryByText(enInspections.schedules.metersLoadError)).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByText(enInspections.schedules.noMeter)).not.toBeInTheDocument();
   });
 });

@@ -331,6 +331,9 @@ export function InspectionScheduleDialog({
     null,
   );
   const [meters, setMeters] = useState<AssetMeter[]>([]);
+  /** The asset's meters could not be read: said so, never shown as "no meter". */
+  const [metersError, setMetersError] = useState<unknown>(null);
+  const [metersReload, setMetersReload] = useState(0);
   const [loadError, setLoadError] = useState<unknown>(null);
   const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -364,14 +367,18 @@ export function InspectionScheduleDialog({
   }, [target, existing]);
 
   useEffect(() => {
+    setMetersError(null);
     if (!asset) {
       setMeters([]);
       return;
     }
     listAssetMeters(asset.id)
       .then((all) => setMeters(all.filter((m) => m.is_active)))
-      .catch(() => setMeters([]));
-  }, [asset]);
+      .catch((err: unknown) => {
+        setMeters([]);
+        setMetersError(err);
+      });
+  }, [asset, metersReload]);
 
   const issues = scheduleFormIssues(form);
   const err = (field: keyof typeof issues) =>
@@ -588,7 +595,14 @@ export function InspectionScheduleDialog({
                 required
                 error={err("meterId")}
               >
-                {asset && meters.length === 0 ? (
+                {metersError != null ? (
+                  <ErrorState
+                    className="py-4"
+                    title={t("schedules.metersLoadError")}
+                    error={metersError}
+                    onRetry={() => setMetersReload((k) => k + 1)}
+                  />
+                ) : asset && meters.length === 0 ? (
                   <p className="text-sm text-text-muted">{t("schedules.noMeter")}</p>
                 ) : (
                   <Select

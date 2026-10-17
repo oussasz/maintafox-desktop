@@ -166,6 +166,7 @@
     }
   },
   "review": {
+    "decidedLoadError": "Could not read the findings already decided",
     "title": "Findings to follow up",
     "none": "No open anomaly.",
     "toDi": "Create a request",
@@ -365,6 +366,7 @@
     }
   },
   "schedules": {
+    "metersLoadError": "Could not read this asset's meters",
     "new": "New schedule",
     "generate": "Generate due rounds",
     "generated": "Rounds generated: {{generated}} · already there: {{skipped}} · marked missed: {{missed}}.",

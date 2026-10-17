@@ -313,6 +313,30 @@ describe("InspectionRunner", () => {
   });
 });
 
+describe("InspectionRoundReview — decided findings", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("says the decided findings could not be read instead of showing none, and retries", async () => {
+    svc.getInspectionRoundRunner.mockResolvedValue(
+      runner("completed_with_findings", [
+        runnerRow(leak, { result: savedResult, sync_state: "synced", missing: [] }),
+      ]),
+    );
+    svc.listInspectionAnomalyRows
+      .mockRejectedValueOnce(new Error("db locked"))
+      .mockResolvedValue({ items: [], total: 0 });
+    render(<InspectionRunner roundId={42} onClose={vi.fn()} />);
+    const alert = await screen.findByText(enInspections.review.decidedLoadError);
+    const box = alert.closest("[role=alert]") as HTMLElement;
+    fireEvent.click(within(box).getByRole("button"));
+    await waitFor(() =>
+      expect(screen.queryByText(enInspections.review.decidedLoadError)).not.toBeInTheDocument(),
+    );
+  });
+});
+
 describe("InspectionRunner — progress, history, keyboard and follow-up", () => {
   beforeEach(() => {
     vi.clearAllMocks();

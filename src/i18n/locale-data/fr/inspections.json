@@ -166,6 +166,7 @@
     }
   },
   "review": {
+    "decidedLoadError": "Impossible de lire les constats déjà traités",
     "title": "Constats à traiter",
     "none": "Aucune anomalie ouverte.",
     "toDi": "Créer une demande",
@@ -365,6 +366,7 @@
     }
   },
   "schedules": {
+    "metersLoadError": "Impossible de lire les compteurs de cet équipement",
     "new": "Nouvelle planification",
     "generate": "Générer les rondes dues",
     "generated": "Rondes générées : {{generated}} · déjà présentes : {{skipped}} · passées en manquées : {{missed}}.",
