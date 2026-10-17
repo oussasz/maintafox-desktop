@@ -71,6 +71,9 @@ pub struct AnalyticsExecutiveDashboard {
     pub org_node_id: Option<i64>,
     pub open_dis: AnalyticsKpiValue,
     pub open_wos: AnalyticsKpiValue,
+    /// Which "open OT" rule `open_wos` counts: `wo::backlog::RULE_NOT_YET_CLOSED`
+    /// (`as_of::wo_open_at`; the OT list's `not_closed_only` filter).
+    pub open_wos_rule: String,
     pub total_assets: AnalyticsKpiValue,
     pub overdue_items: AnalyticsKpiValue,
     pub pm_overdue: AnalyticsKpiValue,
@@ -548,6 +551,7 @@ pub async fn build_executive_dashboard(
         org_node_id: org,
         open_dis,
         open_wos,
+        open_wos_rule: crate::wo::backlog::RULE_NOT_YET_CLOSED.to_string(),
         total_assets,
         overdue_items,
         pm_overdue,

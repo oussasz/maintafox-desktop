@@ -809,3 +809,92 @@ fn one_terminal_list_for_the_open_rule_and_the_as_of_counts() {
         assert!(terminal.contains(legacy), "{legacy}");
     }
 }
+
+// ── The two named "open OT" rules ──────────────────────────────────────────────────────────
+
+fn wo_rule_scope(open_only: bool, not_closed_only: bool) -> crate::wo::queries::WoListFilter {
+    crate::wo::queries::WoListFilter {
+        open_only: Some(open_only),
+        not_closed_only: Some(not_closed_only),
+        limit: 200,
+        offset: 0,
+        ..Default::default()
+    }
+}
+
+/// "Open (work to do)" and "Not yet closed" each list exactly what their figures count; a
+/// mechanically completed OT waiting for close-out is "not yet closed" but has no work to do.
+#[tokio::test]
+async fn the_two_open_ot_rules_list_what_their_figures_count() {
+    let db = setup().await;
+    let me = admin_id(&db).await;
+    work_order(&db, "R-DRAFT", "corrective", "draft", me, None, "NULL", "NULL").await;
+    work_order(&db, "R-READY", "corrective", "ready", me, None, "NULL", "NULL").await;
+    work_order(&db, "R-HOLD", "corrective", "on_hold", me, None, "NULL", "NULL").await;
+    let done = work_order(&db, "R-DONE", "corrective", "completed", me, None, "NULL", "NULL").await;
+    exec(
+        &db,
+        &format!("UPDATE work_orders SET mechanically_completed_at = datetime('now') WHERE id = {done}"),
+    )
+    .await;
+    work_order(&db, "R-CLOSED", "corrective", "closed", me, None, "NULL", "NULL").await;
+    work_order(&db, "R-CANC", "corrective", "cancelled", me, None, "NULL", "NULL").await;
+
+    // Open (work to do): home backlog == OT list `open_only`.
+    let home = work_orders(&db, Utc::now()).await.expect("backlog");
+    assert_eq!(home.open_rule, crate::wo::backlog::RULE_OPEN_WORK_TO_DO);
+    let open = crate::wo::queries::list_work_orders(&db, wo_rule_scope(true, false))
+        .await
+        .expect("open list");
+    assert_eq!((open.total, home.open), (3, 3));
+    assert!(open.items.iter().all(|w| w.code != "R-DONE"));
+
+    // Not yet closed: analytics as-of and the report == OT list `not_closed_only`.
+    let not_closed = crate::wo::queries::list_work_orders(&db, wo_rule_scope(false, true))
+        .await
+        .expect("not-closed list");
+    let as_of = crate::analytics::as_of::wo_open_at(&db, Utc::now(), None)
+        .await
+        .expect("as of");
+    let report = crate::reports::queries::fetch_dashboard_summary(&db)
+        .await
+        .expect("report");
+    assert_eq!((not_closed.total, as_of, report.open_wo), (4, 4, 4));
+    assert!(not_closed.items.iter().any(|w| w.code == "R-DONE"));
+}
+
+/// A person's workload counts their OTs in planning, ready and on hold (current codes, "open
+/// (work to do)"), and the availability check sees them as assigned.
+#[tokio::test]
+async fn a_person_with_planning_ready_and_on_hold_work_is_busy() {
+    let db = setup().await;
+    exec(
+        &db,
+        "INSERT INTO personnel (employee_code, full_name, availability_status) VALUES ('HM-P1', 'Busy Person', 'available')",
+    )
+    .await;
+    let person = scalar(&db, "SELECT id FROM personnel WHERE employee_code = 'HM-P1'").await;
+    let me = admin_id(&db).await;
+    exec(
+        &db,
+        &format!("UPDATE user_accounts SET personnel_id = {person} WHERE id = {me}"),
+    )
+    .await;
+    work_order(&db, "P-PLAN", "corrective", "planning", me, None, "NULL", "NULL").await;
+    work_order(&db, "P-READY", "corrective", "ready", me, None, "NULL", "NULL").await;
+    work_order(&db, "P-HOLD", "corrective", "on_hold", me, None, "NULL", "NULL").await;
+    work_order(&db, "P-DONE", "corrective", "completed", me, None, "NULL", "NULL").await;
+
+    let w = crate::personnel::queries::get_personnel_workload_summary(&db, person)
+        .await
+        .expect("workload");
+    assert_eq!(w.in_progress_work_orders, 3, "planning + ready + on hold");
+    assert_eq!(w.in_progress_work_orders_rule, crate::wo::backlog::RULE_OPEN_WORK_TO_DO);
+    assert_eq!(w.open_work_orders, 4, "not yet closed also counts the completed one");
+    assert_eq!(w.open_work_orders_rule, crate::wo::backlog::RULE_NOT_YET_CLOSED);
+
+    let state = crate::personnel::availability::compute_personnel_availability_state(&db, person)
+        .await
+        .expect("availability");
+    assert_eq!(state.status, "assigned");
+}

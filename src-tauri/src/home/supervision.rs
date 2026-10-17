@@ -39,6 +39,8 @@ pub struct WoBacklogCell {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct SupervisionWorkOrders {
     pub open: i64,
+    /// Which "open OT" rule `open` counts: `wo::backlog::RULE_OPEN_WORK_TO_DO`.
+    pub open_rule: String,
     /// Of `open`, the OTs past their planned end (`wo::backlog::WO_OVERDUE_SQL`, the OT
     /// dashboard's one overdue rule).
     pub overdue: i64,
@@ -220,6 +222,7 @@ pub async fn work_orders(db: &DatabaseConnection, now: DateTime<Utc>) -> AppResu
         ))
         .await?;
     let mut out = SupervisionWorkOrders {
+        open_rule: crate::wo::backlog::RULE_OPEN_WORK_TO_DO.to_string(),
         open: 0,
         overdue: decode(
             &one_row(

@@ -368,6 +368,8 @@ pub async fn delete_schedule(db: &DatabaseConnection, user_id: i64, schedule_id:
 #[derive(Debug, Clone, PartialEq)]
 pub struct DashboardSummaryFigures {
     pub open_di: i64,
+    /// OTs "not yet closed" (`wo::backlog::NOT_CLOSED_SQL`, rule `RULE_NOT_YET_CLOSED`); the
+    /// report row is labelled with that rule's name.
     pub open_wo: i64,
     pub assets: i64,
     /// Assets with a reliability snapshot over the last 365 days.
@@ -391,7 +393,10 @@ pub async fn fetch_dashboard_summary(db: &DatabaseConnection) -> AppResult<Dashb
     .await?;
     let open_wo = count_scalar(
         db,
-        "SELECT COUNT(*) AS cnt FROM work_orders wo          JOIN work_order_statuses s ON s.id = wo.status_id WHERE s.code NOT IN ('closed','cancelled')",
+        &format!(
+            "SELECT COUNT(*) AS cnt FROM work_orders wo JOIN work_order_statuses s ON s.id = wo.status_id WHERE {}",
+            crate::wo::backlog::NOT_CLOSED_SQL
+        ),
     )
     .await?;
     let assets = count_scalar(db, "SELECT COUNT(*) AS cnt FROM equipment WHERE deleted_at IS NULL").await?;
@@ -420,10 +425,12 @@ pub async fn fetch_open_wo_by_status(db: &DatabaseConnection) -> AppResult<Vec<(
     let rows = db
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT s.code AS st, COUNT(*) AS cnt FROM work_orders wo \
-             JOIN work_order_statuses s ON s.id = wo.status_id \
-             WHERE s.code NOT IN ('closed','cancelled') GROUP BY s.code ORDER BY cnt DESC"
-                .to_string(),
+            format!(
+                "SELECT s.code AS st, COUNT(*) AS cnt FROM work_orders wo \
+                 JOIN work_order_statuses s ON s.id = wo.status_id \
+                 WHERE {} GROUP BY s.code ORDER BY cnt DESC",
+                crate::wo::backlog::NOT_CLOSED_SQL
+            ),
         ))
         .await?;
     let mut out = Vec::new();

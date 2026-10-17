@@ -35,10 +35,13 @@ async fn has_active_work_order_for_personnel(db: &impl ConnectionTrait, personne
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT COUNT(*) AS c FROM work_orders wo \
-             INNER JOIN user_accounts ua ON ua.id = wo.primary_responsible_id \
-             WHERE ua.personnel_id = ? AND ua.deleted_at IS NULL \
-             AND wo.closed_at IS NULL AND wo.cancelled_at IS NULL",
+            format!(
+                "SELECT COUNT(*) AS c FROM work_orders wo \
+                 INNER JOIN work_order_statuses s ON s.id = wo.status_id \
+                 INNER JOIN user_accounts ua ON ua.id = wo.primary_responsible_id \
+                 WHERE ua.personnel_id = ? AND ua.deleted_at IS NULL AND {}",
+                crate::wo::backlog::NOT_CLOSED_SQL
+            ),
             [personnel_id.into()],
         ))
         .await?;

@@ -155,7 +155,8 @@ pub(crate) async fn rule_of(conn: &impl ConnectionTrait, category: &str) -> Resu
     })
 }
 
-const WO_OPEN: &str = "s.macro_state IN ('open', 'executing')";
+/// OTs whose work is still to do (`wo::backlog::OPEN_STATUS_SQL`, "Open (work to do)").
+const WO_OPEN: &str = concat!("s.code IN ", crate::wo_open_statuses_sql!());
 
 /// The movement that brought the available stock of an article from above its reorder point to
 /// at or below it most recently, with when it happened (`None`: always below in the ledger).

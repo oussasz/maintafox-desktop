@@ -377,9 +377,12 @@ pub async fn version_work_order_impact(
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT code FROM work_orders \
-              WHERE shift_class_version_id = ? AND closed_at IS NULL AND cancelled_at IS NULL \
-              ORDER BY planned_start, id",
+            format!(
+                "SELECT wo.code FROM work_orders wo JOIN work_order_statuses s ON s.id = wo.status_id \
+                 WHERE wo.shift_class_version_id = ? AND {} \
+                 ORDER BY wo.planned_start, wo.id",
+                crate::wo::backlog::NOT_CLOSED_SQL
+            ),
             [version_id.into()],
         ))
         .await?;

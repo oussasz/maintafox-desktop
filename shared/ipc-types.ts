@@ -5278,6 +5278,8 @@ export interface WoListFilter {
   open_only?: boolean | null;
   /** Only overdue work: the "overdue OT" count's rule (`wo::backlog::WO_OVERDUE_SQL`). */
   overdue_only?: boolean | null;
+  /** Only OTs not yet closed: the reports' / analytics "open OT" rule (`wo::backlog::NOT_CLOSED_SQL`). */
+  not_closed_only?: boolean | null;
   limit: number;
   offset: number;
 }

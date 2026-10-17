@@ -554,30 +554,34 @@ pub async fn compute_personnel_availability_state(
         });
     }
 
-    // Check open WO assignments
+    // Open work assigned to the person: "Open (work to do)" OTs (`wo::backlog::OPEN_STATUS_SQL`)
+    // whose primary responsible is the person's login. A failed read is an error, never "free".
     let wo_row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT COUNT(*) AS n FROM work_orders wo
-             JOIN work_order_statuses s ON s.id = wo.status_id
-             WHERE wo.primary_responsible_id = ?
-               AND s.code NOT IN ('closed', 'cancelled')
-             LIMIT 1",
+            format!(
+                "SELECT COUNT(*) AS n FROM work_orders wo
+                 JOIN work_order_statuses s ON s.id = wo.status_id
+                 JOIN user_accounts ua ON ua.id = wo.primary_responsible_id
+                 WHERE ua.personnel_id = ?
+                   AND s.code IN {}",
+                crate::wo::backlog::OPEN_STATUS_SQL
+            ),
             [personnel_id.into()],
         ))
-        .await;
-
-    if let Ok(Some(wr)) = wo_row {
-        let count: i64 = wr.try_get("", "n").unwrap_or(0);
-        if count > 0 {
-            return Ok(PersonnelAvailabilityState {
-                personnel_id,
-                status: "assigned".to_string(),
-                blocked_override: false,
-                reasons: vec![format!("{count} ordre(s) de travail actif(s).")],
-                as_of,
-            });
-        }
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("open work order count returned no row")))?;
+    let count: i64 = wo_row
+        .try_get("", "n")
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("open work order count decode: {e}")))?;
+    if count > 0 {
+        return Ok(PersonnelAvailabilityState {
+            personnel_id,
+            status: "assigned".to_string(),
+            blocked_override: false,
+            reasons: vec![format!("{count} ordre(s) de travail actif(s).")],
+            as_of,
+        });
     }
 
     Ok(PersonnelAvailabilityState {
