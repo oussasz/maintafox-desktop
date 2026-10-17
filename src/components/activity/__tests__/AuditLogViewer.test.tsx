@@ -79,18 +79,46 @@ describe("AuditLogViewer labels and detail errors", () => {
       expect(auditMocks.listAuditEvents).toHaveBeenCalled();
     });
 
-    expect(screen.getByLabelText("Action code filter")).toBeInTheDocument();
-    expect(screen.getByLabelText("Result filter")).toBeInTheDocument();
-    expect(screen.getByLabelText("Actor ID filter")).toBeInTheDocument();
-    expect(screen.getByLabelText("Retention class filter")).toBeInTheDocument();
-    expect(screen.getByLabelText("Date from filter")).toBeInTheDocument();
-    expect(screen.getByLabelText("Date to filter")).toBeInTheDocument();
+    expect(screen.getByLabelText(/audit\.filters\.action|^Action$/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/audit\.filters\.result|^Result$/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/audit\.filters\.userNumber|User number/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/audit\.filters\.retention|^Retention$/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/filters\.dateFrom|From/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/filters\.dateTo|To/)).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /auth\.login\.success/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /auth login success/i }));
 
     await waitFor(() => {
       expect(auditMocks.getAuditEvent).toHaveBeenCalledWith(77);
       expect(screen.getByText("detail unavailable")).toBeInTheDocument();
     });
+  });
+
+  it("reloads when moving to the next page", async () => {
+    auditMocks.listAuditEvents.mockImplementation((_filter?: unknown) =>
+      Promise.resolve(
+        Array.from({ length: 40 }, (_, i) => ({
+          id: i + 1,
+          action_code: "auth.login.success",
+          target_type: null,
+          target_id: null,
+          actor_id: 1,
+          actor_username: "admin",
+          auth_context: "password",
+          result: "success",
+          happened_at: "2026-04-13T11:00:00.000Z",
+          retention_class: "standard",
+          from_other_device: false,
+        })),
+      ),
+    );
+    renderViewer();
+    await waitFor(() => expect(auditMocks.listAuditEvents).toHaveBeenCalledTimes(1));
+    fireEvent.click(await screen.findByRole("button", { name: /pager\.next|Next/ }));
+    await waitFor(() =>
+      expect(auditMocks.listAuditEvents).toHaveBeenLastCalledWith(
+        expect.objectContaining({ offset: 40 }),
+      ),
+    );
   });
 });

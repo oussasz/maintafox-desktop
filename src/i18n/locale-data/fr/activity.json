@@ -1,4 +1,131 @@
 {
+  "filters": {
+    "any": "Tous",
+    "module": "Module",
+    "severity": "Gravité",
+    "eventClass": "Type d'événement",
+    "dateFrom": "Du",
+    "dateTo": "Au",
+    "advanced": "Filtres avancés",
+    "orgUnitNumber": "N° d'unité d'organisation",
+    "correlation": "Référence de chaîne d'événements",
+    "apply": "Appliquer",
+    "reset": "Réinitialiser"
+  },
+  "pager": {
+    "range": "Événements {{from}} à {{to}}",
+    "previous": "Précédent",
+    "next": "Suivant"
+  },
+  "feed": {
+    "system": "Système",
+    "noSummary": "Pas de résumé pour cet événement.",
+    "chain": "Événements liés",
+    "chainLoading": "Chargement des événements liés…",
+    "chainFailed": "Les événements liés n'ont pas pu être chargés",
+    "link": {
+      "related": "Lié",
+      "caused_by": "Causé par",
+      "triggered": "A déclenché"
+    },
+    "autoRefresh": "Actualiser toutes les 30 s",
+    "savedViews": "Vues enregistrées",
+    "noSavedView": "Aucune vue",
+    "defaultView": "{{name}} (par défaut)",
+    "saveViewName": "Nom de la vue",
+    "saveView": "Enregistrer la vue",
+    "viewSaved": "Vue enregistrée",
+    "empty": "Aucun événement pour ces filtres.",
+    "noPermission": "Vous n'avez pas le droit de consulter le journal d'activité."
+  },
+  "audit": {
+    "filters": {
+      "action": "Action",
+      "actionHint": "Début du code, ex. auth.login",
+      "result": "Résultat",
+      "userNumber": "N° d'utilisateur",
+      "retention": "Conservation"
+    },
+    "mySecurityEvents": "Mes événements de sécurité",
+    "export": {
+      "help": "L'export est lui-même tracé dans le journal d'audit et produit un fichier JSON.",
+      "reason": "Motif de l'export (obligatoire)",
+      "action": "Exporter le journal d'audit",
+      "saved": "{{count}} événement(s) exporté(s)",
+      "failed": "L'export n'a pas pu être enregistré"
+    },
+    "loadError": "Impossible de charger le journal d'audit",
+    "empty": "Aucun événement d'audit pour ces filtres.",
+    "detail": {
+      "target": "Objet",
+      "retention": "Conservation",
+      "technical": "Détails techniques",
+      "before": "Empreinte avant",
+      "after": "Empreinte après"
+    }
+  },
+  "labels": {
+    "module": {
+      "none": "Sans module",
+      "wo": "Ordres de travail",
+      "di": "Demandes d'intervention",
+      "pm": "Maintenance préventive",
+      "planning": "Planification",
+      "permit": "Permis de travail",
+      "personnel": "Personnel",
+      "inventory": "Stocks",
+      "inspection": "Inspections",
+      "notifications": "Notifications",
+      "sync": "Synchronisation",
+      "rbac": "Rôles et droits",
+      "iot": "Capteurs (IoT)",
+      "archive": "Archives",
+      "auth": "Connexion",
+      "equipment": "Équipements",
+      "org": "Organisation",
+      "finance": "Budget",
+      "reliability": "Fiabilité"
+    },
+    "severity": {
+      "info": "Information",
+      "warning": "Avertissement",
+      "warn": "Avertissement",
+      "error": "Erreur",
+      "critical": "Critique",
+      "pass": "Conforme",
+      "fail": "Non conforme",
+      "blocker": "Bloquant",
+      "blocking": "Bloquant",
+      "medium": "Moyenne",
+      "high": "Élevée"
+    },
+    "eventClass": {
+      "operational": "Opérationnel",
+      "system": "Système",
+      "security": "Sécurité"
+    },
+    "result": {
+      "success": "Réussi",
+      "applied": "Appliqué",
+      "blocked": "Bloqué",
+      "pass": "Conforme",
+      "missed": "Manqué",
+      "completed_with_findings": "Terminé avec constats",
+      "completed_no_findings": "Terminé sans constat"
+    },
+    "authContext": {
+      "password": "Mot de passe",
+      "step_up": "Identité confirmée",
+      "session": "Session",
+      "system": "Système"
+    },
+    "retention": {
+      "standard": "Standard",
+      "operations": "Exploitation",
+      "compliance": "Conformité",
+      "security": "Sécurité"
+    }
+  },
   "page": {
     "title": "Journal d'activité",
     "subtitle": "Fil opérationnel et piste d'audit immuable pour la sécurité et la conformité."
