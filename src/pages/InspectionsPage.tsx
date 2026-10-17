@@ -338,7 +338,7 @@ export function InspectionsPage() {
                 <p key={issue.schedule_code} className="text-tone-warning-fg">
                   {t("schedules.issue", { code: issue.schedule_code })}{" "}
                   {t(`errors:gateError.${issue.message.split(":")[0] ?? ""}`, {
-                    defaultValue: issue.message,
+                    defaultValue: t("errors:generic.unexpected"),
                   })}
                 </p>
               ))}

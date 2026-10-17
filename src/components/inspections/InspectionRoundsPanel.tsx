@@ -30,6 +30,7 @@ import { StatusChip } from "@/components/ui/status-chip";
 import { toneOf } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
+import { appErrorText } from "@/lib/app-error";
 import {
   listInspectionRoundPage,
   listInspectionTemplates,
@@ -37,7 +38,6 @@ import {
   startInspectionRound,
 } from "@/services/inspection-service";
 import { listActiveTeams, listPersonnel } from "@/services/personnel-service";
-import { toErrorMessage } from "@/utils/errors";
 import type {
   InspectionRoundSummary,
   InspectionRoundSummaryFilter,
@@ -477,7 +477,7 @@ export function PersonnelPicker({ id, value, onChange }: PersonnelPickerProps) {
         })
         .catch((err: unknown) => {
           setResults([]);
-          setError(toErrorMessage(err));
+          setError(appErrorText(err));
         })
         .finally(() => setSearching(false));
     }, 250);
