@@ -169,7 +169,7 @@ const fmeca: FmecaWorksheet = {
       failure_mode_id: 5,
       mode_code: "BRD",
       mode_label: "Bearing seizure",
-      functional_failure: "",
+      functional_failure: "Low flow",
       failure_effect: "Pump stops",
       failure_mechanism_id: 70,
       mechanism_label: "Wear",
@@ -278,6 +278,7 @@ describe("StudyFmecaStep", () => {
     if (!row) throw new Error("FMECA row missing");
     expect(within(row).getByText("140")).toBeInTheDocument();
     expect(within(row).getByText("Wear · Contamination")).toBeInTheDocument();
+    expect(within(row).getByText("Function lost: Low flow")).toBeInTheDocument();
     // The proposed occurrence shows where it comes from (life analysis).
     expect(within(row).getByText("Weibull").parentElement).toHaveAttribute(
       "title",
@@ -297,6 +298,9 @@ describe("StudyFmecaStep", () => {
     fireEvent.change(within(dialog).getByLabelText("Severity"), { target: { value: "6" } });
     fireEvent.change(within(dialog).getByLabelText("Detection"), { target: { value: "3" } });
     expect(within(dialog).getByText("RPN = 72")).toBeInTheDocument();
+    fireEvent.change(within(dialog).getByLabelText("Functional failure"), {
+      target: { value: "Delivers less than 40 m³/h" },
+    });
     fireEvent.click(save);
 
     await waitFor(() =>
@@ -312,6 +316,7 @@ describe("StudyFmecaStep", () => {
           detectability: 3,
           occurrence_source: "history",
           occurrence_events_per_year: 0.5,
+          functional_failure: "Delivers less than 40 m³/h",
         }),
       }),
     );

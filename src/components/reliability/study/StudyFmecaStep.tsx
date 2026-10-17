@@ -222,7 +222,16 @@ export function StudyFmecaStep({
                   <tbody>
                     {ws.rows.map((r) => (
                       <tr key={r.item_id} className="h-11 border-t border-surface-border align-top">
-                        <td className="px-3 py-2">{r.component_label || "—"}</td>
+                        <td className="px-3 py-2">
+                          {r.component_label || "—"}
+                          {r.functional_failure ? (
+                            <div className="text-xs text-text-muted">
+                              {t("rams.fmeca.functionalFailureShort", {
+                                text: r.functional_failure,
+                              })}
+                            </div>
+                          ) : null}
+                        </td>
                         <td className="px-3 py-2">
                           <span className="font-mono text-xs">{r.mode_code}</span> {r.mode_label}
                         </td>

@@ -213,6 +213,15 @@ export function FmecaItemDialog({
             </select>
           </label>
           <label className={`${field} sm:col-span-2`}>
+            {t("rams.fmeca.functionalFailure")}
+            <Input
+              className="h-10"
+              value={d.functionalFailure}
+              placeholder={t("rams.fmeca.functionalFailurePlaceholder")}
+              onChange={(e) => set("functionalFailure", e.target.value)}
+            />
+          </label>
+          <label className={`${field} sm:col-span-2`}>
             {t("rams.fmeca.colEffect")}
             <Input
               className="h-10"
