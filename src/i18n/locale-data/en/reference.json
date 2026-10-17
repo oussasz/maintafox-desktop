@@ -300,6 +300,7 @@
     "liveTable": "Live table",
     "liveTableHint": "This list belongs to another module and has no versions: every change applies immediately.",
     "domains": {
+      "permitTypes": "Work permit types",
       "articleFamilies": "Stock article families",
       "taxCategories": "Article VAT categories",
       "woStatuses": "Work-order statuses",

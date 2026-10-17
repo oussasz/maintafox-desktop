@@ -10,6 +10,7 @@
 import { Database } from "lucide-react";
 import { useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
+import { useSearchParams } from "react-router-dom";
 
 import { RefreshButton } from "@/components/layout/ModuleHeaderControls";
 import { ModulePageShell } from "@/components/layout/ModulePageShell";
@@ -18,6 +19,7 @@ import { ReferenceValueEditor } from "@/components/lookups/ReferenceValueEditor"
 import { InventoryArticleFamilyHost } from "@/components/lookups/adapters/InventoryArticleFamilyHost";
 import { InventoryTaxCategoryHost } from "@/components/lookups/adapters/InventoryTaxCategoryHost";
 import { NotificationRulesHost } from "@/components/lookups/adapters/NotificationRulesHost";
+import { PermitTypesHost } from "@/components/lookups/adapters/PermitTypesHost";
 import { UrgencyScaleHost } from "@/components/lookups/adapters/UrgencyScaleHost";
 import { WorkOrderStatusesHost } from "@/components/lookups/adapters/WorkOrderStatusesHost";
 import {
@@ -35,11 +37,13 @@ import { StatusChip } from "@/components/ui/status-chip";
 import { mfLayout } from "@/design-system/tokens";
 import { toneOf } from "@/design-system/tone";
 import { usePermissions } from "@/hooks/use-permissions";
+import { LIST_PARAM, textParam, withoutParams } from "@/lib/list-links";
 import { createDraftReferenceSet } from "@/services/reference-service";
 import {
   INVENTORY_ARTICLE_FAMILY_DOMAIN_ID,
   INVENTORY_TAX_CATEGORY_DOMAIN_ID,
   NOTIFICATION_RULES_DOMAIN_ID,
+  PERMIT_TYPES_DOMAIN_ID,
   URGENCY_SCALE_DOMAIN_ID,
   WORK_ORDER_STATUSES_DOMAIN_ID,
   useReferenceManagerStore,
@@ -61,6 +65,8 @@ function SyntheticDomainHost({ domainId }: { domainId: number }) {
       return <WorkOrderStatusesHost />;
     case NOTIFICATION_RULES_DOMAIN_ID:
       return <NotificationRulesHost />;
+    case PERMIT_TYPES_DOMAIN_ID:
+      return <PermitTypesHost />;
     default:
       return null;
   }
@@ -80,10 +86,33 @@ export function ReferenceManagerPage() {
   const loadDomains = useReferenceManagerStore((s) => s.loadDomains);
   const loadSetsForDomain = useReferenceManagerStore((s) => s.loadSetsForDomain);
   const selectSet = useReferenceManagerStore((s) => s.selectSet);
+  const selectDomain = useReferenceManagerStore((s) => s.selectDomain);
 
   useEffect(() => {
     void loadDomains();
   }, [loadDomains]);
+
+  // A link may open one list (`?catalog=<code>`, e.g. from the module that uses it): once the
+  // tree is loaded the list is selected and the parameter leaves the address.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const linkedCatalog = textParam(searchParams.get(LIST_PARAM.catalog));
+  useEffect(() => {
+    if (!linkedCatalog || domainsLoading || domains.length === 0) return;
+    const domain = domains.find((d) => d.code.toUpperCase() === linkedCatalog.toUpperCase());
+    if (domain) {
+      if (isSyntheticReferenceId(domain.id)) selectSet(domain.id, domain.id);
+      else selectDomain(domain.id);
+    }
+    setSearchParams(withoutParams(searchParams, LIST_PARAM.catalog), { replace: true });
+  }, [
+    linkedCatalog,
+    domains,
+    domainsLoading,
+    searchParams,
+    setSearchParams,
+    selectSet,
+    selectDomain,
+  ]);
 
   const selectedDomain =
     selectedDomainId != null ? (domains.find((d) => d.id === selectedDomainId) ?? null) : null;

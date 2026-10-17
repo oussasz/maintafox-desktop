@@ -55,6 +55,7 @@ const SYNTHETIC_DOMAIN_NAME_KEY: Record<string, string> = {
   "WO.WORK_ORDER_STATUSES": "synthetic.domains.woStatuses",
   "NOTIFICATION.RULES": "synthetic.domains.notificationRules",
   "NOTIFICATION.CATEGORIES": "synthetic.domains.notificationCategories",
+  "PERMIT.TYPES": "synthetic.domains.permitTypes",
 };
 
 /** Name shown for a domain: translated for the synthetic live tables, stored name otherwise. */

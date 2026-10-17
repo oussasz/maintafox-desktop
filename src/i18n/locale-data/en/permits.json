@@ -188,6 +188,8 @@
     "submit": "Save"
   },
   "types": {
+    "noViewRight": "Viewing permit types needs the work-permit view right.",
+    "readOnly": "Changing permit types needs the permit issuer right.",
     "title": "Permit types",
     "new": "New type",
     "code": "Code",

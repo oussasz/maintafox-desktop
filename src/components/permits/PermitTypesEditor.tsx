@@ -1,26 +1,21 @@
-import { useEffect, useState, type FormEvent } from "react";
+/**
+ * Work-permit types editor — hosted in Données de référence (catalog `PERMIT.TYPES`), the one
+ * place they are managed. Saves go through `upsert_permit_type` (permit issuer; administrator +
+ * step-up + reason to stop requiring an energy isolation; the LOTO type keeps it).
+ */
+import { useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 
-import {
-  Button,
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  FormField,
-  Input,
-  Textarea,
-} from "@/components/ui";
+import { Button, FormField, Input, Textarea } from "@/components/ui";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useStepUp } from "@/hooks/use-step-up";
 import { appErrorReason } from "@/lib/app-error";
 import { upsertPermitType, type PermitTypeRecord } from "@/services/permit-service";
 
-interface PermitTypesDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
+interface PermitTypesEditorProps {
   types: PermitTypeRecord[];
+  /** Permit issuer right: without it the list is read-only. */
+  canEdit: boolean;
   onSaved: () => void;
 }
 
@@ -80,21 +75,13 @@ function toDraft(ty: PermitTypeRecord): TypeDraft {
   };
 }
 
-export function PermitTypesDialog({ open, onOpenChange, types, onSaved }: PermitTypesDialogProps) {
+export function PermitTypesEditor({ types, canEdit, onSaved }: PermitTypesEditorProps) {
   const { t } = useTranslation("permits");
   const [draft, setDraft] = useState<TypeDraft>(EMPTY);
   const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { withStepUp, StepUpDialogElement } = useStepUp();
-
-  useEffect(() => {
-    if (open) {
-      setDraft(EMPTY);
-      setSubmitted(false);
-      setError(null);
-    }
-  }, [open]);
 
   const relaxing = draft.id != null && draft.savedEnergyIsolation && !draft.energyIsolation;
   const maxHoursValue = draft.maxHours.trim() === "" ? null : Number(draft.maxHours);
@@ -147,52 +134,57 @@ export function PermitTypesDialog({ open, onOpenChange, types, onSaved }: Permit
   );
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>{t("types.title")}</DialogTitle>
-        </DialogHeader>
-
-        <div className="max-h-56 overflow-y-auto rounded-md border border-surface-border">
-          <table className="w-full text-left text-sm">
-            <thead>
-              <tr className="border-b border-surface-border text-text-muted">
-                <th className="px-2 py-1.5 font-medium">{t("types.code")}</th>
-                <th className="px-2 py-1.5 font-medium">{t("types.name")}</th>
-                <th className="px-2 py-1.5 font-medium">{t("types.maxHours")}</th>
-                <th className="px-2 py-1.5 font-medium">{t("types.energyIsolationShort")}</th>
-                <th className="px-2 py-1.5" />
-              </tr>
-            </thead>
-            <tbody>
-              {types.map((ty) => (
-                <tr key={ty.id} className="border-b border-surface-border/60">
-                  <td className="px-2 py-1.5 font-mono text-xs">{ty.code}</td>
-                  <td className="px-2 py-1.5">{ty.name}</td>
-                  <td className="px-2 py-1.5">{ty.max_duration_hours ?? t("detail.none")}</td>
-                  <td className="px-2 py-1.5">
-                    {ty.requires_energy_isolation ? t("types.yes") : t("types.no")}
-                  </td>
-                  <td className="px-2 py-1.5 text-right">
+    <div className="space-y-4">
+      <div className="overflow-x-auto rounded-md border border-surface-border bg-surface-0">
+        <table className="w-full text-left text-sm">
+          <thead>
+            <tr className="border-b border-surface-border text-text-muted">
+              <th className="px-2 py-1.5 font-medium">{t("types.code")}</th>
+              <th className="px-2 py-1.5 font-medium">{t("types.name")}</th>
+              <th className="px-2 py-1.5 font-medium">{t("types.maxHours")}</th>
+              <th className="px-2 py-1.5 font-medium">{t("types.energyIsolationShort")}</th>
+              <th className="px-2 py-1.5" />
+            </tr>
+          </thead>
+          <tbody>
+            {types.map((ty) => (
+              <tr key={ty.id} className="border-b border-surface-border/60">
+                <td className="px-2 py-1.5 font-mono text-xs">{ty.code}</td>
+                <td className="px-2 py-1.5">{ty.name}</td>
+                <td className="px-2 py-1.5">{ty.max_duration_hours ?? t("detail.none")}</td>
+                <td className="px-2 py-1.5">
+                  {ty.requires_energy_isolation ? t("types.yes") : t("types.no")}
+                </td>
+                <td className="px-2 py-1.5 text-right">
+                  {canEdit ? (
                     <Button
                       type="button"
                       variant="ghost"
                       size="sm"
-                      onClick={() => setDraft(toDraft(ty))}
+                      onClick={() => {
+                        setDraft(toDraft(ty));
+                        setSubmitted(false);
+                        setError(null);
+                      }}
                     >
                       {t("actions.edit")}
                     </Button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {types.length === 0 ? (
-            <p className="p-2 text-sm text-text-muted">{t("types.empty")}</p>
-          ) : null}
-        </div>
+                  ) : null}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {types.length === 0 ? (
+          <p className="p-2 text-sm text-text-muted">{t("types.empty")}</p>
+        ) : null}
+      </div>
 
-        <form className="space-y-3" onSubmit={(e) => void handleSubmit(e)}>
+      {canEdit ? (
+        <form
+          className="space-y-3 rounded-md border border-surface-border bg-surface-0 p-4"
+          onSubmit={(e) => void handleSubmit(e)}
+        >
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-medium text-text-primary">
               {draft.id == null ? t("types.new") : `${t("actions.edit")} — ${draft.code}`}
@@ -286,17 +278,16 @@ export function PermitTypesDialog({ open, onOpenChange, types, onSaved }: Permit
               {error}
             </p>
           ) : null}
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              {t("actions.close")}
-            </Button>
+          <div className="flex justify-end">
             <Button type="submit" disabled={busy}>
               {t("types.save")}
             </Button>
-          </DialogFooter>
+          </div>
         </form>
-      </DialogContent>
+      ) : (
+        <p className="text-xs text-text-muted">{t("types.readOnly")}</p>
+      )}
       {StepUpDialogElement}
-    </Dialog>
+    </div>
   );
 }

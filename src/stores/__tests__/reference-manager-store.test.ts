@@ -27,6 +27,7 @@ import {
   INVENTORY_TAX_CATEGORY_SET_ID,
   URGENCY_SCALE_DOMAIN_ID,
   URGENCY_SCALE_SET_ID,
+  PERMIT_TYPES_DOMAIN_ID,
   WORK_ORDER_STATUSES_DOMAIN_ID,
   WORK_ORDER_STATUSES_SET_ID,
   useReferenceManagerStore,
@@ -346,6 +347,18 @@ describe("reference-manager-store — Maintafox lists are hidden (owner rule)", 
 
     const ids = useReferenceManagerStore.getState().domains.map((d) => d.id);
     expect(ids).toEqual([WORK_ORDER_STATUSES_DOMAIN_ID]);
+  });
+
+  it("lists the work-permit types when the backend classes them as a company list", async () => {
+    mockDomains.mockResolvedValueOnce([]);
+    mockCatalogs.mockResolvedValueOnce([{ code: "PERMIT.TYPES", audience: "company" }]);
+
+    await useReferenceManagerStore.getState().loadDomains();
+
+    const { domains, setsMap } = useReferenceManagerStore.getState();
+    expect(domains.map((d) => d.id)).toEqual([PERMIT_TYPES_DOMAIN_ID]);
+    expect(domains[0]?.code).toBe("PERMIT.TYPES");
+    expect(setsMap[PERMIT_TYPES_DOMAIN_ID]?.[0]?.id).toBe(PERMIT_TYPES_DOMAIN_ID);
   });
 
   it("surfaces an error when the module catalog classification cannot be read", async () => {

@@ -42,6 +42,9 @@ export const WORK_ORDER_STATUSES_SET_ID = -105;
 export const NOTIFICATION_RULES_DOMAIN_ID = -106;
 /** Notification categories (SYSTEM: listed for the audience map only, never shown). */
 export const NOTIFICATION_CATEGORIES_DOMAIN_ID = -107;
+/** Work-permit types (`permit_types`, edited through `upsert_permit_type`). */
+export const PERMIT_TYPES_DOMAIN_ID = -108;
+export const PERMIT_TYPES_CATALOG_CODE = "PERMIT.TYPES";
 
 /**
  * Module tables shown in the tree next to the reference domains (no versions: one live set).
@@ -123,6 +126,16 @@ const SYNTHETIC_CATALOGS: readonly SyntheticCatalog[] = [
     "NOTIFICATION.RULES",
     "Notifications (destinataires et escalade)",
     TENANT_DICTIONARY,
+  ),
+  syntheticCatalog(
+    PERMIT_TYPES_DOMAIN_ID,
+    PERMIT_TYPES_CATALOG_CODE,
+    "Types de permis de travail",
+    {
+      governance_level: "tenant_managed",
+      governance_category: "operational_dictionary",
+      is_extendable: true,
+    },
   ),
   syntheticCatalog(
     NOTIFICATION_CATEGORIES_DOMAIN_ID,

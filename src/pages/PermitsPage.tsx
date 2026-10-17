@@ -14,7 +14,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { CalendarCheck, HardHat, Plus, Settings2, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
@@ -23,13 +23,13 @@ import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
 import type { SmartFilterDef } from "@/components/filters/smart-filter-types";
 import { FilterToggleButton, RefreshButton } from "@/components/layout/ModuleHeaderControls";
 import { ModulePageShell } from "@/components/layout/ModulePageShell";
+import { PermitTypesHost } from "@/components/lookups/adapters/PermitTypesHost";
 import { KpiTile } from "@/components/metrics/KpiTile";
 import {
   PermitCreateDialog,
   type PermitCreateWorkOrder,
 } from "@/components/permits/PermitCreateDialog";
 import { PermitDetailPanel } from "@/components/permits/PermitDetailPanel";
-import { PermitTypesDialog } from "@/components/permits/PermitTypesDialog";
 import {
   PERMIT_QUERY_CREATE_FOR_WO,
   PERMIT_QUERY_SELECT,
@@ -48,6 +48,8 @@ import { StatusChip } from "@/components/ui/status-chip";
 import { mfLayout } from "@/design-system/tokens";
 import { PERMIT_STATUS_TONE, toneOf } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
+import { usePermissions } from "@/hooks/use-permissions";
+import { listLinks } from "@/lib/list-links";
 import {
   type PermitComplianceKpi30dRecord,
   type PermitTypeRecord,
@@ -59,6 +61,7 @@ import {
   permitComplianceKpi30d,
 } from "@/services/permit-service";
 import { getWo } from "@/services/wo-service";
+import { PERMIT_TYPES_CATALOG_CODE } from "@/stores/reference-manager-store";
 import { P } from "@shared/rbac/permissions.generated";
 
 /** Every permit status the lifecycle can produce (filter options, in lifecycle order). */
@@ -84,6 +87,7 @@ export function PermitsPage() {
   const { t } = useTranslation("permits");
   const { formatDateTime, formatNumber, formatPercent } = useFormatters();
   const [searchParams, setSearchParams] = useSearchParams();
+  const { can } = usePermissions();
 
   const [types, setTypes] = useState<PermitTypeRecord[]>([]);
   const [permits, setPermits] = useState<WorkPermitRecord[]>([]);
@@ -101,8 +105,8 @@ export function PermitsPage() {
   const [loadError, setLoadError] = useState<unknown>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
-  const [createWo, setCreateWo] = useState<PermitCreateWorkOrder | null>(null);
   const [typesOpen, setTypesOpen] = useState(false);
+  const [createWo, setCreateWo] = useState<PermitCreateWorkOrder | null>(null);
   const [showFilters, setShowFilters] = useState(true);
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
@@ -377,12 +381,21 @@ export function PermitsPage() {
               {t("actions.newPermit")}
             </Button>
           </PermissionGate>
-          <PermissionGate permission={P.PTW_ISSUE}>
+          {/* Permit types live in Données de référence; a permit issuer without access to it
+              edits them here, in the same editor. */}
+          {can(P.REF_VIEW) ? (
+            <Button asChild variant="outline" className="h-11 gap-1.5">
+              <Link to={listLinks.referenceCatalog(PERMIT_TYPES_CATALOG_CODE)}>
+                <Settings2 className="h-4 w-4" aria-hidden />
+                {t("actions.manageTypes")}
+              </Link>
+            </Button>
+          ) : can(P.PTW_ISSUE) ? (
             <Button variant="outline" className="h-11 gap-1.5" onClick={() => setTypesOpen(true)}>
               <Settings2 className="h-4 w-4" aria-hidden />
               {t("actions.manageTypes")}
             </Button>
-          </PermissionGate>
+          ) : null}
           <FilterToggleButton
             open={showFilters}
             onToggle={() => setShowFilters((v) => !v)}
@@ -535,12 +548,14 @@ export function PermitsPage() {
           void load();
         }}
       />
-      <PermitTypesDialog
-        open={typesOpen}
-        onOpenChange={setTypesOpen}
-        types={types}
-        onSaved={() => void load()}
-      />
+      <Dialog open={typesOpen} onOpenChange={setTypesOpen}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{t("types.title")}</DialogTitle>
+          </DialogHeader>
+          <PermitTypesHost embedded onSaved={() => void load()} />
+        </DialogContent>
+      </Dialog>
     </ModulePageShell>
   );
 }

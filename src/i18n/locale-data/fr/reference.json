@@ -300,6 +300,7 @@
     "liveTable": "Table en direct",
     "liveTableHint": "Cette liste appartient à un autre module et n'a pas de versions : chaque modification s'applique immédiatement.",
     "domains": {
+      "permitTypes": "Types de permis de travail",
       "articleFamilies": "Familles d'articles de stock",
       "taxCategories": "Catégories TVA des articles",
       "woStatuses": "Statuts d'ordre de travail",

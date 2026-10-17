@@ -51,6 +51,7 @@ export const LIST_PARAM = {
   type: "type",
   mix: "mix",
   waiting: "waiting",
+  catalog: "catalog",
 } as const;
 
 function query(entries: Array<[string, string | number | undefined]>): string {
@@ -83,6 +84,8 @@ export const listLinks = {
     ])}`,
   pmDue: (window: PmDueLinkWindow) => `/pm${query([[LIST_PARAM.due, window]])}`,
   equipment: (f: { status?: string } = {}) => `/equipment${query([[LIST_PARAM.status, f.status]])}`,
+  /** Données de référence, opened on one list (domain or module catalog code). */
+  referenceCatalog: (code: string) => `/lookups${query([[LIST_PARAM.catalog, code]])}`,
   inventory: (f: { belowReorder?: boolean } = {}) =>
     `/inventory${query([[LIST_PARAM.stock, f.belowReorder ? "below_reorder" : undefined]])}`,
 } as const;
