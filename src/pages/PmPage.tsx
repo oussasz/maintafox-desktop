@@ -62,6 +62,7 @@ import {
 } from "@/components/ui/select";
 import { mfLayout } from "@/design-system/tokens";
 import { useFormatters } from "@/hooks/use-formatters";
+import { LIST_PARAM, dueWindowParam, withoutParams } from "@/lib/list-links";
 import { type PmOccurrenceRow, getPmOccurrence } from "@/services/pm-service";
 import { pushAppToast } from "@/store/app-toast-store";
 import { usePmStore } from "@/stores/pm-store";
@@ -252,6 +253,15 @@ export function PmPage() {
     },
     [setViewMode],
   );
+
+  // A link may open the due queue on a window (?due=overdue|today|next7), shown as the due-window
+  // chip; the parameter then leaves the address.
+  useEffect(() => {
+    const due = dueWindowParam(searchParams.get(LIST_PARAM.due));
+    if (!due) return;
+    openDueList(due, null);
+    setSearchParams(withoutParams(searchParams, LIST_PARAM.due), { replace: true });
+  }, [searchParams, setSearchParams, openDueList]);
 
   const filteredPlans = useMemo(
     () =>

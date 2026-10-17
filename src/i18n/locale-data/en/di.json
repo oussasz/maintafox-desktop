@@ -24,6 +24,9 @@
       "nextStep": "Next step"
     },
     "filters": {
+      "scope": "Scope",
+      "scopeOpen": "Being handled (not closed)",
+      "equipment": "Equipment",
       "status": "Status",
       "reviewQueue": "Validation queue",
       "triageInbox": "DIs to triage / entry queue",

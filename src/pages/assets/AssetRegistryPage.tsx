@@ -35,6 +35,7 @@ import { ErrorState, TruncationNotice } from "@/components/ui/data-state";
 import { WoFormDialog } from "@/components/wo/WoFormDialog";
 import { mfLayout } from "@/design-system/tokens";
 import { useFormatters } from "@/hooks/use-formatters";
+import { LIST_PARAM, textParam, withoutParams } from "@/lib/list-links";
 import { useAssetSearchStore } from "@/stores/asset-search-store";
 import { useAssetStore } from "@/stores/asset-store";
 import type { AssetSearchResult } from "@shared/ipc-types";
@@ -114,6 +115,16 @@ export function AssetRegistryPage() {
       { replace: true },
     );
   }, [searchParams, selectAsset, setSearchParams]);
+
+  // A link may carry a status filter (?status=<code>): it becomes the registry's status filter,
+  // shown as a chip the user can clear, then leaves the address.
+  const updateFilters = useAssetSearchStore((s) => s.updateFilters);
+  useEffect(() => {
+    const status = textParam(searchParams.get(LIST_PARAM.status));
+    if (!status) return;
+    void updateFilters({ status_codes: [status], registry_focus: null });
+    setSearchParams(withoutParams(searchParams, LIST_PARAM.status), { replace: true });
+  }, [searchParams, setSearchParams, updateFilters]);
 
   const switchView = useCallback((v: RegistryView) => {
     setView(v);

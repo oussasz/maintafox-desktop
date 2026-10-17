@@ -50,6 +50,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { mfLayout } from "@/design-system/tokens";
 import { mfTone } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
+import { LIST_PARAM, withoutParams } from "@/lib/list-links";
 import { cn } from "@/lib/utils";
 import {
   type InventoryArticleRow,
@@ -183,6 +184,16 @@ export function InventoryPage() {
   // Deep link from other modules (asset spare parts, work orders): /inventory?articleId=<id>.
   const [searchParams, setSearchParams] = useSearchParams();
   const linkedArticleId = Number(searchParams.get("articleId"));
+
+  // A link may ask for the articles below their reorder point (?stock=below_reorder): it opens
+  // the article list with that stock filter as a visible chip, then leaves the address.
+  useEffect(() => {
+    const stock = searchParams.get(LIST_PARAM.stock);
+    if (stock !== "below_reorder") return;
+    setInvTab("master");
+    setMasterStockFilter("below_reorder");
+    setSearchParams(withoutParams(searchParams, LIST_PARAM.stock), { replace: true });
+  }, [searchParams, setSearchParams]);
   // The list starts empty: only resolve the link once a load has run and finished.
   const articleLoadSeenRef = useRef(false);
   useEffect(() => {

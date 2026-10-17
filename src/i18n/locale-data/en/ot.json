@@ -59,6 +59,9 @@
       "closedAt": "Closed on"
     },
     "filters": {
+      "scope": "Scope",
+      "scopeOpen": "Open (not closed or cancelled)",
+      "equipment": "Equipment",
       "lifecycle": "Lifecycle",
       "status": "Status",
       "type": "Type",

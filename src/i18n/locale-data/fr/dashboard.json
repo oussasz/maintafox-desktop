@@ -1,4 +1,14 @@
 {
+  "overdueChooser": {
+    "title": "Quelle liste ouvrir ?",
+    "description": "Le chiffre « En retard » additionne trois listes. Choisissez celle à ouvrir.",
+    "pm": "Échéances préventives en retard",
+    "pmHint": "File des échéances, filtrée sur « en retard ».",
+    "wo": "Ordres de travail ouverts",
+    "woHint": "La liste ne sait pas encore filtrer sur la date de fin prévue dépassée : elle montre tous les OT ouverts.",
+    "di": "Demandes en cours de traitement",
+    "diHint": "La liste ne sait pas encore filtrer sur « en attente depuis plus de 7 jours » : elle montre toutes les demandes en cours."
+  },
   "page": {
     "title": "Vue d'ensemble",
     "welcome": "Bienvenue, {{name}}"

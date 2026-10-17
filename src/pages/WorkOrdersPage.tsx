@@ -51,6 +51,8 @@ import { useWoTypeLabels } from "@/components/wo/use-wo-type-labels";
 import { mfLayout } from "@/design-system/tokens";
 import { WO_STATUS_TONE, toneOf } from "@/design-system/tone";
 import { usePermissions } from "@/hooks/use-permissions";
+import { LIST_PARAM, idParam, scopeParam, textParam, withoutParams } from "@/lib/list-links";
+import { getAssetByIdSilent } from "@/services/asset-service";
 import { useWoStore } from "@/stores/wo-store";
 import { useWorkOrderTypesCatalog } from "@/stores/work-order-types-catalog-store";
 import { toErrorMessage } from "@/utils/errors";
@@ -73,6 +75,9 @@ const WO_FILTER_STATUSES = [
   "closed",
   "cancelled",
 ] as const;
+
+/** "Open" work orders of the dashboards: every lifecycle state except closed and cancelled. */
+const WO_OPEN_LIFECYCLE = WO_LIFECYCLE_STATES.filter((s) => s !== "closed" && s !== "cancelled");
 
 // ── Component ───────────────────────────────────────────────────────────────
 
@@ -160,6 +165,12 @@ export function WorkOrdersPage() {
   const [printError, setPrintError] = useState<string | null>(null);
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
   const [priorityFilter, setPriorityFilter] = useState<string | null>(null);
+  /** From a dashboard link: open work orders only (shown as a chip, clearable). */
+  const [scopeFilter, setScopeFilter] = useState<"open" | null>(null);
+  /** From an equipment link: one asset (chip shows its code). */
+  const [equipmentFilter, setEquipmentFilter] = useState<{ id: number; label: string } | null>(
+    null,
+  );
 
   const onSearchChange = useCallback(
     (val: string) => {
@@ -216,15 +227,86 @@ export function WorkOrdersPage() {
     setLifecycleFilter(null);
     setTypeFilter(null);
     setPriorityFilter(null);
+    setScopeFilter(null);
+    setEquipmentFilter(null);
     setFilter({
       search: null,
       status_codes: null,
       lifecycle_states: null,
       type_codes: null,
       urgency_code: null,
+      equipment_id: null,
     });
     void loadWos();
   }, [setFilter, loadWos]);
+
+  const handleScopeFilter = useCallback(
+    (val: string | null) => {
+      const scope = val === "open" ? "open" : null;
+      setScopeFilter(scope);
+      setLifecycleFilter(null);
+      setFilter({ lifecycle_states: scope ? [...WO_OPEN_LIFECYCLE] : null });
+      void loadWos();
+    },
+    [setFilter, loadWos],
+  );
+
+  const handleEquipmentFilter = useCallback(
+    (val: string | null) => {
+      if (val) return; // only clearing is offered: the asset comes from the link
+      setEquipmentFilter(null);
+      setFilter({ equipment_id: null });
+      void loadWos();
+    },
+    [setFilter, loadWos],
+  );
+
+  // A link may carry list filters (?scope=open, ?status=, ?urgency=, ?equipment=): they become the
+  // page's filters — visible as chips the user can clear — then leave the address, so the chips
+  // are the only source of truth. Without such a link the page keeps its filters as before.
+  useEffect(() => {
+    const scope = scopeParam(searchParams.get(LIST_PARAM.scope));
+    const status = textParam(searchParams.get(LIST_PARAM.status));
+    const urgency = textParam(searchParams.get(LIST_PARAM.urgency));
+    const equipmentId = idParam(searchParams.get(LIST_PARAM.equipment));
+    if (!scope && !status && !urgency && equipmentId == null) return;
+    setSearchInput("");
+    setStatusFilter(status);
+    setLifecycleFilter(null);
+    setTypeFilter(null);
+    setPriorityFilter(urgency);
+    setScopeFilter(scope);
+    setEquipmentFilter(equipmentId != null ? { id: equipmentId, label: `#${equipmentId}` } : null);
+    setFilter({
+      search: null,
+      status_codes: status ? [status] : null,
+      lifecycle_states: scope ? [...WO_OPEN_LIFECYCLE] : null,
+      type_codes: null,
+      urgency_code: urgency ? (urgency as UrgencyCode) : null,
+      equipment_id: equipmentId,
+    });
+    void loadWos();
+    if (equipmentId != null) {
+      void getAssetByIdSilent(equipmentId).then((asset) => {
+        if (asset) {
+          setEquipmentFilter({
+            id: equipmentId,
+            label: `${asset.asset_code} — ${asset.asset_name}`,
+          });
+        }
+      });
+    }
+    setSearchParams(
+      withoutParams(
+        searchParams,
+        LIST_PARAM.scope,
+        LIST_PARAM.status,
+        LIST_PARAM.urgency,
+        LIST_PARAM.equipment,
+      ),
+      { replace: true },
+    );
+  }, [searchParams, setSearchParams, setFilter, loadWos]);
 
   const filterDefs = useMemo<SmartFilterDef[]>(
     () => [
@@ -260,6 +342,30 @@ export function WorkOrdersPage() {
         value: priorityFilter,
         onChange: handlePriorityFilter,
       },
+      ...(scopeFilter
+        ? [
+            {
+              id: "scope",
+              kind: "select" as const,
+              label: t("list.filters.scope"),
+              options: [{ value: "open", label: t("list.filters.scopeOpen") }],
+              value: scopeFilter,
+              onChange: handleScopeFilter,
+            },
+          ]
+        : []),
+      ...(equipmentFilter
+        ? [
+            {
+              id: "equipment",
+              kind: "select" as const,
+              label: t("list.filters.equipment"),
+              options: [{ value: String(equipmentFilter.id), label: equipmentFilter.label }],
+              value: String(equipmentFilter.id),
+              onChange: handleEquipmentFilter,
+            },
+          ]
+        : []),
     ],
     [
       t,
@@ -275,12 +381,20 @@ export function WorkOrdersPage() {
       handleLifecycleFilter,
       handleTypeFilter,
       handlePriorityFilter,
+      scopeFilter,
+      equipmentFilter,
+      handleScopeFilter,
+      handleEquipmentFilter,
     ],
   );
 
   // ── Load on mount ─────────────────────────────────────────────────────
 
   useEffect(() => {
+    // A link carrying list filters loads the list itself (with those filters), once.
+    const p = new URLSearchParams(window.location.search);
+    const linked = [LIST_PARAM.scope, LIST_PARAM.status, LIST_PARAM.urgency, LIST_PARAM.equipment];
+    if (linked.some((k) => p.has(k))) return;
     void loadWos();
   }, [loadWos]);
 

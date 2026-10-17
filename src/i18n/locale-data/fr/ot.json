@@ -59,6 +59,9 @@
       "closedAt": "Date clôture"
     },
     "filters": {
+      "scope": "Périmètre",
+      "scopeOpen": "Ouverts (ni clôturés ni annulés)",
+      "equipment": "Équipement",
       "lifecycle": "Cycle de vie",
       "status": "Statut",
       "type": "Type",

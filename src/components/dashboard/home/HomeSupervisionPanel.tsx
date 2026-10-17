@@ -11,6 +11,7 @@ import { useUrgencyScale } from "@/components/common/urgency/use-urgency-scale";
 import { useVisibleDiQueues } from "@/components/di/DiQueueBar";
 import { useWoTypeLabels, woNatureLabel } from "@/components/wo/use-wo-type-labels";
 import { useFormatters } from "@/hooks/use-formatters";
+import { listLinks } from "@/lib/list-links";
 import { type HomePeriod, getHomeSupervision } from "@/services/home-service";
 import type { HomeSupervision, HomeSupervisionWorkOrders } from "@shared/ipc-types";
 
@@ -145,9 +146,18 @@ function SupervisionBody({ data }: { data: HomeSupervision }) {
               label={t("home.supervision.pm.overdue")}
               value={n(pm.overdue)}
               tone={pm.overdue > 0 ? "danger" : undefined}
+              to={listLinks.pmDue("overdue")}
             />
-            <HomeFigure label={t("home.supervision.pm.today")} value={n(pm.due_today)} />
-            <HomeFigure label={t("home.supervision.pm.next7")} value={n(pm.due_next_7_days)} />
+            <HomeFigure
+              label={t("home.supervision.pm.today")}
+              value={n(pm.due_today)}
+              to={listLinks.pmDue("today")}
+            />
+            <HomeFigure
+              label={t("home.supervision.pm.next7")}
+              value={n(pm.due_next_7_days)}
+              to={listLinks.pmDue("next7")}
+            />
             <HomeFigure
               label={t("home.supervision.pm.compliance")}
               value={pm.compliance_pct == null ? t("home.none") : formatPercent(pm.compliance_pct)}
@@ -177,6 +187,7 @@ function SupervisionBody({ data }: { data: HomeSupervision }) {
               value={n(stock.lines_to_reorder)}
               hint={t("home.supervision.stock.articles", { count: stock.articles_to_reorder })}
               tone={stock.lines_to_reorder > 0 ? "warning" : undefined}
+              to={listLinks.inventory({ belowReorder: true })}
             />
             <HomeFigure
               label={t("home.supervision.stock.out")}
@@ -375,7 +386,11 @@ function WoBacklogSection({ wo }: { wo: HomeSupervisionWorkOrders }) {
       openTo={homeLinks.workOrders}
     >
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-        <HomeFigure label={t("home.supervision.wo.open")} value={formatNumber(wo.open)} />
+        <HomeFigure
+          label={t("home.supervision.wo.open")}
+          value={formatNumber(wo.open)}
+          to={listLinks.workOrders({ scope: "open" })}
+        />
         <HomeFigure
           label={t("home.supervision.wo.overdue")}
           value={formatNumber(wo.overdue)}

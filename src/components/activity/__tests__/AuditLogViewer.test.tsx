@@ -100,15 +100,14 @@ describe("AuditLogViewer labels and detail errors", () => {
         Array.from({ length: 40 }, (_, i) => ({
           id: i + 1,
           action_code: "auth.login.success",
-          target_type: null,
-          target_id: null,
+          target_type: "session",
+          target_id: `sess-${i + 1}`,
           actor_id: 1,
           actor_username: "admin",
           auth_context: "password",
           result: "success",
           happened_at: "2026-04-13T11:00:00.000Z",
           retention_class: "standard",
-          from_other_device: false,
         })),
       ),
     );

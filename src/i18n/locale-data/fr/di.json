@@ -24,6 +24,9 @@
       "nextStep": "Prochaine étape"
     },
     "filters": {
+      "scope": "Périmètre",
+      "scopeOpen": "En cours de traitement (non clôturées)",
+      "equipment": "Équipement",
       "status": "Statut",
       "reviewQueue": "File de validation",
       "triageInbox": "DIs à trier / flux d'entrée",

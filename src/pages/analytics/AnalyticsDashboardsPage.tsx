@@ -14,8 +14,16 @@ import { VisualMetricCard } from "@/components/metrics/VisualMetricCard";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
+import { listLinks } from "@/lib/list-links";
 import { isSessionActiveForBackgroundWork } from "@/lib/session-ready";
 import {
   getAnalyticsDashboardLayout,
@@ -80,6 +88,7 @@ export function AnalyticsDashboardsPage() {
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
   const [customOpen, setCustomOpen] = useState(false);
+  const [overdueChooserOpen, setOverdueChooserOpen] = useState(false);
 
   const isPlannerHeavy = canAny(P.PLAN_VIEW, P.PM_VIEW, P.PM_EDIT);
   const isSupervisorHeavy = canAny(P.DI_REVIEW, P.OT_CLOSE, P.DI_APPROVE) && !isPlannerHeavy;
@@ -230,7 +239,7 @@ export function AnalyticsDashboardsPage() {
               value: count(data?.open_dis.value),
               available: data?.open_dis.available ?? false,
               trend: periodTrend(data?.open_dis, "up-bad"),
-              onOpen: () => navigate(DASHBOARD_KPI_DRILL_PATH[DASHBOARD_KPI_KEYS.OPEN_DIS]),
+              onOpen: () => navigate(listLinks.requests({ scope: "open" })),
             })}
             {renderKpi({
               title: td("kpi.openWos"),
@@ -238,7 +247,7 @@ export function AnalyticsDashboardsPage() {
               value: count(data?.open_wos.value),
               available: data?.open_wos.available ?? false,
               trend: periodTrend(data?.open_wos, "up-bad"),
-              onOpen: () => navigate(DASHBOARD_KPI_DRILL_PATH[DASHBOARD_KPI_KEYS.OPEN_WOS]),
+              onOpen: () => navigate(listLinks.workOrders({ scope: "open" })),
             })}
             {renderKpi({
               title: td("kpi.totalAssets"),
@@ -254,7 +263,8 @@ export function AnalyticsDashboardsPage() {
               value: count(data?.overdue_items.value),
               available: data?.overdue_items.available ?? false,
               trend: periodTrend(data?.overdue_items, "up-bad"),
-              onOpen: () => navigate(DASHBOARD_KPI_DRILL_PATH[DASHBOARD_KPI_KEYS.OVERDUE_ITEMS]),
+              // Three lists stand behind this figure: the user picks which one to open.
+              onOpen: () => setOverdueChooserOpen(true),
             })}
           </div>
         );
@@ -267,7 +277,7 @@ export function AnalyticsDashboardsPage() {
               value: count(data?.pm_overdue.value),
               available: data?.pm_overdue.available ?? false,
               trend: periodTrend(data?.pm_overdue, "up-bad"),
-              onOpen: () => navigate("/pm"),
+              onOpen: () => navigate(listLinks.pmDue("overdue")),
             })}
             {renderKpi({
               title: t("hub.dashboards.kpi.pmDueToday"),
@@ -275,7 +285,7 @@ export function AnalyticsDashboardsPage() {
               value: count(data?.pm_due_today.value),
               available: data?.pm_due_today.available ?? false,
               trend: periodTrend(data?.pm_due_today, "up-bad"),
-              onOpen: () => navigate("/pm"),
+              onOpen: () => navigate(listLinks.pmDue("today")),
             })}
             {renderKpi({
               title: t("hub.dashboards.kpi.pmDueNext7d"),
@@ -283,7 +293,7 @@ export function AnalyticsDashboardsPage() {
               value: count(data?.pm_due_next_7d.value),
               available: data?.pm_due_next_7d.available ?? false,
               trend: periodTrend(data?.pm_due_next_7d, "up-bad"),
-              onOpen: () => navigate("/pm"),
+              onOpen: () => navigate(listLinks.pmDue("next7")),
             })}
           </div>
         );
@@ -468,6 +478,59 @@ export function AnalyticsDashboardsPage() {
           ))}
         </div>
       )}
+
+      <Dialog open={overdueChooserOpen} onOpenChange={setOverdueChooserOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{td("overdueChooser.title")}</DialogTitle>
+            <DialogDescription>{td("overdueChooser.description")}</DialogDescription>
+          </DialogHeader>
+          <ul className="space-y-2">
+            {canAny(P.PM_VIEW) ? (
+              <li>
+                <Button
+                  variant="outline"
+                  className="h-auto min-h-11 w-full flex-col items-start gap-0.5 py-2 text-start"
+                  onClick={() => navigate(listLinks.pmDue("overdue"))}
+                >
+                  <span>{td("overdueChooser.pm")}</span>
+                  <span className="text-xs font-normal text-text-muted">
+                    {td("overdueChooser.pmHint")}
+                  </span>
+                </Button>
+              </li>
+            ) : null}
+            {canAny(P.OT_VIEW) ? (
+              <li>
+                <Button
+                  variant="outline"
+                  className="h-auto min-h-11 w-full flex-col items-start gap-0.5 py-2 text-start"
+                  onClick={() => navigate(listLinks.workOrders({ scope: "open" }))}
+                >
+                  <span>{td("overdueChooser.wo")}</span>
+                  <span className="text-xs font-normal text-text-muted">
+                    {td("overdueChooser.woHint")}
+                  </span>
+                </Button>
+              </li>
+            ) : null}
+            {canAny(P.DI_VIEW) ? (
+              <li>
+                <Button
+                  variant="outline"
+                  className="h-auto min-h-11 w-full flex-col items-start gap-0.5 py-2 text-start"
+                  onClick={() => navigate(listLinks.requests({ scope: "open" }))}
+                >
+                  <span>{td("overdueChooser.di")}</span>
+                  <span className="text-xs font-normal text-text-muted">
+                    {td("overdueChooser.diHint")}
+                  </span>
+                </Button>
+              </li>
+            ) : null}
+          </ul>
+        </DialogContent>
+      </Dialog>
 
       <AnalyticsCustomizeDialog
         open={customOpen}
