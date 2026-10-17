@@ -1596,7 +1596,8 @@
       "refreshKpi": "Refresh the indicator",
       "dismiss": "Dismiss this point",
       "dismissTitle": "Dismiss this data issue?",
-      "dismissBody": "\"{{issue}}\" on {{asset}} will no longer be listed. Dismiss it only when the data is right as it is."
+      "dismissBody": "\"{{issue}}\" on {{asset}} will no longer be listed. Dismiss it only when the data is right as it is.",
+      "truncated": "Only the first ones are listed: fix these, then refresh to see the next."
     }
   }
 }

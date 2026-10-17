@@ -216,7 +216,11 @@ const routes: RouteObject[] = [
                     element: <PermissionRoute permission={P.EQ_VIEW} />,
                     children: [
                       { path: "equipment", element: <EquipmentPage /> },
-                      { path: "equipment/import", element: <AssetImportPage /> },
+                      // The import screen needs the import right (the backend commands do too).
+                      {
+                        element: <PermissionRoute permission={P.EQ_IMPORT} />,
+                        children: [{ path: "equipment/import", element: <AssetImportPage /> }],
+                      },
                     ],
                   },
                   {

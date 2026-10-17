@@ -103,6 +103,9 @@ export function RamsDataQualityPage() {
 
   const hoursN = Number(hours.replace(",", "."));
   const share = view && view.records > 0 ? view.records_complete / view.records : null;
+  /** "300+" when the backend stopped the list at its maximum. */
+  const atLeast = (n: number, truncated: boolean) =>
+    truncated ? `${formatNumber(n)}+` : formatNumber(n);
   return (
     <ModulePageShell
       headerLeft={
@@ -152,15 +155,18 @@ export function RamsDataQualityPage() {
             />
             <KpiTile
               label={t("rams.quality.codingGaps")}
-              value={formatNumber(view.coding_gaps.length)}
+              value={atLeast(view.coding_gaps.length, view.coding_gaps_truncated)}
+              {...(view.coding_gaps_truncated ? { hint: t("rams.quality.truncated") } : {})}
             />
             <KpiTile
               label={t("rams.quality.noHours")}
-              value={formatNumber(view.no_operating_hours.length)}
+              value={atLeast(view.no_operating_hours.length, view.no_operating_hours_truncated)}
+              {...(view.no_operating_hours_truncated ? { hint: t("rams.quality.truncated") } : {})}
             />
             <KpiTile
               label={t("rams.quality.review")}
-              value={formatNumber(view.review_issues.length)}
+              value={atLeast(view.review_issues.length, view.review_issues_truncated)}
+              {...(view.review_issues_truncated ? { hint: t("rams.quality.truncated") } : {})}
             />
           </div>
 

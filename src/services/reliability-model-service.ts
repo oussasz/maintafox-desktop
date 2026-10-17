@@ -589,6 +589,10 @@ const DataQualitySchema = z.object({
   ),
   records: num,
   records_complete: num,
+  /** A list stopped at its maximum: more exist than are listed. */
+  coding_gaps_truncated: z.boolean(),
+  no_operating_hours_truncated: z.boolean(),
+  review_issues_truncated: z.boolean(),
 });
 
 export type DataQualityView = z.infer<typeof DataQualitySchema>;

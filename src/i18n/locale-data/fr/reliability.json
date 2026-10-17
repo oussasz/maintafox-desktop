@@ -1596,7 +1596,8 @@
       "refreshKpi": "Actualiser l'indicateur",
       "dismiss": "Ignorer ce point",
       "dismissTitle": "Écarter cet écart de données ?",
-      "dismissBody": "« {{issue}} » sur {{asset}} ne sera plus listé. Écartez-le seulement si les données sont justes telles quelles."
+      "dismissBody": "« {{issue}} » sur {{asset}} ne sera plus listé. Écartez-le seulement si les données sont justes telles quelles.",
+      "truncated": "Seuls les premiers sont listés : corrigez-les puis actualisez pour voir les suivants."
     }
   }
 }

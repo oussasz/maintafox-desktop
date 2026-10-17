@@ -763,8 +763,8 @@ async fn executive_dashboard_fleet_wide_values() {
         Some(kpi_definitions::quality_badge::INSUFFICIENT_BASELINE)
     );
     assert_eq!(x.total_assets.value, 2.0, "deleted asset excluded");
-    // DI2 and DI5 waiting more than 7 days + PM O1 overdue.
-    assert_eq!(x.overdue_items.value, 3.0);
+    // DI2 and DI5 waiting more than 7 days + PM O1 overdue + WO-1 past its planned end.
+    assert_eq!(x.overdue_items.value, 4.0);
 
     assert_eq!(x.pm_overdue.value, 1.0);
     assert_eq!(x.pm_due_today.value, 0.0);
@@ -882,7 +882,7 @@ async fn executive_dashboard_scoped_to_one_site() {
     );
     assert_eq!(x.open_wos.value, 1.0);
     assert_eq!(x.total_assets.value, 1.0);
-    assert_eq!(x.overdue_items.value, 2.0, "DI2 + PM O1");
+    assert_eq!(x.overdue_items.value, 3.0, "DI2 + PM O1 + WO-1");
     assert_eq!(x.maintenance_cost.value, 100.0);
     assert_eq!(x.maintenance_cost_pending, Some(1));
     assert_eq!(x.di_status_segments.iter().map(|s| s.count).sum::<i64>(), 4);

@@ -57,9 +57,14 @@ pub struct DataQualityView {
     /// Failure records of the period and those fully coded (mode, cause, mechanism).
     pub records: i64,
     pub records_complete: i64,
+    /// A list stopped at [`MAX_ROWS`]: more exist than are listed (the screen says so; its counts
+    /// are then "at least").
+    pub coding_gaps_truncated: bool,
+    pub no_operating_hours_truncated: bool,
+    pub review_issues_truncated: bool,
 }
 
-const MAX_ROWS: i64 = 300;
+pub const MAX_ROWS: i64 = 300;
 
 pub async fn data_quality(db: &DatabaseConnection, months: i64, user_id: i32) -> AppResult<DataQualityView> {
     let end = Utc::now();
@@ -67,7 +72,9 @@ pub async fn data_quality(db: &DatabaseConnection, months: i64, user_id: i32) ->
     let (s, e) = (start.to_rfc3339(), end.to_rfc3339());
 
     let mut coding_gaps = Vec::new();
-    for w in queries::list_wos_missing_failure_mode(db, None, Some(MAX_ROWS)).await? {
+    let missing_mode = queries::list_wos_missing_failure_mode(db, None, Some(MAX_ROWS)).await?;
+    let mut coding_gaps_truncated = missing_mode.len() as i64 >= MAX_ROWS;
+    for w in missing_mode {
         let row = db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
@@ -110,6 +117,7 @@ pub async fn data_quality(db: &DatabaseConnection, months: i64, user_id: i32) ->
             [s.clone().into(), e.clone().into(), MAX_ROWS.into()],
         ))
         .await?;
+    coding_gaps_truncated |= partial.len() as i64 >= MAX_ROWS;
     for r in &partial {
         let cause: Option<i64> = get(r, "cause")?;
         let cause_nd: i64 = get(r, "cause_nd")?;
@@ -163,6 +171,8 @@ pub async fn data_quality(db: &DatabaseConnection, months: i64, user_id: i32) ->
             [s.clone().into(), e.clone().into(), MAX_ROWS.into()],
         ))
         .await?;
+    // Equipment beyond the first MAX_ROWS (by failures) were not examined.
+    let no_operating_hours_truncated = with_failures.len() as i64 >= MAX_ROWS;
     let mut no_operating_hours = Vec::new();
     for r in &with_failures {
         let id: i64 = get(r, "id")?;
@@ -177,6 +187,7 @@ pub async fn data_quality(db: &DatabaseConnection, months: i64, user_id: i32) ->
     }
 
     let mut review_issues = Vec::new();
+    let mut review_issues_truncated = false;
     for i in
         queries::list_ram_data_quality_issues(db, RamDataQualityIssuesFilter { equipment_id: None }, user_id).await?
     {
@@ -200,6 +211,7 @@ pub async fn data_quality(db: &DatabaseConnection, months: i64, user_id: i32) ->
             });
         }
         if review_issues.len() as i64 >= MAX_ROWS {
+            review_issues_truncated = true;
             break;
         }
     }
@@ -211,5 +223,8 @@ pub async fn data_quality(db: &DatabaseConnection, months: i64, user_id: i32) ->
         review_issues,
         records,
         records_complete,
+        coding_gaps_truncated,
+        no_operating_hours_truncated,
+        review_issues_truncated,
     })
 }

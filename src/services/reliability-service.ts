@@ -590,6 +590,7 @@ const FmecaItemSchema = z.object({
   revised_rpn: z.number().nullable(),
   source_ram_ishikawa_diagram_id: z.number().nullable(),
   source_ishikawa_flow_node_id: z.string().nullable(),
+  review_required: z.boolean(),
   row_version: z.number(),
   updated_at: z.string(),
 });
@@ -893,6 +894,7 @@ export async function computeFmecaCriticality(
       operating_hours: z.number(),
       criticality_number: z.number(),
       analysis_criticality: z.number(),
+      analysis_rows_to_review: z.number(),
     })
     .parse(raw);
 }

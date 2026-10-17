@@ -18,9 +18,12 @@ pub struct FleetViewFilter {
     pub org_node_id: Option<i64>,
     #[serde(default)]
     pub equipment_class_id: Option<i64>,
-    /// Rows returned (ranked by downtime); default 50, at most 200.
+    /// Rows returned (ranked by downtime); default 50, at most 200 per page.
     #[serde(default)]
     pub limit: Option<i64>,
+    /// Rows skipped (next page of the ranking); default 0.
+    #[serde(default)]
+    pub offset: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]

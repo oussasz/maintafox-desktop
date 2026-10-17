@@ -552,6 +552,26 @@ pub async fn get_worksheet(db: &DatabaseConnection, study_id: i64) -> AppResult<
     })
 }
 
+/// The placeholder row written by the former root-cause promotion (no alias): S = O = D = 5 with
+/// the English action "Address RCA cause: …", from a diagram. Same signature as migration 221.
+pub const PLACEHOLDER_SIGNATURE_SQL: &str = "source_ram_ishikawa_diagram_id IS NOT NULL \
+     AND severity = 5 AND occurrence = 5 AND detectability = 5 \
+     AND recommended_action LIKE 'Address RCA cause: %'";
+
+/// Startup pass (idempotent): flags placeholder rows that arrived by sync from a device that had
+/// not run migration 221 yet. Only the exact signature; ratings are not changed. Returns the count.
+pub async fn flag_placeholder_rows(db: &impl ConnectionTrait) -> AppResult<u64> {
+    let res = db
+        .execute(Statement::from_string(
+            DbBackend::Sqlite,
+            format!(
+                "UPDATE fmeca_items SET review_required = 1 WHERE review_required = 0 AND {PLACEHOLDER_SIGNATURE_SQL}"
+            ),
+        ))
+        .await?;
+    Ok(res.rows_affected())
+}
+
 /// FMECA rows of the study still to review (ratings nobody chose, migration 221).
 pub async fn rows_to_review(db: &impl ConnectionTrait, study_id: i64) -> AppResult<i64> {
     let Some(analysis_id) = study_fmeca_analysis_id(db, study_id).await? else {

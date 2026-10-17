@@ -682,6 +682,9 @@ describe("RamsDataQualityPage", () => {
       review_issues: [],
       records: 10,
       records_complete: 9,
+      coding_gaps_truncated: false,
+      no_operating_hours_truncated: false,
+      review_issues_truncated: false,
     };
     mockInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === "get_reliability_data_quality") return view;

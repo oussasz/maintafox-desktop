@@ -7515,6 +7515,8 @@ export interface FmecaItem {
   revised_rpn: number | null;
   source_ram_ishikawa_diagram_id: number | null;
   source_ishikawa_flow_node_id: string | null;
+  /** Ratings nobody chose (former root-cause placeholder): shown "to review", never ranked. */
+  review_required: boolean;
   row_version: number;
   updated_at: string;
 }
@@ -7818,6 +7820,8 @@ export interface FmecaCriticality {
   operating_hours: number;
   criticality_number: number;
   analysis_criticality: number;
+  /** Rows of the analysis still to review, not counted in Cr. */
+  analysis_rows_to_review: number;
 }
 
 export interface RcmDecision {

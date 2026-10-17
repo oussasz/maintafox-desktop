@@ -27,8 +27,11 @@ use crate::{require_permission, require_session, require_step_up};
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
 async fn linked_personnel_id(state: &State<'_, AppState>, user_id: i32) -> AppResult<Option<i64>> {
-    let row = state
-        .db
+    linked_personnel_id_in(&state.db, user_id).await
+}
+
+async fn linked_personnel_id_in(db: &sea_orm::DatabaseConnection, user_id: i32) -> AppResult<Option<i64>> {
+    let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT personnel_id FROM user_accounts WHERE id = ? AND deleted_at IS NULL",
@@ -43,10 +46,21 @@ async fn can_read_personnel_record(
     user: &crate::auth::session_manager::AuthenticatedUser,
     personnel_id: i64,
 ) -> AppResult<bool> {
+    can_read_personnel_record_in(&state.db, &state.permission_cache, user.user_id, personnel_id).await
+}
+
+/// The one personnel self-access rule: holders of per.view read every record, anyone else only the
+/// record linked to their own account.
+async fn can_read_personnel_record_in(
+    db: &sea_orm::DatabaseConnection,
+    cache: &tokio::sync::RwLock<crate::rbac::cache::PermissionCache>,
+    user_id: i32,
+    personnel_id: i64,
+) -> AppResult<bool> {
     let has_global = crate::auth::rbac::check_permission_cached(
-        &state.db,
-        &state.permission_cache,
-        user.user_id,
+        db,
+        cache,
+        user_id,
         crate::rbac::permissions::PER_VIEW,
         &PermissionScope::Global,
     )
@@ -54,7 +68,23 @@ async fn can_read_personnel_record(
     if has_global {
         return Ok(true);
     }
-    Ok(linked_personnel_id(state, user.user_id).await? == Some(personnel_id))
+    Ok(linked_personnel_id_in(db, user_id).await? == Some(personnel_id))
+}
+
+/// A skills-matrix request for one person only (no site or team list) that the self-access rule
+/// allows; any other request needs per.view.
+async fn skills_matrix_single_record_allowed(
+    db: &sea_orm::DatabaseConnection,
+    cache: &tokio::sync::RwLock<crate::rbac::cache::PermissionCache>,
+    user_id: i32,
+    filter: &skills::SkillsMatrixFilter,
+) -> AppResult<bool> {
+    match filter.personnel_id {
+        Some(pid) if filter.entity_id.is_none() && filter.team_id.is_none() => {
+            can_read_personnel_record_in(db, cache, user_id, pid).await
+        }
+        _ => Ok(false),
+    }
 }
 
 /// Who may see `per.sensitiveview` fields (contact, contract/HR data, pay rates, absence reasons):
@@ -592,12 +622,18 @@ pub async fn list_skills_matrix(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<skills::SkillMatrixRow>> {
     let user = require_session!(state);
-    require_permission!(
-        state,
-        &user,
-        crate::rbac::permissions::PER_VIEW,
-        PermissionScope::Global
-    );
+    // One person's skills: the same rule as their work history and workload (per.view, or the
+    // person's own linked record, read from their profile). Any wider list needs per.view.
+    let single_record =
+        skills_matrix_single_record_allowed(&state.db, &state.permission_cache, user.user_id, &filter).await?;
+    if !single_record {
+        require_permission!(
+            state,
+            &user,
+            crate::rbac::permissions::PER_VIEW,
+            PermissionScope::Global
+        );
+    }
     skills::list_skills_matrix(&state.db, filter).await
 }
 
@@ -1373,4 +1409,92 @@ pub async fn set_site_work_week(
         PermissionScope::Global
     );
     calendar::set_site_work_week(&state.db, input, i64::from(user.user_id)).await
+}
+
+#[cfg(test)]
+mod skills_self_access_tests {
+    use super::*;
+    use sea_orm::DatabaseConnection;
+
+    async fn exec(db: &DatabaseConnection, sql: &str) {
+        db.execute(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
+            .await
+            .unwrap_or_else(|e| panic!("{sql}: {e}"));
+    }
+
+    async fn scalar(db: &DatabaseConnection, sql: &str) -> i64 {
+        db.query_one(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
+            .await
+            .expect("query")
+            .expect("row")
+            .try_get_by_index::<i64>(0)
+            .expect("i64")
+    }
+
+    fn one(personnel_id: Option<i64>, team_id: Option<i64>) -> skills::SkillsMatrixFilter {
+        skills::SkillsMatrixFilter {
+            personnel_id,
+            entity_id: None,
+            team_id,
+            skill_code: None,
+            include_inactive: Some(true),
+        }
+    }
+
+    #[tokio::test]
+    async fn without_per_view_only_the_own_record_is_allowed() {
+        let db = crate::db::test_db::seeded().await;
+        // Two people; a user without any role, linked to the first.
+        for code in ["SELF-1", "OTHER-2"] {
+            exec(
+                &db,
+                &format!(
+                    "INSERT INTO personnel (entity_sync_id, employee_code, full_name, employment_type, \
+                     availability_status, created_at, updated_at, row_version) \
+                     VALUES ('p-{code}', '{code}', 'Person {code}', 'employee', 'available', \
+                     datetime('now'), datetime('now'), 1)"
+                ),
+            )
+            .await;
+        }
+        let me = scalar(&db, "SELECT id FROM personnel WHERE employee_code = 'SELF-1'").await;
+        let other = scalar(&db, "SELECT id FROM personnel WHERE employee_code = 'OTHER-2'").await;
+        exec(
+            &db,
+            &format!(
+                "INSERT INTO user_accounts (entity_sync_id, username, identity_mode, password_hash, is_active, \
+                 is_admin, force_password_change, failed_login_attempts, personnel_id, created_at, updated_at, \
+                 row_version) VALUES ('u-self', 'self.user', 'local', 'x', 1, 0, 0, 0, {me}, datetime('now'), \
+                 datetime('now'), 1)"
+            ),
+        )
+        .await;
+        let user = i32::try_from(scalar(&db, "SELECT id FROM user_accounts WHERE username = 'self.user'").await)
+            .expect("fits");
+        let cache = tokio::sync::RwLock::new(crate::rbac::cache::PermissionCache::default());
+
+        assert!(
+            skills_matrix_single_record_allowed(&db, &cache, user, &one(Some(me), None))
+                .await
+                .expect("own")
+        );
+        assert!(
+            !skills_matrix_single_record_allowed(&db, &cache, user, &one(Some(other), None))
+                .await
+                .expect("other"),
+            "another person's skills need per.view"
+        );
+        assert!(
+            !skills_matrix_single_record_allowed(&db, &cache, user, &one(None, None))
+                .await
+                .expect("all"),
+            "the whole matrix needs per.view"
+        );
+        assert!(
+            !skills_matrix_single_record_allowed(&db, &cache, user, &one(Some(me), Some(1)))
+                .await
+                .expect("team"),
+            "a team list is not a single record"
+        );
+    }
 }

@@ -485,7 +485,10 @@ export function FmecaActionsDialog({
         t("rcmLoop.cm", {
           cm: c.criticality_number.toPrecision(3),
           cr: c.analysis_criticality.toPrecision(3),
-        }),
+        }) +
+          (c.analysis_rows_to_review > 0
+            ? ` · ${t("rams.fmeca.rowsToReview", { count: c.analysis_rows_to_review })}`
+            : ""),
       );
       onSaved();
     } catch (err) {

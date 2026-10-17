@@ -5,7 +5,7 @@
 import { Activity, Archive, ArrowRight, FolderOpen, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { RefreshButton } from "@/components/layout/ModuleHeaderControls";
@@ -31,6 +31,7 @@ import { RELIABILITY_DATA_QUALITY_TONE, toneOf } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
 import { cn } from "@/lib/utils";
+import { getAssetById } from "@/services/asset-service";
 import {
   type FleetAssetRow,
   type FleetView,
@@ -54,11 +55,34 @@ export function RamsFleetPage() {
   const [months, setMonths] = useState<RamsPeriodMonths>(24);
   const [orgNodeId, setOrgNodeId] = useState<number | null>(null);
   const [classId, setClassId] = useState<number | null>(null);
-  const [limit, setLimit] = useState(PAGE);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [view, setView] = useState<FleetView | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<number[]>([]);
+  // An equipment handed over in the address (/reliability?equipment=<id>, e.g. from the asset
+  // record): selected for a study, named, or the failure shown.
+  const [searchParams] = useSearchParams();
+  const handedId = Number(searchParams.get("equipment") ?? "");
+  const [handed, setHanded] = useState<{ id: number; code: string } | null>(null);
+  const [handedError, setHandedError] = useState<unknown>(null);
+  useEffect(() => {
+    if (!Number.isInteger(handedId) || handedId <= 0) return;
+    let cancelled = false;
+    setHandedError(null);
+    getAssetById(handedId)
+      .then((a) => {
+        if (cancelled) return;
+        setHanded({ id: a.id, code: a.asset_code });
+        setSelected((prev) => (prev.includes(a.id) ? prev : [...prev, a.id]));
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setHandedError(e);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [handedId]);
   const [studies, setStudies] = useState<ReliabilityStudy[]>([]);
   const [creating, setCreating] = useState(false);
   const [archiveTarget, setArchiveTarget] = useState<ReliabilityStudy | null>(null);
@@ -75,7 +99,8 @@ export function RamsFleetPage() {
           period_end: period.end,
           org_node_id: orgNodeId,
           equipment_class_id: classId,
-          limit,
+          limit: PAGE,
+          offset: 0,
         }),
         listReliabilityStudies(false),
       ]);
@@ -86,7 +111,30 @@ export function RamsFleetPage() {
     } finally {
       setLoading(false);
     }
-  }, [period, orgNodeId, classId, limit]);
+  }, [period, orgNodeId, classId]);
+
+  /** Next page of the ranking (the backend serves it by offset; the KPIs already cover all). */
+  const loadMore = useCallback(async () => {
+    if (!view) return;
+    setLoadingMore(true);
+    try {
+      const next = await getReliabilityFleetView({
+        period_start: period.start,
+        period_end: period.end,
+        org_node_id: orgNodeId,
+        equipment_class_id: classId,
+        limit: PAGE,
+        offset: view.rows.length,
+      });
+      setView((v) =>
+        v ? { ...v, rows: [...v.rows, ...next.rows], total_rows: next.total_rows } : next,
+      );
+    } catch {
+      // The global IPC toast reports the failure; the rows already shown stay.
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [view, period, orgNodeId, classId]);
 
   useEffect(() => {
     void load();
@@ -172,7 +220,6 @@ export function RamsFleetPage() {
               value={months}
               onChange={(e) => {
                 setMonths(Number(e.target.value) as RamsPeriodMonths);
-                setLimit(PAGE);
               }}
             >
               {RAMS_PERIOD_MONTHS.map((m) => (
@@ -189,7 +236,6 @@ export function RamsFleetPage() {
               value={orgNodeId ?? ""}
               onChange={(e) => {
                 setOrgNodeId(e.target.value ? Number(e.target.value) : null);
-                setLimit(PAGE);
               }}
             >
               <option value="">{t("rams.fleet.allSites")}</option>
@@ -207,7 +253,6 @@ export function RamsFleetPage() {
               value={classId ?? ""}
               onChange={(e) => {
                 setClassId(e.target.value ? Number(e.target.value) : null);
-                setLimit(PAGE);
               }}
             >
               <option value="">{t("rams.fleet.allClasses")}</option>
@@ -221,6 +266,13 @@ export function RamsFleetPage() {
         </div>
       }
     >
+      {handedError != null ? (
+        <ErrorState error={handedError} title={t("rams.fleet.handedError")} className="mb-4 py-4" />
+      ) : handed != null ? (
+        <p className="mb-4 text-sm text-text-secondary" role="status">
+          {t("rams.fleet.handedSelected", { code: handed.code })}
+        </p>
+      ) : null}
       {error != null && view == null ? (
         <ErrorState error={error} onRetry={() => void load()} retrying={loading} />
       ) : view == null ? (
@@ -334,8 +386,8 @@ export function RamsFleetPage() {
                 className="mt-3"
                 shown={rows.length}
                 total={view.total_rows}
-                onLoadMore={() => setLimit((l) => l + PAGE)}
-                loadingMore={loading}
+                onLoadMore={() => void loadMore()}
+                loadingMore={loadingMore}
               />
             ) : null}
           </RamsCard>

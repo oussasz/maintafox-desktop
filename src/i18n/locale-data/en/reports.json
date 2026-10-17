@@ -73,7 +73,7 @@
         "next7": "Next 7 days",
         "horizon": "Last {{days}} days",
         "inService": "Registered, not deleted",
-        "overdue": "Requests open > 7 days + overdue PM",
+        "overdue": "Requests open > 7 days + overdue PM + overdue work orders",
         "costSettled": "Booked to the budget by Finance, last {{days}} days",
         "costPending_one": "Last {{days}} days · {{count}} closed work order not yet costed",
         "costPending_other": "Last {{days}} days · {{count}} closed work orders not yet costed"

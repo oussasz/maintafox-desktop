@@ -44,6 +44,8 @@ vi.mock("react-i18next", () => ({
     i18n: { language: "en", resolvedLanguage: "en" },
   }),
 }));
+const assetSvc = vi.hoisted(() => ({ getAssetById: vi.fn() }));
+vi.mock("@/services/asset-service", () => assetSvc);
 vi.mock("@/hooks/use-permissions", () => ({
   usePermissions: () => ({ can: () => true, canAny: () => true, isLoading: false }),
 }));
@@ -191,6 +193,33 @@ describe("RamsFleetPage", () => {
     expect(mockInvoke).toHaveBeenCalledWith("get_reliability_fleet_view", {
       filter: expect.objectContaining({ org_node_id: null, equipment_class_id: null, limit: 50 }),
     });
+  });
+
+  it("selects the equipment handed over in the address, or says it could not be loaded", async () => {
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_reliability_fleet_view") return fleetView;
+      if (cmd === "list_reliability_studies") return [];
+      throw new Error(`unexpected ${cmd}`);
+    });
+    assetSvc.getAssetById.mockResolvedValueOnce({ id: 11, asset_code: "P-102" });
+    const { unmount } = render(
+      <MemoryRouter initialEntries={["/reliability?equipment=11"]}>
+        <RamsFleetPage />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("P-102 is selected for a study.")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /Study 1 equipment/ })).toBeEnabled();
+    unmount();
+
+    assetSvc.getAssetById.mockRejectedValueOnce({ code: "NOT_FOUND", message: "x" });
+    render(
+      <MemoryRouter initialEntries={["/reliability?equipment=99"]}>
+        <RamsFleetPage />
+      </MemoryRouter>,
+    );
+    expect(
+      await screen.findByText("The equipment handed over could not be loaded"),
+    ).toBeInTheDocument();
   });
 
   it("explains an empty period instead of showing an empty table", async () => {

@@ -42,6 +42,9 @@ pub async fn ensure_system_reference_catalog_integrity(db: &DatabaseConnection) 
     crate::permit::energy_reference::map_isolation_texts(db).await?;
     // PM deferral / miss reasons (COMPANY) and finding severities (SYSTEM).
     crate::pm::reason_catalog::ensure_pm_reason_catalogs(db).await?;
+    // FMECA placeholder rows (former root-cause promotion) that arrived by sync from a device that
+    // had not run migration 221 yet are flagged "to review" (exact signature only).
+    crate::reliability::study::fmeca::flag_placeholder_rows(db).await?;
     Ok(())
 }
 
