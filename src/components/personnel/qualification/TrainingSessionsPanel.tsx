@@ -10,6 +10,7 @@ import { useTranslation } from "react-i18next";
 import { PermissionGate } from "@/components/PermissionGate";
 import { FormField } from "@/components/ui/FormField";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import { DateTimeLocalField } from "@/components/ui/date-time-local-field";
 import {
@@ -440,6 +441,7 @@ export function TrainingSessionsPanel({
                       attendance={a}
                       personName={nameOf(a.personnel_id)}
                       passMark={selected.min_pass_score}
+                      issuesCertification={selected.certification_type_id != null}
                       canManage={canManage}
                       onRecord={recordResult}
                     />
@@ -587,12 +589,15 @@ function AttendanceRow({
   attendance,
   personName,
   passMark,
+  issuesCertification,
   canManage,
   onRecord,
 }: {
   attendance: TrainingAttendance;
   personName: string;
   passMark: number;
+  /** Recording "passed" issues the session's certification (backend). */
+  issuesCertification: boolean;
   canManage: boolean;
   onRecord: (a: TrainingAttendance, status: string, score: number | null) => Promise<void>;
 }) {
@@ -600,6 +605,26 @@ function AttendanceRow({
   const [score, setScore] = useState(attendance.score != null ? String(attendance.score) : "");
   const parsed = score.trim() === "" ? null : Number(score);
   const scoreValid = parsed == null || (Number.isFinite(parsed) && parsed >= 0 && parsed <= 100);
+  const belowPassMark = parsed != null && scoreValid && parsed < passMark;
+  /** A result waiting for confirmation: a certificate issue, or a "passed" turned into "failed". */
+  const [pending, setPending] = useState<{ status: string; demoted: boolean } | null>(null);
+
+  const choose = (status: string) => {
+    if (!scoreValid) return;
+    // A score below the pass mark cannot be recorded as passed: it is recorded as failed, and the
+    // user is told so before anything is saved.
+    if (status === "passed" && belowPassMark) {
+      setPending({ status: "failed", demoted: true });
+      return;
+    }
+    // Passing issues the certification: ask first.
+    if (status === "passed" && issuesCertification) {
+      setPending({ status: "passed", demoted: false });
+      return;
+    }
+    void onRecord(attendance, status, parsed);
+  };
+
   return (
     <tr className="border-b border-surface-border/60">
       <td className="py-1.5 pr-2">{personName}</td>
@@ -614,31 +639,29 @@ function AttendanceRow({
       </td>
       <td className="py-1.5 pr-2">
         {canManage ? (
-          <Input
-            aria-label={t("col.score")}
-            className="h-8 w-20"
-            inputMode="decimal"
-            value={score}
-            onChange={(e) => setScore(e.target.value)}
-          />
+          <div>
+            <Input
+              aria-label={t("col.score")}
+              className="h-9 w-20"
+              inputMode="decimal"
+              value={score}
+              onChange={(e) => setScore(e.target.value)}
+            />
+            {belowPassMark ? (
+              <p className="mt-0.5 text-xs text-tone-warning-fg">
+                {t("sessions.belowPassMark", { score: passMark })}
+              </p>
+            ) : null}
+          </div>
         ) : (
           (attendance.score ?? "—")
         )}
       </td>
       <td className="py-1.5 text-right">
         {canManage ? (
-          <Select
-            value=""
-            onValueChange={(status) => {
-              if (!scoreValid) return;
-              // A score below the pass mark cannot be recorded as passed.
-              const finalStatus =
-                status === "passed" && parsed != null && parsed < passMark ? "failed" : status;
-              void onRecord(attendance, finalStatus, parsed);
-            }}
-          >
+          <Select value="" onValueChange={choose}>
             <SelectTrigger
-              className="h-8 w-40"
+              className="h-9 w-40"
               aria-label={t("sessions.recordResult", { person: personName })}
             >
               <SelectValue placeholder={t("sessions.recordResultShort")} />
@@ -652,6 +675,26 @@ function AttendanceRow({
             </SelectContent>
           </Select>
         ) : null}
+        <ConfirmDialog
+          open={pending != null}
+          onOpenChange={(o) => !o && setPending(null)}
+          title={
+            pending?.demoted
+              ? t("sessions.recordedAsFailedTitle")
+              : t("sessions.issueCertificateTitle")
+          }
+          description={
+            pending?.demoted
+              ? t("sessions.recordedAsFailed", { person: personName, score: parsed, passMark })
+              : t("sessions.issueCertificate", { person: personName })
+          }
+          confirmLabel={
+            pending?.demoted ? t("sessions.recordAsFailed") : t("sessions.recordPassed")
+          }
+          onConfirm={async () => {
+            if (pending) await onRecord(attendance, pending.status, parsed);
+          }}
+        />
       </td>
     </tr>
   );
