@@ -35,6 +35,7 @@ import {
 import { StatusChip } from "@/components/ui/status-chip";
 import { REPAIRABLE_STATUS_TONE, toneOf } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
+import { describeAppError } from "@/lib/app-error";
 import { formatAssetLabel, formatEntityCode, formatOrDash } from "@/lib/display";
 import {
   getInventoryRepairableOrderDetail,
@@ -42,7 +43,6 @@ import {
   transitionInventoryRepairableOrder,
   upsertInventoryDocumentLink,
 } from "@/services/inventory-service";
-import { toErrorMessage } from "@/utils/errors";
 import { formatDate, intlLocaleForLanguage } from "@/utils/format-date";
 import type {
   InventoryDocumentLink,
@@ -215,7 +215,7 @@ export function RepairableDetailDialog({
       setCloseWarrantyUntil(orderDetail.order.warranty_until?.slice(0, 10) ?? "");
       setCloseWarrantyActive(orderDetail.order.warranty_active === 1);
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(describeAppError(err).title);
       setDetail(null);
     } finally {
       setLoading(false);
@@ -249,7 +249,7 @@ export function RepairableDetailDialog({
       await load();
       onTransitioned?.();
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(describeAppError(err).title);
     } finally {
       setSaving(false);
     }
@@ -314,7 +314,7 @@ export function RepairableDetailDialog({
       const docs = await listInventoryDocumentLinks("REPAIRABLE_ORDER", detail.order.id);
       setDocuments(docs);
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(describeAppError(err).title);
     } finally {
       setSaving(false);
     }
