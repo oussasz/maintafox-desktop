@@ -10509,6 +10509,8 @@ export interface PermitTypeUpsertInput {
   mandatory_control_rules_json: string | null;
   /** Permits of this type need a verified energy isolation before they start (LOTO). */
   requires_energy_isolation: boolean;
+  /** Required when switching the rule off (administrator + step-up, audited). */
+  disable_isolation_reason?: string | null;
 }
 
 export interface WorkPermitCreateInput {

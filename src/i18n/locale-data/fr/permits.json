@@ -199,6 +199,9 @@
     "empty": "Aucun type de permis.",
     "energyIsolation": "Isolation d’énergie obligatoire (LOTO)",
     "energyIsolationHint": "Un permis de ce type ne peut pas démarrer sans au moins une isolation posée puis vérifiée par une seconde personne.",
+    "energyIsolationLocked": "Le type LOTO exige toujours une isolation d’énergie.",
+    "disableReason": "Pourquoi ne plus exiger d’isolation ?",
+    "disableReasonHint": "Réservé à un administrateur : le mot de passe est redemandé et la modification est tracée dans le journal d’audit.",
     "energyIsolationShort": "Isolation",
     "yes": "Oui",
     "no": "Non"

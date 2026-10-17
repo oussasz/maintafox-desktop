@@ -22,6 +22,17 @@ use crate::wo::workflow::actions::submit::{submit_wo, WoSubmitInput};
 const APPLIER: i64 = 1;
 const VERIFIER: i64 = 2;
 
+/// A permit-type editor without the administrator right / step-up.
+const EDITOR: queries::PermitTypeWriter = queries::PermitTypeWriter {
+    actor_id: APPLIER,
+    may_relax_isolation: false,
+};
+/// An administrator with a valid step-up (checked by the command).
+const ADMIN_STEP_UP: queries::PermitTypeWriter = queries::PermitTypeWriter {
+    actor_id: APPLIER,
+    may_relax_isolation: true,
+};
+
 async fn setup() -> DatabaseConnection {
     let db = crate::db::test_db::seeded().await;
     // APPLIER is the seeded admin; VERIFIER is a second real account (the isolation
@@ -768,7 +779,9 @@ async fn the_isolation_rule_is_the_type_flag_and_the_loto_type_keeps_it() {
             mandatory_ppe_ids_json: Some(hot.mandatory_ppe_ids_json.clone()),
             mandatory_control_rules_json: Some(hot.mandatory_control_rules_json.clone()),
             requires_energy_isolation: Some(true),
+            disable_isolation_reason: None,
         },
+        EDITOR,
     )
     .await
     .expect("flag hot work");
@@ -792,7 +805,9 @@ async fn the_isolation_rule_is_the_type_flag_and_the_loto_type_keeps_it() {
             mandatory_ppe_ids_json: None,
             mandatory_control_rules_json: None,
             requires_energy_isolation: None,
+            disable_isolation_reason: None,
         },
+        EDITOR,
     )
     .await
     .expect("rename loto");
@@ -1006,4 +1021,146 @@ async fn permit_search_runs_on_the_server_over_every_permit() {
             .len(),
         1
     );
+}
+
+fn type_input(
+    t: &crate::permit::domain::PermitType,
+    requires: Option<bool>,
+    reason: Option<&str>,
+) -> crate::permit::domain::PermitTypeUpsertInput {
+    crate::permit::domain::PermitTypeUpsertInput {
+        id: Some(t.id),
+        code: t.code.clone(),
+        name: t.name.clone(),
+        description: Some(t.description.clone()),
+        requires_hse_approval: t.requires_hse_approval,
+        requires_operations_approval: t.requires_operations_approval,
+        requires_atmospheric_test: t.requires_atmospheric_test,
+        max_duration_hours: t.max_duration_hours,
+        mandatory_ppe_ids_json: None,
+        mandatory_control_rules_json: None,
+        requires_energy_isolation: requires,
+        disable_isolation_reason: reason.map(str::to_string),
+    }
+}
+
+#[tokio::test]
+async fn switching_the_isolation_rule_off_is_guarded_and_loto_is_locked() {
+    let db = setup().await;
+    let types = queries::list_permit_types(&db).await.expect("types");
+    let loto = types.iter().find(|t| t.code == "loto").expect("loto").clone();
+    let hot = types.iter().find(|t| t.code == "hot_work").expect("hot").clone();
+
+    // Turning it on: a plain edit.
+    let hot = queries::upsert_permit_type(&db, type_input(&hot, Some(true), None), EDITOR)
+        .await
+        .expect("turn on");
+    assert!(hot.requires_energy_isolation);
+
+    // Off: refused without the administrator right + step-up, then without a reason.
+    assert_validation(
+        queries::upsert_permit_type(&db, type_input(&hot, Some(false), Some("x")), EDITOR).await,
+        "PERMIT_TYPE_ISOLATION_RELAX_FORBIDDEN",
+    );
+    assert_validation(
+        queries::upsert_permit_type(&db, type_input(&hot, Some(false), Some("  ")), ADMIN_STEP_UP).await,
+        "PERMIT_TYPE_ISOLATION_RELAX_REASON",
+    );
+    let before = scalar_i64(
+        &db,
+        "SELECT COUNT(*) FROM audit_events WHERE action_code = 'permit_type.energy_isolation.disabled'",
+    )
+    .await;
+    let off = queries::upsert_permit_type(
+        &db,
+        type_input(&hot, Some(false), Some("Hot work on isolated lines only")),
+        ADMIN_STEP_UP,
+    )
+    .await
+    .expect("administrator switches it off");
+    assert!(!off.requires_energy_isolation);
+    let after = scalar_i64(
+        &db,
+        "SELECT COUNT(*) FROM audit_events WHERE action_code = 'permit_type.energy_isolation.disabled'",
+    )
+    .await;
+    assert_eq!(after, before + 1, "audited");
+
+    // The shipped LOTO type can never stop requiring an isolation.
+    assert_validation(
+        queries::upsert_permit_type(&db, type_input(&loto, Some(false), Some("reason")), ADMIN_STEP_UP).await,
+        "PERMIT_TYPE_LOTO_ISOLATION_LOCKED",
+    );
+    let loto_now = queries::get_permit_type(&db, loto.id)
+        .await
+        .expect("read")
+        .expect("loto");
+    assert!(loto_now.requires_energy_isolation);
+}
+
+#[tokio::test]
+async fn a_permit_always_has_a_bounded_future_expiry() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-PTW-70").await;
+    let create = |expires: Option<String>, ty: i64| WorkPermitCreateInput {
+        permit_type_id: ty,
+        asset_id: Some(asset),
+        entity_id: Some(1),
+        linked_work_order_id: None,
+        expires_at: expires,
+    };
+    let hot = type_id(&db, "hot_work").await; // max 8 h
+    assert_validation(
+        queries::create_work_permit(&db, create(None, hot)).await,
+        "PERMIT_EXPIRY_REQUIRED",
+    );
+    assert_validation(
+        queries::create_work_permit(&db, create(Some("  ".into()), hot)).await,
+        "PERMIT_EXPIRY_REQUIRED",
+    );
+    let too_long = (chrono::Utc::now() + chrono::Duration::hours(10)).to_rfc3339();
+    assert_validation(
+        queries::create_work_permit(&db, create(Some(too_long.clone()), hot)).await,
+        "PERMIT_EXPIRY_TOO_LONG",
+    );
+    let wp = queries::create_work_permit(
+        &db,
+        create(
+            Some((chrono::Utc::now() + chrono::Duration::hours(2)).to_rfc3339()),
+            hot,
+        ),
+    )
+    .await
+    .expect("within the type's duration");
+    // An update can't push it past the type's maximum either.
+    assert_validation(
+        queries::update_work_permit(
+            &db,
+            WorkPermitUpdateInput {
+                id: wp.id,
+                linked_work_order_id: None,
+                asset_id: None,
+                entity_id: None,
+                expires_at: Some(too_long),
+                expected_row_version: wp.row_version,
+            },
+        )
+        .await,
+        "PERMIT_EXPIRY_TOO_LONG",
+    );
+
+    // A permit stored without expiry (created before the rule) cannot be activated.
+    let wp = advance_to_issued(&db, wp).await;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE work_permits SET expires_at = NULL WHERE id = ?",
+        [wp.id.into()],
+    ))
+    .await
+    .expect("legacy permit without expiry");
+    let wp = queries::get_work_permit(&db, wp.id)
+        .await
+        .expect("read")
+        .expect("permit");
+    assert_validation(set_status(&db, &wp, "active").await, "PERMIT_EXPIRY_MISSING");
 }

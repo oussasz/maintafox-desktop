@@ -473,4 +473,49 @@ describe("PermitsPage", () => {
       svc.recordLotoCardPrint.mock.invocationCallOrder[0] ?? 0,
     );
   });
+
+  it("asks a reason to stop requiring an isolation and locks it on the LOTO type", async () => {
+    const hot: PermitTypeRecord = {
+      ...LOTO_TYPE,
+      id: 2,
+      entity_sync_id: "t2",
+      code: "hot_work",
+      name: "Hot work",
+      requires_energy_isolation: true,
+    };
+    svc.listPermitTypes.mockResolvedValue([LOTO_TYPE, hot]);
+    svc.upsertPermitType.mockResolvedValue(hot);
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: enPermits.actions.manageTypes }));
+    const dialog = await screen.findByRole("dialog");
+    const editButtons = within(dialog).getAllByRole("button", { name: enPermits.actions.edit });
+
+    // LOTO: the rule is shown ticked and cannot be changed.
+    fireEvent.click(editButtons[0] as HTMLElement);
+    expect(within(dialog).getByText(enPermits.types.energyIsolationLocked)).toBeInTheDocument();
+
+    // Another type: unticking asks for a reason before anything is saved.
+    fireEvent.click(editButtons[1] as HTMLElement);
+    fireEvent.click(
+      within(dialog).getByRole("checkbox", { name: enPermits.types.energyIsolation }),
+    );
+    expect(within(dialog).getByText(enPermits.types.disableReason)).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: enPermits.types.save }));
+    expect(await within(dialog).findByText(enPermits.errors.required)).toBeInTheDocument();
+    expect(svc.upsertPermitType).not.toHaveBeenCalled();
+
+    fireEvent.change(within(dialog).getByLabelText(new RegExp(enPermits.types.disableReason)), {
+      target: { value: "Isolated lines only" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: enPermits.types.save }));
+    await waitFor(() =>
+      expect(svc.upsertPermitType).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 2,
+          requires_energy_isolation: false,
+          disable_isolation_reason: "Isolated lines only",
+        }),
+      ),
+    );
+  });
 });

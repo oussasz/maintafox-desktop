@@ -13,6 +13,7 @@ import {
   Textarea,
 } from "@/components/ui";
 import { Checkbox } from "@/components/ui/checkbox";
+import { useStepUp } from "@/hooks/use-step-up";
 import { describeAppError } from "@/lib/app-error";
 import { upsertPermitType, type PermitTypeRecord } from "@/services/permit-service";
 
@@ -33,6 +34,11 @@ interface TypeDraft {
   atmospheric: boolean;
   /** Needs a verified energy isolation before it starts (LOTO rule). */
   energyIsolation: boolean;
+  /** The saved value: switching it off needs a reason (administrator + step-up on the server). */
+  savedEnergyIsolation: boolean;
+  /** Shipped LOTO type: the rule cannot be switched off. */
+  lotoLocked: boolean;
+  disableReason: string;
   maxHours: string;
   ppeJson: string | null;
   rulesJson: string | null;
@@ -47,6 +53,9 @@ const EMPTY: TypeDraft = {
   operations: false,
   atmospheric: false,
   energyIsolation: false,
+  savedEnergyIsolation: false,
+  lotoLocked: false,
+  disableReason: "",
   maxHours: "",
   ppeJson: null,
   rulesJson: null,
@@ -62,6 +71,9 @@ function toDraft(ty: PermitTypeRecord): TypeDraft {
     operations: ty.requires_operations_approval,
     atmospheric: ty.requires_atmospheric_test,
     energyIsolation: ty.requires_energy_isolation,
+    savedEnergyIsolation: ty.requires_energy_isolation,
+    lotoLocked: ty.code.trim().toLowerCase() === "loto",
+    disableReason: "",
     maxHours: ty.max_duration_hours == null ? "" : String(ty.max_duration_hours),
     ppeJson: ty.mandatory_ppe_ids_json,
     rulesJson: ty.mandatory_control_rules_json,
@@ -74,6 +86,7 @@ export function PermitTypesDialog({ open, onOpenChange, types, onSaved }: Permit
   const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { withStepUp, StepUpDialogElement } = useStepUp();
 
   useEffect(() => {
     if (open) {
@@ -83,6 +96,7 @@ export function PermitTypesDialog({ open, onOpenChange, types, onSaved }: Permit
     }
   }, [open]);
 
+  const relaxing = draft.id != null && draft.savedEnergyIsolation && !draft.energyIsolation;
   const maxHoursValue = draft.maxHours.trim() === "" ? null : Number(draft.maxHours);
   const maxHoursInvalid =
     maxHoursValue != null && (!Number.isFinite(maxHoursValue) || maxHoursValue <= 0);
@@ -91,22 +105,27 @@ export function PermitTypesDialog({ open, onOpenChange, types, onSaved }: Permit
     e.preventDefault();
     setSubmitted(true);
     if (!draft.code.trim() || !draft.name.trim() || maxHoursInvalid) return;
+    if (relaxing && !draft.disableReason.trim()) return;
     setBusy(true);
     setError(null);
     try {
-      await upsertPermitType({
-        id: draft.id,
-        code: draft.code.trim(),
-        name: draft.name.trim(),
-        description: draft.description,
-        requires_hse_approval: draft.hse,
-        requires_operations_approval: draft.operations,
-        requires_atmospheric_test: draft.atmospheric,
-        max_duration_hours: maxHoursValue,
-        mandatory_ppe_ids_json: draft.ppeJson,
-        mandatory_control_rules_json: draft.rulesJson,
-        requires_energy_isolation: draft.energyIsolation,
-      });
+      // Switching the isolation rule off asks for the administrator's step-up when needed.
+      const save = () =>
+        upsertPermitType({
+          id: draft.id,
+          code: draft.code.trim(),
+          name: draft.name.trim(),
+          description: draft.description,
+          requires_hse_approval: draft.hse,
+          requires_operations_approval: draft.operations,
+          requires_atmospheric_test: draft.atmospheric,
+          max_duration_hours: maxHoursValue,
+          mandatory_ppe_ids_json: draft.ppeJson,
+          mandatory_control_rules_json: draft.rulesJson,
+          requires_energy_isolation: draft.energyIsolation,
+          disable_isolation_reason: relaxing ? draft.disableReason.trim() : null,
+        });
+      await (relaxing ? withStepUp(save) : save());
       setDraft(EMPTY);
       setSubmitted(false);
       onSaved();
@@ -234,8 +253,33 @@ export function PermitTypesDialog({ open, onOpenChange, types, onSaved }: Permit
             {flag("hse", t("types.hse"))}
             {flag("operations", t("types.operations"))}
             {flag("atmospheric", t("types.atmospheric"))}
-            {flag("energyIsolation", t("types.energyIsolation"))}
-            <p className="pl-6 text-xs text-text-muted">{t("types.energyIsolationHint")}</p>
+            {draft.lotoLocked ? (
+              <label className="flex items-center gap-2 text-sm text-text-primary">
+                <Checkbox checked disabled aria-describedby="type-loto-locked" />
+                {t("types.energyIsolation")}
+              </label>
+            ) : (
+              flag("energyIsolation", t("types.energyIsolation"))
+            )}
+            <p id="type-loto-locked" className="pl-6 text-xs text-text-muted">
+              {draft.lotoLocked ? t("types.energyIsolationLocked") : t("types.energyIsolationHint")}
+            </p>
+            {relaxing ? (
+              <FormField
+                name="type-disable-reason"
+                label={t("types.disableReason")}
+                description={t("types.disableReasonHint")}
+                required
+                error={submitted && !draft.disableReason.trim() ? t("errors.required") : undefined}
+              >
+                <Textarea
+                  id="type-disable-reason"
+                  rows={2}
+                  value={draft.disableReason}
+                  onChange={(e) => setDraft((d) => ({ ...d, disableReason: e.target.value }))}
+                />
+              </FormField>
+            ) : null}
           </div>
           {error ? (
             <p role="alert" className="text-sm text-tone-danger-fg">
@@ -252,6 +296,7 @@ export function PermitTypesDialog({ open, onOpenChange, types, onSaved }: Permit
           </DialogFooter>
         </form>
       </DialogContent>
+      {StepUpDialogElement}
     </Dialog>
   );
 }

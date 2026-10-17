@@ -788,10 +788,6 @@
     "submitForPlanning": "Submit for Planning",
     "markReady": "Mark Ready"
   },
-  "print": {
-    "button": "Print",
-    "title": "WO Print Sheet"
-  },
   "cost": {
     "title": "Cost Summary",
     "loading": "Loading costs…",
@@ -927,12 +923,6 @@
     "statusFromDetailHint": "Click a card to open the work order: status changes are made from its detail, where each step checks its conditions (permit, parts, reasons).",
     "transitionNotAllowed": "Cannot move \"{{code}}\" from \"{{from}}\" to {{to}}. Transition not allowed."
   },
-  "shift": {
-    "morning": "Morning",
-    "afternoon": "Afternoon",
-    "night": "Night",
-    "full_day": "Full day"
-  },
   "print": {
     "pageTitle": "WO Sheet",
     "heading": "Work Order Sheet",
@@ -990,7 +980,9 @@
     "laborCost": "Labor",
     "partsCost": "Parts",
     "serviceCost": "Services",
-    "totalCost": "Total"
+    "totalCost": "Total",
+    "button": "Print",
+    "title": "WO Print Sheet"
   },
   "lifecycle": {
     "title": "PRD lifecycle state (derived from the work order's facts)",

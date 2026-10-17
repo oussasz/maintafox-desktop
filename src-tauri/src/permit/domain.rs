@@ -153,6 +153,9 @@ pub struct PermitTypeUpsertInput {
     /// Omitted on update: unchanged. Omitted on create: false.
     #[serde(default)]
     pub requires_energy_isolation: Option<bool>,
+    /// Required (with `adm.settings` + step-up) when switching the energy-isolation rule off.
+    #[serde(default)]
+    pub disable_isolation_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

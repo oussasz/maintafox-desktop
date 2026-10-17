@@ -175,7 +175,7 @@
     "afternoon": "Après-midi",
     "night": "Nuit",
     "fullDay": "Journée",
-    "full_day": "Journée"
+    "full_day": "Journée complète"
   },
   "planning": {
     "timing": "Planification horaire",
@@ -788,10 +788,6 @@
     "submitForPlanning": "Soumettre pour planification",
     "markReady": "Marquer comme Prêt"
   },
-  "print": {
-    "button": "Imprimer",
-    "title": "Fiche d'impression OT"
-  },
   "cost": {
     "title": "Résumé des coûts",
     "loading": "Chargement des coûts…",
@@ -927,12 +923,6 @@
     "statusFromDetailHint": "Cliquez sur une carte pour ouvrir l'OT : les changements de statut se font depuis sa fiche, où chaque étape vérifie ses conditions (permis, pièces, motifs).",
     "transitionNotAllowed": "Impossible de déplacer \"{{code}}\" de \"{{from}}\" vers {{to}}. Transition non permise."
   },
-  "shift": {
-    "morning": "Matin",
-    "afternoon": "Après-midi",
-    "night": "Nuit",
-    "full_day": "Journée complète"
-  },
   "print": {
     "pageTitle": "Fiche OT",
     "heading": "Fiche d'Ordre de Travail",
@@ -990,7 +980,9 @@
     "laborCost": "Main-d'œuvre",
     "partsCost": "Pièces",
     "serviceCost": "Services",
-    "totalCost": "Total"
+    "totalCost": "Total",
+    "button": "Imprimer",
+    "title": "Fiche d'impression OT"
   },
   "lifecycle": {
     "title": "État du cycle de vie PRD (déduit des faits de l'OT)",

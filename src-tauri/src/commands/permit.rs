@@ -35,7 +35,32 @@ pub async fn upsert_permit_type(input: PermitTypeUpsertInput, state: State<'_, A
         crate::rbac::permissions::PTW_ISSUE,
         PermissionScope::Global
     );
-    queries::upsert_permit_type(&state.db, input).await
+    // Switching the energy-isolation rule off weakens the start gate: administrator + step-up
+    // (the query refuses it otherwise, needs a reason and audits it; the LOTO type stays locked).
+    let mut may_relax_isolation = false;
+    if let Some(id) = input.id {
+        if let Some(current) = queries::get_permit_type(&state.db, id).await? {
+            if queries::relaxes_energy_isolation(&current, &input) {
+                require_permission!(
+                    state,
+                    &user,
+                    crate::rbac::permissions::ADM_SETTINGS,
+                    PermissionScope::Global
+                );
+                crate::require_step_up!(state);
+                may_relax_isolation = true;
+            }
+        }
+    }
+    queries::upsert_permit_type(
+        &state.db,
+        input,
+        queries::PermitTypeWriter {
+            actor_id: i64::from(user.user_id),
+            may_relax_isolation,
+        },
+    )
+    .await
 }
 
 #[tauri::command]

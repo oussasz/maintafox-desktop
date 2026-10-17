@@ -118,18 +118,66 @@ fn normalize_ts(field: &str, value: &str) -> AppResult<String> {
         .map_err(|_| AppError::ValidationFailed(vec![format!("{field} must be an RFC 3339 timestamp.")]))
 }
 
-/// Normalizes an optional expiry and rejects expiries that are already past.
-fn normalize_future_expiry(value: Option<String>) -> AppResult<Option<String>> {
-    let Some(raw) = value.filter(|v| !v.trim().is_empty()) else {
-        return Ok(None);
+/// Sync identity of the shipped LOTO permit type (migration 67): its energy-isolation rule is locked.
+const SHIPPED_LOTO_TYPE_SYNC_ID: &str = "11111111-1111-4111-8111-111111111111";
+
+/// A permit must expire: a non-empty expiry in the future and, when the type sets a maximum
+/// duration, no later than now + that duration. Coded refusals (translated on screen).
+async fn checked_expiry(db: &impl ConnectionTrait, permit_type_id: i64, value: Option<&str>) -> AppResult<String> {
+    let Some(raw) = value.map(str::trim).filter(|v| !v.is_empty()) else {
+        return Err(crate::errors::org_validation_failed(
+            "PERMIT_EXPIRY_REQUIRED",
+            "A permit needs an expiry date and time.",
+            std::collections::HashMap::new(),
+        ));
     };
-    let ts = normalize_ts("expires_at", &raw)?;
+    let ts = normalize_ts("expires_at", raw)?;
     if ts <= now_ts() {
-        return Err(AppError::ValidationFailed(vec![
-            "expires_at must be in the future.".into()
-        ]));
+        return Err(crate::errors::org_validation_failed(
+            "PERMIT_EXPIRY_PAST",
+            "The permit expiry must be in the future.",
+            std::collections::HashMap::new(),
+        ));
     }
-    Ok(Some(ts))
+    let max_hours: Option<f64> = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT max_duration_hours FROM permit_types WHERE id = ?",
+            [permit_type_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "PermitType".into(),
+            id: permit_type_id.to_string(),
+        })?
+        .try_get("", "max_duration_hours")
+        .map_err(|e| decode_err("max_duration_hours", e))?;
+    if let Some(hours) = max_hours.filter(|h| *h > 0.0) {
+        // Whole seconds: the stored form has no fractions.
+        #[allow(clippy::cast_possible_truncation)]
+        let limit = (Utc::now() + chrono::Duration::seconds((hours * 3600.0).round() as i64))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
+        if ts > limit {
+            return Err(crate::errors::org_validation_failed(
+                "PERMIT_EXPIRY_TOO_LONG",
+                format!("This permit type lasts at most {hours} h."),
+                std::collections::HashMap::from([("hours".to_string(), hours.to_string())]),
+            ));
+        }
+    }
+    Ok(ts)
+}
+
+/// The stored expiry of a permit, refused when missing (permits created before expiry was required).
+fn checked_expiry_present(wp: &WorkPermit) -> AppResult<String> {
+    wp.expires_at.clone().filter(|e| !e.trim().is_empty()).ok_or_else(|| {
+        crate::errors::org_validation_failed(
+            "PERMIT_EXPIRY_MISSING",
+            format!("Permit {} has no expiry: set one first.", wp.code),
+            std::collections::HashMap::from([("permit".to_string(), wp.code.clone())]),
+        )
+    })
 }
 
 fn is_expired(wp: &WorkPermit) -> bool {
@@ -666,14 +714,100 @@ pub async fn get_permit_type(db: &impl ConnectionTrait, id: i64) -> AppResult<Op
     row.as_ref().map(map_permit_type).transpose()
 }
 
-pub async fn upsert_permit_type(db: &DatabaseConnection, input: PermitTypeUpsertInput) -> AppResult<PermitType> {
+/// Who saves a permit type and what the command checked (`commands::permit::upsert_permit_type`).
+#[derive(Debug, Clone, Copy)]
+pub struct PermitTypeWriter {
+    pub actor_id: i64,
+    /// The caller holds `adm.settings` and a valid step-up: only then may the energy-isolation
+    /// rule of a type be switched off.
+    pub may_relax_isolation: bool,
+}
+
+/// True when the save would switch the energy-isolation rule of an existing type off.
+pub fn relaxes_energy_isolation(current: &PermitType, input: &PermitTypeUpsertInput) -> bool {
+    current.requires_energy_isolation && input.requires_energy_isolation == Some(false)
+}
+
+pub async fn upsert_permit_type(
+    db: &DatabaseConnection,
+    input: PermitTypeUpsertInput,
+    writer: PermitTypeWriter,
+) -> AppResult<PermitType> {
     let txn = db.begin().await?;
-    let out = upsert_permit_type_in(&txn, input).await?;
+    let out = upsert_permit_type_in(&txn, input, writer).await?;
     txn.commit().await?;
     Ok(out)
 }
 
-async fn upsert_permit_type_in(db: &impl ConnectionTrait, input: PermitTypeUpsertInput) -> AppResult<PermitType> {
+/// Switching the energy-isolation rule off weakens the start gate: never for the shipped LOTO
+/// type, otherwise only for an administrator with step-up and a reason, audited in the same
+/// transaction. Switching it on is a plain edit.
+async fn guard_isolation_relax(
+    db: &impl ConnectionTrait,
+    current: &PermitType,
+    input: &PermitTypeUpsertInput,
+    writer: PermitTypeWriter,
+) -> AppResult<()> {
+    if !relaxes_energy_isolation(current, input) {
+        return Ok(());
+    }
+    let params = std::collections::HashMap::from([("type".to_string(), current.code.clone())]);
+    if current.entity_sync_id == SHIPPED_LOTO_TYPE_SYNC_ID || current.code.trim().eq_ignore_ascii_case("loto") {
+        return Err(crate::errors::org_validation_failed(
+            "PERMIT_TYPE_LOTO_ISOLATION_LOCKED",
+            "The LOTO permit type always requires an energy isolation.",
+            params,
+        ));
+    }
+    if !writer.may_relax_isolation {
+        return Err(crate::errors::org_validation_failed(
+            "PERMIT_TYPE_ISOLATION_RELAX_FORBIDDEN",
+            "Only an administrator (with step-up) can stop requiring an energy isolation.",
+            params,
+        ));
+    }
+    let reason = input
+        .disable_isolation_reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|r| !r.is_empty())
+        .ok_or_else(|| {
+            crate::errors::org_validation_failed(
+                "PERMIT_TYPE_ISOLATION_RELAX_REASON",
+                "Give the reason for no longer requiring an energy isolation.",
+                params.clone(),
+            )
+        })?;
+    crate::audit::writer::write_audit_event_in(
+        db,
+        crate::audit::writer::AuditEventInput {
+            action_code: "permit_type.energy_isolation.disabled".to_string(),
+            target_type: Some("permit_type".to_string()),
+            target_id: Some(current.id.to_string()),
+            actor_id: Some(writer.actor_id),
+            auth_context: "step_up".to_string(),
+            result: "success".to_string(),
+            before_hash: None,
+            after_hash: None,
+            retention_class: "standard".to_string(),
+            details_json: Some(serde_json::json!({ "code": current.code, "reason": reason })),
+        },
+    )
+    .await?;
+    Ok(())
+}
+
+async fn upsert_permit_type_in(
+    db: &impl ConnectionTrait,
+    input: PermitTypeUpsertInput,
+    writer: PermitTypeWriter,
+) -> AppResult<PermitType> {
+    // Before any field is moved out of `input`: the energy-isolation off-switch guard.
+    if let Some(id) = input.id.filter(|id| *id > 0) {
+        if let Some(current) = get_permit_type(db, id).await? {
+            guard_isolation_relax(db, &current, &input, writer).await?;
+        }
+    }
     let ppe = input.mandatory_ppe_ids_json.unwrap_or_else(|| "[]".to_string());
     let rules = input.mandatory_control_rules_json.unwrap_or_else(|| "{}".to_string());
     let desc = input.description.unwrap_or_default();
@@ -892,7 +1026,7 @@ async fn create_work_permit_in(db: &impl ConnectionTrait, input: WorkPermitCreat
     let _ = permit_type_requires_energy_isolation(db, input.permit_type_id).await?;
     let (asset_id, entity_id) = resolve_permit_scope(db, &input).await?;
     ensure_wo_asset_aligned(db, input.linked_work_order_id, asset_id).await?;
-    let expires_at = normalize_future_expiry(input.expires_at.clone())?;
+    let expires_at = Some(checked_expiry(db, input.permit_type_id, input.expires_at.as_deref()).await?);
 
     if let Some(wo_id) = input.linked_work_order_id {
         if let Some(existing) = get_work_permit_linked_to_work_order(db, wo_id).await? {
@@ -965,9 +1099,11 @@ async fn update_work_permit_in(db: &impl ConnectionTrait, input: WorkPermitUpdat
     let entity_id = input.entity_id.unwrap_or(current.entity_id);
     let linked = input.linked_work_order_id.or(current.linked_work_order_id);
     ensure_wo_asset_aligned(db, linked, asset_id).await?;
-    let expires = match input.expires_at {
-        Some(e) => normalize_future_expiry(Some(e))?,
-        None => current.expires_at.clone(),
+    // The permit keeps an expiry: a new one is checked like on creation; an update that leaves it
+    // unchanged needs one already (permits created before the rule must be given one).
+    let expires = match input.expires_at.as_deref() {
+        Some(e) => Some(checked_expiry(db, current.permit_type_id, Some(e)).await?),
+        None => Some(checked_expiry_present(&current)?),
     };
 
     let new_rv = current.row_version + 1;
@@ -1036,9 +1172,13 @@ async fn set_work_permit_status_in(
             }
         }
         ("issued", "active") => {
+            // No open-ended permit is activated (permits created before expiry was required).
+            checked_expiry_present(&current)?;
             activation_ready(db, &current).await?;
         }
         ("revalidation_required", "active") => {
+            // No open-ended permit is activated (permits created before expiry was required).
+            checked_expiry_present(&current)?;
             activation_ready(db, &current).await?;
             finalize_open_suspension(db, input.id, actor_id, true).await?;
         }
