@@ -123,10 +123,12 @@
       "wo": "WO",
       "pm": "PM",
       "failures": "Failures",
-      "availability": "Availability",
+      "availability": "Operational availability",
       "ageYm": "{{years}}y {{months}}m",
       "ageM": "{{months}}m",
-      "ageD": "{{days}}d"
+      "ageD": "{{days}}d",
+      "availabilityAsOf": "Latest reliability analysis, to {{date}}",
+      "availabilityNone": "No reliability analysis computed for this asset yet"
     },
     "today": "Today",
     "empty": "No history events for this period.",
@@ -270,7 +272,8 @@
       "primary": "Primary",
       "documentCount": "{{count}} document(s) linked"
     },
-    "import": "Import"
+    "import": "Import",
+    "filterOptionsError": "The filter lists could not be loaded"
   },
   "createForm": {
     "button": "Create asset",
@@ -478,7 +481,10 @@
     "statuses": {
       "decommissioned": "Decommissioned",
       "scrapped": "Scrapped"
-    }
+    },
+    "dependenciesError": "The open work of this asset could not be checked: decommissioning stays unavailable",
+    "statusesError": "The equipment statuses could not be loaded",
+    "targetStatusPlaceholder": "Choose the final status"
   },
   "health": {
     "title": "Health",
@@ -486,7 +492,9 @@
     "fair": "Fair",
     "poor": "Poor",
     "noData": "No health score",
-    "unavailable": "Health data unavailable"
+    "unavailable": "Health data unavailable",
+    "loading": "Health…",
+    "hint": "Indicative follow-up score (0–100) from recent activity, open requests and work orders and meter readings. Not an availability or condition measurement."
   },
   "photos": {
     "title": "Photos",

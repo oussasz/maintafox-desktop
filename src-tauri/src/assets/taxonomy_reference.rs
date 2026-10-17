@@ -176,6 +176,9 @@ pub struct EquipmentTaxonomyOption {
     pub label: String,
     pub parent_id: Option<i64>,
     pub color_hex: Option<String>,
+    /// Meaning of the value for the product (e.g. the availability tag of a status:
+    /// `up` / `down` / `not_installed` / `retired`), read by screens instead of codes.
+    pub semantic_tag: Option<String>,
     pub is_system: bool,
 }
 
@@ -236,6 +239,9 @@ fn map_option_row(row: &sea_orm::QueryResult) -> AppResult<EquipmentTaxonomyOpti
     let color_hex: Option<String> = row
         .try_get("", "color_hex")
         .map_err(|e| AppError::Internal(anyhow::anyhow!("taxonomy option color_hex: {e}")))?;
+    let semantic_tag: Option<String> = row
+        .try_get("", "semantic_tag")
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("taxonomy option semantic_tag: {e}")))?;
     let metadata_json: Option<String> = row
         .try_get("", "metadata_json")
         .map_err(|e| AppError::Internal(anyhow::anyhow!("taxonomy option metadata_json: {e}")))?;
@@ -245,6 +251,7 @@ fn map_option_row(row: &sea_orm::QueryResult) -> AppResult<EquipmentTaxonomyOpti
         label,
         parent_id,
         color_hex,
+        semantic_tag,
         is_system: metadata_implies_system(metadata_json),
     })
 }
@@ -253,7 +260,7 @@ async fn list_domain_options(db: &DatabaseConnection, domain_code: &str) -> AppR
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT rv.id, rv.code, rv.label, rv.parent_id, rv.color_hex, rv.metadata_json \
+            "SELECT rv.id, rv.code, rv.label, rv.parent_id, rv.color_hex, rv.semantic_tag, rv.metadata_json \
              FROM reference_values rv \
              INNER JOIN reference_sets rs ON rs.id = rv.set_id \
              INNER JOIN reference_domains d ON d.id = rs.domain_id \

@@ -15,54 +15,59 @@ function humanizeAge(days: number | null, t: Translator) {
   return t("history.summary.ageD", { days });
 }
 
+/**
+ * Life summary of an asset. Availability is the operational availability of the latest
+ * reliability analysis of the asset (RAMS), with the date it covers; without one it reads "—"
+ * and says why. No figure is estimated here, and no count reads 0 before the summary is loaded.
+ */
 export function AssetLifeSummaryStrip({ summary }: { summary: AssetHistorySummary | null }) {
   const { t } = useTranslation("equipment");
-  const { formatDate } = useFormatters();
+  const { formatDate, formatNumber, formatPercent } = useFormatters();
 
-  const rows = useMemo(
-    () => [
+  const rows = useMemo(() => {
+    const count = (n: number | undefined) => (summary && n != null ? formatNumber(n) : "—");
+    return [
       {
         label: t("history.summary.created"),
         value: summary?.created_at ? formatDate(summary.created_at) : "—",
+        hint: null,
       },
       {
         label: t("history.summary.age"),
         value: humanizeAge(summary?.age_days ?? null, t),
+        hint: null,
       },
-      {
-        label: t("history.summary.wo"),
-        value: String(summary?.wo_count ?? 0),
-      },
-      {
-        label: t("history.summary.pm"),
-        value: String(summary?.pm_count ?? 0),
-      },
-      {
-        label: t("history.summary.failures"),
-        value: String(summary?.failure_count ?? 0),
-      },
+      { label: t("history.summary.wo"), value: count(summary?.wo_count), hint: null },
+      { label: t("history.summary.pm"), value: count(summary?.pm_count), hint: null },
+      { label: t("history.summary.failures"), value: count(summary?.failure_count), hint: null },
       {
         label: t("history.summary.availability"),
         value:
-          summary?.availability_percent != null
-            ? `${summary.availability_percent.toFixed(1)}%`
-            : "—",
+          summary?.availability_percent != null ? formatPercent(summary.availability_percent) : "—",
+        hint:
+          summary?.availability_percent != null && summary.availability_period_end
+            ? t("history.summary.availabilityAsOf", {
+                date: formatDate(summary.availability_period_end),
+              })
+            : summary
+              ? t("history.summary.availabilityNone")
+              : null,
       },
-    ],
-    [summary, t, formatDate],
-  );
+    ];
+  }, [summary, t, formatDate, formatNumber, formatPercent]);
 
   return (
     <div className="rounded-md border border-surface-border bg-surface-1 p-3">
-      <h3 className="text-sm font-semibold mb-2">{t("history.summary.title")}</h3>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+      <h3 className="mb-2 text-sm font-semibold">{t("history.summary.title")}</h3>
+      <dl className="grid grid-cols-2 gap-2 sm:grid-cols-3">
         {rows.map((row) => (
           <div key={row.label} className="rounded border border-surface-border/70 px-2 py-1.5">
-            <p className="text-[10px] uppercase tracking-wide text-text-muted">{row.label}</p>
-            <p className="text-sm font-medium">{row.value}</p>
+            <dt className="text-xs text-text-muted">{row.label}</dt>
+            <dd className="text-sm font-medium">{row.value}</dd>
+            {row.hint ? <dd className="text-xs text-text-muted">{row.hint}</dd> : null}
           </div>
         ))}
-      </div>
+      </dl>
     </div>
   );
 }

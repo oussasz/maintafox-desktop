@@ -139,6 +139,10 @@
   "assetPicker": {
     "searchFailed": "The search failed:",
     "retry": "Retry",
+    "legacyLabel": "Label to reprint: this label is in a former format that cannot identify the equipment safely. Type the asset code printed on the label, then reprint the label from the asset record.",
+    "more": "{{shown}} of {{total}} shown: refine the search",
+    "searchFailed": "The search failed:",
+    "retry": "Retry",
     "legacyLabel": "This label is in a former format that cannot identify the equipment safely: print it again from the asset record.",
     "more": "{{shown}} of {{total}} shown: refine the search",
     "searchPlaceholder": "Search assets by code, name, serial, QR…",

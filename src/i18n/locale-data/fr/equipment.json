@@ -123,10 +123,12 @@
       "wo": "OT",
       "pm": "PM",
       "failures": "Pannes",
-      "availability": "Disponibilité",
+      "availability": "Disponibilité opérationnelle",
       "ageYm": "{{years}}a {{months}}m",
       "ageM": "{{months}}m",
-      "ageD": "{{days}}j"
+      "ageD": "{{days}}j",
+      "availabilityAsOf": "Dernière analyse de fiabilité, au {{date}}",
+      "availabilityNone": "Aucune analyse de fiabilité calculée pour cet actif"
     },
     "today": "Aujourd'hui",
     "empty": "Aucun événement d'historique sur cette période.",
@@ -270,7 +272,8 @@
       "primary": "Principal",
       "documentCount": "{{count}} document(s) lié(s)"
     },
-    "import": "Importer"
+    "import": "Importer",
+    "filterOptionsError": "Les listes des filtres n'ont pas pu être chargées"
   },
   "createForm": {
     "button": "Créer un actif",
@@ -478,7 +481,10 @@
     "statuses": {
       "decommissioned": "Mis hors service",
       "scrapped": "Mis au rebut"
-    }
+    },
+    "dependenciesError": "Les travaux ouverts de cet actif n'ont pas pu être vérifiés : le déclassement reste indisponible",
+    "statusesError": "Les statuts d'équipement n'ont pas pu être chargés",
+    "targetStatusPlaceholder": "Choisir le statut final"
   },
   "health": {
     "title": "Santé",
@@ -486,7 +492,9 @@
     "fair": "Moyen",
     "poor": "Mauvais",
     "noData": "Aucun score de santé",
-    "unavailable": "Données de santé indisponibles"
+    "unavailable": "Données de santé indisponibles",
+    "loading": "Santé…",
+    "hint": "Score de suivi indicatif (0–100) issu de l'activité récente, des DI et OT ouverts et des relevés de compteurs. Ce n'est ni une disponibilité ni une mesure d'état."
   },
   "photos": {
     "title": "Photos",

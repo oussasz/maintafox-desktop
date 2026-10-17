@@ -139,6 +139,10 @@
   "assetPicker": {
     "searchFailed": "La recherche a échoué :",
     "retry": "Réessayer",
+    "legacyLabel": "Étiquette à réimprimer : cet ancien format ne permet pas d'identifier l'équipement sûrement. Saisissez le code de l'actif imprimé sur l'étiquette, puis réimprimez-la depuis la fiche de l'actif.",
+    "more": "{{shown}} sur {{total}} affichés : précisez la recherche",
+    "searchFailed": "La recherche a échoué :",
+    "retry": "Réessayer",
     "legacyLabel": "Cette étiquette est d'un ancien format qui ne permet pas d'identifier l'équipement sûrement : réimprimez-la depuis la fiche de l'actif.",
     "more": "{{shown}} sur {{total}} affichés : précisez la recherche",
     "searchPlaceholder": "Rechercher un actif par code, nom, série, QR…",

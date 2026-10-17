@@ -2111,6 +2111,8 @@ export interface EquipmentTaxonomyOption {
   label: string;
   parent_id: number | null;
   color_hex: string | null;
+  /** Product meaning (EQUIPMENT.STATUS: availability tag up / down / not_installed / retired). */
+  semantic_tag: string | null;
   is_system: boolean;
 }
 
@@ -2476,7 +2478,10 @@ export interface AssetHistorySummary {
   wo_count: number;
   pm_count: number;
   failure_count: number;
+  /** Operational availability (%) of the latest reliability snapshot; null until computed. */
   availability_percent: number | null;
+  /** End of the period that availability covers. */
+  availability_period_end: string | null;
 }
 
 export type AssetHistoryPeriod = "today" | "last_7_days" | "last_30_days" | "this_year" | "all";
@@ -4570,7 +4575,8 @@ export interface UploadAssetPhotoPayload {
 
 export interface DecommissionAssetPayload {
   asset_id: number;
-  target_status: "DECOMMISSIONED" | "SCRAPPED";
+  /** A status tagged `retired` in EQUIPMENT.STATUS (checked by the backend). */
+  target_status: string;
   reason: string;
   notes: string | null;
 }

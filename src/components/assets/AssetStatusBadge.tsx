@@ -1,12 +1,14 @@
 /**
  * Lifecycle status chip for equipment — shared by list, detail and org views.
+ * Tone from the status's availability tag in EQUIPMENT.STATUS; label translated for the
+ * Maintafox values, else the reference label (`asset-tones`).
  */
 
 import { useTranslation } from "react-i18next";
 
-import { ASSET_STATUS_LABEL_KEY, normalizeAssetStatus } from "@/components/assets/asset-tones";
+import { findStatus, statusLabelKey, statusTone } from "@/components/assets/asset-tones";
 import { StatusChip } from "@/components/ui/status-chip";
-import { ASSET_STATUS_TONE, toneOf } from "@/design-system/tone";
+import { useEquipmentTaxonomy } from "@/stores/equipment-taxonomy-store";
 
 interface AssetStatusBadgeProps {
   code: string;
@@ -16,9 +18,10 @@ interface AssetStatusBadgeProps {
 
 export function AssetStatusBadge({ code, size = "sm" }: AssetStatusBadgeProps) {
   const { t } = useTranslation("equipment");
-  const normalized = normalizeAssetStatus(code);
-  const key = ASSET_STATUS_LABEL_KEY[normalized];
-  // A tenant-defined status without a translation shows its code as entered in the catalogue.
-  const label = key ? t(key as never) : code;
-  return <StatusChip label={label} tone={toneOf(ASSET_STATUS_TONE, normalized)} size={size} dot />;
+  const { catalog } = useEquipmentTaxonomy();
+  const key = statusLabelKey(code);
+  const option = findStatus(catalog, code);
+  // Until the list arrives (or if it cannot be read) the code stays readable as entered.
+  const label = key ? t(key as never) : (option?.label ?? code);
+  return <StatusChip label={label} tone={statusTone(catalog, code)} size={size} dot />;
 }
