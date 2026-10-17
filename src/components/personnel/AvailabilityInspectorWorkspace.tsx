@@ -26,6 +26,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { describeAppError } from "@/lib/app-error";
 import { formatOrDash, formatPersonLabel } from "@/lib/display";
 import { cn } from "@/lib/utils";
 import {
@@ -190,7 +191,7 @@ export function AvailabilityInspectorWorkspace({
       .catch((err: unknown) => {
         if (!cancelled) {
           setAvailabilityState(null);
-          setStateError(err instanceof Error ? err.message : String(err));
+          setStateError(describeAppError(err).title);
         }
       })
       .finally(() => {
@@ -204,7 +205,7 @@ export function AvailabilityInspectorWorkspace({
       .catch((err: unknown) => {
         if (!cancelled) {
           setSkills([]);
-          setSkillsError(err instanceof Error ? err.message : String(err));
+          setSkillsError(describeAppError(err).title);
         }
       })
       .finally(() => {
@@ -218,7 +219,7 @@ export function AvailabilityInspectorWorkspace({
       .catch((err: unknown) => {
         if (!cancelled) {
           setWorkload(null);
-          setWorkloadError(err instanceof Error ? err.message : String(err));
+          setWorkloadError(describeAppError(err).title);
         }
       })
       .finally(() => {
@@ -239,7 +240,7 @@ export function AvailabilityInspectorWorkspace({
       onSelectBlock(null);
       onBlocksChanged();
     } catch (err) {
-      setEndError(err instanceof Error ? err.message : String(err));
+      setEndError(describeAppError(err).title);
     } finally {
       setEnding(false);
     }

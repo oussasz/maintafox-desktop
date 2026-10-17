@@ -17,6 +17,7 @@
 //!   `documents` — governed document link references (File 02, Sprint S3)
 
 pub mod bindings;
+pub mod criticality;
 pub mod decommission;
 pub mod documents;
 pub mod governance;
@@ -26,11 +27,14 @@ pub mod history;
 pub mod identity;
 pub mod import;
 pub mod lifecycle;
+pub mod maintenance_profile;
 pub mod meters;
 pub mod photos;
 pub mod registry_metrics;
 pub mod search;
+pub mod spare_parts;
 pub mod taxonomy_reference;
+pub mod tree;
 
 #[cfg(test)]
 mod decommission_tests;
@@ -46,6 +50,10 @@ mod import_tests;
 mod lifecycle_tests;
 #[cfg(test)]
 mod meters_tests;
+#[cfg(test)]
+mod tree_tests;
+#[cfg(test)]
+mod upgrade_tests;
 
 // Re-export most-used types at module root for clean import in command handlers.
 pub use bindings::AssetBindingSummary;

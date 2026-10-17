@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { orgErrorText } from "@/components/org/org-display";
 import { resolveAllowedNodeTypes } from "@/components/org/resolve-allowed-node-types";
 import { Button } from "@/components/ui/button";
 import {
@@ -28,7 +29,6 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { createOrgNode } from "@/services/org-node-service";
 import { listOrgNodeTypes, listOrgRelationshipRules } from "@/services/org-service";
-import { formatOrgIpcError } from "@/utils/errors";
 import type { OrgDesignerNodeRow, OrgNodeType, OrgRelationshipRule } from "@shared/ipc-types";
 
 type CreateMode = "root" | "child";
@@ -77,7 +77,7 @@ export function OrgNodeCreateDialog({
       setTypes(tList.filter((x) => x.is_active));
       setRules(rList);
     } catch (e) {
-      setError(formatOrgIpcError(e));
+      setError(orgErrorText(e));
     } finally {
       setLoading(false);
     }
@@ -142,7 +142,7 @@ export function OrgNodeCreateDialog({
       onCreated(result.id);
       onOpenChange(false);
     } catch (err) {
-      setError(formatOrgIpcError(err));
+      setError(orgErrorText(err));
     } finally {
       setSaving(false);
     }

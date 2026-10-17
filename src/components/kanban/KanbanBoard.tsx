@@ -1,10 +1,30 @@
-import { ChevronDown } from "lucide-react";
-import { useCallback, useMemo, useRef, useState, type DragEvent } from "react";
+import { ArrowRightLeft, ChevronDown } from "lucide-react";
+import {
+  type DragEvent,
+  type KeyboardEvent,
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { useTranslation } from "react-i18next";
 
 import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { StatusChip } from "@/components/ui/status-chip";
 import { mfKanban } from "@/design-system/tokens";
+import { mfTone } from "@/design-system/tone";
+import { appErrorReason } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 
 import type {
@@ -14,87 +34,36 @@ import type {
   KanbanCardAction,
   KanbanColumn,
   KanbanMetaItem,
+  KanbanMoveOutcome,
   KanbanTone,
 } from "./types";
 
-/** Column header chrome — one class set per tone, owned here. */
-const COLUMN_TONE: Record<KanbanTone, string> = {
-  draft: "bg-gray-50 border-gray-200 text-gray-700",
-  planning: "bg-blue-50 border-blue-200 text-blue-800",
-  ready: "bg-indigo-50 border-indigo-200 text-indigo-800",
-  executing: "bg-amber-50 border-amber-200 text-amber-800",
-  success: "bg-teal-50 border-teal-200 text-teal-800",
-  closed: "bg-neutral-50 border-neutral-200 text-neutral-600",
-  cancelled: "bg-red-50 border-red-200 text-red-700",
-  work: "bg-purple-50 border-purple-200 text-purple-700",
-  info: "bg-blue-50 border-blue-200 text-blue-700",
-  warning: "bg-amber-50 border-amber-200 text-amber-800",
-  danger: "bg-red-50 border-red-200 text-red-700",
-  muted: "bg-slate-50 border-slate-200 text-slate-600",
-  critical: "bg-red-50 border-red-200 text-red-700",
-  high: "bg-orange-50 border-orange-200 text-orange-800",
-  medium: "bg-amber-50 border-amber-200 text-amber-800",
-  low: "bg-emerald-50 border-emerald-200 text-emerald-800",
-  neutral: "bg-slate-50 border-slate-200 text-slate-600",
-};
-
-/** Card badge chrome. */
-const BADGE_TONE: Record<KanbanTone, string> = {
-  draft: "bg-surface-3/70 text-text-secondary",
-  planning: "bg-primary/15 text-primary",
-  ready: "bg-primary/15 text-primary",
-  executing: "bg-status-warning/15 text-status-warning",
-  success: "bg-status-success/15 text-status-success",
-  closed: "bg-surface-3/70 text-text-secondary",
-  cancelled: "bg-status-danger/15 text-status-danger",
-  work: "bg-primary/15 text-primary",
-  info: "bg-primary/15 text-primary",
-  warning: "bg-status-warning/15 text-status-warning",
-  danger: "bg-status-danger/15 text-status-danger",
-  muted: "bg-surface-3/70 text-text-secondary",
-  critical: "bg-status-danger/15 text-status-danger",
-  high: "bg-status-warning/15 text-status-warning",
-  medium: "bg-status-warning/15 text-status-warning",
-  low: "bg-status-success/15 text-status-success",
-  neutral: "bg-surface-3/70 text-text-secondary",
-};
-
-/** Accent bar chrome — always rendered. */
-const ACCENT_TONE: Record<KanbanTone, string> = {
-  draft: "bg-gray-300",
-  planning: "bg-blue-400",
-  ready: "bg-indigo-400",
-  executing: "bg-amber-400",
-  success: "bg-emerald-400",
-  closed: "bg-neutral-300",
-  cancelled: "bg-red-600",
-  work: "bg-purple-400",
-  info: "bg-blue-400",
-  warning: "bg-amber-400",
-  danger: "bg-red-600",
-  muted: "bg-gray-300",
-  critical: "bg-red-600",
-  high: "bg-orange-500",
-  medium: "bg-amber-400",
-  low: "bg-emerald-400",
-  neutral: "bg-gray-300",
-};
-
-const DEFAULT_BADGE_TONE: KanbanTone = "muted";
-const DEFAULT_COLUMN_TONE: KanbanTone = "muted";
-const DEFAULT_EMPTY_COLUMN = "—";
+/**
+ * Colours are the seven design-system tones (`design-system/tone.ts`) — the same classes as
+ * the list chips, light and dark. Unset tones are neutral (grey); colour is only used for a
+ * meaning the adapter passes (status, urgency, SLA, safety).
+ */
+const DEFAULT_TONE: KanbanTone = "neutral";
 const DND_MIME = "application/x-maintafox-kanban";
 
+/** Normalizes an `onDrop` outcome: accepted, or refused with an optional localized reason. */
+function readOutcome(outcome: KanbanMoveOutcome): { ok: boolean; reason?: string | undefined } {
+  if (outcome === undefined || outcome === true) return { ok: true };
+  if (outcome === false) return { ok: false };
+  return outcome;
+}
+
+function cardName(card: KanbanCard): string {
+  return card.ariaLabel ?? (card.code ? `${card.code}: ${card.title}` : card.title);
+}
+
 function CardBadge({ badge }: { badge: KanbanBadge }) {
-  const Icon = badge.icon;
   return (
-    <Badge
-      variant="outline"
-      className={cn(mfKanban.badge, BADGE_TONE[badge.tone ?? DEFAULT_BADGE_TONE])}
-    >
-      {Icon ? <Icon className={mfKanban.badgeIcon} aria-hidden /> : null}
-      {badge.label}
-    </Badge>
+    <StatusChip
+      label={badge.label}
+      tone={badge.tone ?? DEFAULT_TONE}
+      {...(badge.icon ? { icon: badge.icon } : {})}
+    />
   );
 }
 
@@ -128,64 +97,120 @@ function CardAction({ action, card }: { action: KanbanCardAction; card: KanbanCa
   );
 }
 
+/** "Move to" menu — the pointer-free, screen-reader-friendly alternative to dragging. */
+function CardMoveMenu({
+  card,
+  targets,
+  onMove,
+}: {
+  card: KanbanCard;
+  targets: KanbanColumn[];
+  onMove: (card: KanbanCard, toColumnId: string) => Promise<void>;
+}) {
+  const { t } = useTranslation("common");
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className={mfKanban.cardActionButton}
+          aria-label={t("kanban.moveCard", { card: cardName(card) })}
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+        >
+          <ArrowRightLeft className={mfKanban.cardActionIcon} aria-hidden />
+          {t("kanban.move")}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" onClick={(e) => e.stopPropagation()}>
+        <DropdownMenuLabel>{t("kanban.moveTo")}</DropdownMenuLabel>
+        {targets.map((column) => (
+          <DropdownMenuItem key={column.id} onSelect={() => void onMove(card, column.id)}>
+            <span
+              className={cn(mfKanban.columnDot, mfTone[column.tone ?? DEFAULT_TONE].dot)}
+              aria-hidden
+            />
+            {column.label}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 /**
  * Fixed card anatomy — identical for every module. Only the data differs.
  * Order: accent → code → title → subtitle → description → badges → meta → actions.
  */
 function KanbanCardView({
   card,
-  enableDrag,
-  canDrag,
+  movable,
+  moveTargets,
+  moveHintId,
   onCardClick,
   onDragStart,
+  onMove,
+  onKeyboardMove,
 }: {
   card: KanbanCard;
-  enableDrag: boolean;
-  canDrag?: ((card: KanbanCard) => boolean) | undefined;
+  movable: boolean;
+  moveTargets: KanbanColumn[];
+  moveHintId: string;
   onCardClick?: ((card: KanbanCard) => void) | undefined;
   onDragStart: (e: DragEvent, card: KanbanCard) => void;
+  onMove: (card: KanbanCard, toColumnId: string) => Promise<void>;
+  onKeyboardMove: (card: KanbanCard, direction: -1 | 1) => void;
 }) {
-  const isDraggable =
-    enableDrag && card.draggable !== false && (canDrag ? canDrag(card) : true) && !card.disabled;
-
   const badges = card.badges ?? [];
   const meta = card.meta ?? [];
   const actions = card.actions ?? [];
   const hasBadgeRow = badges.length > 0 || Boolean(card.link?.code);
-  const accessibleName = card.ariaLabel ?? (card.code ? `${card.code}: ${card.title}` : card.title);
+  const showMoveMenu = movable && moveTargets.length > 0;
 
   return (
     <div
       role="button"
       tabIndex={card.disabled ? -1 : 0}
-      aria-label={accessibleName}
+      aria-label={cardName(card)}
       aria-disabled={card.disabled || undefined}
-      draggable={isDraggable}
+      aria-describedby={movable ? moveHintId : undefined}
+      data-card-id={card.id}
+      draggable={movable}
       className={cn(
         mfKanban.card,
-        isDraggable && mfKanban.cardDraggable,
+        movable && mfKanban.cardDraggable,
         card.selected && mfKanban.cardSelected,
         card.disabled && mfKanban.cardDisabled,
       )}
       onClick={() => {
         if (!card.disabled) onCardClick?.(card);
       }}
-      onKeyDown={(e) => {
-        if (card.disabled) return;
+      onKeyDown={(e: KeyboardEvent<HTMLDivElement>) => {
+        if (card.disabled || e.target !== e.currentTarget) return;
+        if (movable && e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+          e.preventDefault();
+          onKeyboardMove(card, e.key === "ArrowLeft" ? -1 : 1);
+          return;
+        }
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           onCardClick?.(card);
         }
       }}
       onDragStart={(e) => {
-        if (!isDraggable) {
+        if (!movable) {
           e.preventDefault();
           return;
         }
         onDragStart(e, card);
       }}
     >
-      <div className={cn(mfKanban.accentBar, ACCENT_TONE[card.accent ?? "neutral"])} aria-hidden />
+      <div
+        className={cn(mfKanban.accentBar, mfTone[card.accent ?? DEFAULT_TONE].bar)}
+        aria-hidden
+      />
 
       <div className={mfKanban.cardBody}>
         {card.code ? (
@@ -225,11 +250,14 @@ function KanbanCardView({
           </div>
         ) : null}
 
-        {actions.length > 0 ? (
+        {actions.length > 0 || showMoveMenu ? (
           <div className={mfKanban.cardActions}>
             {actions.map((action) => (
               <CardAction key={action.id} action={action} card={card} />
             ))}
+            {showMoveMenu ? (
+              <CardMoveMenu card={card} targets={moveTargets} onMove={onMove} />
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -241,10 +269,14 @@ function KanbanColumnView({
   column,
   cards,
   enableDrag,
-  canDrag,
+  isMovable,
+  moveTargetsOf,
+  moveHintId,
   onCardClick,
   onDragStart,
   onColumnDrop,
+  onMove,
+  onKeyboardMove,
   pageSize,
   loadMoreLabel,
   emptyColumnLabel,
@@ -252,16 +284,21 @@ function KanbanColumnView({
   column: KanbanColumn;
   cards: KanbanCard[];
   enableDrag: boolean;
-  canDrag?: ((card: KanbanCard) => boolean) | undefined;
+  isMovable: (card: KanbanCard) => boolean;
+  moveTargetsOf: (card: KanbanCard) => KanbanColumn[];
+  moveHintId: string;
   onCardClick?: ((card: KanbanCard) => void) | undefined;
   onDragStart: (e: DragEvent, card: KanbanCard) => void;
   onColumnDrop: (e: DragEvent, toColumnId: string) => void;
+  onMove: (card: KanbanCard, toColumnId: string) => Promise<void>;
+  onKeyboardMove: (card: KanbanCard, direction: -1 | 1) => void;
   pageSize: number;
-  loadMoreLabel?: ((remaining: number) => string) | undefined;
+  loadMoreLabel: (remaining: number) => string;
   emptyColumnLabel: string;
 }) {
   const [visibleCount, setVisibleCount] = useState(pageSize);
   const [dragOver, setDragOver] = useState(false);
+  const titleId = useId();
 
   const visible = cards.slice(0, visibleCount);
   const remaining = cards.length - visibleCount;
@@ -282,16 +319,22 @@ function KanbanColumnView({
         onColumnDrop(e, column.id);
       }}
     >
-      <div className={cn(mfKanban.columnHeader, COLUMN_TONE[column.tone ?? DEFAULT_COLUMN_TONE])}>
+      <div className={mfKanban.columnHeader}>
         <div className={mfKanban.columnHeaderLabel}>
-          <span className={mfKanban.columnTitle}>{column.label}</span>
+          <span
+            className={cn(mfKanban.columnDot, mfTone[column.tone ?? DEFAULT_TONE].dot)}
+            aria-hidden
+          />
+          <span id={titleId} className={mfKanban.columnTitle}>
+            {column.label}
+          </span>
         </div>
         <Badge variant="outline" className={mfKanban.countBadge}>
           {cards.length}
         </Badge>
       </div>
 
-      <div className={mfKanban.columnBody} role="list">
+      <div className={mfKanban.columnBody} role="list" aria-labelledby={titleId}>
         {visible.length === 0 ? (
           <div className={mfKanban.columnEmpty}>{emptyColumnLabel}</div>
         ) : (
@@ -299,10 +342,13 @@ function KanbanColumnView({
             <div key={card.id} role="listitem">
               <KanbanCardView
                 card={card}
-                enableDrag={enableDrag}
-                {...(canDrag ? { canDrag } : {})}
+                movable={isMovable(card)}
+                moveTargets={isMovable(card) ? moveTargetsOf(card) : []}
+                moveHintId={moveHintId}
                 {...(onCardClick ? { onCardClick } : {})}
                 onDragStart={onDragStart}
+                onMove={onMove}
+                onKeyboardMove={onKeyboardMove}
               />
             </div>
           ))
@@ -319,7 +365,7 @@ function KanbanColumnView({
             onClick={() => setVisibleCount((n) => n + pageSize)}
           >
             <ChevronDown className="h-3.5 w-3.5" aria-hidden />
-            {loadMoreLabel ? loadMoreLabel(remaining) : String(remaining)}
+            {loadMoreLabel(remaining)}
           </Button>
         </div>
       ) : null}
@@ -333,6 +379,10 @@ function KanbanColumnView({
  * Adapters supply columns, cards, metadata, actions, and callbacks only.
  * All chrome — headers, counters, cards, badges, spacing, typography, empty
  * states, colours, borders, shadows — lives here so every board is identical.
+ *
+ * Moving a card (when `enableDrag`): drag and drop, the card's "Move to" menu, or Alt+←/→ on
+ * the focused card. All three go through the same `canDrop` → `onDrop` path; the result is
+ * announced to screen readers and focus stays on the moved card.
  */
 export function KanbanBoard<T = KanbanCard>({
   columns,
@@ -346,12 +396,20 @@ export function KanbanBoard<T = KanbanCard>({
   onDrop,
   pageSize = 20,
   loadMoreLabel,
-  emptyColumnLabel = DEFAULT_EMPTY_COLUMN,
+  emptyColumnLabel,
   empty,
   className,
-  "aria-label": ariaLabel = "Kanban board",
+  "aria-label": ariaLabel,
 }: KanbanBoardProps<T>) {
+  const { t } = useTranslation("common");
   const dragCardRef = useRef<KanbanCard | null>(null);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  /** Card to focus in its new lane once the server accepted the move (set only on success). */
+  const [focusAfterMove, setFocusAfterMove] = useState<{ cardId: string; columnId: string } | null>(
+    null,
+  );
+  const [announcement, setAnnouncement] = useState("");
+  const moveHintId = useId();
 
   const cards = useMemo(() => {
     if (cardsProp) return cardsProp;
@@ -366,6 +424,83 @@ export function KanbanBoard<T = KanbanCard>({
     }
     return map;
   }, [columns, cards]);
+
+  const isMovable = useCallback(
+    (card: KanbanCard) =>
+      enableDrag && card.draggable !== false && !card.disabled && (canDrag ? canDrag(card) : true),
+    [enableDrag, canDrag],
+  );
+
+  const accepts = useCallback(
+    (card: KanbanCard, toColumnId: string) =>
+      card.columnId !== toColumnId && (!canDrop || canDrop(card, card.columnId, toColumnId)),
+    [canDrop],
+  );
+
+  const moveTargetsOf = useCallback(
+    (card: KanbanCard) => columns.filter((column) => accepts(card, column.id)),
+    [columns, accepts],
+  );
+
+  /**
+   * One path for drag, menu and keyboard: run the adapter's transition, then announce the real
+   * outcome. Focus follows the card only once the server accepted the move.
+   */
+  const moveCard = useCallback(
+    async (card: KanbanCard, toColumnId: string) => {
+      if (!accepts(card, toColumnId) || !onDrop) return;
+      const target = columns.find((c) => c.id === toColumnId);
+      const name = cardName(card);
+      try {
+        const outcome = readOutcome(await onDrop(card, card.columnId, toColumnId));
+        if (outcome.ok) {
+          setFocusAfterMove({ cardId: card.id, columnId: toColumnId });
+          setAnnouncement(t("kanban.moved", { card: name, column: target?.label ?? "" }));
+        } else {
+          setFocusAfterMove(null);
+          setAnnouncement(
+            outcome.reason
+              ? t("kanban.refusedReason", { card: name, reason: outcome.reason })
+              : t("kanban.refused", { card: name }),
+          );
+        }
+      } catch (err) {
+        setFocusAfterMove(null);
+        setAnnouncement(t("kanban.refusedReason", { card: name, reason: appErrorReason(err) }));
+      }
+    },
+    [accepts, columns, onDrop, t],
+  );
+
+  const keyboardMove = useCallback(
+    (card: KanbanCard, direction: -1 | 1) => {
+      const from = columns.findIndex((c) => c.id === card.columnId);
+      for (let i = from + direction; i >= 0 && i < columns.length; i += direction) {
+        const column = columns[i];
+        if (column && accepts(card, column.id)) {
+          void moveCard(card, column.id);
+          return;
+        }
+      }
+      setAnnouncement(t("kanban.noTarget", { card: cardName(card) }));
+    },
+    [columns, accepts, moveCard, t],
+  );
+
+  // Keep keyboard users on the card they moved once the adapter re-renders it in its new lane.
+  // Waits for the card to appear in the target lane (the adapter may reload after or before the
+  // transition resolves), then focuses it once.
+  useEffect(() => {
+    if (!focusAfterMove || !rootRef.current) return;
+    const el = rootRef.current.querySelector<HTMLElement>(
+      `[data-column-id="${CSS.escape(focusAfterMove.columnId)}"] [data-card-id="${CSS.escape(
+        focusAfterMove.cardId,
+      )}"]`,
+    );
+    if (!el) return;
+    if (document.activeElement !== el) el.focus();
+    setFocusAfterMove(null);
+  }, [cards, focusAfterMove]);
 
   const handleDragStart = useCallback((e: DragEvent, card: KanbanCard) => {
     dragCardRef.current = card;
@@ -383,23 +518,40 @@ export function KanbanBoard<T = KanbanCard>({
       const card = dragCardRef.current;
       dragCardRef.current = null;
       if (!card) return;
-      if (card.columnId === toColumnId) return;
-      if (canDrop && !canDrop(card, card.columnId, toColumnId)) return;
-      onDrop?.(card, card.columnId, toColumnId);
+      void moveCard(card, toColumnId);
     },
-    [canDrop, onDrop],
+    [moveCard],
   );
+
+  const boardLabel = ariaLabel ?? t("kanban.boardLabel");
+  const columnEmpty = emptyColumnLabel ?? t("kanban.emptyColumn");
+  const moreLabel = loadMoreLabel ?? ((count: number) => t("kanban.showMore", { count }));
 
   if (columns.length === 0) {
     return (
-      <div className={cn(mfKanban.root, className)} role="region" aria-label={ariaLabel}>
+      <div className={cn(mfKanban.root, className)} role="region" aria-label={boardLabel}>
         <div className={mfKanban.boardEmpty}>{empty}</div>
       </div>
     );
   }
 
   return (
-    <div className={cn(mfKanban.root, className)} role="region" aria-label={ariaLabel}>
+    <div
+      ref={rootRef}
+      className={cn(mfKanban.root, className)}
+      role="region"
+      aria-label={boardLabel}
+    >
+      {enableDrag ? (
+        <>
+          <span id={moveHintId} className="sr-only">
+            {t("kanban.moveHint")}
+          </span>
+          <span className="sr-only" role="status" aria-live="polite">
+            {announcement}
+          </span>
+        </>
+      ) : null}
       <div className={mfKanban.scroller}>
         {columns.map((column) => (
           <KanbanColumnView
@@ -407,13 +559,17 @@ export function KanbanBoard<T = KanbanCard>({
             column={column}
             cards={byColumn.get(column.id) ?? []}
             enableDrag={enableDrag}
-            {...(canDrag ? { canDrag } : {})}
+            isMovable={isMovable}
+            moveTargetsOf={moveTargetsOf}
+            moveHintId={moveHintId}
             {...(onCardClick ? { onCardClick } : {})}
             onDragStart={handleDragStart}
             onColumnDrop={handleColumnDrop}
+            onMove={moveCard}
+            onKeyboardMove={keyboardMove}
             pageSize={pageSize}
-            emptyColumnLabel={emptyColumnLabel}
-            {...(loadMoreLabel ? { loadMoreLabel } : {})}
+            emptyColumnLabel={columnEmpty}
+            loadMoreLabel={moreLabel}
           />
         ))}
       </div>

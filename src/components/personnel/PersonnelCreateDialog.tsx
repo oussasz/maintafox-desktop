@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 
 import { EntityFormImageUploader } from "@/components/entity-form/EntityFormImageUploader";
 import type { EntityFormImageItem } from "@/components/entity-form/EntityFormImageUploader";
+import { ExternalCompanyDialog } from "@/components/personnel/ExternalCompaniesPanel";
 import { PersonnelPickerCombobox } from "@/components/personnel/PersonnelCard";
 import { PositionCombobox } from "@/components/personnel/PositionCombobox";
 import { ReferenceCombobox } from "@/components/reference/ReferenceCombobox";
@@ -26,7 +27,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { mfInput } from "@/design-system/tokens";
 import { usePermissions } from "@/hooks/use-permissions";
+import { describeAppError } from "@/lib/app-error";
+import { cn } from "@/lib/utils";
 import { getOrgDesignerSnapshot } from "@/services/org-designer-service";
 import {
   listActiveTeams,
@@ -137,6 +141,7 @@ export function PersonnelCreateDialog() {
   const [crewOptions, setCrewOptions] = useState<TeamSummary[]>([]);
   const [crewsLoading, setCrewsLoading] = useState(false);
   const [companies, setCompanies] = useState<{ id: number; name: string }[]>([]);
+  const [companyDialogOpen, setCompanyDialogOpen] = useState(false);
   const [personnelList, setPersonnelList] = useState<Personnel[]>([]);
   const [certTypes, setCertTypes] = useState<CertificationType[]>([]);
   const [localError, setLocalError] = useState<string | null>(null);
@@ -272,33 +277,48 @@ export function PersonnelCreateDialog() {
   }, [showCreateForm, resetForm, loadLookups]);
 
   // Seed skills/certs when position changes
-  const handlePositionChange = useCallback(async (id: number | null) => {
-    setPositionId(id);
-    if (!id) {
-      setSkills([]);
-      setCerts([]);
-      return;
-    }
-    try {
-      const seed = await getPositionRequirementSeed(id);
-      setSkills(
-        seed.skill_reference_value_ids.map((refId) => ({
-          key: nextKey(),
-          refValueIdStr: String(refId),
-          proficiency: 1,
-          sourceType: "position_seed" as const,
-        })),
-      );
-      setCerts(
-        seed.certification_type_ids.map((certId) => ({
-          key: nextKey(),
-          certTypeId: certId,
-        })),
-      );
-    } catch {
-      // Silently ignore — user can add manually
-    }
-  }, []);
+  const handlePositionChange = useCallback(
+    async (id: number | null) => {
+      setPositionId(id);
+      // Manually added skills stay; only the rows seeded by the previous position are replaced.
+      const keepManual = (rows: SkillRow[]) => rows.filter((r) => r.sourceType !== "position_seed");
+      if (!id) {
+        setSkills(keepManual);
+        return;
+      }
+      try {
+        const seed = await getPositionRequirementSeed(id);
+        setSkills((prev) => {
+          const manual = keepManual(prev);
+          const manualRefs = new Set(manual.map((r) => r.refValueIdStr));
+          return [
+            ...manual,
+            ...seed.skill_reference_value_ids
+              .filter((refId) => !manualRefs.has(String(refId)))
+              .map((refId) => ({
+                key: nextKey(),
+                refValueIdStr: String(refId),
+                proficiency: 1,
+                sourceType: "position_seed" as const,
+              })),
+          ];
+        });
+        setCerts((prev) => {
+          const have = new Set(prev.map((c) => c.certTypeId));
+          return [
+            ...prev,
+            ...seed.certification_type_ids
+              .filter((certId) => !have.has(certId))
+              .map((certId) => ({ key: nextKey(), certTypeId: certId })),
+          ];
+        });
+      } catch (err) {
+        // Said, not swallowed: the form still works, the requirements are added by hand.
+        setLocalError(t("create.positionSeedFailed", { msg: describeAppError(err).title }));
+      }
+    },
+    [t],
+  );
 
   // ── Photo picker ──────────────────────────────────────────────────────────
   const pickSinglePhoto = useCallback(async (): Promise<EntityFormImageItem[]> => {
@@ -473,14 +493,26 @@ export function PersonnelCreateDialog() {
         await updateExisting(update);
         try {
           await persistRateCard(editingPersonnel.id);
-          closeCreateForm();
         } catch (rateErr) {
-          setLocalError(
-            t("create.rateCardFailed", {
-              msg: rateErr instanceof Error ? rateErr.message : String(rateErr),
-            }),
-          );
+          setLocalError(t("create.rateCardFailed", { msg: describeAppError(rateErr).title }));
+          return;
         }
+        // A photo chosen while editing replaces the current one (the edit form starts empty).
+        const editPhoto = photoItems[0];
+        if (editPhoto?.path) {
+          setPhotoUploading(true);
+          try {
+            await uploadPersonnelPhoto(editingPersonnel.id, editPhoto.path);
+          } catch (photoErr) {
+            setLocalError(
+              t("create.photoUploadWarning", { msg: describeAppError(photoErr).title }),
+            );
+            return;
+          } finally {
+            setPhotoUploading(false);
+          }
+        }
+        closeCreateForm();
         return;
       }
 
@@ -491,9 +523,7 @@ export function PersonnelCreateDialog() {
       } catch (rateErr) {
         await usePersonnelStore.getState().openPersonnel(created.id);
         usePersonnelStore.setState({
-          error: t("create.rateCardFailed", {
-            msg: rateErr instanceof Error ? rateErr.message : String(rateErr),
-          }),
+          error: t("create.rateCardFailed", { msg: describeAppError(rateErr).title }),
         });
         return;
       }
@@ -506,11 +536,7 @@ export function PersonnelCreateDialog() {
           await uploadPersonnelPhoto(created.id, stagedPhoto.path);
         } catch (photoErr) {
           // Non-fatal — show warning but don't block
-          setLocalError(
-            t("create.photoUploadWarning", "Personnel created. Photo upload failed: {{msg}}", {
-              msg: photoErr instanceof Error ? photoErr.message : String(photoErr),
-            }),
-          );
+          setLocalError(t("create.photoUploadWarning", { msg: describeAppError(photoErr).title }));
         } finally {
           setPhotoUploading(false);
         }
@@ -635,11 +661,26 @@ export function PersonnelCreateDialog() {
             </div>
 
             {isExternal ? (
-              <div className="space-y-3 rounded-md border border-amber-400/40 bg-amber-50/40 p-3">
+              <div className="space-y-3 rounded-md border border-tone-attention-border bg-tone-attention-bg p-3">
                 <div className="space-y-1.5">
-                  <Label>{t("field.company")} *</Label>
+                  <div className="flex items-center justify-between gap-2">
+                    <Label htmlFor="per-company">{t("field.company")} *</Label>
+                    {can(P.PER_MANAGE) ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 gap-1 px-2"
+                        onClick={() => setCompanyDialogOpen(true)}
+                      >
+                        <Plus className="h-3.5 w-3.5" aria-hidden />
+                        {t("companies.add")}
+                      </Button>
+                    ) : null}
+                  </div>
                   <select
-                    className="h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm"
+                    id="per-company"
+                    className={mfInput.nativeSelect}
                     value={externalCompanyId ?? ""}
                     onChange={(e) =>
                       setExternalCompanyId(e.target.value ? Number(e.target.value) : null)
@@ -699,7 +740,7 @@ export function PersonnelCreateDialog() {
               <div className="space-y-1.5">
                 <Label>{t("field.entity")} *</Label>
                 <select
-                  className="h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm"
+                  className={mfInput.nativeSelect}
                   value={entityId ?? ""}
                   onChange={(e) =>
                     void handleEntityChange(e.target.value ? Number(e.target.value) : null)
@@ -716,7 +757,7 @@ export function PersonnelCreateDialog() {
               <div className="space-y-1.5">
                 <Label>{t("field.team")} *</Label>
                 <select
-                  className="h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm"
+                  className={mfInput.nativeSelect}
                   value={teamId ?? ""}
                   disabled={entityId == null || crewsLoading}
                   onChange={(e) => setTeamId(e.target.value ? Number(e.target.value) : null)}
@@ -793,121 +834,138 @@ export function PersonnelCreateDialog() {
               onPickFiles={pickSinglePhoto}
               uploading={photoUploading}
               maxItems={1}
-              emptyLabel={t("create.photo.empty", "No photo yet")}
+              emptyLabel={
+                isEdit
+                  ? t("create.photo.editKeepsCurrent")
+                  : t("create.photo.empty", "No photo yet")
+              }
               hintLabel={t("create.photo.hint", "Click to select a profile photo (PNG, JPG, WEBP)")}
               addLabel={t("create.photo.add", "Add photo")}
               primaryLabel={t("create.photo.primary", "Primary")}
               removeLabel={t("create.photo.remove", "Remove")}
             />
 
-            {/* ── Skills ──────────────────────────────────────────────── */}
-            <div className="flex items-center justify-between">
-              <SectionLabel>{t("create.section.skills", "Skills")}</SectionLabel>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="mt-4 h-7 gap-1 text-xs"
-                onClick={addSkill}
-              >
-                <Plus className="h-3.5 w-3.5" />
-                {t("create.skill.add", "Add skill")}
-              </Button>
-            </div>
-            {skills.length === 0 ? (
-              <p className="text-xs text-text-muted">
-                {t(
-                  "create.skill.empty",
-                  "No skills added. Selecting a position will pre-fill from its requirement profile.",
+            {isEdit ? (
+              // The update command carries no skills or certifications: editing them here would
+              // be silently dropped. They are maintained in the person's Qualifications tab.
+              <>
+                <SectionLabel>{t("create.section.skills", "Skills")}</SectionLabel>
+                <p className="rounded-md border border-tone-info-border bg-tone-info-bg px-3 py-2 text-xs text-tone-info-fg">
+                  {t("create.qualificationsInRecord")}
+                </p>
+              </>
+            ) : (
+              <>
+                {/* ── Skills ──────────────────────────────────────────────── */}
+                <div className="flex items-center justify-between">
+                  <SectionLabel>{t("create.section.skills", "Skills")}</SectionLabel>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-4 h-9 gap-1 text-xs"
+                    onClick={addSkill}
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    {t("create.skill.add", "Add skill")}
+                  </Button>
+                </div>
+                {skills.length === 0 ? (
+                  <p className="text-xs text-text-muted">
+                    {t(
+                      "create.skill.empty",
+                      "No skills added. Selecting a position will pre-fill from its requirement profile.",
+                    )}
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {skills.map((skill) => (
+                      <div key={skill.key} className="flex items-center gap-2">
+                        <div className="flex-1">
+                          <ReferenceCombobox
+                            referenceType="personnel.skills"
+                            valueMode="id"
+                            value={skill.refValueIdStr}
+                            onChange={(val) => updateSkillRef(skill.key, val)}
+                            placeholder={t("create.skill.placeholder", "Select skill…")}
+                          />
+                        </div>
+                        <select
+                          className={cn(mfInput.nativeSelect, "w-20 px-2")}
+                          value={skill.proficiency}
+                          onChange={(e) => updateSkillProf(skill.key, e.target.value)}
+                          aria-label={t("create.skill.proficiency", "Proficiency")}
+                        >
+                          {[1, 2, 3, 4, 5].map((lvl) => (
+                            <option key={lvl} value={lvl}>
+                              {lvl}
+                            </option>
+                          ))}
+                        </select>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 shrink-0 text-destructive hover:text-destructive"
+                          onClick={() => removeSkill(skill.key)}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
                 )}
-              </p>
-            ) : (
-              <div className="space-y-2">
-                {skills.map((skill) => (
-                  <div key={skill.key} className="flex items-center gap-2">
-                    <div className="flex-1">
-                      <ReferenceCombobox
-                        referenceType="personnel.skills"
-                        valueMode="id"
-                        value={skill.refValueIdStr}
-                        onChange={(val) => updateSkillRef(skill.key, val)}
-                        placeholder={t("create.skill.placeholder", "Select skill…")}
-                      />
-                    </div>
-                    <select
-                      className="h-9 w-20 rounded-md border border-input bg-background px-2 text-sm shadow-sm"
-                      value={skill.proficiency}
-                      onChange={(e) => updateSkillProf(skill.key, e.target.value)}
-                      aria-label={t("create.skill.proficiency", "Proficiency")}
-                    >
-                      {[1, 2, 3, 4, 5].map((lvl) => (
-                        <option key={lvl} value={lvl}>
-                          {lvl}
-                        </option>
-                      ))}
-                    </select>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 shrink-0 text-destructive hover:text-destructive"
-                      onClick={() => removeSkill(skill.key)}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            )}
 
-            {/* ── Certifications ───────────────────────────────────────── */}
-            <div className="flex items-center justify-between">
-              <SectionLabel>{t("create.section.certs", "Certifications")}</SectionLabel>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="mt-4 h-7 gap-1 text-xs"
-                onClick={addCert}
-              >
-                <Plus className="h-3.5 w-3.5" />
-                {t("create.cert.add", "Add certification")}
-              </Button>
-            </div>
-            {certs.length === 0 ? (
-              <p className="text-xs text-text-muted">
-                {t("create.cert.empty", "No certifications added.")}
-              </p>
-            ) : (
-              <div className="space-y-2">
-                {certs.map((cert) => (
-                  <div key={cert.key} className="flex items-center gap-2">
-                    <select
-                      className="h-9 flex-1 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm"
-                      value={cert.certTypeId ?? ""}
-                      onChange={(e) => updateCertType(cert.key, e.target.value)}
-                    >
-                      <option value="">
-                        {t("create.cert.placeholder", "Select certification…")}
-                      </option>
-                      {certTypes.map((ct) => (
-                        <option key={ct.id} value={ct.id}>
-                          {ct.code} — {ct.name}
-                        </option>
-                      ))}
-                    </select>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 shrink-0 text-destructive hover:text-destructive"
-                      onClick={() => removeCert(cert.key)}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
+                {/* ── Certifications ───────────────────────────────────────── */}
+                <div className="flex items-center justify-between">
+                  <SectionLabel>{t("create.section.certs", "Certifications")}</SectionLabel>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-4 h-9 gap-1 text-xs"
+                    onClick={addCert}
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    {t("create.cert.add", "Add certification")}
+                  </Button>
+                </div>
+                {certs.length === 0 ? (
+                  <p className="text-xs text-text-muted">
+                    {t("create.cert.empty", "No certifications added.")}
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {certs.map((cert) => (
+                      <div key={cert.key} className="flex items-center gap-2">
+                        <select
+                          className={cn(mfInput.nativeSelect, "w-auto flex-1")}
+                          value={cert.certTypeId ?? ""}
+                          onChange={(e) => updateCertType(cert.key, e.target.value)}
+                        >
+                          <option value="">
+                            {t("create.cert.placeholder", "Select certification…")}
+                          </option>
+                          {certTypes.map((ct) => (
+                            <option key={ct.id} value={ct.id}>
+                              {ct.code} — {ct.name}
+                            </option>
+                          ))}
+                        </select>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 shrink-0 text-destructive hover:text-destructive"
+                          onClick={() => removeCert(cert.key)}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
+                )}
+              </>
             )}
 
             {/* ── Contact ─────────────────────────────────────────────── */}
@@ -1018,6 +1076,20 @@ export function PersonnelCreateDialog() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ExternalCompanyDialog
+        open={companyDialogOpen}
+        company={null}
+        onOpenChange={setCompanyDialogOpen}
+        onSaved={(company) => {
+          setCompanies((prev) =>
+            [...prev, { id: company.id, name: company.name }].sort((a, b) =>
+              a.name.localeCompare(b.name),
+            ),
+          );
+          setExternalCompanyId(company.id);
+        }}
+      />
 
       {/* CreateUserDialog — opened after personnel is created if checkbox was checked */}
       {CreateUserDialog && showCreateUser ? (

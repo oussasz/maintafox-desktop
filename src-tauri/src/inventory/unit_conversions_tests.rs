@@ -1,8 +1,7 @@
 //! Unit conversions: validation, article scope over general scope, inverse, optimistic updates,
 //! disagreeing duplicates from two devices.
 
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
-use sea_orm_migration::MigratorTrait;
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 use super::*;
 
@@ -29,18 +28,14 @@ struct Units {
 }
 
 async fn setup() -> (DatabaseConnection, Units) {
-    let db = Database::connect("sqlite::memory:").await.expect("in-memory SQLite");
-    crate::migrations::Migrator::up(&db, None).await.expect("migrations");
-    crate::db::seeder::seed_system_data(&db).await.expect("seeder");
-    let unit = |code: &str| {
-        format!(
-            "SELECT lv.id FROM lookup_values lv JOIN lookup_domains ld ON ld.id = lv.domain_id \
-             WHERE ld.domain_key = 'inventory.unit_of_measure' AND lv.code = '{code}'"
-        )
+    let db = crate::db::test_db::seeded().await;
+    let unit = |code: &'static str| {
+        let db = db.clone();
+        async move { crate::reference::units::unit_id_by_code(&db, code).await.expect(code) }
     };
-    let u = scalar(&db, &unit("U")).await;
-    let bx = scalar(&db, &unit("BOX")).await;
-    let kg = scalar(&db, &unit("KG")).await;
+    let u = unit("U").await;
+    let bx = unit("BOX").await;
+    let kg = unit("KG").await;
     exec(
         &db,
         &format!(
@@ -104,12 +99,9 @@ async fn invalid_conversions_are_refused() {
     ] {
         assert!(create_unit_conversion(&db, 1, bad).await.is_err());
     }
-    let not_a_unit = scalar(
-        &db,
-        "SELECT id FROM lookup_values WHERE id NOT IN (SELECT lv.id FROM lookup_values lv \
-         JOIN lookup_domains ld ON ld.id = lv.domain_id WHERE ld.domain_key = 'inventory.unit_of_measure') LIMIT 1",
-    )
-    .await;
+    let not_a_unit = crate::reference::urgency_scale::urgency_value_id(&db, "normal")
+        .await
+        .expect("a reference value of another list");
     assert!(
         create_unit_conversion(&db, 1, input(not_a_unit, u.u, None, 2.0))
             .await
@@ -181,4 +173,72 @@ async fn disagreeing_duplicates_from_two_devices_are_reported() {
     )
     .await;
     assert!(convert_quantity(&db, 1.0, u.bx, u.u, None).await.is_err());
+}
+
+fn gate_of<T: std::fmt::Debug>(result: AppResult<T>) -> String {
+    match result {
+        Err(AppError::ValidationFailed(m)) => m.join(" "),
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn a_conversion_between_different_dimensions_is_refused() {
+    use crate::reference::units::{
+        self, GATE_UNIT_DIMENSION_MISMATCH, GATE_UNIT_DIMENSION_MISSING, GATE_UNIT_NOT_ACTIVE,
+    };
+    let (db, u) = setup().await;
+    let metre = units::unit_id_by_code(&db, "M").await.expect("M");
+    let gram = units::unit_id_by_code(&db, "G").await.expect("G");
+    let roll = units::unit_id_by_code(&db, "ROUL").await.expect("ROUL");
+
+    // Mass to length: refused with the gate code.
+    assert!(
+        gate_of(create_unit_conversion(&db, 1, input(u.kg, metre, None, 2.0)).await)
+            .contains(GATE_UNIT_DIMENSION_MISMATCH)
+    );
+    // Same dimension, and a packaging unit (its content is defined per article): accepted.
+    create_unit_conversion(&db, 1, input(u.kg, gram, None, 1000.0))
+        .await
+        .expect("kg -> g");
+    create_unit_conversion(&db, 1, input(roll, metre, Some(u.article), 50.0))
+        .await
+        .expect("roll -> m for the article");
+    let grams = convert_quantity(&db, 2.0, u.kg, gram, None).await.expect("kg -> g");
+    assert_eq!(grams.quantity, 2000.0);
+
+    // A unit without dimension (migrated, to review) cannot be used by a new conversion.
+    exec(
+        &db,
+        &format!("UPDATE reference_values SET semantic_tag = NULL WHERE id = {gram}"),
+    )
+    .await;
+    assert!(
+        gate_of(create_unit_conversion(&db, 1, input(gram, u.kg, Some(u.article), 0.001)).await)
+            .contains(GATE_UNIT_DIMENSION_MISSING)
+    );
+    // A retired unit cannot be used by a new conversion.
+    exec(
+        &db,
+        &format!("UPDATE reference_values SET is_active = 0 WHERE id = {metre}"),
+    )
+    .await;
+    assert!(
+        gate_of(create_unit_conversion(&db, 1, input(u.u, metre, Some(u.article), 1.0)).await)
+            .contains(GATE_UNIT_NOT_ACTIVE)
+    );
+
+    // A stored row between different dimensions (made before the guard) is never used.
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO unit_conversions (entity_sync_id, from_unit_value_id, to_unit_value_id, factor, \
+             is_active, row_version, created_at, updated_at) \
+             VALUES ('uc-legacy-cross', {kg}, {u}, 3.0, 1, 1, datetime('now'), datetime('now'))",
+            kg = u.kg,
+            u = u.u
+        ),
+    )
+    .await;
+    assert!(gate_of(convert_quantity(&db, 1.0, u.kg, u.u, None).await).contains(GATE_UNIT_DIMENSION_MISMATCH));
 }

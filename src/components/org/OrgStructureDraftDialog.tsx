@@ -6,6 +6,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { orgErrorText } from "@/components/org/org-display";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -22,7 +23,6 @@ import {
   createOrgStructureModel,
   forkOrgDraftFromPublished,
 } from "@/services/org-service";
-import { formatOrgIpcError } from "@/utils/errors";
 
 export type OrgStructureDraftDialogVariant = "bootstrap" | "fork";
 
@@ -66,7 +66,7 @@ export function OrgStructureDraftDialog({
       onOpenChange(false);
       onSuccess();
     } catch (e) {
-      setError(formatOrgIpcError(e));
+      setError(orgErrorText(e));
     } finally {
       setSubmitting(false);
     }
@@ -154,7 +154,7 @@ export function AbandonOrgDraftDialog({
       onOpenChange(false);
       onSuccess();
     } catch (e) {
-      setError(formatOrgIpcError(e));
+      setError(orgErrorText(e));
     } finally {
       setSubmitting(false);
     }

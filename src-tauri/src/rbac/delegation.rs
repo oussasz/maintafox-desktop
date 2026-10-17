@@ -83,19 +83,24 @@ pub fn validate_delegation_boundary(policy: &DelegatedAdminPolicy, permission_na
 /// Load all `delegated_admin_policies` whose `admin_role_id` is held by the
 /// given user through an active `user_scope_assignments` row.
 async fn load_policies_for_user(db: &DatabaseConnection, user_id: i64) -> AppResult<Vec<DelegatedAdminPolicy>> {
-    let sql = "\
-        SELECT dap.id, dap.admin_role_id, dap.managed_scope_type, \
+    // Assignments in force only (the shared rule and clock of `rbac::resolver`).
+    let sql = format!(
+        "SELECT dap.id, dap.admin_role_id, dap.managed_scope_type, \
                dap.managed_scope_reference, dap.allowed_domains_json, \
                dap.requires_step_up_for_publish \
         FROM delegated_admin_policies dap \
         INNER JOIN user_scope_assignments usa \
           ON usa.role_id = dap.admin_role_id \
         WHERE usa.user_id = ? \
-          AND usa.deleted_at IS NULL \
-          AND (usa.is_emergency = 0 OR usa.emergency_expires_at > datetime('now'))";
+          AND {}",
+        crate::rbac::resolver::ASSIGNMENT_IN_FORCE_SQL
+    );
+    let now = crate::rbac::resolver::assignment_clock();
+    let mut values: Vec<sea_orm::Value> = vec![user_id.into()];
+    values.extend(crate::rbac::resolver::in_force_binds(&now));
 
     let rows = db
-        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, sql, [user_id.into()]))
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
         .await?;
 
     let policies = rows

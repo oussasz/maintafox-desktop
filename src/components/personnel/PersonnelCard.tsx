@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { mfInput } from "@/design-system/tokens";
 import { cn } from "@/lib/utils";
 import type { Personnel } from "@shared/ipc-types";
 
@@ -146,7 +147,7 @@ export function PersonnelPickerCombobox({
         disabled={disabled}
       />
       <select
-        className="h-9 w-full rounded border bg-background px-2 text-sm"
+        className={mfInput.nativeSelect}
         value={value ?? ""}
         onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
         disabled={disabled}

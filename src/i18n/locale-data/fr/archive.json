@@ -1,10 +1,213 @@
 {
   "page": {
-    "title": "Archivage",
-    "subtitle": "Consulter les archives, vérifier l'intégrité et gérer les politiques de rétention."
+    "title": "Archives",
+    "subtitle": "Retrouvez les enregistrements archivés, vérifiez leur intégrité et gérez leur durée de conservation."
   },
   "tabs": {
-    "explorer": "Explorateur",
-    "retention": "Politiques de rétention"
+    "explorer": "Enregistrements archivés",
+    "retention": "Règles de conservation"
+  },
+  "module": {
+    "other": "Autre module",
+    "di": "Demandes d’intervention",
+    "wo": "Ordres de travail",
+    "work_orders": "Ordres de travail",
+    "rbac": "Utilisateurs et rôles",
+    "notifications": "Notifications",
+    "config": "Configuration",
+    "report": "Rapports",
+    "global": "Tous les modules"
+  },
+  "class": {
+    "other": "Autre type d’archive",
+    "operational_history": "Historique d’exploitation",
+    "soft_delete": "Enregistrement supprimé",
+    "audit_retention": "Piste d’audit",
+    "config_snapshot": "Instantané de configuration",
+    "report_copy": "Copie de rapport"
+  },
+  "restorePolicy": {
+    "other": "Non précisé",
+    "not_allowed": "Restauration impossible",
+    "admin_only": "Administrateur uniquement",
+    "until_date": "Jusqu’à une date fixée"
+  },
+  "purgeMode": {
+    "other": "Non précisé",
+    "manual_approval": "Manuelle, après approbation",
+    "scheduled": "Automatique à échéance",
+    "never": "Jamais supprimé"
+  },
+  "action": {
+    "other": "Autre action",
+    "archive": "Archivé",
+    "restore": "Restauration demandée",
+    "export": "Exporté",
+    "purge": "Supprimé définitivement",
+    "legal_hold_on": "Gel juridique posé",
+    "legal_hold_off": "Gel juridique levé"
+  },
+  "result": {
+    "other": "Autre",
+    "success": "Effectué",
+    "failed": "Refusé",
+    "blocked": "Bloqué"
+  },
+  "status": {
+    "legalHold": "Gel juridique",
+    "normal": "Normal"
+  },
+  "record": {
+    "unnamed": "Enregistrement — {{module}}"
+  },
+  "stats": {
+    "total": "Enregistrements archivés",
+    "legalHold": "Sous gel juridique",
+    "withoutHold": "Sans gel juridique",
+    "withoutHoldHint": "Supprimables à la fin de leur durée de conservation"
+  },
+  "explorer": {
+    "filtersTitle": "Parcourir et filtrer",
+    "tree": "Par module, type et année",
+    "treeEmpty": "Rien n’est encore archivé.",
+    "unknownYear": "Date inconnue",
+    "searchPlaceholder": "Rechercher dans les archives…",
+    "legalHoldOnly": "Gel juridique uniquement",
+    "classFilters": "Types d’archive",
+    "dateFrom": "Archivé depuis le",
+    "dateTo": "Archivé jusqu’au",
+    "apply": "Appliquer",
+    "reset": "Réinitialiser",
+    "recordsTitle": "Enregistrements",
+    "loading": "Chargement des enregistrements archivés…",
+    "loadError": "Les enregistrements archivés n’ont pas pu être chargés",
+    "empty": "Aucun enregistrement archivé ne correspond.",
+    "emptyHint": "Modifiez ou réinitialisez les filtres.",
+    "limitReached": "Seuls les {{count}} enregistrements les plus récents sont affichés. Affinez les filtres pour voir les plus anciens.",
+    "select": "Sélection",
+    "selectRecord": "Sélectionner {{name}}",
+    "showing": "{{from}}–{{to}} sur {{total}}",
+    "previous": "Précédent",
+    "next": "Suivant",
+    "col": {
+      "record": "Enregistrement",
+      "class": "Type",
+      "status": "Statut",
+      "archived": "Archivé le"
+    }
+  },
+  "bulk": {
+    "selected_one": "{{count}} enregistrement sélectionné",
+    "selected_other": "{{count}} enregistrements sélectionnés",
+    "export": "Exporter la sélection",
+    "legalHold": "Poser un gel juridique",
+    "purge": "Supprimer définitivement",
+    "clear": "Vider la sélection",
+    "legalHoldTitle": "Poser un gel juridique ?",
+    "legalHoldDescription_one": "L’enregistrement sélectionné sera protégé contre la suppression jusqu’à la levée du gel.",
+    "legalHoldDescription_other": "Les {{count}} enregistrements sélectionnés seront protégés contre la suppression jusqu’à la levée du gel.",
+    "legalHoldConfirm_one": "Poser le gel juridique",
+    "legalHoldConfirm_other": "Poser le gel sur {{count}} enregistrements",
+    "legalHoldDone_one": "Gel juridique posé sur {{count}} enregistrement.",
+    "legalHoldDone_other": "Gel juridique posé sur {{count}} enregistrements.",
+    "purgeTitle": "Supprimer définitivement ?",
+    "purgeDescription_one": "L’enregistrement sélectionné sera effacé des archives. Cette action est irréversible. Les enregistrements sous gel juridique ou encore en période de conservation sont conservés.",
+    "purgeDescription_other": "Les {{count}} enregistrements sélectionnés seront effacés des archives. Cette action est irréversible. Les enregistrements sous gel juridique ou encore en période de conservation sont conservés.",
+    "purgeConfirm_one": "Supprimer définitivement",
+    "purgeConfirm_other": "Supprimer {{count}} enregistrements définitivement",
+    "purgeDone": "{{purged}} supprimé(s), {{blocked}} conservé(s).",
+    "purgeBlocked": "Les enregistrements conservés sont sous gel juridique ou encore en période de conservation.",
+    "purgeBlockedStrict": "Rien n’a été supprimé : le mode strict refuse toute la sélection dès qu’un enregistrement ne peut pas l’être."
+  },
+  "export": {
+    "dialogTitle": "Enregistrer l’export d’archive",
+    "bulkReason": "Export d’une sélection depuis les archives",
+    "singleReason": "Export d’un enregistrement archivé",
+    "saved_one": "Enregistrement archivé exporté.",
+    "saved_other": "{{count}} enregistrements archivés exportés."
+  },
+  "dialog": {
+    "reason": "Motif (consigné dans l’historique de l’archive)",
+    "reasonPlaceholder": "Pourquoi faites-vous cette action ?",
+    "cancel": "Annuler"
+  },
+  "detail": {
+    "back": "Retour à la liste",
+    "loading": "Chargement de l’enregistrement archivé…",
+    "loadError": "L’enregistrement archivé n’a pas pu être chargé",
+    "checksumOk": "Intégrité vérifiée",
+    "checksumBad": "Échec du contrôle d’intégrité",
+    "module": "Module :",
+    "archivedAt": "Archivé le :",
+    "restorePolicy": "Restauration :",
+    "retention": "Conservation :",
+    "retentionValue": "{{years}} ans, suppression : {{mode}}",
+    "noRetention": "Aucune règle de conservation",
+    "export": "Exporter",
+    "restore": "Demander la restauration",
+    "legalHoldOn": "Poser un gel juridique",
+    "legalHoldOff": "Lever le gel juridique",
+    "purge": "Supprimer définitivement",
+    "restoreBlocked": {
+      "policy": "Cet enregistrement ne peut pas être restauré.",
+      "legalHold": "Levez le gel juridique avant de demander une restauration.",
+      "retention": "La règle de conservation de ce type n’autorise pas la restauration."
+    },
+    "restoreTitle": "Demander une restauration ?",
+    "restoreDescription": "La demande pour « {{name}} » est consignée dans l’historique de l’archive. La remise de l’enregistrement dans son module n’est pas encore disponible dans cette version.",
+    "restoreConfirm": "Consigner la demande de restauration",
+    "restoreRecorded": "Demande de restauration consignée dans l’historique de l’archive.",
+    "legalHoldOnTitle": "Poser un gel juridique ?",
+    "legalHoldOnDescription": "« {{name}} » sera protégé contre la suppression jusqu’à la levée du gel.",
+    "legalHoldOffTitle": "Lever le gel juridique ?",
+    "legalHoldOffDescription": "« {{name}} » pourra alors être supprimé à la fin de sa durée de conservation.",
+    "purgeTitle": "Supprimer définitivement ?",
+    "purgeDescription": "« {{name}} » sera effacé des archives. Cette action est irréversible.",
+    "purgeConfirm": "Supprimer définitivement",
+    "purgeNotEligible": "Cet enregistrement ne peut pas encore être supprimé (voir les contrôles ci-dessus).",
+    "purged": "« {{name}} » a été supprimé des archives.",
+    "purgeRefused": "L’enregistrement a été conservé : il n’est pas supprimable.",
+    "eligibility": "Contrôles avant suppression",
+    "checkOk": "OK",
+    "checkBlocked": "Bloquant",
+    "tabs": {
+      "record": "Données archivées",
+      "history": "Historique"
+    },
+    "recordHint": "Le contenu archivé est conservé tel quel, pour l’audit. Exportez-le pour le lire dans un autre outil.",
+    "technicalDetails": "Détails techniques (contenu archivé)",
+    "historyAria": "Historique de l’enregistrement archivé",
+    "historyEmpty": "Aucun événement consigné."
+  },
+  "purgeCheck": {
+    "holdOn": "Sous gel juridique",
+    "holdOff": "Pas de gel juridique",
+    "noPolicy": "Aucune règle de conservation ne s’applique à cet enregistrement",
+    "policyAllows": "La règle de conservation autorise la suppression",
+    "policyForbids": "La règle de conservation n’autorise pas la suppression",
+    "invalidDate": "Date d’archivage inconnue",
+    "periodElapsed": "La durée de conservation de {{years}} ans est écoulée",
+    "periodRunning": "Durée de conservation en cours jusqu’au {{date}}"
+  },
+  "retention": {
+    "title": "Règles de conservation",
+    "subtitle": "Durée de conservation de chaque type d’enregistrement archivé, et possibilité de le restaurer ou de le supprimer.",
+    "loading": "Chargement des règles de conservation…",
+    "loadError": "Les règles de conservation n’ont pas pu être chargées",
+    "empty": "Aucune règle de conservation définie.",
+    "readOnly": "Lecture seule : modifier ces règles nécessite la permission paramètres système.",
+    "noShortening": "Ne peut pas être raccourcie",
+    "purgeLocked": "Impossible quand la suppression est réglée sur jamais",
+    "yearsAria": "Conservation en années pour {{name}}",
+    "allowRestoreAria": "Autoriser la restauration pour {{name}}",
+    "allowPurgeAria": "Autoriser la suppression pour {{name}}",
+    "col": {
+      "module": "Module",
+      "class": "Type",
+      "years": "Conservé (ans)",
+      "purgeMode": "Suppression",
+      "allowRestore": "Restauration autorisée",
+      "allowPurge": "Suppression autorisée"
+    }
   }
 }

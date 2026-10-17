@@ -7,18 +7,14 @@
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
     use sea_orm_migration::MigratorTrait;
 
     /// V1 — Migration 008 applies. After running Migrator::up, both
     /// `backup_policies` and `backup_runs` tables must exist.
     #[tokio::test]
     async fn v1_migration_008_creates_backup_tables() {
-        let db = Database::connect("sqlite::memory:").await.expect("In-memory DB");
-
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("All migrations should apply (including 008)");
+        let db = crate::db::test_db::migrated().await;
 
         // Verify backup_policies exists
         let policies_exists = db
@@ -69,11 +65,7 @@ mod tests {
     /// Uses PRAGMA table_info to enumerate every column.
     #[tokio::test]
     async fn v2_backup_runs_has_correct_columns() {
-        let db = Database::connect("sqlite::memory:").await.expect("In-memory DB");
-
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("Migrations should apply");
+        let db = crate::db::test_db::migrated().await;
 
         let rows = db
             .query_all(Statement::from_string(
@@ -123,11 +115,7 @@ mod tests {
     /// V2b — backup_policies table has all expected columns.
     #[tokio::test]
     async fn v2b_backup_policies_has_correct_columns() {
-        let db = Database::connect("sqlite::memory:").await.expect("In-memory DB");
-
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("Migrations should apply");
+        let db = crate::db::test_db::migrated().await;
 
         let rows = db
             .query_all(Statement::from_string(
@@ -272,11 +260,7 @@ mod tests {
     async fn validate_backup_file_not_found() {
         use crate::backup;
 
-        let db = Database::connect("sqlite::memory:").await.expect("In-memory DB");
-
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("Migrations should apply");
+        let db = crate::db::test_db::migrated().await;
 
         let err = backup::validate_backup_file(&db, "/nonexistent/path/does_not_exist.db", None)
             .await
@@ -294,11 +278,7 @@ mod tests {
     async fn list_backup_runs_empty() {
         use crate::backup;
 
-        let db = Database::connect("sqlite::memory:").await.expect("In-memory DB");
-
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("Migrations should apply");
+        let db = crate::db::test_db::migrated().await;
 
         let runs = backup::list_backup_runs(&db, 20)
             .await

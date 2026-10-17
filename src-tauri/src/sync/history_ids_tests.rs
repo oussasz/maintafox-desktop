@@ -1,12 +1,12 @@
 //! Ids inside history rows read correctly on every device (Phase 2 leftover 3).
 
-use super::test_support::{exec, scalar_i64, scalar_opt_text, started_db, RowFactory, TestServer};
+use super::test_support::{exec, scalar_i64, scalar_opt_text, started_device_db, RowFactory, TestServer};
 
 #[tokio::test]
 async fn history_ids_point_to_the_same_records_on_the_other_device() {
     let mut server = TestServer::new();
-    let a = started_db().await;
-    let b = started_db().await;
+    let a = started_device_db().await;
+    let b = started_device_db().await;
     let mut factory_a = RowFactory::for_device(1);
     let mut factory_b = RowFactory::for_device(2);
     // B already has rows of its own, so the same record gets other local ids there.

@@ -1,5 +1,7 @@
 {
   "page": {
+    "loadError": "Impossible de charger le personnel",
+    "filterLookupError": "Impossible de charger les listes de filtres (postes, organisation)",
     "title": "Personnel",
     "titleNew": "Nouveau personnel",
     "titleEdit": "Modifier personnel"
@@ -9,7 +11,9 @@
     "deactivate": "Désactiver",
     "refresh": "Actualiser",
     "viewDetails": "Voir le détail",
-    "view": "Voir"
+    "view": "Voir",
+    "cancel": "Annuler",
+    "save": "Enregistrer"
   },
   "view": {
     "list": "Liste",
@@ -17,14 +21,16 @@
   },
   "tabs": {
     "directory": "Personnel",
-    "skillsMatrix": "Matrice des competences",
+    "skillsMatrix": "Matrice des compétences",
     "availability": "Disponibilité",
-    "availabilityCalendar": "Calendrier de disponibilite",
+    "availabilityCalendar": "Calendrier de disponibilité",
     "teams": "Gestion des équipes",
-    "teamCapacity": "Capacite des equipes",
+    "teamCapacity": "Capacité des équipes",
     "training": "Formation et certifications",
     "positions": "Postes",
-    "analytics": "Analyses"
+    "analytics": "Analyses",
+    "companies": "Sous-traitants",
+    "calendar": "Calendrier des fériés"
   },
   "training": {
     "heading": "Formation et qualifications",
@@ -107,6 +113,7 @@
     "viewDetails": "Voir le détail"
   },
   "detail": {
+    "loadError": "Impossible d'ouvrir la fiche de cette personne",
     "title": "Détail personnel",
     "noSelection": "Sélectionnez une personne pour afficher le détail",
     "placeholder": "Le panneau détaillé sera disponible dans une version ultérieure.",
@@ -124,15 +131,16 @@
       "more": "Plus d'actions"
     },
     "tabs": {
-      "identity": "Identite",
-      "skills": "Competences",
-      "availability": "Disponibilite",
-      "teams": "Equipes",
+      "identity": "Identité",
+      "skills": "Compétences",
+      "availability": "Disponibilité",
+      "teams": "Équipes",
       "rates": "Tarifs",
       "authorizations": "Autorisations",
       "assignment": "Affectations",
       "history": "Historique",
-      "workload": "Charge"
+      "workload": "Charge",
+      "qualifications": "Habilitations et compétences"
     },
     "workload": {
       "openWo": "OT ouverts",
@@ -163,6 +171,9 @@
     "restricted": "Restreint"
   },
   "create": {
+    "positionSeedFailed": "Les exigences du poste n'ont pas pu être chargées ({{msg}}) : ajoutez les compétences à la main.",
+    "photoUploadWarning": "Fiche enregistrée, mais la photo n'a pas pu être envoyée : {{msg}}",
+    "qualificationsInRecord": "Les compétences et certifications d'une personne existante se gèrent dans l'onglet Qualifications de sa fiche.",
     "title": "Nouveau personnel",
     "editTitle": "Modifier le personnel",
     "submit": "Créer",
@@ -186,6 +197,7 @@
     "ratesHint": "Optionnel. Crée une grille de taux à compter d'aujourd'hui pour le Planning et le coût main-d'œuvre OT.",
     "rateCardFailed": "Personnel enregistré, mais la grille de taux n'a pas pu être créée : {{msg}}. Ajoutez le taux depuis l'onglet Tarifs.",
     "photo": {
+      "editKeepsCurrent": "La photo actuelle est conservée. Choisissez une image pour la remplacer.",
       "label": "Photo de profil",
       "hint": "Choisissez une photo (JPEG/PNG, max 5 Mo)",
       "error": "Échec du téléversement de la photo"
@@ -289,6 +301,8 @@
     "overtimeRateInvalid": "Le taux heures sup. doit être un nombre ≥ 0"
   },
   "crews": {
+    "loadError": "Impossible de charger les équipes et leur capacité",
+    "capacityUnknown": "Aucune capacité calculée pour cette équipe sur la période",
     "catalogTitle": "Catalogue des équipes",
     "empty": "Aucune équipe. Créez une équipe pour affecter le personnel depuis l'annuaire.",
     "noCapacityInHorizon": "Aucune capacité sur cet horizon.",
@@ -376,12 +390,39 @@
     }
   },
   "position": {
+    "certs": {
+      "empty": "Aucune certification requise.",
+      "placeholder": "Choisir une certification…"
+    },
+    "combobox": {
+      "searchPlaceholder": "Filtrer les postes…"
+    },
+    "field": {
+      "active": "Actif",
+      "category": "Catégorie",
+      "code": "Code",
+      "name": "Nom"
+    },
+    "section": {
+      "certs": "Certifications requises",
+      "skills": "Compétences requises"
+    },
+    "skills": {
+      "empty": "Aucune compétence requise.",
+      "placeholder": "Choisir une compétence…"
+    },
+    "validation": {
+      "codeRequired": "Le code du poste est obligatoire",
+      "nameRequired": "Le nom du poste est obligatoire"
+    },
     "panel": {
       "title": "Postes",
       "searchPlaceholder": "Recherche code ou nom…",
       "noData": "Aucun poste trouvé."
     },
     "action": {
+      "addCert": "Ajouter une certification",
+      "addSkill": "Ajouter une compétence",
       "create": "Nouveau poste",
       "archive": "Archiver",
       "archived": "Archivé"
@@ -401,6 +442,9 @@
       "error": "Échec de la création du poste"
     },
     "category": {
+      "contractor": "Sous-traitant",
+      "storekeeper": "Magasinier",
+      "hse": "HSE",
       "technician": "Technicien",
       "engineer": "Ingénieur",
       "supervisor": "Superviseur",
@@ -490,7 +534,12 @@
     "list": {
       "minutesFree": "{{count}} min libres"
     },
+    "unknownBar": "Disponibilité inconnue — absences non lues",
+    "unknownTitle_one": "Les absences de {{count}} personne n’ont pas pu être lues : affichée comme inconnue, pas disponible",
+    "unknownTitle_other": "Les absences de {{count}} personnes n’ont pas pu être lues : affichées comme inconnues, pas disponibles",
+    "partialBlocks": "Toutes les absences de cet horizon n’ont pas pu être lues.",
     "badges": {
+      "unknown": "Disponibilité inconnue",
       "certExpired": "Qualification expirée",
       "certExpiring": "Certification bientôt expirée"
     },
@@ -585,6 +634,20 @@
     }
   },
   "import": {
+    "rowStatus": {
+      "valid": "Valide",
+      "warning": "Avertissement",
+      "error": "Erreur"
+    },
+    "rowAction": {
+      "create": "Créer",
+      "update": "Mettre à jour",
+      "skip": "Ignorer"
+    },
+    "confirmApply": {
+      "title": "Appliquer l'import ?",
+      "body": "{{valid}} ligne(s) valide(s) et {{warning}} avec avertissement seront créées ou mises à jour dans le personnel ; {{error}} ligne(s) en erreur seront ignorées. Les fiches modifiées ne reviennent pas automatiquement à leur état précédent."
+    },
     "title": "Assistant d'import du personnel",
     "description": "Chargez un CSV/XLSX, verifiez les validations de lignes, puis appliquez le lot de facon controlee.",
     "action": {
@@ -620,6 +683,8 @@
       "export": "Exporter les rapports"
     },
     "export": {
+      "saved": "Export enregistré",
+      "failed": "L'export n'a pas pu être enregistré",
       "summary": "Exporter le CSV synthese",
       "skillsGap": "Exporter le CSV ecarts de competences",
       "kpi": "Exporter le CSV KPI"
@@ -639,5 +704,255 @@
       "empty": "Aucune donnee d'ecart disponible.",
       "score": "Score d'ecart : {{score}}"
     }
+  },
+  "capacityDays": {
+    "title": "Capacité selon les classes horaires",
+    "plannedLoad": "Charge planifiée (planification)",
+    "teamIntro": "Heures de chaque jour d'après les classes horaires des membres, sur les jours ouvrés du site, moins les absences, multipliées par le taux d'utilisation (heures disponibles pour les OT). Cliquez sur un jour pour voir chaque membre.",
+    "personIntro": "Deux prochaines semaines : classe horaire, poste, heures disponibles pour les OT et motif.",
+    "from": "Du",
+    "to": "Au",
+    "rangeInvalid": "Choisissez une période de {{max}} jours au plus.",
+    "totalHours": "{{hours}} h disponibles pour les OT sur la période",
+    "day": "Jour",
+    "available": "Pour les OT",
+    "absentHours": "Absences",
+    "onShift": "En poste",
+    "basis": "Base",
+    "noMembers": "Personne dans l'équipe ce jour-là.",
+    "absence": "Absence",
+    "bases": {
+      "roster": "Classes horaires",
+      "rest_day": "Repos",
+      "holiday": "Jour férié",
+      "no_schedule": "Aucune classe horaire",
+      "no_members": "Aucun membre"
+    },
+    "reasons": {
+      "working": "En poste",
+      "absent": "Absent",
+      "rest_day": "Repos",
+      "site_rest_day": "Repos du site",
+      "holiday": "Férié",
+      "no_schedule": "Sans classe horaire",
+      "timetable_not_set_up": "Classe horaire non définie",
+      "not_employed": "Hors contrat"
+    },
+    "classe": "Classe horaire",
+    "attendance": "Présence",
+    "overtime": "Plafond d'heures sup.",
+    "breakShort": "(pause {{minutes}} min)",
+    "personHoursTitle": "{{attendance}} h de présence × {{utilisation}} % d'utilisation",
+    "sources": {
+      "exception": "exception : {{name}}",
+      "personal": "classe horaire propre : {{name}}",
+      "team": "via la classe par défaut de l'équipe : {{name}}"
+    }
+  },
+  "holidays": {
+    "year": "Année",
+    "add": "Nouveau jour férié",
+    "addTitle": "Nouveau jour férié ou d'arrêt",
+    "editTitle": "Modifier le jour férié",
+    "edit": "Modifier",
+    "intro": "Jours fériés et jours d'arrêt de l'usine, saisis année par année (les fêtes islamiques changent chaque année) : personne ne travaille, la capacité compte zéro heure, sauf pour les classes horaires en continu.",
+    "formDescription": "Pour tous les sites, ou seulement pour un site / atelier et ce qui en dépend.",
+    "date": "Date",
+    "scope": "S'applique à",
+    "allSites": "Tous les sites",
+    "active": "En vigueur",
+    "cancelled": "Annulé",
+    "empty": "Aucun jour férié enregistré pour {{year}}",
+    "emptyHint": "Enregistrez les jours fériés et d'arrêt pour que la capacité soit juste.",
+    "title": "Jours fériés et jours d'arrêt",
+    "labelFr": "Nom (français)",
+    "labelEn": "Nom (anglais)"
+  },
+  "companies": {
+    "intro": "Entreprises sous-traitantes : période du contrat, référencement et assurance. Leurs techniciens sont enregistrés dans le registre sans avoir besoin d'un compte.",
+    "add": "Nouvelle entreprise",
+    "addTitle": "Nouvelle entreprise sous-traitante",
+    "editTitle": "Modifier l'entreprise",
+    "formDescription": "Période du contrat, référencement et assurance du sous-traitant.",
+    "name": "Entreprise",
+    "domain": "Domaine d'intervention",
+    "contract": "Contrat",
+    "contractStart": "Début du contrat",
+    "contractEnd": "Fin du contrat",
+    "endBeforeStart": "La fin du contrat précède son début.",
+    "onboarding": "Référencement",
+    "insurance": "Assurance",
+    "notes": "Remarques",
+    "people": "Techniciens",
+    "active": "Active",
+    "empty": "Aucune entreprise sous-traitante",
+    "emptyHint": "Ajoutez les entreprises dont les techniciens interviennent sur site.",
+    "onboardingStatus": {
+      "pending": "En cours de référencement",
+      "active": "Référencée",
+      "suspended": "Suspendue",
+      "expired": "Contrat terminé"
+    },
+    "insuranceStatus": {
+      "unknown": "Non vérifiée",
+      "valid": "Valide",
+      "expired": "Échue",
+      "not_required": "Non exigée"
+    }
+  },
+  "siteWeek": {
+    "title": "Semaine de travail des sites",
+    "intro": "Jours de repos hebdomadaire de tous les sites, ou d'un site qui a les siens, à partir d'une date. La capacité les compte comme non travaillés, sauf pour les classes horaires en continu (3×8, 24 h/24).",
+    "change": "Modifier les jours de repos",
+    "fromDate": "à partir du {{date}}",
+    "noRestDay": "Aucun jour de repos hebdomadaire",
+    "formTitle": "Jours de repos hebdomadaire à partir d'une date",
+    "formDescription": "S'applique à partir de la date choisie (aujourd'hui ou plus tard) ; les semaines précédentes gardent leurs jours de repos.",
+    "restDays": "Jours de repos"
+  },
+  "timetable": {
+    "impact": {
+      "title": "Des OT planifiés utilisent cette version",
+      "description": "{{count}} OT ouvert(s) sont planifiés sur cette version ({{codes}}). Ils gardent les heures avec lesquelles ils ont été planifiés et indiqueront que l'horaire a été modifié depuis la planification.",
+      "confirm": "Enregistrer la modification"
+    },
+    "editor": {
+      "title": "Classe horaire — {{name}}",
+      "description": "Rythme de travail des équipes et des personnes liées à cette classe horaire. Une modification s'applique à partir d'une date et ne réécrit jamais la capacité passée.",
+      "close": "Fermer",
+      "save": "Enregistrer la version",
+      "saving": "Enregistrement…",
+      "history": "Versions",
+      "noVersion": "Cette classe horaire n'a pas encore d'horaire : les équipes qui y sont liées n'ont aucune capacité. Décrivez-le ci-dessous.",
+      "from": "À partir du",
+      "cycle": "Cycle",
+      "weekly": "Hebdomadaire",
+      "rotation": "Roulement",
+      "rotationOf": "Roulement de {{days}} jours",
+      "continuousShort": "en continu",
+      "netHours": "Heures nettes",
+      "hoursPerCycle": "{{hours}} h sur {{days}} jours travaillés",
+      "utilisation": "Utilisation",
+      "status": "État",
+      "inForce": "En vigueur",
+      "planned": "Prévue",
+      "past": "Passée",
+      "edit": "Modifier",
+      "editPlanned": "Modifier la version prévue",
+      "firstVersion": "Horaire de cette classe horaire",
+      "newVersion": "Nouvelle version à partir d'une date",
+      "cancelEdit": "Annuler",
+      "effectiveFrom": "S'applique à partir du",
+      "effectiveFromHelp": "Aujourd'hui ou plus tard : la capacité et les plannings antérieurs restent tels quels.",
+      "utilisationLabel": "Taux d'utilisation (%)",
+      "utilisationPlaceholder": "ex. 85",
+      "utilisationHelp": "Part du temps de poste disponible pour les OT (le reste : réunions, déplacements, pauses non décomptées, administratif). Entre 1 et 100 % ; 85 % est un point de départ courant.",
+      "continuous": "Fonctionnement en continu (3×8, 24 h/24)",
+      "continuousHelp": "L'équipe travaille pendant les jours de repos hebdomadaire du site et les jours fériés, selon ce seul cycle.",
+      "templates": "Partir de",
+      "template": {
+        "day_week": "Journée dim.–jeu. 08:00–16:00",
+        "two_by_eight": "2×8 en roulement (14 jours)",
+        "three_by_eight": "3×8 en roulement (8 jours)",
+        "continuous_day": "Tous les jours 08:00–16:00"
+      },
+      "cycleLength": "Durée du roulement (jours)",
+      "rotationStart": "Le jour 1 du roulement tombe le",
+      "rotationDay": "Jour {{day}} ({{date}})",
+      "day": "Jour",
+      "restDay": "Repos",
+      "start": "Début",
+      "end": "Fin",
+      "breakMinutes": "Pause (min)",
+      "net": "Net",
+      "restDayOf": "{{day}} : jour de repos",
+      "startOf": "{{day}} : début",
+      "endOf": "{{day}} : fin",
+      "breakOf": "{{day}} : pause en minutes",
+      "workingDays": "Jours travaillés par cycle",
+      "netHoursCycle": "Heures nettes par cycle",
+      "plannableHoursCycle": "Heures pour les OT par cycle",
+      "siteRestWarning": "Certains jours travaillés tombent sur les jours de repos hebdomadaire du site ({{days}}) : ils ne comptent que pour les classes horaires en continu ou les sites ayant une autre semaine de travail.",
+      "note": "Remarque (facultatif)",
+      "readOnly": "Vous pouvez consulter cette classe horaire ; la modifier demande le droit de gérer les données de référence.",
+      "issues": {
+        "cycleLength": "Décrivez chaque jour du cycle (1 à 56 jours).",
+        "rotationStart": "Indiquez la date du jour 1 du roulement.",
+        "time": "Saisissez l'heure de début et de fin de chaque jour travaillé.",
+        "breakTooLong": "Une pause doit être plus courte que son poste.",
+        "noWorkingDay": "Gardez au moins un jour travaillé.",
+        "utilisation": "Saisissez le taux d'utilisation, entre 1 et 100 %.",
+        "date": "Choisissez aujourd'hui ou une date ultérieure."
+      }
+    },
+    "review": {
+      "chip": "À vérifier",
+      "classTitle": "Créée par la mise à jour — à revoir",
+      "classBody": "Cette classe horaire a été définie par la mise à jour avec un taux d'utilisation de 100 % : fixez maintenant son taux d'utilisation (part du temps de poste disponible pour les OT). Une classe créée à partir de l'ancienne règle de capacité d'une équipe répartit les heures de cette règle entre les membres de l'époque (voir sa remarque). Confirmez-la telle quelle, ou enregistrez une nouvelle version à partir d'aujourd'hui.",
+      "teamTitle": "Classe par défaut issue de l'ancienne règle de capacité — à revoir",
+      "teamBody": "La mise à jour a conservé la règle de capacité de cette équipe sous la forme de la classe horaire « {{name}} ». Elle s'applique désormais à chaque membre sans classe horaire propre. Confirmez-la, ou choisissez la bonne classe par défaut à partir d'une date (ou aucune).",
+      "confirm": "Confirmer telle quelle"
+    },
+    "team": {
+      "title": "Classes horaires",
+      "current": "Classe par défaut en vigueur",
+      "notSetUp": "Non définie",
+      "inheritHint": "La capacité de l'équipe est la somme des classes horaires de ses membres. La classe par défaut ci-dessous ne s'applique qu'aux membres sans classe horaire propre (définie sur leur fiche) ni exception datée.",
+      "choose": "Classe horaire par défaut",
+      "none": "Aucune classe par défaut",
+      "option": "{{name}} ({{utilisation}} %)",
+      "apply": "Appliquer à partir de cette date",
+      "noClasses": "Aucune classe horaire n'a encore d'horaire : définissez-en une dans Données de référence → Classes horaires.",
+      "history": "Historique",
+      "class": "Classe horaire",
+      "noDefault": "Aucune classe horaire par défaut : chaque membre compte sa propre classe horaire.",
+      "withoutTitle_one": "{{count}} membre sans classe horaire",
+      "withoutTitle_other": "{{count}} membres sans classe horaire",
+      "withoutBody": "Ils comptent 0 h : aucune heure n'est jamais supposée. Donnez à chacun une classe horaire sur sa fiche, ou définissez une classe par défaut pour l'équipe ci-dessous.",
+      "withoutAllBody": "Aucun membre n'a de classe horaire : l'équipe a 0 h et la planification ne peut pas lui affecter de travail. Donnez à chaque membre une classe horaire sur sa fiche, ou définissez une classe par défaut pour l'équipe ci-dessous.",
+      "setForPerson": "Définir pour {{name}}"
+    },
+    "exceptions": {
+      "title": "Exceptions d'horaire",
+      "intro": "Une autre classe horaire que celle de l'équipe, ou un temps partiel, sur une période. Les absences (congé, formation, maladie) sont saisies plus bas.",
+      "empty": "Aucune exception : cette personne suit la classe horaire de l'équipe.",
+      "add": "Ajouter une exception",
+      "addTitle": "Nouvelle exception d'horaire",
+      "editTitle": "Modifier l'exception",
+      "endTitle": "Terminer l'exception",
+      "formHint": "À partir d'aujourd'hui ou plus tard ; la capacité passée n'est jamais réécrite.",
+      "endHint": "Cette exception a commencé : vous pouvez seulement fixer sa date de fin (aujourd'hui ou plus tard).",
+      "classLabel": "Classe horaire pendant la période",
+      "keepTeamClass": "Garder la classe horaire de l'équipe",
+      "percentLabel": "Temps partiel (%)",
+      "percentHelp": "Part de l'horaire travaillée, ex. 50 pour un mi-temps. Laissez vide pour un temps plein.",
+      "from": "Du",
+      "to": "Au (facultatif)",
+      "reason": "Motif (facultatif)",
+      "reasonHelp": "Donnée personnelle : visible seulement des personnes autorisées.",
+      "period": "{{from}} → {{to}}",
+      "openPeriod": "À partir du {{from}}",
+      "otherClass": "Classe horaire : {{name}}",
+      "partTime": "{{percent}} % du temps",
+      "end": "Terminer",
+      "remove": "Supprimer"
+    }
+  },
+  "overtimeCeiling": {
+    "title": "Plafond d'heures supplémentaires",
+    "hint": "Heures que la planification peut ajouter chaque jour au-delà des classes horaires des membres de l'équipe. Une règle s'applique à partir d'un jour, jusqu'à un jour ou sans fin ; les périodes ne se chevauchent pas.",
+    "none": "Aucun plafond : la planification n'ajoute pas d'heures supplémentaires pour cette équipe.",
+    "from": "À partir du",
+    "to": "Jusqu'au",
+    "toOptional": "Jusqu'au (facultatif)",
+    "noEnd": "Sans fin",
+    "hoursPerDay": "Heures sup. / jour",
+    "hours": "{{hours}} h",
+    "add": "Ajouter",
+    "edit": "Modifier",
+    "save": "Enregistrer",
+    "cancel": "Annuler",
+    "created": "Plafond d'heures supplémentaires ajouté",
+    "saved": "Plafond d'heures supplémentaires enregistré"
   }
 }

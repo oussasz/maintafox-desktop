@@ -5,13 +5,13 @@ use tauri::State;
 use crate::auth::rbac::{check_permission, PermissionScope};
 use crate::errors::{AppError, AppResult};
 use crate::planning::domain::{
-    CapacityRule, CapacityRuleFilter, CreateCapacityRuleInput, CreatePlanningWindowInput, CreateScheduleBreakInInput,
-    CreateScheduleCommitmentInput, ExportPlanningGanttPdfInput, ExportedBinaryDocument, FreezeSchedulePeriodInput,
-    NotifyTeamsInput, NotifyTeamsResult, PlanningGanttFilter, PlanningGanttSnapshot, PlanningWindow,
-    PlanningWindowFilter, RefreshScheduleCandidatesInput, RefreshScheduleCandidatesResult, RescheduleCommitmentInput,
-    ScheduleBacklogSnapshot, ScheduleBreakIn, ScheduleBreakInFilter, ScheduleCandidate, ScheduleCandidateFilter,
-    ScheduleChangeLogEntry, ScheduleCommitment, ScheduleCommitmentFilter, SchedulingConflict, TeamCapacityLoad,
-    UpdateCapacityRuleInput, UpdatePlanningWindowInput,
+    AssigneeCapacityInput, CapacityRule, CapacityRuleFilter, CreateCapacityRuleInput, CreatePlanningWindowInput,
+    CreateScheduleBreakInInput, CreateScheduleCommitmentInput, ExportPlanningGanttPdfInput, ExportedBinaryDocument,
+    FreezeSchedulePeriodInput, NotifyTeamsInput, NotifyTeamsResult, PlanningGanttFilter, PlanningGanttSnapshot,
+    PlanningWindow, PlanningWindowFilter, RefreshScheduleCandidatesInput, RefreshScheduleCandidatesResult,
+    RescheduleCommitmentInput, ScheduleBacklogSnapshot, ScheduleBreakIn, ScheduleBreakInFilter, ScheduleCandidate,
+    ScheduleCandidateFilter, ScheduleChangeLogEntry, ScheduleCommitment, ScheduleCommitmentFilter, SchedulingConflict,
+    TeamCapacityLoad, UpdateCapacityRuleInput, UpdatePlanningWindowInput,
 };
 use crate::planning::queries;
 use crate::planning::scheduling;
@@ -313,6 +313,22 @@ pub async fn get_planning_gantt_snapshot(
     scheduling::get_planning_gantt_snapshot(&state.db, filter).await
 }
 
+/// The assignee picker: each crew member's shift and hours left over a slot.
+#[tauri::command]
+pub async fn list_assignee_capacity(
+    input: AssigneeCapacityInput,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::planning::person_load::AssigneeCapacity>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PLAN_VIEW,
+        PermissionScope::Global
+    );
+    scheduling::list_assignee_capacity(&state.db, input).await
+}
+
 #[tauri::command]
 pub async fn list_team_capacity_load(
     period_start: String,
@@ -353,4 +369,124 @@ pub async fn export_planning_gantt_pdf(
         PermissionScope::Global
     );
     scheduling::export_planning_gantt_pdf(&state.db, input).await
+}
+
+// ── Weekly schedule (planning step D) ──────────────────────────────────────────────────
+
+use crate::planning::lifecycle::{self, EndCommitmentInput};
+use crate::planning::weekly_schedule::{
+    self, UnfreezeDecisionInput, UnfreezeRequestInput, WeeklyCrew, WeeklyScheduleRef, WeeklyScheduleView,
+};
+
+#[tauri::command]
+pub async fn get_weekly_schedule(
+    site_id: i64,
+    day: String,
+    state: State<'_, AppState>,
+) -> AppResult<WeeklyScheduleView> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PLAN_VIEW,
+        PermissionScope::Global
+    );
+    weekly_schedule::get_weekly_schedule(&state.db, site_id, &day).await
+}
+
+/// Crews without a planning site (no node able to own work above their primary node).
+#[tauri::command]
+pub async fn list_crews_without_planning_site(state: State<'_, AppState>) -> AppResult<Vec<WeeklyCrew>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PLAN_VIEW,
+        PermissionScope::Global
+    );
+    weekly_schedule::crews_without_site(&state.db).await
+}
+
+#[tauri::command]
+pub async fn approve_weekly_schedule(
+    input: WeeklyScheduleRef,
+    state: State<'_, AppState>,
+) -> AppResult<WeeklyScheduleView> {
+    let user = require_session!(state);
+    require_plan_confirm(&state, user.user_id).await?;
+    weekly_schedule::approve_weekly_schedule(&state.db, i64::from(user.user_id), input).await
+}
+
+#[tauri::command]
+pub async fn freeze_weekly_schedule(
+    input: WeeklyScheduleRef,
+    state: State<'_, AppState>,
+) -> AppResult<WeeklyScheduleView> {
+    let user = require_session!(state);
+    require_plan_confirm(&state, user.user_id).await?;
+    weekly_schedule::freeze_weekly_schedule(&state.db, i64::from(user.user_id), input).await
+}
+
+#[tauri::command]
+pub async fn request_weekly_unfreeze(
+    input: UnfreezeRequestInput,
+    state: State<'_, AppState>,
+) -> AppResult<WeeklyScheduleView> {
+    let user = require_session!(state);
+    require_plan_confirm(&state, user.user_id).await?;
+    weekly_schedule::request_unfreeze(&state.db, i64::from(user.user_id), input).await
+}
+
+/// The second person of the four-eyes unfreeze: signed in, holding plan.confirm, not the requester.
+#[tauri::command]
+pub async fn decide_weekly_unfreeze(
+    input: UnfreezeDecisionInput,
+    state: State<'_, AppState>,
+) -> AppResult<WeeklyScheduleView> {
+    let user = require_session!(state);
+    require_plan_confirm(&state, user.user_id).await?;
+    weekly_schedule::decide_unfreeze(&state.db, i64::from(user.user_id), input).await
+}
+
+#[tauri::command]
+pub async fn publish_weekly_schedule(
+    input: WeeklyScheduleRef,
+    state: State<'_, AppState>,
+) -> AppResult<WeeklyScheduleView> {
+    let user = require_session!(state);
+    require_plan_confirm(&state, user.user_id).await?;
+    weekly_schedule::publish_weekly_schedule(&state.db, i64::from(user.user_id), input).await
+}
+
+/// Gives a commitment's slot back (the job returns to the backlog).
+#[tauri::command]
+pub async fn release_schedule_commitment(input: EndCommitmentInput, state: State<'_, AppState>) -> AppResult<()> {
+    let user = require_session!(state);
+    require_plan_confirm(&state, user.user_id).await?;
+    lifecycle::end_commitment(&state.db, i64::from(user.user_id), input, lifecycle::STATUS_RELEASED).await
+}
+
+/// Takes a job off the schedule.
+#[tauri::command]
+pub async fn cancel_schedule_commitment(input: EndCommitmentInput, state: State<'_, AppState>) -> AppResult<()> {
+    let user = require_session!(state);
+    require_plan_confirm(&state, user.user_id).await?;
+    lifecycle::end_commitment(&state.db, i64::from(user.user_id), input, lifecycle::STATUS_CANCELLED).await
+}
+
+/// Planning KPIs against the frozen weekly baseline (planning step E): loading, schedule
+/// compliance, break-ins, weeks frozen without approval or never frozen.
+#[tauri::command]
+pub async fn get_planning_kpis(
+    filter: crate::planning::kpis::PlanningKpiFilter,
+    state: State<'_, AppState>,
+) -> AppResult<crate::planning::kpis::PlanningKpis> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PLAN_VIEW,
+        PermissionScope::Global
+    );
+    crate::planning::kpis::planning_kpis(&state.db, &filter, chrono::Utc::now()).await
 }

@@ -69,6 +69,7 @@ describe("OS toasts", () => {
 describe("NotificationPreferencesPanel channels", () => {
   const row = {
     category_code: "wo_assigned",
+    module_code: "ot",
     label: "WO Assigned",
     is_user_configurable: true,
     in_app_enabled: true,
@@ -88,11 +89,12 @@ describe("NotificationPreferencesPanel channels", () => {
       email: { available: false, reason: "server_endpoint_not_enabled" },
     });
     render(<NotificationPreferencesPanel />);
-    expect((await screen.findByRole("status")).textContent).toBe(
-      "preferences.emailUnavailable.server_endpoint_not_enabled",
-    );
+    expect(
+      await screen.findByText("preferences.emailUnavailable.server_endpoint_not_enabled"),
+    ).toHaveAttribute("role", "status");
     expect(isDisabled(screen.getByRole("switch", { name: "preferences.col.email" }))).toBe(true);
-    expect(isDisabled(screen.getByRole("switch", { name: "preferences.col.sms" }))).toBe(true);
+    // No SMS channel exists: no SMS control is offered.
+    expect(screen.queryByRole("switch", { name: /sms/i })).toBeNull();
   });
 
   it("enables email when the channel is available", async () => {
@@ -116,9 +118,25 @@ describe("NotificationPreferencesPanel channels", () => {
     });
     render(<NotificationPreferencesPanel />);
     expect(await screen.findByText("preferences.digestHelp")).toBeTruthy();
-    const ownRow = screen.getByRole("combobox", { name: "preferences.col.digest Daily Digest" });
-    const otherRow = screen.getByRole("combobox", { name: "preferences.col.digest WO Assigned" });
+    const ownRow = screen.getByRole("combobox", {
+      name: /^preferences\.col\.digest category\.daily_digest/,
+    });
+    const otherRow = screen.getByRole("combobox", {
+      name: /^preferences\.col\.digest category\.wo_assigned/,
+    });
     expect(isDisabled(ownRow)).toBe(true);
     expect(isDisabled(otherRow)).toBe(false);
+  });
+
+  it("shows translated category names and disables the channels of a category turned off", async () => {
+    svc.getNotificationPreferences.mockResolvedValue([{ ...row, in_app_enabled: false }]);
+    svc.getNotificationChannelStatus.mockResolvedValue({
+      email: { available: true, reason: null },
+    });
+    render(<NotificationPreferencesPanel />);
+    expect(await screen.findByText(/^category\.wo_assigned/)).toBeTruthy();
+    expect(screen.queryByText("WO Assigned")).toBeNull();
+    expect(isDisabled(screen.getByRole("switch", { name: "preferences.col.email" }))).toBe(true);
+    expect(isDisabled(screen.getByRole("switch", { name: /^preferences\.col\.os / }))).toBe(true);
   });
 });

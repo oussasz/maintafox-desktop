@@ -7,7 +7,7 @@ use serde::Deserialize;
 use tauri::{AppHandle, Manager, State};
 
 use crate::auth::rbac::PermissionScope;
-use crate::errors::AppResult;
+use crate::errors::{AppError, AppResult};
 use crate::settings::{self, AppSetting, PolicySnapshot, SessionPolicy, SettingsChangeEvent};
 use crate::state::AppState;
 use crate::{require_permission, require_session, require_step_up};
@@ -60,7 +60,21 @@ pub async fn get_setting(
 ) -> AppResult<Option<AppSetting>> {
     let _user = require_session!(state);
     let resolved_scope = scope.unwrap_or_else(|| "tenant".to_string());
+    ensure_readable_by_any_session(&key)?;
     settings::get_setting(&state.db, &key, &resolved_scope).await
+}
+
+/// Any session may read the plant parameters it needs to display (currency, language, header,
+/// reopen window). Licence onboarding (activation token, machine fingerprint), bootstrap state
+/// and module-managed rows are read only through their own commands.
+fn ensure_readable_by_any_session(key: &str) -> AppResult<()> {
+    if settings::catalog::is_plant_parameter(key) {
+        Ok(())
+    } else {
+        Err(AppError::PermissionDenied(format!(
+            "Setting '{key}' is not readable through the generic settings command."
+        )))
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -72,7 +86,8 @@ pub struct SetSettingPayload {
 }
 
 /// Write a setting value. Requires `adm.settings`.
-/// Existing settings with `setting_risk = high` also require step-up.
+/// Only settings of the catalog are accepted, each validated against its kind; settings with
+/// `setting_risk = high` also require step-up.
 #[tauri::command]
 pub async fn set_setting(payload: SetSettingPayload, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
@@ -83,28 +98,74 @@ pub async fn set_setting(payload: SetSettingPayload, state: State<'_, AppState>)
         PermissionScope::Global
     );
 
-    let scope = payload.scope.unwrap_or_else(|| "tenant".to_string());
+    let Some(def) = settings::catalog::definition(&payload.key) else {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "Unknown setting '{}'.",
+            payload.key
+        )]));
+    };
+    let scope = payload.scope.unwrap_or_else(|| def.scope.to_string());
+    if scope != def.scope {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "Setting '{}' is stored at {} scope, not '{scope}'.",
+            def.key, def.scope
+        )]));
+    }
 
     let existing = settings::get_setting(&state.db, &payload.key, &scope).await?;
-    if let Some(ref s) = existing {
-        if s.setting_risk == "high" {
-            require_step_up!(state);
-        }
+    let high_risk = def.risk == "high" || existing.as_ref().is_some_and(|s| s.setting_risk == "high");
+    if high_risk {
+        require_step_up!(state);
+    }
+
+    let mut value_json = settings::catalog::validate_value(def, &payload.value_json)?;
+    if def.kind == settings::catalog::SettingKind::DocumentHeader {
+        value_json = settings::branding::keep_stored_logo(&state.db, &value_json).await?;
+    }
+    if def.kind == settings::catalog::SettingKind::CurrencyCode {
+        // The tenant currency is an active currency of Données de référence › Devises.
+        let code: String = serde_json::from_str(&value_json)?;
+        crate::reference::currencies::ensure_active_currency(&state.db, &code).await?;
     }
 
     let summary = payload
         .change_summary
         .unwrap_or_else(|| format!("Setting '{}' updated via IPC", payload.key));
 
-    settings::set_setting(
+    settings::set_setting_recorded(
         &state.db,
-        &payload.key,
+        def.key,
         &scope,
-        &payload.value_json,
+        &value_json,
         Some(user.user_id),
         &summary,
+        high_risk,
     )
     .await
+}
+
+/// The currencies of the published list (Données de référence › Devises): code, names, symbol,
+/// minor units, active flag. Any session (pickers and amount display read it).
+#[tauri::command]
+pub async fn list_reference_currencies(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::reference::currencies::CurrencyOption>> {
+    let _user = require_session!(state);
+    crate::reference::currencies::published_currencies(&state.db).await
+}
+
+/// Settings in use with their shipped and current values, lock state, last change and the roles
+/// allowed to change them. Requires `adm.settings`.
+#[tauri::command]
+pub async fn get_settings_overview(state: State<'_, AppState>) -> AppResult<settings::catalog::SettingsOverview> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_SETTINGS,
+        PermissionScope::Global
+    );
+    settings::catalog::overview(&state.db).await
 }
 
 /// Return the active policy snapshot for a domain.
@@ -125,6 +186,7 @@ pub async fn get_session_policy(state: State<'_, AppState>) -> AppResult<Session
 #[tauri::command]
 pub async fn list_setting_change_events(
     limit: Option<i64>,
+    setting_key: Option<String>,
     state: State<'_, AppState>,
 ) -> AppResult<Vec<SettingsChangeEvent>> {
     let user = require_session!(state);
@@ -134,7 +196,7 @@ pub async fn list_setting_change_events(
         crate::rbac::permissions::ADM_SETTINGS,
         PermissionScope::Global
     );
-    settings::list_change_events(&state.db, limit.unwrap_or(50)).await
+    settings::list_change_events(&state.db, limit.unwrap_or(50), setting_key.as_deref()).await
 }
 
 #[derive(Debug, Deserialize)]
@@ -250,6 +312,20 @@ pub async fn ensure_settings_defaults(state: State<'_, AppState>) -> AppResult<(
     crate::db::seeder::seed_default_settings(&state.db).await?;
     settings::ensure_default_policies(&state.db).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ensure_readable_by_any_session;
+
+    #[test]
+    fn only_plant_parameters_are_readable_by_any_session() {
+        assert!(ensure_readable_by_any_session("locale.currency_code").is_ok());
+        assert!(ensure_readable_by_any_session("documents.default_header").is_ok());
+        assert!(ensure_readable_by_any_session("wo.reopen_window_days").is_ok());
+        assert!(ensure_readable_by_any_session("product.license_onboarding").is_err());
+        assert!(ensure_readable_by_any_session("tenant.bootstrap_state").is_err());
+    }
 }
 
 /// Upload / replace the tenant document branding logo. Requires `adm.settings`.

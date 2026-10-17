@@ -1,17 +1,23 @@
 /**
  * WoKanbanView.tsx
  *
- * Data adapter for work-order lanes. Owns status→column mapping, allowed
- * transitions, invalid-drop feedback, and open-detail — never rendering.
+ * Data adapter for work-order lanes. Owns status→column mapping and open-detail.
+ *
+ * Cards are not draggable: every lifecycle step has its own checks and inputs (submit,
+ * readiness, permit gate on start, delay reason on hold, completion gates, cancel reason),
+ * so status changes are made from the OT detail footer, not by dropping a card. The board
+ * says so visibly instead of offering a drop that silently does something else.
  */
 
 import { Calendar as CalendarIcon, User } from "lucide-react";
 import { useCallback, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 
+import { urgencyTone, useUrgencyScale } from "@/components/common/urgency/use-urgency-scale";
 import { KanbanBoard } from "@/components/kanban";
-import type { KanbanBadge, KanbanCard, KanbanColumn, KanbanTone } from "@/components/kanban";
-import { pushAppToast } from "@/store/app-toast-store";
+import type { KanbanBadge, KanbanCard, KanbanColumn } from "@/components/kanban";
+import { WO_STATUS_TONE, toneOf } from "@/design-system/tone";
+import { formatShortDate, intlLocaleForLanguage } from "@/utils/format-date";
 import type { WorkOrder } from "@shared/ipc-types";
 
 /**
@@ -37,51 +43,16 @@ const STATUS_TO_COLUMN: Record<string, string> = {
   technically_verified: "completed",
 };
 
-/**
- * Allowed drag transitions for Option B lifecycle.
- * Validation only — the detail dialog handles the actual IPC call.
- */
-const ALLOWED_TRANSITIONS: Record<string, string[]> = {
-  draft: ["planning", "cancelled"],
-  planning: ["ready", "cancelled"],
-  ready: ["in_progress", "planning", "cancelled"],
-  in_progress: ["on_hold", "completed", "cancelled"],
-  on_hold: ["in_progress", "cancelled"],
-  completed: ["closed"],
-  closed: [],
-  cancelled: [],
-};
-
-const COLUMN_META: { id: string; labelKey: string; tone: KanbanTone }[] = [
-  { id: "draft", labelKey: "kanban.columnDraft", tone: "draft" },
-  { id: "planning", labelKey: "kanban.columnPlanning", tone: "planning" },
-  { id: "ready", labelKey: "kanban.columnReady", tone: "ready" },
-  { id: "executing", labelKey: "kanban.columnExecuting", tone: "executing" },
-  { id: "completed", labelKey: "kanban.columnCompleted", tone: "success" },
-  { id: "closed", labelKey: "kanban.columnClosed", tone: "closed" },
-  { id: "cancelled", labelKey: "kanban.columnCancelled", tone: "cancelled" },
+/** Lanes, each coloured like the list chip of its main status (`WO_STATUS_TONE`). */
+const COLUMN_META: { id: string; labelKey: string; status: string }[] = [
+  { id: "draft", labelKey: "kanban.columnDraft", status: "draft" },
+  { id: "planning", labelKey: "kanban.columnPlanning", status: "planning" },
+  { id: "ready", labelKey: "kanban.columnReady", status: "ready" },
+  { id: "executing", labelKey: "kanban.columnExecuting", status: "in_progress" },
+  { id: "completed", labelKey: "kanban.columnCompleted", status: "completed" },
+  { id: "closed", labelKey: "kanban.columnClosed", status: "closed" },
+  { id: "cancelled", labelKey: "kanban.columnCancelled", status: "cancelled" },
 ];
-
-/** Same urgency tone vocabulary as DI. */
-const URGENCY_TONE: Record<number, KanbanTone> = {
-  1: "low",
-  2: "medium",
-  3: "medium",
-  4: "high",
-  5: "critical",
-};
-
-function shortDate(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  try {
-    return new Date(iso).toLocaleDateString(undefined, {
-      day: "2-digit",
-      month: "short",
-    });
-  } catch {
-    return iso;
-  }
-}
 
 interface WoKanbanViewProps {
   items: WorkOrder[];
@@ -89,7 +60,9 @@ interface WoKanbanViewProps {
 }
 
 export function WoKanbanView({ items, onCardClick }: WoKanbanViewProps) {
-  const { t } = useTranslation(["ot", "common"]);
+  const { t, i18n } = useTranslation(["ot", "common"]);
+  const { labelOf: urgencyLabel } = useUrgencyScale();
+  const locale = intlLocaleForLanguage(i18n.language);
   const byId = useRef(new Map<string, WorkOrder>());
 
   const columns = useMemo<KanbanColumn[]>(
@@ -97,7 +70,7 @@ export function WoKanbanView({ items, onCardClick }: WoKanbanViewProps) {
       COLUMN_META.map((c) => ({
         id: c.id,
         label: t(c.labelKey),
-        tone: c.tone,
+        tone: toneOf(WO_STATUS_TONE, c.status),
       })),
     [t],
   );
@@ -107,13 +80,10 @@ export function WoKanbanView({ items, onCardClick }: WoKanbanViewProps) {
     const result = items.map<KanbanCard>((wo) => {
       const id = String(wo.id);
       map.set(id, wo);
-      const urgencyTone = URGENCY_TONE[wo.urgency_id ?? 0];
+      const urgency = wo.urgency_code ? urgencyTone(wo.urgency_code) : undefined;
       const badges: KanbanBadge[] = [];
-      if (wo.urgency_label) {
-        badges.push({
-          label: wo.urgency_label,
-          ...(urgencyTone ? { tone: urgencyTone } : {}),
-        });
+      if (wo.urgency_code && urgency) {
+        badges.push({ label: urgencyLabel(wo.urgency_code), tone: urgency });
       }
 
       return {
@@ -125,14 +95,17 @@ export function WoKanbanView({ items, onCardClick }: WoKanbanViewProps) {
         ...(badges.length > 0 ? { badges } : {}),
         meta: [
           { label: wo.responsible_username ?? t("kanban.unassigned"), icon: User },
-          { label: shortDate(wo.planned_end), icon: CalendarIcon },
+          {
+            label: wo.planned_end ? formatShortDate(wo.planned_end, locale) : "—",
+            icon: CalendarIcon,
+          },
         ],
-        accent: urgencyTone ?? "neutral",
+        accent: urgency ?? "neutral",
       };
     });
     byId.current = map;
     return result;
-  }, [items, t]);
+  }, [items, locale, t, urgencyLabel]);
 
   const handleCardClick = useCallback(
     (card: KanbanCard) => {
@@ -142,51 +115,22 @@ export function WoKanbanView({ items, onCardClick }: WoKanbanViewProps) {
     [onCardClick],
   );
 
-  const handleDrop = useCallback(
-    (card: KanbanCard, _fromColumnId: string, targetColumnId: string) => {
-      const wo = byId.current.get(card.id);
-      if (!wo) return;
-
-      const fromColumn = STATUS_TO_COLUMN[wo.status_code ?? "draft"] ?? "draft";
-      if (fromColumn === targetColumnId) return;
-
-      const targetStatuses = Object.entries(STATUS_TO_COLUMN)
-        .filter(([, col]) => col === targetColumnId)
-        .map(([s]) => s);
-
-      const currentStatus = wo.status_code ?? "draft";
-      const validTargets = (ALLOWED_TRANSITIONS[currentStatus] ?? []).filter((to) =>
-        targetStatuses.includes(to),
-      );
-
-      if (validTargets.length === 0) {
-        pushAppToast({
-          title: t("kanban.transitionNotAllowed", {
-            code: wo.code,
-            from: currentStatus.replace(/_/g, " "),
-            to: targetColumnId,
-          }),
-          variant: "destructive",
-        });
-        return;
-      }
-
-      // All Option B transitions require full context — open the detail dialog.
-      onCardClick(wo);
-    },
-    [onCardClick, t],
-  );
-
   return (
-    <KanbanBoard
-      columns={columns}
-      cards={cards}
-      enableDrag
-      onCardClick={handleCardClick}
-      onDrop={handleDrop}
-      loadMoreLabel={(count) => t("kanban.loadMore", { count })}
-      emptyColumnLabel={t("kanban.emptyColumn", { ns: "common" })}
-      aria-label={t("page.viewKanban")}
-    />
+    <div className="flex h-full min-h-0 flex-col gap-2">
+      <p className="px-1 text-xs text-text-muted" data-testid="wo-kanban-drag-hint">
+        {t("kanban.statusFromDetailHint")}
+      </p>
+      <div className="min-h-0 flex-1">
+        <KanbanBoard
+          columns={columns}
+          cards={cards}
+          enableDrag={false}
+          onCardClick={handleCardClick}
+          loadMoreLabel={(count) => t("kanban.loadMore", { count })}
+          emptyColumnLabel={t("kanban.emptyColumn", { ns: "common" })}
+          aria-label={t("page.viewKanban")}
+        />
+      </div>
+    </div>
   );
 }

@@ -24,11 +24,14 @@ import type {
   RefImportApplyResult,
   RefExportResult,
   ReferenceGovernanceCapabilities,
+  ReferenceModuleCatalog,
   SchedulePattern,
   UpsertSchedulePatternPayload,
 } from "@shared/ipc-types";
 
 // â”€â”€ Zod schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+export const ReferenceDomainAudienceSchema = z.enum(["system", "company"]);
 
 export const ReferenceDomainSchema = z.object({
   id: z.number().int(),
@@ -37,6 +40,7 @@ export const ReferenceDomainSchema = z.object({
   structure_type: z.string().min(1),
   governance_level: z.string().min(1),
   governance_category: z.string().min(1),
+  audience: ReferenceDomainAudienceSchema,
   is_extendable: z.boolean(),
   validation_rules_json: z.string().nullable(),
   created_at: z.string(),
@@ -101,6 +105,13 @@ export const ReferenceGovernanceCapabilitiesSchema = z.object({
   is_read_only: z.boolean(),
   requires_analytical_protection: z.boolean(),
   set_status: z.string().nullable(),
+  system_values_locked: z.boolean(),
+  audience: ReferenceDomainAudienceSchema,
+});
+
+export const ReferenceModuleCatalogSchema = z.object({
+  code: z.string().min(1),
+  audience: ReferenceDomainAudienceSchema,
 });
 
 // â”€â”€ Domain commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -108,6 +119,12 @@ export const ReferenceGovernanceCapabilitiesSchema = z.object({
 export async function listReferenceDomains(): Promise<ReferenceDomain[]> {
   const raw = await invoke<unknown[]>("list_reference_domains");
   return z.array(ReferenceDomainSchema).parse(raw);
+}
+
+/** Audience of the module tables (OT types, article families…) shown in the reference tree. */
+export async function listReferenceModuleCatalogs(): Promise<ReferenceModuleCatalog[]> {
+  const raw = await invoke<unknown[]>("list_reference_module_catalogs");
+  return z.array(ReferenceModuleCatalogSchema).parse(raw);
 }
 
 export async function getReferenceGovernanceCapabilities(
@@ -565,7 +582,7 @@ const SchedulePatternSchema = z.object({
   is_active: z.boolean(),
   shift_pattern_code: z.string(),
   is_continuous: z.boolean(),
-  nominal_hours_per_day: z.number(),
+  nominal_hours_per_day: z.number().nullable(),
   details: z.array(ScheduleDayPatternSchema),
 });
 

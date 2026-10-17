@@ -56,12 +56,29 @@ export interface TimelineProps<T = TimelineEntry> {
   getEntry?: ((item: T, index: number) => TimelineEntry) | undefined;
   density?: TimelineDensity | undefined;
   groupBy?: "none" | "day" | "custom" | undefined;
-  /** Used when groupBy === "day". */
+  /** Used when groupBy === "day"; defaults to common.timeline.today. */
   todayLabel?: string | undefined;
+  /** Language or BCP 47 locale for dates; defaults to the app language (never the OS locale). */
   locale?: string | undefined;
   loading?: boolean | undefined;
-  error?: ReactNode | undefined;
+  /**
+   * Load failure. Any error value (IPC reject, Error, string) is shown with the shared
+   * `ErrorState` (translated text + retry when `onRetry` is given). A React element is still
+   * rendered as-is for adapters that build their own message.
+   */
+  error?: unknown;
+  /** Retry of the failed load, offered by the error state. */
+  onRetry?: (() => void) | undefined;
+  /**
+   * The adapter loaded only the most recent page and older events exist. The timeline says so
+   * (never a silent cap) and offers `onLoadOlder` when given.
+   */
+  hasOlder?: boolean | undefined;
+  onLoadOlder?: (() => void) | undefined;
+  loadingOlder?: boolean | undefined;
+  /** Defaults to common.timeline.empty. */
   empty?: ReactNode | undefined;
+  /** Defaults to common.timeline.label. */
   "aria-label"?: string | undefined;
   className?: string | undefined;
   /** Forwarded to each item root (e.g. org audit testids). */

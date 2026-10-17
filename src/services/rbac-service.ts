@@ -7,12 +7,15 @@ import { z } from "zod";
 import { invoke, invokeSilent } from "@/lib/ipc-invoke";
 import type {
   AdminChangeEventDetail,
+  AdminEventFacets,
   AdminEventFilter,
   AdminSetUserPasswordInput,
   AdminSetUserPasswordResult,
   AdminStatsPayload,
-  AssignableRoleSummary,
   AssignRoleScopeInput,
+  AssignableRoleSummary,
+  AssignableScopeNode,
+  CloneRoleInput,
   CreateCustomPermissionInput,
   CreateDelegationInput,
   CreateRoleInput,
@@ -22,6 +25,7 @@ import type {
   GrantEmergencyElevationInput,
   IdPayload,
   ImportResult,
+  LockoutPolicySettings,
   MissingTenantScopeUser,
   PasswordPolicySettings,
   PermissionDependencyRow,
@@ -31,12 +35,14 @@ import type {
   RbacSettingEntry,
   RevokeEmergencyElevationInput,
   RoleDetail,
+  RoleEditorCatalog,
   RoleExportPayload,
   RoleImportPayload,
   RoleTemplate,
   RoleValidationResult,
   RoleWithPermissions,
   SessionSummary,
+  SetUserActiveInput,
   SimulateAccessInput,
   SimulateAccessResult,
   StepUpRequest,
@@ -137,6 +143,8 @@ const RoleAssignmentSummarySchema = z.object({
   valid_from: z.string().nullable(),
   valid_to: z.string().nullable(),
   is_emergency: z.boolean(),
+  emergency_expires_at: z.string().nullable().default(null),
+  scope_label: z.string().nullable().default(null),
 });
 
 const UserWithRolesSchema = z.object({
@@ -150,7 +158,9 @@ const UserWithRolesSchema = z.object({
   is_active: z.boolean(),
   force_password_change: z.boolean(),
   last_seen_at: z.string().nullable(),
+  last_login_at: z.string().nullable().default(null),
   locked_until: z.string().nullable(),
+  is_locked: z.boolean().default(false),
   roles: z.array(RoleAssignmentSummarySchema),
 });
 
@@ -204,6 +214,21 @@ const AssignableRoleSummarySchema = z.object({
   is_system: z.boolean(),
 });
 
+const AssignableScopeNodeSchema = z.object({
+  id: z.number(),
+  parent_id: z.number().nullable(),
+  code: z.string(),
+  name: z.string(),
+  type_label: z.string().nullable(),
+  depth: z.number(),
+});
+
+/** Org nodes a role assignment can be limited to (requires adm.users). */
+export async function listAssignableScopeNodes(): Promise<AssignableScopeNode[]> {
+  const raw = await invoke<unknown[]>("list_assignable_scope_nodes");
+  return z.array(AssignableScopeNodeSchema).parse(raw);
+}
+
 /** Roles that may be selected when creating a user (requires adm.users). */
 export async function listAssignableRoles(): Promise<AssignableRoleSummary[]> {
   const raw = await invoke<unknown[]>("list_assignable_roles");
@@ -234,8 +259,14 @@ export async function updateUser(input: UpdateUserInput): Promise<void> {
   await invoke<void>("update_user", { input });
 }
 
-export async function deactivateUser(userId: number): Promise<void> {
-  await invoke<void>("deactivate_user", { userId });
+/** Disable an account (step-up + reason; the account and its history are kept). */
+export async function deactivateUser(input: SetUserActiveInput): Promise<void> {
+  await invoke<void>("deactivate_user", { input });
+}
+
+/** Re-enable a disabled account (step-up + reason). */
+export async function reactivateUser(input: SetUserActiveInput): Promise<void> {
+  await invoke<void>("reactivate_user", { input });
 }
 
 export async function assignRoleScope(input: AssignRoleScopeInput): Promise<IdPayload> {
@@ -243,8 +274,8 @@ export async function assignRoleScope(input: AssignRoleScopeInput): Promise<IdPa
   return IdPayloadSchema.parse(raw);
 }
 
-export async function revokeRoleScope(assignmentId: number): Promise<void> {
-  await invoke<void>("revoke_role_scope", { assignmentId });
+export async function revokeRoleScope(assignmentId: number, reason?: string): Promise<void> {
+  await invoke<void>("revoke_role_scope", { assignmentId, reason: reason ?? null });
 }
 
 // â”€â”€ Role management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -302,6 +333,12 @@ export async function deleteRole(roleId: number): Promise<void> {
   await invoke<void>("delete_role", { roleId });
 }
 
+/** Copy a role (system or custom) into a new custom role with the same permissions. */
+export async function cloneRole(input: CloneRoleInput): Promise<IdPayload> {
+  const raw = await invoke<unknown>("clone_role", { input });
+  return IdPayloadSchema.parse(raw);
+}
+
 export async function listRoleTemplates(): Promise<RoleTemplate[]> {
   const raw = await invoke<unknown[]>("list_role_templates");
   return z.array(RoleTemplateSchema).parse(raw);
@@ -352,11 +389,34 @@ const PasswordPolicySchema = z.object({
   require_lowercase: z.boolean(),
   require_digit: z.boolean(),
   require_special: z.boolean(),
+  unreadable_keys: z.array(z.string()),
 });
 
 export async function getPasswordPolicy(): Promise<PasswordPolicySettings> {
   const raw = await invoke<unknown>("get_password_policy");
   return PasswordPolicySchema.parse(raw);
+}
+
+/** Replace the password policy (validated on the server, step-up, recorded in the history). */
+export async function setPasswordPolicy(input: PasswordPolicySettings): Promise<void> {
+  await invoke<void>("set_password_policy", { input });
+}
+
+const LockoutPolicySchema = z.object({
+  max_attempts: z.number(),
+  lockout_minutes: z.number(),
+  progressive: z.boolean(),
+});
+
+/** Sign-in lockout thresholds the login applies. */
+export async function getLockoutPolicy(): Promise<LockoutPolicySettings> {
+  const raw = await invoke<unknown>("get_lockout_policy");
+  return LockoutPolicySchema.parse(raw);
+}
+
+/** Replace the lockout thresholds (validated, step-up, recorded in the history). */
+export async function setLockoutPolicy(input: LockoutPolicySettings): Promise<void> {
+  await invoke<void>("set_lockout_policy", { input });
 }
 
 // â”€â”€ Permission catalog (SP06-F02) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -402,7 +462,7 @@ export async function getPermissionDependencies(
   permissionName: string,
 ): Promise<PermissionDependencyRow[]> {
   const raw = await invoke<unknown[]>("get_permission_dependencies", {
-    permission_name: permissionName,
+    permissionName,
   });
   return z.array(PermissionDependencyRowSchema).parse(raw);
 }
@@ -453,8 +513,9 @@ const SessionSummarySchema = z.object({
   current_role_names: z.array(z.string()),
 });
 
-export async function listActiveSessions(): Promise<SessionSummary[]> {
-  const raw = await invoke<unknown[]>("list_active_sessions");
+/** Active sessions on this computer, optionally for one user. */
+export async function listActiveSessions(userId?: number): Promise<SessionSummary[]> {
+  const raw = await invoke<unknown[]>("list_active_sessions", { userId: userId ?? null });
   return z.array(SessionSummarySchema).parse(raw);
 }
 
@@ -548,7 +609,7 @@ export async function exportRoleModel(roleIds: number[]): Promise<RoleExportPayl
 }
 
 export async function importRoleModel(payload: RoleImportPayload): Promise<ImportResult> {
-  const raw = await invoke<unknown>("import_role_model", { payload });
+  const raw = await invoke<unknown>("import_role_model", { input: payload });
   return ImportResultSchema.parse(raw);
 }
 
@@ -577,6 +638,63 @@ const AdminChangeEventDetailSchema = z.object({
 export async function listAdminEvents(filter: AdminEventFilter): Promise<AdminChangeEventDetail[]> {
   const raw = await invoke<unknown[]>("list_admin_events", { filter });
   return z.array(AdminChangeEventDetailSchema).parse(raw);
+}
+
+const AdminEventFacetOptionSchema = z.object({
+  id: z.number(),
+  label: z.string(),
+  count: z.number(),
+});
+
+const AdminEventFacetsSchema = z.object({
+  actions: z.array(z.string()),
+  actors: z.array(AdminEventFacetOptionSchema),
+  target_users: z.array(AdminEventFacetOptionSchema),
+  target_roles: z.array(AdminEventFacetOptionSchema),
+  apply_results: z.array(z.string()),
+});
+
+/** Filter choices (actions, actors, targets, results) present in the visible ledger. */
+export async function listAdminEventFacets(): Promise<AdminEventFacets> {
+  const raw = await invoke<unknown>("list_admin_event_facets");
+  return AdminEventFacetsSchema.parse(raw);
+}
+
+/** CSV of the ledger events matching the filter (same visibility as the list). */
+export async function exportAdminEventsCsv(filter: AdminEventFilter): Promise<string> {
+  const raw = await invoke<unknown>("export_admin_events_csv", { filter });
+  return z.string().parse(raw);
+}
+
+// ── Role editor catalog (adm.roles) ─────────────────────────────────────────
+
+const RoleEditorCatalogSchema = z.object({
+  permissions: z.array(
+    z.object({
+      id: z.number(),
+      name: z.string(),
+      description: z.string().nullable(),
+      category: z.string(),
+      is_dangerous: z.boolean(),
+      requires_step_up: z.boolean(),
+      is_system: z.boolean(),
+    }),
+  ),
+  dependencies: z.array(
+    z.object({
+      id: z.number(),
+      permission_name: z.string(),
+      required_permission_name: z.string(),
+      dependency_type: z.string(),
+    }),
+  ),
+  role_holders: z.array(z.object({ role_id: z.number(), active_users: z.number() })),
+});
+
+/** Permission catalog, dependencies and role holder counts for the role editor. */
+export async function getRoleEditorCatalog(): Promise<RoleEditorCatalog> {
+  const raw = await invoke<unknown>("get_role_editor_catalog");
+  return RoleEditorCatalogSchema.parse(raw);
 }
 
 export async function getAdminEvent(eventId: number): Promise<AdminChangeEventDetail> {

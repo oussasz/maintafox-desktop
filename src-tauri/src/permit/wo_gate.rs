@@ -1,10 +1,19 @@
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
+//! Permit gate of work order execution: an OT starts, resumes or is reopened to in-progress only
+//! when every live permit linked to it is active and ready to protect the work (not expired, LOTO
+//! isolations all applied and verified, none removed) — whether or not the OT is flagged as
+//! requiring a permit — and, when it requires one, at least one exists. Planning only warns about
+//! permits; this gate is where the rule is hard-enforced. Callers run it inside the transaction
+//! that changes the status.
 
-use crate::errors::{AppError, AppResult};
+use std::collections::HashMap;
 
-use super::queries::{activation_ready, get_work_permit_linked_to_work_order};
+use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
-pub async fn assert_in_progress_permit_gate(db: &DatabaseConnection, wo_id: i64) -> AppResult<()> {
+use crate::errors::{org_validation_failed, AppError, AppResult};
+
+use super::queries::{activation_ready, list_live_permits_linked_to_work_order};
+
+pub async fn assert_in_progress_permit_gate(db: &impl ConnectionTrait, wo_id: i64) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -19,26 +28,48 @@ pub async fn assert_in_progress_permit_gate(db: &DatabaseConnection, wo_id: i64)
     let requires: i64 = row
         .try_get("", "requires_permit")
         .map_err(|e| AppError::Internal(anyhow::anyhow!("requires_permit decode: {e}")))?;
-    if requires == 0 {
-        return Ok(());
+    assert_live_permits_ready(db, wo_id, requires == 1).await
+}
+
+/// Every live permit linked to the work order is active and ready (a permit that exists protects
+/// the work, flag or not); when the OT requires a permit, at least one exists.
+async fn assert_live_permits_ready(db: &impl ConnectionTrait, wo_id: i64, required: bool) -> AppResult<()> {
+    let permits = list_live_permits_linked_to_work_order(db, wo_id).await?;
+    if permits.is_empty() && required {
+        return Err(org_validation_failed(
+            "PERMIT_REQUIRED_TO_START",
+            "This work order requires a work permit: link an active permit before starting or resuming it.",
+            HashMap::new(),
+        ));
     }
-    let permit = get_work_permit_linked_to_work_order(db, wo_id).await?;
-    let Some(p) = permit else {
-        return Err(AppError::ValidationFailed(vec![
-            "Un permis de travail actif lié est requis pour passer cet ordre de travail en cours.".into(),
-        ]));
-    };
-    if p.status == "suspended" {
-        return Err(AppError::ValidationFailed(vec![
-            "Impossible de démarrer : le permis est suspendu.".into(),
-        ]));
+    for p in &permits {
+        let params = || {
+            HashMap::from([
+                ("permit".to_string(), p.code.clone()),
+                ("status".to_string(), p.status.clone()),
+            ])
+        };
+        if p.status == "suspended" || p.status == "revalidation_required" {
+            return Err(org_validation_failed(
+                "PERMIT_SUSPENDED",
+                format!(
+                    "Permit {} is suspended: revalidate it before starting or resuming the work.",
+                    p.code
+                ),
+                params(),
+            ));
+        }
+        if p.status != "active" {
+            return Err(org_validation_failed(
+                "PERMIT_NOT_ACTIVE",
+                format!(
+                    "Permit {} is '{}': it must be active before the work starts or resumes.",
+                    p.code, p.status
+                ),
+                params(),
+            ));
+        }
+        activation_ready(db, p).await?;
     }
-    if p.status != "active" {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "Le permis doit être au statut « actif » pour démarrer (statut actuel : {}).",
-            p.status
-        )]));
-    }
-    activation_ready(db, &p).await?;
     Ok(())
 }

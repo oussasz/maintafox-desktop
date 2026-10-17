@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   BulkEntitlementOperationRequestV1Schema,
+  channelPolicyConsistent,
+  EntitlementLifecycleActionSchema,
+  EntitlementLifecycleStateSchema,
   entitlementTransitionAllowed,
   SignedClaimPreviewV1Schema,
   validateSlotLimits,
@@ -49,5 +52,40 @@ describe("customer-entitlement-machine-contracts", () => {
       ],
     });
     expect(b.dry_run).toBe(true);
+  });
+});
+
+// Full truth table, mirroring Rust `entitlement_transition_allowed` (vps/customer_entitlement_machine.rs).
+const ALLOWED = new Set([
+  "expired:issue",
+  "revoked:issue",
+  "active:renew",
+  "grace:renew",
+  "active:suspend",
+  "grace:suspend",
+  "active:emergency_lock",
+  "grace:emergency_lock",
+  "suspended:resume_from_suspension",
+  "active:revoke",
+  "grace:revoke",
+  "suspended:revoke",
+]);
+
+describe("entitlement lifecycle transitions (same table as the Rust guard)", () => {
+  const cases = EntitlementLifecycleStateSchema.options.flatMap((from) =>
+    EntitlementLifecycleActionSchema.options.map((action) => [from, action] as const),
+  );
+
+  it.each(cases)("%s + %s", (from, action) => {
+    expect(entitlementTransitionAllowed(from, action)).toBe(ALLOWED.has(`${from}:${action}`));
+  });
+
+  it("covers every state and action", () => {
+    expect(cases).toHaveLength(30);
+  });
+
+  it("requires the licence and rollout channels to match", () => {
+    expect(channelPolicyConsistent("stable", "stable")).toBe(true);
+    expect(channelPolicyConsistent("stable", "pilot")).toBe(false);
   });
 });

@@ -8,6 +8,7 @@
 
 import { create } from "zustand";
 
+import { describeAppError } from "@/lib/app-error";
 import {
   applyAssetImportBatch,
   createAssetImportBatch,
@@ -15,7 +16,6 @@ import {
   listAssetImportBatches,
   validateAssetImportBatch,
 } from "@/services/asset-import-service";
-import { toErrorMessage } from "@/utils/errors";
 import type { ApplyResult, ImportBatchSummary, ImportPreviewRow } from "@shared/ipc-types";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -109,7 +109,7 @@ export const useAssetImportStore = create<AssetImportState>()((set, get) => ({
         step: "validate",
       });
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: describeAppError(err).title });
     } finally {
       set({ loading: false });
     }
@@ -128,7 +128,7 @@ export const useAssetImportStore = create<AssetImportState>()((set, get) => ({
       const preview = await getAssetImportPreview(batchId);
       set({ previewRows: preview.rows, batch: preview.batch });
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: describeAppError(err).title });
     } finally {
       set({ loading: false });
     }
@@ -143,7 +143,7 @@ export const useAssetImportStore = create<AssetImportState>()((set, get) => ({
       const preview = await getAssetImportPreview(batchId);
       set({ previewRows: preview.rows, batch: preview.batch });
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: describeAppError(err).title });
     } finally {
       set({ loading: false });
     }
@@ -161,7 +161,7 @@ export const useAssetImportStore = create<AssetImportState>()((set, get) => ({
       });
       set({ applyResult: result, batch: result.batch, step: "done" });
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: describeAppError(err).title });
     } finally {
       set({ saving: false });
     }
@@ -173,7 +173,7 @@ export const useAssetImportStore = create<AssetImportState>()((set, get) => ({
       const batches = await listAssetImportBatches();
       set({ batches });
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: describeAppError(err).title });
     } finally {
       set({ loading: false });
     }

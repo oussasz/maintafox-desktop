@@ -18,6 +18,10 @@ pub struct WoSyncOutcome {
 
 /// Write committed slot/crew onto the linked WO and mirror candidate window fields.
 ///
+/// Only what the planner set is written: a technician named on the commitment becomes the OT's
+/// responsible; none named keeps the OT's current responsible; `clear_assignee` (the explicit
+/// "Unassigned" of a break-in) removes it.
+///
 /// Call only when `source_type == "work_order"`, after the commitment row is written,
 /// on the open planning transaction.
 pub async fn sync_work_order_from_commitment(
@@ -29,6 +33,7 @@ pub async fn sync_work_order_from_commitment(
     committed_end: &str,
     assigned_team_id: i64,
     assigned_personnel_id: Option<i64>,
+    clear_assignee: bool,
 ) -> AppResult<WoSyncOutcome> {
     let (from_code, status, row_version) = load_wo_status(tx, wo_id).await?;
 
@@ -46,6 +51,10 @@ pub async fn sync_work_order_from_commitment(
     assert_action_allowed(&status, assign_action).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
     let primary_responsible_id = resolve_personnel_user_id(tx, assigned_personnel_id).await?;
+    // The work order's shift must stay one the committed team works on the committed day
+    // (`wo::shifts`); otherwise the commitment is refused rather than the shift cleared.
+    let shift_change =
+        crate::wo::shifts::decide_shift(tx, wo_id, Some(assigned_team_id), Some(committed_start), None, false).await?;
     let now = now_utc_z();
 
     let result = tx
@@ -55,7 +64,7 @@ pub async fn sync_work_order_from_commitment(
                 planned_start = ?,
                 planned_end = ?,
                 assigned_team_id = ?,
-                primary_responsible_id = ?,
+                primary_responsible_id = CASE WHEN ? = 1 THEN NULL ELSE COALESCE(?, primary_responsible_id) END,
                 scheduled_at = ?,
                 planner_id = COALESCE(planner_id, ?),
                 row_version = row_version + 1,
@@ -65,6 +74,7 @@ pub async fn sync_work_order_from_commitment(
                 committed_start.to_string().into(),
                 committed_end.to_string().into(),
                 assigned_team_id.into(),
+                i64::from(clear_assignee).into(),
                 primary_responsible_id.into(),
                 now.clone().into(),
                 actor_id.into(),
@@ -75,6 +85,7 @@ pub async fn sync_work_order_from_commitment(
         ))
         .await?;
     check_concurrency(result.rows_affected())?;
+    crate::wo::shifts::apply_shift_change(tx, wo_id, &shift_change).await?;
 
     let payload = json!({
         "origin": "planning_commitment",
@@ -113,7 +124,7 @@ pub async fn sync_work_order_from_commitment(
          SET window_start = ?,
              window_end = ?,
              assigned_team_id = ?,
-             assigned_personnel_id = ?,
+             assigned_personnel_id = CASE WHEN ? = 1 THEN NULL ELSE COALESCE(?, assigned_personnel_id) END,
              row_version = row_version + 1,
              updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
          WHERE id = ?",
@@ -121,6 +132,7 @@ pub async fn sync_work_order_from_commitment(
             committed_start.to_string().into(),
             committed_end.to_string().into(),
             assigned_team_id.into(),
+            i64::from(clear_assignee).into(),
             assigned_personnel_id.into(),
             schedule_candidate_id.into(),
         ],
@@ -180,4 +192,59 @@ async fn resolve_personnel_user_id(tx: &impl ConnectionTrait, personnel_id: Opti
         ))
         .await?;
     Ok(row.and_then(|r| r.try_get::<i64>("", "id").ok()))
+}
+
+/// A commitment released or cancelled gives its slot back: the work order's planned dates it
+/// wrote are cleared — only while the work order is still in planning / ready and still carries
+/// exactly that slot (a later manual change is kept). Its crew and responsible stay. Returns
+/// whether the work order was changed.
+pub async fn clear_work_order_slot(
+    tx: &impl ConnectionTrait,
+    actor_id: i64,
+    wo_id: i64,
+    committed_start: &str,
+    committed_end: &str,
+    commitment_status: &str,
+) -> AppResult<bool> {
+    let (from_code, status, row_version) = load_wo_status(tx, wo_id).await?;
+    if !matches!(status, WoStatus::Planning | WoStatus::Ready) {
+        return Ok(false);
+    }
+    let now = now_utc_z();
+    let result = tx
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE work_orders SET planned_start = NULL, planned_end = NULL, scheduled_at = NULL,
+                    row_version = row_version + 1, updated_at = ?
+              WHERE id = ? AND row_version = ? AND planned_start = ? AND planned_end = ?",
+            [
+                now.into(),
+                wo_id.into(),
+                row_version.into(),
+                committed_start.to_string().into(),
+                committed_end.to_string().into(),
+            ],
+        ))
+        .await?;
+    if result.rows_affected() == 0 {
+        return Ok(false);
+    }
+    let payload = json!({
+        "origin": "planning_commitment",
+        "commitment_status": commitment_status,
+        "cleared_start": committed_start,
+        "cleared_end": committed_end,
+    })
+    .to_string();
+    emit_action_event(
+        tx,
+        wo_id,
+        "schedule_changed",
+        Some(actor_id),
+        Some(&from_code),
+        Some(&from_code),
+        Some(&payload),
+    )
+    .await?;
+    Ok(true)
 }

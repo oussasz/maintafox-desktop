@@ -9,7 +9,13 @@
     "pick": "Sélectionner…",
     "add": "Ajouter la règle",
     "remove": "Supprimer la règle",
-    "duplicatePair": "Cette règle parent → enfant existe déjà."
+    "duplicatePair": "Cette règle parent → enfant existe déjà.",
+    "loadError": "Impossible de charger les règles de ce brouillon",
+    "unknownType": "Type inconnu",
+    "contains": "peut contenir",
+    "pairLabel": "{{parent}} → {{child}}",
+    "removeConfirmTitle": "Supprimer cette règle ?",
+    "removeConfirmBody": "La règle « {{pair}} » sera retirée du brouillon. Si l’arbre contient déjà ce lien, la publication sera bloquée tant que la règle n’est pas rétablie."
   },
   "createNode": {
     "titleRoot": "Ajouter un nœud racine",
@@ -73,7 +79,7 @@
     "statusDraft": "Brouillon",
     "modelSummary": "Résumé du modèle",
     "totalNodes": "Total des nœuds",
-    "nodeTypesCount": "Types de nœuds",
+    "nodeTypesCount": "Types utilisés",
     "searchPlaceholder": "Rechercher par code, nom ou type…",
     "addRootNode": "Racine",
     "addChildNode": "Enfant",
@@ -113,15 +119,10 @@
       "details": "Détails",
       "responsibilities": "Responsabilités",
       "bindings": "Liaisons externes",
-      "actions": "Actions de prévisualisation",
+      "actions": "Modifications de structure",
       "equipment": "Équipements",
-      "nodeId": "ID du nœud",
       "type": "Type",
-      "typeCode": "Code du type",
-      "depth": "Profondeur",
-      "ancestorPath": "Chemin ancestral",
       "childCount": "Enfants",
-      "rowVersion": "Version de ligne",
       "capabilitiesLabel": "Capacités",
       "noCaps": "Aucune capacité assignée",
       "noResponsibilities": "Aucune responsabilité active",
@@ -130,17 +131,32 @@
       "equipSearchPlaceholder": "Rechercher un équipement à affecter…",
       "searching": "Recherche en cours…",
       "equipCurrentlyAssigned": "Actuellement affecté à {{node}}",
-      "equipmentDraftReadOnly": "L’affectation d’équipement s’applique uniquement à la structure publiée. Les nœuds brouillon ne peuvent pas recevoir d’affectations opérationnelles.",
-      "ended": "Terminée",
-      "person": "Personne",
-      "team": "Équipe",
       "primary": "Principale",
-      "actionsDescription": "Prévisualisez l'impact des modifications structurelles avant de les valider."
+      "actionsDescription": "Chaque modification affiche son impact (sous-unités, responsabilités, équipements, travaux ouverts) avant confirmation.",
+      "actionsNeedDraft": "Le déplacement ou la désactivation d’une unité se fait dans un brouillon de la structure. Passez d’abord sur le brouillon (ou créez-en un).",
+      "alreadyInactive": "Cette unité est déjà inactive.",
+      "location": "Emplacement",
+      "costCentre": "Centre de coûts",
+      "costCentreNotUsed": "Non utilisé à ce niveau",
+      "costCentreNotSet": "Non renseigné",
+      "responsible": "Responsables",
+      "nobodyResponsible": "Personne n’est désigné — désigner un responsable",
+      "equipmentCount": "Équipements",
+      "equipmentCountValue_one": "{{count}} équipement",
+      "equipmentCountValue_other": "{{count}} équipements",
+      "noEquipmentHint": "Recherchez un équipement ci-dessous pour le placer dans cette unité.",
+      "openEquipment": "Ouvrir {{code}} dans le registre des équipements",
+      "assignEquipment": "Placer un équipement dans cette unité",
+      "unassignEquipment": "Retirer {{code}} de cette unité",
+      "unassignTitle": "Retirer l’équipement de cette unité ?",
+      "unassignDescription": "{{code}} — {{name}} ne sera plus placé dans {{unit}}. Son historique est conservé et vous pourrez le replacer plus tard.",
+      "unassignConfirm": "Retirer de l’unité",
+      "equipmentCountUnavailable": "Non chargé — voir l'onglet Équipements"
     },
     "actions": {
-      "moveNode": "Déplacer le nœud",
-      "deactivateNode": "Désactiver le nœud",
-      "reassignResponsibility": "Réassigner la responsabilité"
+      "moveNode": "Déplacer l’unité…",
+      "deactivateNode": "Désactiver l’unité…",
+      "reassignResponsibility": "Gérer les responsabilités"
     },
     "inspectorTab": "Inspecteur",
     "auditTab": "Audit",
@@ -151,11 +167,16 @@
       "collapse": "Réduire le panneau de propriétés",
       "resize": "Redimensionner le panneau de propriétés",
       "drawerDescription": "Consulter les détails, les liaisons et l’historique d’audit du nœud."
-    }
+    },
+    "statusOther": "Autre statut",
+    "loading": "Chargement de l’organisation…",
+    "expandUnit": "Afficher les sous-unités de {{name}}",
+    "collapseUnit": "Masquer les sous-unités de {{name}}",
+    "refreshFailed": "Impossible d'actualiser la structure — l'arbre affiché peut être ancien"
   },
   "nodeTypes": {
     "title": "Gestionnaire de types de nœuds",
-    "description": "Définir les types de nœuds avec icônes, couleurs et indicateurs de capacité.",
+    "description": "Définir les types de nœuds avec leur icône et leurs capacités.",
     "loading": "Chargement des types de nœuds…",
     "empty": "Aucun type de nœud défini.",
     "addType": "Ajouter un type",
@@ -189,13 +210,37 @@
       "hard-hat": "Casque",
       "zap": "Énergie",
       "circuit-board": "Circuit"
-    }
+    },
+    "loadError": "Impossible de charger les types de nœuds",
+    "editTypeNamed": "Modifier le type {{label}}",
+    "deactivate": "Désactiver le type",
+    "deactivateNamed": "Désactiver le type {{label}}",
+    "deactivateConfirmTitle": "Désactiver ce type de nœud ?",
+    "deactivateConfirmBody": "Le type « {{label}} » ne pourra plus être choisi pour de nouveaux nœuds de ce brouillon. Aucun nœud ne l’utilise aujourd’hui."
   },
   "export": {
     "title": "Exporter",
     "print": "Imprimer",
     "exportPng": "Exporter en PNG",
-    "exportCsv": "Exporter en CSV"
+    "exportCsv": "Exporter en CSV",
+    "failed": "Échec de l’export",
+    "saved": "Fichier enregistré",
+    "printTitle": "Structure de l’organisation",
+    "printedAt": "Imprimé le {{date}}",
+    "fileBase": "organisation",
+    "imageFailed": "L’image de la structure n’a pas pu être produite.",
+    "nothingToExport": "La structure est vide : rien à exporter.",
+    "columns": {
+      "code": "Code",
+      "name": "Nom",
+      "level": "Niveau",
+      "parentCode": "Code parent",
+      "depth": "Profondeur",
+      "status": "Statut",
+      "subUnits": "Sous-unités",
+      "responsibilities": "Responsabilités actives",
+      "externalLinks": "Liens externes"
+    }
   },
   "governance": {
     "blockingIssues_one": "La publication est bloquée par 1 problème — corrigez-le ci-dessous, puis réessayez.",
@@ -220,7 +265,9 @@
       "PARENT_CHILD_DRIFT": "Une relation parent–enfant utilisée dans l’arbre n’est plus autorisée par les règles. Déplacez l’unité ou restaurez la règle.",
       "COST_CENTER_INCOMPATIBLE": "«{{nodeName}}» a un centre de coûts, mais son niveau «{{typeCode}}» ne les autorise pas. Retirez le centre de coûts ou autorisez-les sur ce niveau.",
       "UNMAPPED_ACTIVE_NODE_WITH_OPS_REFS": "«{{nodeName}}» est encore utilisé par des données en production mais est absent de ce brouillon. Réparez les copies du brouillon, ou détachez ces liens avant de publier."
-    }
+    },
+    "refreshTimeline": "Actualiser l’historique des modifications",
+    "auditLoadError": "Impossible de charger l'historique des modifications"
   },
   "errors": {
     "ORG_VALIDATE_NOT_DRAFT": "Ce modèle est «{{status}}», pas un brouillon. Seuls les brouillons peuvent être vérifiés pour publication.",
@@ -266,7 +313,10 @@
     "ORG_INVALID_DATE_RANGE": "La date de fin doit être égale ou postérieure à la date de début.",
     "ORG_BINDING_FIELDS_REQUIRED": "Renseignez tous les champs obligatoires du lien externe.",
     "ORG_BINDING_DUPLICATE": "Un lien externe actif de ce type existe déjà sur cette unité.",
-    "ORG_LEGACY_PUBLISH_REMOVED": "Cette action de publication n’est plus disponible. Utilisez l’action Publier actuelle, qui vérifie le brouillon et met à jour les liens en toute sécurité."
+    "ORG_LEGACY_PUBLISH_REMOVED": "Cette action de publication n’est plus disponible. Utilisez l’action Publier actuelle, qui vérifie le brouillon et met à jour les liens en toute sécurité.",
+    "ORG_ASSIGNEE_UNCHANGED": "Cette personne ou équipe assure déjà cette responsabilité sur l’unité.",
+    "ORG_NODE_CANNOT_HOST_ASSETS": "Ce niveau d’organisation ne peut pas accueillir d’équipements. Choisissez une unité dont le niveau accueille des équipements.",
+    "ORG_EQUIPMENT_RETIRED": "Un équipement déclassé ou mis au rebut ne peut pas être placé dans la structure."
   },
   "audit": {
     "changeType": {
@@ -285,7 +335,8 @@
       "create_node_type": "Création de niveau",
       "update_node_type": "Mise à jour de niveau",
       "create_relationship_rule": "Ajout de règle de relation",
-      "delete_relationship_rule": "Suppression de règle de relation"
+      "delete_relationship_rule": "Suppression de règle de relation",
+      "expire_binding": "Fin de lien externe"
     },
     "applyResult": {
       "applied": "Appliqué",
@@ -298,7 +349,9 @@
       "org_node_type": "Niveau d’organisation",
       "relationship_rule": "Règle de relation",
       "responsibility": "Responsabilité",
-      "entity_binding": "Lien externe"
+      "entity_binding": "Lien externe",
+      "org_node_responsibility": "Responsabilité",
+      "org_entity_binding": "Lien externe"
     }
   },
   "draftStatus": {
@@ -312,14 +365,22 @@
       "ready": "Prêt",
       "warning": "Avertissement",
       "error": "Bloqué"
-    }
+    },
+    "retryValidation": "Relancer la vérification"
   },
   "capabilities": {
     "asset": "ACTIF",
     "work": "TRAVAUX",
     "cost": "COÛT",
     "kpi": "KPI",
-    "permit": "PERMIS"
+    "permit": "PERMIS",
+    "long": {
+      "asset": "Accueille des équipements",
+      "work": "Porte des travaux",
+      "cost": "Porte un centre de coûts",
+      "kpi": "Agrège des indicateurs",
+      "permit": "Reçoit des permis de travail"
+    }
   },
   "preview": {
     "title": "Prévisualisation d'impact",
@@ -337,24 +398,16 @@
     "blocked": "Bloqué",
     "moveRequiresParent": "Sélectionnez un nouveau parent avant de confirmer le déplacement.",
     "staleNodeContext": "Rechargez l’unité sélectionnée, puis réessayez.",
-    "actionNotSupported": "Cette action ne peut pas encore être appliquée ici.",
-    "dependencyUnavailable": "Les détails d’impact pour ce domaine ne sont pas encore disponibles.",
     "dependencyDomain": {
-      "assets": "Actifs",
-      "open_work": "Travaux ouverts",
+      "assets": "Équipements placés ici",
+      "open_work": "Ordres de travail ouverts",
       "permits": "Permis",
       "inventory": "Stocks"
     },
     "dependencyStatus": {
-      "unavailable": "Pas encore disponible",
-      "ok": "OK",
-      "impacted": "Impacté"
-    },
-    "dependencyNote": {
-      "assets": "L’impact sur les actifs pour ce changement n’est pas encore disponible.",
-      "open_work": "L’impact sur les ordres de travail ouverts n’est pas encore disponible.",
-      "permits": "L’impact sur les permis pour ce changement n’est pas encore disponible.",
-      "inventory": "L’impact sur les stocks pour ce changement n’est pas encore disponible."
+      "unavailable": "Non calculé",
+      "ok": "Aucun",
+      "impacted": "Concernés"
     },
     "actionLabel": {
       "MoveNode": "Déplacer l’unité vers un nouveau parent",
@@ -370,11 +423,78 @@
       "ORG_PREVIEW_ACTIVE_RESPONSIBILITIES": "Terminez d’abord {{count}} affectation(s) de responsabilité active(s) sur cette unité.",
       "ORG_PREVIEW_ORPHANED_BINDINGS": "{{count}} lien(s) externe(s) resteraient sans unité active.",
       "ORG_PREVIEW_REPLACEMENT_REQUIRED": "Choisissez une personne ou une équipe de remplacement avant de réassigner.",
-      "ORG_PREVIEW_ASSIGNMENT_ENDED": "L’affectation précédente sera terminée.",
-      "ORG_PREVIEW_NO_ASSIGNMENT": "Aucune affectation active de ce type n’a été trouvée à réassigner.",
+      "ORG_PREVIEW_ASSIGNMENT_ENDED": "La dernière désignation pour cette responsabilité est déjà terminée — une nouvelle désignation sera créée.",
+      "ORG_PREVIEW_NO_ASSIGNMENT": "Personne n’assure encore cette responsabilité sur l’unité — ce sera la première désignation.",
       "ORG_PREVIEW_NEW_PARENT_REQUIRED": "Sélectionnez un nouveau parent pour ce déplacement.",
       "ORG_PREVIEW_RESPONSIBILITY_TYPE_REQUIRED": "Choisissez le type de responsabilité à réassigner.",
-      "ORG_PREVIEW_UNKNOWN_ACTION": "Cette action d’aperçu n’est pas prise en charge."
+      "ORG_PREVIEW_UNKNOWN_ACTION": "Cette action d’aperçu n’est pas prise en charge.",
+      "ORG_PREVIEW_SAME_ASSIGNEE": "Cette personne ou équipe assure déjà cette responsabilité.",
+      "ORG_PREVIEW_PARENT_WRONG_MODEL": "L’unité cible appartient à une autre version de la structure."
+    },
+    "loading": "Calcul de l’impact…",
+    "target": {
+      "MoveNode": "Déplacer « {{unit}} » sous « {{target}} ».",
+      "DeactivateNode": "Désactiver « {{unit}} ».",
+      "ReassignResponsibility": "Transférer la responsabilité sur « {{unit}} » à {{target}}."
+    },
+    "reassignIncomplete": "Choisissez la responsabilité et la nouvelle personne ou équipe, puis réessayez.",
+    "applying": "Application…",
+    "confirmAction": {
+      "MoveNode": "Déplacer l’unité",
+      "DeactivateNode": "Désactiver l’unité",
+      "ReassignResponsibility": "Transférer"
+    },
+    "dependenciesHint": "Nombre d’enregistrements en production rattachés aux unités concernées."
+  },
+  "responsibilities": {
+    "assign": "Désigner un responsable…",
+    "emptyHint": "Indiquez qui est responsable de cette unité (responsable maintenance, planificateur, approbateur…). Les notifications et approbations s’appuient sur ces désignations.",
+    "personLine": "Personne : {{name}}",
+    "teamLine": "Équipe : {{name}}",
+    "since": "Depuis le {{date}}",
+    "replace": "Transférer…",
+    "end": "Terminer",
+    "endTitle": "Terminer cette responsabilité ?",
+    "endDescription": "{{name}} ne sera plus {{type}} pour {{unit}}. La désignation reste dans l’historique.",
+    "endConfirm": "Terminer la responsabilité",
+    "unknownAssignee": "Personne ou équipe inconnue",
+    "notPublished": "Cette unité n’existe que dans le brouillon. Responsabilités et équipements pourront être définis après publication.",
+    "draftReadOnly": "Affiché depuis la structure publiée. Les responsabilités et équipements se modifient dans la vue publiée.",
+    "dialog": {
+      "title": "Désigner un responsable",
+      "description": "Qui est responsable de {{unit}}, et de quoi.",
+      "type": "Responsabilité",
+      "typePlaceholder": "Choisissez une responsabilité",
+      "currentHolder": "Actuellement assurée par {{name}}. Choisir quelqu’un d’autre la transfère.",
+      "assignee": "Responsable",
+      "kind": {
+        "person": "Personne",
+        "team": "Équipe"
+      },
+      "needPersonnelView": "Choisir une personne ou une équipe nécessite le droit de consulter le personnel (per.view).",
+      "personSearch": "Rechercher par nom ou matricule",
+      "noPerson": "Aucune personne active ne correspond.",
+      "teamPlaceholder": "Choisissez une équipe",
+      "handoverHint": "La désignation actuelle prend fin et la nouvelle commence au même instant. Vous verrez l’impact avant de confirmer.",
+      "needType": "Choisissez une responsabilité.",
+      "needAssignee": "Choisissez une personne ou une équipe.",
+      "cancel": "Annuler",
+      "reviewHandover": "Vérifier le transfert",
+      "saving": "Enregistrement…",
+      "assign": "Désigner"
     }
+  },
+  "move": {
+    "title": "Déplacer {{unit}}",
+    "currentParent": "Actuellement sous : {{parent}}",
+    "topLevel": "sommet de la structure",
+    "loadingRules": "Chargement des règles de hiérarchie…",
+    "noCandidates": "Aucune unité ne peut accueillir celle-ci",
+    "noCandidatesHint": "Aucune unité active d’un niveau autorisé au-dessus de « {{level}} » n’existe dans cette structure. Ajoutez une règle de hiérarchie ou créez d’abord l’unité parente.",
+    "searchPlaceholder": "Rechercher une unité par nom, code ou niveau",
+    "targetLabel": "Nouvelle unité parente",
+    "noMatch": "Aucune unité ne correspond à votre recherche.",
+    "cancel": "Annuler",
+    "review": "Voir l’impact"
   }
 }

@@ -15,6 +15,7 @@ import {
   previewRefPublishImpact,
   reactivateReferenceValue,
   updateReferenceValue,
+  validateReferenceSet,
 } from "@/services/reference-service";
 import type {
   CreateReferenceValuePayload,
@@ -36,6 +37,7 @@ vi.mock("@/services/reference-service", () => ({
   previewRefPublishImpact: vi.fn(),
   reactivateReferenceValue: vi.fn(),
   updateReferenceValue: vi.fn(),
+  validateReferenceSet: vi.fn(),
 }));
 
 const mockReadiness = vi.mocked(computeRefPublishReadiness);
@@ -46,6 +48,7 @@ const mockList = vi.mocked(listReferenceValues);
 const mockImpact = vi.mocked(previewRefPublishImpact);
 const mockReactivate = vi.mocked(reactivateReferenceValue);
 const mockUpdate = vi.mocked(updateReferenceValue);
+const mockValidate = vi.mocked(validateReferenceSet);
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -155,6 +158,7 @@ beforeEach(() => {
     mockImpact,
     mockReactivate,
     mockUpdate,
+    mockValidate,
   ]) {
     m.mockReset();
   }
@@ -221,6 +225,7 @@ describe("reference-governance-store — loadValues", () => {
 
     const s = useReferenceGovernanceStore.getState();
     expect(s.error).toBe("cannot list");
+    expect(s.valuesError).toBe("cannot list");
     expect(s.values).toEqual(previous);
     expect(s.valuesLoading).toBe(false);
   });
@@ -509,18 +514,34 @@ describe("reference-governance-store — loadImpact", () => {
   });
 });
 
-describe("reference-governance-store — publish", () => {
-  it("publishes and stores the readiness returned by the publish result", async () => {
+describe("reference-governance-store — validateAndPublish", () => {
+  it("validates a draft, publishes it and stores the readiness of the result", async () => {
     const readiness = makeReadiness({ is_ready: true, set_id: 10 });
-    mockPublish.mockResolvedValueOnce(makePublishResult({ readiness }));
+    const result = makePublishResult({ readiness });
+    mockValidate.mockResolvedValueOnce(result.set);
+    mockPublish.mockResolvedValueOnce(result);
 
-    await useReferenceGovernanceStore.getState().publish(10);
+    await expect(
+      useReferenceGovernanceStore.getState().validateAndPublish(10, "draft"),
+    ).resolves.toEqual(result);
 
+    expect(mockValidate).toHaveBeenCalledWith(10);
     expect(mockPublish).toHaveBeenCalledWith(10);
-    expect(mockReadiness).not.toHaveBeenCalled();
+    expect(mockValidate.mock.invocationCallOrder[0]).toBeLessThan(
+      mockPublish.mock.invocationCallOrder[0] ?? 0,
+    );
     expect(useReferenceGovernanceStore.getState().readiness).toEqual(readiness);
     expect(useReferenceGovernanceStore.getState().error).toBeNull();
     expect(useReferenceGovernanceStore.getState().readinessLoading).toBe(false);
+  });
+
+  it("publishes an already validated set without validating it again", async () => {
+    mockPublish.mockResolvedValueOnce(makePublishResult());
+
+    await useReferenceGovernanceStore.getState().validateAndPublish(10, "validated");
+
+    expect(mockValidate).not.toHaveBeenCalled();
+    expect(mockPublish).toHaveBeenCalledWith(10);
   });
 
   it("uses readinessLoading as the busy flag while publishing", async () => {
@@ -528,7 +549,7 @@ describe("reference-governance-store — publish", () => {
     mockPublish.mockReturnValueOnce(d.promise);
     useReferenceGovernanceStore.setState({ error: "old" });
 
-    const pending = useReferenceGovernanceStore.getState().publish(10);
+    const pending = useReferenceGovernanceStore.getState().validateAndPublish(10, "validated");
     expect(useReferenceGovernanceStore.getState().readinessLoading).toBe(true);
     expect(useReferenceGovernanceStore.getState().error).toBeNull();
 
@@ -537,19 +558,23 @@ describe("reference-governance-store — publish", () => {
     expect(useReferenceGovernanceStore.getState().readinessLoading).toBe(false);
   });
 
-  it("on failure sets the publish error and refreshes readiness to show blockers (swallowed)", async () => {
-    mockPublish.mockRejectedValueOnce({ code: "BLOCKED", message: "set not ready" });
+  it("on a validation failure does not publish, refreshes readiness and rejects", async () => {
+    const failure = { code: "BLOCKED", message: "duplicate code" };
+    mockValidate.mockRejectedValueOnce(failure);
     const blockers = makeReadiness({
       is_ready: false,
-      issues: [{ check: "empty_set", message: "no values", severity: "error" }],
+      issues: [{ check: "validation_blockers", message: "1 blocker", severity: "blocker" }],
     });
     mockReadiness.mockResolvedValueOnce(blockers);
 
-    await expect(useReferenceGovernanceStore.getState().publish(10)).resolves.toBeUndefined();
+    await expect(
+      useReferenceGovernanceStore.getState().validateAndPublish(10, "draft"),
+    ).rejects.toBe(failure);
 
+    expect(mockPublish).not.toHaveBeenCalled();
     expect(mockReadiness).toHaveBeenCalledWith(10);
     const s = useReferenceGovernanceStore.getState();
-    expect(s.error).toBe("set not ready");
+    expect(s.error).toBe("duplicate code");
     expect(s.readiness).toEqual(blockers);
     expect(s.readinessLoading).toBe(false);
   });
@@ -560,7 +585,9 @@ describe("reference-governance-store — publish", () => {
     mockPublish.mockRejectedValueOnce(new Error("publish failed"));
     mockReadiness.mockRejectedValueOnce(new Error("refresh failed"));
 
-    await expect(useReferenceGovernanceStore.getState().publish(10)).resolves.toBeUndefined();
+    await expect(
+      useReferenceGovernanceStore.getState().validateAndPublish(10, "validated"),
+    ).rejects.toThrow("publish failed");
 
     const s = useReferenceGovernanceStore.getState();
     expect(s.error).toBe("publish failed");

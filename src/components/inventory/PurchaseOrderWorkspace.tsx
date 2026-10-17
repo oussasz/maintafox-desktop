@@ -15,6 +15,8 @@ import { Timeline } from "@/components/timeline";
 import type { TimelineEntry, TimelineStepState } from "@/components/timeline";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { ErrorState } from "@/components/ui/data-state";
 import {
   Dialog,
   DialogContent,
@@ -31,22 +33,25 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { StatusChip } from "@/components/ui/status-chip";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { POSTING_STATE_TONE, PROCUREMENT_STATUS_TONE, toneOf } from "@/design-system/tone";
+import { useFormatters } from "@/hooks/use-formatters";
 import { formatAssetLabel, formatEntityCode, formatOrDash } from "@/lib/display";
 import { cn } from "@/lib/utils";
 import {
+  type PurchaseOrderDetailView,
   getInventoryPurchaseOrderDetail,
   listInventoryDocumentLinks,
+  setInventoryPurchaseOrderLinePrice,
   transitionInventoryPurchaseOrder,
   updateInventoryProcurementPostingState,
   upsertInventoryDocumentLink,
 } from "@/services/inventory-service";
-import { toErrorMessage } from "@/utils/errors";
 import { formatDate, intlLocaleForLanguage } from "@/utils/format-date";
 import type {
   InventoryDocumentLink,
   InventoryStateEvent,
-  PurchaseOrderDetail,
   PurchaseOrderLine,
 } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
@@ -92,11 +97,6 @@ function lateByDays(expectedDelivery: string | null | undefined, status: string)
   return days > 0 ? days : null;
 }
 
-function fmtMoney(n: number | null | undefined): string {
-  if (n == null || !Number.isFinite(n)) return "—";
-  return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
 function eventForStep(
   events: InventoryStateEvent[],
   statuses: readonly string[],
@@ -137,12 +137,23 @@ export function PurchaseOrderWorkspace({
 }: PurchaseOrderWorkspaceProps) {
   const { t, i18n } = useTranslation("inventory");
   const locale = intlLocaleForLanguage(i18n.language);
+  const { formatCurrency, currencyCode } = useFormatters();
 
-  const [detail, setDetail] = useState<PurchaseOrderDetail | null>(null);
+  const [detail, setDetail] = useState<PurchaseOrderDetailView | null>(null);
+  /** Currency the PO is priced in (supplier currency); the tenant currency when none. */
+  const poCurrency = detail?.order.currency_code ?? currencyCode;
+  /** Money in the PO currency, "—" when unknown. */
+  const fmtMoney = (n: number | null | undefined) =>
+    n == null || !Number.isFinite(n) ? "—" : formatCurrency(n, poCurrency);
+  const [priceDraft, setPriceDraft] = useState("");
+  const [priceSaving, setPriceSaving] = useState(false);
+  const [priceError, setPriceError] = useState<unknown>(null);
   const [documents, setDocuments] = useState<InventoryDocumentLink[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  /** Failure to load the purchase order (action failures are reported by the global toast). */
+  const [loadError, setLoadError] = useState<unknown>(null);
+  const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
   const [selectedLineId, setSelectedLineId] = useState<number | null>(null);
   const [docRef, setDocRef] = useState("");
   const [docPurpose, setDocPurpose] = useState<string>("INVOICE");
@@ -156,7 +167,7 @@ export function PurchaseOrderWorkspace({
       return;
     }
     setLoading(true);
-    setError(null);
+    setLoadError(null);
     try {
       const [poDetail, docs] = await Promise.all([
         getInventoryPurchaseOrderDetail(poId),
@@ -171,7 +182,7 @@ export function PurchaseOrderWorkspace({
         return poDetail.lines[0]?.id ?? null;
       });
     } catch (err) {
-      setError(toErrorMessage(err));
+      setLoadError(err);
       setDetail(null);
     } finally {
       setLoading(false);
@@ -188,14 +199,36 @@ export function PurchaseOrderWorkspace({
     [detail, selectedLineId],
   );
 
+  useEffect(() => {
+    setPriceDraft(selectedLine?.unit_price != null ? String(selectedLine.unit_price) : "");
+    setPriceError(null);
+  }, [selectedLine]);
+
+  const parsedPrice = priceDraft.trim() === "" ? null : Number(priceDraft.replace(",", "."));
+  const priceInvalid = parsedPrice !== null && !(parsedPrice >= 0);
+
+  const savePrice = async () => {
+    if (!selectedLine || priceInvalid || priceSaving) return;
+    setPriceSaving(true);
+    setPriceError(null);
+    try {
+      await setInventoryPurchaseOrderLinePrice(selectedLine.id, parsedPrice);
+      await load();
+    } catch (err) {
+      setPriceError(err);
+    } finally {
+      setPriceSaving(false);
+    }
+  };
+
   const lateDays = detail
     ? lateByDays(detail.order.expected_delivery_date, detail.order.status)
     : null;
 
-  const runTransition = async (nextStatus: string) => {
-    if (!detail) return;
+  /** Resolves to false when the transition failed (reported by the global IPC toast). */
+  const runTransition = async (nextStatus: string): Promise<boolean> => {
+    if (!detail) return false;
     setSaving(true);
-    setError(null);
     try {
       await transitionInventoryPurchaseOrder({
         purchase_order_id: detail.order.id,
@@ -205,8 +238,9 @@ export function PurchaseOrderWorkspace({
       await load();
       onTransitioned?.();
       await onReload?.();
-    } catch (err) {
-      setError(toErrorMessage(err));
+      return true;
+    } catch {
+      return false;
     } finally {
       setSaving(false);
     }
@@ -215,7 +249,6 @@ export function PurchaseOrderWorkspace({
   const applyPostingState = async () => {
     if (!detail) return;
     setSaving(true);
-    setError(null);
     try {
       await updateInventoryProcurementPostingState({
         entity_type: "purchase_order",
@@ -225,8 +258,8 @@ export function PurchaseOrderWorkspace({
       });
       await load();
       await onReload?.();
-    } catch (err) {
-      setError(toErrorMessage(err));
+    } catch {
+      // reported by the global IPC toast
     } finally {
       setSaving(false);
     }
@@ -235,7 +268,6 @@ export function PurchaseOrderWorkspace({
   const addDocument = async () => {
     if (!detail || !docRef.trim()) return;
     setSaving(true);
-    setError(null);
     try {
       await upsertInventoryDocumentLink({
         entity_type: "PURCHASE_ORDER",
@@ -246,8 +278,8 @@ export function PurchaseOrderWorkspace({
       setDocRef("");
       const docs = await listInventoryDocumentLinks("PURCHASE_ORDER", detail.order.id);
       setDocuments(docs);
-    } catch (err) {
-      setError(toErrorMessage(err));
+    } catch {
+      // reported by the global IPC toast
     } finally {
       setSaving(false);
     }
@@ -262,6 +294,7 @@ export function PurchaseOrderWorkspace({
           defaultValue: key,
         }),
       locale,
+      currencyCode,
     );
   };
 
@@ -276,9 +309,11 @@ export function PurchaseOrderWorkspace({
             {order ? (
               <>
                 <span className="font-mono">{formatEntityCode(order.po_number)}</span>
-                <Badge variant={order.status === "CANCELLED" ? "destructive" : "outline"}>
-                  {t(`procurement.statuses.${order.status}`, { defaultValue: order.status })}
-                </Badge>
+                <StatusChip
+                  label={t(`procurement.statuses.${order.status}`, { defaultValue: order.status })}
+                  tone={toneOf(PROCUREMENT_STATUS_TONE, order.status)}
+                  dot
+                />
                 {lateDays != null ? (
                   <Badge variant="destructive">
                     {t("procurement.poWorkspace.lateByDays", { count: lateDays })}
@@ -294,13 +329,12 @@ export function PurchaseOrderWorkspace({
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
           {loading ? (
             <p className="text-sm text-text-muted">{t("procurement.poWorkspace.loading")}</p>
-          ) : error && !detail ? (
-            <p className="text-sm text-destructive">{error}</p>
+          ) : loadError && !detail ? (
+            <ErrorState error={loadError} onRetry={() => void load()} />
           ) : !detail || !order ? (
             <p className="text-sm text-text-muted">{t("procurement.poWorkspace.noSelection")}</p>
           ) : (
             <>
-              {error ? <p className="mb-3 text-sm text-destructive">{error}</p> : null}
               <Tabs defaultValue="general">
                 <TabsList className="mb-3 flex h-auto flex-wrap gap-1">
                   <TabsTrigger value="general">
@@ -337,6 +371,21 @@ export function PurchaseOrderWorkspace({
                       value={t(`procurement.postingStates.${order.posting_state}`, {
                         defaultValue: order.posting_state,
                       })}
+                    />
+                    <Field
+                      label={t("procurement.poWorkspace.fields.orderedBy")}
+                      value={formatOrDash(order.ordered_by_name)}
+                    />
+                    <Field
+                      label={t("procurement.poWorkspace.fields.currency")}
+                      value={
+                        order.currency_code && order.currency_code !== currencyCode
+                          ? t("procurement.poWorkspace.currencyForeign", {
+                              code: order.currency_code,
+                              tenant: currencyCode,
+                            })
+                          : t("procurement.poForm.currencyTenant", { code: currencyCode })
+                      }
                     />
                     <Field
                       label={t("procurement.poWorkspace.fields.createdAt")}
@@ -490,6 +539,47 @@ export function PurchaseOrderWorkspace({
                           </button>
                         );
                       })}
+                      {selectedLine && order.status === "DRAFT" ? (
+                        <PermissionGate permission={P.INV_PROCURE}>
+                          <div className="space-y-1 rounded-md border border-dashed p-3">
+                            <Label htmlFor="po-line-price">
+                              {t("procurement.poWorkspace.price.label", {
+                                article: selectedLine.article_code,
+                                currency: poCurrency,
+                              })}
+                            </Label>
+                            <div className="flex gap-2">
+                              <Input
+                                id="po-line-price"
+                                inputMode="decimal"
+                                className="h-11 tabular-nums"
+                                value={priceDraft}
+                                onChange={(e) => setPriceDraft(e.target.value)}
+                                aria-describedby="po-line-price-hint"
+                              />
+                              <Button
+                                type="button"
+                                className="h-11"
+                                disabled={priceSaving || priceInvalid}
+                                onClick={() => void savePrice()}
+                              >
+                                {t("procurement.poWorkspace.price.save")}
+                              </Button>
+                            </div>
+                            <p id="po-line-price-hint" className="text-xs text-text-muted">
+                              {priceInvalid
+                                ? t("procurement.poWorkspace.price.invalid")
+                                : t("procurement.poWorkspace.price.hint")}
+                            </p>
+                            {priceError ? (
+                              <ErrorState
+                                error={priceError}
+                                title={t("procurement.poWorkspace.price.error")}
+                              />
+                            ) : null}
+                          </div>
+                        </PermissionGate>
+                      ) : null}
                       {selectedLine && selectedLine.remaining_qty > 0 ? (
                         <div>
                           <p className="mb-1 text-xs font-medium text-text-muted">
@@ -553,12 +643,19 @@ export function PurchaseOrderWorkspace({
                             <span className="font-mono font-medium">
                               {formatEntityCode(gr.gr_number)}
                             </span>
-                            <Badge variant="outline">{gr.status}</Badge>
-                            <Badge variant="secondary">
-                              {t(`procurement.postingStates.${gr.posting_state}`, {
+                            <StatusChip
+                              label={t(`procurement.statuses.${gr.status}`, {
+                                defaultValue: gr.status,
+                              })}
+                              tone={toneOf(PROCUREMENT_STATUS_TONE, gr.status)}
+                              dot
+                            />
+                            <StatusChip
+                              label={t(`procurement.postingStates.${gr.posting_state}`, {
                                 defaultValue: gr.posting_state,
                               })}
-                            </Badge>
+                              tone={toneOf(POSTING_STATE_TONE, gr.posting_state)}
+                            />
                           </div>
                           <div className="mt-1 text-xs text-text-muted">
                             {t("procurement.poWorkspace.receipts.receivedAt")}:{" "}
@@ -683,28 +780,41 @@ export function PurchaseOrderWorkspace({
             </Button>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11"
+              onClick={() => onOpenChange(false)}
+            >
               {t("procurement.poWorkspace.actions.close")}
             </Button>
             {order ? (
               <PermissionGate permission={P.INV_PROCURE}>
                 <>
-                  <Button
-                    variant="outline"
-                    disabled={saving || order.status !== "DRAFT"}
-                    onClick={() => void runTransition("SUBMITTED")}
-                  >
-                    {t("procurement.poWorkspace.actions.submit")}
-                  </Button>
-                  <Button
-                    disabled={saving || order.status !== "SUBMITTED"}
-                    onClick={() => void runTransition("APPROVED")}
-                  >
-                    {t("procurement.poWorkspace.actions.approve")}
-                  </Button>
+                  {/* Only the transitions the current status allows are offered. */}
+                  {order.status === "DRAFT" ? (
+                    <Button
+                      variant="outline"
+                      className="h-11"
+                      disabled={saving}
+                      onClick={() => void runTransition("SUBMITTED")}
+                    >
+                      {t("procurement.poWorkspace.actions.submit")}
+                    </Button>
+                  ) : null}
+                  {order.status === "SUBMITTED" ? (
+                    <Button
+                      className="h-11"
+                      disabled={saving}
+                      onClick={() => void runTransition("APPROVED")}
+                    >
+                      {t("procurement.poWorkspace.actions.approve")}
+                    </Button>
+                  ) : null}
                   {onReceiveGoods && isReceivablePurchaseOrder(order.status) ? (
                     <Button
                       variant="outline"
+                      className="h-11"
                       disabled={saving}
                       onClick={() => onReceiveGoods(order.id)}
                     >
@@ -714,8 +824,9 @@ export function PurchaseOrderWorkspace({
                   {cancelTarget ? (
                     <Button
                       variant="destructive"
+                      className="h-11"
                       disabled={saving}
-                      onClick={() => void runTransition(cancelTarget)}
+                      onClick={() => setCancelConfirmOpen(true)}
                     >
                       {t("procurement.poWorkspace.actions.cancel")}
                     </Button>
@@ -726,6 +837,21 @@ export function PurchaseOrderWorkspace({
           </div>
         </DialogFooter>
       </DialogContent>
+      <ConfirmDialog
+        open={cancelConfirmOpen}
+        onOpenChange={setCancelConfirmOpen}
+        title={t("procurement.purchaseOrders.confirmCancel.title")}
+        description={t("procurement.purchaseOrders.confirmCancel.description", {
+          number: order?.po_number ?? "",
+        })}
+        confirmLabel={t("procurement.purchaseOrders.confirmCancel.confirm")}
+        destructive
+        onConfirm={async () => {
+          if (!cancelTarget) return;
+          const ok = await runTransition(cancelTarget);
+          if (!ok) throw new Error("cancel failed");
+        }}
+      />
     </Dialog>
   );
 }

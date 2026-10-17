@@ -346,22 +346,6 @@ fn valid_version_transition(current: &str, next: &str) -> bool {
     )
 }
 
-fn valid_variance_driver(driver_code: &str) -> bool {
-    matches!(
-        driver_code,
-        "emergency_break_in"
-            | "vendor_delay"
-            | "labor_overrun"
-            | "estimate_error"
-            | "scope_change"
-            | "price_increase"
-            | "permit_delay"
-            | "availability_loss"
-            | "repeat_failure"
-            | "shutdown_scope_growth"
-    )
-}
-
 fn valid_variance_transition(current: &str, next: &str) -> bool {
     matches!(
         (current, next),
@@ -1082,6 +1066,13 @@ pub async fn create_budget_line(db: &DatabaseConnection, input: CreateBudgetLine
     let version = ensure_version_editable(&txn, input.budget_version_id).await?;
     let _ = version;
     let budget_bucket = required_trimmed("Budget bucket", &input.budget_bucket)?;
+    crate::finance::reference_catalog::ensure_active_code(
+        &txn,
+        crate::finance::reference_catalog::DOMAIN_COST_CATEGORIES,
+        &budget_bucket,
+        "Cost category",
+    )
+    .await?;
     if input.period_month.is_some_and(|month| !(1..=12).contains(&month)) {
         return Err(AppError::ValidationFailed(vec![
             "Period month must be between 1 and 12.".to_string(),
@@ -1188,6 +1179,15 @@ pub async fn update_budget_line(
         .as_deref()
         .map(|value| required_trimmed("Budget bucket", value))
         .transpose()?;
+    if let Some(bucket) = budget_bucket.as_deref() {
+        crate::finance::reference_catalog::ensure_active_code(
+            &txn,
+            crate::finance::reference_catalog::DOMAIN_COST_CATEGORIES,
+            bucket,
+            "Cost category",
+        )
+        .await?;
+    }
 
     let result = txn
         .execute(Statement::from_sql_and_values(
@@ -1293,8 +1293,18 @@ pub async fn create_budget_actual(
     input: CreateBudgetActualInput,
     allow_posted: bool,
 ) -> AppResult<BudgetActual> {
-    let _ = get_budget_version(db, input.budget_version_id).await?;
+    let version = get_budget_version(db, input.budget_version_id).await?;
+    if let Some(month) = input.period_month.filter(|m| (1..=12).contains(m)) {
+        crate::finance::periods::ensure_period_open(db, version.fiscal_year, month).await?;
+    }
     let budget_bucket = required_trimmed("Budget bucket", &input.budget_bucket)?;
+    crate::finance::reference_catalog::ensure_active_code(
+        db,
+        crate::finance::reference_catalog::DOMAIN_COST_CATEGORIES,
+        &budget_bucket,
+        "Cost category",
+    )
+    .await?;
     let source_type = required_trimmed("Source type", &input.source_type)?;
     let source_id = required_trimmed("Source id", &input.source_id)?;
     let source_currency = required_trimmed("Source currency", &input.source_currency)?;
@@ -1696,6 +1706,13 @@ pub async fn create_budget_commitment(
         ]));
     }
     let budget_bucket = required_trimmed("Budget bucket", &input.budget_bucket)?;
+    crate::finance::reference_catalog::ensure_active_code(
+        db,
+        crate::finance::reference_catalog::DOMAIN_COST_CATEGORIES,
+        &budget_bucket,
+        "Cost category",
+    )
+    .await?;
     let commitment_type = required_trimmed("Commitment type", &input.commitment_type)?;
     let source_type = required_trimmed("Source type", &input.source_type)?;
     let source_id = required_trimmed("Source id", &input.source_id)?;
@@ -2099,6 +2116,13 @@ pub async fn create_budget_variance_review(
 ) -> AppResult<BudgetVarianceReview> {
     let _ = get_budget_version(db, input.budget_version_id).await?;
     let budget_bucket = required_trimmed("Budget bucket", &input.budget_bucket)?;
+    crate::finance::reference_catalog::ensure_active_code(
+        db,
+        crate::finance::reference_catalog::DOMAIN_COST_CATEGORIES,
+        &budget_bucket,
+        "Cost category",
+    )
+    .await?;
     let driver_code = required_trimmed("Driver code", &input.driver_code)?;
     let review_commentary = required_trimmed("Review commentary", &input.review_commentary)?;
     let snapshot_context_json = required_trimmed("Snapshot context json", &input.snapshot_context_json)?;
@@ -2107,11 +2131,13 @@ pub async fn create_budget_variance_review(
             "Period month must be between 1 and 12.".to_string(),
         ]));
     }
-    if !valid_variance_driver(&driver_code) {
-        return Err(AppError::ValidationFailed(vec![
-            "driver_code must be one of the governed variance taxonomy values.".to_string(),
-        ]));
-    }
+    crate::finance::reference_catalog::ensure_active_code(
+        db,
+        crate::finance::reference_catalog::DOMAIN_VARIANCE_REASONS,
+        &driver_code,
+        "Variance reason",
+    )
+    .await?;
 
     let duplicate = db
         .query_one(Statement::from_sql_and_values(
@@ -3503,42 +3529,28 @@ pub async fn evaluate_budget_alerts(
         }
     }
 
-    let team_commit_rows = db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT assigned_team_id AS team_id,
-                    CAST(strftime('%m', committed_start) AS INTEGER) AS period_month,
-                    SUM((julianday(committed_end) - julianday(committed_start)) * 24.0) AS committed_hours
-             FROM schedule_commitments
-             WHERE assigned_team_id IS NOT NULL
-             GROUP BY assigned_team_id, CAST(strftime('%m', committed_start) AS INTEGER)",
-            [],
-        ))
-        .await?;
+    // Committed labour per team and month of the budget's fiscal year, counted as the planning
+    // board counts it (`planning::load`): duration x crew size spread over the working time of
+    // each slot, finished and cancelled work left out.
     let mut team_commit_map = std::collections::HashMap::<(i64, i64), f64>::new();
-    for row in team_commit_rows {
-        let team_id: i64 = row.try_get("", "team_id")?;
-        let month: i64 = row.try_get("", "period_month")?;
-        let committed_hours: f64 = row.try_get("", "committed_hours")?;
-        team_commit_map.insert((team_id, month), committed_hours);
+    if let Ok(year) = i32::try_from(version.fiscal_year) {
+        for ((team_id, month), hours) in crate::planning::load::team_month_loads(db, year).await? {
+            team_commit_map.insert((team_id, i64::from(month)), hours);
+        }
     }
-    let team_capacity_rows = db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT team_id,
-                    CAST(strftime('%m', effective_start) AS INTEGER) AS period_month,
-                    AVG(available_hours_per_day + max_overtime_hours_per_day) * 30.0 AS capacity_hours
-             FROM capacity_rules
-             GROUP BY team_id, CAST(strftime('%m', effective_start) AS INTEGER)",
-            [],
-        ))
-        .await?;
+    // Team capacity of each month with commitments: the same figure planning books against
+    // (members' Classes horaires on working days, minus absences, x utilisation, plus the
+    // planner's overtime ceiling), over the budget's fiscal year.
     let mut team_capacity_map = std::collections::HashMap::<(i64, i64), f64>::new();
-    for row in team_capacity_rows {
-        let team_id: i64 = row.try_get("", "team_id")?;
-        let month: i64 = row.try_get("", "period_month")?;
-        let capacity_hours: f64 = row.try_get("", "capacity_hours")?;
-        team_capacity_map.insert((team_id, month), capacity_hours);
+    for &(team_id, month) in team_commit_map.keys() {
+        let (Ok(year), Ok(month_no)) = (i32::try_from(version.fiscal_year), u32::try_from(month)) else {
+            continue;
+        };
+        if !(1..=12).contains(&month_no) {
+            continue;
+        }
+        let hours = crate::personnel::capacity::team_month_hours(db, team_id, year, month_no).await?;
+        team_capacity_map.insert((team_id, month), hours);
     }
     let txn = db.begin().await?;
 
@@ -3943,7 +3955,11 @@ pub async fn build_budget_report_pack(
     let reassignment_row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT COALESCE(SUM(has_blocking_conflict), 0) AS churn FROM schedule_commitments",
+            // Real churn: commitments moved after they were committed — reschedules and emergency
+            // reassignments (planning change log) and break-ins.
+            "SELECT (SELECT COUNT(*) FROM schedule_change_log \
+                      WHERE action_type IN ('reschedule_commitment', 'emergency_reassign')) \
+                  + (SELECT COUNT(*) FROM schedule_break_ins) AS churn",
             [],
         ))
         .await?;

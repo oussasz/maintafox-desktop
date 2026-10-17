@@ -2,12 +2,16 @@
  * Planning board presentation helpers — adapters only; no IPC.
  */
 
+import type { TFunction } from "i18next";
+
+import { PERMIT_QUERY_CREATE_FOR_WO, PERMIT_QUERY_SELECT } from "@/components/permits/permit-rules";
 import type { ResourceTimelineState } from "@/design-system/resource-timeline-tokens";
 import {
-  blockTypeToTimelineState,
   RESOURCE_TIMELINE_HORIZON_PRESETS,
+  blockTypeToTimelineState,
 } from "@/design-system/resource-timeline-tokens";
 import type {
+  ConflictReason,
   PlanningGanttSnapshot,
   PlanningWindow,
   ScheduleCandidate,
@@ -18,28 +22,11 @@ import type {
 export const PLANNING_HORIZON_PRESETS = RESOURCE_TIMELINE_HORIZON_PRESETS;
 export const PLANNING_DEFAULT_HORIZON_DAYS = RESOURCE_TIMELINE_HORIZON_PRESETS[1]; // 14
 
-/** Default daily available hours when no capacity_rules row exists (matches Rust gate). */
-export const PLANNING_DEFAULT_DAILY_CAPACITY_HOURS = 8;
-
 /** Utilization ratio thresholds for capacity strip tone. */
 export const PLANNING_UTILIZATION_PARTIAL = 0.8;
 export const PLANNING_UTILIZATION_CRITICAL = 1;
 
 export const PLANNING_UNASSIGNED_GROUP_ID = "unassigned";
-
-export const PLANNING_BREAK_IN_REASONS = [
-  "emergency",
-  "safety",
-  "production_loss",
-  "regulatory",
-  "other",
-] as const;
-
-export type PlanningBreakInReason = (typeof PLANNING_BREAK_IN_REASONS)[number];
-
-export const PLANNING_WINDOW_TYPES = ["production", "maintenance", "shutdown", "freeze"] as const;
-
-export type PlanningWindowType = (typeof PLANNING_WINDOW_TYPES)[number];
 
 export type SuggestedAssignee = {
   personnel_id: number;
@@ -153,7 +140,8 @@ export const PLANNING_PAGE_VIEW_STORAGE_PREFIX = "maintafox.planning.pageView";
 
 export type PlanningBoardScope = { kind: "all" } | { kind: "crew"; teamId: number };
 
-export type PlanningPageView = "gantt" | "calendar";
+/** "week": the site's weekly schedule (approve, freeze, publish). */
+export type PlanningPageView = "gantt" | "calendar" | "week";
 
 export type PlanningCalendarMode = "month" | "week" | "day";
 
@@ -286,7 +274,7 @@ export function planningPageViewStorageKey(userId: number | null | undefined): s
 export function readStoredPageView(userId: number | null | undefined): PlanningPageView {
   try {
     const raw = localStorage.getItem(planningPageViewStorageKey(userId));
-    if (raw === "calendar" || raw === "gantt") return raw;
+    if (raw === "calendar" || raw === "gantt" || raw === "week") return raw;
   } catch {
     /* ignore */
   }
@@ -565,6 +553,8 @@ export type PlanningTimelineItemData = {
   endMs: number;
   state: ResourceTimelineState;
   canMove: boolean;
+  /** Why the bar is critical: its open conflicts, one per line. */
+  conflictReasons?: ConflictReason[];
 };
 
 export type PlanningWindowHighlightData = {
@@ -619,8 +609,9 @@ export function buildPlanningTimelineItems(input: {
       title,
       startMs: start,
       endMs: end,
-      state: frozen ? "blocked" : commitment.has_blocking_conflict ? "critical" : "commitment",
+      state: commitmentTimelineState(commitment),
       canMove: canDrag && !frozen,
+      conflictReasons: parseConflictReasons(commitment.conflict_reasons_json),
     });
   }
 
@@ -659,9 +650,9 @@ export function buildPlanningWindowHighlights(
 }
 
 /**
- * Prefill commit slot from candidate window / duration.
- * Capacity gate is daily (≈8h + overtime) — never prefill a multi-day span that
- * would always fail the gate. Prefer estimated duration when the window is wider.
+ * Prefill commit slot from the candidate's window and estimated duration — never an assumed
+ * length: without an estimate only the known ends are filled. The dialog then keeps the end
+ * inside the team's remaining capacity of the day (its Classes horaires + overtime ceiling).
  */
 export function deriveCommitSlotLocals(candidate: ScheduleCandidate | null): {
   startLocal: string;
@@ -671,15 +662,13 @@ export function deriveCommitSlotLocals(candidate: ScheduleCandidate | null): {
 
   const windowStart = candidate.window_start?.trim() ? candidate.window_start : null;
   const windowEnd = candidate.window_end?.trim() ? candidate.window_end : null;
-  const hasStart = windowStart != null;
-  const hasEnd = windowEnd != null;
   const durationH = candidate.estimated_duration_hours;
-  const maxSlotH = PLANNING_DEFAULT_DAILY_CAPACITY_HOURS;
+  const hasDuration = durationH != null && Number.isFinite(durationH) && durationH > 0;
 
-  const clampEndFromStart = (startIso: string, preferredHours: number, hardEndIso?: string) => {
+  const endFromStart = (startIso: string, hours: number, hardEndIso?: string | null) => {
     const startMs = parseMs(startIso);
     if (!startMs) return "";
-    let endMs = startMs + preferredHours * 3_600_000;
+    let endMs = startMs + hours * 3_600_000;
     if (hardEndIso) {
       const hardEnd = parseMs(hardEndIso);
       if (hardEnd && hardEnd > startMs) endMs = Math.min(endMs, hardEnd);
@@ -687,65 +676,41 @@ export function deriveCommitSlotLocals(candidate: ScheduleCandidate | null): {
     return toDateTimeLocal(new Date(endMs).toISOString());
   };
 
-  if (hasStart && hasEnd) {
-    const startMs = parseMs(windowStart);
-    const endMs = parseMs(windowEnd);
-    const spanH = startMs && endMs && endMs > startMs ? (endMs - startMs) / 3_600_000 : 0;
-    const preferred =
-      durationH != null && Number.isFinite(durationH) && durationH > 0
-        ? Math.min(durationH, maxSlotH)
-        : Math.min(spanH > 0 ? spanH : maxSlotH, maxSlotH);
-
-    if (spanH > preferred + 0.01) {
-      return {
-        startLocal: toDateTimeLocal(windowStart),
-        endLocal: clampEndFromStart(windowStart, preferred, windowEnd),
-      };
-    }
-
+  if (windowStart && windowEnd) {
     return {
       startLocal: toDateTimeLocal(windowStart),
+      endLocal: hasDuration
+        ? endFromStart(windowStart, durationH, windowEnd)
+        : toDateTimeLocal(windowEnd),
+    };
+  }
+  if (windowStart) {
+    return {
+      startLocal: toDateTimeLocal(windowStart),
+      endLocal: hasDuration ? endFromStart(windowStart, durationH) : "",
+    };
+  }
+  if (windowEnd) {
+    const endMs = parseMs(windowEnd);
+    return {
+      startLocal:
+        hasDuration && endMs
+          ? toDateTimeLocal(new Date(endMs - durationH * 3_600_000).toISOString())
+          : "",
       endLocal: toDateTimeLocal(windowEnd),
     };
   }
-
-  if (hasStart && !hasEnd && durationH != null && Number.isFinite(durationH) && durationH > 0) {
-    const preferred = Math.min(durationH, maxSlotH);
-    return {
-      startLocal: toDateTimeLocal(windowStart),
-      endLocal: clampEndFromStart(windowStart, preferred),
-    };
-  }
-
-  if (hasEnd && !hasStart && durationH != null && Number.isFinite(durationH) && durationH > 0) {
-    const endMs = parseMs(windowEnd);
-    if (endMs) {
-      const preferred = Math.min(durationH, maxSlotH);
-      return {
-        startLocal: toDateTimeLocal(new Date(endMs - preferred * 3_600_000).toISOString()),
-        endLocal: toDateTimeLocal(windowEnd),
-      };
-    }
-  }
-
-  if (hasStart) {
-    return {
-      startLocal: toDateTimeLocal(windowStart),
-      endLocal: clampEndFromStart(windowStart, maxSlotH),
-    };
-  }
-  if (hasEnd) {
-    return { startLocal: "", endLocal: toDateTimeLocal(windowEnd) };
-  }
-
   return { startLocal: "", endLocal: "" };
 }
 
-/** UTC work-date key used by the Rust capacity gate (`date_naive` of committed_start). */
-export function workDateFromCommittedIso(iso: string): string | null {
+/** Local calendar day (`YYYY-MM-DD`) of an instant — the days the timetables and the load use. */
+export function localDayOf(iso: string): string | null {
   const ms = parseMs(iso);
   if (!ms) return null;
-  return new Date(ms).toISOString().slice(0, 10);
+  const d = new Date(ms);
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${m}-${day}`;
 }
 
 export type TeamDayCapacity = {
@@ -753,11 +718,14 @@ export type TeamDayCapacity = {
   overtimeHours: number;
   committedHours: number;
   remainingHours: number;
+  /** `roster` | `rest_day` | `holiday` | `no_schedule` | `no_members`; null when not loaded. */
+  basis: string | null;
 };
 
 /**
- * Remaining team capacity for a work date (mirrors compute_capacity_gate defaults).
- * Missing gantt rows ⇒ 8h available / 0 overtime / 0 committed.
+ * A team's capacity on a local day (the members' Classes horaires on the site's working days −
+ * absences, × utilisation, plus the planner's overtime ceiling) and the labour hours already
+ * committed there. No row ⇒ 0 h, never a default.
  */
 export function resolveTeamDayCapacity(
   capacity: TeamCapacityLoad[] | null | undefined,
@@ -765,69 +733,194 @@ export function resolveTeamDayCapacity(
   workDate: string,
 ): TeamDayCapacity {
   const row = (capacity ?? []).find((c) => c.team_id === teamId && c.work_date === workDate);
-  const availableHours = row?.available_hours ?? PLANNING_DEFAULT_DAILY_CAPACITY_HOURS;
+  const availableHours = row?.available_hours ?? 0;
   const overtimeHours = row?.overtime_hours ?? 0;
   const committedHours = row?.committed_hours ?? 0;
   const remainingHours = Math.max(0, availableHours + overtimeHours - committedHours);
-  return { availableHours, overtimeHours, committedHours, remainingHours };
+  return {
+    availableHours,
+    overtimeHours,
+    committedHours,
+    remainingHours,
+    basis: row?.basis ? row.basis : null,
+  };
 }
 
-/** True when requested hours would fail the daily capacity gate. */
-export function exceedsTeamDayCapacity(
-  capacity: TeamCapacityLoad[] | null | undefined,
-  teamId: number,
-  committedStartIso: string,
-  committedEndIso: string,
-): boolean {
-  const workDate = workDateFromCommittedIso(committedStartIso);
-  if (!workDate) return true;
-  const startMs = parseMs(committedStartIso);
-  const endMs = parseMs(committedEndIso);
-  if (!startMs || !endMs || endMs <= startMs) return true;
-  const requested = (endMs - startMs) / 3_600_000;
-  const { remainingHours } = resolveTeamDayCapacity(capacity, teamId, workDate);
-  return requested > remainingHours + 1e-6;
+/** The local days a slot covers, with the share (0–1] of each (mirrors `planning::load::slot_days`). */
+export function slotDays(startIso: string, endIso: string): Array<{ day: string; share: number }> {
+  const startMs = parseMs(startIso);
+  const endMs = parseMs(endIso);
+  if (!startMs || !endMs || endMs <= startMs) return [];
+  const out: Array<{ day: string; share: number }> = [];
+  const cursor = new Date(startMs);
+  cursor.setHours(0, 0, 0, 0);
+  while (cursor.getTime() < endMs) {
+    const dayStart = cursor.getTime();
+    const next = new Date(cursor);
+    next.setDate(next.getDate() + 1);
+    const dayEnd = next.getTime();
+    const covered = Math.min(endMs, dayEnd) - Math.max(startMs, dayStart);
+    const key = localDayOf(new Date(dayStart).toISOString());
+    if (covered > 0 && key) {
+      out.push({ day: key, share: Math.min(1, covered / (dayEnd - dayStart)) });
+    }
+    cursor.setTime(dayEnd);
+  }
+  return out;
+}
+
+/** A capacity window's local wall-clock time (`YYYY-MM-DDTHH:MM:SS`, no offset ⇒ local) in ms. */
+function localWallMs(raw: string): number | null {
+  const ms = new Date(raw).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function overlapMs(aStart: number, aEnd: number, bStart: number, bEnd: number): number {
+  return Math.max(0, Math.min(aEnd, bEnd) - Math.max(aStart, bStart));
 }
 
 /**
- * Clamp end so the slot fits remaining daily capacity (and optional hard max end ms).
+ * Spreads labour hours over working time (mirrors `planning::load::spread`): each day weighs its
+ * members' shift windows by the part inside the slot (a night shift belongs to the day it starts);
+ * hours of members without a known window count in full on the days the slot touches. Only a slot
+ * touching no working time at all keeps its hours on the calendar days it covers (the overload shows).
  */
-export function clampEndToRemainingCapacity(args: {
-  startIso: string;
-  endIso: string;
-  teamId: number;
-  capacity: TeamCapacityLoad[] | null | undefined;
-  hardMaxEndMs?: number;
-}): string {
-  const { startIso, endIso, teamId, capacity, hardMaxEndMs } = args;
+export function spreadLabour(
+  labourHours: number,
+  startIso: string,
+  endIso: string,
+  teamRows: TeamCapacityLoad[],
+): Map<string, number> {
+  const calendar = slotDays(startIso, endIso);
+  const out = new Map<string, number>();
   const startMs = parseMs(startIso);
   const endMs = parseMs(endIso);
-  if (!startMs || !endMs || endMs <= startMs) return endIso;
-
-  const workDate = workDateFromCommittedIso(startIso);
-  if (!workDate) return endIso;
-  const { remainingHours } = resolveTeamDayCapacity(capacity, teamId, workDate);
-  if (remainingHours <= 0) {
-    // Keep a 1-minute marker so the field stays valid; submit will block.
-    return toDateTimeLocal(new Date(startMs + 60_000).toISOString());
+  if (calendar.length === 0 || !startMs || !endMs) return out;
+  const touched = new Set(calendar.map((d) => d.day));
+  let weights: Array<{ day: string; w: number }> = [];
+  for (const row of teamRows) {
+    let w = 0;
+    for (const win of row.work_windows) {
+      const s = localWallMs(win.start);
+      const e = localWallMs(win.end);
+      if (s == null || e == null || e <= s) continue;
+      w += (win.hours * overlapMs(startMs, endMs, s, e)) / (e - s);
+    }
+    if (row.unwindowed_hours > 0 && touched.has(row.work_date)) w += row.unwindowed_hours;
+    if (w > 0) weights.push({ day: row.work_date, w });
   }
-
-  let maxEndMs = startMs + remainingHours * 3_600_000;
-  if (hardMaxEndMs != null && hardMaxEndMs > startMs) {
-    maxEndMs = Math.min(maxEndMs, hardMaxEndMs);
-  }
-  const nextEndMs = Math.min(endMs, maxEndMs);
-  return toDateTimeLocal(new Date(nextEndMs).toISOString());
+  if (weights.length === 0) weights = calendar.map((d) => ({ day: d.day, w: d.share }));
+  const total = weights.reduce((sum, d) => sum + d.w, 0);
+  if (total <= 0) return out;
+  for (const { day, w } of weights) out.set(day, (out.get(day) ?? 0) + (labourHours * w) / total);
+  return out;
 }
 
-export function isDoubleBookingErrorMessage(message: string): boolean {
-  const lower = message.toLowerCase();
-  return lower.includes("double-booking") || lower.includes("double booking");
+/**
+ * Shift time one person can give the slot: each day, the longest part of a member's shift window
+ * inside the slot, summed (hours). Null when a day it touches has hours without a known window.
+ */
+export function slotShiftHours(
+  startIso: string,
+  endIso: string,
+  teamRows: TeamCapacityLoad[],
+): number | null {
+  const startMs = parseMs(startIso);
+  const endMs = parseMs(endIso);
+  if (!startMs || !endMs || endMs <= startMs) return null;
+  const touched = new Set(slotDays(startIso, endIso).map((d) => d.day));
+  let total = 0;
+  for (const row of teamRows) {
+    if (row.unwindowed_hours > 0 && touched.has(row.work_date)) return null;
+    let longest = 0;
+    for (const win of row.work_windows) {
+      const s = localWallMs(win.start);
+      const e = localWallMs(win.end);
+      if (s == null || e == null) continue;
+      longest = Math.max(longest, overlapMs(startMs, endMs, s, e));
+    }
+    total += longest / 3_600_000;
+  }
+  return total;
 }
 
-export function isCapacityGateErrorMessage(message: string): boolean {
-  const lower = message.toLowerCase();
-  return lower.includes("capacity gate") || lower.includes("exceeds capacity");
+export type SlotCapacityDay = TeamDayCapacity & { day: string; shareHours: number };
+
+/** The previous local day (`YYYY-MM-DD`): a night shift that started then may run into a slot. */
+function previousDay(day: string): string {
+  const d = new Date(`${day}T12:00:00`);
+  d.setDate(d.getDate() - 1);
+  return localDayOf(d.toISOString()) ?? day;
+}
+
+/** The team's capacity rows a slot can use: the day before it starts through its last day. */
+export function slotCapacityRows(
+  capacity: TeamCapacityLoad[] | null | undefined,
+  teamId: number,
+  startIso: string,
+  endIso: string,
+): TeamCapacityLoad[] {
+  const days = slotDays(startIso, endIso);
+  const usable = new Set(days.map((d) => d.day));
+  const first = days[0]?.day;
+  if (first) usable.add(previousDay(first));
+  return (capacity ?? []).filter((c) => c.team_id === teamId && usable.has(c.work_date));
+}
+
+/**
+ * Capacity over the days a slot uses, as the backend gate checks it: the work's labour hours
+ * (duration × crew size) spread over the working time it covers, against each day's remaining hours.
+ */
+export function checkSlotCapacity(args: {
+  capacity: TeamCapacityLoad[] | null | undefined;
+  teamId: number;
+  startIso: string;
+  endIso: string;
+  labourHours: number;
+}): { days: SlotCapacityDay[]; overloaded: SlotCapacityDay | null; noSchedule: boolean } {
+  const { capacity, teamId, startIso, endIso, labourHours } = args;
+  const days = slotDays(startIso, endIso).map((d) => d.day);
+  const shares = spreadLabour(
+    labourHours,
+    startIso,
+    endIso,
+    slotCapacityRows(capacity, teamId, startIso, endIso),
+  );
+  const shown = [...new Set([...days, ...shares.keys()])].sort();
+  const rows: SlotCapacityDay[] = shown.map((day) => ({
+    ...resolveTeamDayCapacity(capacity, teamId, day),
+    day,
+    shareHours: shares.get(day) ?? 0,
+  }));
+  const overloaded = rows.find((r) => r.shareHours > r.remainingHours + 0.01) ?? null;
+  const slotRows = rows.filter((r) => days.includes(r.day));
+  const noSchedule =
+    slotRows.length > 0 &&
+    slotRows.every((r) => r.basis === "no_schedule" || r.basis === "no_members");
+  return { days: rows, overloaded, noSchedule };
+}
+
+/** Assignee refusals the planner may override with a reason (the commit gate's codes). */
+export const ASSIGNEE_OVERRIDABLE_CODES = [
+  "PLANNING_ASSIGNEE_NOT_IN_CREW",
+  "PLANNING_ASSIGNEE_NOT_WORKING",
+  "PLANNING_ASSIGNEE_OVERLOADED",
+  "PLANNING_DOUBLE_BOOKING",
+] as const;
+
+/** A refusal about the technician (crew, shift, hours left, double booking): overridable with a reason. */
+export function isAssigneeOverridableError(codes: string[]): boolean {
+  return codes.some((c) => (ASSIGNEE_OVERRIDABLE_CODES as readonly string[]).includes(c));
+}
+
+/** The overridable refusals among `codes` (shown in the override dialog, acknowledged on retry). */
+export function overridableCodes(codes: string[]): string[] {
+  return codes.filter((c) => (ASSIGNEE_OVERRIDABLE_CODES as readonly string[]).includes(c));
+}
+
+/** The crew's load would exceed its capacity plus overtime ceiling (`PLANNING_CAPACITY_EXCEEDED`). */
+export function isCapacityGateError(codes: string[]): boolean {
+  return codes.includes("PLANNING_CAPACITY_EXCEEDED");
 }
 
 export function parseLaborCostRange(
@@ -843,4 +936,146 @@ export function parseLaborCostRange(
   } catch {
     return null;
   }
+}
+
+/**
+ * Screen that shows the record behind a planning candidate (OT detail, DI detail), or null
+ * when the source has no deep-linkable screen yet (e.g. PM occurrences).
+ */
+export function candidateSourcePath(
+  candidate: Pick<ScheduleCandidate, "source_type" | "source_id" | "source_di_id">,
+): string | null {
+  if (candidate.source_type === "work_order" && candidate.source_id > 0) {
+    return `/work-orders?openWo=${candidate.source_id}`;
+  }
+  if (candidate.source_di_id != null && candidate.source_di_id > 0) {
+    return `/requests?openDi=${candidate.source_di_id}`;
+  }
+  return null;
+}
+
+/** The open conflicts of a commitment (`conflict_reasons_json`); unreadable JSON gives none. */
+export function parseConflictReasons(json: string | null | undefined): ConflictReason[] {
+  if (!json) return [];
+  try {
+    const parsed: unknown = JSON.parse(json);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (r): r is ConflictReason =>
+        typeof r === "object" &&
+        r !== null &&
+        typeof (r as ConflictReason).conflict_type === "string" &&
+        typeof (r as ConflictReason).reason_code === "string",
+    );
+  } catch {
+    return [];
+  }
+}
+
+function reasonDetails(reason: ConflictReason): Record<string, unknown> {
+  if (!reason.details_json) return {};
+  try {
+    const parsed: unknown = JSON.parse(reason.details_json);
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
+}
+
+/**
+ * A conflict explained in the planner's words: the reason (`reasons.<REASON_CODE>`) with its
+ * details, else the conflict type's label.
+ */
+export function conflictReasonText(reason: ConflictReason, t: TFunction<"planning">): string {
+  const details = reasonDetails(reason);
+  // Lists read as "a, b"; the parts of an estimate are translated.
+  const params: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(details)) {
+    params[key] = Array.isArray(value) ? stringList(value).join(", ") : value;
+  }
+  const skills = stringList(details["required_skills"]);
+  const missing = stringList(details["missing"]).map((m) =>
+    t(`reasonParts.${m}`, { defaultValue: m }),
+  );
+  const fallback = t(`blockers.${reason.conflict_type}`, { defaultValue: reason.conflict_type });
+  return t(`reasons.${reason.reason_code}`, {
+    defaultValue: fallback,
+    ...params,
+    missing: missing.join(", "),
+    skills: skills.join(", "),
+    required: skills.length,
+  });
+}
+
+/** Hover text of a bar: its title, then why it is critical. */
+export function timelineItemTooltip(
+  item: Pick<PlanningTimelineItemData, "title" | "conflictReasons">,
+  t: TFunction<"planning">,
+): string {
+  const reasons = (item.conflictReasons ?? []).map((r) => `• ${conflictReasonText(r, t)}`);
+  return [item.title, ...reasons].join("\n");
+}
+
+/** Blocking refuses the commitment; any other severity than `warning` blocks (fails closed). */
+export function isBlockingSeverity(severity: string): boolean {
+  return severity !== "warning";
+}
+
+/** Where a reason leads: the permit, a stock article, or the planning windows. */
+export type ConflictReasonLink =
+  | { kind: "permit"; path: string }
+  | { kind: "requestPermit"; path: string }
+  | { kind: "article"; path: string; code: string }
+  | { kind: "windows" };
+
+export function conflictReasonLinks(reason: ConflictReason): ConflictReasonLink[] {
+  const details = reasonDetails(reason);
+  const permitId = details["permit_id"];
+  const workOrderId = details["work_order_id"];
+  if (typeof permitId === "number") {
+    return [{ kind: "permit", path: `/permits?${PERMIT_QUERY_SELECT}=${permitId}` }];
+  }
+  if (reason.reason_code === "PERMIT_TO_REQUEST" && typeof workOrderId === "number") {
+    return [
+      { kind: "requestPermit", path: `/permits?${PERMIT_QUERY_CREATE_FOR_WO}=${workOrderId}` },
+    ];
+  }
+  if (reason.reason_code === "NO_FEASIBLE_WINDOW") return [{ kind: "windows" }];
+  const lines = Array.isArray(details["lines"]) ? (details["lines"] as unknown[]) : [];
+  return lines.flatMap((line): ConflictReasonLink[] => {
+    if (typeof line !== "object" || line === null) return [];
+    const { article_id: articleId, article } = line as Record<string, unknown>;
+    return typeof articleId === "number"
+      ? [
+          {
+            kind: "article",
+            path: `/inventory?articleId=${articleId}`,
+            code: typeof article === "string" ? article : String(articleId),
+          },
+        ]
+      : [];
+  });
+}
+
+/**
+ * Colour of a commitment's bar: frozen, critical (a blocking conflict now, or forced over one),
+ * amber (warnings only — enforced later, e.g. the permit at OT start), or plain.
+ */
+export function commitmentTimelineState(
+  commitment: Pick<
+    ScheduleCommitment,
+    "frozen_at" | "has_blocking_conflict" | "conflict_reasons_json"
+  >,
+): ResourceTimelineState {
+  if (commitment.frozen_at) return "blocked";
+  if (commitment.has_blocking_conflict) return "critical";
+  return parseConflictReasons(commitment.conflict_reasons_json).length > 0
+    ? "partial"
+    : "commitment";
 }

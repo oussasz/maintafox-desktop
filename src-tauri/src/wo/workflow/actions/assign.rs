@@ -35,6 +35,13 @@ pub struct WoEmergencyReassignInput {
     pub assigned_team_id: Option<i64>,
     pub primary_responsible_id: Option<i64>,
     pub override_reason: String,
+    /// The new team's shift window (`wo::shifts`), when the team changes; `None` keeps the
+    /// current one, which the new team must then work on the planned day.
+    #[serde(default)]
+    pub shift_class_version_id: Option<i64>,
+    /// Removes the shift.
+    #[serde(default)]
+    pub clear_shift: bool,
 }
 
 struct LatestCommitment {
@@ -124,8 +131,14 @@ async fn append_emergency_schedule_log(
     Ok(())
 }
 
-/// Product path: emergency reassign (skips capacity / lock / double-booking gates).
+/// Product path: emergency reassign (skips capacity / lock / double-booking gates). Never blocked
+/// by the shift: a shift the new team does not work is cleared, and the work order records that it
+/// must be chosen again.
 pub async fn emergency_reassign(db: &DatabaseConnection, input: WoEmergencyReassignInput) -> AppResult<WorkOrder> {
+    reassign(db, input, true).await
+}
+
+async fn reassign(db: &DatabaseConnection, input: WoEmergencyReassignInput, emergency: bool) -> AppResult<WorkOrder> {
     let reason = input.override_reason.trim().to_string();
     if reason.is_empty() {
         return Err(AppError::ValidationFailed(vec![
@@ -166,6 +179,39 @@ pub async fn emergency_reassign(db: &DatabaseConnection, input: WoEmergencyReass
     };
     assert_action_allowed(&status, action).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
+    // The shift must stay one the (new) team works on the planned day. A normal assignment is
+    // refused otherwise; an emergency is not blocked: the shift is cleared, never silently.
+    use crate::wo::shifts::{self, ShiftChange};
+    let decided = shifts::decide_shift(
+        &txn,
+        input.wo_id,
+        input.assigned_team_id,
+        None,
+        input.shift_class_version_id,
+        input.clear_shift,
+    )
+    .await;
+    let (shift_change, shift_cleared) = match decided {
+        Ok(change) => (change, None),
+        Err(e)
+            if emergency
+                && input.shift_class_version_id.is_none()
+                && [
+                    shifts::GATE_WO_SHIFT_TEAM_CHANGED,
+                    shifts::GATE_WO_SHIFT_NOT_OFFERED,
+                    shifts::GATE_WO_SHIFT_LEGACY_REPLAN,
+                ]
+                .iter()
+                .any(|code| shifts::is_refusal(&e, code)) =>
+        {
+            (
+                ShiftChange::Clear,
+                Some(shifts::current_shift_note(&txn, input.wo_id).await?),
+            )
+        }
+        Err(e) => return Err(e),
+    };
+
     let now = now_utc_z();
     let result = txn
         .execute(Statement::from_sql_and_values(
@@ -192,6 +238,14 @@ pub async fn emergency_reassign(db: &DatabaseConnection, input: WoEmergencyReass
         ))
         .await?;
     check_concurrency(result.rows_affected())?;
+    crate::wo::shifts::apply_shift_change(&txn, input.wo_id, &shift_change).await?;
+
+    // The new responsible must hold what the work order requires (or have a supervisor
+    // override recorded for it — `record_qualification_override`).
+    // A login without a personnel card cannot be checked: refused when anything is required.
+    if let Some(uid) = input.primary_responsible_id {
+        crate::qualification::gate::enforce_user_on_work_order(&txn, uid, input.wo_id).await?;
+    }
 
     if let Some(cmt) = commitment {
         let next_team = input.assigned_team_id.unwrap_or(cmt.assigned_team_id);
@@ -225,11 +279,12 @@ pub async fn emergency_reassign(db: &DatabaseConnection, input: WoEmergencyReass
     }
 
     let payload = json!({
-        "origin": "emergency_reassign",
+        "origin": if emergency { "emergency_reassign" } else { "assign" },
         "override_reason": reason,
         "assigned_team_id": input.assigned_team_id,
         "primary_responsible_id": input.primary_responsible_id,
         "skips_planning_gates": true,
+        "shift_cleared": shift_cleared,
     })
     .to_string();
 
@@ -243,6 +298,26 @@ pub async fn emergency_reassign(db: &DatabaseConnection, input: WoEmergencyReass
         Some(&payload),
     )
     .await?;
+    if let Some(previous) = shift_cleared {
+        // The work order's trail says the shift must be chosen again for the new team.
+        let note = json!({
+            "reason": "team_changed_in_emergency",
+            "shift_to_rechoose": true,
+            "previous_shift": previous,
+            "assigned_team_id": input.assigned_team_id,
+        })
+        .to_string();
+        emit_action_event(
+            &txn,
+            input.wo_id,
+            "shift_cleared",
+            Some(input.actor_id),
+            Some(&from_code),
+            Some(&from_code),
+            Some(&note),
+        )
+        .await?;
+    }
 
     let wo = queries::get_work_order(&txn, input.wo_id)
         .await?
@@ -254,9 +329,11 @@ pub async fn emergency_reassign(db: &DatabaseConnection, input: WoEmergencyReass
     Ok(wo)
 }
 
-/// Legacy entry used by tests / seed — requires override_reason; delegates to emergency_reassign.
+/// Assignment (`assign_wo`) — requires override_reason; the same write as an emergency reassign,
+/// except that a shift the new team does not work refuses it (the planner chooses one of the new
+/// team's shifts, or none).
 pub async fn save_assignment(db: &DatabaseConnection, input: WoAssignSaveInput) -> AppResult<WorkOrder> {
-    emergency_reassign(
+    reassign(
         db,
         WoEmergencyReassignInput {
             wo_id: input.wo_id,
@@ -265,7 +342,10 @@ pub async fn save_assignment(db: &DatabaseConnection, input: WoAssignSaveInput) 
             assigned_team_id: input.assigned_team_id,
             primary_responsible_id: input.primary_responsible_id,
             override_reason: input.override_reason,
+            shift_class_version_id: None,
+            clear_shift: false,
         },
+        false,
     )
     .await
 }

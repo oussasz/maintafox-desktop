@@ -5,6 +5,7 @@ import { initI18n } from "@/i18n";
 
 import { App } from "./App";
 import "./styles/globals.css";
+import "./styles/auth.css";
 
 // Initialize i18n before rendering — must be called before any useTranslation hook.
 initI18n();

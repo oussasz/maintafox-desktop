@@ -3,7 +3,9 @@
 // render correctly with the Maintafox Tailwind token system.
 
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import i18next from "i18next";
+import { initReactI18next } from "react-i18next";
+import { beforeAll, describe, expect, it } from "vitest";
 
 import {
   Badge,
@@ -27,8 +29,23 @@ import {
 } from "@/components/ui";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import enCommon from "@/i18n/en/common.json";
 
 // ─── Button ───────────────────────────────────────────────────────
+
+// Shared components (dialog close button…) read the common namespace.
+beforeAll(async () => {
+  if (!i18next.isInitialized) {
+    await i18next.use(initReactI18next).init({
+      lng: "en",
+      fallbackLng: "en",
+      ns: ["common"],
+      defaultNS: "common",
+      resources: { en: { common: enCommon } },
+      interpolation: { escapeValue: false },
+    });
+  }
+});
 
 describe("Button", () => {
   it("renders with default variant", () => {
@@ -134,8 +151,8 @@ describe("Dialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open" }));
     expect(screen.getByRole("dialog")).toBeInTheDocument();
 
-    // Click the Radix close button (sr-only "Close" text)
-    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    // The close button carries the translated common "Close" label.
+    fireEvent.click(screen.getByRole("button", { name: enCommon.action.close }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });

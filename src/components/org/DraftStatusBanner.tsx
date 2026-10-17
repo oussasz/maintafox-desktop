@@ -3,14 +3,23 @@
  * publish-readiness validation in a single banner (replaces stacked alerts).
  */
 
-import { CheckCircle, Info, Loader2, ShieldAlert, TriangleAlert, Wrench } from "lucide-react";
+import {
+  CheckCircle,
+  Info,
+  Loader2,
+  RefreshCw,
+  ShieldAlert,
+  TriangleAlert,
+  Wrench,
+} from "lucide-react";
 import { useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { StatusChip } from "@/components/ui/status-chip";
 import { mfAlert } from "@/design-system/tokens";
+import type { Tone } from "@/design-system/tone";
 import { formatOrgValidationIssue } from "@/lib/format-org-validation-issue";
 import { cn } from "@/lib/utils";
 import { useOrgDesignerStore } from "@/stores/org-designer-store";
@@ -67,11 +76,11 @@ const variantIconClass: Record<DraftBannerVariant, string> = {
   error: "text-status-danger",
 };
 
-const variantBadgeClass: Record<DraftBannerVariant, string> = {
-  info: "border-primary/30 text-text-primary",
-  success: "border-status-success/40 text-status-success",
-  warning: "border-status-warning/40 text-status-warning",
-  error: "border-status-danger/40 text-status-danger",
+const variantTone: Record<DraftBannerVariant, Tone> = {
+  info: "info",
+  success: "success",
+  warning: "warning",
+  error: "danger",
 };
 
 export function DraftStatusBanner({
@@ -169,19 +178,14 @@ export function DraftStatusBanner({
     >
       <div className="flex items-start gap-2.5">
         {validationLoading ? (
-          <Loader2 className="h-4 w-4 shrink-0 animate-spin text-text-muted mt-0.5" />
+          <Loader2 className="h-4 w-4 shrink-0 animate-spin text-text-muted mt-0.5" aria-hidden />
         ) : (
-          <Icon className={cn("h-4 w-4 shrink-0 mt-0.5", variantIconClass[variant])} />
+          <Icon className={cn("h-4 w-4 shrink-0 mt-0.5", variantIconClass[variant])} aria-hidden />
         )}
         <div className="flex-1 min-w-0 space-y-1.5">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm font-medium text-text-primary">{draftTitle}</span>
-            <Badge
-              variant="outline"
-              className={cn("text-[10px] px-1.5 py-0", variantBadgeClass[variant])}
-            >
-              {statusLabel}
-            </Badge>
+            <StatusChip label={statusLabel} tone={variantTone[variant]} />
           </div>
           <p className="text-xs text-text-muted leading-relaxed">{draftExplanation}</p>
           <p
@@ -215,13 +219,27 @@ export function DraftStatusBanner({
             </ul>
           )}
 
+          {storeError && !validationLoading && (
+            // The check itself failed (not a blocker in the model): let the user run it again.
+            <div className="pt-1.5">
+              <Button
+                variant="outline"
+                className="h-10 gap-1.5"
+                onClick={() => void loadPublishValidation(draftModelId)}
+                data-testid="retry-publish-validation"
+              >
+                <RefreshCw className="h-3.5 w-3.5" aria-hidden />
+                {t("draftStatus.retryValidation")}
+              </Button>
+            </div>
+          )}
+
           {hasUnmappedLineage && (
             <div className="pt-1.5 space-y-1">
               <PermissionGate permission={P.ORG_ADMIN}>
                 <Button
-                  size="sm"
                   variant="outline"
-                  className="gap-1.5"
+                  className="h-10 gap-1.5"
                   disabled={reconcileLoading || validationLoading}
                   onClick={() => void handleRepairLineage()}
                   data-testid="repair-draft-lineage"

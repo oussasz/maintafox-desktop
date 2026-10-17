@@ -134,6 +134,136 @@ pub struct ImportResult {
 //  HELPERS
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/// One row of the admin change ledger (`admin_change_events`), built by the admin commands.
+#[derive(Debug, Default)]
+pub(crate) struct AdminEventRecord<'a> {
+    pub action: &'a str,
+    pub target_user_id: Option<i64>,
+    pub target_role_id: Option<i64>,
+    pub scope_type: Option<&'a str>,
+    pub scope_reference: Option<&'a str>,
+    pub summary: Option<String>,
+    pub diff: Option<serde_json::Value>,
+    pub step_up_used: bool,
+}
+
+/// Outcome stored in `admin_change_events.apply_result` for an action that was carried out.
+pub(crate) const APPLY_RESULT_APPLIED: &str = "applied";
+/// Outcome stored for an attempted admin action that was refused (no permission, invalid input).
+pub(crate) const APPLY_RESULT_BLOCKED: &str = "blocked";
+
+/// Write one row to the admin change ledger with an explicit outcome.
+pub(crate) async fn write_admin_event(
+    db: &impl ConnectionTrait,
+    actor_id: i64,
+    record: &AdminEventRecord<'_>,
+    apply_result: &str,
+) -> AppResult<()> {
+    let diff_json = match &record.diff {
+        Some(v) => Some(serde_json::to_string(v)?),
+        None => None,
+    };
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO admin_change_events \
+         (action, actor_id, target_user_id, target_role_id, \
+          scope_type, scope_reference, summary, diff_json, step_up_used, apply_result) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            record.action.into(),
+            actor_id.into(),
+            record.target_user_id.into(),
+            record.target_role_id.into(),
+            record.scope_type.map(str::to_string).into(),
+            record.scope_reference.map(str::to_string).into(),
+            record.summary.clone().into(),
+            diff_json.into(),
+            i32::from(record.step_up_used).into(),
+            apply_result.into(),
+        ],
+    ))
+    .await?;
+    Ok(())
+}
+
+/// The actor holds at least one administration permission (users, roles, permissions, settings).
+async fn holds_any_admin_permission(db: &sea_orm::DatabaseConnection, actor_id: i64) -> bool {
+    let Ok(user_id) = i32::try_from(actor_id) else {
+        return false;
+    };
+    for permission in [
+        crate::rbac::permissions::ADM_USERS,
+        crate::rbac::permissions::ADM_ROLES,
+        crate::rbac::permissions::ADM_PERMISSIONS,
+        crate::rbac::permissions::ADM_SETTINGS,
+    ] {
+        if crate::auth::rbac::check_permission(db, user_id, permission, &PermissionScope::Global)
+            .await
+            .unwrap_or(false)
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// Ledger an admin action that was refused: no permission, or input the server rejected.
+/// A missing step-up is not a refusal (the screen asks for the password and retries), and an
+/// infrastructure error is not an admin decision; neither is written.
+pub(crate) async fn record_blocked_admin_action<T>(
+    db: &sea_orm::DatabaseConnection,
+    actor_id: i64,
+    action: &str,
+    target_user_id: Option<i64>,
+    target_role_id: Option<i64>,
+    result: &AppResult<T>,
+) {
+    let Err(err) = result else { return };
+    let refused = matches!(
+        err,
+        AppError::PermissionDenied(_)
+            | AppError::Permission { .. }
+            | AppError::ValidationFailed(_)
+            | AppError::NotFound { .. }
+    );
+    if !refused {
+        return;
+    }
+    let mut message = err.to_string();
+    if message.chars().count() > 500 {
+        message = message.chars().take(500).collect();
+    }
+    // The admin ledger is for administrators' actions. A refusal of someone holding no
+    // administration permission at all goes to the security journal instead (no ledger spam).
+    if !holds_any_admin_permission(db, actor_id).await {
+        let target = target_user_id.map(|id| id.to_string());
+        crate::audit::emit(
+            db,
+            crate::audit::AuditEvent {
+                event_type: crate::audit::event_type::PERMISSION_DENIED,
+                actor_id: i32::try_from(actor_id).ok(),
+                entity_type: target.as_ref().map(|_| "user_account"),
+                entity_id: target.as_deref(),
+                summary: "Administration action refused (no administration permission)",
+                detail_json: Some(serde_json::json!({ "action": action, "error": message }).to_string()),
+                ..Default::default()
+            },
+        )
+        .await;
+        return;
+    }
+    let record = AdminEventRecord {
+        action,
+        target_user_id,
+        target_role_id,
+        summary: Some(message),
+        ..Default::default()
+    };
+    if let Err(e) = write_admin_event(db, actor_id, &record, APPLY_RESULT_BLOCKED).await {
+        tracing::warn!(action, error = %e, "could not ledger a refused admin action");
+    }
+}
+
 /// Write an immutable row to `admin_change_events`.
 pub(crate) async fn record_admin_event(
     db: &sea_orm::DatabaseConnection,
@@ -187,7 +317,7 @@ pub(crate) async fn record_admin_event(
 
 /// List all active (non-expired, non-revoked) sessions with device and role info.
 #[tauri::command]
-pub async fn list_active_sessions(state: State<'_, AppState>) -> AppResult<Vec<SessionSummary>> {
+pub async fn list_active_sessions(user_id: Option<i64>, state: State<'_, AppState>) -> AppResult<Vec<SessionSummary>> {
     let caller = require_session!(state);
     require_permission!(
         state,
@@ -220,12 +350,17 @@ pub async fn list_active_sessions(state: State<'_, AppState>) -> AppResult<Vec<S
         INNER JOIN user_accounts ua ON CAST(ua.id AS TEXT) = s.user_id \
         LEFT JOIN trusted_devices td ON td.id = s.device_id \
         WHERE s.is_revoked = 0 \
-          AND s.expires_at > datetime('now') \
+          AND julianday(s.expires_at) > julianday('now') \
+          AND (? IS NULL OR s.user_id = CAST(? AS TEXT)) \
         ORDER BY s.created_at DESC";
 
     let rows = state
         .db
-        .query_all(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            sql,
+            [user_id.into(), user_id.into()],
+        ))
         .await?;
 
     let mut sessions = Vec::with_capacity(rows.len());
@@ -257,21 +392,21 @@ pub async fn list_active_sessions(state: State<'_, AppState>) -> AppResult<Vec<S
 
 /// Load active role names for a user (by text user_id from app_sessions).
 async fn load_user_role_names(db: &sea_orm::DatabaseConnection, user_id_text: &str) -> AppResult<Vec<String>> {
-    let sql = "\
-        SELECT DISTINCT r.name \
+    // Roles in force only (the shared rule and clock of `rbac::resolver`).
+    let sql = format!(
+        "SELECT DISTINCT r.name \
         FROM user_scope_assignments usa \
         INNER JOIN roles r ON r.id = usa.role_id \
         WHERE CAST(usa.user_id AS TEXT) = ? \
-          AND usa.deleted_at IS NULL \
-          AND (usa.is_emergency = 0 \
-               OR usa.emergency_expires_at > datetime('now'))";
+          AND {}",
+        crate::rbac::resolver::ASSIGNMENT_IN_FORCE_SQL
+    );
+    let now = crate::rbac::resolver::assignment_clock();
+    let mut values: Vec<sea_orm::Value> = vec![user_id_text.to_string().into()];
+    values.extend(crate::rbac::resolver::in_force_binds(&now));
 
     let rows = db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            sql,
-            [user_id_text.to_string().into()],
-        ))
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
         .await?;
 
     let names = rows
@@ -316,7 +451,7 @@ pub async fn revoke_session(session_id: String, state: State<'_, AppState>) -> A
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT user_id FROM app_sessions \
-             WHERE id = ? AND is_revoked = 0 AND expires_at > datetime('now')",
+             WHERE id = ? AND is_revoked = 0 AND julianday(expires_at) > julianday('now')",
             [session_id.clone().into()],
         ))
         .await?
@@ -326,6 +461,12 @@ pub async fn revoke_session(session_id: String, state: State<'_, AppState>) -> A
         })?;
 
     let target_user_id: String = row.try_get("", "user_id")?;
+    // Ending someone's session is managing their account (administrators, stronger accounts).
+    let target_id = target_user_id.parse::<i64>().map_err(|_| AppError::NotFound {
+        entity: "UserAccount".into(),
+        id: target_user_id.clone(),
+    })?;
+    crate::commands::admin_users::ensure_may_manage_account(&state.db, &caller, target_id).await?;
 
     state
         .db
@@ -457,24 +598,13 @@ pub async fn create_delegation_policy(
         )]));
     }
 
-    // ── Validate scope_reference exists in org_units if not tenant ───────
-    if input.managed_scope_type != "tenant" {
-        if let Some(ref scope_ref) = input.managed_scope_reference {
-            let exists = state
-                .db
-                .query_one(Statement::from_sql_and_values(
-                    DbBackend::Sqlite,
-                    "SELECT id FROM org_units WHERE id = ?",
-                    [scope_ref.clone().into()],
-                ))
-                .await?;
-            if exists.is_none() {
-                return Err(AppError::ValidationFailed(vec![format!(
-                    "Scope reference '{scope_ref}' not found in org_units"
-                )]));
-            }
-        }
-    }
+    // ── Validate the managed scope (tenant, or an existing org node / team) ─
+    crate::commands::admin_users::validate_assignment_scope(
+        &state.db,
+        &input.managed_scope_type,
+        input.managed_scope_reference.as_deref(),
+    )
+    .await?;
 
     let domains_json = serde_json::to_string(&input.allowed_domains)?;
 
@@ -927,6 +1057,10 @@ pub async fn import_role_model(input: RoleImportPayload, state: State<'_, AppSta
                 ));
             }
         }
+        // An imported role carries no permission the importing administrator lacks.
+        if let Err(e) = crate::commands::admin_users::ensure_caller_holds(&state.db, &caller, &names).await {
+            errors.push(e.to_string());
+        }
 
         if !errors.is_empty() {
             skipped.push(SkippedRole {
@@ -991,9 +1125,15 @@ pub async fn import_role_model(input: RoleImportPayload, state: State<'_, AppSta
         for perm_name in &entry.permissions {
             tx.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "INSERT OR IGNORE INTO role_permissions (role_id, permission_id) \
-                 SELECT ?, p.id FROM permissions p WHERE p.name = ?",
-                [new_role_id.into(), perm_name.clone().into()],
+                // `granted_at` is NOT NULL: without it OR IGNORE dropped every permission silently.
+                "INSERT OR IGNORE INTO role_permissions (role_id, permission_id, granted_at, granted_by_id) \
+                 SELECT ?, p.id, ?, ? FROM permissions p WHERE p.name = ?",
+                [
+                    new_role_id.into(),
+                    now.clone().into(),
+                    i64::from(caller.user_id).into(),
+                    perm_name.clone().into(),
+                ],
             ))
             .await?;
         }

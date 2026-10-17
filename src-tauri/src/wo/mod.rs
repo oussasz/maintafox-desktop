@@ -3,6 +3,7 @@ pub mod attachments;
 pub mod audit;
 pub mod backlog;
 pub mod closeout;
+pub mod closeout_reference_catalog;
 pub mod costs;
 pub mod delay;
 pub mod domain;
@@ -13,8 +14,8 @@ pub mod lifecycle;
 pub mod parts;
 pub mod permissions;
 pub mod plan_adherence;
-pub mod priorities;
 pub mod queries;
+pub mod shifts;
 pub mod stats;
 pub mod statuses;
 pub mod tasks;
@@ -37,5 +38,7 @@ mod execution_tests;
 mod gap06_regression_tests;
 #[cfg(test)]
 mod migration_tests;
+#[cfg(test)]
+mod shift_tests;
 #[cfg(test)]
 mod tests;

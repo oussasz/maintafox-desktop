@@ -27,6 +27,7 @@ const PermitTypeSchema = z.object({
   max_duration_hours: z.number().nullable(),
   mandatory_ppe_ids_json: z.string(),
   mandatory_control_rules_json: z.string(),
+  requires_energy_isolation: z.boolean(),
   row_version: z.number(),
 });
 
@@ -51,6 +52,7 @@ const WorkPermitSchema = z.object({
   asset_code: z.string().nullable(),
   asset_label: z.string().nullable(),
   linked_work_order_code: z.string().nullable(),
+  permit_type_requires_energy_isolation: z.boolean(),
 });
 
 const PermitSuspensionSchema = z.object({
@@ -84,8 +86,16 @@ const PermitIsolationSchema = z.object({
   entity_sync_id: z.string(),
   permit_id: z.number(),
   isolation_point: z.string(),
+  /** Text typed before the lists existed (history, "original entry"); empty otherwise. */
   energy_type: z.string(),
   isolation_method: z.string(),
+  energy_type_id: z.number().nullable(),
+  energy_type_code: z.string().nullable(),
+  energy_type_label: z.string().nullable(),
+  isolation_method_id: z.number().nullable(),
+  isolation_method_label: z.string().nullable(),
+  /** A typed text could not be mapped onto the lists: someone must choose. */
+  mapping_review_required: z.boolean(),
   lock_number: z.string().nullable(),
   applied_by_id: z.number().nullable(),
   verified_by_id: z.number().nullable(),
@@ -126,7 +136,22 @@ const PermitComplianceKpi30dSchema = z.object({
   rate: z.number().nullable(),
 });
 
+const IsolationOptionSchema = z.object({
+  id: z.number(),
+  code: z.string(),
+  label: z.string(),
+  label_en: z.string().nullable(),
+  review_required: z.boolean(),
+});
+
+const IsolationOptionsSchema = z.object({
+  energy_types: z.array(IsolationOptionSchema),
+  isolation_methods: z.array(IsolationOptionSchema),
+});
+
 export type PermitTypeRecord = z.infer<typeof PermitTypeSchema>;
+export type IsolationOption = z.infer<typeof IsolationOptionSchema>;
+export type IsolationOptions = z.infer<typeof IsolationOptionsSchema>;
 export type WorkPermitRecord = z.infer<typeof WorkPermitSchema>;
 export type PermitSuspensionRecord = z.infer<typeof PermitSuspensionSchema>;
 export type PermitHandoverLogRecord = z.infer<typeof PermitHandoverLogSchema>;
@@ -158,6 +183,12 @@ export async function listPermitHandoverLogs(permitId: number): Promise<PermitHa
 export async function listPermitIsolations(permitId: number): Promise<PermitIsolationRecord[]> {
   const raw = await invoke<unknown>("list_permit_isolations", { permitId });
   return z.array(PermitIsolationSchema).parse(raw);
+}
+
+/** Choices of the isolation form: energy types (SYSTEM list) and the plant's isolation methods. */
+export async function listPermitIsolationOptions(): Promise<IsolationOptions> {
+  const raw = await invoke<unknown>("list_permit_isolation_options");
+  return IsolationOptionsSchema.parse(raw);
 }
 
 export async function getLotoCardView(

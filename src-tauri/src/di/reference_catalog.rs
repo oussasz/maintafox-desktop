@@ -1,17 +1,22 @@
 //! DI reference catalog membership checks (equipment-parity).
 //!
-//! Origin and symptom are Category B domains (`DI.ORIGIN`, `DI.SYMPTOM`).
-//! Create/update writes must resolve against the latest published active set —
-//! free-text codes / unknown ids are rejected.
+//! Origin is the Category B domain `DI.ORIGIN`. The symptom is a value of the failure-symptom
+//! list shared with the OT close-out and RAMS (`WORK.SYMPTOMS`, ISO 14224; migration 199 merged
+//! the former `DI.SYMPTOM` into it). Create/update writes must resolve against the latest
+//! published active set — free-text codes / unknown ids are rejected.
 
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
 use crate::errors::{AppError, AppResult};
 
 const DOMAIN_ORIGIN: &str = "DI.ORIGIN";
-const DOMAIN_SYMPTOM: &str = "DI.SYMPTOM";
+const DOMAIN_SYMPTOM: &str = crate::wo::closeout_reference_catalog::DOMAIN_SYMPTOMS;
 const DOMAIN_REQUEST_TYPE: &str = "DI.REQUEST_TYPE";
 const DOMAIN_DISPOSITION: &str = "DI.DISPOSITION";
+/// Reasons for sending a request back to its requester for information (COMPANY list).
+pub const DOMAIN_RETURN_REASON: &str = "DI.RETURN_REASON";
+/// Reasons for deferring a request (COMPANY list).
+pub const DOMAIN_DEFERRAL_REASON: &str = "DI.DEFERRAL_REASON";
 
 /// Default request type when callers omit one (seeded Category A code).
 pub const DEFAULT_DI_REQUEST_TYPE: &str = "repair";
@@ -126,7 +131,42 @@ pub async fn validate_di_disposition(db: &impl ConnectionTrait, disposition_code
     Ok(code)
 }
 
-/// Validate `symptom_code_id` against published active `DI.SYMPTOM` by id.
+/// Normalize and validate a review-decision reason (`DI.RETURN_REASON`, `DI.DEFERRAL_REASON`)
+/// against the published active values of its list. Returns the trimmed code.
+pub async fn validate_di_decision_reason(
+    db: &impl ConnectionTrait,
+    domain_code: &str,
+    reason_code: &str,
+) -> AppResult<String> {
+    let code = reason_code.trim().to_string();
+    if code.is_empty() {
+        return Err(AppError::ValidationFailed(vec!["Le motif est obligatoire.".into()]));
+    }
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT rv.code FROM reference_values rv \
+             INNER JOIN reference_sets rs ON rs.id = rv.set_id \
+             INNER JOIN reference_domains d ON d.id = rs.domain_id \
+             WHERE d.code = ? AND rs.status = 'published' \
+               AND UPPER(TRIM(rv.code)) = UPPER(TRIM(?)) AND rv.is_active = 1 \
+             ORDER BY rs.version_no DESC LIMIT 1",
+            [domain_code.into(), code.clone().into()],
+        ))
+        .await?;
+    let Some(row) = row else {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "Motif '{code}' introuvable dans le référentiel {domain_code} (valeur publiée active requise)."
+        )]));
+    };
+    // The code as the list stores it (a reason typed in another case is stored canonically).
+    let canonical: String = row
+        .try_get("", "code")
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("decision reason code decode: {e}")))?;
+    Ok(canonical.trim().to_string())
+}
+
+/// Validate `symptom_code_id` against the published active shared symptom list by id.
 pub async fn validate_di_symptom_id(db: &impl ConnectionTrait, symptom_id: i64) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_sql_and_values(
@@ -156,7 +196,7 @@ pub async fn require_di_symptom_id(db: &impl ConnectionTrait, symptom_code_id: O
     Ok(id)
 }
 
-/// Resolve a published active `DI.SYMPTOM` id by code (for system-generated DIs).
+/// Resolve a published active symptom id by code (for system-generated DIs).
 pub async fn resolve_di_symptom_id_by_code(db: &impl ConnectionTrait, code: &str) -> AppResult<Option<i64>> {
     let code = code.trim();
     if code.is_empty() {
@@ -201,22 +241,12 @@ pub async fn resolve_system_di_symptom_id(db: &impl ConnectionTrait, preferred_c
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
-    use sea_orm_migration::MigratorTrait;
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
     use super::*;
 
     async fn setup() -> sea_orm::DatabaseConnection {
-        let db = Database::connect("sqlite::memory:").await.expect("connect");
-        db.execute(Statement::from_string(
-            DbBackend::Sqlite,
-            "PRAGMA foreign_keys = ON;".to_string(),
-        ))
-        .await
-        .expect("pragma");
-        crate::migrations::Migrator::up(&db, None).await.expect("migrate");
-        crate::db::seeder::seed_system_data(&db).await.expect("seed");
-        db
+        crate::db::test_db::seeded().await
     }
 
     async fn symptom_id(db: &sea_orm::DatabaseConnection, code: &str) -> i64 {
@@ -256,6 +286,54 @@ mod tests {
         let db = setup().await;
         let err = require_di_symptom_id(&db, None).await.expect_err("must fail");
         assert!(matches!(err, AppError::ValidationFailed(_)));
+    }
+
+    #[tokio::test]
+    async fn decision_reasons_are_seeded_and_validated() {
+        let db = setup().await;
+        for (domain, code) in [
+            (DOMAIN_RETURN_REASON, "unclear_description"),
+            (DOMAIN_DEFERRAL_REASON, "awaiting_parts"),
+        ] {
+            let ok = validate_di_decision_reason(&db, domain, &format!(" {code} "))
+                .await
+                .expect("seeded reason accepted");
+            assert_eq!(ok, code);
+            // Another case is accepted and stored as the list writes it.
+            let upper = validate_di_decision_reason(&db, domain, &code.to_uppercase())
+                .await
+                .expect("case-insensitive match");
+            assert_eq!(upper, code);
+            let err = validate_di_decision_reason(&db, domain, "not-a-reason")
+                .await
+                .expect_err("unknown reason refused");
+            assert!(matches!(err, AppError::ValidationFailed(_)));
+            let err = validate_di_decision_reason(&db, domain, "  ")
+                .await
+                .expect_err("empty reason refused");
+            assert!(matches!(err, AppError::ValidationFailed(_)));
+        }
+        // Both lists are the company's: listed and editable in Données de référence.
+        let rows = db
+            .query_all(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT code, audience FROM reference_domains \
+                  WHERE code IN ('DI.RETURN_REASON', 'DI.DEFERRAL_REASON') ORDER BY code"
+                    .to_string(),
+            ))
+            .await
+            .expect("domains");
+        let audiences: Vec<(String, String)> = rows
+            .iter()
+            .map(|r| (r.try_get("", "code").unwrap(), r.try_get("", "audience").unwrap()))
+            .collect();
+        assert_eq!(
+            audiences,
+            vec![
+                ("DI.DEFERRAL_REASON".to_string(), "company".to_string()),
+                ("DI.RETURN_REASON".to_string(), "company".to_string()),
+            ]
+        );
     }
 
     #[tokio::test]

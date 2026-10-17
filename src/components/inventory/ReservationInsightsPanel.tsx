@@ -6,20 +6,20 @@ import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 
 import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
-import { Badge } from "@/components/ui/badge";
-import { formatOrDash, formatSiteLabel } from "@/lib/display";
+import { StatusChip } from "@/components/ui/status-chip";
+import { RESERVATION_STATUS_TONE, toneOf } from "@/design-system/tone";
+import { useFormatters } from "@/hooks/use-formatters";
+import { formatSiteLabel } from "@/lib/display";
 import type { StockReservation } from "@shared/ipc-types";
 
 export interface ReservationInsightsPanelProps {
   reservations: StockReservation[];
 }
 
-function formatQty(n: number): string {
-  return Number.isFinite(n) ? String(n) : "—";
-}
-
 export function ReservationInsightsPanel({ reservations }: ReservationInsightsPanelProps) {
   const { t } = useTranslation("inventory");
+  const { formatNumber, formatDate } = useFormatters();
+  const formatQty = (n: number) => formatNumber(n, { maximumFractionDigits: 3 });
 
   const groups = useMemo(() => {
     const map = new Map<
@@ -69,29 +69,37 @@ export function ReservationInsightsPanel({ reservations }: ReservationInsightsPa
               />
             ) : (
               <span className="text-xs font-medium text-text-muted">
-                {t("article.reservations.ungrouped", { defaultValue: "Other reservations" })}
+                {t("article.reservations.ungrouped")}
               </span>
             )}
             <span className="text-xs text-text-muted">
-              {t("article.reservations.lineCount", {
-                defaultValue: "{{count}} line(s)",
-                count: group.rows.length,
-              })}
+              {t("article.reservations.lineCount", { count: group.rows.length })}
             </span>
           </div>
           <div className="space-y-2">
             {group.rows.map((r) => (
               <div key={r.id} className="rounded bg-surface-muted/40 p-2 text-sm">
                 <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="secondary" className="h-5 text-[10px]">
-                    {r.status}
-                  </Badge>
-                  <span className="font-medium tabular-nums">{formatQty(r.quantity_reserved)}</span>
-                  <span className="text-xs text-text-muted">{formatOrDash(r.source_type)}</span>
+                  <StatusChip
+                    label={t(`detail.reservationStatuses.${r.status}`, { defaultValue: r.status })}
+                    tone={toneOf(RESERVATION_STATUS_TONE, r.status)}
+                    dot
+                  />
+                  <span className="font-medium tabular-nums">
+                    {t("detail.reservations.reservedQty", {
+                      reserved: formatQty(r.quantity_reserved),
+                      issued: formatQty(r.quantity_issued),
+                    })}
+                  </span>
+                  <span className="text-xs text-text-muted">
+                    {t(`detail.reservations.sources.${r.source_type}`, {
+                      defaultValue: t("detail.reservations.sources.OTHER"),
+                    })}
+                  </span>
                 </div>
                 <div className="mt-1 text-xs text-text-muted">
                   {formatSiteLabel(r.warehouse_code, r.warehouse_name)} /{" "}
-                  {formatSiteLabel(r.location_code, r.location_name)}
+                  {formatSiteLabel(r.location_code, r.location_name)} · {formatDate(r.created_at)}
                 </div>
               </div>
             ))}

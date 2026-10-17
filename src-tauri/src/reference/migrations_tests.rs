@@ -6,8 +6,7 @@
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
-    use sea_orm_migration::MigratorTrait;
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
     use crate::auth::rbac::PermissionScope;
     use crate::auth::session_manager::AuthenticatedUser;
@@ -20,26 +19,7 @@ mod tests {
 
     /// In-memory SQLite with all migrations + seed data.
     async fn setup() -> sea_orm::DatabaseConnection {
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("in-memory SQLite should connect");
-
-        db.execute(Statement::from_string(
-            DbBackend::Sqlite,
-            "PRAGMA foreign_keys = ON;".to_string(),
-        ))
-        .await
-        .expect("PRAGMA foreign_keys");
-
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("migrations should apply cleanly");
-
-        crate::db::seeder::seed_system_data(&db)
-            .await
-            .expect("seeder should run cleanly");
-
-        db
+        crate::db::test_db::seeded().await
     }
 
     /// Assigns a user to a role by name at tenant scope.
@@ -263,6 +243,19 @@ mod tests {
             .await
             .expect("create to value");
 
+        // The session's account exists and is active (`require_session!` checks the stored
+        // account on every command).
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            "INSERT OR IGNORE INTO user_accounts \
+             (id, entity_sync_id, username, identity_mode, password_hash, is_active, is_admin, \
+              force_password_change, failed_login_attempts, created_at, updated_at, row_version) \
+             VALUES (20, 'ref-s3-user-20', 'admin-s3', 'local', 'x', 1, 1, 0, 0, \
+                     '2026-10-16T00:00:00Z', '2026-10-16T00:00:00Z', 1)"
+                .to_string(),
+        ))
+        .await
+        .expect("session account");
         assign_role(&db, 20, "Administrator").await;
 
         let state = AppState::new(db.clone());
@@ -278,6 +271,15 @@ mod tests {
                 token_tenant_id: "tenant-test".into(),
             });
         }
+        // A signed-in session has its stored row (sessions without one are refused).
+        let (session_id, expires_at) = {
+            let sm = state.session.read().await;
+            let s = sm.current.as_ref().expect("session");
+            (s.session_db_id.clone(), s.expires_at.to_rfc3339())
+        };
+        crate::auth::session_manager::create_session_record(&db, &session_id, 20, &expires_at)
+            .await
+            .expect("session row");
 
         // No step-up yet -> must fail.
         let err = guarded_merge_action(&state, domain_id, from.id, to.id)

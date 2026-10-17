@@ -8,18 +8,23 @@ import { X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { PermissionGate } from "@/components/PermissionGate";
 import { DataTable } from "@/components/data/DataTable";
 import {
   DetailSectionCard,
-  EntityDetailHeader,
   ENTITY_DETAIL_HEADER_ACTION_BTN,
+  EntityDetailHeader,
 } from "@/components/detail";
 import { CrewBadge } from "@/components/personnel/CrewBadge";
+import { TeamCapacityDays } from "@/components/personnel/TeamCapacityDays";
+import { TeamOvertimeCeilingPanel } from "@/components/personnel/TeamOvertimeCeilingPanel";
 import { TeamSkillsHeatmap } from "@/components/personnel/TeamSkillsHeatmap";
+import { TeamTimetablePanel } from "@/components/personnel/TeamTimetablePanel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { describeAppError } from "@/lib/app-error";
 import { formatOrDash, formatPersonLabel } from "@/lib/display";
 import {
   getTeam,
@@ -37,6 +42,7 @@ import type {
   TeamMemberRow,
   TeamSummary,
 } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 export type TeamDetailWorkspaceProps = {
   teamId: number;
@@ -49,6 +55,8 @@ export type TeamDetailWorkspaceProps = {
   /** Called after roster lead changes so the parent can refresh lead_count. */
   onRosterChanged?: (() => void) | undefined;
   canManage?: boolean | undefined;
+  /** Tab shown first (planning links open the capacity tab). */
+  initialTab?: string | undefined;
 };
 
 export function TeamDetailWorkspace({
@@ -61,6 +69,7 @@ export function TeamDetailWorkspace({
   onOpenPersonnel,
   onRosterChanged,
   canManage = false,
+  initialTab,
 }: TeamDetailWorkspaceProps) {
   const { t } = useTranslation("personnel");
   const [team, setTeam] = useState<TeamSummary | null>(null);
@@ -72,7 +81,9 @@ export function TeamDetailWorkspace({
   const [error, setError] = useState<string | null>(null);
   const [skillsError, setSkillsError] = useState<string | null>(null);
   const [capacityNote, setCapacityNote] = useState<string | null>(null);
-  const [tab, setTab] = useState("overview");
+  /** Bumped when the team's Classe horaire changes, so its capacity reloads. */
+  const [timetableRevision, setTimetableRevision] = useState(0);
+  const [tab, setTab] = useState(initialTab ?? "overview");
   const [leadBusyId, setLeadBusyId] = useState<number | null>(null);
 
   const load = useCallback(async () => {
@@ -85,7 +96,7 @@ export function TeamDetailWorkspace({
         getTeam(teamId),
         listTeamMembers(teamId),
         listSkillsMatrix({ team_id: teamId, include_inactive: false }).catch((err: unknown) => {
-          setSkillsError(err instanceof Error ? err.message : String(err));
+          setSkillsError(describeAppError(err).title);
           return [] as SkillMatrixRow[];
         }),
         scanSuccessionRisk(null, teamId),
@@ -105,15 +116,20 @@ export function TeamDetailWorkspace({
         setCapacityNote(t("crews.detail.capacityLoadUnavailable"));
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(describeAppError(err).title);
       setTeam(null);
     } finally {
       setLoading(false);
     }
   }, [teamId, dateFrom, dateTo, t]);
 
+  // A new team opens on its initial tab (the planning deep link asks for "capacity"); a reload of
+  // the same team (dates changed) keeps the tab the user is on.
   useEffect(() => {
-    setTab("overview");
+    setTab(initialTab ?? "overview");
+  }, [teamId, initialTab]);
+
+  useEffect(() => {
     void load();
   }, [load]);
 
@@ -130,7 +146,7 @@ export function TeamDetailWorkspace({
         await load();
         onRosterChanged?.();
       } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
+        setError(describeAppError(err).title);
       } finally {
         setLeadBusyId(null);
       }
@@ -281,7 +297,10 @@ export function TeamDetailWorkspace({
       {
         accessorKey: "utilization_ratio",
         header: t("crews.detail.utilization"),
-        cell: ({ row }) => `${Math.round(row.original.utilization_ratio * 100)}%`,
+        cell: ({ row }) =>
+          row.original.utilization_ratio == null
+            ? "—"
+            : `${Math.round(row.original.utilization_ratio * 100)}%`,
       },
     ],
     [t],
@@ -419,13 +438,34 @@ export function TeamDetailWorkspace({
             </TabsContent>
 
             <TabsContent value="capacity" className="space-y-3">
+              <DetailSectionCard title={t("timetable.team.title")}>
+                <TeamTimetablePanel
+                  teamId={teamId}
+                  onOpenPersonnel={onOpenPersonnel}
+                  onChanged={() => setTimetableRevision((n) => n + 1)}
+                />
+              </DetailSectionCard>
+              <DetailSectionCard title={t("capacityDays.title")}>
+                <TeamCapacityDays key={timetableRevision} teamId={teamId} />
+              </DetailSectionCard>
+              <PermissionGate permission={P.PLAN_VIEW}>
+                <DetailSectionCard title={t("overtimeCeiling.title")}>
+                  <TeamOvertimeCeilingPanel
+                    teamId={teamId}
+                    onChanged={() => setTimetableRevision((n) => n + 1)}
+                  />
+                </DetailSectionCard>
+              </PermissionGate>
               <DetailSectionCard title={t("crews.detail.horizonKpis")}>
                 {capacity ? (
                   <p className="text-sm">
                     {t("crews.detail.capacitySummary", {
                       available: capacity.total_available_minutes,
                       blocked: capacity.total_blocked_minutes,
-                      ratio: Math.round((capacity.avg_availability_ratio ?? 0) * 100),
+                      ratio:
+                        capacity.avg_availability_ratio == null
+                          ? "—"
+                          : Math.round(capacity.avg_availability_ratio * 100),
                     })}
                   </p>
                 ) : (
@@ -436,7 +476,9 @@ export function TeamDetailWorkspace({
                 ) : null}
               </DetailSectionCard>
               {dailyLoad.length > 0 ? (
-                <DataTable columns={loadColumns} data={dailyLoad} pageSize={10} />
+                <DetailSectionCard title={t("capacityDays.plannedLoad")}>
+                  <DataTable columns={loadColumns} data={dailyLoad} pageSize={10} />
+                </DetailSectionCard>
               ) : null}
             </TabsContent>
 

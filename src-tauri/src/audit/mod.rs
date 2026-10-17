@@ -28,6 +28,7 @@ pub mod event_type {
     pub const PERMISSION_REMOVED: &str = "permission.removed";
     pub const USER_CREATED: &str = "user.created";
     pub const USER_DEACTIVATED: &str = "user.deactivated";
+    pub const USER_REACTIVATED: &str = "user.reactivated";
     pub const PASSWORD_CHANGED: &str = "user.password_changed";
     pub const FORCE_CHANGE_SET: &str = "user.force_change_set";
     pub const PIN_SET: &str = "user.pin_set";

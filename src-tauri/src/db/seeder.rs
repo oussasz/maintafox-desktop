@@ -6,35 +6,6 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, Value};
 /// Increment this when adding new system domains or values in a release.
 pub const SEED_SCHEMA_VERSION: i32 = 2;
 
-/// Baseline settings seeded on first startup after settings migration is applied.
-/// Tuple format: (`setting_key`, category, `setting_scope`, `setting_value_json`)
-const DEFAULT_SETTINGS: &[(&str, &str, &str, &str)] = &[
-    ("ram.fmeca_rpn_critical_threshold", "reliability", "tenant", r"150"),
-    // PRD §6.5: a closed WO may be reopened within this many days of its closure.
-    ("wo.reopen_window_days", "work_orders", "tenant", r"30"),
-    ("locale.primary_language", "localization", "tenant", r#""fr""#),
-    ("locale.fallback_language", "localization", "tenant", r#""en""#),
-    ("locale.date_format", "localization", "tenant", r#""DD/MM/YYYY""#),
-    ("locale.number_format", "localization", "tenant", r#""fr-FR""#),
-    ("locale.week_start_day", "localization", "tenant", r"1"),
-    ("locale.currency_code", "localization", "tenant", r#""DZD""#),
-    ("appearance.color_mode", "appearance", "tenant", r#""light""#),
-    ("appearance.density", "appearance", "tenant", r#""standard""#),
-    ("appearance.text_scale", "appearance", "tenant", r"1.0"),
-    ("updater.release_channel", "system", "device", r#""stable""#),
-    ("updater.auto_check", "system", "device", r"true"),
-    ("backup.retention_daily", "backup", "tenant", r"7"),
-    ("backup.retention_weekly", "backup", "tenant", r"4"),
-    ("backup.retention_monthly", "backup", "tenant", r"12"),
-    ("diagnostics.log_retention_days", "system", "device", r"30"),
-    (
-        "documents.default_header",
-        "documents",
-        "tenant",
-        r#"{"version":1,"content_json":{"type":"doc","content":[{"type":"paragraph"}]},"html":"","logo_relative_path":null}"#,
-    ),
-];
-
 /// Inserts all system-governed lookup domains and values idempotently.
 ///
 /// Safe to call on every startup: uses INSERT OR IGNORE semantics.
@@ -173,15 +144,8 @@ pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
     )
     .await?;
     seed_domain(db, "personnel.contract_type", "Type de contrat", "tenant", false, true).await?;
-    seed_domain(
-        db,
-        "inventory.unit_of_measure",
-        "Unité de mesure stock",
-        "tenant",
-        false,
-        true,
-    )
-    .await?;
+    // Stock units are the governed list MEASURE.UNITS (`reference::units`, migration 201); the
+    // former lookup `inventory.unit_of_measure` is no longer seeded.
     seed_domain(
         db,
         "inventory.movement_type",
@@ -1348,19 +1312,6 @@ pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
         seed_value(db, d, "STAGIAIRE", "Stagiaire", "Stagiaire", "Intern", None, 5, false).await?;
     }
 
-    // inventory.unit_of_measure
-    {
-        let d = get_domain_id(db, "inventory.unit_of_measure").await?;
-        seed_value(db, d, "U", "Unit\u{00e9}", "Unit\u{00e9}", "Unit", None, 1, true).await?;
-        seed_value(db, d, "KG", "kg", "kg", "kg", None, 2, true).await?;
-        seed_value(db, d, "L", "L", "L", "L", None, 3, true).await?;
-        seed_value(db, d, "M", "m", "m", "m", None, 4, true).await?;
-        seed_value(db, d, "M2", "m\u{00b2}", "m\u{00b2}", "m\u{00b2}", None, 5, true).await?;
-        seed_value(db, d, "BOX", "Bo\u{00ee}te", "Bo\u{00ee}te", "Box", None, 6, true).await?;
-        seed_value(db, d, "ROUL", "Rouleau", "Rouleau", "Roll", None, 7, true).await?;
-        seed_value(db, d, "PAIRE", "Paire", "Paire", "Pair", None, 8, true).await?;
-    }
-
     // inventory.movement_type
     {
         let d = get_domain_id(db, "inventory.movement_type").await?;
@@ -1721,6 +1672,9 @@ pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
         let d = get_domain_id(db, "inventory.currency").await?;
         seed_value(db, d, "EUR", "EUR", "EUR", "EUR", None, 1, true).await?;
         seed_value(db, d, "USD", "USD", "USD", "USD", None, 2, true).await?;
+        // The governed list (Données de référence › Devises) is the source of this copy: it adds
+        // the other currencies and the French / English names (`reference::currencies`).
+        crate::reference::currencies::ensure_currency_catalog(db).await?;
     }
 
     // inventory.erp_reconcile_state
@@ -2301,19 +2255,23 @@ pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
 pub async fn seed_default_settings(db: &DatabaseConnection) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
 
-    for (setting_key, category, setting_scope, setting_value_json) in DEFAULT_SETTINGS {
+    // Shipped values come from the settings catalog (single source of the "Valeur livree").
+    for def in crate::settings::catalog::SETTINGS_CATALOG {
+        let (setting_key, category, setting_scope, setting_value_json) =
+            (&def.key, &def.category, &def.scope, &def.shipped_value_json);
         // Insert missing rows; do not overwrite tenant-customized values.
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             r"INSERT OR IGNORE INTO app_settings
                    (setting_key, category, setting_scope, setting_value_json,
                     setting_risk, validation_status, last_modified_at)
-               VALUES (?, ?, ?, ?, 'low', 'valid', ?)",
+               VALUES (?, ?, ?, ?, ?, 'valid', ?)",
             [
                 (*setting_key).into(),
                 (*category).into(),
                 (*setting_scope).into(),
                 (*setting_value_json).into(),
+                def.risk.into(),
                 now.clone().into(),
             ],
         ))
@@ -2333,6 +2291,12 @@ pub async fn seed_default_settings(db: &DatabaseConnection) -> AppResult<()> {
             ],
         ))
         .await?;
+    }
+
+    // Values in the settings history are kept for plant parameters only (no-op once clean).
+    let scrubbed = crate::settings::scrub_hash_only_history(db).await?;
+    if scrubbed > 0 {
+        tracing::warn!(rows = scrubbed, "settings history: cleared values of hash-only keys");
     }
 
     // Keep runtime locale resolution aligned with Settings SSOT.
@@ -2360,7 +2324,7 @@ pub async fn seed_default_settings(db: &DatabaseConnection) -> AppResult<()> {
     }
 
     tracing::info!(
-        count = DEFAULT_SETTINGS.len(),
+        count = crate::settings::catalog::SETTINGS_CATALOG.len(),
         "seed_default_settings: baseline settings ensured (idempotent)"
     );
 
@@ -2547,6 +2511,18 @@ async fn seed_permissions(db: &DatabaseConnection) -> AppResult<()> {
                 i32::from(meta.requires_step_up).into(),
                 now.clone().into(),
             ],
+        ))
+        .await?;
+    }
+
+    // Every catalog permission is a system permission, however its row first appeared (an older
+    // migration may have created it differently): the administrator roles are linked to every
+    // system permission below, on every start, so permissions added in later versions reach them.
+    for meta in crate::rbac::permissions::CATALOG {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE permissions SET is_system = 1 WHERE name = ? AND is_system <> 1",
+            [meta.name.into()],
         ))
         .await?;
     }
@@ -2931,12 +2907,68 @@ mod tests {
         );
     }
 
+    /// Permissions of a later version (and links lost on an older database) reach the
+    /// administrator roles at the next start: the seed runs on every start and is idempotent.
+    #[tokio::test]
+    async fn administrator_roles_hold_every_catalog_permission_after_each_start() {
+        let db = crate::db::test_db::seeded().await;
+        let probe = crate::rbac::permissions::CATALOG[0].name;
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE permissions SET is_system = 0 WHERE name = ?",
+            [probe.into()],
+        ))
+        .await
+        .unwrap();
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "DELETE FROM role_permissions WHERE permission_id = (SELECT id FROM permissions WHERE name = ?)",
+            [probe.into()],
+        ))
+        .await
+        .unwrap();
+
+        seed_system_data(&db).await.expect("seed again");
+
+        for role in ["Administrator", "Superadmin"] {
+            let missing = db
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "SELECT COUNT(*) AS n FROM permissions p \
+                      WHERE p.is_system = 1 AND NOT EXISTS ( \
+                        SELECT 1 FROM role_permissions rp JOIN roles r ON r.id = rp.role_id \
+                         WHERE rp.permission_id = p.id AND r.name = ? AND r.deleted_at IS NULL)",
+                    [role.into()],
+                ))
+                .await
+                .unwrap()
+                .and_then(|r| r.try_get::<i64>("", "n").ok())
+                .unwrap();
+            assert_eq!(missing, 0, "{role} misses system permissions");
+        }
+        let catalog_names = crate::rbac::permissions::CATALOG.len() as i64;
+        let system = db
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT COUNT(*) AS n FROM permissions WHERE is_system = 1".to_string(),
+            ))
+            .await
+            .unwrap()
+            .and_then(|r| r.try_get::<i64>("", "n").ok())
+            .unwrap();
+        assert!(
+            system >= catalog_names,
+            "every catalog permission is a system permission"
+        );
+    }
+
     #[test]
     fn default_settings_count_is_expected() {
         assert_eq!(
-            DEFAULT_SETTINGS.len(),
-            // +locale.currency_code, +ram.fmeca_rpn_critical_threshold, +wo.reopen_window_days
-            18,
+            crate::settings::catalog::SETTINGS_CATALOG.len(),
+            // +locale.currency_code, +ram.fmeca_rpn_critical_threshold, +wo.reopen_window_days,
+            // +ram.fmeca_rating_scales, +locale.fiscal_year_start_month
+            20,
             "Default settings count changed; update migration and verification checks"
         );
     }

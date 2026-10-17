@@ -1,6 +1,10 @@
 /**
  * Availability tab — ResourceTimeline chronology + list secondary view.
  * Detail inspection: split pane (not centered Dialog). Block create/edit: dialog.
+ *
+ * Absence blocks are read per person. A person whose blocks could not be read (or not all of
+ * them for the horizon) is never drawn as available: the row carries an "availability unknown"
+ * bar over the whole horizon and a badge, and the page offers a retry.
  */
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from "react";
@@ -31,6 +35,7 @@ import {
 } from "@/components/timeline/ResourceTimeline";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ErrorState } from "@/components/ui/data-state";
 import { Input } from "@/components/ui/input";
 import {
   blockTypeToTimelineState,
@@ -38,6 +43,7 @@ import {
   RESOURCE_TIMELINE_STATE_CLASS,
 } from "@/design-system/resource-timeline-tokens";
 import { mfLayout } from "@/design-system/tokens";
+import { describeAppError } from "@/lib/app-error";
 import { formatPersonLabel } from "@/lib/display";
 import { cn } from "@/lib/utils";
 import { getOrgDesignerSnapshot } from "@/services/org-designer-service";
@@ -72,6 +78,30 @@ type CertWarning = "expired" | "expiring";
 const BLOCK_TYPES = ["medical", "restriction", "leave", "training"] as const;
 const CRITICAL_FILTER_VALUE = "critical";
 const CERT_LOOKAHEAD_DAYS = 30;
+/** Blocks read per person: the backend maximum (`list_personnel_availability_blocks`, newest first). */
+const BLOCKS_PER_PERSON = 200;
+/** People whose blocks are read at the same time (no cap on the number of people). */
+const BLOCK_READ_CONCURRENCY = 20;
+/** Id space of the "availability unknown" bars (never collides with block ids). */
+const UNKNOWN_ITEM_ID_BASE = -1_000_000;
+
+/** Overlaps the horizon [from, to] (local days). */
+function inHorizon(b: PersonnelAvailabilityBlock, dateFrom: string, dateTo: string): boolean {
+  const s = parseBlockTimeMs(b.start_at);
+  const e = parseBlockTimeMs(b.end_at);
+  if (s == null || e == null) return false;
+  return e >= Date.parse(`${dateFrom}T00:00:00`) && s <= Date.parse(`${dateTo}T23:59:59`);
+}
+
+/**
+ * A full page (newest first) whose oldest block still starts inside or after the horizon may hide
+ * older blocks of the horizon: the person's availability is then not known for sure.
+ */
+function pageMayHideHorizon(blocks: PersonnelAvailabilityBlock[], dateFrom: string): boolean {
+  if (blocks.length < BLOCKS_PER_PERSON) return false;
+  const oldest = Math.min(...blocks.map((b) => parseBlockTimeMs(b.start_at) ?? Infinity));
+  return oldest >= Date.parse(`${dateFrom}T00:00:00`);
+}
 
 export const AvailabilityCalendar = forwardRef<
   AvailabilityCalendarHandle,
@@ -103,7 +133,7 @@ export const AvailabilityCalendar = forwardRef<
 
   const [rows, setRows] = useState<AvailabilityCalendarEntry[]>([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [reloadToken, setReloadToken] = useState(0);
 
   const [entityNodes, setEntityNodes] = useState<OrgDesignerNodeRow[]>([]);
@@ -116,6 +146,9 @@ export const AvailabilityCalendar = forwardRef<
   const [allBlocks, setAllBlocks] = useState<PersonnelAvailabilityBlock[]>([]);
   const [blocksLoading, setBlocksLoading] = useState(false);
   const [blocksError, setBlocksError] = useState<string | null>(null);
+  /** People whose blocks of the horizon are not known (read failed or page incomplete). */
+  const [unknownPeople, setUnknownPeople] = useState<Set<number>>(new Set());
+  const [firstBlockError, setFirstBlockError] = useState<unknown>(null);
 
   const [blockDialogOpen, setBlockDialogOpen] = useState(false);
   const [blockDialogMode, setBlockDialogMode] = useState<"create" | "edit">("create");
@@ -200,7 +233,7 @@ export const AvailabilityCalendar = forwardRef<
         if (!cancelled) setRows(data);
       })
       .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+        if (!cancelled) setError(err);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -290,32 +323,36 @@ export const AvailabilityCalendar = forwardRef<
     let cancelled = false;
     if (filteredPeople.length === 0) {
       setAllBlocks([]);
+      setUnknownPeople(new Set());
+      setFirstBlockError(null);
       return;
     }
-    setBlocksError(null);
     void (async () => {
-      try {
-        const chunks = await Promise.all(
-          filteredPeople
-            .slice(0, 80)
-            .map((p) => listPersonnelAvailabilityBlocks(p.personnel_id, 100).catch(() => [])),
+      const flat: PersonnelAvailabilityBlock[] = [];
+      const unknown = new Set<number>();
+      let firstError: unknown = null;
+      for (let i = 0; i < filteredPeople.length; i += BLOCK_READ_CONCURRENCY) {
+        const batch = filteredPeople.slice(i, i + BLOCK_READ_CONCURRENCY);
+        const results = await Promise.allSettled(
+          batch.map((p) => listPersonnelAvailabilityBlocks(p.personnel_id, BLOCKS_PER_PERSON)),
         );
         if (cancelled) return;
-        const horizonStart = Date.parse(`${dateFrom}T00:00:00`);
-        const horizonEnd = Date.parse(`${dateTo}T23:59:59`);
-        const flat = chunks.flat().filter((b) => {
-          const s = parseBlockTimeMs(b.start_at);
-          const e = parseBlockTimeMs(b.end_at);
-          if (s == null || e == null) return false;
-          return e >= horizonStart && s <= horizonEnd;
+        results.forEach((res, k) => {
+          const person = batch[k];
+          if (!person) return;
+          if (res.status === "rejected") {
+            unknown.add(person.personnel_id);
+            firstError ??= res.reason;
+            return;
+          }
+          if (pageMayHideHorizon(res.value, dateFrom)) unknown.add(person.personnel_id);
+          flat.push(...res.value.filter((b) => inHorizon(b, dateFrom, dateTo)));
         });
-        setAllBlocks(flat);
-      } catch (err) {
-        if (!cancelled) {
-          setAllBlocks([]);
-          setBlocksError(err instanceof Error ? err.message : String(err));
-        }
       }
+      if (cancelled) return;
+      setAllBlocks(flat);
+      setUnknownPeople(unknown);
+      setFirstBlockError(firstError);
     })();
     return () => {
       cancelled = true;
@@ -347,22 +384,19 @@ export const AvailabilityCalendar = forwardRef<
     }
     let cancelled = false;
     setBlocksLoading(true);
-    void listPersonnelAvailabilityBlocks(selectedPersonId, 100)
+    setBlocksError(null);
+    void listPersonnelAvailabilityBlocks(selectedPersonId, BLOCKS_PER_PERSON)
       .then((blocks) => {
         if (cancelled) return;
-        const horizonStart = Date.parse(`${dateFrom}T00:00:00`);
-        const horizonEnd = Date.parse(`${dateTo}T23:59:59`);
-        setPersonBlocks(
-          blocks.filter((b) => {
-            const s = parseBlockTimeMs(b.start_at);
-            const e = parseBlockTimeMs(b.end_at);
-            if (s == null || e == null) return false;
-            return e >= horizonStart && s <= horizonEnd;
-          }),
-        );
+        setPersonBlocks(blocks.filter((b) => inHorizon(b, dateFrom, dateTo)));
+        if (pageMayHideHorizon(blocks, dateFrom)) setBlocksError(t("availability.partialBlocks"));
       })
-      .catch(() => {
-        if (!cancelled) setPersonBlocks([]);
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          // Never an empty list (= "available"): the inspector shows why nothing is listed.
+          setPersonBlocks([]);
+          setBlocksError(describeAppError(err).title);
+        }
       })
       .finally(() => {
         if (!cancelled) setBlocksLoading(false);
@@ -370,7 +404,7 @@ export const AvailabilityCalendar = forwardRef<
     return () => {
       cancelled = true;
     };
-  }, [selectedPersonId, dateFrom, dateTo, reloadToken]);
+  }, [selectedPersonId, dateFrom, dateTo, reloadToken, t]);
 
   const groups: ResourceTimelineGroup[] = useMemo(
     () =>
@@ -392,6 +426,11 @@ export const AvailabilityCalendar = forwardRef<
               <span className="truncate font-mono text-[11px] leading-4 text-text-muted">
                 {p.employee_code}
               </span>
+              {unknownPeople.has(p.personnel_id) ? (
+                <Badge variant="destructive" className="h-4 shrink-0 px-1 text-[10px] leading-none">
+                  {t("availability.badges.unknown")}
+                </Badge>
+              ) : null}
               {certWarnings.get(p.personnel_id) === "expired" ? (
                 <Badge variant="destructive" className="h-4 shrink-0 px-1 text-[10px] leading-none">
                   {t("availability.badges.certExpired")}
@@ -405,12 +444,23 @@ export const AvailabilityCalendar = forwardRef<
           </button>
         ),
       })),
-    [peopleForView, certWarnings, t],
+    [peopleForView, certWarnings, unknownPeople, t],
   );
 
   const items: ResourceTimelineItem[] = useMemo(() => {
     const personIds = new Set(peopleForView.map((p) => p.personnel_id));
-    return allBlocks
+    // A person whose blocks are not known is covered by one "unknown" bar: never shown free.
+    const unknownBars: ResourceTimelineItem[] = peopleForView
+      .filter((p) => unknownPeople.has(p.personnel_id))
+      .map((p) => ({
+        id: UNKNOWN_ITEM_ID_BASE - p.personnel_id,
+        group: p.personnel_id,
+        title: t("availability.unknownBar"),
+        start_time: Date.parse(`${dateFrom}T00:00:00`),
+        end_time: Date.parse(`${dateTo}T23:59:59`),
+        state: "blocked" as const,
+      }));
+    const blockBars = allBlocks
       .filter((b) => personIds.has(b.personnel_id))
       .filter((b) => (filterBlockType ? b.block_type === filterBlockType : true))
       .map((b) => {
@@ -425,7 +475,8 @@ export const AvailabilityCalendar = forwardRef<
           state: blockTypeToTimelineState(b.block_type, b.is_critical),
         };
       });
-  }, [allBlocks, peopleForView, filterBlockType, t]);
+    return [...unknownBars, ...blockBars];
+  }, [allBlocks, peopleForView, filterBlockType, unknownPeople, dateFrom, dateTo, t]);
 
   const applyHorizonPreset = (days: number) => {
     const from = toLocalIsoDate(new Date());
@@ -574,8 +625,14 @@ export const AvailabilityCalendar = forwardRef<
             ))}
       </div>
 
-      {error ? <div className="text-sm text-destructive">{error}</div> : null}
-      {blocksError ? <div className="text-sm text-destructive">{blocksError}</div> : null}
+      {unknownPeople.size > 0 ? (
+        <ErrorState
+          error={firstBlockError ?? t("availability.partialBlocks")}
+          title={t("availability.unknownTitle", { count: unknownPeople.size })}
+          onRetry={loadCalendar}
+          className="py-4"
+        />
+      ) : null}
 
       <div className={cn(mfLayout.moduleWorkspaceSplit, "min-h-0 flex-1")}>
         <div
@@ -609,13 +666,15 @@ export const AvailabilityCalendar = forwardRef<
               }}
               {...(selectedBlockId != null ? { selectedItemIds: [selectedBlockId] } : {})}
               loading={loading}
-              error={error}
+              error={error != null ? describeAppError(error).title : null}
               emptyTitle={t("availability.empty")}
               className="min-h-0 flex-1"
             />
           ) : (
             <div className="space-y-2 overflow-auto text-sm">
-              {loading ? (
+              {error != null ? (
+                <ErrorState error={error} onRetry={loadCalendar} />
+              ) : loading ? (
                 <p className="text-text-muted">{t("common.loading")}</p>
               ) : peopleForView.length === 0 ? (
                 <p className="text-text-muted">{t("availability.empty")}</p>
@@ -632,6 +691,11 @@ export const AvailabilityCalendar = forwardRef<
                   >
                     <div className="font-medium">{formatPersonLabel(person.full_name)}</div>
                     <div className="text-xs text-text-muted">{person.employee_code}</div>
+                    {unknownPeople.has(person.personnel_id) ? (
+                      <div className="mt-1 text-xs font-medium text-tone-danger-fg">
+                        {t("availability.unknownBar")}
+                      </div>
+                    ) : null}
                     <div className="mt-1 flex flex-wrap gap-1">
                       {dates.map((d) => {
                         const cell = person.cells.get(d);

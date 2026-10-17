@@ -1,5 +1,4 @@
 import {
-  Activity,
   BarChart3,
   CalendarClock,
   FileStack,
@@ -8,21 +7,15 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { NavLink, Navigate, Outlet, useLocation } from "react-router-dom";
+import { NavLink, Navigate, Outlet } from "react-router-dom";
 
 import { ModulePageShell } from "@/components/layout/ModulePageShell";
 import { usePermissions } from "@/hooks/use-permissions";
 import { cn } from "@/lib/utils";
 import { P } from "@shared/rbac/permissions.generated";
 
-const TABS: { to: string; key: string; icon: LucideIcon; matchPrefix?: string }[] = [
+const TABS: { to: string; key: string; icon: LucideIcon }[] = [
   { to: "/analytics/dashboards", key: "hub.tabs.dashboards", icon: LayoutDashboard },
-  {
-    to: "/analytics/rams/dashboard",
-    key: "hub.tabs.rams",
-    icon: Activity,
-    matchPrefix: "/analytics/rams",
-  },
   { to: "/analytics/templates", key: "hub.tabs.templates", icon: FileStack },
   { to: "/analytics/schedules", key: "hub.tabs.schedules", icon: CalendarClock },
   { to: "/analytics/history", key: "hub.tabs.history", icon: History },
@@ -31,7 +24,6 @@ const TABS: { to: string; key: string; icon: LucideIcon; matchPrefix?: string }[
 export function AnalyticsModuleLayout() {
   const { t } = useTranslation("reports");
   const { can } = usePermissions();
-  const location = useLocation();
   const canView = can(P.REP_VIEW);
 
   if (!canView) {
@@ -42,26 +34,23 @@ export function AnalyticsModuleLayout() {
     );
   }
 
-  const onRams = location.pathname.startsWith("/analytics/rams");
-
   return (
     <ModulePageShell
       icon={BarChart3}
       title={t("hub.title")}
       description={t("hub.subtitle")}
-      bodyClassName={onRams ? null : "flex min-h-0 flex-1 flex-col p-4"}
+      bodyClassName="flex min-h-0 flex-1 flex-col p-4"
     >
-      <div className={cn("shrink-0 border-b border-surface-border", onRams ? "px-4 pt-3" : "mb-4")}>
+      <div className="mb-4 shrink-0 border-b border-surface-border">
         <nav className="flex flex-wrap gap-1" aria-label={t("hub.navAria")}>
-          {TABS.map(({ to, key, icon: Icon, matchPrefix }) => (
+          {TABS.map(({ to, key, icon: Icon }) => (
             <NavLink
               key={to}
               to={to}
               className={({ isActive }) => {
-                const active = matchPrefix ? location.pathname.startsWith(matchPrefix) : isActive;
                 return cn(
-                  "inline-flex items-center gap-1.5 rounded-t-md px-3 py-2 text-sm transition-colors",
-                  active
+                  "inline-flex min-h-[44px] items-center gap-1.5 rounded-t-md px-3 py-2 text-sm transition-colors",
+                  isActive
                     ? "border border-b-0 border-surface-border bg-surface-1 font-medium text-text-primary"
                     : "text-text-muted hover:bg-surface-2/70 hover:text-text-primary",
                 );
@@ -73,7 +62,7 @@ export function AnalyticsModuleLayout() {
           ))}
         </nav>
       </div>
-      <div className={cn("min-h-0 min-w-0", onRams ? "flex flex-1 flex-col" : "flex-1")}>
+      <div className="min-h-0 min-w-0 flex-1">
         <Outlet />
       </div>
     </ModulePageShell>

@@ -18,6 +18,7 @@
 //! consume the same capability snapshot and need no structural rewrite.
 
 use crate::errors::{AppError, AppResult};
+use crate::reference::audience::DomainAudience;
 use crate::reference::domains::ReferenceDomain;
 use crate::reference::sets::ReferenceSet;
 use serde::{Deserialize, Serialize};
@@ -86,26 +87,54 @@ fn category_for_known_code(code: &str) -> Option<GovernanceCategory> {
     match normalize_domain_code(code).as_str() {
         "EQUIPMENT.STATUS"
         | "EQUIPMENT.CRITICALITY"
-        | "EQUIPMENT.CLASS"
-        | "DI.PRIORITY"
         | "DI.IMPACT_LEVEL"
-        | "DI.REQUEST_TYPE" => Some(GovernanceCategory::SystemCatalog),
+        | "WORK.URGENCY"
+        | "WORK.MAINTENANCE_NATURES"
+        | "WORK.ORDER_TYPES"
+        // Physical dimensions of the units: the conversion guard depends on them (`units`).
+        | "MEASURE.DIMENSIONS"
+        // LOTO energy sources (ISO 14118 / OSHA 1910.147), `permit::energy_reference`.
+        | "PERMIT.ENERGY_TYPES"
+        // Severity of a PM finding: mapped to the follow-up urgency (`pm::reason_catalog`).
+        | "PM.FINDING_SEVERITY" => Some(GovernanceCategory::SystemCatalog),
 
         "EQUIPMENT.FAMILY"
         | "EQUIPMENT.SUBFAMILY"
-        | "DI.SYMPTOM"
         | "DI.ORIGIN"
         | "DI.DISPOSITION"
+        // Reasons of the request review decisions (return for information, deferral).
+        | "DI.RETURN_REASON"
+        | "DI.DEFERRAL_REASON"
         | "PERSONNEL.SKILLS"
         | "ORG.SCHEDULE_CLASS"
         | "WORK.DELAY_REASONS"
-        | "WORK.PART_UNUSED_REASON" => Some(GovernanceCategory::OperationalDictionary),
+        | "WORK.PART_UNUSED_REASON"
+        // How a plant isolates an energy for LOTO (`permit::energy_reference`).
+        | "PERMIT.ISOLATION_METHODS"
+        // Why a PM is deferred, missed or cancelled (`pm::reason_catalog`).
+        | "PM.DEFERRAL_REASONS" => Some(GovernanceCategory::OperationalDictionary),
 
-        "WORK.FAILURE_MODES"
+        // Equipment classes (ISO 14224 taxonomy): the product seeds the baseline classes, each plant
+        // adds its own (presses, boilers, transformers, packaging lines, …) through draft → publish.
+        // The seeded classes stay protected (see `system_values_locked`).
+        "EQUIPMENT.CLASS"
+        | "WORK.FAILURE_MODES"
         | "WORK.SYMPTOMS"
         | "WORK.FAILURE_CAUSES"
         | "WORK.FAILURE_EFFECTS"
-        | "PM.MAINTENANCE_TASK_LIST" => Some(GovernanceCategory::ControlledCatalog),
+        | "PM.MAINTENANCE_TASK_LIST"
+        // Electrical habilitations (NF C 18-510): starter symbols, the company adds or retires its own.
+        | "PERSONNEL.HABILITATIONS"
+        // Request types differ per plant and are extended through draft → publish (owner, 2026-10-15).
+        | "DI.REQUEST_TYPE"
+        // A plant's own OT sub-types, each under one protected maintenance nature, governed through
+        // draft → validate → publish like the other governed lists (owner, 2026-10-15).
+        | "WORK.ORDER_SUBTYPES"
+        // Units of measure: the plant adds its own units through draft → validate → publish, every
+        // module links them by id (`units`, owner decision of the reference data review).
+        | "MEASURE.UNITS"
+        // ISO 4217 currencies: shipped ones, the plant adds others (`reference::currencies`).
+        | "INVENTORY.CURRENCY" => Some(GovernanceCategory::ControlledCatalog),
 
         _ => None,
     }
@@ -114,10 +143,7 @@ fn category_for_known_code(code: &str) -> Option<GovernanceCategory> {
 /// Domains that require analytical publish impact / protected delete semantics.
 /// Subset of Category A (not all system catalogs).
 fn is_analytical_system_code(code: &str) -> bool {
-    matches!(
-        normalize_domain_code(code).as_str(),
-        "DI.PRIORITY" | "DI.IMPACT_LEVEL" | "DI.REQUEST_TYPE"
-    )
+    matches!(normalize_domain_code(code).as_str(), "DI.IMPACT_LEVEL")
 }
 
 fn normalize_domain_code(code: &str) -> String {
@@ -135,19 +161,24 @@ fn category_from_legacy_level(governance_level: &str) -> GovernanceCategory {
 
 /// Resolve the effective category for a domain.
 ///
-/// Precedence: stored `governance_category` → known code map → legacy level.
+/// Precedence: known product code map → stored `governance_category` → legacy level.
+///
+/// The product domains of the map are governed by this file alone: the stored column is only a
+/// copy kept aligned by the integrity seeders, and some seeders write a fixed value for it. Letting
+/// the map win keeps one decision for those domains whatever an older seeder or replica stored.
+/// Tenant-created domains (codes outside the map) keep their stored category.
 pub fn resolve_category(
     domain_code: &str,
     legacy_governance_level: &str,
     stored_category: Option<&str>,
 ) -> GovernanceCategory {
+    if let Some(cat) = category_for_known_code(domain_code) {
+        return cat;
+    }
     if let Some(raw) = stored_category {
         if let Some(cat) = GovernanceCategory::parse(raw) {
             return cat;
         }
-    }
-    if let Some(cat) = category_for_known_code(domain_code) {
-        return cat;
     }
     category_from_legacy_level(legacy_governance_level)
 }
@@ -231,6 +262,67 @@ pub fn allows_publish(category: GovernanceCategory) -> bool {
     }
 }
 
+/// Domains whose product-seeded values (`metadata_json.origin = "system"`) are owned by the
+/// startup integrity seeders, which re-apply their label, order and active flag on every run
+/// (`assets::taxonomy_reference`). Tenants extend these domains with their own values; the seeded
+/// values cannot be edited, deactivated or re-parented, because the next startup would silently
+/// undo the change. Local wording for a seeded value goes through aliases.
+fn has_integrity_owned_system_values(code: &str) -> bool {
+    matches!(
+        normalize_domain_code(code).as_str(),
+        "EQUIPMENT.CLASS"
+            | "EQUIPMENT.FAMILY"
+            | "EQUIPMENT.SUBFAMILY"
+            | "EQUIPMENT.STATUS"
+            | "EQUIPMENT.CRITICALITY"
+            // OT settlement posts to the seeded cost categories: tenants add categories, never
+            // retire or recode the seeded ones.
+            | "FINANCE.COST_CATEGORIES"
+            // Standard units of measure: stock and meter history depend on them; the plant adds
+            // its own units (`reference::units`), never retires or recodes the standard ones.
+            | "MEASURE.UNITS"
+            // Shipped ISO currencies: stock costs and the tenant currency depend on them.
+            | "INVENTORY.CURRENCY"
+    )
+}
+
+/// Whether the product-seeded values of this domain are locked for tenants.
+pub fn system_values_locked(domain: &ReferenceDomain) -> bool {
+    has_integrity_owned_system_values(&domain.code)
+}
+
+/// `metadata_json` marks a product-seeded value (`{"origin":"system"}`).
+pub fn metadata_marks_system_origin(metadata_json: Option<&str>) -> bool {
+    let Some(raw) = metadata_json else {
+        return false;
+    };
+    match serde_json::from_str::<serde_json::Value>(raw) {
+        Ok(v) => v.get("origin").and_then(|o| o.as_str()) == Some("system"),
+        Err(_) => false,
+    }
+}
+
+/// Refuses a tenant change to a product-seeded value of a locked domain.
+pub fn assert_system_value_mutable(domain: &ReferenceDomain, value_metadata_json: Option<&str>) -> AppResult<()> {
+    if system_values_locked(domain) && metadata_marks_system_origin(value_metadata_json) {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "Cette valeur est fournie par le produit pour le domaine '{}' et ne peut pas être modifiée              ni désactivée. Ajoutez un alias pour un libellé local, ou créez votre propre valeur.",
+            domain.code
+        )]));
+    }
+    Ok(())
+}
+
+/// Refuses tenant input that claims product origin (only the seeders create system values).
+pub fn assert_not_claiming_system_origin(metadata_json: Option<&str>) -> AppResult<()> {
+    if metadata_marks_system_origin(metadata_json) {
+        return Err(AppError::ValidationFailed(vec![
+            "L'origine « system » est réservée aux valeurs fournies par le produit.".into(),
+        ]));
+    }
+    Ok(())
+}
+
 /// Whether governed publish requires an impact preview (analytical catalogs).
 pub fn requires_publish_impact_preview(domain: &ReferenceDomain) -> bool {
     requires_analytical_protection(domain)
@@ -263,20 +355,27 @@ pub struct ReferenceGovernanceCapabilities {
     pub is_read_only: bool,
     pub requires_analytical_protection: bool,
     pub set_status: Option<String>,
+    /// Product-seeded values of this domain cannot be edited, deactivated or moved by tenants.
+    pub system_values_locked: bool,
+    /// `system` | `company` (see `reference::audience`). A SYSTEM domain is fully read-only.
+    pub audience: String,
 }
 
 /// Build capability snapshot for a domain and optional selected set.
 ///
 /// When `set` is `None`, value-mutation flags are `false` (mutation is set-scoped).
+/// A SYSTEM domain (`reference::audience`) is read-only whatever its category.
 pub fn capabilities_for(domain: &ReferenceDomain, set: Option<&ReferenceSet>) -> ReferenceGovernanceCapabilities {
     let cat = category_of(domain);
-    let can_mutate = set.map(|s| allows_value_mutation(cat, s)).unwrap_or(false);
-    let can_draft = allows_create_draft_set(cat);
+    let editable = domain.audience == DomainAudience::Company;
+    let can_mutate = editable && set.map(|s| allows_value_mutation(cat, s)).unwrap_or(false);
+    let can_draft = editable && allows_create_draft_set(cat);
     let can_discard = can_draft && set.map(|s| s.status == "draft").unwrap_or(false);
-    let can_pub = allows_publish(cat);
-    let can_op = allows_operational_create(cat);
-    let read_only =
-        matches!(cat, GovernanceCategory::SystemCatalog) || (!can_mutate && !can_draft && !can_pub && !can_op);
+    let can_pub = editable && allows_publish(cat);
+    let can_op = editable && allows_operational_create(cat);
+    let read_only = !editable
+        || matches!(cat, GovernanceCategory::SystemCatalog)
+        || (!can_mutate && !can_draft && !can_pub && !can_op);
 
     ReferenceGovernanceCapabilities {
         category: cat.as_str().to_string(),
@@ -291,6 +390,8 @@ pub fn capabilities_for(domain: &ReferenceDomain, set: Option<&ReferenceSet>) ->
         is_read_only: read_only,
         requires_analytical_protection: requires_analytical_protection(domain),
         set_status: set.map(|s| s.status.clone()),
+        system_values_locked: system_values_locked(domain),
+        audience: domain.audience.as_str().to_string(),
     }
 }
 

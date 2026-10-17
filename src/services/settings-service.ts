@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
 import type {
+  CurrencyOption,
   DocumentBrandingLogoPreview,
   DocumentBrandingLogoUploadResult,
   ActivatePolicyPayload,
@@ -15,6 +16,7 @@ import type {
   SavePolicyDraftPayload,
   SessionPolicy,
   SettingsChangeEvent,
+  SettingsOverview,
 } from "@shared/ipc-types";
 
 // â”€â”€ Zod schemas for runtime validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -52,9 +54,36 @@ const SettingsChangeEventSchema = z.object({
   old_value_hash: z.string().nullable(),
   new_value_hash: z.string().nullable(),
   changed_by_id: z.number().nullable(),
+  changed_by_name: z.string().nullable().default(null),
   changed_at: z.string(),
   required_step_up: z.boolean(),
   apply_result: z.string(),
+  old_value_json: z.string().nullable().default(null),
+  new_value_json: z.string().nullable().default(null),
+});
+
+const SettingDefinitionViewSchema = z.object({
+  key: z.string(),
+  category: z.string(),
+  scope: z.string(),
+  kind: z.enum(["choice", "integer", "currency", "month", "document_header", "module"]),
+  options: z.array(z.string()),
+  min: z.number().nullable(),
+  max: z.number().nullable(),
+  shipped_value_json: z.string(),
+  current_value_json: z.string().nullable(),
+  differs_from_shipped: z.boolean(),
+  editor: z.enum(["section", "dedicated"]),
+  risk: z.string().transform((v): "low" | "high" => (v === "high" ? "high" : "low")),
+  required_permission: z.string(),
+  locked_reason: z.string().nullable(),
+  last_modified_at: z.string().nullable(),
+  last_modified_by: z.string().nullable(),
+});
+
+const SettingsOverviewSchema = z.object({
+  definitions: z.array(SettingDefinitionViewSchema),
+  roles_allowed_to_change: z.array(z.string()),
 });
 
 // â”€â”€ Service functions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -140,11 +169,39 @@ export async function getPolicySnapshot(domain: string): Promise<PolicySnapshot 
  * Return the most recent settings audit events.
  * Requires `adm.settings` permission.
  */
-export async function listSettingChangeEvents(limit?: number): Promise<SettingsChangeEvent[]> {
+export async function listSettingChangeEvents(
+  limit?: number,
+  settingKey?: string,
+): Promise<SettingsChangeEvent[]> {
   const raw = await invoke<SettingsChangeEvent[]>("list_setting_change_events", {
     limit,
+    settingKey,
   });
   return z.array(SettingsChangeEventSchema).parse(raw);
+}
+
+const CurrencyOptionSchema = z.object({
+  code: z.string(),
+  label: z.string(),
+  label_en: z.string().nullable(),
+  symbol: z.string().nullable(),
+  minor_units: z.number().nullable(),
+  is_active: z.boolean(),
+});
+
+/** Currencies of Données de référence › Devises (published list). Any session. */
+export async function listReferenceCurrencies(): Promise<CurrencyOption[]> {
+  const raw = await invoke<unknown>("list_reference_currencies");
+  return z.array(CurrencyOptionSchema).parse(raw);
+}
+
+/**
+ * Settings in use: shipped vs current value, lock state, last change, and the roles
+ * allowed to change them. Requires `adm.settings`.
+ */
+export async function getSettingsOverview(): Promise<SettingsOverview> {
+  const raw = await invoke<unknown>("get_settings_overview");
+  return SettingsOverviewSchema.parse(raw);
 }
 
 // â”€â”€ Policy Draft / Test / Activate â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

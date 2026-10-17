@@ -7,7 +7,7 @@ use tokio::time::{interval, Duration as TokioDuration};
 
 use crate::errors::AppResult;
 use crate::reports::artifacts::persist_run_artifact;
-use crate::reports::export::export_report_document;
+use crate::reports::export::{export_report_document, ReportLocale};
 use crate::reports::queries::{
     finish_run_failed, get_template_by_id, insert_run, list_enabled_schedules, update_schedule_times,
 };
@@ -49,7 +49,9 @@ async fn run_due_schedules(db: &DatabaseConnection, app_data_dir: &std::path::Pa
         };
         let run_id = insert_run(db, Some(s.id), s.template_id, s.user_id, "running", &s.export_format).await?;
 
-        let doc = match export_report_document(db, &template.code, &s.export_format).await {
+        // Scheduled runs have no UI: the report follows the app language.
+        let locale = ReportLocale::resolve(db, None).await;
+        let doc = match export_report_document(db, &template.code, &s.export_format, locale).await {
             Ok(d) => d,
             Err(e) => {
                 let _ = finish_run_failed(db, run_id, &e.to_string()).await;

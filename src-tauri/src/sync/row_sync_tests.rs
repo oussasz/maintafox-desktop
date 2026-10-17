@@ -6,8 +6,8 @@ use sea_orm::DatabaseConnection;
 use super::registry::{self, ConflictPolicy, SyncScope};
 use super::row_layout;
 use super::test_support::{
-    created_row, current_payload, editable_text_column, exec, scalar_i64, started_db, CreatedRow, ExchangeReport,
-    RowFactory, TestServer,
+    created_row, current_payload, editable_text_column, exec, scalar_i64, started_device_db, CreatedRow,
+    ExchangeReport, RowFactory, TestServer,
 };
 
 /// Identity, access, organisation, assets and reference catalogs.
@@ -41,6 +41,8 @@ pub(crate) const FOUNDATION_TYPES: &[&str] = &[
     "asset_document_links",
     "asset_external_ids",
     "asset_photos",
+    "equipment_spare_parts",
+    "equipment_criticality_assessments",
     "library_documents",
     "media_attachments",
     "lookup_domains",
@@ -83,6 +85,11 @@ pub(crate) const INVENTORY_TYPES: &[&str] = &[
     "goods_receipts",
     "goods_receipt_lines",
     "repairable_orders",
+    "inventory_lots",
+    "currency_exchange_rates",
+    "inventory_valuation_periods",
+    "inventory_valuation_snapshot_lines",
+    "procurement_approval_limits",
 ];
 
 /// Intervention requests and work orders with their details and history.
@@ -93,9 +100,7 @@ pub(crate) const WORK_ORDER_TYPES: &[&str] = &[
     "di_review_events",
     "di_sla_rules",
     "di_state_transition_log",
-    "work_order_types",
     "work_order_statuses",
-    "urgency_levels",
     "delay_reason_codes",
     "closeout_validation_policies",
     "work_orders",
@@ -130,6 +135,9 @@ pub(crate) const PM_PLANNING_TYPES: &[&str] = &[
     "schedule_break_ins",
     "schedule_change_log",
     "schedule_details",
+    "weekly_schedules",
+    "weekly_schedule_events",
+    "weekly_schedule_baseline_items",
 ];
 
 /// Budgets, costs, forecasts and ERP exports.
@@ -147,6 +155,9 @@ pub(crate) const FINANCE_TYPES: &[&str] = &[
     "budget_alert_events",
     "posted_export_batches",
     "integration_exceptions",
+    "wo_cost_estimates",
+    "wo_cost_settlements",
+    "budget_periods",
 ];
 
 /// Personnel records, skills and qualifications.
@@ -167,6 +178,13 @@ pub(crate) const PERSONNEL_TYPES: &[&str] = &[
     "training_sessions",
     "training_attendance",
     "document_acknowledgements",
+    "qualification_requirements",
+    "qualification_overrides",
+    "work_calendar_holidays",
+    "site_work_weeks",
+    "schedule_class_versions",
+    "team_schedule_assignments",
+    "personnel_schedule_exceptions",
 ];
 
 /// Inspections and work permits.
@@ -174,6 +192,7 @@ pub(crate) const INSPECTION_PERMIT_TYPES: &[&str] = &[
     "inspection_templates",
     "inspection_template_versions",
     "inspection_checkpoints",
+    "inspection_schedules",
     "inspection_rounds",
     "inspection_results",
     "inspection_evidence",
@@ -212,6 +231,11 @@ pub(crate) const RELIABILITY_TYPES: &[&str] = &[
     "data_integrity_findings",
     "data_integrity_repair_actions",
     "analytics_contract_versions",
+    "reliability_cost_profiles",
+    "reliability_studies",
+    "reliability_study_assets",
+    "reliability_study_record_events",
+    "reliability_study_decisions",
 ];
 
 /// Settings, history logs, notifications and reports.
@@ -346,8 +370,8 @@ async fn stage_errors(db: &DatabaseConnection) -> Vec<String> {
 pub(crate) const SINGLETON_TYPES: &[&str] = &["ram_advanced_guardrails"];
 
 pub(crate) async fn round_trip(entity_types: &[&str]) {
-    let a = started_db().await;
-    let b = started_db().await;
+    let a = started_device_db().await;
+    let b = started_device_db().await;
     let mut server = TestServer::new();
     let mut factory = RowFactory::new();
     let mut problems = Vec::new();
@@ -552,13 +576,22 @@ async fn balance(db: &DatabaseConnection, article_sync: &str, location_sync: &st
 async fn received_stock_movements_update_stock_balances() {
     use crate::inventory::domain::{InventoryIssueInput, InventoryReserveInput, InventoryStockAdjustInput};
     use crate::inventory::queries::{adjust_stock, issue_reserved_stock, reserve_stock};
+    use sea_orm::ConnectionTrait;
 
-    let a = started_db().await;
-    let b = started_db().await;
+    let a = started_device_db().await;
+    let b = started_device_db().await;
     let mut server = TestServer::new();
     let mut factory = RowFactory::new();
     let article = factory.create(&a, "articles").await.expect("article");
     let location = factory.create(&a, "stock_locations").await.expect("location");
+    // The factory fills every flag; this test is about balances, not lot / serial tracking.
+    a.execute(sea_orm::Statement::from_sql_and_values(
+        sea_orm::DbBackend::Sqlite,
+        "UPDATE articles SET requires_serial_tracking = 0, requires_batch_tracking = 0,          requires_expiration = 0 WHERE id = ?",
+        [article.rowid.into()],
+    ))
+    .await
+    .expect("untracked article");
 
     adjust_stock(
         &a,

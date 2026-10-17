@@ -397,6 +397,11 @@ pub const ROW_SPECS: &[RowSpec] = &[
     ),
     spec("asset_external_ids", &[r("asset_id", "equipment")]),
     spec("asset_photos", &[]),
+    spec("equipment_spare_parts", &[]),
+    spec(
+        "equipment_criticality_assessments",
+        &[hist("equipment_id", "equipment"), hist("assessed_by_id", USER)],
+    ),
     spec(
         "library_documents",
         &[r("equipment_id", "equipment"), r("uploaded_by_id", USER)],
@@ -413,10 +418,15 @@ pub const ROW_SPECS: &[RowSpec] = &[
     ),
     spec("lookup_value_aliases", &[r("value_id", "lookup_values")]),
     spec("reference_domains", &[]),
-    spec(
-        "reference_sets",
-        &[r("domain_id", "reference_domains"), r("created_by_id", USER)],
-    ),
+    RowSpec {
+        // When the publish impact preview ran on this device (cleared when the set's values
+        // change): a preview made on one device does not count for another.
+        device_local: &["impact_previewed_at"],
+        ..spec(
+            "reference_sets",
+            &[r("domain_id", "reference_domains"), r("created_by_id", USER)],
+        )
+    },
     spec(
         "reference_values",
         &[r("set_id", "reference_sets"), r("parent_id", "reference_values")],
@@ -484,15 +494,15 @@ pub const ROW_SPECS: &[RowSpec] = &[
         &[hist("di_id", "intervention_requests"), hist("actor_id", USER)],
     ),
     // ── Work orders ─────────────────────────────────────────────────────────────────────────
-    spec("work_order_types", &[]),
     spec("work_order_statuses", &[]),
-    spec("urgency_levels", &[]),
     spec("delay_reason_codes", &[]),
     spec("closeout_validation_policies", &[]),
     spec(
         "work_orders",
         &[
-            r("type_id", "work_order_types"),
+            // OT type and urgency level: values of the SYSTEM lists `WORK.ORDER_TYPES` and
+            // `WORK.URGENCY` (migration 198).
+            r("type_id", "reference_values"),
             r("status_id", "work_order_statuses"),
             r("equipment_id", "equipment"),
             r("location_id", "org_nodes"),
@@ -502,8 +512,10 @@ pub const ROW_SPECS: &[RowSpec] = &[
             r("primary_responsible_id", USER),
             r("planning_approved_by_id", USER),
             r("assigned_team_id", "teams"),
-            r("urgency_id", "urgency_levels"),
+            r("urgency_id", "reference_values"),
             r("source_di_id", "intervention_requests"),
+            // The Classe horaire version the work order is planned on (migration 202).
+            r("shift_class_version_id", "schedule_class_versions"),
             // Never written by any command yet: synchronised only while empty.
             unmapped("component_id"),
             unmapped("approver_id"),
@@ -552,22 +564,45 @@ pub const ROW_SPECS: &[RowSpec] = &[
     spec(
         "pm_plans",
         &[
-            poly("asset_scope_id", "asset_scope_type", &[("equipment", "equipment")]),
+            // A plan targets one equipment, or fans out over an equipment family, an organisation
+            // location (subtree) or a criticality group (`pm::generation`).
+            poly(
+                "asset_scope_id",
+                "asset_scope_type",
+                &[
+                    ("equipment", "equipment"),
+                    ("family", "reference_values"),
+                    ("location", "org_nodes"),
+                    ("criticality_group", "lookup_values"),
+                ],
+            ),
             r("assigned_team_id", "teams"),
             // A plan points to its current version, which points back to the plan.
             soft("current_version_id", "pm_plan_versions"),
         ],
     ),
-    spec(
-        "pm_plan_versions",
-        // Revision created from an FMECA item or an RCM decision (Phase 6.5). Soft: the source
-        // also points to the version it created.
-        &[poly_soft(
-            "source_id",
-            "source_type",
-            &[("fmeca_item", "fmeca_items"), ("rcm_decision", "rcm_decisions")],
-        )],
-    ),
+    RowSpec {
+        // The asset meter a usage-based version counts on (`pm::generation` trigger shapes).
+        json_refs: &[
+            json_ref("trigger_definition_json", "$.asset_meter_id", "equipment_meters"),
+            json_ref("trigger_definition_json", "$.meter.asset_meter_id", "equipment_meters"),
+        ],
+        ..spec(
+            "pm_plan_versions",
+            // Revision created from an FMECA item, an RCM decision (Phase 6.5) or a PM finding.
+            // Soft: the source also points to the version it created (FMECA/RCM).
+            &[poly_soft(
+                "source_id",
+                "source_type",
+                &[
+                    ("fmeca_item", "fmeca_items"),
+                    ("rcm_decision", "rcm_decisions"),
+                    ("pm_finding", "pm_findings"),
+                    ("reliability_study_decision", "reliability_study_decisions"),
+                ],
+            )],
+        )
+    },
     // Generated by every device from the plans (deterministic identity, `pm::queries`); sent when
     // a person acts on an occurrence.
     spec("pm_occurrences", &[]),
@@ -602,6 +637,9 @@ pub const ROW_SPECS: &[RowSpec] = &[
         ..spec("schedule_change_log", &[hist("actor_id", USER)])
     },
     spec("schedule_details", &[]),
+    spec("weekly_schedules", &[]),
+    spec("weekly_schedule_events", &[]),
+    spec("weekly_schedule_baseline_items", &[]),
     // ── Finance ─────────────────────────────────────────────────────────────────────────────
     spec("cost_centers", &[]),
     spec("budget_versions", &[]),
@@ -678,12 +716,23 @@ pub const ROW_SPECS: &[RowSpec] = &[
     ),
     RowSpec {
         // The checkpoint package lists the equipment of each checkpoint by local id.
-        json_refs: &[json_ref("checkpoint_package_json", "[*].asset_id", "equipment")],
+        // The unit of each measurement checkpoint (MEASURE.UNITS, migration 201) is a history
+        // value of the published package: a unit retired since is sent empty.
+        json_refs: &[
+            json_ref("checkpoint_package_json", "[*].asset_id", "equipment"),
+            json_ref_hist("checkpoint_package_json", "[*].measurement_unit_id", "reference_values"),
+        ],
         ..spec("inspection_template_versions", &[])
     },
     // No command writes the checkpoint component yet: synchronised only while empty.
     spec("inspection_checkpoints", &[unmapped("component_id")]),
     spec("inspection_rounds", &[]),
+    RowSpec {
+        // When this device last generated the schedule's rounds: each device generates for
+        // itself (generated rounds have deterministic identities), so it never travels.
+        device_local: &["last_generated_at"],
+        ..spec("inspection_schedules", &[])
+    },
     spec("inspection_results", &[]),
     spec("inspection_evidence", &[]),
     spec(
@@ -749,6 +798,29 @@ pub const ROW_SPECS: &[RowSpec] = &[
     spec("ram_advanced_guardrails", &[]),
     spec("reliability_beta_benchmarks", &[]),
     spec("reliability_dashboard_policies", &[]),
+    // Reliability studies (migration 179). Users are referenced by identity; the cost default of a
+    // class has an identity derived from the class (`study::store::upsert_cost_profile`).
+    spec("reliability_studies", &[r("created_by_id", USER)]),
+    spec("reliability_study_assets", &[]),
+    spec("reliability_study_record_events", &[r("actor_id", USER)]),
+    RowSpec {
+        // The PM trigger the decision will write keeps the meter it counts on.
+        json_refs: &[json_ref(
+            "proposed_trigger_definition_json",
+            "$.asset_meter_id",
+            "equipment_meters",
+        )],
+        ..spec(
+            "reliability_study_decisions",
+            &[
+                r("approver_id", USER),
+                r("proposed_by_id", USER),
+                r("decided_by_id", USER),
+                r("applied_by_id", USER),
+            ],
+        )
+    },
+    spec("reliability_cost_profiles", &[r("updated_by_id", USER)]),
     spec("fmeca_analyses", &[r("created_by_id", USER)]),
     spec("fmeca_items", &[unmapped("component_id")]),
     spec("fmeca_item_parts", &[]),
@@ -904,7 +976,17 @@ pub const ROW_SPECS: &[RowSpec] = &[
             poly(
                 "route_to_reference",
                 "route_to_type",
-                &[("role", NOT_A_ROW), ("team", "teams"), ("user", USER)],
+                &[
+                    ("role", NOT_A_ROW),
+                    ("team", "teams"),
+                    ("user", USER),
+                    // Resolved from the record and the people notified; `permission` holds a code.
+                    ("supervisor", NOT_A_ROW),
+                    ("planner", NOT_A_ROW),
+                    ("team_lead", NOT_A_ROW),
+                    ("entity_manager", NOT_A_ROW),
+                    ("permission", NOT_A_ROW),
+                ],
             ),
         ],
     ),
@@ -928,22 +1010,35 @@ pub const ROW_SPECS: &[RowSpec] = &[
         ],
         // The de-duplication key is built from local ids (`di-…-<id>`, `planning.notify.<id>…`):
         // received on another device it would suppress an unrelated event there. Each device keeps
-        // its own keys; received events carry none.
-        device_local: &["dedupe_key"],
+        // its own keys; received events carry none. Whether the event's condition cleared is
+        // computed by each device from synchronised data (`notifications::conditions`).
+        device_local: &["dedupe_key", "resolved_at"],
         ..spec(
             "notification_events",
-            &[poly_hist(
-                "source_record_id",
-                "source_module",
-                &[
-                    ("di", "intervention_requests"),
-                    ("intervention_requests", "intervention_requests"),
-                    ("pm", "pm_occurrences"),
-                    ("personnel", "personnel"),
-                    ("planning", "schedule_commitments"),
-                    ("finance_budget", "budget_versions"),
-                ],
-            )],
+            &[
+                // Org node of the record, for read-time visibility (`notifications::inbox`).
+                hist("org_node_id", "org_nodes"),
+                poly_hist(
+                    "source_record_id",
+                    "source_module",
+                    &[
+                        ("di", "intervention_requests"),
+                        ("intervention_requests", "intervention_requests"),
+                        ("pm", "pm_occurrences"),
+                        ("personnel", "personnel"),
+                        ("planning", "schedule_commitments"),
+                        ("finance_budget", "budget_versions"),
+                        ("work_orders", "work_orders"),
+                        ("wo", "work_orders"),
+                        ("inspection", "inspection_rounds"),
+                        ("inventory", "articles"),
+                        ("permit", "work_permits"),
+                        // The daily digest names its day (`2026-10-15`); conflicts carry no record.
+                        ("notifications", NOT_A_ROW),
+                        ("sync", NOT_A_ROW),
+                    ],
+                ),
+            ],
         )
     },
     RowSpec {
@@ -952,7 +1047,14 @@ pub const ROW_SPECS: &[RowSpec] = &[
             json_ref_hist("action_url", "?openDi", "intervention_requests"),
             json_ref_hist("action_url", "?di", "intervention_requests"),
             json_ref_hist("action_url", "?occurrence", "pm_occurrences"),
+            json_ref_hist("action_url", "?openWo", "work_orders"),
+            json_ref_hist("action_url", "?openRound", "inspection_rounds"),
+            json_ref_hist("action_url", "?articleId", "articles"),
+            json_ref_hist("action_url", "?permit", "work_permits"),
         ],
+        // Whether the condition cleared is computed by each device (`notifications::conditions`);
+        // whether the condition was already true when this device started watching it, too.
+        device_local: &["resolved_at", "already_true"],
         ..spec(
             "notifications",
             &[
@@ -997,6 +1099,11 @@ pub const ROW_SPECS: &[RowSpec] = &[
     spec("article_families", &[]),
     spec("articles", &[]),
     spec("unit_conversions", &[]),
+    spec("inventory_lots", &[]),
+    spec("currency_exchange_rates", &[]),
+    spec("inventory_valuation_periods", &[]),
+    spec("inventory_valuation_snapshot_lines", &[]),
+    spec("procurement_approval_limits", &[]),
     spec("article_cost_profiles", &[]),
     spec("warehouses", &[]),
     spec("stock_locations", &[]),
@@ -1077,7 +1184,8 @@ pub const ROW_SPECS: &[RowSpec] = &[
         "inventory_supplier_prices",
         &[
             r("currency_value_id", "lookup_values"),
-            r("price_unit_value_id", "lookup_values"),
+            // Price unit: a unit of MEASURE.UNITS (migration 201).
+            r("price_unit_value_id", "reference_values"),
         ],
     ),
     spec(
@@ -1110,6 +1218,18 @@ pub const ROW_SPECS: &[RowSpec] = &[
     spec("goods_receipts", &[r("received_by_id", USER)]),
     spec("goods_receipt_lines", &[]),
     spec("repairable_orders", &[r("created_by_id", USER)]),
+    // ── Finance: OT cost flow and budget periods ────────────────────────────────────────────
+    spec("wo_cost_estimates", &[]),
+    spec("wo_cost_settlements", &[]),
+    spec("budget_periods", &[]),
+    // Personnel, qualifications and training (migrations 191-197).
+    spec("qualification_requirements", &[]),
+    spec("qualification_overrides", &[]),
+    spec("work_calendar_holidays", &[]),
+    spec("site_work_weeks", &[]),
+    spec("schedule_class_versions", &[]),
+    spec("team_schedule_assignments", &[]),
+    spec("personnel_schedule_exceptions", &[]),
 ];
 
 /// Rules of an entity type synchronised by the generic engine.

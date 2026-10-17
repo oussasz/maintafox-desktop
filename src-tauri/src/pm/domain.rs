@@ -24,6 +24,15 @@ pub struct PmPlan {
     pub row_version: i64,
     pub created_at: String,
     pub updated_at: String,
+    /// Equipment code (`equipment.asset_id_code`) when the plan targets one asset; read-only join.
+    #[serde(default)]
+    pub asset_code: Option<String>,
+    /// Equipment name when the plan targets one asset; read-only join.
+    #[serde(default)]
+    pub asset_name: Option<String>,
+    /// Name of the family / location / criticality group a fanned-out plan targets.
+    #[serde(default)]
+    pub asset_scope_label: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,6 +49,9 @@ pub struct PmPlanVersion {
     pub required_skills_json: Option<String>,
     pub required_tools_json: Option<String>,
     pub estimated_duration_hours: Option<f64>,
+    /// People the job takes; copied onto the OT the PM generates.
+    #[serde(default)]
+    pub planned_crew_size: Option<i64>,
     pub estimated_labor_cost: Option<f64>,
     pub estimated_parts_cost: Option<f64>,
     pub estimated_service_cost: Option<f64>,
@@ -103,6 +115,9 @@ pub struct CreatePmPlanVersionInput {
     pub required_skills_json: Option<String>,
     pub required_tools_json: Option<String>,
     pub estimated_duration_hours: Option<f64>,
+    /// People the job takes; copied onto the OT the PM generates.
+    #[serde(default)]
+    pub planned_crew_size: Option<i64>,
     pub estimated_labor_cost: Option<f64>,
     pub estimated_parts_cost: Option<f64>,
     pub estimated_service_cost: Option<f64>,
@@ -119,6 +134,12 @@ pub struct UpdatePmPlanVersionInput {
     pub required_skills_json: Option<String>,
     pub required_tools_json: Option<String>,
     pub estimated_duration_hours: Option<f64>,
+    /// People the job takes; copied onto the OT the PM generates.
+    #[serde(default)]
+    pub planned_crew_size: Option<i64>,
+    /// Removes the crew size (`planned_crew_size` omitted keeps it).
+    #[serde(default)]
+    pub clear_planned_crew_size: bool,
     pub estimated_labor_cost: Option<f64>,
     pub estimated_parts_cost: Option<f64>,
     pub estimated_service_cost: Option<f64>,
@@ -151,6 +172,27 @@ pub struct PmOccurrence {
     pub plan_code: Option<String>,
     pub plan_title: Option<String>,
     pub strategy_type: Option<String>,
+    /// Equipment code of the plan's target asset (read-only join, never stored on the occurrence).
+    #[serde(default)]
+    pub asset_code: Option<String>,
+    /// Equipment name of the plan's target asset (read-only join).
+    #[serde(default)]
+    pub asset_name: Option<String>,
+    /// Asset the occurrence is for (one per asset for family / location / criticality plans).
+    #[serde(default)]
+    pub equipment_id: Option<i64>,
+    /// Tolerance window (`pm::schedule`): work done inside it is on time.
+    #[serde(default)]
+    pub window_start_at: Option<String>,
+    #[serde(default)]
+    pub window_end_at: Option<String>,
+    #[serde(default)]
+    pub window_start_meter: Option<f64>,
+    #[serde(default)]
+    pub window_end_meter: Option<f64>,
+    /// `on_time` | `early` | `late` of the last execution, when recorded.
+    #[serde(default)]
+    pub timing_status: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -290,6 +332,12 @@ pub struct PmExecution {
     pub actual_duration_hours: Option<f64>,
     pub actual_labor_hours: Option<f64>,
     pub created_at: Option<String>,
+    /// Lifetime reading of the plan's meter on the asset when the work was recorded.
+    #[serde(default)]
+    pub meter_reading: Option<f64>,
+    /// `on_time` | `early` | `late` against the occurrence window.
+    #[serde(default)]
+    pub timing_status: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -396,6 +444,78 @@ pub struct PmGovernanceKpiReport {
     pub overdue_risk: PmRateKpi,
     pub first_pass_completion: PmRateKpi,
     pub follow_up_ratio: PmRateKpi,
+    /// Failures found by PM: corrective follow-up OTs raised from the findings of the period.
+    pub failures_found_by_pm: i64,
     pub effort_variance: PmEffortVarianceKpi,
     pub derivation_rules: Vec<String>,
+}
+
+/// Period of the PM compliance KPI (`from` inclusive, `to` exclusive, RFC3339).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PmComplianceInput {
+    pub from: String,
+    pub to: String,
+    #[serde(default)]
+    pub pm_plan_id: Option<i64>,
+}
+
+/// PM compliance (SMRP 5.4.1 style, see `pm::compliance`): occurrences due in the period whose
+/// outcome is known (`due_count`) and how their work went against the tolerance window.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PmComplianceReport {
+    pub from: String,
+    pub to: String,
+    pub pm_plan_id: Option<i64>,
+    pub due_count: i64,
+    pub on_time_count: i64,
+    pub early_count: i64,
+    pub late_count: i64,
+    /// Due in the period, window closed, no completion (missed or still open late).
+    pub not_done_count: i64,
+    /// Due in the period, still inside its window, not done yet: not judged (not in `due_count`).
+    #[serde(default)]
+    pub pending_count: i64,
+    /// `on_time_count / due_count × 100`; `None` when nothing was due.
+    pub compliance_pct: Option<f64>,
+}
+
+/// A value a plan can be scoped to (equipment family, location, criticality group).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PmScopeOption {
+    pub id: i64,
+    pub code: String,
+    pub label: String,
+}
+
+/// An asset a plan scope covers (fan-out preview).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PmScopeAsset {
+    pub equipment_id: i64,
+    pub asset_code: String,
+    pub asset_name: String,
+}
+
+/// A meter of an asset, with its lifetime value (what usage-based PM counts on).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PmAssetMeter {
+    pub id: i64,
+    pub name: String,
+    pub meter_type: String,
+    /// Unit of the meter (`MEASURE.UNITS`) and its symbol, read from the reference data.
+    pub unit_value_id: Option<i64>,
+    pub unit: Option<String>,
+    pub current_reading: f64,
+    pub lifetime_reading: f64,
+    pub rollover_value: Option<f64>,
+    pub last_read_at: Option<String>,
+    pub is_primary: bool,
+}
+
+/// A meter reading recorded from the PM workspace (`kind`: normal | rollover | replacement).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecordPmMeterReadingInput {
+    pub meter_id: i64,
+    pub reading_value: f64,
+    pub reading_at: Option<String>,
+    pub kind: Option<String>,
 }

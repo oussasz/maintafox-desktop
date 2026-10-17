@@ -623,3 +623,186 @@ pub async fn export_budget_report_pack(
     require_fin_report(&state, user.user_id).await?;
     queries::export_budget_report_pack(&state.db, input).await
 }
+
+// ── Work-order cost flow (estimate, settlement), budget cockpit, periods, asset costs ──────────
+
+#[tauri::command]
+pub async fn get_wo_cost_view(
+    work_order_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<crate::finance::settlement::WoCostView> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
+    // Per-person lines carry names and pay rates: Finance only.
+    let show_labor_lines = check_permission(
+        &state.db,
+        user.user_id,
+        crate::rbac::permissions::FIN_VIEW,
+        &PermissionScope::Global,
+    )
+    .await?;
+    crate::finance::settlement::get_wo_cost_view(&state.db, work_order_id, show_labor_lines).await
+}
+
+#[tauri::command]
+pub async fn upsert_wo_cost_estimate(
+    input: crate::finance::wo_costing::UpsertWoCostEstimateInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::finance::wo_costing::WoCostEstimate> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
+    // Choosing where the OT is charged is a posting decision: changing the cost-centre override
+    // needs `fin.post`; planners keep editing the estimated amounts.
+    let current_override = crate::finance::wo_costing::get_wo_cost_estimate(&state.db, input.work_order_id)
+        .await?
+        .and_then(|e| e.cost_center_id);
+    if input.cost_center_id != current_override {
+        require_fin_post(&state, user.user_id).await?;
+    }
+    crate::finance::wo_costing::upsert_wo_cost_estimate(&state.db, i64::from(user.user_id), input).await
+}
+
+#[tauri::command]
+pub async fn list_wo_settlements(
+    filter: crate::finance::settlement::WoSettlementFilter,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::finance::settlement::WoCostSettlement>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::FIN_VIEW,
+        PermissionScope::Global
+    );
+    crate::finance::settlement::list_wo_settlements(&state.db, filter).await
+}
+
+#[tauri::command]
+pub async fn retry_wo_settlement(
+    settlement_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<crate::finance::settlement::WoCostSettlement> {
+    let user = require_session!(state);
+    require_fin_post(&state, user.user_id).await?;
+    let txn = sea_orm::TransactionTrait::begin(&state.db).await?;
+    let settlement =
+        crate::finance::settlement::retry_pending_settlement(&txn, settlement_id, i64::from(user.user_id)).await?;
+    txn.commit().await?;
+    Ok(settlement)
+}
+
+/// Finance catch-up: books the cost documents that reached settled OTs after their settlement
+/// (for instance receipts or movements brought by a sync). Returns the number of OTs updated.
+#[tauri::command]
+pub async fn post_late_wo_costs(state: State<'_, AppState>) -> AppResult<i64> {
+    let user = require_session!(state);
+    require_fin_post(&state, user.user_id).await?;
+    let txn = sea_orm::TransactionTrait::begin(&state.db).await?;
+    let touched = crate::finance::settlement::post_all_late_costs(&txn, i64::from(user.user_id)).await?;
+    txn.commit().await?;
+    Ok(touched)
+}
+
+#[tauri::command]
+pub async fn get_budget_cockpit(
+    filter: crate::finance::cockpit::BudgetCockpitFilter,
+    state: State<'_, AppState>,
+) -> AppResult<crate::finance::cockpit::BudgetCockpit> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::FIN_VIEW,
+        PermissionScope::Global
+    );
+    crate::finance::cockpit::get_budget_cockpit(&state.db, filter).await
+}
+
+#[tauri::command]
+pub async fn get_budget_cockpit_drilldown(
+    filter: crate::finance::cockpit::BudgetCockpitDrilldownFilter,
+    state: State<'_, AppState>,
+) -> AppResult<crate::finance::cockpit::BudgetCockpitDrilldown> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::FIN_VIEW,
+        PermissionScope::Global
+    );
+    crate::finance::cockpit::get_budget_cockpit_drilldown(&state.db, filter).await
+}
+
+#[tauri::command]
+pub async fn list_budget_periods(
+    fiscal_year: i64,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::finance::periods::BudgetPeriod>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::FIN_VIEW,
+        PermissionScope::Global
+    );
+    crate::finance::periods::list_budget_periods(&state.db, fiscal_year).await
+}
+
+/// Closing a month freezes its reported figures: approval right (`fin.approve` + step-up).
+#[tauri::command]
+pub async fn close_budget_period(
+    input: crate::finance::periods::CloseBudgetPeriodInput,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::finance::periods::BudgetPeriod>> {
+    let user = require_session!(state);
+    require_fin_approve(&state, user.user_id).await?;
+    crate::finance::periods::close_budget_period(&state.db, i64::from(user.user_id), input).await
+}
+
+/// Reopening a closed month changes reported figures: approval right (`fin.approve` + step-up).
+#[tauri::command]
+pub async fn reopen_budget_period(
+    input: crate::finance::periods::ReopenBudgetPeriodInput,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::finance::periods::BudgetPeriod>> {
+    let user = require_session!(state);
+    require_fin_approve(&state, user.user_id).await?;
+    crate::finance::periods::reopen_budget_period(&state.db, i64::from(user.user_id), input).await
+}
+
+#[tauri::command]
+pub async fn list_asset_cost_history(
+    filter: crate::finance::asset_costs::AssetCostFilter,
+    state: State<'_, AppState>,
+) -> AppResult<crate::finance::asset_costs::AssetCostHistory> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::FIN_VIEW,
+        PermissionScope::Global
+    );
+    crate::finance::asset_costs::list_asset_cost_history(&state.db, filter).await
+}
+
+/// Finance catalogs from the reference data (cost categories, variance reasons), readable by
+/// anyone who sees budget or OT costs — maintaining them stays in Données de référence.
+#[tauri::command]
+pub async fn list_finance_catalogs(
+    state: State<'_, AppState>,
+) -> AppResult<crate::finance::reference_catalog::FinanceCatalogs> {
+    let user = require_session!(state);
+    let mut allowed = false;
+    for permission in [crate::rbac::permissions::FIN_VIEW, crate::rbac::permissions::OT_VIEW] {
+        if check_permission(&state.db, user.user_id, permission, &PermissionScope::Global).await? {
+            allowed = true;
+            break;
+        }
+    }
+    if !allowed {
+        return Err(AppError::PermissionDenied(
+            "Required permission: fin.view or ot.view.".to_string(),
+        ));
+    }
+    crate::finance::reference_catalog::list_finance_catalogs(&state.db).await
+}

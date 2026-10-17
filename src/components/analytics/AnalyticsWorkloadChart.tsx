@@ -63,9 +63,7 @@ export function AnalyticsWorkloadChart(props: {
           {t("chart.title", { days: horizonDays })}
         </CardTitle>
         {qualityBadge ? (
-          <p className="text-xs text-amber-700 dark:text-amber-500">
-            {t(`kpi.qualityBadge.${qualityBadge}`)}
-          </p>
+          <p className="text-xs text-tone-warning-fg">{t(`kpi.qualityBadge.${qualityBadge}`)}</p>
         ) : null}
       </CardHeader>
       <CardContent className="pb-4">

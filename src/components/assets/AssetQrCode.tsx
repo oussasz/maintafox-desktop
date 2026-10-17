@@ -6,16 +6,16 @@
  * changing page layout. Payload/export pipelines unchanged.
  */
 
-import { Loader2, Maximize2, Download, Printer } from "lucide-react";
+import { Download, Loader2, Maximize2, Printer } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import {
-  downloadIdentificationQrPng,
-  printIdentificationLabel,
   type IdentificationLabelContext,
   type IdentificationLabelMetadataRow,
+  downloadIdentificationQrPng,
+  printIdentificationLabel,
   useIdentificationQr,
 } from "@/components/identification";
 import { Button } from "@/components/ui/button";
@@ -31,8 +31,9 @@ import {
 } from "@/components/ui/toast";
 import { isExportCancelled, revealInFolder } from "@/export";
 import { useToast } from "@/hooks/use-toast";
+import { describeAppError } from "@/lib/app-error";
+import { assetQrPayload } from "@/lib/asset-qr";
 import { getActivationLicenseMetadata } from "@/services/product-license-service";
-import { toErrorMessage } from "@/utils/errors";
 import type { Asset } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -122,7 +123,8 @@ export function AssetQrCode({ asset }: AssetQrCodeProps) {
       primaryCode: asset.asset_code,
       name: asset.asset_name,
       metadata,
-      payload: `maintafox://asset/${asset.id}`,
+      // The asset code, shared by every device (a local id differs after synchronisation).
+      payload: assetQrPayload(asset.asset_code),
       filenameStem: asset.asset_code,
     };
   }, [
@@ -130,7 +132,6 @@ export function AssetQrCode({ asset }: AssetQrCodeProps) {
     asset.asset_name,
     asset.class_code,
     asset.class_name,
-    asset.id,
     asset.org_node_name,
     t,
   ]);
@@ -154,7 +155,7 @@ export function AssetQrCode({ asset }: AssetQrCodeProps) {
       if (isExportCancelled(err)) {
         return;
       }
-      const msg = toErrorMessage(err);
+      const msg = describeAppError(err).title;
       setExportError(msg);
       toast({ title: t("qr.export.failedTitle"), description: msg, variant: "destructive" });
     } finally {
@@ -178,7 +179,7 @@ export function AssetQrCode({ asset }: AssetQrCodeProps) {
         variant: "default",
       });
     } catch (err) {
-      const msg = toErrorMessage(err);
+      const msg = describeAppError(err).title;
       setExportError(msg);
       toast({ title: t("qr.export.failedTitle"), description: msg, variant: "destructive" });
     } finally {
@@ -193,7 +194,7 @@ export function AssetQrCode({ asset }: AssetQrCodeProps) {
       } catch (err) {
         toast({
           title: t("qr.export.failedTitle"),
-          description: toErrorMessage(err),
+          description: describeAppError(err).title,
           variant: "destructive",
         });
       }

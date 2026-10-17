@@ -1,19 +1,23 @@
 /**
  * DiCreateForm.tsx
  *
- * Multi-section create / edit form for Intervention Requests (DI).
- * Three visual sections: Requester (read-only), Equipment Selection,
- * General Information. Client-side validation with inline errors.
- *
- * Phase 2 – Sub-phase 04 – File 01 – Sprint S4.
+ * Create / edit form of an intervention request: requester (read-only), equipment and its
+ * location in the plant hierarchy, what was observed (symptom from the shared ISO 14224 list,
+ * urgency with the plain-language target of each level), pictures and files.
+ * Before the request is sent, open requests already raised on the same asset are shown (same
+ * symptom first) so the requester can avoid a duplicate. Everything is read from the local
+ * database, so the form works offline.
  */
 
-import { Loader2 } from "lucide-react";
+import { AlertTriangle, Loader2, MapPin } from "lucide-react";
 import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { AssetPicker } from "@/components/assets/AssetPicker";
+import { UrgencySelect } from "@/components/common/urgency/UrgencySelect";
+import { urgencyLevelLabel, useUrgencyScale } from "@/components/common/urgency/use-urgency-scale";
 import { DiAttachmentPanel } from "@/components/di/DiAttachmentPanel";
+import { diStatusToI18nKey } from "@/components/di/status-meta";
 import {
   EntityFormAttachments,
   EntityFormImageUploader,
@@ -30,11 +34,16 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
+import { StatusChip } from "@/components/ui/status-chip";
 import { Textarea } from "@/components/ui/textarea";
+import { DI_STATUS_TONE, mfTone, toneOf } from "@/design-system/tone";
 import { useSession } from "@/hooks/use-session";
+import { describeAppError } from "@/lib/app-error";
 import { assetToSearchResult } from "@/lib/asset-to-search-result";
+import { cn } from "@/lib/utils";
 import { getAssetById, getAssetByIdSilent } from "@/services/asset-service";
 import { uploadDiAttachmentFromPath } from "@/services/di-attachment-service";
+import { findPossibleDuplicateDis, type PossibleDuplicate } from "@/services/di-service";
 import { useDiStore } from "@/stores/di-store";
 import type { AssetSearchResult, DiCreateInput, InterventionRequest } from "@shared/ipc-types";
 
@@ -42,7 +51,8 @@ import type { AssetSearchResult, DiCreateInput, InterventionRequest } from "@sha
 
 const TITLE_MAX = 100;
 const DESC_MAX = 1000;
-const DEFAULT_REQUEST_TYPE = "repair";
+/** Possible duplicates listed before submitting (the most relevant first). */
+const DUPLICATES_SHOWN = 5;
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -120,9 +130,7 @@ export function DiCreateForm({
   const [title, setTitle] = useState(initial?.title ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
   const [originType, setOriginType] = useState<string>(initial?.origin_type ?? "");
-  const [requestType, setRequestType] = useState<string>(
-    initial?.request_type ?? DEFAULT_REQUEST_TYPE,
-  );
+  const [requestType, setRequestType] = useState<string>(initial?.request_type ?? "");
   const [urgency, setUrgency] = useState<string>(initial?.reported_urgency ?? "");
   const [impactLevel, setImpactLevel] = useState<string>(initial?.impact_level ?? "");
   const [symptomCodeId, setSymptomCodeId] = useState<number | null>(
@@ -138,6 +146,11 @@ export function DiCreateForm({
 
   // Equipment selection (shared AssetPicker)
   const [selectedAsset, setSelectedAsset] = useState<AssetSearchResult | null>(null);
+
+  // Open requests already raised on the same asset (duplicate warning)
+  const [duplicates, setDuplicates] = useState<PossibleDuplicate[]>([]);
+  const { levelOf, language } = useUrgencyScale();
+  const urgencyLevel = levelOf(urgency);
 
   // Validation
   const [touched, setTouched] = useState<Set<string>>(new Set());
@@ -181,6 +194,32 @@ export function DiCreateForm({
       cancelled = true;
     };
   }, [isEdit, prefillAsset, prefillEquipmentId]);
+
+  // ── Duplicate warning (same asset, open, same symptom first) ─────────
+
+  const assetId = selectedAsset?.id ?? null;
+  useEffect(() => {
+    if (assetId == null) {
+      setDuplicates([]);
+      return;
+    }
+    let cancelled = false;
+    void findPossibleDuplicateDis({
+      equipmentId: assetId,
+      symptomCodeId,
+      excludeId: initial?.id ?? null,
+    })
+      .then((found) => {
+        if (!cancelled) setDuplicates(found);
+      })
+      .catch(() => {
+        // The warning is a help, not a gate: no list when it cannot be read.
+        if (!cancelled) setDuplicates([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [assetId, symptomCodeId, initial?.id]);
 
   // ── Validation ────────────────────────────────────────────────────────
 
@@ -267,7 +306,8 @@ export function DiCreateForm({
           reported_urgency: urgency,
           observed_at: observedAt || null,
         });
-        onSubmitted({ ...initial, title, description, request_type: requestType });
+        const updated = useDiStore.getState().activeDi?.di;
+        onSubmitted(updated && updated.id === initial.id ? updated : initial);
       } else {
         const input: DiCreateInput = {
           equipment_id: selectedAsset.id,
@@ -337,8 +377,10 @@ export function DiCreateForm({
         onSubmitted(di);
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setSubmitError(msg);
+      const described = describeAppError(err);
+      setSubmitError(
+        described.description ? `${described.title} — ${described.description}` : described.title,
+      );
     }
   }, [
     currentErrors,
@@ -409,7 +451,58 @@ export function DiCreateForm({
             markTouched("equipment");
           }}
           error={fieldError("equipment")}
+          disabled={isEdit}
         />
+        {selectedAsset ? (
+          <p className="mt-2 flex items-start gap-1.5 text-xs text-text-secondary">
+            <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+            <span>
+              <span className="font-medium">{t("form.location.label")}</span>{" "}
+              {selectedAsset.org_path ?? selectedAsset.org_node_name ?? t("form.location.none")}
+              {selectedAsset.parent_asset_code ? (
+                <>
+                  {" · "}
+                  {t("form.location.parent", {
+                    parent: [selectedAsset.parent_asset_code, selectedAsset.parent_asset_name]
+                      .filter(Boolean)
+                      .join(" — "),
+                  })}
+                </>
+              ) : null}
+            </span>
+          </p>
+        ) : null}
+        {duplicates.length > 0 ? (
+          <div
+            role="status"
+            className={cn("mt-3 space-y-1.5 rounded-lg border px-3 py-2", mfTone.attention.panel)}
+          >
+            <p className="flex items-center gap-1.5 text-xs font-semibold text-text-primary">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              {duplicates.some((d) => d.sameSymptom)
+                ? t("form.duplicates.sameSymptom", {
+                    count: duplicates.filter((d) => d.sameSymptom).length,
+                  })
+                : t("form.duplicates.sameAsset", { count: duplicates.length })}
+            </p>
+            <ul className="space-y-1">
+              {duplicates.slice(0, DUPLICATES_SHOWN).map(({ di, sameSymptom }) => (
+                <li key={di.id} className="flex items-center gap-2 text-xs">
+                  <span className="font-mono text-text-muted">{di.code}</span>
+                  <span className={cn("min-w-0 flex-1 truncate", sameSymptom && "font-medium")}>
+                    {di.title}
+                  </span>
+                  <StatusChip
+                    label={t(`status.${diStatusToI18nKey(di.status)}` as const)}
+                    tone={toneOf(DI_STATUS_TONE, di.status)}
+                    dot
+                  />
+                </li>
+              ))}
+            </ul>
+            <p className="text-xs text-text-secondary">{t("form.duplicates.hint")}</p>
+          </div>
+        ) : null}
       </section>
 
       <Separator />
@@ -456,6 +549,7 @@ export function DiCreateForm({
               markTouched("origin_type");
             }}
             allowClear={false}
+            disabled={isEdit}
             placeholder={t("form.originType.placeholder")}
             aria-invalid={Boolean(fieldError("origin_type"))}
           />
@@ -472,7 +566,7 @@ export function DiCreateForm({
             referenceType="di.request_type"
             value={requestType || null}
             onChange={(code) => {
-              setRequestType(code ?? DEFAULT_REQUEST_TYPE);
+              setRequestType(code ?? "");
               markTouched("request_type");
             }}
             allowClear={false}
@@ -490,7 +584,7 @@ export function DiCreateForm({
         >
           <ReferenceCombobox
             id="symptom_code_id"
-            referenceType="di.symptom"
+            referenceType="work.symptom"
             valueMode="id"
             value={symptomCodeId != null ? String(symptomCodeId) : null}
             onChange={(idStr) => {
@@ -510,19 +604,34 @@ export function DiCreateForm({
           error={fieldError("reported_urgency")}
           required
         >
-          <ReferenceCombobox
+          <UrgencySelect
             id="reported_urgency"
-            referenceType="di.priority"
             value={urgency || null}
             onChange={(code) => {
-              setUrgency(code ?? "");
+              setUrgency(code);
               markTouched("reported_urgency");
             }}
-            allowClear={false}
-            allowCreate={false}
             placeholder={t("form.priority.placeholder")}
             aria-invalid={Boolean(fieldError("reported_urgency"))}
+            aria-describedby="reported_urgency-hint"
           />
+          <p id="reported_urgency-hint" className="mt-1 text-xs text-text-secondary">
+            {urgencyLevel
+              ? [
+                  urgencyLevel.description,
+                  urgencyLevel.response_target_hours != null &&
+                  urgencyLevel.completion_target_hours != null
+                    ? t("form.priority.targetHint", {
+                        level: urgencyLevelLabel(urgencyLevel, language),
+                        response: urgencyLevel.response_target_hours,
+                        completion: urgencyLevel.completion_target_hours,
+                      })
+                    : t("form.priority.noTarget"),
+                ]
+                  .filter(Boolean)
+                  .join(" ")
+              : t("form.priority.chooseHint")}
+          </p>
         </FormField>
 
         {/* Impact level */}
@@ -663,7 +772,10 @@ export function DiCreateForm({
 
       {/* ── Error banner ────────────────────────────────────────────── */}
       {(submitError || storeError) && (
-        <div className="rounded-md border border-status-danger/30 bg-status-danger/10 px-3 py-2 text-sm text-status-danger">
+        <div
+          role="alert"
+          className="rounded-md border border-status-danger/30 bg-status-danger/10 px-3 py-2 text-sm text-status-danger"
+        >
           {submitError || storeError}
         </div>
       )}

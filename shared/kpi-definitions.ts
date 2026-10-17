@@ -76,8 +76,8 @@ export {
 
 export const RELIABILITY_RAM_EVIDENCE_HASH = "#ram-data-quality";
 
-/** Canonical Deep RAMS routes under the unified Analytics hub (M0+). */
-export const ANALYTICS_RAMS_BASE_PATH = "/analytics/rams";
+/** Reliability (RAMS) module routes (own sidebar entry; `/analytics/rams/*` redirects here). */
+export const ANALYTICS_RAMS_BASE_PATH = "/reliability";
 
 export const analyticsRamsPath = (segment: string, hash = "") =>
   `${ANALYTICS_RAMS_BASE_PATH}/${segment.replace(/^\//, "")}${hash}`;

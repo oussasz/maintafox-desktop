@@ -13,8 +13,9 @@ import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 
-import { StepUpDialog } from "@/components/auth/StepUpDialog";
 import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
+import { UrgencyBadge } from "@/components/common/urgency/UrgencyBadge";
+import { urgencyLabelFor } from "@/components/common/urgency/use-urgency-scale";
 import {
   fetchDiSymptomLabel,
   loadDiOriginLabelMap,
@@ -25,6 +26,7 @@ import { DI_STATUS_STYLE, diStatusToI18nKey } from "@/components/di/status-meta"
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   Dialog,
   DialogContent,
@@ -38,6 +40,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useSession } from "@/hooks/use-session";
 import { i18n } from "@/i18n";
+import { describeAppError } from "@/lib/app-error";
 import { formatAssetLabel, formatOrgNodeLabel, formatPersonLabel } from "@/lib/display";
 import { convertDiToWo } from "@/services/di-conversion-service";
 import { useDiReviewStore } from "@/stores/di-review-store";
@@ -47,13 +50,6 @@ import type { InterventionRequest } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
-
-const URGENCY_STYLE: Record<string, string> = {
-  critical: "bg-red-100 text-red-700",
-  high: "bg-orange-100 text-orange-800",
-  medium: "bg-yellow-100 text-yellow-800",
-  low: "bg-green-100 text-green-800",
-};
 
 function esc(v: string): string {
   return v
@@ -73,6 +69,7 @@ function printApprovalSheet(
   locale: string,
   originLabel: string,
   symptomLabel: string,
+  urgencyLabel: string,
 ) {
   const now = new Date().toLocaleString(locale);
   const fmt = (iso: string) => {
@@ -115,15 +112,15 @@ function printApprovalSheet(
   <table>
     <tr><th>${t("approvalPrint.thCode")}</th><td>${esc(di.code)}</td></tr>
     <tr><th>${t("approvalPrint.thTitle")}</th><td>${esc(di.title)}</td></tr>
-    <tr><th>${t("approvalPrint.thStatus")}</th><td>${esc(di.status)}</td></tr>
-    <tr><th>${t("approvalPrint.thPriority")}</th><td>${esc(di.reported_urgency)}</td></tr>
+    <tr><th>${t("approvalPrint.thStatus")}</th><td>${esc(t(`status.${diStatusToI18nKey(di.status)}`))}</td></tr>
+    <tr><th>${t("approvalPrint.thPriority")}</th><td>${esc(urgencyLabel)}</td></tr>
     <tr><th>${t("approvalPrint.thOrigin")}</th><td>${esc(originLabel)}</td></tr>
     ${
       symptomLabel
         ? `<tr><th>${t("detail.fields.symptom")}</th><td>${esc(symptomLabel)}</td></tr>`
         : ""
     }
-    <tr><th>${t("approvalPrint.thImpact")}</th><td>${esc(di.impact_level)}</td></tr>
+    <tr><th>${t("approvalPrint.thImpact")}</th><td>${esc(t(`form.impact.${di.impact_level}` as "form.impact.unknown", { defaultValue: di.impact_level }))}</td></tr>
     <tr><th>${t("approvalPrint.thAsset")}</th><td>${esc(formatAssetLabel(di.asset_code, di.asset_label))}</td></tr>
     <tr><th>${t("approvalPrint.thOrg")}</th><td>${esc(formatOrgNodeLabel(di.org_node_code, di.org_node_label))}</td></tr>
     <tr><th>${t("approvalPrint.thSubmitted")}</th><td>${esc(fmt(di.submitted_at))}</td></tr>
@@ -189,8 +186,9 @@ export function DiApprovalDialog() {
   const { info } = useSession();
 
   const [note, setNote] = useState("");
-  const [showStepUp, setShowStepUp] = useState(false);
-  const [stepUpMode, setStepUpMode] = useState<"approve" | "convert">("approve");
+  // Approve and convert are confirmed in a dialog (no password re-entry; RBAC + audit on the backend).
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmMode, setConfirmMode] = useState<"approve" | "convert">("approve");
   const [conversionResult, setConversionResult] = useState<{
     woId: number | null;
     woCode: string | null;
@@ -207,7 +205,7 @@ export function DiApprovalDialog() {
     (woId: number) => {
       setConversionResult(null);
       setNote("");
-      setShowStepUp(false);
+      setConfirmOpen(false);
       setRetryRowVersion(null);
       closeApproval();
       navigate(`/work-orders?openWo=${woId}`);
@@ -216,13 +214,13 @@ export function DiApprovalDialog() {
   );
 
   const handleApproveClick = useCallback(() => {
-    setStepUpMode("approve");
-    setShowStepUp(true);
+    setConfirmMode("approve");
+    setConfirmOpen(true);
   }, []);
 
   const handleConvertClick = useCallback(() => {
-    setStepUpMode("convert");
-    setShowStepUp(true);
+    setConfirmMode("convert");
+    setConfirmOpen(true);
   }, []);
 
   const handleCloseRequest = useCallback(() => {
@@ -231,10 +229,9 @@ export function DiApprovalDialog() {
     openRejection(di);
   }, [closeApproval, di, openRejection]);
 
-  const handleStepUpVerified = useCallback(async () => {
-    setShowStepUp(false);
+  const handleConfirmed = useCallback(async () => {
     if (!di) return;
-    if (stepUpMode === "approve") {
+    if (confirmMode === "approve") {
       try {
         const result = await approve({
           di_id: di.id,
@@ -275,10 +272,10 @@ export function DiApprovalDialog() {
       setConversionResult({
         woId: null,
         woCode: null,
-        conversionError: err instanceof Error ? err.message : String(err),
+        conversionError: describeAppError(err).title,
       });
     }
-  }, [di, approve, info, note, handoffToWorkOrder, loadDis, stepUpMode, retryRowVersion, t]);
+  }, [di, approve, info, note, handoffToWorkOrder, loadDis, confirmMode, retryRowVersion, t]);
 
   const handleRetryConversion = useCallback(async () => {
     if (!di || retryRowVersion == null) return;
@@ -303,22 +300,19 @@ export function DiApprovalDialog() {
       setConversionResult({
         woId: null,
         woCode: null,
-        conversionError: err instanceof Error ? err.message : String(err),
+        conversionError: describeAppError(err).title,
       });
     }
   }, [di, handoffToWorkOrder, loadDis, note, retryRowVersion]);
-
-  const handleStepUpCancel = useCallback(() => {
-    setShowStepUp(false);
-  }, []);
 
   const handlePrint = useCallback(() => {
     if (!di) return;
     const tPrint = i18n.getFixedT(i18n.language, "di");
     void (async () => {
-      const [originMap, symptomText] = await Promise.all([
+      const [originMap, symptomText, urgencyText] = await Promise.all([
         loadDiOriginLabelMap(),
         fetchDiSymptomLabel(di.symptom_code_id),
+        urgencyLabelFor(di.validated_urgency ?? di.reported_urgency, i18n.language),
       ]);
       printApprovalSheet(
         di,
@@ -328,13 +322,14 @@ export function DiApprovalDialog() {
         intlLocaleForLanguage(i18n.language),
         resolveDiOriginLabel(originMap, di.origin_type),
         symptomText,
+        urgencyText,
       );
     })();
   }, [di, approverName, note, i18n]);
 
   const handleClose = useCallback(() => {
     setNote("");
-    setShowStepUp(false);
+    setConfirmOpen(false);
     setConversionResult(null);
     setRetryRowVersion(null);
     closeApproval();
@@ -344,10 +339,25 @@ export function DiApprovalDialog() {
 
   return (
     <>
-      <StepUpDialog
-        open={showStepUp}
-        onVerified={handleStepUpVerified}
-        onCancel={handleStepUpCancel}
+      <ConfirmDialog
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        title={
+          confirmMode === "approve"
+            ? t("review.confirmApproveTitle")
+            : t("review.confirmConvertTitle")
+        }
+        description={
+          confirmMode === "approve"
+            ? t("review.confirmApproveDescription", { code: di.code })
+            : t("review.confirmConvertDescription", { code: di.code })
+        }
+        confirmLabel={
+          confirmMode === "approve"
+            ? t("review.confirmApproveAction")
+            : t("review.confirmConvertAction")
+        }
+        onConfirm={handleConfirmed}
       />
       <Dialog open={open} onOpenChange={(isOpen) => !isOpen && handleClose()}>
         <DialogContent
@@ -362,9 +372,9 @@ export function DiApprovalDialog() {
 
           <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
             {/* Conversion notice — WO code is assigned only on convert */}
-            <div className="rounded-lg bg-green-50 border border-green-200 py-3 px-4 space-y-1">
-              <p className="text-center font-mono font-bold text-green-800">{di.code}</p>
-              <p className="text-center text-sm text-green-700">
+            <div className="rounded-lg bg-tone-success-bg border border-tone-success-border py-3 px-4 space-y-1">
+              <p className="text-center font-mono font-bold text-tone-success-fg">{di.code}</p>
+              <p className="text-center text-sm text-tone-success-fg">
                 {t("review.woCodeAssignedOnConvert")}
               </p>
             </div>
@@ -384,16 +394,11 @@ export function DiApprovalDialog() {
                   />
                   <Badge
                     variant="outline"
-                    className={`text-[10px] border-0 ml-auto ${DI_STATUS_STYLE[di.status] ?? "bg-gray-100"}`}
+                    className={`text-[10px] border-0 ml-auto ${DI_STATUS_STYLE[di.status] ?? "bg-tone-neutral-bg"}`}
                   >
                     {t(`status.${diStatusToI18nKey(di.status)}` as const)}
                   </Badge>
-                  <Badge
-                    variant="outline"
-                    className={`text-[10px] border-0 ${URGENCY_STYLE[di.reported_urgency] ?? ""}`}
-                  >
-                    {t(`priority.${di.reported_urgency}`)}
-                  </Badge>
+                  <UrgencyBadge code={di.validated_urgency ?? di.reported_urgency} />
                 </div>
 
                 {/* Equipment */}
@@ -495,7 +500,7 @@ export function DiApprovalDialog() {
             {conversionResult?.woCode && !conversionResult.conversionError && (
               <div
                 role="status"
-                className="rounded-md bg-green-100 border border-green-300 px-4 py-3 text-sm text-green-800 flex items-center gap-2"
+                className="rounded-md bg-tone-success-bg border border-tone-success-border px-4 py-3 text-sm text-tone-success-fg flex items-center gap-2"
               >
                 <CheckCircle2 className="h-4 w-4 shrink-0" />
                 <span>
@@ -507,7 +512,7 @@ export function DiApprovalDialog() {
             {conversionResult?.conversionError && (
               <div
                 role="alert"
-                className="rounded-md bg-amber-100 border border-amber-300 px-4 py-3 text-sm text-amber-800 flex items-start gap-2"
+                className="rounded-md bg-tone-warning-bg border border-tone-warning-border px-4 py-3 text-sm text-tone-warning-fg flex items-start gap-2"
               >
                 <TriangleAlert className="h-4 w-4 shrink-0 mt-0.5" />
                 <div>
@@ -548,7 +553,7 @@ export function DiApprovalDialog() {
                   size="sm"
                   onClick={handleApproveClick}
                   disabled={saving}
-                  className="gap-1.5 bg-green-600 hover:bg-green-700 text-white"
+                  className="gap-1.5"
                 >
                   {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                   {t("action.approve")}
@@ -559,7 +564,7 @@ export function DiApprovalDialog() {
                   size="sm"
                   onClick={handleConvertClick}
                   disabled={saving}
-                  className="gap-1.5 bg-green-600 hover:bg-green-700 text-white"
+                  className="gap-1.5"
                 >
                   {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                   {t("review.convertToWo")}

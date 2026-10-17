@@ -1,8 +1,7 @@
-//! Dashboard KPI and workload chart IPC commands.
+//! Home page widgets that are not a role panel (`commands::home`): the per-user layout, the
+//! activity chart, the open-requests-by-status chart and the indicator strip (`get_overview_kpis`).
 //!
-//! Phase 2 - Sub-phase 00 - File 02 - Sprint S4.
-//!
-//! Provides aggregated counts for the Dashboard KPI grid and workload chart.
+//! Every figure fails with an error when its query fails — never a silent 0.
 
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use serde::{Deserialize, Serialize};
@@ -22,32 +21,16 @@ use crate::state::AppState;
 // Types
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Single KPI card data.
-#[derive(Debug, Serialize)]
-pub struct KpiValue {
-    pub key: String,
-    pub value: i64,
-    pub previous_value: i64,
-    pub available: bool,
-    pub quality_badge: Option<String>,
-}
-
-/// Top-level response for `get_dashboard_kpis`.
-#[derive(Debug, Serialize)]
-pub struct DashboardKpis {
-    pub open_dis: KpiValue,
-    pub open_wos: KpiValue,
-    pub total_assets: KpiValue,
-    pub overdue_items: KpiValue,
-}
-
-/// Single day data for the workload chart.
-#[derive(Debug, Serialize)]
+/// One day of the activity chart. A series the person may not see is `None` (not 0).
+#[derive(Debug, Serialize, PartialEq, Eq)]
 pub struct WorkloadDay {
     pub date: String,
-    pub di_created: i64,
-    pub wo_completed: i64,
-    pub pm_due: i64,
+    /// Requests submitted that day (`submitted_at`).
+    pub di_created: Option<i64>,
+    /// Work orders closed that day (status `closed`, `closed_at`).
+    pub wo_completed: Option<i64>,
+    /// PM occurrences due that day, cancelled ones excluded.
+    pub pm_due: Option<i64>,
 }
 
 /// Response for `get_dashboard_workload_chart`.
@@ -68,10 +51,12 @@ pub struct SaveDashboardLayoutInput {
     pub layout_json: String,
 }
 
+/// Open requests of one status (`di::stats::open_backlog_by_status`).
 #[derive(Debug, Serialize)]
 pub struct DiStatusSegment {
     pub status: String,
     pub count: i64,
+    pub avg_age_days: f64,
 }
 
 #[derive(Debug, Serialize)]
@@ -80,30 +65,11 @@ pub struct DashboardDiStatusChart {
     pub available: bool,
 }
 
-#[derive(Debug, Serialize)]
-pub struct DashboardReliabilitySnapshotSummary {
-    pub available: bool,
-    pub snapshot_count: i64,
-    pub avg_data_quality_score: Option<f64>,
-    pub avg_mtbf_hours: Option<f64>,
-    pub total_failure_events: i64,
-}
+/// Mirrors `DEFAULT_DASHBOARD_LAYOUT` in `shared/dashboard-layout.ts`.
+pub const DEFAULT_DASHBOARD_LAYOUT_JSON: &str = r#"{"version":1,"widgets":[{"id":"my_work","order":0,"visible":true},{"id":"supervision","order":1,"visible":true},{"id":"planning","order":2,"visible":true},{"id":"kpis","order":3,"visible":true},{"id":"workload","order":4,"visible":true},{"id":"di_status","order":5,"visible":true}]}"#;
 
-#[derive(Debug, Serialize)]
-pub struct KpiSqlSample {
-    pub key: String,
-    pub value: i64,
-    pub sql: String,
-    pub sample_ids: Vec<i64>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct DashboardKpiValidation {
-    pub samples: Vec<KpiSqlSample>,
-    pub overdue_items_total: i64,
-}
-
-pub const DEFAULT_DASHBOARD_LAYOUT_JSON: &str = r#"{"version":1,"widgets":[{"id":"kpis","order":0,"visible":true},{"id":"workload","order":1,"visible":true},{"id":"di_status","order":2,"visible":true},{"id":"reliability_snapshot","order":3,"visible":false}]}"#;
+/// Periods of the activity chart (days).
+pub const WORKLOAD_PERIODS: [i64; 2] = [7, 30];
 
 fn validate_dashboard_layout_json(raw: &str) -> AppResult<()> {
     if raw.len() > 48_000 {
@@ -178,234 +144,96 @@ pub(crate) fn kpi_quality_badge(previous_value: i64, value: i64) -> Option<Strin
     }
 }
 
+fn decode<T: sea_orm::TryGetable>(row: &sea_orm::QueryResult, col: &str) -> AppResult<T> {
+    row.try_get::<T>("", col)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("dashboard decode '{col}': {e}")))
+}
+
+/// Which series of the activity chart the person may see.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct WorkloadSeries {
+    pub di: bool,
+    pub wo: bool,
+    pub pm: bool,
+}
+
+/// The activity chart in one query: the last `period` days (today included), each with the
+/// counts of the series the person may see.
+pub async fn build_workload_chart(
+    db: &impl ConnectionTrait,
+    period: i64,
+    series: WorkloadSeries,
+) -> AppResult<DashboardWorkloadChart> {
+    if !WORKLOAD_PERIODS.contains(&period) {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "period_days must be one of {WORKLOAD_PERIODS:?}."
+        )]));
+    }
+    let col = |allowed: bool, sql: &str, name: &str| {
+        if allowed {
+            format!("({sql}) AS {name}")
+        } else {
+            format!("NULL AS {name}")
+        }
+    };
+    let sql = format!(
+        "WITH RECURSIVE days(d) AS ( \
+           SELECT date('now', ?) UNION ALL SELECT date(d, '+1 day') FROM days WHERE d < date('now') \
+         ) \
+         SELECT days.d AS d, {di}, {wo}, {pm} FROM days ORDER BY days.d",
+        di = col(
+            series.di,
+            "SELECT COUNT(*) FROM intervention_requests ir WHERE date(ir.submitted_at) = days.d",
+            "di_created"
+        ),
+        wo = col(
+            series.wo,
+            "SELECT COUNT(*) FROM work_orders wo JOIN work_order_statuses s ON s.id = wo.status_id \
+             WHERE s.code = 'closed' AND date(wo.closed_at) = days.d",
+            "wo_completed"
+        ),
+        pm = col(
+            series.pm,
+            "SELECT COUNT(*) FROM pm_occurrences po \
+             WHERE po.due_at IS NOT NULL AND date(po.due_at) = days.d AND po.status <> 'cancelled'",
+            "pm_due"
+        ),
+    );
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            sql,
+            [format!("-{} days", period - 1).into()],
+        ))
+        .await?;
+    let days = rows
+        .iter()
+        .map(|r| {
+            Ok(WorkloadDay {
+                date: decode(r, "d")?,
+                di_created: decode(r, "di_created")?,
+                wo_completed: decode(r, "wo_completed")?,
+                pm_due: decode(r, "pm_due")?,
+            })
+        })
+        .collect::<AppResult<Vec<_>>>()?;
+    let any_series = series.di || series.wo || series.pm;
+    let sparse = any_series
+        && days
+            .iter()
+            .all(|d| d.di_created.unwrap_or(0) == 0 && d.wo_completed.unwrap_or(0) == 0 && d.pm_due.unwrap_or(0) == 0);
+    Ok(DashboardWorkloadChart {
+        days,
+        period_days: period,
+        quality_badge: sparse.then(|| kpi_definitions::quality_badge::SPARSE_WORKLOAD.to_string()),
+    })
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Commands
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Returns KPI counts for the dashboard card grid.
-///
-/// - Open DIs: count of intervention_requests NOT in terminal states
-/// - Open WOs: count of WOs not in terminal status
-/// - Total Assets: count of equipment rows
-/// - Overdue Items: DIs + PM occurrences currently overdue
-///
-/// Each KPI also returns a `previous_value` (same window shifted back)
-/// so the frontend can compute the trend delta.
-#[tauri::command]
-pub async fn get_dashboard_kpis(state: State<'_, AppState>) -> AppResult<DashboardKpis> {
-    let user = require_session!(state);
-    let db = &state.db;
-
-    let can_di = check_permission(
-        db,
-        user.user_id,
-        crate::rbac::permissions::DI_VIEW,
-        &PermissionScope::Global,
-    )
-    .await?;
-    let can_ot = check_permission(
-        db,
-        user.user_id,
-        crate::rbac::permissions::OT_VIEW,
-        &PermissionScope::Global,
-    )
-    .await?;
-    let can_eq = check_permission(
-        db,
-        user.user_id,
-        crate::rbac::permissions::EQ_VIEW,
-        &PermissionScope::Global,
-    )
-    .await?;
-    let can_pm = check_permission(
-        db,
-        user.user_id,
-        crate::rbac::permissions::PM_VIEW,
-        &PermissionScope::Global,
-    )
-    .await?;
-
-    // ── Open DIs (current) ────────────────────────────────────────────
-    let open_di_count = if can_di {
-        count_scalar(
-            db,
-            "SELECT COUNT(*) AS cnt FROM intervention_requests \
-         WHERE status NOT IN ('rejected','converted_to_work_order',\
-         'closed_as_non_executable','archived')",
-        )
-        .await
-    } else {
-        0
-    };
-
-    // ── Previous-period open DIs (snapshot: created before 7 days ago) ──
-    let prev_di_count = if can_di {
-        count_scalar(
-            db,
-            "SELECT COUNT(*) AS cnt FROM intervention_requests \
-         WHERE status NOT IN ('rejected','converted_to_work_order',\
-         'closed_as_non_executable','archived') \
-         AND created_at <= datetime('now', '-7 days')",
-        )
-        .await
-    } else {
-        0
-    };
-
-    // ── Total assets (current) ────────────────────────────────────────
-    let asset_count = if can_eq {
-        count_scalar(db, "SELECT COUNT(*) AS cnt FROM equipment WHERE deleted_at IS NULL").await
-    } else {
-        0
-    };
-    let prev_asset_count = if can_eq {
-        count_scalar(
-            db,
-            "SELECT COUNT(*) AS cnt FROM equipment WHERE deleted_at IS NULL \
-         AND created_at <= datetime('now', '-7 days')",
-        )
-        .await
-    } else {
-        0
-    };
-
-    // ── Overdue DIs: in non-terminal state for > 7 days ───────────────
-    let overdue_count = if can_di {
-        count_scalar(
-            db,
-            "SELECT COUNT(*) AS cnt FROM intervention_requests \
-         WHERE status NOT IN ('rejected','converted_to_work_order',\
-         'closed_as_non_executable','archived') \
-         AND created_at <= datetime('now', '-7 days')",
-        )
-        .await
-    } else {
-        0
-    };
-
-    let prev_overdue = if can_di {
-        count_scalar(
-            db,
-            "SELECT COUNT(*) AS cnt FROM intervention_requests \
-         WHERE status NOT IN ('rejected','converted_to_work_order',\
-         'closed_as_non_executable','archived') \
-         AND created_at <= datetime('now', '-14 days')",
-        )
-        .await
-    } else {
-        0
-    };
-
-    let open_wos_val = if can_ot {
-        count_scalar(
-            db,
-            "SELECT COUNT(*) AS cnt FROM work_orders wo \
-         JOIN work_order_statuses s ON s.id = wo.status_id \
-         WHERE s.code NOT IN ('closed','cancelled')",
-        )
-        .await
-    } else {
-        0
-    };
-    let open_wos_prev = if can_ot {
-        count_scalar(
-            db,
-            "SELECT COUNT(*) AS cnt FROM work_orders wo \
-         JOIN work_order_statuses s ON s.id = wo.status_id \
-         WHERE s.code NOT IN ('closed','cancelled') \
-         AND wo.created_at <= datetime('now', '-7 days')",
-        )
-        .await
-    } else {
-        0
-    };
-
-    let overdue_pm_now = if can_pm {
-        count_scalar(
-            db,
-            "SELECT COUNT(*) AS cnt FROM pm_occurrences \
-             WHERE status NOT IN ('completed','cancelled','missed') \
-             AND due_at IS NOT NULL \
-             AND due_at < datetime('now')",
-        )
-        .await
-    } else {
-        0
-    };
-    let overdue_pm_prev = if can_pm {
-        count_scalar(
-            db,
-            "SELECT COUNT(*) AS cnt FROM pm_occurrences \
-             WHERE status NOT IN ('completed','cancelled','missed') \
-             AND due_at IS NOT NULL \
-             AND due_at < datetime('now', '-7 days')",
-        )
-        .await
-    } else {
-        0
-    };
-
-    let overdue_val = overdue_count + overdue_pm_now;
-    let overdue_prev = prev_overdue + overdue_pm_prev;
-
-    let overdue_items_available = can_di || can_pm;
-
-    Ok(DashboardKpis {
-        open_dis: KpiValue {
-            key: kpi_definitions::dashboard::OPEN_DIS.into(),
-            value: open_di_count,
-            previous_value: prev_di_count,
-            available: can_di,
-            quality_badge: if can_di {
-                kpi_quality_badge(prev_di_count, open_di_count)
-            } else {
-                None
-            },
-        },
-        open_wos: KpiValue {
-            key: kpi_definitions::dashboard::OPEN_WOS.into(),
-            value: open_wos_val,
-            previous_value: open_wos_prev,
-            available: can_ot,
-            quality_badge: if can_ot {
-                kpi_quality_badge(open_wos_prev, open_wos_val)
-            } else {
-                None
-            },
-        },
-        total_assets: KpiValue {
-            key: kpi_definitions::dashboard::TOTAL_ASSETS.into(),
-            value: asset_count,
-            previous_value: prev_asset_count,
-            available: can_eq,
-            quality_badge: if can_eq {
-                kpi_quality_badge(prev_asset_count, asset_count)
-            } else {
-                None
-            },
-        },
-        overdue_items: KpiValue {
-            key: kpi_definitions::dashboard::OVERDUE_ITEMS.into(),
-            value: overdue_val,
-            previous_value: overdue_prev,
-            available: overdue_items_available,
-            quality_badge: if overdue_items_available {
-                kpi_quality_badge(overdue_prev, overdue_val)
-            } else {
-                None
-            },
-        },
-    })
-}
-
-/// Returns per-day workload data for the chart.
-///
-/// `period_days`: 7 or 30 (validated, defaults to 7 if invalid).
-///
-/// For each day in the period, counts:
-/// - DIs created on that date
-/// - WOs completed
-/// - PM due
+/// Activity per day over `period_days` (7 or 30): requests submitted, work orders closed, PM due.
 #[tauri::command]
 pub async fn get_dashboard_workload_chart(
     period_days: i64,
@@ -413,116 +241,30 @@ pub async fn get_dashboard_workload_chart(
 ) -> AppResult<DashboardWorkloadChart> {
     let user = require_session!(state);
     let db = &state.db;
-    let period = if period_days == 30 { 30 } else { 7 };
-
-    let can_di = check_permission(
-        db,
-        user.user_id,
-        crate::rbac::permissions::DI_VIEW,
-        &PermissionScope::Global,
-    )
-    .await?;
-    let can_ot = check_permission(
-        db,
-        user.user_id,
-        crate::rbac::permissions::OT_VIEW,
-        &PermissionScope::Global,
-    )
-    .await?;
-    let can_pm = check_permission(
-        db,
-        user.user_id,
-        crate::rbac::permissions::PM_VIEW,
-        &PermissionScope::Global,
-    )
-    .await?;
-    let any_series = can_di || can_ot || can_pm;
-
-    let mut days = Vec::with_capacity(period as usize);
-
-    for i in (0..period).rev() {
-        let date_row = db
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT date('now', ? || ' days') AS d",
-                [(-i).into()],
-            ))
-            .await?;
-
-        let date_str: String = date_row
-            .as_ref()
-            .and_then(|r| {
-                use sea_orm::TryGetable;
-                String::try_get(r, "", "d").ok()
-            })
-            .unwrap_or_default();
-
-        // DI created on this date
-        let di_created = if can_di {
-            count_scalar(
-                db,
-                &format!(
-                    "SELECT COUNT(*) AS cnt FROM intervention_requests \
-                 WHERE date(created_at) = '{date_str}'"
-                ),
-            )
-            .await
-        } else {
-            0
-        };
-
-        let wo_completed = if can_ot {
-            count_scalar(
-                db,
-                &format!(
-                    "SELECT COUNT(*) AS cnt FROM work_orders wo \
-                 JOIN work_order_statuses s ON s.id = wo.status_id \
-                 WHERE s.code = 'closed' AND date(wo.closed_at) = '{date_str}'"
-                ),
-            )
-            .await
-        } else {
-            0
-        };
-
-        let pm_due = if can_pm {
-            count_scalar(
-                db,
-                &format!(
-                    "SELECT COUNT(*) AS cnt FROM pm_occurrences \
-                 WHERE due_at IS NOT NULL \
-                 AND date(due_at) = '{date_str}' \
-                 AND status NOT IN ('completed','cancelled','missed')"
-                ),
-            )
-            .await
-        } else {
-            0
-        };
-
-        days.push(WorkloadDay {
-            date: date_str,
-            di_created,
-            wo_completed,
-            pm_due,
-        });
-    }
-
-    let sparse = any_series
-        && days
-            .iter()
-            .all(|d| d.di_created == 0 && d.wo_completed == 0 && d.pm_due == 0);
-    let quality_badge = if sparse {
-        Some(kpi_definitions::quality_badge::SPARSE_WORKLOAD.to_string())
-    } else {
-        None
+    let series = WorkloadSeries {
+        di: check_permission(
+            db,
+            user.user_id,
+            crate::rbac::permissions::DI_VIEW,
+            &PermissionScope::Global,
+        )
+        .await?,
+        wo: check_permission(
+            db,
+            user.user_id,
+            crate::rbac::permissions::OT_VIEW,
+            &PermissionScope::Global,
+        )
+        .await?,
+        pm: check_permission(
+            db,
+            user.user_id,
+            crate::rbac::permissions::PM_VIEW,
+            &PermissionScope::Global,
+        )
+        .await?,
     };
-
-    Ok(DashboardWorkloadChart {
-        days,
-        period_days: period,
-        quality_badge,
-    })
+    build_workload_chart(db, period_days, series).await
 }
 
 #[tauri::command]
@@ -537,12 +279,12 @@ pub async fn get_dashboard_layout(state: State<'_, AppState>) -> AppResult<Dashb
             [uid.into()],
         ))
         .await?;
-    let layout_json = if let Some(r) = row {
-        use sea_orm::TryGetable;
-        String::try_get(&r, "", "layout_json").unwrap_or_else(|_| DEFAULT_DASHBOARD_LAYOUT_JSON.to_string())
-    } else {
-        DEFAULT_DASHBOARD_LAYOUT_JSON.to_string()
+    let layout_json = match row {
+        Some(r) => decode::<String>(&r, "layout_json")?,
+        None => DEFAULT_DASHBOARD_LAYOUT_JSON.to_string(),
     };
+    // A layout saved by an older version that no longer validates falls back to the default one;
+    // the page merges any saved order and visibility it can still read.
     if validate_dashboard_layout_json(&layout_json).is_err() {
         return Ok(DashboardLayoutPayload {
             layout_json: DEFAULT_DASHBOARD_LAYOUT_JSON.to_string(),
@@ -574,6 +316,7 @@ pub async fn save_dashboard_layout(
     })
 }
 
+/// Open requests by status (`di::stats::open_backlog_by_status`, the DI page's open backlog).
 #[tauri::command]
 pub async fn get_dashboard_di_status_chart(state: State<'_, AppState>) -> AppResult<DashboardDiStatusChart> {
     let user = require_session!(state);
@@ -590,227 +333,17 @@ pub async fn get_dashboard_di_status_chart(state: State<'_, AppState>) -> AppRes
             available: false,
         });
     }
-    let rows = state
-        .db
-        .query_all(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT status, COUNT(*) AS cnt FROM intervention_requests GROUP BY status ORDER BY cnt DESC".to_string(),
-        ))
-        .await?;
-    use sea_orm::TryGetable;
-    let mut segments = Vec::new();
-    for r in rows {
-        let status: String = String::try_get(&r, "", "status").unwrap_or_default();
-        let count: i64 = i64::try_get(&r, "", "cnt").unwrap_or(0);
-        segments.push(DiStatusSegment { status, count });
-    }
+    let backlog = crate::di::stats::open_backlog_by_status(&state.db, None).await?;
     Ok(DashboardDiStatusChart {
-        segments,
+        segments: backlog
+            .into_iter()
+            .map(|b| DiStatusSegment {
+                status: b.status,
+                count: b.count,
+                avg_age_days: b.avg_age_days,
+            })
+            .collect(),
         available: true,
-    })
-}
-
-#[tauri::command]
-pub async fn get_dashboard_reliability_snapshot_summary(
-    state: State<'_, AppState>,
-) -> AppResult<DashboardReliabilitySnapshotSummary> {
-    let user = require_session!(state);
-    if !check_permission(
-        &state.db,
-        user.user_id,
-        crate::rbac::permissions::REP_VIEW,
-        &PermissionScope::Global,
-    )
-    .await?
-    {
-        return Ok(DashboardReliabilitySnapshotSummary {
-            available: false,
-            snapshot_count: 0,
-            avg_data_quality_score: None,
-            avg_mtbf_hours: None,
-            total_failure_events: 0,
-        });
-    }
-    // Pooled fleet ratios over the latest snapshot per equipment (never mean of ratios).
-    let fleet = crate::reliability::fleet::pooled_fleet_kpis(
-        &state.db,
-        crate::reliability::fleet::FleetWindow {
-            since_days: 365,
-            until_days: None,
-        },
-        None,
-        crate::reliability::readiness::DQ_GREEN_THRESHOLD,
-    )
-    .await?;
-    let snapshot_count = fleet.equipment_count;
-    let avg_dq = fleet.mean_data_quality_score;
-    let avg_mtbf = fleet.mtbf_hours;
-    let total_ev = fleet.total_failure_events;
-    Ok(DashboardReliabilitySnapshotSummary {
-        available: true,
-        snapshot_count,
-        avg_data_quality_score: avg_dq,
-        avg_mtbf_hours: avg_mtbf,
-        total_failure_events: total_ev,
-    })
-}
-
-/// Same KPI counts as [`get_dashboard_kpis`], plus the exact count SQL and a few row ids per slice for cross-checking in SQLite.
-#[tauri::command]
-pub async fn get_dashboard_kpi_validation(state: State<'_, AppState>) -> AppResult<DashboardKpiValidation> {
-    let user = require_session!(state);
-    let db = &state.db;
-
-    let can_di = check_permission(
-        db,
-        user.user_id,
-        crate::rbac::permissions::DI_VIEW,
-        &PermissionScope::Global,
-    )
-    .await?;
-    let can_ot = check_permission(
-        db,
-        user.user_id,
-        crate::rbac::permissions::OT_VIEW,
-        &PermissionScope::Global,
-    )
-    .await?;
-    let can_eq = check_permission(
-        db,
-        user.user_id,
-        crate::rbac::permissions::EQ_VIEW,
-        &PermissionScope::Global,
-    )
-    .await?;
-    let can_pm = check_permission(
-        db,
-        user.user_id,
-        crate::rbac::permissions::PM_VIEW,
-        &PermissionScope::Global,
-    )
-    .await?;
-
-    const SQL_OPEN_DIS: &str = "SELECT COUNT(*) AS cnt FROM intervention_requests \
-         WHERE status NOT IN ('rejected','converted_to_work_order',\
-         'closed_as_non_executable','archived')";
-    const SAMPLE_OPEN_DIS: &str = "SELECT id FROM intervention_requests \
-         WHERE status NOT IN ('rejected','converted_to_work_order',\
-         'closed_as_non_executable','archived') ORDER BY id LIMIT 5";
-
-    const SQL_OPEN_WOS: &str = "SELECT COUNT(*) AS cnt FROM work_orders wo \
-         JOIN work_order_statuses s ON s.id = wo.status_id \
-         WHERE s.code NOT IN ('closed','cancelled')";
-    const SAMPLE_OPEN_WOS: &str = "SELECT wo.id AS id FROM work_orders wo \
-         JOIN work_order_statuses s ON s.id = wo.status_id \
-         WHERE s.code NOT IN ('closed','cancelled') ORDER BY wo.id LIMIT 5";
-
-    const SQL_ASSETS: &str = "SELECT COUNT(*) AS cnt FROM equipment WHERE deleted_at IS NULL";
-    const SAMPLE_ASSETS: &str = "SELECT id FROM equipment WHERE deleted_at IS NULL ORDER BY id LIMIT 5";
-
-    const SQL_OVERDUE_DI: &str = "SELECT COUNT(*) AS cnt FROM intervention_requests \
-         WHERE status NOT IN ('rejected','converted_to_work_order',\
-         'closed_as_non_executable','archived') \
-         AND created_at <= datetime('now', '-7 days')";
-    const SAMPLE_OVERDUE_DI: &str = "SELECT id FROM intervention_requests \
-         WHERE status NOT IN ('rejected','converted_to_work_order',\
-         'closed_as_non_executable','archived') \
-         AND created_at <= datetime('now', '-7 days') ORDER BY id LIMIT 5";
-
-    const SQL_OVERDUE_PM: &str = "SELECT COUNT(*) AS cnt FROM pm_occurrences \
-         WHERE status NOT IN ('completed','cancelled','missed') \
-         AND due_at IS NOT NULL \
-         AND due_at < datetime('now')";
-    const SAMPLE_OVERDUE_PM: &str = "SELECT id FROM pm_occurrences \
-         WHERE status NOT IN ('completed','cancelled','missed') \
-         AND due_at IS NOT NULL \
-         AND due_at < datetime('now') ORDER BY id LIMIT 5";
-
-    let open_dis = if can_di {
-        count_scalar(db, SQL_OPEN_DIS).await
-    } else {
-        0
-    };
-    let open_wos = if can_ot {
-        count_scalar(db, SQL_OPEN_WOS).await
-    } else {
-        0
-    };
-    let total_assets = if can_eq { count_scalar(db, SQL_ASSETS).await } else { 0 };
-    let overdue_di = if can_di {
-        count_scalar(db, SQL_OVERDUE_DI).await
-    } else {
-        0
-    };
-    let overdue_pm = if can_pm {
-        count_scalar(db, SQL_OVERDUE_PM).await
-    } else {
-        0
-    };
-    let overdue_items_total = overdue_di + overdue_pm;
-
-    let mut samples = vec![
-        KpiSqlSample {
-            key: kpi_definitions::dashboard::OPEN_DIS.into(),
-            value: open_dis,
-            sql: SQL_OPEN_DIS.into(),
-            sample_ids: if can_di {
-                sample_ids(db, SAMPLE_OPEN_DIS).await
-            } else {
-                vec![]
-            },
-        },
-        KpiSqlSample {
-            key: kpi_definitions::dashboard::OPEN_WOS.into(),
-            value: open_wos,
-            sql: SQL_OPEN_WOS.into(),
-            sample_ids: if can_ot {
-                sample_ids(db, SAMPLE_OPEN_WOS).await
-            } else {
-                vec![]
-            },
-        },
-        KpiSqlSample {
-            key: kpi_definitions::dashboard::TOTAL_ASSETS.into(),
-            value: total_assets,
-            sql: SQL_ASSETS.into(),
-            sample_ids: if can_eq {
-                sample_ids(db, SAMPLE_ASSETS).await
-            } else {
-                vec![]
-            },
-        },
-        KpiSqlSample {
-            key: format!("{}.di_stale_window", kpi_definitions::dashboard::OVERDUE_ITEMS),
-            value: overdue_di,
-            sql: SQL_OVERDUE_DI.into(),
-            sample_ids: if can_di {
-                sample_ids(db, SAMPLE_OVERDUE_DI).await
-            } else {
-                vec![]
-            },
-        },
-        KpiSqlSample {
-            key: format!("{}.pm_past_due", kpi_definitions::dashboard::OVERDUE_ITEMS),
-            value: overdue_pm,
-            sql: SQL_OVERDUE_PM.into(),
-            sample_ids: if can_pm {
-                sample_ids(db, SAMPLE_OVERDUE_PM).await
-            } else {
-                vec![]
-            },
-        },
-    ];
-
-    samples.push(KpiSqlSample {
-        key: kpi_definitions::dashboard::OVERDUE_ITEMS.into(),
-        value: overdue_items_total,
-        sql: "overdue_items = di_stale_window + pm_past_due (same SQL as get_dashboard_kpis).".into(),
-        sample_ids: vec![],
-    });
-
-    Ok(DashboardKpiValidation {
-        samples,
-        overdue_items_total,
     })
 }
 
@@ -838,9 +371,8 @@ pub async fn get_overview_kpis(state: State<'_, AppState>) -> AppResult<Overview
     let can_pm = check_permission(db, uid, crate::rbac::permissions::PM_VIEW, &PermissionScope::Global).await?;
     let can_rep = check_permission(db, uid, crate::rbac::permissions::REP_VIEW, &PermissionScope::Global).await?;
     let can_inv = check_permission(db, uid, crate::rbac::permissions::INV_VIEW, &PermissionScope::Global).await?;
-    let can_fin = check_permission(db, uid, crate::rbac::permissions::FIN_VIEW, &PermissionScope::Global).await?;
 
-    build_overview_kpis(db, can_di, can_ot, can_eq, can_pm, can_rep, can_inv, can_fin).await
+    build_overview_kpis(db, can_di, can_ot, can_eq, can_pm, can_rep, can_inv).await
 }
 
 #[tauri::command]
@@ -858,41 +390,4 @@ pub async fn save_overview_kpi_layout(input: SaveOverviewKpiLayoutInput, state: 
     let existing = get_analytics_layout(&state.db, i64::from(user.user_id)).await?;
     let merged = merge_overview_kpis_into_layout(&existing, overview)?;
     save_analytics_layout(&state.db, i64::from(user.user_id), &merged).await
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// Helpers
-// ═══════════════════════════════════════════════════════════════════════════════
-
-async fn sample_ids(db: &sea_orm::DatabaseConnection, sql: &str) -> Vec<i64> {
-    let Ok(rows) = db
-        .query_all(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
-        .await
-    else {
-        return vec![];
-    };
-    use sea_orm::TryGetable;
-    let mut out = Vec::new();
-    for r in rows {
-        if let Ok(id) = i64::try_get(&r, "", "id") {
-            out.push(id);
-        }
-    }
-    out
-}
-
-/// Execute a `SELECT COUNT(*) AS cnt` query and return the count.
-/// Returns 0 if the table doesn't exist or the query fails.
-async fn count_scalar(db: &sea_orm::DatabaseConnection, sql: &str) -> i64 {
-    let result = db
-        .query_one(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
-        .await;
-
-    match result {
-        Ok(Some(row)) => {
-            use sea_orm::TryGetable;
-            i64::try_get(&row, "", "cnt").unwrap_or(0)
-        }
-        _ => 0,
-    }
 }

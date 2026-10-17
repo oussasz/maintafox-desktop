@@ -361,18 +361,28 @@ describe("org-governance-store", () => {
       expect(useOrgGovernanceStore.getState().auditLoading).toBe(false);
     });
 
-    it("sets error on failure, keeps previous events and does not rethrow", async () => {
+    it("keeps an audit failure apart from the publish error, keeps previous events", async () => {
       const previous = [makeEvent()];
+      const failure = { code: "DB", message: "audit unavailable" };
       useOrgGovernanceStore.setState({ auditEvents: previous });
-      mockList.mockRejectedValueOnce({ code: "DB", message: "audit unavailable" });
+      mockList.mockRejectedValueOnce(failure);
 
       await expect(useOrgGovernanceStore.getState().loadAuditEvents()).resolves.toBeUndefined();
 
       const s = useOrgGovernanceStore.getState();
-      expect(s.error).toBe("audit unavailable");
+      // A history outage must not block publishing (publish reads `error`).
+      expect(s.error).toBeNull();
+      expect(s.auditError).toBe(failure);
       expect(s.auditEvents).toBe(previous);
       expect(s.auditLoading).toBe(false);
     });
+  });
+
+  it("a successful audit reload clears the previous audit failure", async () => {
+    useOrgGovernanceStore.setState({ auditError: { code: "DB" } });
+    mockList.mockResolvedValueOnce([]);
+    await useOrgGovernanceStore.getState().loadAuditEvents();
+    expect(useOrgGovernanceStore.getState().auditError).toBeNull();
   });
 
   it("clearError resets error to null", () => {

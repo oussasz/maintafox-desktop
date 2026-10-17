@@ -1,7 +1,7 @@
 {
   "page": {
     "title": "Work permits",
-    "description": "PRD §6.23 — permit lifecycle, LOTO isolations, suspensions and handback."
+    "description": "Permit lifecycle, LOTO isolations, suspensions and hand-backs."
   },
   "actions": {
     "refresh": "Refresh",
@@ -11,20 +11,33 @@
     "save": "Save",
     "cancel": "Cancel",
     "close": "Close",
-    "select": "Select {{code}}"
+    "select": "Select {{code}}",
+    "retry": "Retry"
   },
   "kpi": {
     "title": "LOTO compliance (30 days)",
     "summary": "Activations: {{activated}} · Handed back on time: {{onTime}}",
-    "rate": "Rate: {{rate}} %"
+    "rate": "Rate: {{rate}} %",
+    "loadError": "The permit indicators could not be loaded",
+    "open": "Open permits",
+    "openHint": "Not closed, handed back, cancelled or expired",
+    "activated": "Permits activated",
+    "period30d": "Last 30 days",
+    "onTimeRate": "Handed back on time",
+    "onTimeHint": "{{onTime}} of {{activated}} activated permits, last 30 days"
   },
   "open": {
     "title": "Open permits (not expired)",
-    "empty": "No open permits."
+    "empty": "No open permits.",
+    "count_one": "{{count}} open permit (not expired)",
+    "count_other": "{{count}} open permits (not expired)"
   },
   "list": {
     "title": "Permits",
-    "empty": "No permits yet."
+    "empty": "No permits yet.",
+    "noMatch": "No permit matches the search.",
+    "moreAvailable": "The first {{shown}} permits are shown; more exist.",
+    "loadMore": "Show more"
   },
   "columns": {
     "code": "Code",
@@ -45,7 +58,8 @@
     "closed": "Closed",
     "handed_back": "Handed back",
     "cancelled": "Cancelled",
-    "expired": "Expired"
+    "expired": "Expired",
+    "unknown": "Unknown status"
   },
   "detail": {
     "title": "Permit {{code}}",
@@ -59,7 +73,9 @@
     "expiresAt": "Expires",
     "closedAt": "Closed",
     "handedBackAt": "Handed back",
-    "none": "—"
+    "none": "—",
+    "dialogDescription": "Permit status, LOTO isolations, suspensions and handovers.",
+    "linkError": "This permit could not be opened"
   },
   "transition": {
     "submitReview": "Submit for review",
@@ -75,12 +91,13 @@
     "confirmCancel": "Cancel this permit? This cannot be undone."
   },
   "gate": {
-    "noIsolation": "LOTO permits need at least one isolation before activation.",
+    "noIsolation": "This permit type requires at least one energy isolation before activation.",
     "unverified": "Every isolation must be applied and verified by a second person before activation.",
     "removed": "A lock has already been removed; this permit can no longer protect work.",
     "expired": "This permit has expired.",
     "pendingRemoval": "Every lock removal must be verified before the permit can be closed.",
-    "handoverRequired": "Record a handover before handing back."
+    "handoverRequired": "Record a handover before handing back.",
+    "isolationsUnavailable": "The isolations of this permit could not be read: no lifecycle step until they are."
   },
   "isolation": {
     "title": "LOTO isolation points",
@@ -104,7 +121,17 @@
       "verified": "Verified",
       "removed": "Removed"
     },
-    "editLocked": "Isolations can only be added while the permit is not active."
+    "editLocked": "Isolations can only be added while the permit is not active.",
+    "loadError": "The isolations of this permit could not be loaded",
+    "loading": "Loading isolations…",
+    "notSet": "Not set",
+    "toReview": "To review",
+    "toReviewHint": "The text typed before the lists existed could not be matched: choose the energy type and the method.",
+    "originalEntry": "Original entry: {{text}}",
+    "energyPlaceholder": "Choose the energy",
+    "methodPlaceholder": "Choose the method",
+    "optionsError": "The energy and method lists could not be loaded.",
+    "listsHint": "Energy types follow ISO 14118 / OSHA 1910.147; isolation methods are your site’s list (Reference data)."
   },
   "card": {
     "title": "LOTO card",
@@ -116,7 +143,10 @@
     "verifier": "Verifier",
     "expiry": "Expiry",
     "show": "Show card",
-    "recordPrint": "Record print"
+    "recordPrint": "Record print",
+    "print": "Print LOTO tag",
+    "doNotOperate": "DANGER — DO NOT OPERATE. Equipment locked out.",
+    "signature": "Worker signature"
   },
   "suspension": {
     "title": "Suspensions",
@@ -129,6 +159,9 @@
     "submit": "Suspend"
   },
   "handover": {
+    "handedTo": "handed to",
+    "rolesHint": "Enter the role of the person handing over and of the one receiving (free text).",
+    "onlyWhenClosed": "The hand-over is recorded once the permit is closed.",
     "title": "Handovers",
     "empty": "No handover recorded.",
     "add": "Record handover",
@@ -155,6 +188,8 @@
     "submit": "Save"
   },
   "types": {
+    "noViewRight": "Viewing permit types needs the work-permit view right.",
+    "readOnly": "Changing permit types needs the permit issuer right.",
     "title": "Permit types",
     "new": "New type",
     "code": "Code",
@@ -166,7 +201,15 @@
     "maxHours": "Max duration (h)",
     "version": "Version",
     "save": "Save type",
-    "empty": "No permit types."
+    "empty": "No permit types.",
+    "energyIsolation": "Energy isolation required (LOTO)",
+    "energyIsolationHint": "A permit of this type cannot start without at least one isolation applied and verified by a second person.",
+    "energyIsolationLocked": "The LOTO type always requires an energy isolation.",
+    "disableReason": "Why no longer require an isolation?",
+    "disableReasonHint": "Only an administrator can do this; the password is asked again and the change is recorded in the audit log.",
+    "energyIsolationShort": "Isolation",
+    "yes": "Yes",
+    "no": "No"
   },
   "woGate": {
     "title": "Work permit",
@@ -181,5 +224,10 @@
   "errors": {
     "required": "This field is required.",
     "invalidNumber": "Enter a valid number."
+  },
+  "filters": {
+    "searchPlaceholder": "Search a permit, asset or work order…",
+    "status": "Status",
+    "type": "Permit type"
   }
 }

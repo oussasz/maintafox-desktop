@@ -1,7 +1,6 @@
 import {
   AlertTriangle,
   ClipboardList,
-  Loader2,
   MoreHorizontal,
   Package,
   Pencil,
@@ -26,17 +25,20 @@ import { ArticleConsumptionChart } from "@/components/inventory/ArticleConsumpti
 import { InventoryAdjustmentDialog } from "@/components/inventory/InventoryAdjustmentDialog";
 import { ReservationInsightsPanel } from "@/components/inventory/ReservationInsightsPanel";
 import {
-  SupplierArticleSourcesSection,
   type SourceSupplierOption,
+  SupplierArticleSourcesSection,
 } from "@/components/inventory/SupplierArticleSourcesSection";
 import { SupplierComparisonCard } from "@/components/inventory/SupplierComparisonCard";
 import {
   composeArticleActivity,
   computeArticleKpis,
 } from "@/components/inventory/article-activity";
+import { useLookupOptions } from "@/components/inventory/use-lookup-options";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import {
   Dialog,
   DialogContent,
@@ -60,13 +62,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { StatusChip } from "@/components/ui/status-chip";
+import { PROCUREMENT_STATUS_TONE, REPAIRABLE_STATUS_TONE, toneOf } from "@/design-system/tone";
+import { useFormatters } from "@/hooks/use-formatters";
 import { formatOrDash, formatSiteLabel } from "@/lib/display";
 import {
+  type InventoryArticleRow,
   deleteInventoryArticleEquivalent,
   getInventoryArticleRepairableHistory,
+  isBelowReorderPoint,
   listInventoryArticleEquivalents,
   listInventoryArticlePurchaseHistory,
-  listInventoryArticles,
   listInventoryDocumentLinks,
   listInventoryReservations,
   listInventoryStateEvents,
@@ -76,18 +82,8 @@ import {
   upsertInventoryArticleEquivalent,
   upsertInventoryDocumentLink,
 } from "@/services/inventory-service";
-import { toErrorMessage } from "@/utils/errors";
-import type {
-  ArticleEquivalent,
-  ArticlePurchaseHistoryRow,
-  ArticleRepairableHistory,
-  InventoryArticle,
-  InventoryDocumentLink,
-  InventoryStateEvent,
-  InventoryStockBalance,
-  InventoryTransaction,
-  StockReservation,
-} from "@shared/ipc-types";
+import { useInventoryStore } from "@/stores/inventory-store";
+import type { ArticleEquivalent } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
 export type ArticleDetailView =
@@ -101,7 +97,7 @@ export type ArticleDetailView =
   | "documents";
 
 export interface ArticleDetailWorkspaceProps {
-  article: InventoryArticle;
+  article: InventoryArticleRow;
   onEdit: () => void;
   onDeactivate: () => void;
   onCreateRequisition: () => void;
@@ -111,22 +107,63 @@ export interface ArticleDetailWorkspaceProps {
   onOpenPurchaseOrder?: (purchaseOrderId: number) => void;
 }
 
-function formatQty(n: number): string {
-  return Number.isFinite(n) ? String(n) : "—";
+/** One independently loaded section of the article detail. */
+interface Section<T> {
+  data: T;
+  loading: boolean;
+  error: unknown;
+  reload: () => void;
 }
 
-function formatDate(v: string | null | undefined): string {
-  if (!v) return "—";
-  try {
-    return new Date(v).toLocaleDateString();
-  } catch {
-    return v;
+/**
+ * Loads one section on its own, so a failing call shows an ErrorState with retry in that
+ * section only instead of blanking the whole article panel.
+ */
+function useSection<T>(load: () => Promise<T>, initial: T, key: unknown): Section<T> {
+  const [data, setData] = useState<T>(initial);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<unknown>(null);
+  const [version, setVersion] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    load()
+      .then((value) => {
+        if (!cancelled) setData(value);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setError(err);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // `load` closes over `key`; reloading on key/version change is the contract.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, version]);
+
+  const reload = useCallback(() => setVersion((v) => v + 1), []);
+  return { data, loading, error, reload };
+}
+
+/** Section body: loading, error with retry, or the content. */
+function SectionBody({
+  section,
+  children,
+}: {
+  section: Pick<Section<unknown>, "loading" | "error" | "reload">;
+  children: React.ReactNode;
+}) {
+  if (section.error) {
+    return <ErrorState error={section.error} onRetry={section.reload} />;
   }
+  if (section.loading) return <LoadingState className="py-6" />;
+  return <>{children}</>;
 }
-
-const EQUIVALENCE_TYPES = ["SUBSTITUTE", "ALTERNATIVE", "INTERCHANGEABLE", "COMPATIBLE"] as const;
-
-const DOC_LINK_PURPOSES = ["CONTRACT", "CERTIFICATE", "DATASHEET", "MANUAL", "OTHER"] as const;
 
 export function ArticleDetailWorkspace({
   article,
@@ -138,95 +175,133 @@ export function ArticleDetailWorkspace({
 }: ArticleDetailWorkspaceProps) {
   const { t } = useTranslation("inventory");
   const { t: tc } = useTranslation("common");
+  const { formatDate, formatDateTime, formatNumber, formatCurrency } = useFormatters();
+  const storeArticles = useInventoryStore((s) => s.articles);
+  const equivalenceTypes = useLookupOptions("inventory.equivalence_type");
+  const documentPurposes = useLookupOptions("inventory.document_link_purpose");
+  const movementReasons = useLookupOptions("inventory.movement_type");
   const [activeView, setActiveView] = useState<ArticleDetailView>("details");
   const [adjustOpen, setAdjustOpen] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [balances, setBalances] = useState<InventoryStockBalance[]>([]);
-  const [transactions, setTransactions] = useState<InventoryTransaction[]>([]);
-  const [reservations, setReservations] = useState<StockReservation[]>([]);
-  const [stateEvents, setStateEvents] = useState<InventoryStateEvent[]>([]);
-  const [purchaseHistory, setPurchaseHistory] = useState<ArticlePurchaseHistoryRow[]>([]);
-  const [equivalents, setEquivalents] = useState<ArticleEquivalent[]>([]);
-  const [repairableHistory, setRepairableHistory] = useState<ArticleRepairableHistory[]>([]);
-  const [documentLinks, setDocumentLinks] = useState<InventoryDocumentLink[]>([]);
-  const [allArticles, setAllArticles] = useState<InventoryArticle[]>([]);
-  const [sourcingSuppliers, setSourcingSuppliers] = useState<SourceSupplierOption[]>([]);
+
+  const articleId = article.id;
+  const balances = useSection(
+    () => listInventoryStockBalances({ article_id: articleId, warehouse_id: null }),
+    [],
+    articleId,
+  );
+  const transactions = useSection(
+    () => listInventoryTransactions({ article_id: articleId, limit: 200 }),
+    [],
+    articleId,
+  );
+  const reservations = useSection(
+    () => listInventoryReservations({ article_id: articleId, include_inactive: true }),
+    [],
+    articleId,
+  );
+  const stateEvents = useSection(
+    () => listInventoryStateEvents("ARTICLE", articleId),
+    [],
+    articleId,
+  );
+  const purchaseHistory = useSection(
+    () => listInventoryArticlePurchaseHistory(articleId),
+    [],
+    articleId,
+  );
+  const equivalents = useSection(() => listInventoryArticleEquivalents(articleId), [], articleId);
+  const repairableHistory = useSection(
+    () => getInventoryArticleRepairableHistory(articleId),
+    [],
+    articleId,
+  );
+  const documentLinks = useSection(
+    () => listInventoryDocumentLinks("ARTICLE", articleId),
+    [],
+    articleId,
+  );
+  const suppliers = useSection<SourceSupplierOption[]>(
+    () =>
+      listInventorySuppliers().then((rows) =>
+        // Blocked suppliers are not valid sourcing candidates.
+        rows
+          .filter((s) => s.is_active === 1 && s.status_code !== "BLOCKED")
+          .map((s) => ({ id: s.id, code: s.code, name: s.name })),
+      ),
+    [],
+    articleId,
+  );
   const [sourcingVersion, setSourcingVersion] = useState(0);
 
   // Equivalent form
   const [equivFormOpen, setEquivFormOpen] = useState(false);
   const [equivArticleId, setEquivArticleId] = useState<number>(0);
-  const [equivType, setEquivType] = useState<string>("SUBSTITUTE");
+  const [equivType, setEquivType] = useState<string>("");
   const [equivNotes, setEquivNotes] = useState<string>("");
   const [equivBidirectional, setEquivBidirectional] = useState<boolean>(true);
   const [equivSaving, setEquivSaving] = useState(false);
+  const [equivToRemove, setEquivToRemove] = useState<ArticleEquivalent | null>(null);
 
   // Document link form
   const [docFormOpen, setDocFormOpen] = useState(false);
   const [docRef, setDocRef] = useState<string>("");
-  const [docPurpose, setDocPurpose] = useState<string>("DATASHEET");
+  const [docPurpose, setDocPurpose] = useState<string>("");
   const [docPrimary, setDocPrimary] = useState<boolean>(false);
   const [docSaving, setDocSaving] = useState(false);
 
-  const load = useCallback(async (articleId: number) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const [bal, tx, res, ev, history, equivs, repHistory, docs, articles, suppliers] =
-        await Promise.all([
-          listInventoryStockBalances({ article_id: articleId, warehouse_id: null }),
-          listInventoryTransactions({ article_id: articleId, limit: 200 }),
-          listInventoryReservations({ article_id: articleId, include_inactive: true }),
-          listInventoryStateEvents("ARTICLE", articleId),
-          listInventoryArticlePurchaseHistory(articleId),
-          listInventoryArticleEquivalents(articleId),
-          getInventoryArticleRepairableHistory(articleId),
-          listInventoryDocumentLinks("ARTICLE", articleId),
-          listInventoryArticles({ search: null }),
-          listInventorySuppliers(),
-        ]);
-      setBalances(bal);
-      setTransactions(tx);
-      setReservations(res);
-      setStateEvents(ev);
-      setPurchaseHistory(history);
-      setEquivalents(equivs);
-      setRepairableHistory(repHistory);
-      setDocumentLinks(docs);
-      setAllArticles(articles.filter((a) => a.is_active === 1 && a.id !== articleId));
-      // Blocked suppliers are not valid sourcing candidates.
-      setSourcingSuppliers(
-        suppliers
-          .filter((s) => s.is_active === 1 && s.status_code !== "BLOCKED")
-          .map((s) => ({ id: s.id, code: s.code, name: s.name })),
-      );
-    } catch (err) {
-      setError(toErrorMessage(err));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const otherActiveArticles = useMemo(
+    () => storeArticles.filter((a) => a.is_active === 1 && a.id !== articleId),
+    [storeArticles, articleId],
+  );
 
-  useEffect(() => {
-    void load(article.id);
-  }, [article.id, load]);
+  const formatQty = useCallback(
+    (n: number) => formatNumber(n, { maximumFractionDigits: 3 }),
+    [formatNumber],
+  );
+  const dateLabel = useCallback(
+    (v: string | null | undefined) => (v ? formatDate(v) : "—"),
+    [formatDate],
+  );
 
   const handleStockAdjusted = useCallback(() => {
-    void load(article.id);
+    balances.reload();
+    transactions.reload();
     onStockAdjusted?.();
-  }, [article.id, load, onStockAdjusted]);
+  }, [balances, transactions, onStockAdjusted]);
 
   /** Keeps the sources list and the comparison card in sync after either mutates. */
   const handleSourcesChanged = useCallback(() => {
     setSourcingVersion((v) => v + 1);
   }, []);
 
-  const kpis = useMemo(() => computeArticleKpis(balances, transactions), [balances, transactions]);
+  const kpis = useMemo(
+    () => computeArticleKpis(balances.data, transactions.data),
+    [balances.data, transactions.data],
+  );
 
   const activityItems = useMemo(
-    () => composeArticleActivity({ article, stateEvents, transactions, reservations }),
-    [article, stateEvents, transactions, reservations],
+    () =>
+      composeArticleActivity({
+        article,
+        stateEvents: stateEvents.data,
+        transactions: transactions.data,
+        reservations: reservations.data,
+        labels: {
+          motif: (code) => movementReasons.labelOf(code),
+          reservationStatus: (code) =>
+            t(`detail.reservationStatuses.${code}`, { defaultValue: code }),
+          qty: formatQty,
+        },
+      }),
+    [
+      article,
+      formatQty,
+      movementReasons,
+      reservations.data,
+      stateEvents.data,
+      t,
+      transactions.data,
+    ],
   );
 
   const tabs = useMemo(
@@ -244,9 +319,8 @@ export function ArticleDetailWorkspace({
   );
 
   const saveEquivalent = async () => {
-    if (equivArticleId <= 0) return;
+    if (equivArticleId <= 0 || !equivType) return;
     setEquivSaving(true);
-    setError(null);
     try {
       await upsertInventoryArticleEquivalent({
         article_id: article.id,
@@ -255,32 +329,27 @@ export function ArticleDetailWorkspace({
         notes: equivNotes.trim() || null,
         is_bidirectional: equivBidirectional,
       });
-      const updated = await listInventoryArticleEquivalents(article.id);
-      setEquivalents(updated);
+      equivalents.reload();
       setEquivFormOpen(false);
       setEquivArticleId(0);
       setEquivNotes("");
-    } catch (err) {
-      setError(toErrorMessage(err));
+    } catch {
+      // Reported by the global IPC toast; the dialog stays open with the user's input.
     } finally {
       setEquivSaving(false);
     }
   };
 
-  const deleteEquivalent = async (id: number) => {
-    setError(null);
-    try {
-      await deleteInventoryArticleEquivalent(id);
-      setEquivalents((prev) => prev.filter((e) => e.id !== id));
-    } catch (err) {
-      setError(toErrorMessage(err));
-    }
+  const removeEquivalent = async () => {
+    if (!equivToRemove) return;
+    // Rejects on failure so ConfirmDialog stays open (the toast explains why).
+    await deleteInventoryArticleEquivalent(equivToRemove.id);
+    equivalents.reload();
   };
 
   const saveDocLink = async () => {
-    if (!docRef.trim()) return;
+    if (!docRef.trim() || !docPurpose) return;
     setDocSaving(true);
-    setError(null);
     try {
       await upsertInventoryDocumentLink({
         entity_type: "ARTICLE",
@@ -289,32 +358,27 @@ export function ArticleDetailWorkspace({
         link_purpose: docPurpose,
         is_primary: docPrimary,
       });
-      const updated = await listInventoryDocumentLinks("ARTICLE", article.id);
-      setDocumentLinks(updated);
+      documentLinks.reload();
       setDocFormOpen(false);
       setDocRef("");
-    } catch (err) {
-      setError(toErrorMessage(err));
+    } catch {
+      // Reported by the global IPC toast; the dialog stays open with the user's input.
     } finally {
       setDocSaving(false);
     }
   };
 
-  if (loading) {
-    return (
-      <div className="flex h-64 items-center justify-center">
-        <Loader2 className="h-5 w-5 animate-spin text-text-muted" />
-      </div>
-    );
-  }
+  const activitySection = {
+    loading: stateEvents.loading || transactions.loading || reservations.loading,
+    error: stateEvents.error ?? transactions.error ?? reservations.error,
+    reload: () => {
+      if (stateEvents.error) stateEvents.reload();
+      if (transactions.error) transactions.reload();
+      if (reservations.error) reservations.reload();
+    },
+  };
 
-  if (error) {
-    return (
-      <div className="flex h-64 items-center justify-center p-6">
-        <p className="text-sm text-status-danger">{error}</p>
-      </div>
-    );
-  }
+  const lowStock = isBelowReorderPoint(article);
 
   return (
     <div className="flex h-full flex-col space-y-4 overflow-auto p-4">
@@ -322,9 +386,23 @@ export function ArticleDetailWorkspace({
         code={article.article_code}
         designation={article.article_name}
         statusSlot={
-          <Badge variant={article.is_active === 1 ? "secondary" : "outline"}>
-            {article.is_active === 1 ? tc("status.active") : tc("status.inactive")}
-          </Badge>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <StatusChip
+              label={article.is_active === 1 ? tc("status.active") : tc("status.inactive")}
+              tone={article.is_active === 1 ? "success" : "neutral"}
+              dot
+            />
+            {lowStock ? (
+              <StatusChip
+                label={t("list.belowReorder")}
+                tone="warning"
+                icon={AlertTriangle}
+                title={t("list.belowReorderHint", {
+                  reorderPoint: formatQty(article.reorder_point),
+                })}
+              />
+            ) : null}
+          </div>
         }
         qrSlot={
           <EntityQrCode
@@ -350,8 +428,10 @@ export function ArticleDetailWorkspace({
                 size="sm"
                 className={ENTITY_DETAIL_HEADER_ACTION_BTN}
                 onClick={() => setAdjustOpen(true)}
+                disabled={article.is_active !== 1}
+                title={article.is_active !== 1 ? t("detail.inactiveHint") : undefined}
               >
-                <Package className="h-3.5 w-3.5" />
+                <Package className="h-3.5 w-3.5" aria-hidden />
                 {t("detail.actions.adjustStock")}
               </Button>
             </PermissionGate>
@@ -361,8 +441,10 @@ export function ArticleDetailWorkspace({
                 size="sm"
                 className={ENTITY_DETAIL_HEADER_ACTION_BTN}
                 onClick={onCreateRequisition}
+                disabled={article.is_active !== 1}
+                title={article.is_active !== 1 ? t("detail.inactiveHint") : undefined}
               >
-                <ClipboardList className="h-3.5 w-3.5" />
+                <ClipboardList className="h-3.5 w-3.5" aria-hidden />
                 {t("detail.actions.createRequisition")}
               </Button>
             </PermissionGate>
@@ -375,15 +457,15 @@ export function ArticleDetailWorkspace({
                 <Button
                   variant="outline"
                   size="sm"
-                  className="h-7 w-7 px-0"
+                  className="h-10 w-10 px-0"
                   aria-label={t("detail.actions.more")}
                 >
-                  <MoreHorizontal className="h-3.5 w-3.5" />
+                  <MoreHorizontal className="h-4 w-4" aria-hidden />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="w-48">
+              <DropdownMenuContent align="start" className="w-52">
                 <DropdownMenuItem className="gap-2" onClick={onEdit}>
-                  <Pencil className="h-3.5 w-3.5" />
+                  <Pencil className="h-3.5 w-3.5" aria-hidden />
                   {tc("action.edit")}
                 </DropdownMenuItem>
                 {article.is_active === 1 ? (
@@ -393,7 +475,7 @@ export function ArticleDetailWorkspace({
                       className="gap-2 text-status-danger focus:text-status-danger"
                       onClick={onDeactivate}
                     >
-                      <AlertTriangle className="h-3.5 w-3.5" />
+                      <AlertTriangle className="h-3.5 w-3.5" aria-hidden />
                       {t("detail.actions.deactivate")}
                     </DropdownMenuItem>
                   </>
@@ -403,21 +485,48 @@ export function ArticleDetailWorkspace({
           </PermissionGate>
         }
         footerSlot={
+          // List totals come with the article row; locations and 30-day movements need the
+          // balance / movement sections.
           <EntitySummaryKpiStrip
             title={t("detail.kpis.title")}
             kpis={[
-              { id: "onHand", label: t("detail.kpis.onHand"), value: formatQty(kpis.onHand) },
-              { id: "reserved", label: t("detail.kpis.reserved"), value: formatQty(kpis.reserved) },
+              {
+                id: "onHand",
+                label: t("detail.kpis.onHand"),
+                value: `${formatQty(article.on_hand_qty)} ${article.unit_code}`,
+              },
+              {
+                id: "reserved",
+                label: t("detail.kpis.reserved"),
+                value: formatQty(article.reserved_qty),
+              },
               {
                 id: "available",
                 label: t("detail.kpis.available"),
-                value: formatQty(kpis.available),
+                value: formatQty(article.available_qty),
               },
-              { id: "locations", label: t("detail.kpis.locations"), value: String(kpis.locations) },
+              {
+                id: "avgCost",
+                label: t("detail.kpis.avgCost"),
+                value: article.avg_unit_cost != null ? formatCurrency(article.avg_unit_cost) : "—",
+              },
+              {
+                id: "stockValue",
+                label: t("detail.kpis.stockValue"),
+                value: article.stock_value != null ? formatCurrency(article.stock_value) : "—",
+              },
+              {
+                id: "locations",
+                label: t("detail.kpis.locations"),
+                value: balances.loading || balances.error ? "—" : formatNumber(kpis.locations),
+              },
               {
                 id: "movements30d",
                 label: t("detail.kpis.movements30d"),
-                value: String(kpis.movements30d),
+                value:
+                  transactions.loading || transactions.error
+                    ? "—"
+                    : formatNumber(kpis.movements30d),
               },
             ]}
           />
@@ -434,31 +543,37 @@ export function ArticleDetailWorkspace({
       {activeView === "activity" ? (
         <Card>
           <CardContent className="pt-4">
-            <EntityActivityTimeline
-              items={activityItems}
-              emptyLabel={t("detail.activity.empty")}
-              todayLabel={t("detail.activity.today")}
-              searchPlaceholder={t("detail.activity.search")}
-              kindAllLabel={t("detail.activity.kindAll")}
-              periodAllLabel={t("detail.activity.periodAll")}
-              period30dLabel={t("detail.activity.period30d")}
-              period90dLabel={t("detail.activity.period90d")}
-              typeLabel={(key) => t(`detail.activity.types.${key}`, { defaultValue: key })}
-              kindFilterOptions={[
-                { value: "all", label: t("detail.activity.kindAll") },
-                { value: "created", label: t("detail.activity.kinds.created") },
-                { value: "edited", label: t("detail.activity.kinds.edited") },
-                { value: "stock_movement", label: t("detail.activity.kinds.stock_movement") },
-                {
-                  value: "reservation_created",
-                  label: t("detail.activity.kinds.reservation_created"),
-                },
-                {
-                  value: "reservation_released",
-                  label: t("detail.activity.kinds.reservation_released"),
-                },
-              ]}
-            />
+            <SectionBody section={activitySection}>
+              <EntityActivityTimeline
+                items={activityItems}
+                emptyLabel={t("detail.activity.empty")}
+                todayLabel={t("detail.activity.today")}
+                searchPlaceholder={t("detail.activity.search")}
+                kindAllLabel={t("detail.activity.kindAll")}
+                periodAllLabel={t("detail.activity.periodAll")}
+                period30dLabel={t("detail.activity.period30d")}
+                period90dLabel={t("detail.activity.period90d")}
+                typeLabel={(key) =>
+                  t(`detail.activity.types.${key}`, {
+                    defaultValue: t("detail.activity.types.other"),
+                  })
+                }
+                kindFilterOptions={[
+                  { value: "all", label: t("detail.activity.kindAll") },
+                  { value: "created", label: t("detail.activity.kinds.created") },
+                  { value: "edited", label: t("detail.activity.kinds.edited") },
+                  { value: "stock_movement", label: t("detail.activity.kinds.stock_movement") },
+                  {
+                    value: "reservation_created",
+                    label: t("detail.activity.kinds.reservation_created"),
+                  },
+                  {
+                    value: "reservation_released",
+                    label: t("detail.activity.kinds.reservation_released"),
+                  },
+                ]}
+              />
+            </SectionBody>
           </CardContent>
         </Card>
       ) : null}
@@ -467,24 +582,30 @@ export function ArticleDetailWorkspace({
       {activeView === "stock_positions" ? (
         <Card>
           <CardContent className="space-y-2 pt-4">
-            {balances.length === 0 ? (
-              <p className="text-sm text-text-muted">{t("detail.stockPositions.empty")}</p>
-            ) : (
-              balances.map((b) => (
-                <div key={b.id} className="rounded border border-surface-border p-2.5 text-sm">
-                  <div className="font-medium">
-                    {formatSiteLabel(b.warehouse_code, b.warehouse_name)}
-                    <span className="text-text-muted"> / </span>
-                    {formatSiteLabel(b.location_code, b.location_name)}
+            <SectionBody section={balances}>
+              {balances.data.length === 0 ? (
+                <p className="text-sm text-text-muted">{t("detail.stockPositions.empty")}</p>
+              ) : (
+                balances.data.map((b) => (
+                  <div key={b.id} className="rounded border border-surface-border p-2.5 text-sm">
+                    <div className="font-medium">
+                      {formatSiteLabel(b.warehouse_code, b.warehouse_name)}
+                      <span className="text-text-muted"> / </span>
+                      {formatSiteLabel(b.location_code, b.location_name)}
+                    </div>
+                    <div className="mt-1 text-xs text-text-muted">
+                      {t("detail.kpis.onHand")}: {formatQty(b.on_hand_qty)} ·{" "}
+                      {t("detail.kpis.reserved")}: {formatQty(b.reserved_qty)} ·{" "}
+                      {t("detail.kpis.available")}: {formatQty(b.available_qty)} ·{" "}
+                      {t("detail.kpis.avgCost")}:{" "}
+                      {b.moving_avg_unit_cost != null
+                        ? formatCurrency(b.moving_avg_unit_cost)
+                        : t("detail.stockPositions.notValued")}
+                    </div>
                   </div>
-                  <div className="mt-1 text-xs text-text-muted">
-                    {t("detail.kpis.onHand")}: {formatQty(b.on_hand_qty)} ·{" "}
-                    {t("detail.kpis.reserved")}: {formatQty(b.reserved_qty)} ·{" "}
-                    {t("detail.kpis.available")}: {formatQty(b.available_qty)}
-                  </div>
-                </div>
-              ))
-            )}
+                ))
+              )}
+            </SectionBody>
           </CardContent>
         </Card>
       ) : null}
@@ -493,7 +614,9 @@ export function ArticleDetailWorkspace({
       {activeView === "reservations" ? (
         <Card>
           <CardContent className="space-y-4 pt-4">
-            <ReservationInsightsPanel reservations={reservations} />
+            <SectionBody section={reservations}>
+              <ReservationInsightsPanel reservations={reservations.data} />
+            </SectionBody>
             <ArticleConsumptionChart articleId={article.id} />
           </CardContent>
         </Card>
@@ -503,53 +626,61 @@ export function ArticleDetailWorkspace({
       {activeView === "purchase_history" ? (
         <Card>
           <CardContent className="pt-4">
-            {purchaseHistory.length === 0 ? (
-              <p className="text-sm text-text-muted">{t("article.purchaseHistory.empty")}</p>
-            ) : (
-              <div className="space-y-2">
-                {purchaseHistory.map((row) => (
-                  <div
-                    key={row.purchase_order_id}
-                    className="rounded border border-surface-border p-2.5 text-sm"
-                  >
-                    <div className="flex flex-wrap items-center gap-2">
-                      {onOpenPurchaseOrder ? (
-                        <button
-                          type="button"
-                          className="font-mono font-medium text-primary hover:underline"
-                          onClick={() => onOpenPurchaseOrder(row.purchase_order_id)}
-                        >
-                          {row.po_number}
-                        </button>
-                      ) : (
-                        <span className="font-mono font-medium">{row.po_number}</span>
-                      )}
-                      <Badge variant="outline" className="h-4 text-[10px]">
-                        {row.status}
-                      </Badge>
-                      {row.supplier_name ? (
-                        <span className="text-xs text-text-muted">{row.supplier_name}</span>
-                      ) : null}
-                    </div>
-                    <div className="mt-1 flex flex-wrap gap-4 text-xs text-text-muted">
-                      <span>
-                        {t("article.purchaseHistory.columns.orderedQty")}: {row.ordered_qty}
-                      </span>
-                      <span>
-                        {t("article.purchaseHistory.columns.receivedQty")}: {row.received_qty}
-                      </span>
-                      {row.unit_price != null ? (
+            <SectionBody section={purchaseHistory}>
+              {purchaseHistory.data.length === 0 ? (
+                <p className="text-sm text-text-muted">{t("article.purchaseHistory.empty")}</p>
+              ) : (
+                <div className="space-y-2">
+                  {purchaseHistory.data.map((row) => (
+                    <div
+                      key={row.purchase_order_id}
+                      className="rounded border border-surface-border p-2.5 text-sm"
+                    >
+                      <div className="flex flex-wrap items-center gap-2">
+                        {onOpenPurchaseOrder ? (
+                          <button
+                            type="button"
+                            className="min-h-6 font-mono font-medium text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            onClick={() => onOpenPurchaseOrder(row.purchase_order_id)}
+                          >
+                            {row.po_number}
+                          </button>
+                        ) : (
+                          <span className="font-mono font-medium">{row.po_number}</span>
+                        )}
+                        <StatusChip
+                          label={t(`procurement.statuses.${row.status}`, {
+                            defaultValue: row.status,
+                          })}
+                          tone={toneOf(PROCUREMENT_STATUS_TONE, row.status)}
+                          dot
+                        />
+                        {row.supplier_name ? (
+                          <span className="text-xs text-text-muted">{row.supplier_name}</span>
+                        ) : null}
+                      </div>
+                      <div className="mt-1 flex flex-wrap gap-4 text-xs text-text-muted">
                         <span>
-                          {t("article.purchaseHistory.columns.unitPrice")}:{" "}
-                          {row.unit_price.toFixed(2)}
+                          {t("article.purchaseHistory.columns.orderedQty")}:{" "}
+                          {formatQty(row.ordered_qty)}
                         </span>
-                      ) : null}
-                      {row.ordered_at ? <span>{formatDate(row.ordered_at)}</span> : null}
+                        <span>
+                          {t("article.purchaseHistory.columns.receivedQty")}:{" "}
+                          {formatQty(row.received_qty)}
+                        </span>
+                        {row.unit_price != null ? (
+                          <span>
+                            {t("article.purchaseHistory.columns.unitPrice")}:{" "}
+                            {formatCurrency(row.unit_price)}
+                          </span>
+                        ) : null}
+                        {row.ordered_at ? <span>{dateLabel(row.ordered_at)}</span> : null}
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
-            )}
+                  ))}
+                </div>
+              )}
+            </SectionBody>
           </CardContent>
         </Card>
       ) : null}
@@ -562,11 +693,11 @@ export function ArticleDetailWorkspace({
               <p className="text-sm font-medium">{t("article.sections.equivalents")}</p>
               <PermissionGate permission={P.INV_MANAGE}>
                 <Button
-                  size="sm"
                   variant="outline"
+                  className="h-10"
                   onClick={() => {
                     setEquivArticleId(0);
-                    setEquivType("SUBSTITUTE");
+                    setEquivType(equivalenceTypes.options[0]?.code ?? "");
                     setEquivNotes("");
                     setEquivBidirectional(true);
                     setEquivFormOpen(true);
@@ -576,39 +707,44 @@ export function ArticleDetailWorkspace({
                 </Button>
               </PermissionGate>
             </div>
-            {equivalents.length === 0 ? (
-              <p className="text-sm text-text-muted">{t("article.equivalents.empty")}</p>
-            ) : (
-              <div className="space-y-2">
-                {equivalents.map((eq) => (
-                  <div
-                    key={eq.id}
-                    className="flex flex-wrap items-center gap-2 rounded border border-surface-border p-2.5 text-sm"
-                  >
-                    <span className="font-medium">
-                      {eq.equivalent_code} — {eq.equivalent_name}
-                    </span>
-                    <Badge variant="outline" className="h-4 text-[10px]">
-                      {eq.equivalence_type}
-                    </Badge>
-                    {eq.is_bidirectional === 1 ? (
-                      <span className="text-xs text-text-muted">↔</span>
-                    ) : null}
-                    {eq.notes ? <span className="text-xs text-text-muted">{eq.notes}</span> : null}
-                    <PermissionGate permission={P.INV_MANAGE}>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="ml-auto h-5 px-1.5 text-xs text-status-danger hover:text-status-danger"
-                        onClick={() => void deleteEquivalent(eq.id)}
-                      >
-                        Remove
-                      </Button>
-                    </PermissionGate>
-                  </div>
-                ))}
-              </div>
-            )}
+            <SectionBody section={equivalents}>
+              {equivalents.data.length === 0 ? (
+                <p className="text-sm text-text-muted">{t("article.equivalents.empty")}</p>
+              ) : (
+                <div className="space-y-2">
+                  {equivalents.data.map((eq) => (
+                    <div
+                      key={eq.id}
+                      className="flex flex-wrap items-center gap-2 rounded border border-surface-border p-2.5 text-sm"
+                    >
+                      <span className="font-medium">
+                        {eq.equivalent_code} — {eq.equivalent_name}
+                      </span>
+                      <Badge variant="outline" className="text-[10px]">
+                        {equivalenceTypes.labelOf(eq.equivalence_type)}
+                      </Badge>
+                      {eq.is_bidirectional === 1 ? (
+                        <span className="text-xs text-text-muted">
+                          {t("article.equivalents.fields.bidirectional")}
+                        </span>
+                      ) : null}
+                      {eq.notes ? (
+                        <span className="text-xs text-text-muted">{eq.notes}</span>
+                      ) : null}
+                      <PermissionGate permission={P.INV_MANAGE}>
+                        <Button
+                          variant="ghost"
+                          className="ml-auto h-9 px-2 text-xs text-status-danger hover:text-status-danger"
+                          onClick={() => setEquivToRemove(eq)}
+                        >
+                          {t("article.equivalents.remove")}
+                        </Button>
+                      </PermissionGate>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </SectionBody>
           </CardContent>
         </Card>
       ) : null}
@@ -617,36 +753,42 @@ export function ArticleDetailWorkspace({
       {activeView === "repairable_history" ? (
         <Card>
           <CardContent className="pt-4">
-            {repairableHistory.length === 0 ? (
-              <p className="text-sm text-text-muted">{t("article.repairableHistory.empty")}</p>
-            ) : (
-              <div className="space-y-2">
-                {repairableHistory.map((row) => (
-                  <div
-                    key={row.order_id}
-                    className="rounded border border-surface-border p-2.5 text-sm"
-                  >
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-mono font-medium">{row.order_code}</span>
-                      <Badge variant="secondary" className="h-4 text-[10px]">
-                        {row.status}
-                      </Badge>
-                      <span className="tabular-nums">×{row.quantity}</span>
+            <SectionBody section={repairableHistory}>
+              {repairableHistory.data.length === 0 ? (
+                <p className="text-sm text-text-muted">{t("article.repairableHistory.empty")}</p>
+              ) : (
+                <div className="space-y-2">
+                  {repairableHistory.data.map((row) => (
+                    <div
+                      key={row.order_id}
+                      className="rounded border border-surface-border p-2.5 text-sm"
+                    >
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-mono font-medium">{row.order_code}</span>
+                        <StatusChip
+                          label={t(`procurement.repairableStatuses.${row.status}`, {
+                            defaultValue: row.status,
+                          })}
+                          tone={toneOf(REPAIRABLE_STATUS_TONE, row.status)}
+                          dot
+                        />
+                        <span className="tabular-nums">×{formatQty(row.quantity)}</span>
+                      </div>
+                      <div className="mt-1 flex flex-wrap gap-4 text-xs text-text-muted">
+                        {row.reason ? <span>{row.reason}</span> : null}
+                        {row.repair_cost != null ? (
+                          <span>
+                            {t("article.repairableHistory.columns.cost")}:{" "}
+                            {formatCurrency(row.repair_cost)}
+                          </span>
+                        ) : null}
+                        <span>{dateLabel(row.created_at)}</span>
+                      </div>
                     </div>
-                    <div className="mt-1 flex flex-wrap gap-4 text-xs text-text-muted">
-                      {row.reason ? <span>{row.reason}</span> : null}
-                      {row.repair_cost != null ? (
-                        <span>
-                          {t("article.repairableHistory.columns.cost")}:{" "}
-                          {row.repair_cost.toFixed(2)}
-                        </span>
-                      ) : null}
-                      <span>{formatDate(row.created_at)}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+                  ))}
+                </div>
+              )}
+            </SectionBody>
           </CardContent>
         </Card>
       ) : null}
@@ -659,11 +801,11 @@ export function ArticleDetailWorkspace({
               <p className="text-sm font-medium">{t("article.sections.documents")}</p>
               <PermissionGate permission={P.INV_MANAGE}>
                 <Button
-                  size="sm"
                   variant="outline"
+                  className="h-10"
                   onClick={() => {
                     setDocRef("");
-                    setDocPurpose("DATASHEET");
+                    setDocPurpose(documentPurposes.options[0]?.code ?? "");
                     setDocPrimary(false);
                     setDocFormOpen(true);
                   }}
@@ -672,29 +814,31 @@ export function ArticleDetailWorkspace({
                 </Button>
               </PermissionGate>
             </div>
-            {documentLinks.length === 0 ? (
-              <p className="text-sm text-text-muted">{t("article.documents.empty")}</p>
-            ) : (
-              <div className="space-y-2">
-                {documentLinks.map((doc) => (
-                  <div
-                    key={doc.id}
-                    className="flex flex-wrap items-center gap-2 rounded border border-surface-border p-2.5 text-sm"
-                  >
-                    <span className="break-all font-medium">{doc.document_ref}</span>
-                    <Badge variant="outline" className="h-4 text-[10px]">
-                      {doc.link_purpose}
-                    </Badge>
-                    {doc.is_primary === 1 ? (
-                      <Badge variant="secondary" className="h-4 text-[10px]">
-                        Primary
+            <SectionBody section={documentLinks}>
+              {documentLinks.data.length === 0 ? (
+                <p className="text-sm text-text-muted">{t("article.documents.empty")}</p>
+              ) : (
+                <div className="space-y-2">
+                  {documentLinks.data.map((doc) => (
+                    <div
+                      key={doc.id}
+                      className="flex flex-wrap items-center gap-2 rounded border border-surface-border p-2.5 text-sm"
+                    >
+                      <span className="break-all font-medium">{doc.document_ref}</span>
+                      <Badge variant="outline" className="text-[10px]">
+                        {documentPurposes.labelOf(doc.link_purpose)}
                       </Badge>
-                    ) : null}
-                    <span className="text-xs text-text-muted">{formatDate(doc.valid_from)}</span>
-                  </div>
-                ))}
-              </div>
-            )}
+                      {doc.is_primary === 1 ? (
+                        <Badge variant="secondary" className="text-[10px]">
+                          {t("article.documents.columns.primary")}
+                        </Badge>
+                      ) : null}
+                      <span className="text-xs text-text-muted">{dateLabel(doc.valid_from)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </SectionBody>
           </CardContent>
         </Card>
       ) : null}
@@ -721,6 +865,14 @@ export function ArticleDetailWorkspace({
               label={t("detail.fields.criticality")}
               value={formatOrDash(article.criticality_label ?? article.criticality_code)}
             />
+            <DetailFieldRow
+              label={t("article.fields.abcClass")}
+              value={formatOrDash(article.abc_class_code)}
+            />
+            <DetailFieldRow
+              label={t("article.fields.xyzClass")}
+              value={formatOrDash(article.xyz_class_code)}
+            />
           </DetailSectionCard>
 
           <DetailSectionCard title={t("detail.sections.identification")} icon={Tag}>
@@ -733,6 +885,15 @@ export function ArticleDetailWorkspace({
             <DetailFieldRow
               label={t("detail.fields.taxCategory")}
               value={formatOrDash(article.tax_category_label || article.tax_category_code)}
+            />
+            <DetailFieldRow
+              label={t("article.fields.manufacturerName")}
+              value={formatOrDash(article.manufacturer_name)}
+            />
+            <DetailFieldRow
+              label={t("article.fields.manufacturerPartNumber")}
+              value={formatOrDash(article.manufacturer_part_number)}
+              mono
             />
             <DetailFieldRow
               label={tc("label.status")}
@@ -757,6 +918,14 @@ export function ArticleDetailWorkspace({
               label={t("detail.fields.safetyStock")}
               value={formatQty(article.safety_stock)}
             />
+            <DetailFieldRow
+              label={t("article.fields.leadTimeDays")}
+              value={article.lead_time_days != null ? formatNumber(article.lead_time_days) : "—"}
+            />
+            <DetailFieldRow
+              label={t("article.fields.isCriticalSpare")}
+              value={article.is_critical_spare === 1 ? tc("action.yes") : tc("action.no")}
+            />
           </DetailSectionCard>
 
           <DetailSectionCard title={t("detail.sections.warehouse")} icon={Warehouse}>
@@ -779,20 +948,28 @@ export function ArticleDetailWorkspace({
           <DetailSectionCard title={t("detail.sections.lifecycle")} icon={Tag}>
             <DetailFieldRow
               label={tc("label.createdAt")}
-              value={article.created_at ? new Date(article.created_at).toLocaleString() : "—"}
+              value={article.created_at ? formatDateTime(article.created_at) : "—"}
             />
             <DetailFieldRow
               label={tc("label.updatedAt")}
-              value={article.updated_at ? new Date(article.updated_at).toLocaleString() : "—"}
+              value={article.updated_at ? formatDateTime(article.updated_at) : "—"}
             />
           </DetailSectionCard>
 
-          <SupplierArticleSourcesSection
-            articleId={article.id}
-            suppliers={sourcingSuppliers}
-            onChanged={handleSourcesChanged}
-            refreshToken={sourcingVersion}
-          />
+          {suppliers.error ? (
+            <ErrorState
+              error={suppliers.error}
+              title={t("detail.suppliersLoadError")}
+              onRetry={suppliers.reload}
+            />
+          ) : (
+            <SupplierArticleSourcesSection
+              articleId={article.id}
+              suppliers={suppliers.data}
+              onChanged={handleSourcesChanged}
+              refreshToken={sourcingVersion}
+            />
+          )}
 
           <SupplierComparisonCard
             articleId={article.id}
@@ -820,17 +997,21 @@ export function ArticleDetailWorkspace({
           </DialogHeader>
           <div className="grid gap-3">
             <div className="space-y-1">
-              <Label>{t("article.equivalents.fields.equivalentArticle")}</Label>
+              <Label htmlFor="equiv-article">
+                {t("article.equivalents.fields.equivalentArticle")}
+              </Label>
               <Select
                 value={String(equivArticleId)}
                 onValueChange={(v) => setEquivArticleId(Number(v))}
               >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select article" />
+                <SelectTrigger id="equiv-article">
+                  <SelectValue placeholder={t("procurement.requisitionForm.selectArticle")} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="0">Select article</SelectItem>
-                  {allArticles.map((a) => (
+                  <SelectItem value="0">
+                    {t("procurement.requisitionForm.selectArticle")}
+                  </SelectItem>
+                  {otherActiveArticles.map((a) => (
                     <SelectItem key={a.id} value={String(a.id)}>
                       {a.article_code} — {a.article_name}
                     </SelectItem>
@@ -839,24 +1020,30 @@ export function ArticleDetailWorkspace({
               </Select>
             </div>
             <div className="space-y-1">
-              <Label>{t("article.equivalents.fields.type")}</Label>
+              <Label htmlFor="equiv-type">{t("article.equivalents.fields.type")}</Label>
               <Select value={equivType} onValueChange={setEquivType}>
-                <SelectTrigger>
-                  <SelectValue />
+                <SelectTrigger id="equiv-type">
+                  <SelectValue placeholder={t("article.equivalents.selectType")} />
                 </SelectTrigger>
                 <SelectContent>
-                  {EQUIVALENCE_TYPES.map((et) => (
-                    <SelectItem key={et} value={et}>
-                      {et}
+                  {equivalenceTypes.options.map((option) => (
+                    <SelectItem key={option.id} value={option.code}>
+                      {equivalenceTypes.labelOf(option.code)}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+              {equivalenceTypes.error ? (
+                <p className="text-xs text-text-muted">
+                  {t("article.equivalents.typesUnavailable")}
+                </p>
+              ) : null}
             </div>
             <div className="flex items-center gap-2">
               <input
                 id="equiv-bidirectional"
                 type="checkbox"
+                className="h-4 w-4"
                 checked={equivBidirectional}
                 onChange={(e) => setEquivBidirectional(e.target.checked)}
               />
@@ -865,23 +1052,42 @@ export function ArticleDetailWorkspace({
               </Label>
             </div>
             <div className="space-y-1">
-              <Label>{t("article.equivalents.fields.notes")}</Label>
-              <Input value={equivNotes} onChange={(e) => setEquivNotes(e.target.value)} />
+              <Label htmlFor="equiv-notes">{t("article.equivalents.fields.notes")}</Label>
+              <Input
+                id="equiv-notes"
+                value={equivNotes}
+                onChange={(e) => setEquivNotes(e.target.value)}
+              />
             </div>
           </div>
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button variant="outline" onClick={() => setEquivFormOpen(false)}>
-              Cancel
+          <DialogFooter className="gap-2">
+            <Button variant="outline" className="h-11" onClick={() => setEquivFormOpen(false)}>
+              {tc("action.cancel")}
             </Button>
             <Button
-              disabled={equivSaving || equivArticleId <= 0}
+              className="h-11"
+              disabled={equivSaving || equivArticleId <= 0 || !equivType}
               onClick={() => void saveEquivalent()}
             >
-              Save
+              {tc("action.save")}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ConfirmDialog
+        open={equivToRemove !== null}
+        onOpenChange={(open) => {
+          if (!open) setEquivToRemove(null);
+        }}
+        title={t("article.equivalents.confirmRemove.title")}
+        description={t("article.equivalents.confirmRemove.description", {
+          code: equivToRemove?.equivalent_code ?? "",
+        })}
+        confirmLabel={t("article.equivalents.confirmRemove.confirm")}
+        destructive
+        onConfirm={removeEquivalent}
+      />
 
       {/* ── DOCUMENT LINK FORM DIALOG ── */}
       <Dialog open={docFormOpen} onOpenChange={setDocFormOpen}>
@@ -891,32 +1097,41 @@ export function ArticleDetailWorkspace({
           </DialogHeader>
           <div className="grid gap-3">
             <div className="space-y-1">
-              <Label>{t("procurement.suppliers.documents.fields.ref")}</Label>
+              <Label htmlFor="doc-ref">{t("procurement.suppliers.documents.fields.ref")}</Label>
               <Input
+                id="doc-ref"
                 value={docRef}
                 onChange={(e) => setDocRef(e.target.value)}
-                placeholder="e.g. spec-2024.pdf or https://…"
+                placeholder={t("procurement.suppliers.documents.refPlaceholder")}
               />
             </div>
             <div className="space-y-1">
-              <Label>{t("procurement.suppliers.documents.fields.purpose")}</Label>
+              <Label htmlFor="doc-purpose">
+                {t("procurement.suppliers.documents.fields.purpose")}
+              </Label>
               <Select value={docPurpose} onValueChange={setDocPurpose}>
-                <SelectTrigger>
-                  <SelectValue />
+                <SelectTrigger id="doc-purpose">
+                  <SelectValue placeholder={t("procurement.suppliers.documents.selectPurpose")} />
                 </SelectTrigger>
                 <SelectContent>
-                  {DOC_LINK_PURPOSES.map((p) => (
-                    <SelectItem key={p} value={p}>
-                      {p}
+                  {documentPurposes.options.map((option) => (
+                    <SelectItem key={option.id} value={option.code}>
+                      {documentPurposes.labelOf(option.code)}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+              {documentPurposes.error ? (
+                <p className="text-xs text-text-muted">
+                  {t("procurement.suppliers.documents.purposesUnavailable")}
+                </p>
+              ) : null}
             </div>
             <div className="flex items-center gap-2">
               <input
                 id="doc-primary"
                 type="checkbox"
+                className="h-4 w-4"
                 checked={docPrimary}
                 onChange={(e) => setDocPrimary(e.target.checked)}
               />
@@ -925,12 +1140,16 @@ export function ArticleDetailWorkspace({
               </Label>
             </div>
           </div>
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button variant="outline" onClick={() => setDocFormOpen(false)}>
-              Cancel
+          <DialogFooter className="gap-2">
+            <Button variant="outline" className="h-11" onClick={() => setDocFormOpen(false)}>
+              {tc("action.cancel")}
             </Button>
-            <Button disabled={docSaving || !docRef.trim()} onClick={() => void saveDocLink()}>
-              Save
+            <Button
+              className="h-11"
+              disabled={docSaving || !docRef.trim() || !docPurpose}
+              onClick={() => void saveDocLink()}
+            >
+              {tc("action.save")}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -794,6 +794,110 @@
     {
       "entity_type": "unit_conversions",
       "scope": "tenant"
+    },
+    {
+      "entity_type": "currency_exchange_rates",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "equipment_criticality_assessments",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "equipment_spare_parts",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "inventory_lots",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "inventory_valuation_periods",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "inventory_valuation_snapshot_lines",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "procurement_approval_limits",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "reliability_cost_profiles",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "reliability_studies",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "reliability_study_assets",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "reliability_study_decisions",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "reliability_study_record_events",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "qualification_overrides",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "qualification_requirements",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "work_calendar_holidays",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "site_work_weeks",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "schedule_class_versions",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "team_schedule_assignments",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "personnel_schedule_exceptions",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "wo_cost_estimates",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "wo_cost_settlements",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "budget_periods",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "inspection_schedules",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "weekly_schedules",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "weekly_schedule_events",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "weekly_schedule_baseline_items",
+      "scope": "tenant"
     }
   ]
 }

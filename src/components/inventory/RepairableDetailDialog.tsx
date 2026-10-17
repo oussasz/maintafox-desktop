@@ -32,6 +32,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { StatusChip } from "@/components/ui/status-chip";
+import { REPAIRABLE_STATUS_TONE, toneOf } from "@/design-system/tone";
+import { useFormatters } from "@/hooks/use-formatters";
+import { describeAppError } from "@/lib/app-error";
 import { formatAssetLabel, formatEntityCode, formatOrDash } from "@/lib/display";
 import {
   getInventoryRepairableOrderDetail,
@@ -39,7 +43,6 @@ import {
   transitionInventoryRepairableOrder,
   upsertInventoryDocumentLink,
 } from "@/services/inventory-service";
-import { toErrorMessage } from "@/utils/errors";
 import { formatDate, intlLocaleForLanguage } from "@/utils/format-date";
 import type {
   InventoryDocumentLink,
@@ -75,14 +78,15 @@ export interface RepairableDetailDialogProps {
   onOpenArticle?: (articleId: number) => void;
 }
 
-function fmtMoney(n: number | null | undefined): string {
-  if (n == null || !Number.isFinite(n)) return "—";
-  return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
-function fmtDays(n: number | null | undefined): string {
-  if (n == null || !Number.isFinite(n)) return "—";
-  return n.toLocaleString(undefined, { maximumFractionDigits: 1 });
+/** Money in the tenant currency and day counts in the app locale ("—" when unknown). */
+function useRepairFormatters() {
+  const { formatCurrency, formatNumber } = useFormatters();
+  return {
+    fmtMoney: (n: number | null | undefined) =>
+      n == null || !Number.isFinite(n) ? "—" : formatCurrency(n),
+    fmtDays: (n: number | null | undefined) =>
+      n == null || !Number.isFinite(n) ? "—" : formatNumber(n, { maximumFractionDigits: 1 }),
+  };
 }
 
 function eventForStatus(
@@ -99,6 +103,7 @@ function stepRank(status: string): number {
 
 function RepairVsReplaceCard({ result }: { result: RepairVsReplaceResult }) {
   const { t } = useTranslation("inventory");
+  const { fmtMoney } = useRepairFormatters();
 
   if (result.recommendation === "INSUFFICIENT_DATA") {
     return (
@@ -175,6 +180,7 @@ export function RepairableDetailDialog({
 }: RepairableDetailDialogProps) {
   const { t, i18n } = useTranslation("inventory");
   const locale = intlLocaleForLanguage(i18n.language);
+  const { fmtMoney, fmtDays } = useRepairFormatters();
 
   const [detail, setDetail] = useState<RepairableOrderDetail | null>(null);
   const [documents, setDocuments] = useState<InventoryDocumentLink[]>([]);
@@ -209,7 +215,7 @@ export function RepairableDetailDialog({
       setCloseWarrantyUntil(orderDetail.order.warranty_until?.slice(0, 10) ?? "");
       setCloseWarrantyActive(orderDetail.order.warranty_active === 1);
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(describeAppError(err).title);
       setDetail(null);
     } finally {
       setLoading(false);
@@ -243,7 +249,7 @@ export function RepairableDetailDialog({
       await load();
       onTransitioned?.();
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(describeAppError(err).title);
     } finally {
       setSaving(false);
     }
@@ -308,7 +314,7 @@ export function RepairableDetailDialog({
       const docs = await listInventoryDocumentLinks("REPAIRABLE_ORDER", detail.order.id);
       setDocuments(docs);
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(describeAppError(err).title);
     } finally {
       setSaving(false);
     }
@@ -334,11 +340,13 @@ export function RepairableDetailDialog({
               {order ? (
                 <>
                   <span className="font-mono">{formatEntityCode(order.order_code)}</span>
-                  <Badge variant={order.status === "SCRAPPED" ? "destructive" : "outline"}>
-                    {t(`procurement.repairableStatuses.${order.status}`, {
+                  <StatusChip
+                    label={t(`procurement.repairableStatuses.${order.status}`, {
                       defaultValue: order.status,
                     })}
-                  </Badge>
+                    tone={toneOf(REPAIRABLE_STATUS_TONE, order.status)}
+                    dot
+                  />
                   {order.warranty_active === 1 ? (
                     <Badge variant="secondary">
                       {t("procurement.repairableDetail.warrantyActive")}

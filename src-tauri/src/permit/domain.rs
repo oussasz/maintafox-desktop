@@ -13,6 +13,10 @@ pub struct PermitType {
     pub max_duration_hours: Option<f64>,
     pub mandatory_ppe_ids_json: String,
     pub mandatory_control_rules_json: String,
+    /// A permit of this type needs at least one verified energy isolation before it starts
+    /// (LOTO; migration 225, formerly a rule on the code `loto`).
+    #[serde(default)]
+    pub requires_energy_isolation: bool,
     pub row_version: i64,
 }
 
@@ -44,6 +48,9 @@ pub struct WorkPermit {
     pub asset_label: Option<String>,
     #[serde(default)]
     pub linked_work_order_code: Option<String>,
+    /// The type's `requires_energy_isolation` (the start gate needs an isolation).
+    #[serde(default)]
+    pub permit_type_requires_energy_isolation: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,8 +89,26 @@ pub struct PermitIsolation {
     pub entity_sync_id: String,
     pub permit_id: i64,
     pub isolation_point: String,
+    /// Text typed before migration 225, kept as read-only history ("Saisie d'origine"); empty
+    /// for isolations recorded on the lists.
     pub energy_type: String,
+    /// Text typed before migration 225 (history), empty otherwise.
     pub isolation_method: String,
+    /// `PERMIT.ENERGY_TYPES` value (SYSTEM list).
+    #[serde(default)]
+    pub energy_type_id: Option<i64>,
+    #[serde(default)]
+    pub energy_type_code: Option<String>,
+    #[serde(default)]
+    pub energy_type_label: Option<String>,
+    /// `PERMIT.ISOLATION_METHODS` value (COMPANY list).
+    #[serde(default)]
+    pub isolation_method_id: Option<i64>,
+    #[serde(default)]
+    pub isolation_method_label: Option<String>,
+    /// A migrated text could not be mapped onto the lists: a person must choose.
+    #[serde(default)]
+    pub mapping_review_required: bool,
     pub lock_number: Option<String>,
     pub applied_by_id: Option<i64>,
     pub verified_by_id: Option<i64>,
@@ -107,6 +132,9 @@ pub struct WorkPermitListFilter {
     pub asset_id: Option<i64>,
     #[serde(default)]
     pub linked_work_order_id: Option<i64>,
+    /// Code, type, equipment or OT text (server-side search over every permit, not one page).
+    #[serde(default)]
+    pub search: Option<String>,
     pub limit: Option<i64>,
 }
 
@@ -122,6 +150,12 @@ pub struct PermitTypeUpsertInput {
     pub max_duration_hours: Option<f64>,
     pub mandatory_ppe_ids_json: Option<String>,
     pub mandatory_control_rules_json: Option<String>,
+    /// Omitted on update: unchanged. Omitted on create: false.
+    #[serde(default)]
+    pub requires_energy_isolation: Option<bool>,
+    /// Required (with `adm.settings` + step-up) when switching the energy-isolation rule off.
+    #[serde(default)]
+    pub disable_isolation_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -181,8 +215,12 @@ pub struct PermitIsolationUpsertInput {
     pub id: Option<i64>,
     pub permit_id: i64,
     pub isolation_point: String,
-    pub energy_type: String,
-    pub isolation_method: String,
+    /// Active `PERMIT.ENERGY_TYPES` value (required).
+    #[serde(default)]
+    pub energy_type_id: Option<i64>,
+    /// Active `PERMIT.ISOLATION_METHODS` value (required).
+    #[serde(default)]
+    pub isolation_method_id: Option<i64>,
     #[serde(default)]
     pub lock_number: Option<String>,
 }

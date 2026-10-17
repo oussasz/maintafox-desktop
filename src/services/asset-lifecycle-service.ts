@@ -55,6 +55,7 @@ export const AssetMeterSchema = z.object({
   name: z.string(),
   meter_code: z.string().nullable(),
   meter_type: z.string(),
+  unit_value_id: z.number().nullable(),
   unit: z.string().nullable(),
   current_reading: z.number(),
   last_read_at: z.string().nullable(),

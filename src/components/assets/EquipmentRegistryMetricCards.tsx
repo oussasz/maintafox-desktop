@@ -1,17 +1,19 @@
 /**
  * Equipment registry KPI strip — VisualMetricCard adapters for KPI-047…051.
  * Click-to-filter toggles `registry_focus` on the asset search store.
+ *
+ * The strip is a current state (the backend has no baseline for it), so no trend is shown. A failed
+ * load is shown with its cause and a retry, never as empty tiles.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import {
-  VisualMetricCard,
-  type VisualMetricTrendSense,
-} from "@/components/metrics/VisualMetricCard";
+import { VisualMetricCard } from "@/components/metrics/VisualMetricCard";
 import { seriesUsableForViz } from "@/components/metrics/visual-metric-viz";
+import { ErrorState } from "@/components/ui/data-state";
 import { mfVisualMetric } from "@/design-system/tokens";
+import { useFormatters } from "@/hooks/use-formatters";
 import { cn } from "@/lib/utils";
 import { getEquipmentRegistryMetrics } from "@/services/asset-search-service";
 import { useAssetSearchStore } from "@/stores/asset-search-store";
@@ -27,32 +29,16 @@ import type {
 
 type RegistryFocus = NonNullable<AssetSearchFilters["registry_focus"]>;
 
-function trendPercent(value: number, previous: number): number | null {
-  if (!Number.isFinite(value) || !Number.isFinite(previous)) return null;
-  if (previous === 0) return value === 0 ? 0 : null;
-  return ((value - previous) / Math.abs(previous)) * 100;
-}
-
-function senseForDelta(
-  delta: number,
-  direction: "up-good" | "up-bad" | "neutral",
-): VisualMetricTrendSense {
-  if (delta === 0 || direction === "neutral") return "neutral";
-  const up = delta > 0;
-  if (direction === "up-good") return up ? "up-good" : "up-bad";
-  return up ? "up-bad" : "up-good";
-}
-
 /** Metrics use SmartFilterBar scope without the KPI drill focus (strip stays stable). */
 function metricsScopeFilters(filters: AssetSearchFilters): AssetSearchFilters {
   return { ...filters, registry_focus: null };
 }
 
-function formatCellValue(cell: EquipmentRegistryMetricCell): string {
-  if (cell.value_kind === "percent") {
-    return cell.value.toFixed(0);
-  }
-  return Math.round(cell.value).toLocaleString();
+function formatCellValue(
+  cell: EquipmentRegistryMetricCell,
+  formatNumber: ReturnType<typeof useFormatters>["formatNumber"],
+): string {
+  return formatNumber(Math.round(cell.value), { maximumFractionDigits: 0 });
 }
 
 function MetricStripSkeleton() {
@@ -83,8 +69,12 @@ export function EquipmentRegistryMetricCards() {
   const filters = useAssetSearchStore((s) => s.filters);
   const updateFilters = useAssetSearchStore((s) => s.updateFilters);
 
+  const { formatNumber } = useFormatters();
   const [payload, setPayload] = useState<EquipmentRegistryMetricsPayload | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<unknown>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const retry = useCallback(() => setReloadKey((k) => k + 1), []);
 
   const scopeKey = useMemo(() => {
     const scope = metricsScopeFilters(filters);
@@ -93,7 +83,9 @@ export function EquipmentRegistryMetricCards() {
       class_codes: scope.class_codes ?? null,
       family_codes: scope.family_codes ?? null,
       status_codes: scope.status_codes ?? null,
+      criticality_codes: scope.criticality_codes ?? null,
       org_node_ids: scope.org_node_ids ?? null,
+      org_subtree: scope.org_subtree ?? null,
       include_decommissioned: scope.include_decommissioned ?? false,
       limit: scope.limit ?? null,
     });
@@ -105,9 +97,15 @@ export function EquipmentRegistryMetricCards() {
     void (async () => {
       try {
         const next = await getEquipmentRegistryMetrics(metricsScopeFilters(filters));
-        if (!cancelled) setPayload(next);
-      } catch {
-        if (!cancelled) setPayload(null);
+        if (!cancelled) {
+          setPayload(next);
+          setError(null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setPayload(null);
+          setError(err);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -117,7 +115,7 @@ export function EquipmentRegistryMetricCards() {
     };
     // scopeKey captures the relevant filter fields for metrics (excludes registry_focus).
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional scopeKey gate
-  }, [scopeKey]);
+  }, [scopeKey, reloadKey]);
 
   const cellByKey = useMemo(() => {
     const map = new Map<string, EquipmentRegistryMetricCell>();
@@ -147,6 +145,17 @@ export function EquipmentRegistryMetricCards() {
   if (loading && !payload) {
     return <MetricStripSkeleton />;
   }
+  if (error && !payload) {
+    return (
+      <ErrorState
+        error={error}
+        title={t("metrics.loadError")}
+        onRetry={retry}
+        retrying={loading}
+        className="py-4"
+      />
+    );
+  }
 
   return (
     <div
@@ -165,22 +174,7 @@ export function EquipmentRegistryMetricCards() {
         {EQUIPMENT_KPI_REGISTRY.map((reg) => {
           const cell = cellByKey.get(reg.semanticKey as EquipmentKpiSemanticKey);
           const available = Boolean(cell?.available);
-          const value = cell && available ? formatCellValue(cell) : "—";
-
-          let trend: { label: string; sense: VisualMetricTrendSense } | undefined;
-          if (cell && available) {
-            const pct = trendPercent(cell.value, cell.previous_value);
-            if (pct !== null && Math.abs(pct) >= 0.5) {
-              const rounded = Math.abs(pct) >= 10 ? Math.round(pct) : Math.round(pct * 10) / 10;
-              const sign = rounded > 0 ? "+" : "";
-              trend = {
-                label: `${sign}${rounded}%`,
-                sense: senseForDelta(cell.value - cell.previous_value, reg.trendSense),
-              };
-            } else if (pct !== null) {
-              trend = { label: t("metrics.stable"), sense: "neutral" };
-            }
-          }
+          const value = cell && available ? formatCellValue(cell, formatNumber) : "—";
 
           const series =
             reg.vizKind === "histogram" ? seriesUsableForViz(cell?.series ?? undefined) : undefined;
@@ -210,7 +204,6 @@ export function EquipmentRegistryMetricCards() {
               unavailableLabel="—"
               vizKind={reg.vizKind}
               {...(reg.valueKind === "percent" ? { unit: t("metrics.unit.percent") } : {})}
-              {...(trend ? { trendLabel: trend.label, trendSense: trend.sense } : {})}
               {...(series ? { series } : {})}
               {...(reg.vizKind === "gauge" && cell ? { gaugeValue: cell.value } : {})}
               {...(reg.vizKind === "alert" && cell

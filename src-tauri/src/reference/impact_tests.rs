@@ -1,8 +1,7 @@
 //! Publish impact: changed codes against the published set, usage found through every foreign
 //! key to `reference_values` and `lookup_values`, grouped per module.
 
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
-use sea_orm_migration::MigratorTrait;
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 use crate::reference::domains::{self, CreateReferenceDomainPayload};
 use crate::reference::impact::{module_of, value_changes};
@@ -16,12 +15,7 @@ async fn exec(db: &DatabaseConnection, sql: &str) {
 }
 
 async fn setup() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:").await.expect("in-memory SQLite");
-    exec(&db, "PRAGMA foreign_keys = ON").await;
-    crate::migrations::Migrator::up(&db, None).await.expect("migrations");
-    crate::db::seeder::seed_system_data(&db).await.expect("seeder");
-    publish::clear_impact_cache();
-    db
+    crate::db::test_db::seeded().await
 }
 
 async fn add_value(db: &DatabaseConnection, set_id: i64, code: &str) {

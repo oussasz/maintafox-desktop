@@ -32,12 +32,12 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useFormatters } from "@/hooks/use-formatters";
+import { describeAppError } from "@/lib/app-error";
 import { formatAssetLabel, formatOrDash } from "@/lib/display";
 import {
   listSupplierArticleSources,
   upsertSupplierArticleSource,
 } from "@/services/inventory-service";
-import { toErrorMessage } from "@/utils/errors";
 import type { SupplierArticleSource, SupplierArticleSourceInput } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -149,7 +149,7 @@ export function SupplierArticleSourcesSection({
     try {
       setSources(await listSupplierArticleSources(supplierId ?? null, articleId ?? null));
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(describeAppError(err).title);
     } finally {
       setLoading(false);
     }
@@ -205,7 +205,7 @@ export function SupplierArticleSourcesSection({
       onChanged?.();
       return true;
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(describeAppError(err).title);
       return false;
     } finally {
       setSaving(false);

@@ -565,21 +565,29 @@ pub async fn tenant_config_sync_payload(db: &DatabaseConnection) -> AppResult<Op
 }
 
 /// True when at least one active user has Administrator or Superadmin explicitly scoped to this tenant.
+/// Only permanent assignments in force count (an expired or emergency grant does not make the
+/// tenant administered).
 pub async fn tenant_has_administrator_for_id(db: &DatabaseConnection, tenant_id: &str) -> AppResult<bool> {
+    let now = crate::rbac::resolver::assignment_clock();
+    let mut values: Vec<sea_orm::Value> = crate::rbac::resolver::permanent_binds(&now).to_vec();
+    values.push(tenant_id.into());
     let row = db
         .query_one(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
-            r"SELECT COUNT(1) AS c
+            format!(
+                "SELECT COUNT(1) AS c
                 FROM user_accounts ua
-                INNER JOIN user_scope_assignments usa
-                  ON usa.user_id = ua.id AND usa.deleted_at IS NULL
+                INNER JOIN user_scope_assignments usa ON usa.user_id = ua.id
                 INNER JOIN roles r ON r.id = usa.role_id AND r.deleted_at IS NULL
                WHERE ua.deleted_at IS NULL AND ua.is_active = 1
+                 AND {}
                  AND usa.scope_type = 'tenant'
                  AND r.name IN ('Administrator', 'Superadmin')
                  AND NOT (ua.username = 'admin' AND COALESCE(usa.notes, '') = 'System seeder')
                  AND TRIM(COALESCE(usa.scope_reference, '')) = ?",
-            [tenant_id.into()],
+                crate::rbac::resolver::PERMANENT_ASSIGNMENT_IN_FORCE_SQL
+            ),
+            values,
         ))
         .await?;
     let count: i64 = row.as_ref().and_then(|r| r.try_get::<i64>("", "c").ok()).unwrap_or(0);

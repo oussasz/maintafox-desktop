@@ -22,6 +22,7 @@ import {
   SelectValue,
   Textarea,
 } from "@/components/ui";
+import { woTypeLabel } from "@/components/wo/use-wo-type-labels";
 import { listPmPlans } from "@/services/pm-service";
 import {
   applyRcmDecisionLogic,
@@ -123,7 +124,7 @@ function SourceActions({
   allowPm: boolean;
   onDone: (message: string) => void;
 }) {
-  const { t } = useTranslation("reliability");
+  const { t, i18n } = useTranslation("reliability");
   const [plans, setPlans] = useState<{ id: number; label: string }[]>([]);
   const [planId, setPlanId] = useState("");
   const [note, setNote] = useState("");
@@ -207,7 +208,7 @@ function SourceActions({
             <SelectContent>
               {active.map((w) => (
                 <SelectItem key={w.code} value={w.code}>
-                  {w.label}
+                  {woTypeLabel(w, i18n.language)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -484,7 +485,10 @@ export function FmecaActionsDialog({
         t("rcmLoop.cm", {
           cm: c.criticality_number.toPrecision(3),
           cr: c.analysis_criticality.toPrecision(3),
-        }),
+        }) +
+          (c.analysis_rows_to_review > 0
+            ? ` · ${t("rams.fmeca.rowsToReview", { count: c.analysis_rows_to_review })}`
+            : ""),
       );
       onSaved();
     } catch (err) {

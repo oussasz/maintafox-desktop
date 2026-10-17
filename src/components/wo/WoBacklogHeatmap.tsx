@@ -7,9 +7,9 @@ import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { useFormatters } from "@/hooks/use-formatters";
+import { describeAppError } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import { getWoBacklogHeatmap } from "@/services/wo-service";
-import { toErrorMessage } from "@/utils/errors";
 import type { WoBacklogHeatmap as Heatmap, WoBacklogDay } from "@shared/ipc-types";
 
 const WEEK_OPTIONS = [2, 4, 8, 12] as const;
@@ -47,7 +47,7 @@ export function WoBacklogHeatmap() {
       setData(await getWoBacklogHeatmap({ weeks }));
       setError(null);
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(describeAppError(err).title);
     }
   }, [weeks]);
 

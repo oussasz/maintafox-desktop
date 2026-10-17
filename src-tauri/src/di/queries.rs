@@ -10,7 +10,10 @@ use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
-use super::domain::{generate_di_code, guard_transition, map_intervention_request, DiStatus, InterventionRequest};
+use super::domain::{
+    generate_di_code, guard_transition, map_intervention_request, DiStatus, InterventionRequest, IR_COLS, IR_JOINS,
+    IR_JOIN_COLS,
+};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Input / output types
@@ -28,8 +31,128 @@ pub struct DiListFilter {
     pub urgency: Option<String>,
     pub disposition_code: Option<String>,
     pub search: Option<String>,
+    /// Work queue of the requests screen ([`DI_QUEUES`]); `None` lists every request.
+    #[serde(default)]
+    pub queue: Option<String>,
+    /// Only the open requests (`di::stats::OPEN_SQL`, the "open DI" count's rule).
+    #[serde(default)]
+    pub open_only: Option<bool>,
+    /// Only the open requests submitted at least this many days ago (`di::stats::WAITING_SQL`, the
+    /// "waiting more than N days" count of the home / analytics overdue figure). Implies open.
+    #[serde(default)]
+    pub waiting_days: Option<i64>,
     pub limit: i64,
     pub offset: i64,
+}
+
+/// Work queues of the requests screen, in the order of the request lifecycle.
+///
+/// - `to_screen` — submitted, waiting to be admitted for review;
+/// - `to_review` — in review, waiting for the screening decision;
+/// - `awaiting_info` — sent back to the requester for information;
+/// - `to_approve` — screened, waiting for approval;
+/// - `approved_not_converted` — approved, no work order yet;
+/// - `deferred_due` — deferred and the deferral date has come;
+/// - `sla_at_risk` — open with the SLA at risk or breached;
+/// - `mine` — the open requests of the signed-in user (the command sets the submitter); their
+///   closed requests stay reachable through the "all" list and its filters.
+pub const DI_QUEUES: &[&str] = &[
+    "to_screen",
+    "to_review",
+    "awaiting_info",
+    "to_approve",
+    "approved_not_converted",
+    "deferred_due",
+    "sla_at_risk",
+    "mine",
+];
+
+/// SQL predicate (alias `ir`) of a work queue. For `mine` the caller adds the submitter (list:
+/// `submitter_id` filter; count: the signed-in user), so list and count share one predicate.
+fn queue_predicate(queue: &str) -> AppResult<Option<String>> {
+    let sql = match queue {
+        "to_screen" => "ir.status = 'submitted'".to_string(),
+        "to_review" => "ir.status = 'in_review'".to_string(),
+        "awaiting_info" => "ir.status = 'returned_for_clarification'".to_string(),
+        "to_approve" => "ir.status = 'awaiting_approval'".to_string(),
+        "approved_not_converted" => "(ir.status = 'approved' AND ir.converted_to_wo_id IS NULL)".to_string(),
+        "deferred_due" => "(ir.status = 'deferred' AND ir.deferred_until IS NOT NULL \
+             AND date(ir.deferred_until) <= date('now'))"
+            .to_string(),
+        "sla_at_risk" => super::sla::SLA_AT_RISK_OR_BREACHED_SQL.to_string(),
+        "mine" => "ir.status <> 'closed'".to_string(),
+        other => {
+            return Err(AppError::ValidationFailed(vec![format!(
+                "File de travail inconnue : '{other}'."
+            )]))
+        }
+    };
+    Ok(Some(sql))
+}
+
+/// Most urgent first on the shared scale (validated urgency, else reported), from the scale's ranks.
+fn urgency_rank_sql() -> String {
+    let arms: String = crate::reference::urgency_scale::UrgencyCode::ALL
+        .iter()
+        .map(|c| format!(" WHEN '{}' THEN {}", c.as_str(), c.rank()))
+        .collect();
+    format!("CASE COALESCE(ir.validated_urgency, ir.reported_urgency){arms} ELSE 99 END")
+}
+
+/// Size of every work queue (the badges of the queue bar). `mine` counts the requests of `user_id`.
+#[derive(Debug, Clone, Serialize, Default, PartialEq, Eq)]
+pub struct DiQueueCounts {
+    pub to_screen: i64,
+    pub to_review: i64,
+    pub awaiting_info: i64,
+    pub to_approve: i64,
+    pub approved_not_converted: i64,
+    pub deferred_due: i64,
+    pub sla_at_risk: i64,
+    /// Open requests of the signed-in user.
+    pub mine: i64,
+    /// Requests of the signed-in user waiting for their answer.
+    pub mine_awaiting_info: i64,
+}
+
+pub async fn count_di_queues(db: &impl ConnectionTrait, user_id: i64) -> AppResult<DiQueueCounts> {
+    let mut arms: Vec<String> = Vec::new();
+    for queue in DI_QUEUES.iter().filter(|q| **q != "mine") {
+        if let Some(pred) = queue_predicate(queue)? {
+            arms.push(format!(
+                "COALESCE(SUM(CASE WHEN {pred} THEN 1 ELSE 0 END), 0) AS {queue}"
+            ));
+        }
+    }
+    let mine = queue_predicate("mine")?.unwrap_or_else(|| "1 = 1".to_string());
+    let sql = format!(
+        "SELECT {}, \
+                COALESCE(SUM(CASE WHEN ir.submitter_id = ? AND {mine} THEN 1 ELSE 0 END), 0) AS mine, \
+                COALESCE(SUM(CASE WHEN ir.submitter_id = ? AND ir.status = 'returned_for_clarification' \
+                                  THEN 1 ELSE 0 END), 0) AS mine_awaiting_info \
+           FROM intervention_requests ir",
+        arms.join(", ")
+    );
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            &sql,
+            [user_id.into(), user_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("DI queue count returned no row")))?;
+    let get = |col: &str| row.try_get::<i64>("", col).map_err(|e| decode_err(col, e));
+    Ok(DiQueueCounts {
+        to_screen: get("to_screen")?,
+        to_review: get("to_review")?,
+        awaiting_info: get("awaiting_info")?,
+        to_approve: get("to_approve")?,
+        approved_not_converted: get("approved_not_converted")?,
+        deferred_due: get("deferred_due")?,
+        sla_at_risk: get("sla_at_risk")?,
+        mine: get("mine")?,
+        mine_awaiting_info: get("mine_awaiting_info")?,
+    })
 }
 
 /// Paginated list result.
@@ -115,46 +238,6 @@ pub struct DiDraftUpdateInput {
     pub reported_urgency: Option<String>,
     pub observed_at: Option<Option<String>>,
 }
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// Constants
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/// All columns from `intervention_requests` for SELECT reuse.
-const IR_COLS: &str = "\
-    ir.id, ir.code, ir.equipment_id, ir.sub_asset_ref, ir.org_node_id, \
-    ir.status, ir.title, ir.description, ir.origin_type, ir.request_type, ir.symptom_code_id, \
-    ir.impact_level, ir.production_impact, ir.safety_flag, ir.environmental_flag, \
-    ir.quality_flag, ir.reported_urgency, ir.validated_urgency, \
-    ir.observed_at, ir.submitted_at, \
-    ir.reviewer_id, ir.screened_at, ir.approved_at, \
-    ir.deferred_until, ir.declined_at, ir.closed_at, ir.archived_at, \
-    ir.converted_to_wo_id, ir.converted_at, \
-    ir.sla_rule_id, ir.sla_target_response_hours, ir.sla_target_resolution_hours, \
-    ir.sla_escalation_threshold_hours, ir.sla_response_deadline, ir.sla_resolution_deadline, \
-    ir.sla_response_breach_notified_at, ir.sla_resolution_breach_notified_at, \
-    ir.reviewer_note, ir.classification_code_id, \
-    ir.is_recurrence_flag, ir.recurrence_di_id, \
-    ir.source_inspection_anomaly_id, \
-    ir.disposition_code, ir.disposition_notes, ir.related_di_id, ir.closed_by_id, ir.deferred_from_status, \
-    ir.row_version, ir.submitter_id, ir.created_at, ir.updated_at";
-
-/// Display enrichment columns (must be paired with `IR_JOINS`).
-const IR_JOIN_COLS: &str = "\
-    eq.asset_id_code AS asset_code, eq.name AS asset_label, \
-    org.code AS org_node_code, org.name AS org_node_label, \
-    COALESCE(us.display_name, us.username) AS submitter_display_name, \
-    COALESCE(ur.display_name, ur.username) AS reviewer_display_name, \
-    wo.code AS converted_to_wo_code, wo.title AS converted_to_wo_title, \
-    related_di.code AS related_di_code";
-
-const IR_JOINS: &str = "\
-    LEFT JOIN equipment eq ON eq.id = ir.equipment_id \
-    LEFT JOIN org_nodes org ON org.id = ir.org_node_id \
-    LEFT JOIN user_accounts us ON us.id = ir.submitter_id \
-    LEFT JOIN user_accounts ur ON ur.id = ir.reviewer_id \
-    LEFT JOIN work_orders wo ON wo.id = ir.converted_to_wo_id \
-    LEFT JOIN intervention_requests related_di ON related_di.id = ir.related_di_id";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Row mappers
@@ -265,7 +348,24 @@ pub async fn list_intervention_requests(db: &DatabaseConnection, filter: DiListF
         }
     }
 
+    // ── Shared scopes: the KPI counts' own predicates, so a drill lists exactly what was counted ──
+    if filter.open_only.unwrap_or(false) || filter.waiting_days.is_some() {
+        where_clauses.push(super::stats::OPEN_SQL.to_string());
+    }
+    if let Some(days) = filter.waiting_days {
+        where_clauses.push(super::stats::WAITING_SQL.to_string());
+        binds.push(super::stats::waiting_since(chrono::Utc::now(), days).into());
+    }
+
     // ── Free-text search (title + description + code) ─────────────────────
+    // Work queue
+    let queue = filter.queue.as_deref().map(str::trim).filter(|q| !q.is_empty());
+    if let Some(q) = queue {
+        if let Some(pred) = queue_predicate(q)? {
+            where_clauses.push(pred);
+        }
+    }
+
     if let Some(ref search) = filter.search {
         let trimmed = search.trim();
         if !trimmed.is_empty() {
@@ -298,12 +398,18 @@ pub async fn list_intervention_requests(db: &DatabaseConnection, filter: DiListF
     let row_limit = filter.limit.clamp(1, 200);
     let offset = filter.offset.max(0);
 
+    // A work queue is worked most urgent first, then oldest first (first in, first out); the
+    // other lists show the latest requests first.
+    let order_sql = match queue {
+        Some(q) if q != "mine" => format!("{} ASC, ir.submitted_at ASC, ir.id ASC", urgency_rank_sql()),
+        _ => "ir.submitted_at DESC, ir.id DESC".to_string(),
+    };
     let data_sql = format!(
         "SELECT {IR_COLS}, {IR_JOIN_COLS} \
          FROM intervention_requests ir \
          {IR_JOINS} \
          WHERE {where_sql} \
-         ORDER BY ir.submitted_at DESC \
+         ORDER BY {order_sql} \
          LIMIT {row_limit} OFFSET {offset}"
     );
     let rows = db
@@ -413,6 +519,8 @@ pub async fn create_intervention_request(
     let origin_type = crate::di::reference_catalog::validate_di_origin_code(db, &input.origin_type).await?;
     let request_type = crate::di::reference_catalog::validate_di_request_type(db, &input.request_type).await?;
     let symptom_code_id = crate::di::reference_catalog::require_di_symptom_id(db, input.symptom_code_id).await?;
+    // Shared DI / OT urgency scale (`WORK.URGENCY`).
+    let reported_urgency = crate::reference::urgency_scale::validate_urgency_code(&input.reported_urgency)?;
 
     if input.org_node_id != 0 {
         crate::org::model_scope::assert_org_node_active(db, input.org_node_id).await?;
@@ -447,7 +555,7 @@ pub async fn create_intervention_request(
             (i64::from(input.safety_flag)).into(),
             (i64::from(input.environmental_flag)).into(),
             (i64::from(input.quality_flag)).into(),
-            input.reported_urgency.into(),
+            reported_urgency.as_str().into(),
             input
                 .observed_at
                 .map(sea_orm::Value::from)
@@ -616,8 +724,9 @@ pub async fn update_di_draft_fields(
         values.push(i64::from(quality_flag).into());
     }
     if let Some(ref reported_urgency) = input.reported_urgency {
+        let level = crate::reference::urgency_scale::validate_urgency_code(reported_urgency)?;
         sets.push("reported_urgency = ?".into());
-        values.push(reported_urgency.clone().into());
+        values.push(level.as_str().into());
     }
     if let Some(ref observed_at) = input.observed_at {
         sets.push("observed_at = ?".into());

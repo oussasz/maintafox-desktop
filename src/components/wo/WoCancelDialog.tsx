@@ -20,8 +20,8 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { useSession } from "@/hooks/use-session";
+import { describeAppError } from "@/lib/app-error";
 import { useWoStore } from "@/stores/wo-store";
-import { toErrorMessage } from "@/utils/errors";
 import type { WorkOrder } from "@shared/ipc-types";
 
 interface WoCancelDialogProps {
@@ -63,7 +63,7 @@ export function WoCancelDialog({ wo, open, onOpenChange }: WoCancelDialogProps) 
       });
       onOpenChange(false);
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(describeAppError(err).title);
     }
   }, [wo, info?.user_id, reason, cancelWorkOrder, onOpenChange, t]);
 

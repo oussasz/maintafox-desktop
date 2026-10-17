@@ -1,12 +1,19 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
+import { ConflictReasonList } from "@/components/planning/ConflictReasonList";
+import { parseConflictReasons } from "@/components/planning/planning-model";
+import { errorText } from "@/components/planning/weekly-schedule-model";
 import { Timeline } from "@/components/timeline/Timeline";
 import type { TimelineEntry, TimelineTone } from "@/components/timeline/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import { Textarea } from "@/components/ui/textarea";
+import { useFormatters } from "@/hooks/use-formatters";
 import { formatOrDash, formatPersonLabel } from "@/lib/display";
 import type { ScheduleChangeLogEntry, ScheduleCommitment } from "@shared/ipc-types";
 
@@ -20,6 +27,15 @@ type CommitmentInspectorDialogProps = {
   onRequestBreakIn?: (commitmentId: number) => void;
   /** Jump to Gantt board focused on this commitment (calendar surface). */
   onOpenOnBoard?: (commitmentId: number) => void;
+  /**
+   * Ends a committed slot: "released" gives the slot back (the job returns to the backlog),
+   * "cancelled" withdraws it. Absent without the planning confirm right.
+   */
+  onEndCommitment?: (
+    commitment: ScheduleCommitment,
+    to: "released" | "cancelled",
+    reason: string,
+  ) => Promise<void>;
 };
 
 function actionTone(action: string): TimelineTone {
@@ -37,8 +53,43 @@ export function CommitmentInspectorDialog({
   onLoadChangeLog,
   onRequestBreakIn,
   onOpenOnBoard,
+  onEndCommitment,
 }: CommitmentInspectorDialogProps) {
   const { t, i18n } = useTranslation("planning");
+  const { formatDateTime } = useFormatters();
+  const [ending, setEnding] = useState<"released" | "cancelled" | null>(null);
+  const [endReason, setEndReason] = useState("");
+  const [endBusy, setEndBusy] = useState(false);
+  const [endError, setEndError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setEnding(null);
+    setEndReason("");
+    setEndError(null);
+  }, [commitment?.id, open]);
+
+  // A frozen slot changes only through a break-in; only a committed one can end.
+  const canEnd =
+    commitment != null && commitment.status === "committed" && commitment.frozen_at == null;
+
+  async function confirmEnd() {
+    if (!commitment || !ending || !onEndCommitment) return;
+    setEndBusy(true);
+    setEndError(null);
+    try {
+      await onEndCommitment(commitment, ending, endReason.trim());
+      setEnding(null);
+      setEndReason("");
+    } catch (err) {
+      setEndError(errorText(err));
+    } finally {
+      setEndBusy(false);
+    }
+  }
+  const conflictReasons = useMemo(
+    () => parseConflictReasons(commitment?.conflict_reasons_json),
+    [commitment?.conflict_reasons_json],
+  );
 
   useEffect(() => {
     if (open && commitment) {
@@ -93,6 +144,9 @@ export function CommitmentInspectorDialog({
                 commitment?.source_type ||
                 t("inspector.title")}
             </span>
+            {commitment && commitment.status !== "committed" ? (
+              <Badge variant="outline">{t(`commitmentStatus.${commitment.status}`)}</Badge>
+            ) : null}
             {commitment?.frozen_at ? (
               <Badge variant="secondary">{t("inspector.frozen")}</Badge>
             ) : null}
@@ -102,6 +156,18 @@ export function CommitmentInspectorDialog({
           </DialogTitle>
           {commitment?.source_title ? (
             <p className="text-sm text-text-secondary">{commitment.source_title}</p>
+          ) : null}
+          <ConflictReasonList reasons={conflictReasons} />
+          {commitment?.source_type === "work_order" ? (
+            <div className="flex flex-wrap items-center gap-2 pt-1 text-xs text-text-muted">
+              <span>{t("inspector.sourceWorkOrder")}</span>
+              <LinkedEntityBadge
+                entity="work_order"
+                code={commitment.source_code}
+                entityId={commitment.source_id}
+                title={commitment.source_title}
+              />
+            </div>
           ) : null}
         </DialogHeader>
 
@@ -113,8 +179,8 @@ export function CommitmentInspectorDialog({
                   {t("inspector.slot")}
                 </div>
                 <div className="text-text-primary">
-                  {new Date(commitment.committed_start).toLocaleString()} –{" "}
-                  {new Date(commitment.committed_end).toLocaleString()}
+                  {formatDateTime(commitment.committed_start)} –{" "}
+                  {formatDateTime(commitment.committed_end)}
                 </div>
               </div>
               <div>
@@ -148,16 +214,66 @@ export function CommitmentInspectorDialog({
                   ) : null}
                 </div>
               </div>
+              {commitment.status !== "committed" && commitment.status_reason ? (
+                <div className="sm:col-span-2">
+                  <div className="text-[10px] uppercase tracking-wide text-text-muted">
+                    {t("inspector.statusReason")}
+                  </div>
+                  <div className="text-text-primary">
+                    {commitment.status_reason}
+                    {commitment.status_changed_at
+                      ? ` (${formatDateTime(commitment.status_changed_at)})`
+                      : ""}
+                  </div>
+                </div>
+              ) : null}
               {commitment.nearest_feasible_window ? (
                 <div className="sm:col-span-2">
                   <div className="text-[10px] uppercase tracking-wide text-text-muted">
                     {t("inspector.nearestWindow")}
                   </div>
                   <div className="text-text-primary">
-                    {new Date(commitment.nearest_feasible_window).toLocaleString()}
+                    {formatDateTime(commitment.nearest_feasible_window)}
                   </div>
                 </div>
               ) : null}
+            </div>
+          ) : null}
+
+          {ending ? (
+            <div className="space-y-2 rounded-md border border-surface-border p-3">
+              <p className="text-sm text-text-secondary">{t(`lifecycle.${ending}.hint`)}</p>
+              <Label htmlFor="commitment-end-reason">{t("lifecycle.reason")}</Label>
+              <Textarea
+                id="commitment-end-reason"
+                value={endReason}
+                onChange={(e) => setEndReason(e.target.value)}
+              />
+              {endError ? (
+                <p role="alert" className="text-sm text-status-danger">
+                  {endError}
+                </p>
+              ) : null}
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={ending === "cancelled" ? "destructive" : "default"}
+                  disabled={endBusy || endReason.trim() === ""}
+                  onClick={() => void confirmEnd()}
+                >
+                  {t(`lifecycle.${ending}.confirm`)}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={endBusy}
+                  onClick={() => setEnding(null)}
+                >
+                  {t("dialogs.cancel")}
+                </Button>
+              </div>
             </div>
           ) : null}
 
@@ -189,6 +305,26 @@ export function CommitmentInspectorDialog({
               >
                 {t("breakIns.create")}
               </Button>
+            ) : null}
+            {canEnd && onEndCommitment && ending == null ? (
+              <>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setEnding("released")}
+                >
+                  {t("lifecycle.released.action")}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setEnding("cancelled")}
+                >
+                  {t("lifecycle.cancelled.action")}
+                </Button>
+              </>
             ) : null}
             {commitment && onOpenOnBoard ? (
               <Button

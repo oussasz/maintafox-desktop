@@ -8,8 +8,7 @@
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
-    use sea_orm_migration::MigratorTrait;
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
     use crate::di::domain::InterventionRequest;
     use crate::di::queries::{
@@ -19,24 +18,7 @@ mod tests {
 
     /// In-memory SQLite with all migrations applied + seeded system data.
     async fn setup() -> sea_orm::DatabaseConnection {
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("in-memory SQLite should connect");
-
-        db.execute(Statement::from_string(
-            DbBackend::Sqlite,
-            "PRAGMA foreign_keys = ON;".to_string(),
-        ))
-        .await
-        .expect("PRAGMA foreign_keys");
-
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("migrations should apply cleanly");
-
-        crate::db::seeder::seed_system_data(&db)
-            .await
-            .expect("seeder should run cleanly");
+        let db = crate::db::test_db::seeded().await;
 
         // Seed FK prerequisite data (equipment, org_nodes)
         seed_fk_data(&db).await;
@@ -123,7 +105,7 @@ mod tests {
             safety_flag: false,
             environmental_flag: false,
             quality_flag: false,
-            reported_urgency: "medium".to_string(),
+            reported_urgency: "normal".to_string(),
             observed_at: None,
             source_inspection_anomaly_id: None,
             submitter_id: user_id,
@@ -196,7 +178,7 @@ mod tests {
         assert_eq!(di.title, "Pump vibration alert");
         assert_eq!(di.origin_type, "operator");
         assert_eq!(di.impact_level, "unknown");
-        assert_eq!(di.reported_urgency, "medium");
+        assert_eq!(di.reported_urgency, "normal");
         assert!(!di.submitted_at.is_empty(), "submitted_at must be set");
         assert_eq!(di.row_version, 1);
         assert_eq!(di.submitter_id, user_id);
@@ -709,5 +691,376 @@ mod tests {
             "get_recent_similar_dis must return at most 5 rows, got {}",
             similar.len()
         );
+    }
+
+    // ─── Work queues, SLA state and the requester's answer ───────────────────
+
+    async fn set_status(db: &sea_orm::DatabaseConnection, id: i64, status: &str) {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE intervention_requests SET status = ?, row_version = row_version + 1 WHERE id = ?",
+            [status.into(), id.into()],
+        ))
+        .await
+        .expect("set status");
+    }
+
+    /// Moves the submission (and the frozen deadlines with it) `hours` into the past.
+    async fn age_request(db: &sea_orm::DatabaseConnection, id: i64, hours: i64) {
+        let shift = format!("-{hours} hours");
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE intervention_requests SET \
+                submitted_at = strftime('%Y-%m-%dT%H:%M:%SZ', submitted_at, ?), \
+                sla_response_deadline = strftime('%Y-%m-%dT%H:%M:%SZ', sla_response_deadline, ?), \
+                sla_resolution_deadline = strftime('%Y-%m-%dT%H:%M:%SZ', sla_resolution_deadline, ?) \
+             WHERE id = ?",
+            [
+                shift.clone().into(),
+                shift.clone().into(),
+                shift.clone().into(),
+                id.into(),
+            ],
+        ))
+        .await
+        .expect("age request");
+        // The history moves with the request, so its pauses keep their place on the clock.
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE di_state_transition_log SET acted_at = strftime('%Y-%m-%dT%H:%M:%SZ', acted_at, ?) \
+             WHERE di_id = ?",
+            [shift.into(), id.into()],
+        ))
+        .await
+        .expect("age history");
+    }
+
+    /// Records a status change the way the review functions do (row + transition log entry).
+    async fn move_to(db: &sea_orm::DatabaseConnection, id: i64, from: &str, to: &str) {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE intervention_requests SET status = ?, row_version = row_version + 1 WHERE id = ?",
+            [to.into(), id.into()],
+        ))
+        .await
+        .expect("move status");
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO di_state_transition_log (di_id, from_status, to_status, action, actor_id, acted_at) \
+             VALUES (?, ?, ?, 'test', NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
+            [id.into(), from.into(), to.into()],
+        ))
+        .await
+        .expect("log transition");
+    }
+
+    async fn sla_of(db: &sea_orm::DatabaseConnection, id: i64) -> crate::di::sla::DiSlaStatus {
+        let di = get_intervention_request(db, id).await.expect("get").expect("row");
+        crate::di::sla::compute_sla_status(db, &di).await.expect("sla")
+    }
+
+    #[tokio::test]
+    async fn a_request_waiting_on_its_requester_does_not_breach_and_the_wait_extends_the_deadline() {
+        let db = setup().await;
+        let user_id = get_user_id(&db).await;
+        let di = create_intervention_request(&db, make_create_input(&db, user_id, "Waiting", "d").await)
+            .await
+            .expect("create");
+        move_to(&db, di.id, "submitted", "in_review").await;
+        move_to(&db, di.id, "in_review", "returned_for_clarification").await;
+        // Submitted, sent back at once, and still waiting a year later.
+        age_request(&db, di.id, 24 * 365).await;
+
+        let waiting = get_intervention_request(&db, di.id).await.expect("get").expect("row");
+        assert_eq!(waiting.sla_state.as_deref(), Some("paused"));
+        assert!(waiting.sla_paused_hours > 24.0 * 364.0, "{}", waiting.sla_paused_hours);
+        let status = sla_of(&db, di.id).await;
+        assert!(!status.is_response_breached && !status.is_resolution_breached);
+        let ids = |q: &'static str| {
+            let db = db.clone();
+            async move {
+                list_intervention_requests(&db, queue_filter(q))
+                    .await
+                    .expect("list")
+                    .items
+                    .iter()
+                    .map(|d| d.id)
+                    .collect::<Vec<_>>()
+            }
+        };
+        assert!(ids("sla_at_risk").await.is_empty(), "a paused request is not at risk");
+
+        // The requester answers: the clock runs again, the year of waiting is not counted.
+        move_to(&db, di.id, "returned_for_clarification", "in_review").await;
+        let back = get_intervention_request(&db, di.id).await.expect("get").expect("row");
+        assert_eq!(back.sla_state.as_deref(), Some("on_track"));
+        let status = sla_of(&db, di.id).await;
+        let frozen = chrono::NaiveDateTime::parse_from_str(
+            back.sla_response_deadline.as_deref().expect("frozen"),
+            "%Y-%m-%dT%H:%M:%SZ",
+        )
+        .expect("parse");
+        let extended = chrono::NaiveDateTime::parse_from_str(
+            status.sla_deadline.as_deref().expect("deadline"),
+            "%Y-%m-%dT%H:%M:%SZ",
+        )
+        .expect("parse");
+        assert!(
+            (extended - frozen).num_hours() >= 24 * 364,
+            "the wait extends the deadline: {frozen} → {extended}"
+        );
+        assert!(status.paused_hours > 24.0 * 364.0);
+    }
+
+    #[tokio::test]
+    async fn a_deferred_request_pauses_its_clock_too() {
+        let db = setup().await;
+        let user_id = get_user_id(&db).await;
+        let di = create_intervention_request(&db, make_create_input(&db, user_id, "Deferred", "d").await)
+            .await
+            .expect("create");
+        move_to(&db, di.id, "submitted", "in_review").await;
+        move_to(&db, di.id, "in_review", "deferred").await;
+        age_request(&db, di.id, 24 * 365).await;
+
+        let deferred = get_intervention_request(&db, di.id).await.expect("get").expect("row");
+        assert_eq!(deferred.sla_state.as_deref(), Some("paused"));
+        let stats = crate::di::stats::get_di_stats(
+            &db,
+            crate::di::stats::DiStatsFilter {
+                date_from: None,
+                date_to: None,
+                entity_id: None,
+            },
+        )
+        .await
+        .expect("stats");
+        assert_eq!(stats.sla_open.paused, 1);
+        assert_eq!(stats.sla_open.breached, 0);
+        assert_eq!(stats.overdue, 0);
+
+        move_to(&db, di.id, "deferred", "in_review").await;
+        let back = get_intervention_request(&db, di.id).await.expect("get").expect("row");
+        assert_eq!(back.sla_state.as_deref(), Some("on_track"));
+    }
+
+    #[tokio::test]
+    async fn a_request_closed_before_its_deadline_meets_the_sla_even_if_never_screened() {
+        let db = setup().await;
+        let user_id = get_user_id(&db).await;
+        let di = create_intervention_request(&db, make_create_input(&db, user_id, "Duplicate", "d").await)
+            .await
+            .expect("create");
+        // Closed as a duplicate one hour after submission, without screening; that was long ago.
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE intervention_requests SET status = 'closed', disposition_code = 'duplicate', \
+                closed_at = strftime('%Y-%m-%dT%H:%M:%SZ', submitted_at, '+1 hours') WHERE id = ?",
+            [di.id.into()],
+        ))
+        .await
+        .expect("close");
+        age_request(&db, di.id, 24 * 30).await;
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE intervention_requests SET closed_at = strftime('%Y-%m-%dT%H:%M:%SZ', submitted_at, '+1 hours') \
+             WHERE id = ?",
+            [di.id.into()],
+        ))
+        .await
+        .expect("closing time");
+
+        let stats = crate::di::stats::get_di_stats(
+            &db,
+            crate::di::stats::DiStatsFilter {
+                date_from: None,
+                date_to: None,
+                entity_id: None,
+            },
+        )
+        .await
+        .expect("stats");
+        assert_eq!(stats.sla_met_count, 1, "closed within the response target");
+        assert_eq!(stats.sla_breached_count, 0);
+        assert_eq!(stats.closed_in_period, 1);
+        assert_eq!(
+            sla_of(&db, di.id).await.status,
+            Some(crate::di::sla::DiSlaLifecycleStatus::Completed)
+        );
+    }
+
+    #[tokio::test]
+    async fn my_requests_list_and_count_agree() {
+        let db = setup().await;
+        let user_id = get_user_id(&db).await;
+        let open = create_intervention_request(&db, make_create_input(&db, user_id, "Open", "d").await)
+            .await
+            .expect("open");
+        let closed = create_intervention_request(&db, make_create_input(&db, user_id, "Closed", "d").await)
+            .await
+            .expect("closed");
+        set_status(&db, closed.id, "closed").await;
+
+        let mut filter = queue_filter("mine");
+        filter.submitter_id = Some(user_id);
+        let page = list_intervention_requests(&db, filter).await.expect("mine");
+        let counts = crate::di::queries::count_di_queues(&db, user_id).await.expect("counts");
+        assert_eq!(page.items.iter().map(|d| d.id).collect::<Vec<_>>(), vec![open.id]);
+        assert_eq!(page.total, counts.mine);
+    }
+
+    fn queue_filter(queue: &str) -> DiListFilter {
+        DiListFilter {
+            queue: Some(queue.to_string()),
+            limit: 50,
+            offset: 0,
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn work_queues_list_and_count_the_same_requests() {
+        let db = setup().await;
+        let user_id = get_user_id(&db).await;
+        let mut ids = Vec::new();
+        for title in ["Queue A", "Queue B", "Queue C", "Queue D", "Queue E"] {
+            let di = create_intervention_request(&db, make_create_input(&db, user_id, title, "d").await)
+                .await
+                .expect("create");
+            ids.push(di.id);
+        }
+        // A stays submitted; B returned for information; C approved without a work order;
+        // D awaiting approval; E submitted long ago (SLA breached).
+        set_status(&db, ids[1], "returned_for_clarification").await;
+        set_status(&db, ids[2], "approved").await;
+        set_status(&db, ids[3], "awaiting_approval").await;
+        age_request(&db, ids[4], 24 * 365).await;
+
+        let listed = |q: &'static str| {
+            let db = db.clone();
+            async move {
+                list_intervention_requests(&db, queue_filter(q))
+                    .await
+                    .expect("list queue")
+                    .items
+                    .iter()
+                    .map(|d| d.id)
+                    .collect::<Vec<_>>()
+            }
+        };
+        let to_screen = listed("to_screen").await;
+        assert_eq!(to_screen.len(), 2);
+        assert!(to_screen.contains(&ids[0]) && to_screen.contains(&ids[4]));
+        assert_eq!(listed("awaiting_info").await, vec![ids[1]]);
+        assert_eq!(listed("approved_not_converted").await, vec![ids[2]]);
+        assert_eq!(listed("to_approve").await, vec![ids[3]]);
+        assert_eq!(listed("sla_at_risk").await, vec![ids[4]]);
+
+        // The SQL queue and the state computed on read agree.
+        let aged = get_intervention_request(&db, ids[4]).await.expect("get").expect("row");
+        assert_eq!(aged.sla_state.as_deref(), Some("breached"));
+        let fresh = get_intervention_request(&db, ids[0]).await.expect("get").expect("row");
+        assert_eq!(fresh.sla_state.as_deref(), Some("on_track"));
+
+        let counts = crate::di::queries::count_di_queues(&db, user_id).await.expect("counts");
+        assert_eq!(counts.to_screen, 2);
+        assert_eq!(counts.to_review, 0);
+        assert_eq!(counts.awaiting_info, 1);
+        assert_eq!(counts.to_approve, 1);
+        assert_eq!(counts.approved_not_converted, 1);
+        assert_eq!(counts.sla_at_risk, 1);
+        assert_eq!(counts.mine, 5);
+        assert_eq!(counts.mine_awaiting_info, 1);
+
+        let err = list_intervention_requests(&db, queue_filter("everything"))
+            .await
+            .expect_err("unknown queue refused");
+        assert!(matches!(err, crate::errors::AppError::ValidationFailed(_)));
+    }
+
+    #[tokio::test]
+    async fn requester_answers_and_resubmits_a_returned_request() {
+        use crate::di::review::{resubmit_returned_di, DiResubmitInput};
+
+        let db = setup().await;
+        let user_id = get_user_id(&db).await;
+        let di = create_intervention_request(&db, make_create_input(&db, user_id, "Returned", "d").await)
+            .await
+            .expect("create");
+        let input = |actor_id: i64, row_version: i64, note: &str| DiResubmitInput {
+            di_id: di.id,
+            actor_id,
+            expected_row_version: row_version,
+            response_note: note.to_string(),
+        };
+
+        // Not returned yet: refused.
+        let err = resubmit_returned_di(&db, input(user_id, di.row_version, "answer"))
+            .await
+            .expect_err("only a returned request");
+        assert!(matches!(err, crate::errors::AppError::ValidationFailed(_)));
+
+        set_status(&db, di.id, "returned_for_clarification").await;
+        let rv = di.row_version + 1;
+        // An empty answer and another user are refused.
+        assert!(resubmit_returned_di(&db, input(user_id, rv, "  ")).await.is_err());
+        assert!(resubmit_returned_di(&db, input(user_id + 9999, rv, "answer"))
+            .await
+            .is_err());
+
+        let updated = resubmit_returned_di(&db, input(user_id, rv, "Vibration at 120 Hz, photo added"))
+            .await
+            .expect("resubmit");
+        assert_eq!(updated.status, "in_review");
+
+        let log = get_di_transition_log(&db, di.id).await.expect("log");
+        let last = log.last().expect("transition");
+        assert_eq!(last.action, "re_submitted");
+        assert_eq!(last.notes.as_deref(), Some("Vibration at 120 Hz, photo added"));
+        let events = crate::di::review::get_review_events(&db, di.id).await.expect("events");
+        assert!(events
+            .iter()
+            .any(|e| e.event_type == "resubmitted" && e.to_status == "in_review"));
+    }
+
+    #[tokio::test]
+    async fn stats_measure_backlog_sla_and_conversion_from_the_requests() {
+        let db = setup().await;
+        let user_id = get_user_id(&db).await;
+        let a = create_intervention_request(&db, make_create_input(&db, user_id, "Fresh", "d").await)
+            .await
+            .expect("a");
+        let b = create_intervention_request(&db, make_create_input(&db, user_id, "Old", "d").await)
+            .await
+            .expect("b");
+        age_request(&db, b.id, 24 * 365).await;
+
+        let stats = crate::di::stats::get_di_stats(
+            &db,
+            crate::di::stats::DiStatsFilter {
+                date_from: None,
+                date_to: None,
+                entity_id: None,
+            },
+        )
+        .await
+        .expect("stats");
+
+        assert_eq!(stats.sla_open.breached, 1, "the old request is past its targets");
+        assert_eq!(stats.sla_open.on_track, 1, "the fresh request is on track");
+        assert_eq!(stats.overdue, 1);
+        assert_eq!(stats.overdue_dis.len(), 1);
+        assert_eq!(stats.overdue_dis[0].id, b.id);
+        assert!(stats.overdue_dis[0].hours_overdue > 0.0);
+        let submitted = stats
+            .backlog_by_status
+            .iter()
+            .find(|s| s.status == "submitted")
+            .expect("submitted backlog");
+        assert_eq!(submitted.count, 2);
+        assert!(submitted.max_age_days >= 365.0);
+        assert_eq!(stats.converted_count, 0);
+        assert_eq!(stats.avg_response_hours, None, "nothing screened yet");
+        let _ = a;
     }
 }

@@ -36,6 +36,9 @@ const CertificationTypeSchema = z.object({
   default_validity_months: z.number().nullable(),
   renewal_lead_days: z.number().nullable(),
   row_version: z.number(),
+  category: z.string(),
+  description: z.string().nullable(),
+  is_active: z.boolean(),
 });
 
 const PersonnelCertificationSchema = z.object({

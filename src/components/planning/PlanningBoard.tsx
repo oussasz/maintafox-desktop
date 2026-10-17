@@ -7,8 +7,11 @@ import {
   buildPlanningWindowHighlights,
   capacityByDate,
   commitmentItemId,
+  commitmentTimelineState,
   teamGroupId,
+  timelineItemTooltip,
   parseCommitmentItemId,
+  parseConflictReasons,
   parseTeamGroupId,
   PLANNING_UNASSIGNED_GROUP_ID,
   utilizationState,
@@ -147,8 +150,12 @@ export function PlanningBoard({
           title,
           start_time: start,
           end_time: end,
-          state: frozen ? "blocked" : commitment.has_blocking_conflict ? "critical" : "commitment",
+          state: commitmentTimelineState(commitment),
           canMove: canDrag && !frozen,
+          tooltip: timelineItemTooltip(
+            { title, conflictReasons: parseConflictReasons(commitment.conflict_reasons_json) },
+            t,
+          ),
         });
       }
       return next;
@@ -162,8 +169,9 @@ export function PlanningBoard({
       end_time: row.endMs,
       state: row.state,
       canMove: row.canMove,
+      tooltip: timelineItemTooltip(row, t),
     }));
-  }, [commitments, gantt, canDrag, laneMode]);
+  }, [commitments, gantt, canDrag, laneMode, t]);
 
   const highlights = useMemo<ResourceTimelineTimeRangeHighlight[]>(
     () => buildPlanningWindowHighlights(lockedWindows),
@@ -187,29 +195,67 @@ export function PlanningBoard({
     return days;
   }, [horizonStart, horizonEnd]);
 
-  const crewCapacitySummary = useMemo(() => {
-    if (laneMode !== "crew") return [];
-    const byTeam = new Map<number, { name: string; maxUtil: number }>();
+  /** Capacity rows of the strip: one per crew in All-crews mode, the selected crew otherwise. */
+  const capacityRows = useMemo(() => {
+    if (laneMode !== "crew")
+      return [{ teamId: null as number | null, name: "", byDay: capacityMap }];
+    const byTeam = new Map<number, { name: string; byDay: Map<string, TeamCapacityLoad> }>();
     for (const lane of gantt?.crew_lanes ?? []) {
-      byTeam.set(lane.team_id, { name: lane.team_name, maxUtil: 0 });
+      byTeam.set(lane.team_id, { name: lane.team_name, byDay: new Map() });
     }
     for (const row of capacityLoad) {
-      const entry = byTeam.get(row.team_id);
-      if (!entry) {
-        byTeam.set(row.team_id, {
-          name: t("board.unknownCrew"),
-          maxUtil: row.utilization_ratio,
-        });
-        continue;
-      }
-      entry.maxUtil = Math.max(entry.maxUtil, row.utilization_ratio);
+      const entry = byTeam.get(row.team_id) ?? { name: t("board.unknownCrew"), byDay: new Map() };
+      entry.byDay.set(row.work_date.slice(0, 10), row);
+      byTeam.set(row.team_id, entry);
     }
-    return [...byTeam.entries()].map(([teamId, v]) => ({
-      teamId,
-      name: v.name,
-      utilization: v.maxUtil,
-    }));
-  }, [laneMode, gantt?.crew_lanes, capacityLoad, t]);
+    return [...byTeam.entries()].map(([teamId, v]) => ({ teamId: teamId as number | null, ...v }));
+  }, [laneMode, gantt?.crew_lanes, capacityLoad, capacityMap, t]);
+
+  const renderCapacityDay = (day: string, row: TeamCapacityLoad | undefined) => {
+    if (!row) {
+      return (
+        <div
+          key={day}
+          className="shrink-0 rounded border border-surface-border px-2 py-1 text-[10px] text-text-muted"
+        >
+          {day.slice(5)}
+        </div>
+      );
+    }
+    const basisLabel =
+      row.basis && row.basis !== "roster"
+        ? t(`commitment.capacityBasis.${row.basis}`, { defaultValue: row.basis })
+        : null;
+    // No hours that day: say why; committed work on such a day is an overload.
+    const state =
+      row.utilization_ratio == null
+        ? row.committed_hours > 0
+          ? "critical"
+          : "free"
+        : utilizationState(row.utilization_ratio);
+    return (
+      <div
+        key={day}
+        className={cn(
+          "shrink-0 rounded border px-2 py-1 text-[10px]",
+          RESOURCE_TIMELINE_STATE_CLASS[state],
+        )}
+        title={
+          t("gantt.capacityLine", {
+            committed: row.committed_hours.toFixed(1),
+            available: (row.available_hours + row.overtime_hours).toFixed(1),
+          }) + (basisLabel ? ` · ${basisLabel}` : "")
+        }
+      >
+        <span className="font-medium">{day.slice(5)}</span>{" "}
+        <Badge variant="outline" className="h-4 px-1 text-[9px]">
+          {row.utilization_ratio == null
+            ? t("gantt.noCapacity")
+            : `${Math.round(row.utilization_ratio * 100)}%`}
+        </Badge>
+      </div>
+    );
+  };
 
   const emptyTitle =
     commitments.length === 0
@@ -224,67 +270,20 @@ export function PlanningBoard({
         <p className="text-[10px] font-medium uppercase tracking-wide text-text-muted">
           {laneMode === "crew" ? t("gantt.capacityTitleAllCrews") : t("gantt.capacityTitle")}
         </p>
-        {laneMode === "crew" ? (
-          <div className="flex flex-wrap gap-1.5">
-            {crewCapacitySummary.length === 0 ? (
-              <span className="text-xs text-text-muted">{t("gantt.emptyCapacity")}</span>
-            ) : (
-              crewCapacitySummary.map((row) => {
-                const state = utilizationState(row.utilization);
-                return (
-                  <div
-                    key={row.teamId}
-                    className={cn(
-                      "rounded border px-2 py-1 text-[10px]",
-                      RESOURCE_TIMELINE_STATE_CLASS[state],
-                    )}
-                  >
-                    <span className="font-medium">{row.name}</span>{" "}
-                    <Badge variant="outline" className="h-4 px-1 text-[9px]">
-                      {Math.round(row.utilization * 100)}%
-                    </Badge>
-                  </div>
-                );
-              })
-            )}
-          </div>
+        {capacityLoad.length === 0 ? (
+          <span className="text-xs text-text-muted">{t("gantt.emptyCapacity")}</span>
         ) : (
-          <div className="flex flex-wrap gap-1.5">
-            {capacityDays.slice(0, 28).map((day) => {
-              const row = capacityMap.get(day);
-              if (!row) {
-                return (
-                  <div
-                    key={day}
-                    className="rounded border border-surface-border px-2 py-1 text-[10px] text-text-muted"
-                  >
-                    {day.slice(5)}
-                  </div>
-                );
-              }
-              const state = utilizationState(row.utilization_ratio);
-              return (
-                <div
-                  key={day}
-                  className={cn(
-                    "rounded border px-2 py-1 text-[10px]",
-                    RESOURCE_TIMELINE_STATE_CLASS[state],
-                  )}
-                  title={t("gantt.capacityLine", {
-                    committed: row.committed_hours.toFixed(1),
-                    available: (row.available_hours + row.overtime_hours).toFixed(1),
-                  })}
-                >
-                  <span className="font-medium">{day.slice(5)}</span>{" "}
-                  <Badge variant="outline" className="h-4 px-1 text-[9px]">
-                    {Math.round(row.utilization_ratio * 100)}%
-                  </Badge>
-                </div>
-              );
-            })}
-            {capacityLoad.length === 0 && (
-              <span className="text-xs text-text-muted">{t("gantt.emptyCapacity")}</span>
-            )}
+          <div className="space-y-1 overflow-x-auto pb-1">
+            {capacityRows.map((row) => (
+              <div key={row.teamId ?? "selected"} className="flex items-center gap-1.5">
+                {laneMode === "crew" ? (
+                  <span className="w-28 shrink-0 truncate text-[10px] font-medium text-text-secondary">
+                    {row.name}
+                  </span>
+                ) : null}
+                {capacityDays.map((day) => renderCapacityDay(day, row.byDay.get(day)))}
+              </div>
+            ))}
           </div>
         )}
       </div>

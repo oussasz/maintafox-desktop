@@ -293,6 +293,8 @@ async fn materialize_pass(
     // One transaction per pass (one disk commit for up to `limit` rows instead of one per row);
     // each row still runs in its own savepoint, so a row that fails leaves nothing behind.
     let pass = db.begin().await?;
+    // Rows that can change a settled OT's cost (finance late costs, swept after the commit).
+    let mut late_cost_rows: Vec<(String, String)> = Vec::new();
     // Rows waiting for a parent are retried in the same run as long as other rows were applied,
     // so a child that arrived before its parent in the same run does not wait for the next one.
     let mut queue = items;
@@ -304,6 +306,9 @@ async fn materialize_pass(
                 ApplyOutcome::Applied => {
                     result.applied += 1;
                     progressed = true;
+                    if crate::finance::settlement::LATE_COST_SYNC_TYPES.contains(&item.entity_type.as_str()) {
+                        late_cost_rows.push((item.entity_type.clone(), item.entity_sync_id.clone()));
+                    }
                 }
                 ApplyOutcome::Unchanged => {
                     result.skipped += 1;
@@ -333,6 +338,11 @@ async fn materialize_pass(
         queue = waiting_for_parent;
     }
     pass.commit().await?;
+
+    // After the commit, with capture active: late-cost deltas are local writes, pushed like any other.
+    if !late_cost_rows.is_empty() {
+        crate::finance::settlement::post_late_costs_after_sync(db, &late_cost_rows).await;
+    }
 
     Ok(result)
 }

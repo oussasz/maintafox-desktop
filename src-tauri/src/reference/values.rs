@@ -250,8 +250,163 @@ pub fn code_from_label(label: &str) -> AppResult<String> {
 fn allows_cross_domain_parent(child_domain_code: &str, parent_domain_code: &str) -> bool {
     matches!(
         (child_domain_code, parent_domain_code),
-        ("EQUIPMENT.FAMILY", "EQUIPMENT.CLASS") | ("EQUIPMENT.SUBFAMILY", "EQUIPMENT.FAMILY")
+        ("EQUIPMENT.FAMILY", "EQUIPMENT.CLASS")
+            | ("EQUIPMENT.SUBFAMILY", "EQUIPMENT.FAMILY")
+            | ("WORK.ORDER_SUBTYPES", "WORK.MAINTENANCE_NATURES")
     )
+}
+
+/// Domain code of the value `value_id`, `None` when the value does not exist.
+pub(crate) async fn domain_code_of_value(db: &impl ConnectionTrait, value_id: i64) -> AppResult<Option<String>> {
+    db.query_one(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "SELECT d.code AS domain_code FROM reference_values rv \
+           JOIN reference_sets rs ON rs.id = rv.set_id \
+           JOIN reference_domains d ON d.id = rs.domain_id WHERE rv.id = ?",
+        [value_id.into()],
+    ))
+    .await?
+    .map(|r| r.try_get::<String>("", "domain_code"))
+    .transpose()
+    .map_err(|e| decode_err("domain_code", e))
+}
+
+/// Whether `parent_id` is a value of a domain the domain `child_domain_code` may hang under
+/// (cross-domain parent: family → class, OT sub-type → maintenance nature…). Such a parent
+/// stays the same when a draft is cloned or validated: it lives in another domain's set.
+pub(crate) async fn is_allowed_cross_domain_parent(
+    db: &impl ConnectionTrait,
+    child_domain_code: &str,
+    parent_id: i64,
+) -> AppResult<bool> {
+    Ok(domain_code_of_value(db, parent_id).await?.is_some_and(|parent| {
+        allows_cross_domain_parent(&child_domain_code.to_ascii_uppercase(), &parent.to_ascii_uppercase())
+    }))
+}
+
+/// Id of the active value `code` in the published set of `domain` (a cross-domain parent named by
+/// code, as CSV import rows do).
+pub(crate) async fn published_value_id_by_code(
+    db: &impl ConnectionTrait,
+    domain: &str,
+    code: &str,
+) -> AppResult<Option<i64>> {
+    db.query_one(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "SELECT rv.id FROM reference_values rv \
+           JOIN reference_sets rs ON rs.id = rv.set_id AND rs.status = 'published' \
+           JOIN reference_domains d ON d.id = rs.domain_id \
+          WHERE UPPER(TRIM(d.code)) = ? AND UPPER(TRIM(rv.code)) = UPPER(TRIM(?)) AND rv.is_active = 1 \
+          ORDER BY rs.version_no DESC LIMIT 1",
+        [domain.to_ascii_uppercase().into(), code.into()],
+    ))
+    .await?
+    .map(|r| r.try_get::<i64>("", "id"))
+    .transpose()
+    .map_err(|e| decode_err("id", e))
+}
+
+/// Domains whose `semantic_tag` names the EN 13306 nature of the OT their value leads to (the
+/// DI → OT conversion reads it, `wo::types::nature_for_request_type`). Empty = no nature: the
+/// request becomes corrective work.
+pub(crate) fn is_nature_tagged_domain(domain_code: &str) -> bool {
+    domain_code.trim().eq_ignore_ascii_case("DI.REQUEST_TYPE")
+}
+
+/// Stable gate code of a nature tag that is not one of the maintenance natures.
+pub const GATE_REF_NATURE_TAG_INVALID: &str = "GATE_REF_NATURE_TAG_INVALID";
+
+/// Normalises and checks the nature tag of a value of a nature-tagged domain: empty means no
+/// nature; otherwise the tag must be the code of an active value of `WORK.MAINTENANCE_NATURES`.
+/// Other domains keep their free semantic tag.
+pub(crate) async fn checked_semantic_tag(
+    db: &impl ConnectionTrait,
+    domain_code: &str,
+    tag: Option<&str>,
+) -> AppResult<Option<String>> {
+    if crate::reference::units::is_units_domain(domain_code) {
+        // The tag of a unit is its physical dimension (`reference::units`).
+        return crate::reference::units::checked_dimension_tag(db, tag).await;
+    }
+    let tag = tag.map(str::trim).filter(|t| !t.is_empty());
+    if !is_nature_tagged_domain(domain_code) {
+        return Ok(tag.map(str::to_string));
+    }
+    let Some(tag) = tag else {
+        return Ok(None);
+    };
+    let known = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS ok FROM reference_values rv \
+               JOIN reference_sets rs ON rs.id = rv.set_id AND rs.status = 'published' \
+               JOIN reference_domains d ON d.id = rs.domain_id \
+              WHERE UPPER(TRIM(d.code)) = 'WORK.MAINTENANCE_NATURES' AND rv.code = ? AND rv.is_active = 1",
+            [tag.into()],
+        ))
+        .await?
+        .is_some();
+    if !known {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "{GATE_REF_NATURE_TAG_INVALID}: '{tag}' n'est pas une nature de maintenance (EN 13306)."
+        )]));
+    }
+    Ok(Some(tag.to_string()))
+}
+
+/// Domains whose every value must hang under a value of another domain: a plant's OT sub-type
+/// belongs to exactly one protected EN 13306 maintenance nature (`wo::types`).
+pub(crate) fn required_parent_domain(child_domain_code: &str) -> Option<&'static str> {
+    match child_domain_code.trim().to_ascii_uppercase().as_str() {
+        "WORK.ORDER_SUBTYPES" => Some("WORK.MAINTENANCE_NATURES"),
+        _ => None,
+    }
+}
+
+/// Refuses a value of a domain with a required parent domain whose parent is missing or lives
+/// in another domain.
+async fn assert_required_parent(db: &DatabaseConnection, set_id: i64, parent_id: Option<i64>) -> AppResult<()> {
+    let child = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT d.code AS domain_code FROM reference_sets rs \
+               JOIN reference_domains d ON d.id = rs.domain_id WHERE rs.id = ?",
+            [set_id.into()],
+        ))
+        .await?;
+    let Some(child) = child else {
+        return Ok(());
+    };
+    let child_domain: String = child
+        .try_get("", "domain_code")
+        .map_err(|e| decode_err("child.domain_code", e))?;
+    let Some(required) = required_parent_domain(&child_domain) else {
+        return Ok(());
+    };
+    let refusal = || {
+        AppError::ValidationFailed(vec![format!(
+            "GATE_REF_PARENT_REQUIRED: chaque valeur de '{child_domain}' doit être rattachée à une valeur de '{required}'."
+        )])
+    };
+    let Some(pid) = parent_id else {
+        return Err(refusal());
+    };
+    let parent_domain: Option<String> = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT d.code AS domain_code FROM reference_values rv \
+               JOIN reference_sets rs ON rs.id = rv.set_id \
+               JOIN reference_domains d ON d.id = rs.domain_id WHERE rv.id = ?",
+            [pid.into()],
+        ))
+        .await?
+        .map(|r| r.try_get::<String>("", "domain_code"))
+        .transpose()
+        .map_err(|e| decode_err("parent.domain_code", e))?;
+    if parent_domain.as_deref().map(|d| d.eq_ignore_ascii_case(required)) != Some(true) {
+        return Err(refusal());
+    }
+    Ok(())
 }
 
 /// Validates that a parent_id exists and is valid for the target set/domain.
@@ -377,7 +532,9 @@ pub async fn create_value(
     // Verify set exists and mutation is allowed by governance policy.
     let set = sets::get_reference_set(db, payload.set_id).await?;
     let domain = domains::get_reference_domain(db, set.domain_id).await?;
+    crate::reference::audience::assert_domain_editable(&domain)?;
     crate::reference::governance::assert_allows_value_mutation(&domain, &set)?;
+    crate::reference::governance::assert_not_claiming_system_origin(payload.metadata_json.as_deref())?;
 
     let code = normalize_code(&payload.code);
     validate_code(&code)?;
@@ -387,6 +544,32 @@ pub async fn create_value(
     if let Some(pid) = payload.parent_id {
         validate_parent(db, payload.set_id, pid).await?;
     }
+    assert_required_parent(db, payload.set_id, payload.parent_id).await?;
+    let mut semantic_tag = checked_semantic_tag(db, &domain.code, payload.semantic_tag.as_deref()).await?;
+    if crate::reference::units::is_units_domain(&domain.code) {
+        // A plant unit names its base standard unit (same dimension) and the factor to it; its
+        // dimension is the base unit's.
+        semantic_tag = Some(
+            crate::reference::units::checked_plant_unit(
+                db,
+                payload.set_id,
+                &code,
+                payload.parent_id,
+                semantic_tag.as_deref(),
+                payload.metadata_json.as_deref(),
+            )
+            .await?,
+        );
+    }
+    // A currency is an ISO 4217 code with its minor units (`reference::currencies`).
+    let metadata_json = if crate::reference::currencies::is_currency_domain(&domain.code) {
+        Some(crate::reference::currencies::checked_currency_metadata(
+            &code,
+            payload.metadata_json.as_deref(),
+        )?)
+    } else {
+        payload.metadata_json.clone()
+    };
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -403,9 +586,9 @@ pub async fn create_value(
             payload.sort_order.into(),
             payload.color_hex.into(),
             payload.icon_name.into(),
-            payload.semantic_tag.into(),
+            semantic_tag.into(),
             payload.external_code.into(),
-            payload.metadata_json.into(),
+            metadata_json.into(),
         ],
     ))
     .await
@@ -467,6 +650,7 @@ pub async fn create_operational_value(
 
     let domain_id: i64 = domain_row.try_get("", "id").map_err(|e| decode_err("domain.id", e))?;
     let domain = domains::get_reference_domain(db, domain_id).await?;
+    crate::reference::audience::assert_domain_editable(&domain)?;
     crate::reference::governance::assert_allows_operational_create(&domain)?;
 
     let published = db
@@ -498,6 +682,7 @@ pub async fn create_operational_value(
     if let Some(pid) = payload.parent_id {
         validate_parent(db, set_id, pid).await?;
     }
+    assert_required_parent(db, set_id, payload.parent_id).await?;
 
     // The value row and its sync outbox entry commit together.
     let txn = db.begin().await?;
@@ -567,10 +752,43 @@ pub async fn update_value(
     let existing = get_value_by_id(db, value_id).await?;
     let set = sets::get_reference_set(db, existing.set_id).await?;
     let domain = domains::get_reference_domain(db, set.domain_id).await?;
+    crate::reference::audience::assert_domain_editable(&domain)?;
     crate::reference::governance::assert_allows_value_mutation(&domain, &set)?;
+    crate::reference::governance::assert_system_value_mutable(&domain, existing.metadata_json.as_deref())?;
+    if let Some(Some(ref mj)) = payload.metadata_json {
+        crate::reference::governance::assert_not_claiming_system_origin(Some(mj))?;
+    }
 
     let mut sets_clause: Vec<String> = Vec::new();
     let mut values: Vec<sea_orm::Value> = Vec::new();
+
+    // A plant unit keeps a valid base and factor after every edit; editing a migrated unit to
+    // review makes them required and clears its review flag (`reference::units`).
+    let unit_edit = if crate::reference::units::is_units_domain(&domain.code) {
+        let tag = match &payload.semantic_tag {
+            Some(t) => t.clone(),
+            None => existing.semantic_tag.clone(),
+        };
+        let metadata = match &payload.metadata_json {
+            Some(m) => m.clone(),
+            None => existing.metadata_json.clone(),
+        };
+        let dimension = crate::reference::units::checked_plant_unit(
+            db,
+            existing.set_id,
+            &existing.code,
+            existing.parent_id,
+            tag.as_deref(),
+            metadata.as_deref(),
+        )
+        .await?;
+        Some((
+            dimension,
+            crate::reference::units::reviewed_metadata(metadata.as_deref()),
+        ))
+    } else {
+        None
+    };
 
     if let Some(ref label) = payload.label {
         validate_label(label)?;
@@ -593,17 +811,29 @@ pub async fn update_value(
         sets_clause.push("icon_name = ?".into());
         values.push(icon.clone().into());
     }
-    if let Some(ref st) = payload.semantic_tag {
+    if let Some((dimension, metadata)) = unit_edit {
         sets_clause.push("semantic_tag = ?".into());
-        values.push(st.clone().into());
+        values.push(dimension.into());
+        sets_clause.push("metadata_json = ?".into());
+        values.push(metadata.into());
+    } else if let Some(ref st) = payload.semantic_tag {
+        let tag = checked_semantic_tag(db, &domain.code, st.as_deref()).await?;
+        sets_clause.push("semantic_tag = ?".into());
+        values.push(tag.into());
     }
     if let Some(ref ec) = payload.external_code {
         sets_clause.push("external_code = ?".into());
         values.push(ec.clone().into());
     }
     if let Some(ref mj) = payload.metadata_json {
-        sets_clause.push("metadata_json = ?".into());
-        values.push(mj.clone().into());
+        if crate::reference::currencies::is_currency_domain(&domain.code) {
+            let checked = crate::reference::currencies::checked_currency_metadata(&existing.code, mj.as_deref())?;
+            sets_clause.push("metadata_json = ?".into());
+            values.push(checked.into());
+        } else if !crate::reference::units::is_units_domain(&domain.code) {
+            sets_clause.push("metadata_json = ?".into());
+            values.push(mj.clone().into());
+        }
     }
 
     if sets_clause.is_empty() {
@@ -633,12 +863,18 @@ pub async fn deactivate_value(db: &DatabaseConnection, value_id: i64, _actor_id:
     let existing = get_value_by_id(db, value_id).await?;
     let set = sets::get_reference_set(db, existing.set_id).await?;
     let domain = domains::get_reference_domain(db, set.domain_id).await?;
+    crate::reference::audience::assert_domain_editable(&domain)?;
     crate::reference::governance::assert_allows_value_mutation(&domain, &set)?;
+    crate::reference::governance::assert_system_value_mutable(&domain, existing.metadata_json.as_deref())?;
 
     if !existing.is_active {
         return Err(AppError::ValidationFailed(vec![
             "Cette valeur est déjà désactivée.".into()
         ]));
+    }
+    if crate::reference::currencies::is_currency_domain(&domain.code) {
+        // A currency still in use (company currency, stock costs, valuation, settlements) stays.
+        crate::reference::currencies::ensure_currency_not_in_use(db, &existing.code).await?;
     }
 
     db.execute(Statement::from_sql_and_values(
@@ -658,7 +894,9 @@ pub async fn reactivate_value(db: &DatabaseConnection, value_id: i64, _actor_id:
     let existing = get_value_by_id(db, value_id).await?;
     let set = sets::get_reference_set(db, existing.set_id).await?;
     let domain = domains::get_reference_domain(db, set.domain_id).await?;
+    crate::reference::audience::assert_domain_editable(&domain)?;
     crate::reference::governance::assert_allows_value_mutation(&domain, &set)?;
+    crate::reference::governance::assert_system_value_mutable(&domain, existing.metadata_json.as_deref())?;
 
     if existing.is_active {
         return Err(AppError::ValidationFailed(vec!["Cette valeur est déjà active.".into()]));
@@ -686,7 +924,9 @@ pub async fn move_value_parent(
     let existing = get_value_by_id(db, value_id).await?;
     let set = sets::get_reference_set(db, existing.set_id).await?;
     let domain = domains::get_reference_domain(db, set.domain_id).await?;
+    crate::reference::audience::assert_domain_editable(&domain)?;
     crate::reference::governance::assert_allows_value_mutation(&domain, &set)?;
+    crate::reference::governance::assert_system_value_mutable(&domain, existing.metadata_json.as_deref())?;
 
     if let Some(pid) = new_parent_id {
         // Cannot parent to self
@@ -697,6 +937,18 @@ pub async fn move_value_parent(
         }
         validate_parent(db, existing.set_id, pid).await?;
         detect_cycle(db, value_id, pid).await?;
+    }
+    assert_required_parent(db, existing.set_id, new_parent_id).await?;
+    if crate::reference::units::is_units_domain(&domain.code) {
+        // The parent of a plant unit is its base standard unit.
+        crate::reference::units::checked_base_move(
+            db,
+            existing.set_id,
+            &existing.code,
+            existing.semantic_tag.as_deref(),
+            new_parent_id,
+        )
+        .await?;
     }
 
     db.execute(Statement::from_sql_and_values(

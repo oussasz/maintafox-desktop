@@ -10,6 +10,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { urgencyBorderClass } from "@/components/common/urgency/use-urgency-scale";
 import { diStatusToI18nKey } from "@/components/di/status-meta";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -25,15 +26,6 @@ interface DiCalendarViewProps {
   onChipClick: (di: InterventionRequest) => void;
   onChipContextMenu?: (e: React.MouseEvent, di: InterventionRequest) => void;
 }
-
-// ── Urgency colors ────────────────────────────────────────────────────────────
-
-const URGENCY_COLOR: Record<string, string> = {
-  low: "border-l-green-400",
-  medium: "border-l-yellow-400",
-  high: "border-l-orange-400",
-  critical: "border-l-red-500",
-};
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -206,7 +198,7 @@ export function DiCalendarView({ items, onChipClick, onChipContextMenu }: DiCale
                       <button
                         key={di.id}
                         type="button"
-                        className={`w-full text-left text-[9px] rounded px-1 py-0.5 truncate border-l-2 bg-surface-1 hover:bg-surface-2 cursor-pointer ${URGENCY_COLOR[di.reported_urgency] ?? "border-l-gray-300"}`}
+                        className={`w-full text-left text-[9px] rounded px-1 py-0.5 truncate border-l-2 bg-surface-1 hover:bg-surface-2 cursor-pointer ${urgencyBorderClass(di.validated_urgency ?? di.reported_urgency)}`}
                         onClick={() => onChipClick(di)}
                         onContextMenu={(e) => {
                           e.preventDefault();
@@ -247,7 +239,7 @@ export function DiCalendarView({ items, onChipClick, onChipContextMenu }: DiCale
                       <button
                         key={di.id}
                         type="button"
-                        className={`w-full text-left text-[10px] rounded px-1.5 py-1 border-l-2 bg-surface-1 hover:bg-surface-2 cursor-pointer ${URGENCY_COLOR[di.reported_urgency] ?? "border-l-gray-300"}`}
+                        className={`w-full text-left text-[10px] rounded px-1.5 py-1 border-l-2 bg-surface-1 hover:bg-surface-2 cursor-pointer ${urgencyBorderClass(di.validated_urgency ?? di.reported_urgency)}`}
                         onClick={() => onChipClick(di)}
                         onContextMenu={(e) => {
                           e.preventDefault();
@@ -280,7 +272,7 @@ export function DiCalendarView({ items, onChipClick, onChipContextMenu }: DiCale
                   <button
                     key={di.id}
                     type="button"
-                    className={`w-full text-left rounded-lg border border-surface-border p-3 border-l-4 hover:bg-surface-1 transition-colors cursor-pointer ${URGENCY_COLOR[di.reported_urgency] ?? "border-l-gray-300"}`}
+                    className={`w-full text-left rounded-lg border border-surface-border p-3 border-l-4 hover:bg-surface-1 transition-colors cursor-pointer ${urgencyBorderClass(di.validated_urgency ?? di.reported_urgency)}`}
                     onClick={() => onChipClick(di)}
                     onContextMenu={(e) => {
                       e.preventDefault();

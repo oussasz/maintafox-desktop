@@ -29,7 +29,9 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
+import { LinkedEntityBadge, roundTitle } from "@/components/common/LinkedEntityBadge";
+import { UrgencyBadge } from "@/components/common/urgency/UrgencyBadge";
+import { WoCostPanel } from "@/components/finance/WoCostPanel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -48,22 +50,24 @@ import { WoCancelDialog } from "@/components/wo/WoCancelDialog";
 import { WoCloseOutPanel } from "@/components/wo/WoCloseOutPanel";
 import { WoCompletionDialog } from "@/components/wo/WoCompletionDialog";
 import { completionGatesProgress } from "@/components/wo/WoCompletionGatesChecklist";
-import { WoCostSummaryCard } from "@/components/wo/WoCostSummaryCard";
 import {
   WoExecutionControls,
   type WoExecutionControlsHandle,
 } from "@/components/wo/WoExecutionControls";
 import { WoPlanningPanel } from "@/components/wo/WoPlanningPanel";
 import { printWoFiche } from "@/components/wo/WoPrintFiche";
+import { useWoTypeLabels } from "@/components/wo/use-wo-type-labels";
+import { formatWoShift } from "@/components/wo/wo-shift-label";
 import { usePermissions } from "@/hooks/use-permissions";
 import { needsPlanningApproval, useWoLifecycleActions } from "@/hooks/use-wo-lifecycle-actions";
+import { describeAppError } from "@/lib/app-error";
+import { formatAssetLabel } from "@/lib/display";
 import { evaluateWoCompletionGates } from "@/services/wo-service";
 import { pushAppToast } from "@/store/app-toast-store";
 import { useWoStore } from "@/stores/wo-store";
-import { toErrorMessage } from "@/utils/errors";
 import { formatDate } from "@/utils/format-date";
 import { isWoLifecycleState } from "@/utils/wo-lifecycle";
-import { statusToI18nKey, STATUS_STYLE, URGENCY_STYLE } from "@/utils/wo-status";
+import { STATUS_STYLE, statusToI18nKey } from "@/utils/wo-status";
 import type { WoCompletionGate, WoStatus, WorkOrder } from "@shared/ipc-types";
 import { P, type PermissionName } from "@shared/rbac/permissions.generated";
 
@@ -88,6 +92,7 @@ interface WoDetailDialogProps {
 
 export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailDialogProps) {
   const { t, i18n } = useTranslation("ot");
+  const { typeLabel, natureLabel } = useWoTypeLabels();
   const { can } = usePermissions();
 
   const saving = useWoStore((s) => s.saving);
@@ -138,7 +143,7 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
     if (!wo) return;
     setPrintError(null);
     printWoFiche(wo, t, i18n.resolvedLanguage || i18n.language || "fr").catch((err: unknown) =>
-      setPrintError(toErrorMessage(err)),
+      setPrintError(describeAppError(err).title),
     );
   }, [wo, t, i18n.resolvedLanguage, i18n.language]);
 
@@ -228,7 +233,7 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
               <div className="flex items-center gap-1.5 shrink-0 pt-0.5">
                 <Badge
                   variant="outline"
-                  className={`text-xs border-0 ${STATUS_STYLE[wo.status_code ?? ""] ?? "bg-gray-100"}`}
+                  className={`text-xs border-0 ${STATUS_STYLE[wo.status_code ?? ""] ?? "bg-tone-neutral-bg"}`}
                 >
                   {t(`status.${statusKey}` as const)}
                 </Badge>
@@ -242,14 +247,7 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
                     {t(`lifecycle.${wo.lifecycle_state}`)}
                   </Badge>
                 ) : null}
-                {wo.urgency_id != null && (
-                  <Badge
-                    variant="outline"
-                    className={`text-xs border-0 ${URGENCY_STYLE[String(wo.urgency_id)] ?? ""}`}
-                  >
-                    {wo.urgency_label ?? t("form.urgency.label")}
-                  </Badge>
-                )}
+                <UrgencyBadge code={wo.urgency_code} size="md" />
               </div>
             </div>
           </DialogHeader>
@@ -272,15 +270,47 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
             )}
 
             {lifecycle.error && (
-              <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              <div className="rounded-md border border-tone-danger-border bg-tone-danger-bg px-3 py-2 text-sm text-tone-danger-fg">
                 {lifecycle.error}
               </div>
             )}
 
+            {wo.description?.trim() ? (
+              <section aria-labelledby="wo-detail-description" className="space-y-1">
+                <h3 id="wo-detail-description" className="text-xs font-semibold text-text-muted">
+                  {t("form.description.label")}
+                </h3>
+                <p className="whitespace-pre-wrap break-words text-sm text-text-primary">
+                  {wo.description}
+                </p>
+              </section>
+            ) : null}
+
             <Card>
               <CardContent className="p-3 grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2 text-xs">
-                <InfoRow label={t("detail.fields.type")} value={wo.type_label ?? "—"} />
-                <InfoRow label={t("detail.fields.equipment")} value={wo.asset_label ?? "—"} />
+                <InfoRow
+                  label={t("detail.fields.type")}
+                  value={typeLabel(wo.type_code, wo.type_label) || "—"}
+                />
+                {wo.subtype_label ? (
+                  <InfoRow label={t("detail.fields.subtype")} value={wo.subtype_label} />
+                ) : null}
+                <InfoRow
+                  label={t("detail.fields.nature")}
+                  value={natureLabel(wo.type_code) ?? wo.nature_label ?? "—"}
+                />
+                <InfoRow
+                  label={t("detail.fields.equipment")}
+                  value={formatAssetLabel(wo.asset_code, wo.asset_label)}
+                />
+                <InfoRow
+                  label={t("permitRequirement.short")}
+                  value={
+                    wo.requires_permit
+                      ? t("permitRequirement.required")
+                      : t("permitRequirement.notRequired")
+                  }
+                />
                 <InfoRow
                   label={t("detail.fields.assignedTo")}
                   value={wo.responsible_display_name ?? wo.responsible_username ?? "—"}
@@ -297,10 +327,7 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
                   label={t("detail.fields.plannedEnd")}
                   value={wo.planned_end ? formatDate(wo.planned_end, i18n.language) : "—"}
                 />
-                <InfoRow
-                  label={t("detail.fields.shift")}
-                  value={wo.shift ? t(`shift.${wo.shift}`) : "—"}
-                />
+                <InfoRow label={t("detail.fields.shift")} value={formatWoShift(wo, t) ?? "—"} />
                 <InfoRow
                   label={t("detail.fields.estimatedHours")}
                   value={
@@ -320,6 +347,36 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
                     }
                   />
                 )}
+                {wo.source_inspection_round_id != null && (
+                  <InfoRow
+                    label={t("detail.fields.sourceInspectionRound")}
+                    value={
+                      <LinkedEntityBadge
+                        entity="inspection_round"
+                        code={wo.source_inspection_round_code}
+                        entityId={wo.source_inspection_round_id}
+                        title={roundTitle(
+                          wo.source_inspection_round_title,
+                          wo.source_inspection_round_scheduled_at,
+                          i18n.language,
+                        )}
+                      />
+                    }
+                  />
+                )}
+                {wo.source_pm_plan_id != null && (
+                  <InfoRow
+                    label={t("detail.fields.sourcePmPlan")}
+                    value={
+                      <LinkedEntityBadge
+                        entity="pm_plan"
+                        code={wo.source_pm_plan_code}
+                        entityId={wo.source_pm_plan_id}
+                        title={wo.source_pm_plan_title}
+                      />
+                    }
+                  />
+                )}
                 {wo.source_ram_ishikawa_diagram_id != null && wo.source_rca_cause_text && (
                   <InfoRow
                     label={t("detail.fields.sourceRca")}
@@ -333,7 +390,7 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
               </CardContent>
             </Card>
 
-            <WoCostSummaryCard woId={wo.id} status={wo.status_code ?? "draft"} />
+            <WoCostPanel woId={wo.id} status={wo.status_code ?? "draft"} />
 
             <Tabs value={activeTab} onValueChange={setActiveTab}>
               <TabsList className="w-full justify-start">
@@ -400,7 +457,7 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
 
           <Separator />
           {lifecycle.readinessBlocking.length > 0 && (wo.status_code ?? "") === "planning" && (
-            <div className="mx-6 mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            <div className="mx-6 mt-3 rounded-md border border-tone-warning-border bg-tone-warning-bg px-3 py-2 text-sm text-tone-warning-fg">
               <p className="mb-1 font-medium">{t("planning.readinessBlocking")}</p>
               <ul className="list-disc list-inside space-y-0.5">
                 {lifecycle.readinessBlocking.map((msg, i) => (
@@ -462,7 +519,7 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
             <DialogDescription>{t("planning.readinessBlockingHint")}</DialogDescription>
           </DialogHeader>
           {readinessDialogBlocking.length > 0 ? (
-            <ul className="list-disc list-inside space-y-1 text-sm text-amber-900">
+            <ul className="list-disc list-inside space-y-1 text-sm text-tone-warning-fg">
               {readinessDialogBlocking.map((msg, i) => (
                 <li key={i}>{msg}</li>
               ))}
@@ -550,12 +607,7 @@ function FooterActions({
               {t("planning.approvePlanning")}
             </Button>
           )}
-          <Button
-            size="sm"
-            onClick={onMarkReady}
-            disabled={busy}
-            className="gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white"
-          >
+          <Button size="sm" onClick={onMarkReady} disabled={busy} className="gap-1.5">
             <CheckCircle2 className="h-3.5 w-3.5" />
             {t("planning.markReady")}
           </Button>
@@ -574,12 +626,7 @@ function FooterActions({
             <RotateCcw className="h-3.5 w-3.5" />
             {t("planning.returnToPlanning")}
           </Button>
-          <Button
-            size="sm"
-            onClick={onStart}
-            disabled={busy}
-            className="gap-1.5 bg-green-600 hover:bg-green-700 text-white"
-          >
+          <Button size="sm" onClick={onStart} disabled={busy} className="gap-1.5">
             <Play className="h-3.5 w-3.5" />
             {t("action.start")}
           </Button>
@@ -592,12 +639,7 @@ function FooterActions({
             <Pause className="h-3.5 w-3.5" />
             {t("action.hold")}
           </Button>
-          <Button
-            size="sm"
-            onClick={onComplete}
-            disabled={busy}
-            className="gap-1.5 bg-amber-600 hover:bg-amber-700 text-white"
-          >
+          <Button size="sm" onClick={onComplete} disabled={busy} className="gap-1.5">
             <CheckCircle2 className="h-3.5 w-3.5" />
             {t("action.complete")}
           </Button>
@@ -605,12 +647,7 @@ function FooterActions({
       )}
 
       {s === "on_hold" && can(P.OT_EDIT) && (
-        <Button
-          size="sm"
-          onClick={onResume}
-          disabled={busy}
-          className="gap-1.5 bg-blue-600 hover:bg-blue-700 text-white"
-        >
+        <Button size="sm" onClick={onResume} disabled={busy} className="gap-1.5">
           <Play className="h-3.5 w-3.5" />
           {t("footer.resume")}
         </Button>

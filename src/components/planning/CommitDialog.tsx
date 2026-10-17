@@ -1,35 +1,44 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Link } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
+import {
+  AssigneeCapacityDetails,
+  assigneeOptionSuffix,
+} from "@/components/planning/AssigneeCapacityDetails";
+import { ConflictReasonList } from "@/components/planning/ConflictReasonList";
+import { FrozenWeekBreakInDialog } from "@/components/planning/FrozenWeekBreakInDialog";
 import { OverrideReasonDialog } from "@/components/planning/OverrideReasonDialog";
 import {
+  PLANNING_PROPOSED_ITEM_ID,
+  PLANNING_TIMELINE_MAX_ZOOM_MS,
+  PLANNING_UNASSIGNED_GROUP_ID,
+  type PlanningBoardScope,
   buildPlanningTimelineItems,
   buildPlanningTimelineLanes,
   buildPlanningWindowHighlights,
   candidateDisplayCode,
   candidateDisplayTitle,
-  clampEndToRemainingCapacity,
-  teamGroupId,
+  checkSlotCapacity,
+  commitmentTimelineState,
   deriveCommitSlotLocals,
-  exceedsTeamDayCapacity,
   fromDateTimeLocal,
   hoursBetweenLocals,
-  isCapacityGateErrorMessage,
-  isDoubleBookingErrorMessage,
+  isCapacityGateError,
+  overridableCodes,
+  isAssigneeOverridableError,
   msToLocalIsoDate,
   parseLaborCostRange,
   parseMs,
-  parseSuggestedAssignees,
-  PLANNING_PROPOSED_ITEM_ID,
-  PLANNING_TIMELINE_MAX_ZOOM_MS,
-  PLANNING_UNASSIGNED_GROUP_ID,
   previewLaborCost,
-  resolveTeamDayCapacity,
   sanitizeBudgetThresholdInput,
-  workDateFromCommittedIso,
-  type PlanningBoardScope,
+  slotCapacityRows,
+  slotShiftHours,
+  teamGroupId,
+  timelineItemTooltip,
 } from "@/components/planning/planning-model";
+import { useAssigneeCapacity } from "@/components/planning/use-assignee-capacity";
 import {
   ResourceTimeline,
   type ResourceTimelineGroup,
@@ -55,9 +64,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useFormatters } from "@/hooks/use-formatters";
+import { appErrorText } from "@/lib/app-error";
 import { formatOrDash, formatPersonLabel } from "@/lib/display";
-import { listTeamMembers, getActiveRateCard } from "@/services/personnel-service";
-import { toErrorMessage } from "@/utils/errors";
+import { getActiveRateCard, listTeamMembers } from "@/services/personnel-service";
+import { extractIpcValidationDetails } from "@/utils/errors";
 import type {
   CandidateConflictSummary,
   CreateScheduleCommitmentInput,
@@ -89,6 +99,8 @@ type CommitDialogProps = {
   visibleEnd: number;
   saving: boolean;
   onSubmit: (input: CreateScheduleCommitmentInput) => Promise<void>;
+  /** Who may approve a break-in (frozen week); same list as the break-in dialog. */
+  approvers: { id: number; label: string }[];
 };
 
 export function CommitDialog({
@@ -108,6 +120,7 @@ export function CommitDialog({
   visibleEnd,
   saving,
   onSubmit,
+  approvers,
 }: CommitDialogProps) {
   const { t } = useTranslation("planning");
   const { formatCurrency } = useFormatters();
@@ -126,6 +139,12 @@ export function CommitDialog({
   const [overrideOpen, setOverrideOpen] = useState(false);
   const [pendingOverrideInput, setPendingOverrideInput] =
     useState<CreateScheduleCommitmentInput | null>(null);
+  /** The assignee refusals the pending override would cover (shown before confirming). */
+  const [pendingOverrideCodes, setPendingOverrideCodes] = useState<string[]>([]);
+  /** A commit refused because its week is frozen, waiting for its break-in reason. */
+  const [pendingFrozenInput, setPendingFrozenInput] =
+    useState<CreateScheduleCommitmentInput | null>(null);
+  const [frozenWeekStart, setFrozenWeekStart] = useState<string | null>(null);
 
   const requireTargetCrew = boardScope.kind === "all";
   const effectiveTeamId = requireTargetCrew ? targetCrewId : teamId;
@@ -172,7 +191,7 @@ export function CommitDialog({
       } catch (err) {
         if (cancelled) return;
         setRoster([]);
-        setRosterError(toErrorMessage(err));
+        setRosterError(appErrorText(err));
       } finally {
         if (!cancelled) setRosterLoading(false);
       }
@@ -207,40 +226,32 @@ export function CommitDialog({
     };
   }, [open, personnelId]);
 
-  const suggestions = useMemo(
-    () => parseSuggestedAssignees(candidate?.suggested_assignees_json),
-    [candidate?.suggested_assignees_json],
-  );
-
   const rosterIds = useMemo(() => new Set(roster.map((m) => m.personnel_id)), [roster]);
 
-  const assigneeOptions = useMemo(() => {
-    const byId = new Map(
-      roster.map((m) => [
-        m.personnel_id,
-        {
+  /** Each crew member over the chosen slot: shift and hours left per day, refusals. */
+  const assigneeCapacity = useAssigneeCapacity({
+    enabled: open,
+    teamId: effectiveTeamId,
+    startIso: start.trim() ? fromDateTimeLocal(start) : "",
+    endIso: end.trim() ? fromDateTimeLocal(end) : "",
+    candidateId: candidate?.id ?? null,
+  });
+
+  const assigneeOptions = useMemo(
+    () =>
+      roster.map((m) => {
+        const name = m.employee_code
+          ? `${formatPersonLabel(m.full_name)} (${m.employee_code})`
+          : formatPersonLabel(m.full_name);
+        const cap = assigneeCapacity.get(m.personnel_id);
+        return {
           id: m.personnel_id,
-          label: m.employee_code
-            ? `${formatPersonLabel(m.full_name)} (${m.employee_code})`
-            : formatPersonLabel(m.full_name),
-        },
-      ]),
-    );
-    const ranked: Array<{ id: number; label: string }> = [];
-    for (const suggestion of suggestions) {
-      const existing = byId.get(suggestion.personnel_id);
-      if (!existing) continue;
-      ranked.push({
-        id: suggestion.personnel_id,
-        label: `${existing.label} · ${t("commitment.matchingSkills", {
-          count: suggestion.matching_skills,
-        })}`,
-      });
-      byId.delete(suggestion.personnel_id);
-    }
-    for (const rest of byId.values()) ranked.push(rest);
-    return ranked;
-  }, [roster, suggestions, t]);
+          label: cap ? `${name} — ${assigneeOptionSuffix(cap, t)}` : name,
+        };
+      }),
+    [roster, assigneeCapacity, t],
+  );
+  const selectedCapacity = personnelId != null ? assigneeCapacity.get(personnelId) : undefined;
 
   // Drop assignee if no longer on crew (e.g. crew changed while dialog open).
   useEffect(() => {
@@ -256,61 +267,60 @@ export function CommitDialog({
   const code = candidate ? candidateDisplayCode(candidate) : "";
   const title = candidate ? candidateDisplayTitle(candidate) : "";
   const blockers = conflictSummary?.blocker_codes ?? [];
+  const reasons = conflictSummary?.reasons ?? [];
 
   const durationHours = useMemo(() => hoursBetweenLocals(start, end), [start, end]);
 
-  const dayCapacity = useMemo(() => {
-    if (effectiveTeamId == null || !start.trim()) return null;
-    const startIso = fromDateTimeLocal(start);
-    const workDate = workDateFromCommittedIso(startIso);
-    if (!workDate) return null;
-    return {
-      workDate,
-      ...resolveTeamDayCapacity(gantt?.capacity, effectiveTeamId, workDate),
-    };
-  }, [effectiveTeamId, start, gantt?.capacity]);
+  /** Labour hours the work books: duration × crew size (as the backend gate). None without both. */
+  const labourHours = useMemo(() => {
+    const h = candidate?.estimated_duration_hours;
+    const crew = candidate?.planned_crew_size;
+    return h != null && Number.isFinite(h) && h > 0 && crew != null && crew >= 1 ? h * crew : null;
+  }, [candidate?.estimated_duration_hours, candidate?.planned_crew_size]);
+  const notEstimated = candidate != null && labourHours == null;
 
-  const capacityBlocked = useMemo(() => {
-    if (effectiveTeamId == null || !start.trim() || !end.trim()) return false;
-    return exceedsTeamDayCapacity(
-      gantt?.capacity,
-      effectiveTeamId,
-      fromDateTimeLocal(start),
-      fromDateTimeLocal(end),
+  /** Every day of the slot: its share of the labour against the team's remaining hours. */
+  const slotCapacity = useMemo(() => {
+    if (effectiveTeamId == null || !start.trim() || !end.trim() || labourHours == null) return null;
+    return checkSlotCapacity({
+      capacity: gantt?.capacity,
+      teamId: effectiveTeamId,
+      startIso: fromDateTimeLocal(start),
+      endIso: fromDateTimeLocal(end),
+      labourHours,
+    });
+  }, [effectiveTeamId, start, end, labourHours, gantt?.capacity]);
+
+  const capacityBlocked = slotCapacity?.overloaded != null;
+
+  /**
+   * Each person works the whole duration: warn (not block) when the slot holds less shift time
+   * than that. Unknown when a day's shift windows are not known.
+   */
+  const shiftTimeShort = useMemo(() => {
+    const duration = candidate?.estimated_duration_hours;
+    if (effectiveTeamId == null || !start.trim() || !end.trim() || duration == null) return null;
+    const startIso = fromDateTimeLocal(start);
+    const endIso = fromDateTimeLocal(end);
+    const shiftHours = slotShiftHours(
+      startIso,
+      endIso,
+      slotCapacityRows(gantt?.capacity, effectiveTeamId, startIso, endIso),
     );
-  }, [effectiveTeamId, start, end, gantt?.capacity]);
+    return shiftHours != null && duration > shiftHours + 0.01 ? { duration, shiftHours } : null;
+  }, [candidate?.estimated_duration_hours, effectiveTeamId, start, end, gantt?.capacity]);
 
   const isLocalDateAtCapacity = useMemo(() => {
     if (effectiveTeamId == null) return () => false;
     const team = effectiveTeamId;
     const rows = gantt?.capacity;
+    // Only days known to be full from the load data (a working day with nothing left).
     return (localDate: string) => {
-      const noonIso = fromDateTimeLocal(`${localDate}T12:00`);
-      const workDate = workDateFromCommittedIso(noonIso);
-      if (!workDate) return false;
-      // Only disable days we know are full from load data (committed > 0 and remaining 0).
-      const row = (rows ?? []).find((c) => c.team_id === team && c.work_date === workDate);
-      if (!row) return false;
-      return resolveTeamDayCapacity(rows, team, workDate).remainingHours <= 0;
+      const row = (rows ?? []).find((c) => c.team_id === team && c.work_date === localDate);
+      if (!row || row.available_hours + row.overtime_hours <= 0) return false;
+      return row.available_hours + row.overtime_hours - row.committed_hours <= 0;
     };
   }, [effectiveTeamId, gantt?.capacity]);
-
-  // Keep end inside remaining daily capacity whenever start / crew / capacity change.
-  useEffect(() => {
-    if (!open || effectiveTeamId == null || !start.trim() || !end.trim()) return;
-    const startIso = fromDateTimeLocal(start);
-    const endIso = fromDateTimeLocal(end);
-    const clampedLocal = clampEndToRemainingCapacity({
-      startIso,
-      endIso,
-      teamId: effectiveTeamId,
-      capacity: gantt?.capacity,
-      ...(horizonEnd ? { hardMaxEndMs: horizonEnd } : {}),
-    });
-    if (clampedLocal && clampedLocal !== end) {
-      setEnd(clampedLocal);
-    }
-  }, [open, effectiveTeamId, start, end, gantt?.capacity, horizonEnd]);
 
   const slotOutsideHorizon = useMemo(() => {
     if (!start.trim() && !end.trim()) return false;
@@ -324,10 +334,10 @@ export function CommitDialog({
   }, [start, end, horizonStart, horizonEnd]);
 
   const estimateDisplay = useMemo(() => {
-    if (durationHours != null && personnelId != null && laborRate != null) {
+    if (labourHours != null && personnelId != null && laborRate != null) {
       return {
         kind: "computed" as const,
-        value: previewLaborCost(durationHours, laborRate),
+        value: previewLaborCost(labourHours, laborRate),
       };
     }
     if (personnelId != null && rateLoading) {
@@ -339,7 +349,7 @@ export function CommitDialog({
       }
       return { kind: "noRate" as const };
     }
-    if (personnelId != null && laborRate != null && durationHours == null) {
+    if (personnelId != null && laborRate != null && labourHours == null) {
       return { kind: "needSlot" as const };
     }
     if (costRange) {
@@ -349,7 +359,7 @@ export function CommitDialog({
       return { kind: "needAssignee" as const };
     }
     return { kind: "loading" as const };
-  }, [durationHours, personnelId, laborRate, costRange, rateLoading]);
+  }, [labourHours, personnelId, laborRate, costRange, rateLoading]);
 
   const assigneeDisabled = effectiveTeamId == null || rosterLoading || Boolean(rosterError);
   const assigneeHelper = (() => {
@@ -415,7 +425,6 @@ export function CommitDialog({
         const startMs = parseMs(commitment.committed_start);
         const endMs = parseMs(commitment.committed_end);
         if (!startMs || !endMs || endMs <= startMs) continue;
-        const frozen = Boolean(commitment.frozen_at);
         const title =
           commitment.source_code?.trim() ||
           commitment.source_title?.trim() ||
@@ -426,7 +435,7 @@ export function CommitDialog({
           title,
           start_time: startMs,
           end_time: endMs,
-          state: frozen ? "blocked" : commitment.has_blocking_conflict ? "critical" : "commitment",
+          state: commitmentTimelineState(commitment),
           canMove: false,
         });
       }
@@ -443,6 +452,7 @@ export function CommitDialog({
         end_time: row.endMs,
         state: row.state,
         canMove: false,
+        tooltip: timelineItemTooltip(row, t),
       }));
     }
 
@@ -518,15 +528,23 @@ export function CommitDialog({
       setFieldError(t("commitment.errors.assigneeNotOnCrew"));
       return null;
     }
-    if (exceedsTeamDayCapacity(gantt?.capacity, effectiveTeamId, committedStart, committedEnd)) {
-      const workDate = workDateFromCommittedIso(committedStart);
-      const remaining =
-        workDate != null
-          ? resolveTeamDayCapacity(gantt?.capacity, effectiveTeamId, workDate).remainingHours
-          : 0;
+    if (labourHours == null) {
+      setFieldError(t("commitment.notEstimated"));
+      return null;
+    }
+    const check = checkSlotCapacity({
+      capacity: gantt?.capacity,
+      teamId: effectiveTeamId,
+      startIso: committedStart,
+      endIso: committedEnd,
+      labourHours,
+    });
+    if (check.overloaded) {
       setFieldError(
-        t("commitment.errors.capacityExceeded", {
-          remaining: remaining.toFixed(1),
+        t("commitment.errors.capacityExceededDay", {
+          day: check.overloaded.day,
+          share: check.overloaded.shareHours.toFixed(1),
+          remaining: check.overloaded.remainingHours.toFixed(1),
         }),
       );
       return null;
@@ -561,23 +579,31 @@ export function CommitDialog({
       await onSubmit(input);
       onOpenChange(false);
     } catch (err) {
-      const message = toErrorMessage(err);
-      if (isCapacityGateErrorMessage(message)) {
-        const workDate = workDateFromCommittedIso(input.committed_start);
-        const remaining =
-          workDate != null && effectiveTeamId != null
-            ? resolveTeamDayCapacity(gantt?.capacity, effectiveTeamId, workDate).remainingHours
-            : 0;
+      const message = appErrorText(err);
+      const details = extractIpcValidationDetails(err);
+      const codes = details.map((d) => d.code);
+      if (isCapacityGateError(codes)) {
+        const overloaded = slotCapacity?.overloaded;
         setFormError(
-          t("commitment.errors.capacityExceeded", {
-            remaining: remaining.toFixed(1),
-          }),
+          overloaded
+            ? t("commitment.errors.capacityExceededDay", {
+                day: overloaded.day,
+                share: overloaded.shareHours.toFixed(1),
+                remaining: overloaded.remainingHours.toFixed(1),
+              })
+            : message,
         );
       } else {
         setFormError(message);
       }
-      if (isDoubleBookingErrorMessage(message)) {
+      const frozen = details.find((d) => d.code === "PLANNING_WEEK_FROZEN");
+      if (frozen && !input.frozen_week_break_in) {
+        setFrozenWeekStart(frozen.params?.["week_start"] ?? null);
+        setPendingFrozenInput(input);
+      }
+      if (isAssigneeOverridableError(codes)) {
         setPendingOverrideInput(input);
+        setPendingOverrideCodes(overridableCodes(codes));
       }
     }
   }
@@ -637,13 +663,14 @@ export function CommitDialog({
 
               {blockers.length > 0 ? (
                 <div className="flex flex-wrap gap-1">
-                  {blockers.slice(0, 8).map((codeKey) => (
+                  {[...new Set(blockers)].slice(0, 8).map((codeKey) => (
                     <Badge key={codeKey} variant="destructive" className="text-[10px] font-normal">
                       {t(`blockers.${codeKey}`, { defaultValue: codeKey })}
                     </Badge>
                   ))}
                 </div>
               ) : null}
+              <ConflictReasonList reasons={reasons} />
 
               <div className="flex flex-col gap-3">
                 <DateTimeLocalField
@@ -673,25 +700,73 @@ export function CommitDialog({
                   }}
                 />
                 <p className="text-[11px] text-text-muted">{t("commitment.horizonHint")}</p>
-                {dayCapacity ? (
+                {notEstimated ? (
+                  <p className="text-[11px] text-tone-attention-fg" role="alert">
+                    {t("commitment.notEstimated")}
+                  </p>
+                ) : labourHours != null ? (
                   <p className="text-[11px] text-text-muted">
-                    {t("commitment.capacityRemaining", {
-                      remaining: dayCapacity.remainingHours.toFixed(1),
-                      available: (dayCapacity.availableHours + dayCapacity.overtimeHours).toFixed(
-                        1,
-                      ),
+                    {t("commitment.labourHours", {
+                      hours: labourHours.toFixed(1),
+                      duration: candidate?.estimated_duration_hours?.toFixed(1),
+                      crew: candidate?.planned_crew_size,
                     })}
                   </p>
                 ) : null}
-                {capacityBlocked ? (
-                  <p className="text-[11px] text-amber-700 dark:text-amber-400">
-                    {t("commitment.capacityBlockedHint", {
-                      remaining: (dayCapacity?.remainingHours ?? 0).toFixed(1),
+                {slotCapacity && slotCapacity.days.length > 0 ? (
+                  <ul className="space-y-0.5 text-[11px] text-text-muted">
+                    {slotCapacity.days.map((d) => (
+                      <li
+                        key={d.day}
+                        className={
+                          slotCapacity.overloaded?.day === d.day
+                            ? "text-tone-attention-fg"
+                            : undefined
+                        }
+                      >
+                        {t("commitment.capacityByDay", {
+                          day: d.day,
+                          share: d.shareHours.toFixed(1),
+                          remaining: d.remainingHours.toFixed(1),
+                          available: (d.availableHours + d.overtimeHours).toFixed(1),
+                        })}
+                        {d.basis && d.basis !== "roster"
+                          ? ` · ${t(`commitment.capacityBasis.${d.basis}`, { defaultValue: d.basis })}`
+                          : null}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                {slotCapacity?.noSchedule ? (
+                  <p className="text-[11px] text-tone-attention-fg" role="alert">
+                    {t("commitment.noTeamCapacity")}{" "}
+                    <Link
+                      to={`/personnel?tab=teams&team=${effectiveTeamId ?? ""}`}
+                      className="underline"
+                    >
+                      {t("commitment.setUpTeamCapacity")}
+                    </Link>
+                  </p>
+                ) : null}
+                {shiftTimeShort ? (
+                  <p className="text-[11px] text-tone-attention-fg" role="status">
+                    {t("commitment.shiftTimeShort", {
+                      duration: shiftTimeShort.duration.toFixed(1),
+                      shift: shiftTimeShort.shiftHours.toFixed(1),
+                    })}
+                  </p>
+                ) : null}
+                {capacityBlocked && slotCapacity?.overloaded ? (
+                  <p className="text-[11px] text-tone-attention-fg" role="alert">
+                    {t("commitment.errors.capacityExceededDay", {
+                      day: slotCapacity.overloaded.day,
+                      share: slotCapacity.overloaded.shareHours.toFixed(1),
+                      remaining: slotCapacity.overloaded.remainingHours.toFixed(1),
                     })}
                   </p>
                 ) : null}
                 {slotOutsideHorizon ? (
-                  <p className="text-[11px] text-amber-700 dark:text-amber-400">
+                  <p className="text-[11px] text-text-warning">
                     {t("commitment.horizonPrefillWarning")}
                   </p>
                 ) : null}
@@ -750,6 +825,11 @@ export function CommitDialog({
                     ))}
                   </SelectContent>
                 </Select>
+                <AssigneeCapacityDetails
+                  capacity={selectedCapacity}
+                  crewSize={candidate?.planned_crew_size ?? null}
+                  assigned={personnelId != null}
+                />
                 {assigneeHelper ? (
                   <p className={cnHelper(rosterError != null)}>{assigneeHelper}</p>
                 ) : (
@@ -877,6 +957,7 @@ export function CommitDialog({
                   effectiveTeamId == null ||
                   saving ||
                   rosterLoading ||
+                  notEstimated ||
                   capacityBlocked ||
                   slotOutsideHorizon
                 }
@@ -889,9 +970,24 @@ export function CommitDialog({
         </DialogContent>
       </Dialog>
 
+      <FrozenWeekBreakInDialog
+        open={pendingFrozenInput != null}
+        onOpenChange={(next) => {
+          if (!next) setPendingFrozenInput(null);
+        }}
+        weekStart={frozenWeekStart}
+        approvers={approvers}
+        onConfirm={(breakIn) => {
+          const pending = pendingFrozenInput;
+          if (!pending) return;
+          setPendingFrozenInput(null);
+          void submit({ ...pending, frozen_week_break_in: breakIn });
+        }}
+      />
       <OverrideReasonDialog
         open={overrideOpen}
         onOpenChange={setOverrideOpen}
+        issues={pendingOverrideCodes}
         onConfirm={(reason) => {
           const pending = pendingOverrideInput;
           if (!pending) return;
@@ -900,9 +996,17 @@ export function CommitDialog({
             ...pending,
             allow_double_booking_override: true,
             override_reason: reason,
+            // Only the refusals shown in the dialog are overridden.
+            acknowledged_assignee_issues: pendingOverrideCodes,
           });
         }}
-      />
+      >
+        <AssigneeCapacityDetails
+          capacity={selectedCapacity}
+          crewSize={candidate?.planned_crew_size ?? null}
+          assigned={personnelId != null}
+        />
+      </OverrideReasonDialog>
     </>
   );
 }

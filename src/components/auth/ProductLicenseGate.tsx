@@ -1,3 +1,4 @@
+import { ClipboardPaste, KeyRound, Loader2, Monitor } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -7,12 +8,12 @@ import { ActivationStatusCard } from "@/components/auth/activation/ActivationSta
 import { ActivationStepper } from "@/components/auth/activation/ActivationStepper";
 import { ActivationTechnicalDetails } from "@/components/auth/activation/ActivationTechnicalDetails";
 import { OrganizationLicenseCard } from "@/components/auth/activation/OrganizationLicenseCard";
+import { AuthField } from "@/components/auth/shell/AuthField";
+import { AuthAlert, AuthButton, AuthStatusChip } from "@/components/auth/shell/AuthPrimitives";
+import { AuthShell } from "@/components/auth/shell/AuthShell";
 import { MaintafoxWordmark } from "@/components/branding/MaintafoxWordmark";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { ProductLicenseGateContext } from "@/contexts/product-license-gate-context";
-import { mfAlert, mfAuth } from "@/design-system/tokens";
+import { mfAuth } from "@/design-system/tokens";
 import { cn } from "@/lib/utils";
 import { getAppInfo } from "@/services/app.service";
 import { getEntitlementSummary, notifyEntitlementsUpdated } from "@/services/entitlement-service";
@@ -609,268 +610,276 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
       : []),
   ];
 
+  /** Fills the key field from the clipboard. Silently does nothing when access is denied. */
+  const pasteKeyFromClipboard = async () => {
+    try {
+      const text = (await navigator.clipboard.readText()).trim();
+      if (text) {
+        setKey(text);
+        setPendingPreview(null);
+      }
+    } catch {
+      // Clipboard permission denied or unavailable: the user can still type or Ctrl+V.
+    }
+  };
+
   const errorBlock =
     error != null ? (
-      <div className={cn(mfAlert.danger, "space-y-2")} role="alert">
-        <p className="font-medium">{error.title}</p>
-        <p>{error.message}</p>
-        <p className="text-xs opacity-90">
-          {t("activation.diag.referenceCode")}:{" "}
-          <span className="font-mono">{error.referenceCode}</span>
+      <AuthAlert
+        tone={error.referenceCode === "network_unreachable" ? "warning" : "danger"}
+        title={t(`activation.errors.${error.referenceCode}.title`, { defaultValue: error.title })}
+      >
+        <p>
+          {t(`activation.errors.${error.referenceCode}.message`, {
+            defaultValue: error.message,
+          })}
         </p>
-        <Button
+        <p className="text-xs text-text-secondary">
+          {t("activation.diag.referenceCode")}:{" "}
+          <span className="font-mono text-text-primary">{error.referenceCode}</span>
+        </p>
+        <button
           type="button"
-          variant="ghost"
-          className="h-auto px-0 text-xs underline"
+          aria-expanded={showErrorDetails}
+          className={cn("text-xs", mfAuth.linkPrimary)}
           onClick={() => setShowErrorDetails((v) => !v)}
         >
           {showErrorDetails
             ? t("activation.hideTechnicalDetails")
             : t("activation.showTechnicalDetails")}
-        </Button>
+        </button>
         {showErrorDetails ? (
-          <pre className="max-h-32 overflow-auto whitespace-pre-wrap font-mono text-xs opacity-90">
+          <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap rounded-md bg-surface-0/70 p-2 font-mono text-xs text-text-secondary">
             {error.technicalDetails}
           </pre>
         ) : null}
-      </div>
+      </AuthAlert>
     ) : null;
 
+  const technicalDetails = (
+    <ActivationTechnicalDetails
+      summaryLabel={t("activation.technicalDetails")}
+      rows={techRows}
+      copyLabel={t("activation.copyDetails")}
+      copiedLabel={t("activation.copied")}
+    />
+  );
+
+  const goToLogin = () => {
+    setPreferLoginView(true);
+    navigate("/login", { replace: true });
+  };
+
+  const stepNumber = stepId === "activate" ? 2 : 1;
+
   const activationOrOutlet = loading ? (
-    <div className={cn(mfAuth.shell, "flex-col gap-6")}>
-      <MaintafoxWordmark size="md" align="center" />
-      <p className="text-sm text-text-secondary">{t("activation.loading")}</p>
-      <div className="h-8 w-8 animate-spin rounded-full border-2 border-surface-3 border-t-primary" />
+    <div className={mfAuth.shell}>
+      <MaintafoxWordmark size="md" tone="auth" align="center" />
+      <div
+        role="status"
+        className="mt-6 flex items-center gap-2 text-sm text-text-secondary"
+        aria-live="polite"
+      >
+        <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+        {t("activation.loading")}
+      </div>
     </div>
   ) : allowLoginEscape || (complete && !denied && !needsMarkRetry) ? (
     children
   ) : !complete || denied || needsMarkRetry ? (
-    <div className={mfAuth.shell}>
-      <div className={cn(mfAuth.cardCompact, "max-h-[90vh] max-w-lg overflow-y-auto")}>
-        <div className={cn(mfAuth.cardBrandSeparator, "mb-5 pb-5")}>
-          <MaintafoxWordmark size="md" align="center" />
+    <AuthShell width="md">
+      {!denied ? (
+        <div className="mb-6">
+          <ActivationStepper
+            current={stepId}
+            progressLabel={t("activation.stepOf", { current: stepNumber, total: 3 })}
+            labels={{
+              validate: t("activation.steps.validate"),
+              activate: t("activation.steps.activate"),
+              finish: t("activation.steps.finish"),
+            }}
+          />
         </div>
+      ) : null}
 
-        {!denied ? (
-          <div className="mb-5">
-            <ActivationStepper
-              current={stepId}
+      <h1 className={mfAuth.title}>{denied ? denyView?.title : t("activation.title")}</h1>
+      <p className={mfAuth.subtitle}>
+        {denied
+          ? (state?.deny_message ?? denyView?.body)
+          : pendingPreview
+            ? t("activation.verifiedTitle")
+            : t("activation.subtitle")}
+      </p>
+      <div className="mt-3">
+        <AuthStatusChip tone={isOnline ? "ok" : "warn"}>
+          {isOnline ? t("activation.online") : t("activation.offline")}
+        </AuthStatusChip>
+      </div>
+
+      {!denied ? (
+        pendingPreview || needsMarkRetry ? (
+          <div className="mt-6 space-y-4">
+            <ActivationStatusCard
+              items={[
+                { id: "verified", label: t("activation.status.licenseVerified"), done: true },
+                { id: "connected", label: t("activation.status.connected"), done: true },
+              ]}
+              waitingLabel={t("activation.status.waiting")}
+            />
+
+            <p className="text-sm text-text-secondary">
+              {t("activation.verifiedBody")}{" "}
+              <span className="font-semibold text-text-primary">{companyName}</span>
+            </p>
+
+            <OrganizationLicenseCard
+              fields={{
+                companyName,
+                tenantSlug: pendingPreview?.tenant_slug ?? null,
+                licensePlan:
+                  pendingPreview?.edition ??
+                  pendingPreview?.license_plan ??
+                  pendingPreview?.license_tier ??
+                  null,
+                licenseStatus: pendingPreview?.license_status ?? "active",
+                channel: pendingPreview?.update_channel ?? null,
+                expiresAt: pendingPreview?.expires_at ?? null,
+                allowedDevices: pendingPreview?.device_limit ?? null,
+                activatedDevices: pendingPreview?.activated_device_count ?? null,
+                deviceName: deviceName.trim() || defaultDeviceName(),
+              }}
               labels={{
-                validate: t("activation.steps.validate"),
-                activate: t("activation.steps.activate"),
-                finish: t("activation.steps.finish"),
+                companyBelongsTo: t("activation.companyBelongsTo"),
+                slug: t("activation.fields.slug"),
+                plan: t("activation.fields.plan"),
+                status: t("activation.fields.status"),
+                channel: t("activation.fields.channel"),
+                expiration: t("activation.fields.expiration"),
+                allowedDevices: t("activation.fields.allowedDevices"),
+                activatedDevices: t("activation.fields.activatedDevices"),
+                deviceName: t("activation.fields.deviceName"),
+                notSpecified: t("activation.fields.notSpecified"),
               }}
             />
-          </div>
-        ) : null}
 
-        <h1 className="text-lg font-semibold text-text-primary">
-          {denied ? denyView?.title : t("activation.title")}
-        </h1>
-        <p className="mt-2 text-sm text-text-secondary">
-          {denied
-            ? (state?.deny_message ?? denyView?.body)
-            : pendingPreview
-              ? t("activation.verifiedTitle")
-              : t("activation.subtitle")}
-        </p>
+            <AuthField
+              id="activation-device-name"
+              label={t("activation.deviceNameLabel")}
+              icon={<Monitor />}
+              value={deviceName}
+              onChange={(e) => setDeviceName(e.target.value)}
+              placeholder={t("activation.deviceNamePlaceholder")}
+              disabled={submitting}
+              hint={t("activation.slotNote")}
+            />
 
-        {!denied ? (
-          pendingPreview || needsMarkRetry ? (
-            <div className="mt-6 space-y-4">
-              <ActivationStatusCard
-                items={[
-                  { id: "verified", label: t("activation.status.licenseVerified"), done: true },
-                  { id: "connected", label: t("activation.status.connected"), done: true },
-                ]}
-                waitingLabel={t("activation.status.waiting")}
-              />
+            {errorBlock}
 
-              <p className="text-sm text-text-secondary">
-                {t("activation.verifiedBody")}{" "}
-                <span className="font-semibold text-text-primary">{companyName}</span>
-              </p>
-              <p className="text-xs text-text-muted">{t("activation.slotNote")}</p>
-
-              <OrganizationLicenseCard
-                fields={{
-                  companyName,
-                  tenantSlug: pendingPreview?.tenant_slug ?? null,
-                  licensePlan:
-                    pendingPreview?.edition ??
-                    pendingPreview?.license_plan ??
-                    pendingPreview?.license_tier ??
-                    null,
-                  licenseStatus: pendingPreview?.license_status ?? "active",
-                  channel: pendingPreview?.update_channel ?? null,
-                  expiresAt: pendingPreview?.expires_at ?? null,
-                  allowedDevices: pendingPreview?.device_limit ?? null,
-                  activatedDevices: pendingPreview?.activated_device_count ?? null,
-                  deviceName: deviceName.trim() || defaultDeviceName(),
-                }}
-                labels={{
-                  companyBelongsTo: t("activation.companyBelongsTo"),
-                  slug: t("activation.fields.slug"),
-                  plan: t("activation.fields.plan"),
-                  status: t("activation.fields.status"),
-                  channel: t("activation.fields.channel"),
-                  expiration: t("activation.fields.expiration"),
-                  allowedDevices: t("activation.fields.allowedDevices"),
-                  activatedDevices: t("activation.fields.activatedDevices"),
-                  deviceName: t("activation.fields.deviceName"),
-                  notSpecified: t("activation.fields.notSpecified"),
-                }}
-              />
-
-              <div className="space-y-2">
-                <Label htmlFor="activation-device-name">{t("activation.deviceNameLabel")}</Label>
-                <Input
-                  id="activation-device-name"
-                  value={deviceName}
-                  onChange={(e) => setDeviceName(e.target.value)}
-                  placeholder={t("activation.deviceNamePlaceholder")}
-                  disabled={submitting}
-                />
-              </div>
-
-              {errorBlock}
-
+            <div className="flex flex-col gap-2.5">
               {pendingMarkToken ? (
-                <Button
-                  type="button"
-                  className="w-full"
+                <AuthButton
                   disabled={submitting}
+                  loading={submitting}
                   onClick={() => void onRetryMarkInitialized()}
                 >
                   {submitting ? t("activation.activating") : t("activation.retryFinalize")}
-                </Button>
+                </AuthButton>
               ) : null}
-
-              <div className="flex flex-col gap-2">
-                <Button
-                  type="button"
-                  className="w-full"
-                  disabled={submitting || pendingMarkToken != null}
-                  onClick={() => void onActivateDevice()}
-                >
-                  {submitting && !pendingMarkToken
-                    ? t("activation.activating")
-                    : t("activation.activateCta")}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="w-full"
-                  disabled={submitting}
-                  onClick={() => {
-                    setPendingPreview(null);
-                    setPendingMarkToken(null);
-                    setError(null);
-                    setShowErrorDetails(false);
-                  }}
-                >
-                  {t("activation.changeKey")}
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className="w-full"
-                  disabled={submitting}
-                  onClick={() => {
-                    setPreferLoginView(true);
-                    navigate("/login", { replace: true });
-                  }}
-                >
-                  {t("activation.backToLogin")}
-                </Button>
-              </div>
-
-              <ActivationTechnicalDetails
-                summaryLabel={t("activation.technicalDetails")}
-                rows={techRows}
-              />
-            </div>
-          ) : (
-            <form className="mt-6 space-y-4" onSubmit={onValidateKey}>
-              <div className="space-y-2">
-                <Label htmlFor="product-license-key">{t("activation.keyLabel")}</Label>
-                <Input
-                  id="product-license-key"
-                  autoComplete="off"
-                  value={key}
-                  onChange={(e) => {
-                    setKey(e.target.value);
-                    setPendingPreview(null);
-                  }}
-                  placeholder={t("activation.keyPlaceholder")}
-                  className="font-mono text-sm"
-                />
-              </div>
-              {errorBlock}
-              {warning ? <p className={cn(mfAlert.warning)}>{warning}</p> : null}
-              {state?.status === "degraded_api_unavailable" ? (
-                <p className={cn(mfAlert.warning)}>
-                  {state.degraded_reason ?? t("activation.status.waiting")}
-                </p>
-              ) : null}
-              <Button
-                type="submit"
-                className="w-full"
-                disabled={submitting || key.trim().length < 8}
+              <AuthButton
+                variant={pendingMarkToken ? "secondary" : "primary"}
+                disabled={submitting || pendingMarkToken != null}
+                loading={submitting && !pendingMarkToken}
+                onClick={() => void onActivateDevice()}
               >
-                {submitting ? t("activation.validating") : t("activation.validate")}
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                className="w-full"
+                {submitting && !pendingMarkToken
+                  ? t("activation.activating")
+                  : t("activation.activateCta")}
+              </AuthButton>
+              <AuthButton
+                variant="secondary"
                 disabled={submitting}
                 onClick={() => {
-                  setPreferLoginView(true);
-                  navigate("/login", { replace: true });
+                  setPendingPreview(null);
+                  setPendingMarkToken(null);
+                  setError(null);
+                  setShowErrorDetails(false);
                 }}
               >
+                {t("activation.changeKey")}
+              </AuthButton>
+              <AuthButton variant="ghost" disabled={submitting} onClick={goToLogin}>
                 {t("activation.backToLogin")}
-              </Button>
-              <ActivationTechnicalDetails
-                summaryLabel={t("activation.technicalDetails")}
-                rows={techRows}
-              />
-            </form>
-          )
-        ) : (
-          <div className="mt-6 space-y-3">
-            {errorBlock}
-            <Button
-              type="button"
-              className="w-full"
-              variant="outline"
-              onClick={() => void attemptReconciliation("manual")}
-              disabled={!isOnline || reconciling}
-            >
-              {reconciling
-                ? t("activation.denied.revalidating")
-                : t("activation.denied.revalidate")}
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              className="w-full"
-              onClick={() => {
-                setPreferLoginView(true);
-                navigate("/login", { replace: true });
-              }}
-            >
-              {t("activation.backToLogin")}
-            </Button>
-            <ActivationTechnicalDetails
-              summaryLabel={t("activation.technicalDetails")}
-              rows={techRows}
-            />
+              </AuthButton>
+            </div>
+
+            {technicalDetails}
           </div>
-        )}
-      </div>
-    </div>
+        ) : (
+          <form className="mt-6 space-y-4" onSubmit={onValidateKey}>
+            <AuthField
+              id="product-license-key"
+              label={t("activation.keyLabel")}
+              icon={<KeyRound />}
+              autoComplete="off"
+              spellCheck={false}
+              value={key}
+              onChange={(e) => {
+                setKey(e.target.value);
+                setPendingPreview(null);
+              }}
+              placeholder={t("activation.keyPlaceholder")}
+              hint={t("activation.keyHint")}
+              inputClassName="pr-[5.5rem] font-mono text-sm tracking-wide"
+              trailing={
+                <button
+                  type="button"
+                  onClick={() => void pasteKeyFromClipboard()}
+                  aria-label={t("activation.pasteKeyLabel")}
+                  className="inline-flex h-9 items-center gap-1.5 rounded-md px-2.5 text-[13px] font-medium text-[var(--mfa-blue)] transition-colors hover:bg-[var(--mfa-blue-tint)]"
+                >
+                  <ClipboardPaste className="h-4 w-4" aria-hidden />
+                  {t("activation.pasteKey")}
+                </button>
+              }
+            />
+            {errorBlock}
+            {warning ? <AuthAlert tone="warning">{warning}</AuthAlert> : null}
+            {state?.status === "degraded_api_unavailable" ? (
+              <AuthAlert tone="warning">
+                {state.degraded_reason ?? t("activation.status.waiting")}
+              </AuthAlert>
+            ) : null}
+            <AuthButton
+              type="submit"
+              loading={submitting}
+              disabled={submitting || key.trim().length < 8}
+            >
+              {submitting ? t("activation.validating") : t("activation.validate")}
+            </AuthButton>
+            <AuthButton variant="ghost" disabled={submitting} onClick={goToLogin}>
+              {t("activation.backToLogin")}
+            </AuthButton>
+            {technicalDetails}
+          </form>
+        )
+      ) : (
+        <div className="mt-6 space-y-3">
+          {errorBlock}
+          <AuthButton
+            variant="secondary"
+            onClick={() => void attemptReconciliation("manual")}
+            disabled={!isOnline || reconciling}
+            loading={reconciling}
+          >
+            {reconciling ? t("activation.denied.revalidating") : t("activation.denied.revalidate")}
+          </AuthButton>
+          <AuthButton variant="ghost" onClick={goToLogin}>
+            {t("activation.backToLogin")}
+          </AuthButton>
+          {technicalDetails}
+        </div>
+      )}
+    </AuthShell>
   ) : (
     <>
       {children}

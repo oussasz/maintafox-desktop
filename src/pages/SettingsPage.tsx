@@ -4,8 +4,9 @@ import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
-import { PasswordPolicyPanel } from "@/components/admin/PasswordPolicyPanel";
+import { LockoutPolicyPanel, PasswordPolicyPanel } from "@/components/admin/PasswordPolicyPanel";
 import { DiagnosticsPanel } from "@/components/diagnostics/DiagnosticsPanel";
+import { ModulePageShell } from "@/components/layout/ModulePageShell";
 import { LicenseEnforcementPanel } from "@/components/license/LicenseEnforcementPanel";
 import { ActivityLogSettingsSection } from "@/components/settings/ActivityLogSettingsSection";
 import { BackupOperationsPanel } from "@/components/settings/BackupOperationsPanel";
@@ -16,15 +17,20 @@ import { NotificationsSettingsPanel } from "@/components/settings/NotificationsS
 import { PolicyEditorPanel } from "@/components/settings/PolicyEditorPanel";
 import { ProfileSettingsPanel } from "@/components/settings/ProfileSettingsPanel";
 import {
+  type CurrencyListState,
+  SettingsCatalogSections,
+  formatSettingValue,
+} from "@/components/settings/SettingsCatalogSections";
+import {
   SETTINGS_TABS,
   SettingsCategorySidebar,
   type SettingsTabId,
 } from "@/components/settings/SettingsCategorySidebar";
-import { SettingsValueEditor } from "@/components/settings/SettingsValueEditor";
 import { SyncFeedbackPanel } from "@/components/sync/SyncFeedbackPanel";
 import { Timeline } from "@/components/timeline";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import {
   Toast,
   ToastClose,
@@ -37,15 +43,18 @@ import { mfLayout } from "@/design-system/tokens";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useToast } from "@/hooks/use-toast";
 import { i18n } from "@/i18n";
+import { describeAppError } from "@/lib/app-error";
 import {
   ensureSettingsDefaults,
-  listAllSettings,
+  getSettingsOverview,
+  listReferenceCurrencies,
   listSettingChangeEvents,
 } from "@/services/settings-service";
-import type { AppSetting, SettingsChangeEvent } from "@shared/ipc-types";
+import type { CurrencyOption, SettingsChangeEvent, SettingsOverview } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
-const GENERAL_CATEGORIES = ["localization", "appearance", "system", "reliability"] as const;
+/** Sections of the General tab, in display order (settings come from the server catalog). */
+const GENERAL_CATEGORIES = ["localization", "work_orders", "reliability"] as const;
 const BACKUP_CATEGORIES = ["backup"] as const;
 const SETTINGS_TAB_IDS = new Set<SettingsTabId>(SETTINGS_TABS.map((tab) => tab.id));
 
@@ -60,13 +69,9 @@ function isAdmSettingsTab(tab: SettingsTabId): boolean {
   return SETTINGS_TABS.find((entry) => entry.id === tab)?.requiresAdmSettings === true;
 }
 
-function filterByCategories(settings: AppSetting[], categories: readonly string[]): AppSetting[] {
-  const allowed = new Set(categories);
-  return settings.filter((s) => allowed.has(s.category));
-}
-
 export function SettingsPage() {
   const { t } = useTranslation("settings");
+  const tAny = t as unknown as (key: string, options?: Record<string, unknown>) => string;
   const { toasts, toast, dismiss } = useToast();
   const { can, isLoading: permissionsLoading } = usePermissions();
   const canManageSettings = can(P.ADM_SETTINGS);
@@ -75,12 +80,15 @@ export function SettingsPage() {
   const [activeTab, setActiveTab] = useState<SettingsTabId>(() =>
     parseSettingsTab(searchParams.get("tab")),
   );
-  const [allSettings, setAllSettings] = useState<AppSetting[]>([]);
+  const [overview, setOverview] = useState<SettingsOverview | null>(null);
+  const [currencyOptions, setCurrencyOptions] = useState<CurrencyOption[] | null>(null);
+  const [currencyError, setCurrencyError] = useState<unknown>(null);
   const [auditLog, setAuditLog] = useState<SettingsChangeEvent[]>([]);
+  const [auditLogError, setAuditLogError] = useState<unknown>(null);
   const [initialLoading, setInitialLoading] = useState(true);
   const [contentRefreshing, setContentRefreshing] = useState(false);
   const [restoringDefaults, setRestoringDefaults] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const didAutoEnsureRef = useRef(false);
 
   const visibleTabs = useMemo(
@@ -148,40 +156,69 @@ export function SettingsPage() {
     [setSearchParams, canManageSettings],
   );
 
-  const generalSettings = useMemo(
-    () => filterByCategories(allSettings, GENERAL_CATEGORIES),
-    [allSettings],
-  );
-  const backupRetentionSettings = useMemo(
-    () => filterByCategories(allSettings, BACKUP_CATEGORIES),
-    [allSettings],
-  );
+  const definitions = overview?.definitions ?? [];
+  const hasStoredSettings = definitions.some((d) => d.current_value_json != null);
 
-  const loadAll = useCallback(async (opts?: { silent?: boolean; allowEnsure?: boolean }) => {
-    const silent = opts?.silent === true;
-    const allowEnsure = opts?.allowEnsure !== false;
-    if (!silent) setContentRefreshing(true);
+  /** Données de référence › Devises; the currency picker stays disabled until it is loaded. */
+  const loadCurrencies = useCallback(async () => {
+    setCurrencyError(null);
     try {
-      let settings = await listAllSettings();
-      const events = await listSettingChangeEvents(20).catch(() => [] as SettingsChangeEvent[]);
-
-      if (settings.length === 0 && allowEnsure && !didAutoEnsureRef.current) {
-        didAutoEnsureRef.current = true;
-        await ensureSettingsDefaults();
-        settings = await listAllSettings();
-      }
-
-      setAllSettings(settings);
-      setAuditLog(events);
-      setError(null);
+      setCurrencyOptions(await listReferenceCurrencies());
     } catch (err) {
-      console.error("[SettingsPage] Failed to load settings:", err);
-      setError("loadError");
-    } finally {
-      setInitialLoading(false);
-      setContentRefreshing(false);
+      setCurrencyOptions(null);
+      setCurrencyError(err);
     }
   }, []);
+
+  const loadAuditLog = useCallback(async () => {
+    setAuditLogError(null);
+    try {
+      setAuditLog(await listSettingChangeEvents(20));
+    } catch (err) {
+      setAuditLogError(err);
+    }
+  }, []);
+
+  const currencies: CurrencyListState = useMemo(
+    () => ({
+      options: currencyOptions,
+      error: currencyError,
+      onRetry: () => void loadCurrencies(),
+    }),
+    [currencyOptions, currencyError, loadCurrencies],
+  );
+
+  const loadAll = useCallback(
+    async (opts?: { silent?: boolean; allowEnsure?: boolean }) => {
+      const silent = opts?.silent === true;
+      const allowEnsure = opts?.allowEnsure !== false;
+      if (!silent) setContentRefreshing(true);
+      try {
+        let next = await getSettingsOverview();
+
+        if (
+          !next.definitions.some((d) => d.current_value_json != null) &&
+          allowEnsure &&
+          !didAutoEnsureRef.current
+        ) {
+          didAutoEnsureRef.current = true;
+          await ensureSettingsDefaults();
+          next = await getSettingsOverview();
+        }
+
+        setOverview(next);
+        setError(null);
+        // Each reports its own failure with a retry (never an empty list in its place).
+        await Promise.all([loadCurrencies(), loadAuditLog()]);
+      } catch (err) {
+        setError(err);
+      } finally {
+        setInitialLoading(false);
+        setContentRefreshing(false);
+      }
+    },
+    [loadCurrencies, loadAuditLog],
+  );
 
   useEffect(() => {
     void i18n.loadNamespaces(["settings", "admin", "activity"]);
@@ -193,8 +230,9 @@ export function SettingsPage() {
       setInitialLoading(false);
       setContentRefreshing(false);
       setError(null);
-      setAllSettings([]);
+      setOverview(null);
       setAuditLog([]);
+      setAuditLogError(null);
       return;
     }
     void loadAll({ allowEnsure: true });
@@ -231,7 +269,7 @@ export function SettingsPage() {
       console.error("[SettingsPage] Failed to restore defaults:", err);
       onToast({
         title: t("page.restoreDefaultsError"),
-        description: String(err),
+        description: describeAppError(err).title,
         variant: "destructive",
       });
     } finally {
@@ -268,17 +306,12 @@ export function SettingsPage() {
 
   return (
     <ToastProvider>
-      <div className={mfLayout.moduleRoot}>
-        <div className={mfLayout.moduleHeader}>
-          <div className={mfLayout.moduleTitleRow}>
-            <Settings className={mfLayout.moduleHeaderIcon} />
-            <div>
-              <h1 className={mfLayout.moduleTitle}>{t("page.title")}</h1>
-              <p className="text-sm text-text-muted">{t("page.description")}</p>
-            </div>
-          </div>
-        </div>
-
+      <ModulePageShell
+        icon={Settings}
+        title={t("page.title")}
+        description={t("page.description")}
+        bodyClassName={null}
+      >
         <div className={mfLayout.moduleWorkspaceSplit}>
           <div className="shrink-0 border-r border-surface-border py-6 pl-6 pr-2">
             <SettingsCategorySidebar
@@ -289,18 +322,13 @@ export function SettingsPage() {
           </div>
 
           <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-6 overflow-auto p-6">
-            {canManageSettings && error ? (
-              <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
-                <span>{t("page.loadError")}</span>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void loadAll({ allowEnsure: true })}
-                >
-                  {t("page.retry")}
-                </Button>
-              </div>
+            {canManageSettings && error != null ? (
+              <ErrorState
+                className="shrink-0 py-4"
+                error={error}
+                title={t("page.loadError")}
+                onRetry={() => void loadAll({ allowEnsure: true })}
+              />
             ) : null}
 
             <Card className="shrink-0">
@@ -317,10 +345,7 @@ export function SettingsPage() {
               </CardHeader>
               <CardContent className="flex flex-col gap-6">
                 {permissionsLoading || (isAdmSettingsTab(activeTab) && initialLoading) ? (
-                  <div className="flex flex-col items-center justify-center gap-2 py-12 text-text-muted">
-                    <Loader2 className="h-5 w-5 animate-spin" aria-hidden />
-                    <p>{t("page.loading")}</p>
-                  </div>
+                  <LoadingState label={t("page.loading")} className="py-12" />
                 ) : (
                   <>
                     {activeTab === "profile" ? (
@@ -350,12 +375,14 @@ export function SettingsPage() {
                           onToast={onToast}
                           onSaved={() => void loadAll({ silent: true, allowEnsure: false })}
                         />
-                        {generalSettings.length > 0 ? (
-                          <SettingsValueEditor
-                            settings={generalSettings}
-                            onSettingSaved={() =>
-                              void loadAll({ silent: true, allowEnsure: false })
-                            }
+                        {hasStoredSettings ? (
+                          <SettingsCatalogSections
+                            categories={GENERAL_CATEGORIES}
+                            definitions={definitions}
+                            currencies={currencies}
+                            rolesAllowed={overview?.roles_allowed_to_change ?? []}
+                            canEdit={canManageSettings}
+                            onSaved={() => void loadAll({ silent: true, allowEnsure: false })}
                             onToast={onToast}
                           />
                         ) : (
@@ -370,6 +397,7 @@ export function SettingsPage() {
                           {t("tabs.securityHint")}
                         </p>
                         <PasswordPolicyPanel />
+                        <LockoutPolicyPanel />
                         <PolicyEditorPanel domain="session" onToast={onToast} />
                         <PermissionGate permission={P.LOG_VIEW}>
                           <ActivityLogSettingsSection />
@@ -379,12 +407,14 @@ export function SettingsPage() {
 
                     {activeTab === "backup" && canManageSettings ? (
                       <section className="space-y-6">
-                        {backupRetentionSettings.length > 0 ? (
-                          <SettingsValueEditor
-                            settings={backupRetentionSettings}
-                            onSettingSaved={() =>
-                              void loadAll({ silent: true, allowEnsure: false })
-                            }
+                        {hasStoredSettings ? (
+                          <SettingsCatalogSections
+                            categories={BACKUP_CATEGORIES}
+                            definitions={definitions}
+                            currencies={currencies}
+                            rolesAllowed={overview?.roles_allowed_to_change ?? []}
+                            canEdit={canManageSettings}
+                            onSaved={() => void loadAll({ silent: true, allowEnsure: false })}
                             onToast={onToast}
                           />
                         ) : (
@@ -412,7 +442,7 @@ export function SettingsPage() {
               </CardContent>
             </Card>
 
-            {canManageSettings && auditLog.length > 0 ? (
+            {canManageSettings && (auditLog.length > 0 || auditLogError != null) ? (
               <Card className="shrink-0">
                 <CardHeader className="pb-3">
                   <CardTitle className="flex items-center gap-2 text-lg">
@@ -421,27 +451,43 @@ export function SettingsPage() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <Timeline
-                    items={auditLog}
-                    aria-label={t("auditLog.title")}
-                    getEntry={(evt) => ({
-                      id: String(evt.id),
-                      title: evt.setting_key_or_domain,
-                      description: evt.change_summary,
-                      timestamp: evt.changed_at,
-                      ...(evt.required_step_up
-                        ? {
-                            badges: [{ label: t("auditLog.stepUp"), tone: "info" as const }],
-                          }
-                        : {}),
-                    })}
-                  />
+                  {auditLogError != null ? (
+                    <ErrorState
+                      error={auditLogError}
+                      title={t("auditLog.loadError")}
+                      onRetry={() => void loadAuditLog()}
+                    />
+                  ) : (
+                    <Timeline
+                      items={auditLog}
+                      aria-label={t("auditLog.title")}
+                      getEntry={(evt) => {
+                        const def = definitions.find((d) => d.key === evt.setting_key_or_domain);
+                        const valueChange =
+                          def && (evt.old_value_json != null || evt.new_value_json != null)
+                            ? `${formatSettingValue(def, evt.old_value_json, tAny)} → ${formatSettingValue(def, evt.new_value_json, tAny)}`
+                            : null;
+                        return {
+                          id: String(evt.id),
+                          title: def ? tAny(`keys.${def.key}`) : evt.setting_key_or_domain,
+                          description: valueChange ?? evt.change_summary,
+                          timestamp: evt.changed_at,
+                          ...(evt.changed_by_name ? { actor: evt.changed_by_name } : {}),
+                          ...(evt.required_step_up
+                            ? {
+                                badges: [{ label: t("auditLog.stepUp"), tone: "info" as const }],
+                              }
+                            : {}),
+                        };
+                      }}
+                    />
+                  )}
                 </CardContent>
               </Card>
             ) : null}
           </div>
         </div>
-      </div>
+      </ModulePageShell>
 
       {toasts.map((tm) => (
         <Toast key={tm.id} variant={tm.variant ?? "default"} onOpenChange={() => dismiss(tm.id)}>

@@ -9,7 +9,25 @@ pub struct CertificationType {
     pub default_validity_months: Option<i64>,
     pub renewal_lead_days: Option<i64>,
     pub row_version: i64,
+    /// `electrical` | `loto` | `confined_space` | `work_at_height` | `welding` | `lifting` |
+    /// `first_aid` | `hot_work` | `other` (see [`CERTIFICATION_CATEGORIES`]).
+    pub category: String,
+    pub description: Option<String>,
+    pub is_active: bool,
 }
+
+/// Families of certifications / authorisations a maintenance department tracks.
+pub const CERTIFICATION_CATEGORIES: &[&str] = &[
+    "electrical",
+    "loto",
+    "confined_space",
+    "work_at_height",
+    "welding",
+    "lifting",
+    "first_aid",
+    "hot_work",
+    "other",
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QualificationRequirementProfile {
@@ -45,6 +63,15 @@ pub struct CertificationTypeUpsertInput {
     pub name: String,
     pub default_validity_months: Option<i64>,
     pub renewal_lead_days: Option<i64>,
+    /// Omitted by older clients: kept as stored (`other` on create).
+    #[serde(default)]
+    pub category: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub is_active: Option<bool>,
+    #[serde(default)]
+    pub expected_row_version: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

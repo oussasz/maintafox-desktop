@@ -10,8 +10,7 @@
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
-    use sea_orm_migration::MigratorTrait;
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
     use crate::errors::AppError;
     use crate::wo::closeout::{
@@ -31,26 +30,7 @@ mod tests {
     // ═══════════════════════════════════════════════════════════════════════
 
     async fn setup() -> sea_orm::DatabaseConnection {
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("in-memory SQLite should connect");
-
-        db.execute(Statement::from_string(
-            DbBackend::Sqlite,
-            "PRAGMA foreign_keys = ON;".to_string(),
-        ))
-        .await
-        .expect("PRAGMA foreign_keys");
-
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("migrations should apply cleanly");
-
-        crate::db::seeder::seed_system_data(&db)
-            .await
-            .expect("seeder should run cleanly");
-
-        db
+        crate::db::test_db::seeded().await
     }
 
     async fn admin_id(db: &sea_orm::DatabaseConnection) -> i64 {
@@ -218,7 +198,8 @@ mod tests {
                 source_rca_cause_text: None,
                 entity_id: None,
                 planner_id: None,
-                urgency_id: Some(3),
+                urgency_code: Some("normal".into()),
+                subtype_code: None,
                 title: "Closeout test WO".into(),
                 description: Some("Integration test for closeout".into()),
                 notes: None,
@@ -258,9 +239,13 @@ mod tests {
                 planned_start: Some("2026-04-10T08:00:00Z".to_string()),
                 planned_end: Some("2026-04-10T16:00:00Z".to_string()),
                 shift: None,
+                shift_class_version_id: None,
+                clear_shift: false,
                 expected_duration_hours: Some(8.0),
+                planned_crew_size: None,
+                clear_crew_size: false,
                 planned_downtime_hours: None,
-                urgency_id: None,
+                urgency_code: None,
             },
         )
         .await
@@ -794,6 +779,38 @@ mod tests {
         ))
         .await
         .expect("recent closure");
+
+        // Reopening to execution restarts work: the permit gate applies. The OT requires a
+        // permit and its only permit is closed → refused.
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE work_orders SET requires_permit = 1 WHERE id = ?",
+            [wo_id.into()],
+        ))
+        .await
+        .expect("require a permit");
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO work_permits (entity_sync_id, code, linked_work_order_id, permit_type_id, asset_id, entity_id, status, row_version)
+             SELECT 'reopen-closed-permit', 'PTW-REOPEN', wo.id, pt.id, COALESCE(wo.equipment_id, (SELECT MIN(id) FROM equipment)), COALESCE(wo.entity_id, 1), 'closed', 1
+               FROM work_orders wo, permit_types pt WHERE wo.id = ? AND pt.code = 'hot_work'",
+            [wo_id.into()],
+        ))
+        .await
+        .expect("closed permit");
+        let refused = closeout::reopen_wo(&db, reopen(closed_wo.row_version)).await;
+        assert!(
+            format!("{refused:?}").contains("PERMIT_REQUIRED_TO_START"),
+            "reopen to execution without a live permit: {refused:?}"
+        );
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE work_orders SET requires_permit = 0 WHERE id = ?",
+            [wo_id.into()],
+        ))
+        .await
+        .expect("no permit required");
+
         let reopened = closeout::reopen_wo(&db, reopen(closed_wo.row_version))
             .await
             .expect("reopen within window");

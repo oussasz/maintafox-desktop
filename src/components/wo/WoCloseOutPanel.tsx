@@ -21,9 +21,11 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
 import { ReferenceCombobox } from "@/components/reference/ReferenceCombobox";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -33,14 +35,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { StatusChip } from "@/components/ui/status-chip";
 import { Textarea } from "@/components/ui/textarea";
 import {
   WoCompletionGatesChecklist,
   completionGatesProgress,
 } from "@/components/wo/WoCompletionGatesChecklist";
+import { PERMIT_STATUS_TONE, toneOf } from "@/design-system/tone";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useSession } from "@/hooks/use-session";
 import { useStepUp } from "@/hooks/use-step-up";
+import { describeAppError } from "@/lib/app-error";
 import { formatPersonLabel } from "@/lib/display";
 import { getSetting } from "@/services/settings-service";
 import {
@@ -56,9 +61,10 @@ import {
 } from "@/services/wo-closeout-service";
 import { evaluateWoCompletionGates } from "@/services/wo-service";
 import { useWoStore } from "@/stores/wo-store";
-import { toErrorMessage } from "@/utils/errors";
 import type { WoCompletionGate, WorkOrder } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
+
+import { mergeWoPersonOptions, useWoPeopleOptions } from "./use-wo-people";
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -98,7 +104,7 @@ function ErrorBanner({ message }: { message: string }) {
 
 function SuccessBanner({ message }: { message: string }) {
   return (
-    <div className="flex items-center gap-2 rounded-md border border-green-500/50 bg-green-50 p-3 text-sm text-green-700">
+    <div className="flex items-center gap-2 rounded-md border border-tone-success-border bg-tone-success-bg p-3 text-sm text-tone-success-fg">
       <CheckCircle2 className="h-4 w-4 shrink-0" />
       <span>{message}</span>
     </div>
@@ -109,11 +115,13 @@ function SuccessBanner({ message }: { message: string }) {
 
 export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps) {
   const { t } = useTranslation("ot");
+  const { t: tPermits } = useTranslation("permits");
   const { info } = useSession();
   const { can } = usePermissions();
+  // Reopen still asks for the password; verification and close are confirmed in a dialog.
   const { withStepUp, StepUpDialogElement } = useStepUp();
+  const [confirmAction, setConfirmAction] = useState<"verify" | "close" | null>(null);
   const refreshActiveWo = useWoStore((s) => s.refreshActiveWo);
-  const woItems = useWoStore((s) => s.items);
   const canReopen = can(P.OT_REOPEN);
 
   // Track current WO state (gets updated after transitions)
@@ -127,6 +135,8 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
   const [failureModeId, setFailureModeId] = useState<number | null>(null);
   const [failureCauseId, setFailureCauseId] = useState<number | null>(null);
   const [failureEffectId, setFailureEffectId] = useState<number | null>(null);
+  const [failureMechanismId, setFailureMechanismId] = useState<number | null>(null);
+  const [detectionMethodId, setDetectionMethodId] = useState<number | null>(null);
   const [repairType, setRepairType] = useState<RepairType>("na");
   const [correctiveAction, setCorrectiveAction] = useState("");
   const [rootCauseSummary, setRootCauseSummary] = useState("");
@@ -168,33 +178,23 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
     "pm_plan_code" | "pm_plan_title" | "pm_due_at" | "permits"
   > | null>(null);
 
-  const signerOptions = useMemo(() => {
-    const dedup = new Map<string, string>();
-    for (const item of woItems) {
-      if (item.primary_responsible_id != null) {
-        dedup.set(
-          String(item.primary_responsible_id),
-          item.responsible_display_name?.trim() ||
-            item.responsible_username?.trim() ||
-            String(item.primary_responsible_id),
-        );
-      }
-      if (item.planner_id != null) {
-        dedup.set(
-          String(item.planner_id),
-          item.planner_display_name?.trim() ||
-            item.planner_username?.trim() ||
-            String(item.planner_id),
-        );
-      }
-    }
-    if (info?.user_id != null) {
-      dedup.set(String(info.user_id), formatPersonLabel(info.display_name, info.username));
-    }
-    return Array.from(dedup.entries())
-      .map(([value, label]) => ({ value, label }))
-      .sort((a, b) => a.label.localeCompare(b.label));
-  }, [woItems, info?.user_id, info?.display_name, info?.username]);
+  // FMECA override signer: personnel register (active staff with a login) + the current user.
+  const people = useWoPeopleOptions();
+  const signerOptions = useMemo(
+    () =>
+      mergeWoPersonOptions(
+        people.options,
+        info?.user_id != null
+          ? [
+              {
+                value: String(info.user_id),
+                label: formatPersonLabel(info.display_name, info.username),
+              },
+            ]
+          : [],
+      ),
+    [people.options, info?.user_id, info?.display_name, info?.username],
+  );
 
   // ── Pre-populate from existing failure data (GA-049) ────────────────
   useEffect(() => {
@@ -214,6 +214,8 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
           setFailureModeId(fd.failure_mode_id);
           setFailureCauseId(fd.failure_cause_id);
           setFailureEffectId(fd.failure_effect_id);
+          setFailureMechanismId(fd.failure_mechanism_id ?? null);
+          setDetectionMethodId(fd.detection_method_id ?? null);
           setCauseNotDetermined(fd.cause_not_determined);
           if (fd.is_temporary_repair) setRepairType("temporary");
           else if (fd.is_permanent_repair) setRepairType("permanent");
@@ -224,7 +226,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
         if (snap.service_cost > 0) setServiceCost(String(snap.service_cost));
       })
       .catch((err: unknown) => {
-        if (!cancelled) setDetailError(toErrorMessage(err));
+        if (!cancelled) setDetailError(describeAppError(err).title);
       });
     return () => {
       cancelled = true;
@@ -271,6 +273,8 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
         failure_mode_id: causeNotDetermined ? null : failureModeId,
         failure_cause_id: causeNotDetermined ? null : failureCauseId,
         failure_effect_id: causeNotDetermined ? null : failureEffectId,
+        failure_mechanism_id: causeNotDetermined ? null : failureMechanismId,
+        detection_method_id: detectionMethodId,
         is_temporary_repair: repairType === "temporary",
         is_permanent_repair: repairType === "permanent",
         cause_not_determined: causeNotDetermined,
@@ -293,7 +297,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
         /* keep previous gates */
       }
     } catch (err) {
-      setDetailError(toErrorMessage(err));
+      setDetailError(describeAppError(err).title);
     } finally {
       setSavingDetails(false);
     }
@@ -305,6 +309,8 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
     failureModeId,
     failureCauseId,
     failureEffectId,
+    failureMechanismId,
+    detectionMethodId,
     repairType,
     narrative,
     rootCauseSummary,
@@ -320,17 +326,15 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
     if (!canEdit || !actorId || !verificationResult) return;
     setSavingVerification(true);
     setVerificationError(null);
-    withStepUp(() =>
-      saveVerification({
-        wo_id: currentWo.id,
-        verified_by_id: actorId,
-        result: verificationResult,
-        return_to_service_confirmed: returnToServiceConfirmed,
-        recurrence_risk_level: null,
-        notes: verificationNotes.trim() || null,
-        expected_row_version: currentWo.row_version,
-      }),
-    )
+    return saveVerification({
+      wo_id: currentWo.id,
+      verified_by_id: actorId,
+      result: verificationResult,
+      return_to_service_confirmed: returnToServiceConfirmed,
+      recurrence_risk_level: null,
+      notes: verificationNotes.trim() || null,
+      expected_row_version: currentWo.row_version,
+    })
       .then(async ([, updatedWo]) => {
         setCurrentWo(updatedWo);
         setVerificationResult("");
@@ -338,13 +342,12 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
         setVerificationNotes("");
         await refreshActiveWo();
       })
-      .catch((err: unknown) => setVerificationError(toErrorMessage(err)))
+      .catch((err: unknown) => setVerificationError(describeAppError(err).title))
       .finally(() => setSavingVerification(false));
   }, [
     canEdit,
     currentWo,
     info,
-    withStepUp,
     verificationResult,
     returnToServiceConfirmed,
     verificationNotes,
@@ -359,29 +362,27 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
     setClosing(true);
     setBlockingErrors([]);
     setCloseError(null);
-    withStepUp(() =>
-      closeWo({
-        wo_id: currentWo.id,
-        actor_id: actorId,
-        expected_row_version: currentWo.row_version,
-        ...(currentWo.production_impact_id != null
-          ? {
-              no_downtime_attestation: noDowntimeAttestation,
-              no_downtime_attestation_reason: noDowntimeReason.trim() || null,
-            }
-          : {}),
-        fmeca_parts_override_reason: fmecaOverrideReason.trim() || null,
-        fmeca_parts_override_signed_by_id:
-          fmecaOverrideSignerId.trim() !== "" ? Number(fmecaOverrideSignerId) : null,
-        fmeca_parts_override_signer_password: fmecaOverrideSignerPassword || null,
-      }),
-    )
+    return closeWo({
+      wo_id: currentWo.id,
+      actor_id: actorId,
+      expected_row_version: currentWo.row_version,
+      ...(currentWo.production_impact_id != null
+        ? {
+            no_downtime_attestation: noDowntimeAttestation,
+            no_downtime_attestation_reason: noDowntimeReason.trim() || null,
+          }
+        : {}),
+      fmeca_parts_override_reason: fmecaOverrideReason.trim() || null,
+      fmeca_parts_override_signed_by_id:
+        fmecaOverrideSignerId.trim() !== "" ? Number(fmecaOverrideSignerId) : null,
+      fmeca_parts_override_signer_password: fmecaOverrideSignerPassword || null,
+    })
       .then(() => onClosed())
       .catch((err: unknown) => {
         if (err instanceof CloseoutBlockingError) {
           setBlockingErrors(err.blockingErrors);
         } else {
-          setCloseError(toErrorMessage(err));
+          setCloseError(describeAppError(err).title);
         }
       })
       .finally(() => setClosing(false));
@@ -389,7 +390,6 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
     canEdit,
     currentWo,
     info,
-    withStepUp,
     onClosed,
     noDowntimeAttestation,
     noDowntimeReason,
@@ -422,7 +422,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
         setReopenReason("");
         await refreshActiveWo();
       })
-      .catch((err: unknown) => setReopenError(toErrorMessage(err)))
+      .catch((err: unknown) => setReopenError(describeAppError(err).title))
       .finally(() => setReopening(false));
   }, [
     canEdit,
@@ -457,7 +457,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
         }
       })
       .catch((err: unknown) => {
-        if (!cancelled) setReopenWindowError(toErrorMessage(err));
+        if (!cancelled) setReopenWindowError(describeAppError(err).title);
       });
     return () => {
       cancelled = true;
@@ -479,6 +479,44 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
   return (
     <div className="space-y-6">
       {StepUpDialogElement}
+      <ConfirmDialog
+        open={confirmAction !== null}
+        onOpenChange={(next) => {
+          if (!next) setConfirmAction(null);
+        }}
+        title={
+          confirmAction === "close"
+            ? t("closeout.confirmCloseTitle")
+            : t("closeout.confirmVerifyTitle")
+        }
+        description={
+          confirmAction === "close"
+            ? t("closeout.confirmCloseDescription", { code: currentWo.code })
+            : t("closeout.confirmVerifyDescription", {
+                code: currentWo.code,
+                result:
+                  verificationResult === "pass"
+                    ? t("closeout.resultPass")
+                    : verificationResult === "fail"
+                      ? t("closeout.resultFail")
+                      : t("closeout.resultMonitor"),
+                rts:
+                  verificationResult === "pass" && returnToServiceConfirmed
+                    ? t("closeout.confirmVerifyReturnToService")
+                    : "",
+              })
+        }
+        confirmLabel={
+          confirmAction === "close"
+            ? t("closeout.confirmCloseAction")
+            : t("closeout.confirmVerifyAction")
+        }
+        destructive={confirmAction === "close"}
+        onConfirm={async () => {
+          // Errors stay inline in the panel (verification / close-out banners).
+          await (confirmAction === "close" ? handleClose() : handleSaveVerification());
+        }}
+      />
 
       {completionGates.length > 0 && (
         <section className="space-y-2">
@@ -595,6 +633,36 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
               disabled={!isDetailEditable || causeNotDetermined}
             />
           </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="wo-failure-mechanism">{t("closeout.iso.mechanism")}</Label>
+            <ReferenceCombobox
+              id="wo-failure-mechanism"
+              referenceType="work.failure_mechanism"
+              valueMode="id"
+              value={failureMechanismId != null ? String(failureMechanismId) : null}
+              onChange={(idStr) => setFailureMechanismId(idStr ? Number(idStr) : null)}
+              allowClear
+              allowCreate={false}
+              placeholder={t("closeout.iso.mechanismPlaceholder")}
+              disabled={!isDetailEditable || causeNotDetermined}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="wo-detection-method">{t("closeout.iso.detection")}</Label>
+            <ReferenceCombobox
+              id="wo-detection-method"
+              referenceType="work.detection_method"
+              valueMode="id"
+              value={detectionMethodId != null ? String(detectionMethodId) : null}
+              onChange={(idStr) => setDetectionMethodId(idStr ? Number(idStr) : null)}
+              allowClear
+              allowCreate={false}
+              placeholder={t("closeout.iso.detectionPlaceholder")}
+              disabled={!isDetailEditable}
+            />
+          </div>
         </div>
       </section>
 
@@ -701,9 +769,13 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
               <div className="flex gap-4">
                 {(
                   [
-                    { value: "pass", label: t("closeout.resultPass"), cls: "text-green-700" },
+                    { value: "pass", label: t("closeout.resultPass"), cls: "text-tone-success-fg" },
                     { value: "fail", label: t("closeout.resultFail"), cls: "text-destructive" },
-                    { value: "monitor", label: t("closeout.resultMonitor"), cls: "text-amber-600" },
+                    {
+                      value: "monitor",
+                      label: t("closeout.resultMonitor"),
+                      cls: "text-tone-warning-fg",
+                    },
                   ] as const
                 ).map(({ value, label, cls }) => (
                   <label key={value} className="flex cursor-pointer items-center gap-1.5">
@@ -751,7 +823,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
             {verificationError && <ErrorBanner message={verificationError} />}
 
             <Button
-              onClick={handleSaveVerification}
+              onClick={() => setConfirmAction("verify")}
               disabled={
                 !canEdit ||
                 savingVerification ||
@@ -871,7 +943,11 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
 
             {closeError && <ErrorBanner message={closeError} />}
 
-            <Button variant="destructive" onClick={handleClose} disabled={!canEdit || closing}>
+            <Button
+              variant="destructive"
+              onClick={() => setConfirmAction("close")}
+              disabled={!canEdit || closing}
+            >
               {closing ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               ) : (
@@ -896,11 +972,20 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
               </p>
             ) : null}
             {links.permits.length > 0 ? (
-              <p>
-                {t("closeout.linkedPermits", {
-                  list: links.permits.map((p) => `${p.code} (${p.status})`).join(", "),
-                })}
-              </p>
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                <span>{t("closeout.linkedPermitsLabel")}</span>
+                {links.permits.map((p) => (
+                  <span key={p.id} className="inline-flex items-center gap-1.5">
+                    <LinkedEntityBadge entity="permit" code={p.code} entityId={p.id} />
+                    <StatusChip
+                      label={tPermits(`status.${p.status}`, {
+                        defaultValue: tPermits("status.unknown"),
+                      })}
+                      tone={toneOf(PERMIT_STATUS_TONE, p.status)}
+                    />
+                  </span>
+                ))}
+              </div>
             ) : null}
           </div>
         ) : null}

@@ -142,6 +142,10 @@ mod errors_tests {
                 "ACCOUNT_LOCKED",
             ),
             (AppError::SessionLocked("idle".into()), "SESSION_LOCKED"),
+            (
+                AppError::PasswordChangeRequired("change first".into()),
+                "PASSWORD_CHANGE_REQUIRED",
+            ),
             (AppError::Internal(anyhow::anyhow!("boom")), "INTERNAL_ERROR"),
         ];
 

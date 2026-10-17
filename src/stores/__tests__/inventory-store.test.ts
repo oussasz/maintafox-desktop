@@ -6,6 +6,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  type InventoryArticleRow,
   createInventoryArticle,
   listInventoryArticleFamilies,
   listInventoryArticles,
@@ -15,7 +16,6 @@ import {
 } from "@/services/inventory-service";
 import type {
   ArticleFamily,
-  InventoryArticle,
   InventoryArticleInput,
   StockLocation,
   Warehouse,
@@ -74,7 +74,7 @@ function makeLocation(overrides: Partial<StockLocation> = {}): StockLocation {
   };
 }
 
-function makeArticle(overrides: Partial<InventoryArticle> = {}): InventoryArticle {
+function makeArticle(overrides: Partial<InventoryArticleRow> = {}): InventoryArticleRow {
   return {
     id: 4,
     article_code: "ART-001",
@@ -85,6 +85,7 @@ function makeArticle(overrides: Partial<InventoryArticle> = {}): InventoryArticl
     unit_value_id: 10,
     unit_code: "EA",
     unit_label: "Each",
+    unit_symbol: "ea",
     criticality_value_id: null,
     criticality_code: null,
     criticality_label: null,
@@ -107,10 +108,35 @@ function makeArticle(overrides: Partial<InventoryArticle> = {}): InventoryArticl
     max_stock: 20,
     reorder_point: 5,
     safety_stock: 1,
+    manufacturer_name: null,
+    manufacturer_part_number: null,
+    oem_part_number: null,
+    replenishment_policy_code: null,
+    economic_order_qty: null,
+    minimum_order_qty: null,
+    maximum_order_qty: null,
+    order_multiple_qty: null,
+    lead_time_days: null,
+    review_period_days: null,
+    abc_class_code: null,
+    xyz_class_code: null,
+    is_critical_spare: 0,
+    requires_expiration: 0,
+    shelf_life_days: null,
+    requires_batch_tracking: 0,
     is_active: 1,
     row_version: 1,
     created_at: TS,
     updated_at: TS,
+    on_hand_qty: 12,
+    reserved_qty: 2,
+    available_qty: 10,
+    avg_unit_cost: null,
+    stock_value: null,
+    unvalued_qty: 0,
+    barcode: null,
+    requires_serial_tracking: 0,
+    reorder_trigger: null,
     ...overrides,
   };
 }
@@ -132,7 +158,7 @@ function makeInput(overrides: Partial<InventoryArticleInput> = {}): InventoryArt
   };
 }
 
-function primeLists(articles: InventoryArticle[] = [makeArticle()]) {
+function primeLists(articles: InventoryArticleRow[] = [makeArticle()]) {
   mockFamilies.mockResolvedValue([makeFamily()]);
   mockWarehouses.mockResolvedValue([makeWarehouse()]);
   mockLocations.mockResolvedValue([makeLocation()]);
@@ -187,6 +213,16 @@ describe("inventory-store", () => {
       expect(s.loading).toBe(false);
     });
 
+    it("clears a previous load failure once a load succeeds", async () => {
+      primeLists();
+      useInventoryStore.setState({ loadError: new Error("old failure") });
+
+      await useInventoryStore.getState().loadAll();
+
+      expect(useInventoryStore.getState().loadError).toBeNull();
+      expect(useInventoryStore.getState().articles[0]?.available_qty).toBe(10);
+    });
+
     it("passes the current articleSearch to listInventoryArticles", async () => {
       primeLists();
       useInventoryStore.setState({ articleSearch: "bearing" });
@@ -198,7 +234,8 @@ describe("inventory-store", () => {
 
     it("swallows a failure of any list, sets error and keeps previous data", async () => {
       primeLists();
-      mockWarehouses.mockRejectedValueOnce(new Error("warehouses failed"));
+      const failure = new Error("warehouses failed");
+      mockWarehouses.mockRejectedValueOnce(failure);
       const previous = [makeArticle({ id: 99 })];
       useInventoryStore.setState({ articles: previous });
 
@@ -206,6 +243,8 @@ describe("inventory-store", () => {
 
       const s = useInventoryStore.getState();
       expect(s.error).toBe("warehouses failed");
+      // The raw failure is kept for ErrorState (translated by describeAppError).
+      expect(s.loadError).toBe(failure);
       expect(s.articles).toBe(previous);
       expect(s.families).toEqual([]);
       expect(s.loading).toBe(false);
@@ -227,9 +266,9 @@ describe("inventory-store", () => {
     it("creates, then reloads all lists; saving toggles", async () => {
       primeLists();
       const input = makeInput();
-      let resolveCreate: (v: InventoryArticle) => void = () => undefined;
+      let resolveCreate: (v: InventoryArticleRow) => void = () => undefined;
       mockCreate.mockReturnValueOnce(
-        new Promise<InventoryArticle>((r) => {
+        new Promise<InventoryArticleRow>((r) => {
           resolveCreate = r;
         }),
       );

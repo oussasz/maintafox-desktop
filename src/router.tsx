@@ -6,6 +6,7 @@ import { PermissionRoute } from "@/components/auth/PermissionRoute";
 import { ProductLicenseGate } from "@/components/auth/ProductLicenseGate";
 import { AppShell } from "@/components/layout/AppShell";
 import { DashboardPage } from "@/pages/DashboardPage";
+import { NotFoundPage, RouteErrorPage } from "@/pages/NotFoundPage";
 import { P } from "@shared/rbac/permissions.generated";
 
 // Lazy-load all module pages
@@ -29,6 +30,9 @@ const PlanningPage = lazy(() =>
   import("@/pages/PlanningPage").then((m) => ({ default: m.PlanningPage })),
 );
 const PmPage = lazy(() => import("@/pages/PmPage").then((m) => ({ default: m.PmPage })));
+const ComponentShowcase = lazy(() =>
+  import("@/pages/dev/ComponentShowcase").then((m) => ({ default: m.ComponentShowcase })),
+);
 const PermitsPage = lazy(() =>
   import("@/pages/PermitsPage").then((m) => ({ default: m.PermitsPage })),
 );
@@ -73,34 +77,19 @@ const AnalyticsHistoryPage = lazy(() =>
     default: m.AnalyticsHistoryPage,
   })),
 );
-const ReliabilityModuleLayout = lazy(() =>
-  import("@/pages/reliability/ReliabilityModuleLayout").then((m) => ({
-    default: m.ReliabilityModuleLayout,
+const RamsFleetPage = lazy(() =>
+  import("@/pages/reliability/RamsFleetPage").then((m) => ({
+    default: m.RamsFleetPage,
   })),
 );
-const ReliabilityDashboardPage = lazy(() =>
-  import("@/pages/reliability/ReliabilityDashboardPage").then((m) => ({
-    default: m.ReliabilityDashboardPage,
+const RamsDataQualityPage = lazy(() =>
+  import("@/pages/reliability/RamsDataQualityPage").then((m) => ({
+    default: m.RamsDataQualityPage,
   })),
 );
-const ReliabilityFoundationPage = lazy(() =>
-  import("@/pages/reliability/ReliabilityFoundationPage").then((m) => ({
-    default: m.ReliabilityFoundationPage,
-  })),
-);
-const ReliabilityVisualLabPage = lazy(() =>
-  import("@/pages/reliability/ReliabilityVisualLabPage").then((m) => ({
-    default: m.ReliabilityVisualLabPage,
-  })),
-);
-const ReliabilityAdvancedPage = lazy(() =>
-  import("@/pages/reliability/ReliabilityAdvancedPage").then((m) => ({
-    default: m.ReliabilityAdvancedPage,
-  })),
-);
-const ReliabilityGovernancePage = lazy(() =>
-  import("@/pages/reliability/ReliabilityGovernancePage").then((m) => ({
-    default: m.ReliabilityGovernancePage,
+const RamsStudyPage = lazy(() =>
+  import("@/pages/reliability/RamsStudyPage").then((m) => ({
+    default: m.RamsStudyPage,
   })),
 );
 const BudgetPage = lazy(() =>
@@ -134,6 +123,9 @@ const DocumentationIndexRedirect = lazy(() =>
 );
 const ArchivePage = lazy(() =>
   import("@/pages/ArchivePage").then((m) => ({ default: m.ArchivePage })),
+);
+const NotificationsPage = lazy(() =>
+  import("@/pages/NotificationsPage").then((m) => ({ default: m.NotificationsPage })),
 );
 const SettingsPage = lazy(() =>
   import("@/pages/SettingsPage").then((m) => ({ default: m.SettingsPage })),
@@ -174,6 +166,7 @@ const routes: RouteObject[] = [
         <Outlet />
       </ProductLicenseGate>
     ),
+    errorElement: <RouteErrorPage />,
     children: [
       // ── Public routes (license-gated, no shell, no auth required) ───────
       {
@@ -223,7 +216,11 @@ const routes: RouteObject[] = [
                     element: <PermissionRoute permission={P.EQ_VIEW} />,
                     children: [
                       { path: "equipment", element: <EquipmentPage /> },
-                      { path: "equipment/import", element: <AssetImportPage /> },
+                      // The import screen needs the import right (the backend commands do too).
+                      {
+                        element: <PermissionRoute permission={P.EQ_IMPORT} />,
+                        children: [{ path: "equipment/import", element: <AssetImportPage /> }],
+                      },
                     ],
                   },
                   {
@@ -270,47 +267,44 @@ const routes: RouteObject[] = [
                           { path: "templates", element: <AnalyticsTemplatesPage /> },
                           { path: "schedules", element: <AnalyticsSchedulesPage /> },
                           { path: "history", element: <AnalyticsHistoryPage /> },
-                          {
-                            path: "rams",
-                            element: <ReliabilityModuleLayout />,
-                            children: [
-                              { index: true, element: <Navigate to="dashboard" replace /> },
-                              { path: "dashboard", element: <ReliabilityDashboardPage /> },
-                              { path: "foundation", element: <ReliabilityFoundationPage /> },
-                              { path: "lab", element: <ReliabilityVisualLabPage /> },
-                              { path: "advanced", element: <ReliabilityAdvancedPage /> },
-                              { path: "governance", element: <ReliabilityGovernancePage /> },
-                            ],
-                          },
                         ],
                       },
+                    ],
+                  },
+                  {
+                    element: <PermissionRoute permission={P.RAM_VIEW} />,
+                    children: [
                       {
                         path: "reliability",
                         children: [
-                          {
-                            index: true,
-                            element: <Navigate to="/analytics/rams/dashboard" replace />,
-                          },
-                          {
-                            path: "dashboard",
-                            element: <Navigate to="/analytics/rams/dashboard" replace />,
-                          },
+                          { index: true, element: <RamsFleetPage /> },
+                          { path: "studies/:studyId", element: <RamsStudyPage /> },
+                          { path: "data-quality", element: <RamsDataQualityPage /> },
+                          // Former screens, now inside the module (study steps, data quality).
+                          { path: "dashboard", element: <Navigate to="/reliability" replace /> },
                           {
                             path: "foundation",
-                            element: <Navigate to="/analytics/rams/foundation" replace />,
+                            element: <Navigate to="/reliability/data-quality" replace />,
                           },
+                          { path: "lab", element: <Navigate to="/reliability" replace /> },
+                          { path: "advanced", element: <Navigate to="/reliability" replace /> },
+                          { path: "governance", element: <Navigate to="/reliability" replace /> },
+                        ],
+                      },
+                      // The module used to live under the analytics hub: old links redirect with
+                      // the reliability permission only.
+                      {
+                        path: "analytics/rams",
+                        children: [
+                          { index: true, element: <Navigate to="/reliability" replace /> },
+                          { path: "dashboard", element: <Navigate to="/reliability" replace /> },
                           {
-                            path: "lab",
-                            element: <Navigate to="/analytics/rams/lab" replace />,
+                            path: "foundation",
+                            element: <Navigate to="/reliability/data-quality" replace />,
                           },
-                          {
-                            path: "advanced",
-                            element: <Navigate to="/analytics/rams/advanced" replace />,
-                          },
-                          {
-                            path: "governance",
-                            element: <Navigate to="/analytics/rams/governance" replace />,
-                          },
+                          { path: "lab", element: <Navigate to="/reliability" replace /> },
+                          { path: "advanced", element: <Navigate to="/reliability" replace /> },
+                          { path: "governance", element: <Navigate to="/reliability" replace /> },
                         ],
                       },
                     ],
@@ -344,10 +338,7 @@ const routes: RouteObject[] = [
                     element: <PermissionRoute permission={P.REF_VIEW} />,
                     children: [{ path: "lookups", element: <LookupsPage /> }],
                   },
-                  {
-                    path: "notifications",
-                    element: <Navigate to="/settings?tab=notifications" replace />,
-                  },
+                  { path: "notifications", element: <NotificationsPage /> },
                   {
                     element: <PermissionRoute permission={P.DOC_VIEW} />,
                     children: [
@@ -384,6 +375,11 @@ const routes: RouteObject[] = [
                     element: <Navigate to="/settings?tab=security" replace />,
                   },
                   { path: "settings", element: <SettingsPage /> },
+                  // Living design-system reference (docs/DESIGN_SYSTEM.md). Development builds only:
+                  // the import is tree-shaken from production bundles.
+                  ...(import.meta.env.DEV
+                    ? [{ path: "__dev/components", element: <ComponentShowcase /> }]
+                    : []),
                   {
                     element: <PermissionRoute permission={P.CFG_VIEW} />,
                     children: [
@@ -402,6 +398,8 @@ const routes: RouteObject[] = [
                     element: <Navigate to="/settings?tab=profile" replace />,
                   },
                   { path: "unauthorized", element: <UnauthorizedPage /> },
+                  // Any address without a screen stays inside the shell with a way back.
+                  { path: "*", element: <NotFoundPage /> },
                 ],
               },
             ],
@@ -411,5 +409,8 @@ const routes: RouteObject[] = [
     ],
   },
 ];
+
+/** Route tree, exported for tests (e.g. every dashboard drill link must resolve to a screen). */
+export const appRouteTree = routes;
 
 export const router = createBrowserRouter(routes);

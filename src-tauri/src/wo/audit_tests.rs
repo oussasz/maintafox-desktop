@@ -2,7 +2,7 @@
 //!
 //! V1 — Permission seed count: 8 ot.* rows after migration 026.
 //! V2 — Audit on close: successful close_wo writes row with action='closed',
-//!       apply_result='applied', requires_step_up=1.
+//!       apply_result='applied', requires_step_up=0 (confirmed in a dialog).
 //! V3 — Blocked close audit: quality-gate failure writes row with
 //!       apply_result='blocked' and details_json containing error text.
 //! V4 — Fire-and-log: wo_change_events table dropped; close_wo primary workflow
@@ -10,8 +10,7 @@
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
-    use sea_orm_migration::MigratorTrait;
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
     use crate::wo::audit::{self, WoAuditInput};
     use crate::wo::closeout::{self, SaveFailureDetailInput, SaveVerificationInput, UpdateWoRcaInput, WoCloseInput};
@@ -28,26 +27,7 @@ mod tests {
     // ═══════════════════════════════════════════════════════════════════════
 
     async fn setup() -> sea_orm::DatabaseConnection {
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("in-memory SQLite should connect");
-
-        db.execute(Statement::from_string(
-            DbBackend::Sqlite,
-            "PRAGMA foreign_keys = ON;".to_string(),
-        ))
-        .await
-        .expect("PRAGMA foreign_keys");
-
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("all migrations should apply cleanly");
-
-        crate::db::seeder::seed_system_data(&db)
-            .await
-            .expect("seeder should run cleanly");
-
-        db
+        crate::db::test_db::seeded().await
     }
 
     async fn admin_id(db: &sea_orm::DatabaseConnection) -> i64 {
@@ -215,7 +195,8 @@ mod tests {
                 source_rca_cause_text: None,
                 entity_id: None,
                 planner_id: None,
-                urgency_id: Some(3),
+                urgency_code: Some("normal".into()),
+                subtype_code: None,
                 title: "Audit test WO".into(),
                 description: None,
                 notes: None,
@@ -255,9 +236,13 @@ mod tests {
                 planned_start: Some("2026-04-10T08:00:00Z".to_string()),
                 planned_end: Some("2026-04-10T12:00:00Z".to_string()),
                 shift: None,
+                shift_class_version_id: None,
+                clear_shift: false,
                 expected_duration_hours: Some(4.0),
+                planned_crew_size: None,
+                clear_crew_size: false,
                 planned_downtime_hours: None,
-                urgency_id: None,
+                urgency_code: None,
             },
         )
         .await
@@ -455,7 +440,7 @@ mod tests {
                 actor_id: Some(actor),
                 summary: Some("Work order closed".into()),
                 details_json: None,
-                requires_step_up: true,
+                requires_step_up: false,
                 apply_result: "applied".into(),
             },
         )
@@ -480,7 +465,8 @@ mod tests {
 
         assert_eq!(action, "closed");
         assert_eq!(apply_result, "applied");
-        assert_eq!(requires_step_up, 1);
+        // Close is confirmed in a dialog (owner decision 2026-10-14), not by step-up.
+        assert_eq!(requires_step_up, 0);
     }
 
     // ═══════════════════════════════════════════════════════════════════════

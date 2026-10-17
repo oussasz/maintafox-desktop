@@ -15,8 +15,7 @@
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
-    use sea_orm_migration::MigratorTrait;
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
     use crate::auth::rbac::{self, PermissionScope};
     use crate::errors::AppError;
@@ -38,26 +37,7 @@ mod tests {
     // ═══════════════════════════════════════════════════════════════════════
 
     async fn setup() -> sea_orm::DatabaseConnection {
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("in-memory SQLite should connect");
-
-        db.execute(Statement::from_string(
-            DbBackend::Sqlite,
-            "PRAGMA foreign_keys = ON;".to_string(),
-        ))
-        .await
-        .expect("PRAGMA foreign_keys");
-
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("migrations should apply cleanly");
-
-        crate::db::seeder::seed_system_data(&db)
-            .await
-            .expect("seeder should run cleanly");
-
-        db
+        crate::db::test_db::seeded().await
     }
 
     async fn resolve_delay_reason_id(db: &sea_orm::DatabaseConnection, code: &str) -> i64 {
@@ -225,7 +205,8 @@ mod tests {
                 source_rca_cause_text: None,
                 entity_id: None,
                 planner_id: None,
-                urgency_id: Some(3),
+                urgency_code: Some("normal".into()),
+                subtype_code: None,
                 title: "Test WO for execution".into(),
                 description: Some("Integration test".into()),
                 notes: None,
@@ -265,9 +246,13 @@ mod tests {
                 planned_start: Some("2026-04-10T08:00:00Z".to_string()),
                 planned_end: Some("2026-04-10T16:00:00Z".to_string()),
                 shift: None,
+                shift_class_version_id: None,
+                clear_shift: false,
                 expected_duration_hours: Some(8.0),
+                planned_crew_size: None,
+                clear_crew_size: false,
                 planned_downtime_hours: None,
-                urgency_id: None,
+                urgency_code: None,
             },
         )
         .await
@@ -441,7 +426,8 @@ mod tests {
                 source_rca_cause_text: None,
                 entity_id: None,
                 planner_id: None,
-                urgency_id: Some(3),
+                urgency_code: Some("normal".into()),
+                subtype_code: None,
                 title: "Task gate test".into(),
                 description: None,
                 notes: None,
@@ -540,7 +526,8 @@ mod tests {
                 source_rca_cause_text: None,
                 entity_id: None,
                 planner_id: None,
-                urgency_id: Some(3),
+                urgency_code: Some("normal".into()),
+                subtype_code: None,
                 title: "Parts gate test".into(),
                 description: None,
                 notes: None,
@@ -675,7 +662,8 @@ mod tests {
                 source_rca_cause_text: None,
                 entity_id: None,
                 planner_id: None,
-                urgency_id: Some(3),
+                urgency_code: Some("normal".into()),
+                subtype_code: None,
                 title: "Full path test".into(),
                 description: Some("S2 V2".into()),
                 notes: None,
@@ -716,9 +704,13 @@ mod tests {
                 planned_start: Some("2026-04-10T08:00:00Z".to_string()),
                 planned_end: Some("2026-04-10T16:00:00Z".to_string()),
                 shift: None,
+                shift_class_version_id: None,
+                clear_shift: false,
                 expected_duration_hours: Some(8.0),
+                planned_crew_size: None,
+                clear_crew_size: false,
                 planned_downtime_hours: None,
-                urgency_id: None,
+                urgency_code: None,
             },
         )
         .await
@@ -884,7 +876,12 @@ mod tests {
         let wo_lines: Vec<&str> = lib_rs.lines().filter(|l| l.contains("commands::wo::")).collect();
 
         // Snapshot of the registered WO command surface; update deliberately when adding commands.
-        assert_eq!(wo_lines.len(), 65, "invoke_handler must contain exactly 65 WO commands");
+        // Migration 198: the OT type CRUD (3) and the OT priority commands (2) gave way to the shared
+        // urgency scale commands (`list_urgency_levels`, `update_urgency_level`) and the plant's
+        // OT sub-types (`list_work_order_subtypes`). Personnel added labour for a person without a
+        // login (`add_personnel_labor`) and the people list (`list_wo_labor_people`). Migration 202:
+        // the shift windows of the team's Classes horaires (`list_wo_shift_options`).
+        assert_eq!(wo_lines.len(), 68, "invoke_handler must contain exactly 68 WO commands");
 
         let mut seen = std::collections::HashSet::new();
         for line in &wo_lines {
@@ -953,7 +950,8 @@ mod tests {
                 source_rca_cause_text: None,
                 entity_id: None,
                 planner_id: None,
-                urgency_id: None,
+                urgency_code: None,
+                subtype_code: None,
                 title: "Shift persistence test".into(),
                 description: None,
                 notes: None,
@@ -982,8 +980,9 @@ mod tests {
         .await
         .expect("submit_wo");
 
-        // plan_wo with shift = "nuit"
-        let planned = execution::plan_wo(
+        // The old fixed codes are refused on a new plan (migration 202): the shift is a window
+        // of the team's Classe horaire (`wo::shifts`).
+        let refused = execution::plan_wo(
             &db,
             WoPlanInput {
                 wo_id: wo.id,
@@ -992,31 +991,24 @@ mod tests {
                 planner_id: actor,
                 planned_start: Some("2026-04-10T08:00:00Z".to_string()),
                 planned_end: Some("2026-04-10T16:00:00Z".to_string()),
-                shift: Some("nuit".into()),
+                shift: Some("night".into()),
+                shift_class_version_id: None,
+                clear_shift: false,
                 expected_duration_hours: None,
+                planned_crew_size: None,
+                clear_crew_size: false,
                 planned_downtime_hours: None,
-                urgency_id: None,
+                urgency_code: None,
             },
         )
         .await
-        .expect("plan_wo with shift");
-
-        assert_eq!(
-            planned.shift.as_deref(),
-            Some("nuit"),
-            "plan_wo response must carry shift = 'nuit'"
-        );
-
+        .expect_err("an old shift code is refused");
+        assert!(format!("{refused:?}").contains("GATE_WO_SHIFT_INVALID"));
         let reloaded = queries::get_work_order(&db, wo.id)
             .await
             .expect("get_work_order")
-            .expect("WO must exist after plan_wo");
-
-        assert_eq!(
-            reloaded.shift.as_deref(),
-            Some("nuit"),
-            "shift must survive a round-trip through the database"
-        );
+            .expect("WO must exist");
+        assert!(reloaded.shift.is_none() && reloaded.shift_class_version_id.is_none());
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -1087,7 +1079,6 @@ mod tests {
         let actor = admin_id(&db).await;
 
         let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
         let sched: i64 = db
             .query_one(Statement::from_string(
                 DbBackend::Sqlite,
@@ -1127,7 +1118,8 @@ mod tests {
             "INSERT INTO personnel_rate_cards \
              (personnel_id, effective_from, labor_rate, overtime_rate, source_type, created_at) \
              VALUES (?, ?, 37.0, 50.0, 'manual', ?)",
-            [personnel_id.into(), today.into(), now.clone().into()],
+            // Valid on the work date of the entries below (the rate of the day the work was done).
+            [personnel_id.into(), "2026-04-01".into(), now.clone().into()],
         ))
         .await
         .expect("rate card");
@@ -1201,5 +1193,547 @@ mod tests {
         .expect("add labor without link");
         assert_eq!(missing.rate_source, "missing");
         assert!(missing.hourly_rate.is_none());
+    }
+    // ═══════════════════════════════════════════════════════════════════════
+    // Permit / LOTO requirement — persisted on create, editable until start
+    // ═══════════════════════════════════════════════════════════════════════
+
+    fn corrective_input(actor: i64, requires_permit: Option<bool>) -> WoCreateInput {
+        WoCreateInput {
+            type_code: "corrective".into(),
+            equipment_id: Some(1),
+            location_id: None,
+            source_di_id: None,
+            source_inspection_anomaly_id: None,
+            source_ram_ishikawa_diagram_id: None,
+            source_ishikawa_flow_node_id: None,
+            source_rca_cause_text: None,
+            entity_id: None,
+            planner_id: None,
+            urgency_code: Some("normal".into()),
+            subtype_code: None,
+            title: "Corrective WO with LOTO".into(),
+            description: None,
+            notes: None,
+            planned_start: None,
+            planned_end: None,
+            shift: None,
+            expected_duration_hours: None,
+            creator_id: actor,
+            requires_permit,
+        }
+    }
+
+    #[tokio::test]
+    async fn permit_requirement_persists_on_create() {
+        let db = setup().await;
+        seed_test_equipment(&db).await;
+        let actor = admin_id(&db).await;
+
+        let with_permit = queries::create_work_order(&db, corrective_input(actor, Some(true)))
+            .await
+            .expect("create WO requiring a permit");
+        assert!(with_permit.requires_permit, "requires_permit=true must be stored");
+
+        let reloaded = queries::get_work_order(&db, with_permit.id)
+            .await
+            .expect("reload")
+            .expect("WO exists");
+        assert!(reloaded.requires_permit, "requires_permit must survive a reload");
+
+        let without = queries::create_work_order(&db, corrective_input(actor, None))
+            .await
+            .expect("create WO without permit");
+        assert!(!without.requires_permit, "default stays false");
+    }
+
+    #[tokio::test]
+    async fn permit_requirement_set_in_planning_gates_start_and_freezes_in_progress() {
+        use crate::wo::workflow::actions::{set_permit_requirement, WoPermitRequirementInput};
+
+        let db = setup().await;
+        seed_test_equipment(&db).await;
+        let actor = admin_id(&db).await;
+
+        let wo = queries::create_work_order(&db, corrective_input(actor, None))
+            .await
+            .expect("create WO");
+        let wo = submit_wo(
+            &db,
+            WoSubmitInput {
+                wo_id: wo.id,
+                actor_id: actor,
+                expected_row_version: wo.row_version,
+            },
+        )
+        .await
+        .expect("submit → planning");
+
+        let wo = set_permit_requirement(
+            &db,
+            WoPermitRequirementInput {
+                wo_id: wo.id,
+                expected_row_version: wo.row_version,
+                requires_permit: true,
+            },
+            actor,
+        )
+        .await
+        .expect("planner can require a permit in planning");
+        assert!(wo.requires_permit);
+
+        let gate = crate::permit::wo_gate::assert_in_progress_permit_gate(&db, wo.id).await;
+        assert!(
+            format!("{gate:?}").contains("PERMIT_REQUIRED_TO_START"),
+            "start gate must refuse without an active permit: {gate:?}"
+        );
+
+        // A stale row version is refused (optimistic concurrency).
+        let stale = set_permit_requirement(
+            &db,
+            WoPermitRequirementInput {
+                wo_id: wo.id,
+                expected_row_version: wo.row_version - 1,
+                requires_permit: false,
+            },
+            actor,
+        )
+        .await;
+        assert!(stale.is_err(), "stale row version must be rejected");
+
+        // Once the work is under way the requirement can no longer change.
+        let (running_id, running_rv) = create_wo_in_progress(&db).await;
+        let frozen = set_permit_requirement(
+            &db,
+            WoPermitRequirementInput {
+                wo_id: running_id,
+                expected_row_version: running_rv,
+                requires_permit: true,
+            },
+            actor,
+        )
+        .await;
+        assert!(
+            matches!(frozen, Err(AppError::ValidationFailed(_))),
+            "requirement is frozen once the WO is in progress"
+        );
+    }
+
+    /// The start / resume gate (`permit::wo_gate`) is where permit and LOTO safety is
+    /// hard-enforced (planning only warns): every live permit of the OT must be active and every
+    /// isolation verified.
+    #[tokio::test]
+    async fn start_gate_refuses_until_every_live_permit_is_active_and_isolations_verified() {
+        use crate::wo::workflow::actions::{set_permit_requirement, WoPermitRequirementInput};
+
+        let db = setup().await;
+        seed_test_equipment(&db).await;
+        let actor = admin_id(&db).await;
+        let wo = queries::create_work_order(&db, corrective_input(actor, None))
+            .await
+            .expect("create WO");
+        let wo = submit_wo(
+            &db,
+            WoSubmitInput {
+                wo_id: wo.id,
+                actor_id: actor,
+                expected_row_version: wo.row_version,
+            },
+        )
+        .await
+        .expect("submit → planning");
+        let wo = set_permit_requirement(
+            &db,
+            WoPermitRequirementInput {
+                wo_id: wo.id,
+                expected_row_version: wo.row_version,
+                requires_permit: true,
+            },
+            actor,
+        )
+        .await
+        .expect("permit required");
+        let equipment = wo.equipment_id.expect("WO equipment");
+        let exec_sql = |sql: String| {
+            let db = db.clone();
+            async move {
+                db.execute(Statement::from_string(DbBackend::Sqlite, sql.clone()))
+                    .await
+                    .unwrap_or_else(|e| panic!("{sql}: {e}"));
+            }
+        };
+        let gate = || crate::permit::wo_gate::assert_in_progress_permit_gate(&db, wo.id);
+        let refused_with = |result: Result<(), AppError>, code: &str| {
+            let text = format!("{result:?}");
+            assert!(text.contains(code), "expected {code}: {text}");
+        };
+
+        // Issued, not active: refused.
+        exec_sql(format!(
+            "INSERT INTO work_permits (entity_sync_id, code, linked_work_order_id, permit_type_id, asset_id, entity_id, status, row_version)
+             SELECT 'gate-hot', 'PTW-HOT', {}, id, {equipment}, 1, 'issued', 1 FROM permit_types WHERE code = 'hot_work'",
+            wo.id
+        ))
+        .await;
+        refused_with(gate().await, "PERMIT_NOT_ACTIVE");
+        // Suspended: refused.
+        exec_sql("UPDATE work_permits SET status = 'suspended' WHERE code = 'PTW-HOT'".into()).await;
+        refused_with(gate().await, "PERMIT_SUSPENDED");
+        // Active: allowed.
+        exec_sql("UPDATE work_permits SET status = 'active' WHERE code = 'PTW-HOT'".into()).await;
+        gate().await.expect("active hot-work permit");
+
+        // A second live permit counts too: an active LOTO permit without isolation points.
+        exec_sql(format!(
+            "INSERT INTO work_permits (entity_sync_id, code, linked_work_order_id, permit_type_id, asset_id, entity_id, status, row_version)
+             SELECT 'gate-loto', 'PTW-LOTO', {}, id, {equipment}, 1, 'active', 1 FROM permit_types WHERE code = 'loto'",
+            wo.id
+        ))
+        .await;
+        refused_with(gate().await, "LOTO_NO_ISOLATION");
+        // An isolation applied but not verified: refused.
+        exec_sql(
+            "INSERT INTO permit_isolations (entity_sync_id, permit_id, isolation_point, energy_type, isolation_method)
+             SELECT 'gate-iso', id, 'Q12 disconnector', 'electrical', 'lock' FROM work_permits WHERE code = 'PTW-LOTO'"
+                .into(),
+        )
+        .await;
+        refused_with(gate().await, "LOTO_NOT_VERIFIED");
+        // Verified: allowed.
+        exec_sql(
+            "UPDATE permit_isolations SET verified_at = '2026-05-04T07:30:00Z' WHERE entity_sync_id = 'gate-iso'"
+                .into(),
+        )
+        .await;
+        gate().await.expect("every isolation verified");
+        // Removed before the work resumes: refused.
+        exec_sql(
+            "UPDATE permit_isolations SET removal_verified_at = '2026-05-04T12:00:00Z' WHERE entity_sync_id = 'gate-iso'"
+                .into(),
+        )
+        .await;
+        refused_with(gate().await, "LOTO_ISOLATION_REMOVED");
+        exec_sql("UPDATE permit_isolations SET removal_verified_at = NULL WHERE entity_sync_id = 'gate-iso'".into())
+            .await;
+        // Expired: refused.
+        exec_sql("UPDATE work_permits SET expires_at = '2000-01-01T00:00:00Z' WHERE code = 'PTW-HOT'".into()).await;
+        refused_with(gate().await, "PERMIT_EXPIRED");
+        // Closed permits no longer count: with none live, the work cannot start.
+        exec_sql("UPDATE work_permits SET status = 'closed'".into()).await;
+        refused_with(gate().await, "PERMIT_REQUIRED_TO_START");
+    }
+
+    /// A permit linked to an OT protects the work even when the OT is not flagged as requiring
+    /// one: a suspended permit or unverified LOTO refuses start / resume. No linked permit and no
+    /// requirement: the OT starts as before.
+    #[tokio::test]
+    async fn a_linked_permit_is_enforced_even_without_the_requirement_flag() {
+        let db = setup().await;
+        seed_test_equipment(&db).await;
+        let actor = admin_id(&db).await;
+        let wo = queries::create_work_order(&db, corrective_input(actor, None))
+            .await
+            .expect("create WO");
+        assert!(!wo.requires_permit);
+        let equipment = wo.equipment_id.expect("WO equipment");
+        let exec_sql = |sql: String| {
+            let db = db.clone();
+            async move {
+                db.execute(Statement::from_string(DbBackend::Sqlite, sql.clone()))
+                    .await
+                    .unwrap_or_else(|e| panic!("{sql}: {e}"));
+            }
+        };
+        let gate = || crate::permit::wo_gate::assert_in_progress_permit_gate(&db, wo.id);
+        gate().await.expect("no permit, none required");
+
+        exec_sql(format!(
+            "INSERT INTO work_permits (entity_sync_id, code, linked_work_order_id, permit_type_id, asset_id, entity_id, status, row_version)
+             SELECT 'flagless-loto', 'PTW-FLAGLESS', {}, id, {equipment}, 1, 'active', 1 FROM permit_types WHERE code = 'loto'",
+            wo.id
+        ))
+        .await;
+        exec_sql(
+            "INSERT INTO permit_isolations (entity_sync_id, permit_id, isolation_point, energy_type, isolation_method)
+             SELECT 'flagless-iso', id, 'Q7 breaker', 'electrical', 'lock' FROM work_permits WHERE code = 'PTW-FLAGLESS'"
+                .into(),
+        )
+        .await;
+        let unverified = gate().await;
+        assert!(
+            format!("{unverified:?}").contains("LOTO_NOT_VERIFIED"),
+            "{unverified:?}"
+        );
+        exec_sql("UPDATE work_permits SET status = 'suspended' WHERE code = 'PTW-FLAGLESS'".into()).await;
+        let suspended = gate().await;
+        assert!(format!("{suspended:?}").contains("PERMIT_SUSPENDED"), "{suspended:?}");
+        exec_sql("UPDATE work_permits SET status = 'active' WHERE code = 'PTW-FLAGLESS'".into()).await;
+        exec_sql(
+            "UPDATE permit_isolations SET verified_at = '2026-05-04T07:30:00Z' WHERE entity_sync_id = 'flagless-iso'"
+                .into(),
+        )
+        .await;
+        gate().await.expect("active permit, isolation verified");
+    }
+    // ═══════════════════════════════════════════════════════════════════════
+    // Execution-added stock part — reserved and issued from stock at once
+    // ═══════════════════════════════════════════════════════════════════════
+
+    async fn lookup_value_id(db: &sea_orm::DatabaseConnection, domain_key: &str) -> i64 {
+        db.query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT lv.id FROM lookup_values lv JOIN lookup_domains ld ON ld.id = lv.domain_id \
+             WHERE ld.domain_key = ? AND lv.is_active = 1 AND lv.deleted_at IS NULL \
+             ORDER BY lv.sort_order, lv.id LIMIT 1",
+            [domain_key.into()],
+        ))
+        .await
+        .expect("lookup query")
+        .expect("lookup value")
+        .try_get::<i64>("", "id")
+        .expect("lookup id")
+    }
+
+    /// Article with `qty` on hand at the seeded MAIN-BIN location. Returns (article_id, location_id).
+    async fn seed_stock_article(db: &sea_orm::DatabaseConnection, code: &str, qty: f64) -> (i64, i64) {
+        let unit = crate::reference::units::unit_id_by_code(db, "U").await.expect("unit U");
+        let stocking = lookup_value_id(db, "inventory.stocking_type").await;
+        let tax = lookup_value_id(db, "inventory.tax_category").await;
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO articles (entity_sync_id, article_code, article_name, unit_value_id, \
+             stocking_type_value_id, tax_category_value_id, min_stock, reorder_point, safety_stock, \
+             is_active, row_version) VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, 1, 1)",
+            [
+                format!("art-{code}").into(),
+                code.into(),
+                format!("Article {code}").into(),
+                unit.into(),
+                stocking.into(),
+                tax.into(),
+            ],
+        ))
+        .await
+        .expect("insert article");
+        let article_id: i64 = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT id FROM articles WHERE article_code = ?",
+                [code.into()],
+            ))
+            .await
+            .expect("article query")
+            .expect("article row")
+            .try_get("", "id")
+            .expect("article id");
+        let location_id: i64 = db
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT id FROM stock_locations WHERE code = 'MAIN-BIN' LIMIT 1".to_string(),
+            ))
+            .await
+            .expect("location query")
+            .expect("MAIN-BIN location")
+            .try_get("", "id")
+            .expect("location id");
+        crate::inventory::queries::adjust_stock(
+            db,
+            crate::inventory::domain::InventoryStockAdjustInput {
+                article_id,
+                location_id,
+                delta_qty: qty,
+                reason_code: Some("seed for WO execution test".to_string()),
+                notes: None,
+                source_ref: None,
+            },
+        )
+        .await
+        .expect("seed stock");
+        (article_id, location_id)
+    }
+
+    async fn on_hand(db: &sea_orm::DatabaseConnection, article_id: i64, location_id: i64) -> f64 {
+        db.query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT on_hand_qty FROM stock_balances WHERE article_id = ? AND location_id = ?",
+            [article_id.into(), location_id.into()],
+        ))
+        .await
+        .expect("balance query")
+        .expect("balance row")
+        .try_get::<f64>("", "on_hand_qty")
+        .expect("on_hand_qty")
+    }
+
+    #[tokio::test]
+    async fn execution_added_stock_part_is_reserved_and_issued() {
+        let db = setup().await;
+        let (wo_id, _) = create_wo_in_progress(&db).await;
+        let (article_id, location_id) = seed_stock_article(&db, "EXEC-BRG-6207", 10.0).await;
+
+        let part = parts::add_planned_part(
+            &db,
+            parts::AddPartInput {
+                wo_id,
+                article_id: Some(article_id),
+                article_ref: None,
+                quantity_planned: 2.0,
+                unit_cost: None,
+                stock_location_id: Some(location_id),
+                auto_reserve: Some(true),
+                notes: None,
+                origin: None,
+            },
+        )
+        .await
+        .expect("add execution part from stock");
+
+        assert_eq!(part.origin, "execution_added");
+        assert!(part.reservation_id.is_some(), "a reservation must back the issued part");
+        assert_eq!(part.quantity_issued, 2.0, "the used quantity is issued from stock");
+        assert_eq!(
+            on_hand(&db, article_id, location_id).await,
+            8.0,
+            "stock decreases by the issue"
+        );
+    }
+
+    #[tokio::test]
+    async fn execution_added_stock_part_without_enough_stock_is_rejected_and_not_kept() {
+        let db = setup().await;
+        let (wo_id, _) = create_wo_in_progress(&db).await;
+        let (article_id, location_id) = seed_stock_article(&db, "EXEC-SEAL-01", 1.0).await;
+
+        let result = parts::add_planned_part(
+            &db,
+            parts::AddPartInput {
+                wo_id,
+                article_id: Some(article_id),
+                article_ref: None,
+                quantity_planned: 5.0,
+                unit_cost: None,
+                stock_location_id: Some(location_id),
+                auto_reserve: Some(true),
+                notes: None,
+                origin: None,
+            },
+        )
+        .await;
+        assert!(result.is_err(), "issuing more than available must fail");
+        let lines: i64 = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT COUNT(*) AS n FROM work_order_parts WHERE work_order_id = ? AND article_id = ?",
+                [wo_id.into(), article_id.into()],
+            ))
+            .await
+            .expect("count")
+            .expect("row")
+            .try_get("", "n")
+            .expect("n");
+        assert_eq!(lines, 0, "no unissued 'used' line may remain");
+        assert_eq!(on_hand(&db, article_id, location_id).await, 1.0, "stock unchanged");
+    }
+    // ═══════════════════════════════════════════════════════════════════════
+    // Close-out coding on reference values (migration 178) + future labour
+    // ═══════════════════════════════════════════════════════════════════════
+
+    async fn value_id(db: &sea_orm::DatabaseConnection, domain: &str, code: &str) -> i64 {
+        db.query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT rv.id FROM reference_values rv JOIN reference_sets rs ON rs.id = rv.set_id \
+             JOIN reference_domains d ON d.id = rs.domain_id \
+             WHERE d.code = ? AND rv.code = ? LIMIT 1",
+            [domain.into(), code.into()],
+        ))
+        .await
+        .expect("value query")
+        .unwrap_or_else(|| panic!("{domain}:{code} must be seeded"))
+        .try_get::<i64>("", "id")
+        .expect("value id")
+    }
+
+    #[tokio::test]
+    async fn closeout_coding_saves_iso_14224_reference_values() {
+        let db = setup().await;
+        let (wo_id, _) = create_wo_in_progress(&db).await;
+        let symptom = value_id(&db, "WORK.SYMPTOMS", "vibration").await;
+        let cause = value_id(&db, "WORK.FAILURE_CAUSES", "wear_and_tear").await;
+        let effect = value_id(&db, "WORK.FAILURE_EFFECTS", "degraded").await;
+        let mechanism = value_id(&db, "WORK.FAILURE_MECHANISMS", "fatigue").await;
+        let detection = value_id(&db, "WORK.DETECTION_METHODS", "inspection").await;
+
+        let saved = closeout::save_failure_coding(
+            &db,
+            closeout::SaveFailureCodingInput {
+                base: SaveFailureDetailInput {
+                    wo_id,
+                    symptom_id: Some(symptom),
+                    failure_mode_id: None,
+                    failure_cause_id: Some(cause),
+                    failure_effect_id: Some(effect),
+                    is_temporary_repair: false,
+                    is_permanent_repair: true,
+                    cause_not_determined: false,
+                    notes: Some("Bearing replaced".into()),
+                },
+                failure_mechanism_id: Some(mechanism),
+                detection_method_id: Some(detection),
+            },
+        )
+        .await
+        .expect("cause / effect from reference domains must satisfy the foreign keys");
+        assert_eq!(saved.failure_cause_id, Some(cause));
+        assert_eq!(saved.failure_effect_id, Some(effect));
+        assert_eq!(saved.failure_mechanism_id, Some(mechanism));
+        assert_eq!(saved.detection_method_id, Some(detection));
+        assert!(saved.failure_mechanism_label.is_some());
+
+        // A mechanism id from another domain is refused.
+        let wrong = closeout::save_failure_coding(
+            &db,
+            closeout::SaveFailureCodingInput {
+                base: SaveFailureDetailInput {
+                    wo_id,
+                    symptom_id: Some(symptom),
+                    failure_mode_id: None,
+                    failure_cause_id: Some(cause),
+                    failure_effect_id: Some(effect),
+                    is_temporary_repair: false,
+                    is_permanent_repair: true,
+                    cause_not_determined: false,
+                    notes: None,
+                },
+                failure_mechanism_id: Some(cause),
+                detection_method_id: None,
+            },
+        )
+        .await;
+        assert!(matches!(wrong, Err(AppError::ValidationFailed(_))));
+    }
+
+    #[tokio::test]
+    async fn labour_in_the_future_is_rejected() {
+        let db = setup().await;
+        let (wo_id, _) = create_wo_in_progress(&db).await;
+        let actor = admin_id(&db).await;
+        let tomorrow = (chrono::Utc::now() + chrono::Duration::days(1))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
+        let result = labor::add_labor_entry(
+            &db,
+            AddLaborInput {
+                wo_id,
+                intervener_id: actor,
+                skill_id: None,
+                started_at: Some("2026-04-10T08:00:00Z".into()),
+                ended_at: Some(tomorrow),
+                hours_worked: None,
+                hourly_rate: None,
+                notes: None,
+            },
+        )
+        .await;
+        assert!(matches!(result, Err(AppError::ValidationFailed(_))));
     }
 }

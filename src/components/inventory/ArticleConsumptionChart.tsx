@@ -6,8 +6,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { BarChart } from "@/components/charts/BarChart";
+import { describeAppError } from "@/lib/app-error";
 import { getArticleConsumptionMonthly } from "@/services/inventory-service";
-import { toErrorMessage } from "@/utils/errors";
 import type { ArticleConsumptionMonth } from "@shared/ipc-types";
 
 export interface ArticleConsumptionChartProps {
@@ -33,7 +33,7 @@ export function ArticleConsumptionChart({ articleId, months = 12 }: ArticleConsu
       .catch((err) => {
         if (!cancelled) {
           setRows([]);
-          setError(toErrorMessage(err));
+          setError(describeAppError(err).title);
         }
       })
       .finally(() => {

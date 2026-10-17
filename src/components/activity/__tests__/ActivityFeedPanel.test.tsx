@@ -77,24 +77,38 @@ describe("ActivityFeedPanel accessibility and saved views", () => {
     activityMocks.listSavedActivityFilters.mockClear();
   });
 
-  it("exposes labeled filter controls and keeps selected saved view value", async () => {
+  it("exposes readable filter labels (no column names) and applies a saved view", async () => {
     renderPanel();
 
     await waitFor(() => {
-      expect(screen.getByLabelText("Event class filter")).toBeInTheDocument();
+      expect(screen.getByLabelText(/filters\.module|^Module$/)).toBeInTheDocument();
     });
+    expect(screen.queryByPlaceholderText("event_class")).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("source_module")).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/filters\.severity|Severity/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/filters\.eventClass|Event type/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/filters\.dateFrom|From/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/filters\.dateTo|To/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/feed\.autoRefresh|Refresh every/)).toBeInTheDocument();
 
-    expect(screen.getByLabelText("Event class filter")).toBeInTheDocument();
-    expect(screen.getByLabelText("Source module filter")).toBeInTheDocument();
-    expect(screen.getByLabelText("Severity filter")).toBeInTheDocument();
-    expect(screen.getByLabelText("Entity scope ID filter")).toBeInTheDocument();
-    expect(screen.getByLabelText("Correlation ID filter")).toBeInTheDocument();
-    expect(screen.getByLabelText("Date from filter")).toBeInTheDocument();
-    expect(screen.getByLabelText("Date to filter")).toBeInTheDocument();
-    expect(screen.getByLabelText("Auto-refresh activity feed")).toBeInTheDocument();
+    await waitFor(() => expect(activityMocks.listSavedActivityFilters).toHaveBeenCalled());
+    const savedViews = screen.getByLabelText(/feed\.savedViews|Saved views/);
+    fireEvent.keyDown(savedViews, { key: "Enter" });
+    fireEvent.click(await screen.findByRole("option", { name: "Critical by module" }));
 
-    const savedViewSelect = screen.getByLabelText("Saved activity views") as HTMLSelectElement;
-    fireEvent.change(savedViewSelect, { target: { value: "11" } });
-    expect(savedViewSelect.value).toBe("11");
+    // The saved filter fills the module filter with its translated label.
+    await waitFor(() =>
+      expect(screen.getByLabelText(/filters\.module|^Module$/)).toHaveTextContent(/archive/i),
+    );
+  });
+
+  it("shows a load failure with retry instead of 'no event'", async () => {
+    activityMocks.listActivityEvents.mockRejectedValueOnce({
+      code: "DATABASE_ERROR",
+      message: "down",
+    });
+    renderPanel();
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.queryByText(/feed\.empty|No event for these filters/)).not.toBeInTheDocument();
   });
 });

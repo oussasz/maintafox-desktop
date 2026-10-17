@@ -113,4 +113,11 @@ describe("Sidebar ΓÇö permission-based filtering", () => {
     expect(screen.queryByText("nav.groups.compliance")).not.toBeInTheDocument();
     expect(screen.getByText("nav.groups.core")).toBeInTheDocument();
   });
+  it("a role administrator without user management still reaches Administration", async () => {
+    // The /admin route opens with adm.users OR adm.roles; the menu entry follows the same rule.
+    mockCan.mockImplementation((permission: PermissionName) => permission === P.ADM_ROLES);
+    renderSidebar();
+
+    expect(await screen.findByText("nav.admin")).toBeInTheDocument();
+  });
 });

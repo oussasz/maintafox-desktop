@@ -4,9 +4,10 @@
 //!
 //! - Planned load of a day: open work orders whose `planned_start` falls on that day, summed on
 //!   `expected_duration_hours`. Orders without an estimate are counted separately (never as 0 h).
-//! - Capacity of a day: for every crew with a capacity rule in force that day, available +
-//!   overtime hours (`capacity_rules`). Without any rule the capacity is unknown (`None`) and
-//!   no day is called overloaded.
+//! - Capacity of a day: for every active crew, the hours its members' Classes horaires give for
+//!   work orders that day plus the planner's overtime ceiling (`personnel::capacity`, the same
+//!   figure planning books against). Without any crew working to a schedule in the period the
+//!   capacity is unknown (`None`) and no day is called overloaded.
 //! - Blocked work: orders on hold, grouped by the semantic tag of their open delay reason.
 
 use std::collections::BTreeMap;
@@ -18,7 +19,13 @@ use serde::{Deserialize, Serialize};
 use crate::errors::{AppError, AppResult};
 
 /// Statuses whose work is still ahead (not finished, not abandoned).
-const OPEN_STATUS_SQL: &str = "('draft', 'planning', 'ready', 'in_progress', 'on_hold')";
+pub const OPEN_STATUS_SQL: &str = "('draft', 'planning', 'ready', 'in_progress', 'on_hold')";
+
+/// SQL predicate (aliases `wo` and its status `s`, one bind: now, RFC 3339): an OT whose work is
+/// still ahead ([`OPEN_STATUS_SQL`]) and whose planned end is past — the one "overdue" rule (OT
+/// dashboard, home page, `analytics::as_of::wo_overdue_at` at now), so overdue is part of open.
+pub const WO_OVERDUE_SQL: &str = "(s.code IN ('draft', 'planning', 'ready', 'in_progress', 'on_hold') \
+     AND wo.planned_end IS NOT NULL AND datetime(wo.planned_end) < datetime(?))";
 pub const MAX_WEEKS: i64 = 12;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -100,64 +107,36 @@ async fn bucket(
     })
 }
 
-/// Capacity of each day: per crew, the latest rule in force that day.
+/// Capacity of each day: the sum over the active crews of their capacity (`personnel::capacity`).
 async fn capacity_by_day(db: &impl ConnectionTrait, days: &[NaiveDate]) -> AppResult<Option<BTreeMap<String, f64>>> {
-    let rules = db
+    let (Some(first), Some(last)) = (days.iter().min(), days.iter().max()) else {
+        return Ok(None);
+    };
+    let teams: Vec<i64> = db
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT team_id, effective_start, effective_end, available_hours_per_day, max_overtime_hours_per_day \
-             FROM capacity_rules ORDER BY team_id, effective_start"
-                .to_string(),
+            "SELECT id FROM teams WHERE status = 'active' AND deleted_at IS NULL ORDER BY id".to_string(),
         ))
-        .await?;
-    if rules.is_empty() {
+        .await?
+        .iter()
+        .map(|r| r.try_get::<i64>("", "id").map_err(|e| decode_err("id", e)))
+        .collect::<AppResult<_>>()?;
+    if teams.is_empty() {
         return Ok(None);
     }
-    struct Rule {
-        team: i64,
-        start: String,
-        end: Option<String>,
-        hours: f64,
-    }
-    let mut parsed = Vec::with_capacity(rules.len());
-    for r in &rules {
-        let available: f64 = r
-            .try_get("", "available_hours_per_day")
-            .map_err(|e| decode_err("available_hours_per_day", e))?;
-        let overtime: f64 = r
-            .try_get("", "max_overtime_hours_per_day")
-            .map_err(|e| decode_err("max_overtime_hours_per_day", e))?;
-        parsed.push(Rule {
-            team: r.try_get("", "team_id").map_err(|e| decode_err("team_id", e))?,
-            start: r
-                .try_get::<String>("", "effective_start")
-                .map_err(|e| decode_err("effective_start", e))?,
-            end: r
-                .try_get("", "effective_end")
-                .map_err(|e| decode_err("effective_end", e))?,
-            hours: available + overtime,
-        });
-    }
-    let mut out = BTreeMap::new();
-    for d in days {
-        let day = d.format("%Y-%m-%d").to_string();
-        let mut per_team: BTreeMap<i64, (&str, f64)> = BTreeMap::new();
-        for rule in &parsed {
-            let starts = rule.start.get(..10).unwrap_or(&rule.start) <= day.as_str();
-            let not_ended = rule
-                .end
-                .as_deref()
-                .is_none_or(|e| e.get(..10).unwrap_or(e) >= day.as_str());
-            if starts && not_ended {
-                let entry = per_team.entry(rule.team).or_insert((rule.start.as_str(), rule.hours));
-                if rule.start.as_str() >= entry.0 {
-                    *entry = (rule.start.as_str(), rule.hours);
-                }
+    let mut out: BTreeMap<String, f64> = days.iter().map(|d| (d.format("%Y-%m-%d").to_string(), 0.0)).collect();
+    // Without any crew working to a schedule in the period, capacity is unknown: no day is called
+    // overloaded (an upgraded database whose people have no Classe horaire yet).
+    let mut any_schedule = false;
+    for team in teams {
+        for day in crate::personnel::capacity::team_capacity_span(db, team, *first, *last).await? {
+            any_schedule |= day.basis == "roster";
+            if let Some(total) = out.get_mut(&day.day) {
+                *total += day.available_hours + day.rule_overtime_hours.unwrap_or(0.0);
             }
         }
-        out.insert(day, per_team.values().map(|(_, h)| h).sum());
     }
-    Ok(Some(out))
+    Ok(any_schedule.then_some(out))
 }
 
 pub async fn get_wo_backlog_heatmap(

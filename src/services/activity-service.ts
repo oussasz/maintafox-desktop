@@ -141,7 +141,7 @@ export async function listActivityEvents(filter?: ActivityFilter): Promise<Activ
 }
 
 export async function getActivityEvent(event_id: number): Promise<ActivityEventDetail> {
-  const raw = await invoke<ActivityEventDetail>("get_activity_event", { event_id });
+  const raw = await invoke<ActivityEventDetail>("get_activity_event", { eventId: event_id });
   return ActivityEventDetailSchema.parse(raw);
 }
 
@@ -170,7 +170,7 @@ export async function listAuditEvents(filter?: AuditFilter): Promise<AuditEventS
 }
 
 export async function getAuditEvent(event_id: number): Promise<AuditEventDetail> {
-  const raw = await invoke<AuditEventDetail>("get_audit_event", { event_id });
+  const raw = await invoke<AuditEventDetail>("get_audit_event", { eventId: event_id });
   return AuditEventDetailSchema.parse(raw);
 }
 

@@ -1,36 +1,17 @@
 //! Supervisor verification tests for Phase 2 SP05 File 01 Sprint S1.
 //!
 //! V1 — Migration 022 applies cleanly; all tables created; work_order_stubs dropped.
-//! V2 — Seed row counts: work_order_types=7, work_order_statuses=8 live system rows
-//!       (Option B; table may also hold retired rows), urgency_levels=5, delay_reason_codes=10.
+//! V2 — Seed row counts: OT types = 8 values of `WORK.ORDER_TYPES`, work_order_statuses=8 live
+//!       system rows (Option B; table may also hold retired rows), urgency scale = 5 levels of
+//!       `WORK.URGENCY`, delay_reason_codes=10.
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
-    use sea_orm_migration::MigratorTrait;
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
     /// In-memory SQLite with all migrations applied.
     async fn setup() -> sea_orm::DatabaseConnection {
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("in-memory SQLite should connect");
-
-        db.execute(Statement::from_string(
-            DbBackend::Sqlite,
-            "PRAGMA foreign_keys = ON;".to_string(),
-        ))
-        .await
-        .expect("PRAGMA foreign_keys");
-
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("migrations should apply cleanly (including 022)");
-
-        crate::db::seeder::seed_system_data(&db)
-            .await
-            .expect("seeder should run cleanly");
-
-        db
+        crate::db::test_db::seeded().await
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -184,10 +165,15 @@ mod tests {
         row.try_get::<i64>("", "cnt").unwrap()
     }
 
+    /// Since migration 198 the OT types are the SYSTEM reference list `WORK.ORDER_TYPES`
+    /// (the 7 historical types plus `predictive`), each with an EN 13306 nature.
     #[tokio::test]
-    async fn v2_work_order_types_has_7_rows() {
+    async fn v2_work_order_types_are_the_reference_list_with_natures() {
         let db = setup().await;
-        assert_eq!(count_rows(&db, "work_order_types").await, 7);
+        let types = crate::wo::types::list_work_order_types(&db).await.expect("types");
+        assert_eq!(types.len(), 8);
+        assert!(types.iter().all(|t| t.nature.is_some() && t.is_system));
+        assert!(!table_exists(&db, "work_order_types").await);
     }
 
     #[tokio::test]
@@ -228,10 +214,25 @@ mod tests {
         }
     }
 
+    /// Since migration 198 the urgency scale is the SYSTEM reference list `WORK.URGENCY`.
     #[tokio::test]
-    async fn v2_urgency_levels_has_5_rows() {
+    async fn v2_urgency_scale_has_5_levels() {
         let db = setup().await;
-        assert_eq!(count_rows(&db, "urgency_levels").await, 5);
+        let levels = crate::reference::urgency_scale::list_urgency_levels(&db)
+            .await
+            .expect("levels");
+        assert_eq!(levels.len(), 5);
+        assert!(!table_exists(&db, "urgency_levels").await);
+    }
+
+    async fn table_exists(db: &sea_orm::DatabaseConnection, name: &str) -> bool {
+        db.query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            format!("SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = '{name}'"),
+        ))
+        .await
+        .expect("query")
+        .is_some()
     }
 
     #[tokio::test]

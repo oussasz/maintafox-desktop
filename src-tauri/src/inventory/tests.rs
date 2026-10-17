@@ -1,5 +1,4 @@
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
-use sea_orm_migration::MigratorTrait;
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 use crate::errors::AppError;
 use crate::inventory::domain::{
@@ -14,12 +13,7 @@ use crate::inventory::domain::{
 use crate::inventory::{controls, procurement, queries};
 
 async fn setup_db() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:").await.expect("in-memory sqlite");
-    crate::migrations::Migrator::up(&db, None).await.expect("migrations");
-    crate::db::seeder::seed_system_data(&db)
-        .await
-        .expect("seed system data");
-    db
+    crate::db::test_db::seeded().await
 }
 
 async fn first_active_lookup_value_id(db: &DatabaseConnection, domain_key: &str) -> i64 {
@@ -55,7 +49,7 @@ async fn main_location_id(db: &DatabaseConnection) -> i64 {
 }
 
 async fn create_test_article(db: &DatabaseConnection, code: &str) -> i64 {
-    let unit_value_id = first_active_lookup_value_id(db, "inventory.unit_of_measure").await;
+    let unit_value_id = crate::reference::units::unit_id_by_code(db, "U").await.expect("unit U");
     let stocking_type_value_id = first_active_lookup_value_id(db, "inventory.stocking_type").await;
     let tax_category_value_id = first_active_lookup_value_id(db, "inventory.tax_category").await;
     let created = queries::create_article(
@@ -92,6 +86,8 @@ async fn create_test_article(db: &DatabaseConnection, code: &str) -> i64 {
             shelf_life_days: None,
             requires_batch_tracking: None,
             is_active: Some(true),
+            barcode: None,
+            requires_serial_tracking: None,
         },
     )
     .await
@@ -347,6 +343,7 @@ async fn transfer_safety_preserves_reserved_and_blocks_double_consumption() {
             source_id: Some(9003),
             source_ref: Some("WO-9003".to_string()),
             notes: Some("should fail due reserved".to_string()),
+            lot_id: None,
         },
     )
     .await
@@ -439,7 +436,7 @@ async fn procurement_requisition_po_gr_flow_keeps_traceability() {
             next_status: "APPROVED".to_string(),
             reason: None,
             note: None,
-            actor_id: None,
+            actor_id: Some(1),
         },
     )
     .await
@@ -452,6 +449,7 @@ async fn procurement_requisition_po_gr_flow_keeps_traceability() {
             supplier_id: None,
             supplier_company_id: Some(supplier_id),
             actor_id: None,
+            currency_code: None,
         },
     )
     .await
@@ -477,7 +475,7 @@ async fn procurement_requisition_po_gr_flow_keeps_traceability() {
             next_status: "APPROVED".to_string(),
             reason: None,
             note: None,
-            actor_id: None,
+            actor_id: Some(1),
         },
     )
     .await
@@ -516,9 +514,13 @@ async fn procurement_requisition_po_gr_flow_keeps_traceability() {
                 accepted_qty: 7.0,
                 rejected_qty: 0.0,
                 rejection_reason: None,
+                lots: None,
+                entered_unit_value_id: None,
             }],
             fulfillment_action: None,
             actor_id: None,
+            exchange_rate: None,
+            posting_date: None,
         },
     )
     .await
@@ -1433,4 +1435,279 @@ async fn list_stock_balances_includes_synthetic_zero_when_no_balance_row() {
     assert_eq!(after.len(), 1);
     assert!(after[0].id > 0);
     assert!((after[0].on_hand_qty - 3.0).abs() < f64::EPSILON);
+}
+
+#[tokio::test]
+async fn list_articles_returns_stock_totals_per_article() {
+    let db = setup_db().await;
+    let stocked_id = create_test_article(&db, "INV-TOT-001").await;
+    let empty_id = create_test_article(&db, "INV-TOT-002").await;
+    let location_id = main_location_id(&db).await;
+
+    queries::adjust_stock(
+        &db,
+        InventoryStockAdjustInput {
+            article_id: stocked_id,
+            location_id,
+            delta_qty: 8.0,
+            reason_code: Some("ENTREE_ACHAT".to_string()),
+            notes: None,
+            source_ref: None,
+        },
+    )
+    .await
+    .expect("adjust");
+    queries::reserve_stock(
+        &db,
+        InventoryReserveInput {
+            article_id: stocked_id,
+            location_id,
+            quantity: 3.0,
+            source_type: "WO".to_string(),
+            source_id: Some(1),
+            source_ref: None,
+            notes: None,
+        },
+    )
+    .await
+    .expect("reserve");
+
+    let rows = queries::list_articles(
+        &db,
+        InventoryArticleFilter {
+            search: Some("INV-TOT".to_string()),
+        },
+    )
+    .await
+    .expect("list articles");
+    let stocked = rows.iter().find(|a| a.id == stocked_id).expect("stocked article");
+    assert!((stocked.on_hand_qty - 8.0).abs() < f64::EPSILON);
+    assert!((stocked.reserved_qty - 3.0).abs() < f64::EPSILON);
+    assert!((stocked.available_qty - 5.0).abs() < f64::EPSILON);
+
+    let empty = rows.iter().find(|a| a.id == empty_id).expect("article without balance");
+    assert!(empty.on_hand_qty.abs() < f64::EPSILON);
+    assert!(empty.reserved_qty.abs() < f64::EPSILON);
+    assert!(empty.available_qty.abs() < f64::EPSILON);
+}
+
+#[tokio::test]
+async fn work_order_exit_requires_an_existing_work_order_reference() {
+    let db = setup_db().await;
+    let article_id = create_test_article(&db, "INV-WO-EXIT").await;
+    let location_id = main_location_id(&db).await;
+    queries::adjust_stock(
+        &db,
+        InventoryStockAdjustInput {
+            article_id,
+            location_id,
+            delta_qty: 5.0,
+            reason_code: Some("ENTREE_ACHAT".to_string()),
+            notes: None,
+            source_ref: None,
+        },
+    )
+    .await
+    .expect("seed stock");
+
+    let exit = |source_ref: Option<&str>| InventoryStockAdjustInput {
+        article_id,
+        location_id,
+        delta_qty: -1.0,
+        reason_code: Some("SORTIE_OT".to_string()),
+        notes: None,
+        source_ref: source_ref.map(str::to_string),
+    };
+
+    let missing = queries::adjust_stock(&db, exit(None)).await;
+    assert!(
+        matches!(missing, Err(AppError::ValidationFailed(_))),
+        "exit without OT must fail"
+    );
+    let unknown = queries::adjust_stock(&db, exit(Some("OT-DOES-NOT-EXIST"))).await;
+    assert!(
+        matches!(unknown, Err(AppError::ValidationFailed(_))),
+        "unknown OT must fail"
+    );
+
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO work_orders (code, type_id, status_id, title, row_version, created_at, updated_at)
+         VALUES (?, (SELECT v.id FROM reference_values v JOIN reference_sets s ON s.id = v.set_id JOIN reference_domains d ON d.id = s.domain_id WHERE d.code = 'WORK.ORDER_TYPES' AND v.code = 'corrective'),
+                 (SELECT id FROM work_order_statuses WHERE code = 'in_progress'), 'Pump repair', 1,
+                 datetime('now'), datetime('now'))",
+        ["OT-TEST-0001".into()],
+    ))
+    .await
+    .expect("insert work order");
+
+    let balance = queries::adjust_stock(&db, exit(Some("OT-TEST-0001")))
+        .await
+        .expect("exit to an existing OT");
+    assert!((balance.on_hand_qty - 4.0).abs() < f64::EPSILON);
+}
+
+#[tokio::test]
+async fn costed_entries_maintain_weighted_average_and_article_stock_value() {
+    let db = setup_db().await;
+    let article_id = create_test_article(&db, "INV-WAC-001").await;
+    let location_id = main_location_id(&db).await;
+    let entry = |qty: f64| InventoryStockAdjustInput {
+        article_id,
+        location_id,
+        delta_qty: qty,
+        reason_code: Some("ENTREE_ACHAT".to_string()),
+        notes: None,
+        source_ref: None,
+    };
+
+    // 10 @ 4.00 then 10 @ 6.00 → average 5.00, value 100.
+    queries::adjust_stock_costed(&db, entry(10.0), Some(4.0))
+        .await
+        .expect("entry 1");
+    let balance = queries::adjust_stock_costed(&db, entry(10.0), Some(6.0))
+        .await
+        .expect("entry 2");
+    assert!((balance.moving_avg_unit_cost.expect("avg") - 5.0).abs() < 1e-9);
+
+    // An exit is valued at the average and does not change it.
+    let after_exit = queries::adjust_stock_costed(&db, entry(-4.0), None)
+        .await
+        .expect("exit");
+    assert!((after_exit.moving_avg_unit_cost.expect("avg") - 5.0).abs() < 1e-9);
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT unit_cost, extended_cost, cost_source_type FROM inventory_transactions
+             WHERE article_id = ? AND movement_type = 'ADJUST_OUT'",
+            [article_id.into()],
+        ))
+        .await
+        .expect("query")
+        .expect("exit movement");
+    let exit_cost: f64 = row.try_get("", "extended_cost").expect("extended_cost");
+    assert!((exit_cost - 20.0).abs() < 1e-9);
+    let source: String = row.try_get("", "cost_source_type").expect("source");
+    assert_eq!(source, "MOVING_AVG");
+
+    // An exit carrying its own cost is refused.
+    assert!(matches!(
+        queries::adjust_stock_costed(&db, entry(-1.0), Some(3.0)).await,
+        Err(AppError::ValidationFailed(_))
+    ));
+    // A negative cost is refused.
+    assert!(matches!(
+        queries::adjust_stock_costed(&db, entry(1.0), Some(-3.0)).await,
+        Err(AppError::ValidationFailed(_))
+    ));
+
+    let articles = queries::list_articles(
+        &db,
+        InventoryArticleFilter {
+            search: Some("INV-WAC".to_string()),
+        },
+    )
+    .await
+    .expect("list");
+    let article = articles.iter().find(|a| a.id == article_id).expect("article");
+    assert!((article.avg_unit_cost.expect("avg") - 5.0).abs() < 1e-9);
+    assert!((article.stock_value.expect("value") - 80.0).abs() < 1e-9);
+    assert!(article.unvalued_qty.abs() < f64::EPSILON);
+}
+
+#[test]
+fn weighted_moving_average_blends_by_quantity() {
+    use crate::inventory::valuation::weighted_moving_average;
+    assert!((weighted_moving_average(10.0, Some(4.0), 10.0, 6.0) - 5.0).abs() < 1e-9);
+    // First costed receipt on uncosted stock takes the receipt price.
+    assert!((weighted_moving_average(5.0, None, 5.0, 8.0) - 8.0).abs() < 1e-9);
+    assert!((weighted_moving_average(0.0, Some(3.0), 2.0, 7.0) - 7.0).abs() < 1e-9);
+}
+
+/// One low-stock definition (`evaluate_reorder`): the dashboard tiles, the alerts and the
+/// article list agree, and an article with no stock row at all (never received) counts.
+#[tokio::test]
+async fn low_stock_is_one_definition_across_dashboard_alerts_and_list() {
+    let db = setup_db().await;
+    let article_id = create_test_article(&db, "LOW-ZERO-001").await; // reorder point 5, no stock
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE articles SET is_critical_spare = 1 WHERE id = ?",
+        [article_id.into()],
+    ))
+    .await
+    .expect("critical spare");
+
+    let triggers = queries::reorder_triggers_by_article(&db).await.expect("triggers");
+    assert_eq!(
+        triggers.get(&article_id).map(String::as_str),
+        Some("reorder_point"),
+        "a never-stocked article is at or below its reorder point"
+    );
+
+    let summary = queries::get_procurement_dashboard_summary(&db).await.expect("summary");
+    assert_eq!(summary.low_stock_articles, i64::try_from(triggers.len()).unwrap());
+    assert!(summary.critical_low_stock_articles >= 1);
+    assert!(summary.open_requisition_statuses.contains(&"SUBMITTED".to_string()));
+    assert!(summary.late_po_statuses.contains(&"APPROVED".to_string()));
+
+    let listed = queries::list_articles(
+        &db,
+        InventoryArticleFilter {
+            search: Some("LOW-ZERO-001".into()),
+        },
+    )
+    .await
+    .expect("list");
+    assert_eq!(listed[0].reorder_trigger.as_deref(), Some("reorder_point"));
+
+    let alerts = queries::get_procurement_alerts(&db).await.expect("alerts");
+    let critical = alerts
+        .iter()
+        .find(|a| a.kind == "CRITICAL_STOCK" && a.entity_id == Some(article_id))
+        .expect("critical stock alert for the never-stocked spare");
+    assert_eq!(critical.entity_code.as_deref(), Some("LOW-ZERO-001"));
+    assert_eq!(critical.params.get("threshold_qty").map(String::as_str), Some("5"));
+    assert_eq!(critical.params.get("available_qty").map(String::as_str), Some("0"));
+}
+
+/// "To reorder" is counted per article on the home page and the analytics overview — the article
+/// list's "below reorder point" filter — never per article × store line.
+#[tokio::test]
+async fn to_reorder_counts_articles_like_the_article_list() {
+    let db = setup_db().await;
+    let a = create_test_article(&db, "RO-ART-A").await; // reorder point 5, no stock
+    let b = create_test_article(&db, "RO-ART-B").await;
+    // A second active store: each never-stocked article is short in both.
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "INSERT INTO warehouses (entity_sync_id, code, name, is_active, row_version) \
+         VALUES ('ro-wh-2', 'RO-WH-2', 'Second store', 1, 1)"
+            .to_string(),
+    ))
+    .await
+    .expect("second store");
+
+    let listed = queries::list_articles(&db, InventoryArticleFilter::default())
+        .await
+        .expect("list");
+    let list_count = listed
+        .iter()
+        .filter(|x| x.is_active == 1 && x.reorder_trigger.is_some())
+        .count() as i64;
+    assert!(listed.iter().any(|x| x.id == a && x.reorder_trigger.is_some()));
+    assert!(listed.iter().any(|x| x.id == b && x.reorder_trigger.is_some()));
+
+    let home = crate::home::supervision::stock(&db).await.expect("home stock");
+    assert_eq!(home.articles_to_reorder, list_count, "home headline = article list");
+    assert!(
+        home.lines_to_reorder > home.articles_to_reorder,
+        "an article short in two stores is two lines but one article"
+    );
+    let per_article = queries::reorder_triggers_by_article(&db).await.expect("triggers");
+    assert_eq!(
+        i64::try_from(per_article.len()).unwrap(),
+        list_count,
+        "analytics overview count"
+    );
 }

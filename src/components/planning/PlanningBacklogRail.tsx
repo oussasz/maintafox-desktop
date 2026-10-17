@@ -1,11 +1,23 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router-dom";
 
-import { candidateDisplayCode, candidateDisplayTitle } from "@/components/planning/planning-model";
+import { ConflictReasonList } from "@/components/planning/ConflictReasonList";
+import {
+  candidateDisplayCode,
+  candidateDisplayTitle,
+  candidateSourcePath,
+  isBlockingSeverity,
+} from "@/components/planning/planning-model";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { mfTone } from "@/design-system/tone";
 import { cn } from "@/lib/utils";
-import type { CandidateConflictSummary, ScheduleCandidate } from "@shared/ipc-types";
+import type {
+  CandidateConflictSummary,
+  ConflictReason,
+  ScheduleCandidate,
+} from "@shared/ipc-types";
 
 type PlanningBacklogRailProps = {
   ready: ScheduleCandidate[];
@@ -13,15 +25,10 @@ type PlanningBacklogRailProps = {
   conflictSummary: CandidateConflictSummary[];
   selectedCandidateId: number | null;
   onSelectReady: (candidate: ScheduleCandidate) => void;
+  /** Opens the planning windows from a reason that needs one. */
+  onOpenWindows?: () => void;
   className?: string;
 };
-
-function riskTone(risk: number | null | undefined): "default" | "secondary" | "destructive" {
-  if (risk == null) return "secondary";
-  if (risk >= 0.7) return "destructive";
-  if (risk >= 0.4) return "secondary";
-  return "default";
-}
 
 export function PlanningBacklogRail({
   ready,
@@ -29,9 +36,11 @@ export function PlanningBacklogRail({
   conflictSummary,
   selectedCandidateId,
   onSelectReady,
+  onOpenWindows,
   className,
 }: PlanningBacklogRailProps) {
   const { t } = useTranslation("planning");
+  const navigate = useNavigate();
   const [tab, setTab] = useState<"ready" | "blocked">("ready");
 
   const conflictByCandidate = useMemo(() => {
@@ -74,21 +83,28 @@ export function PlanningBacklogRail({
           <div className="space-y-2">
             {ready.map((candidate) => {
               const selected = selectedCandidateId === candidate.id;
+              const summary = conflictByCandidate.get(candidate.id);
               return (
-                <button
+                <div
                   key={candidate.id}
-                  type="button"
                   className={cn(
-                    "w-full rounded-lg border p-3 text-left transition-colors hover:bg-surface-2",
+                    "rounded-lg border",
                     selected ? "border-primary bg-surface-2" : "border-surface-border bg-surface-0",
                   )}
-                  onClick={() => onSelectReady(candidate)}
                 >
-                  <CandidateCardBody
-                    candidate={candidate}
-                    blockers={conflictByCandidate.get(candidate.id)?.blocker_codes ?? []}
+                  <button
+                    type="button"
+                    className="w-full rounded-lg p-3 text-left transition-colors hover:bg-surface-2"
+                    onClick={() => onSelectReady(candidate)}
+                  >
+                    <CandidateCardBody candidate={candidate} summary={summary} />
+                  </button>
+                  <ConflictReasonList
+                    reasons={summary?.reasons ?? []}
+                    onOpenWindows={onOpenWindows}
+                    className="px-3 pb-3"
                   />
-                </button>
+                </div>
               );
             })}
             {ready.length === 0 && (
@@ -99,17 +115,40 @@ export function PlanningBacklogRail({
 
         <TabsContent value="blocked" className="mt-0 min-h-0 flex-1 overflow-y-auto p-3">
           <div className="space-y-2">
-            {blocked.map((candidate) => (
-              <div
-                key={candidate.id}
-                className="rounded-lg border border-surface-border bg-surface-0 p-3"
-              >
-                <CandidateCardBody
-                  candidate={candidate}
-                  blockers={conflictByCandidate.get(candidate.id)?.blocker_codes ?? []}
-                />
-              </div>
-            ))}
+            {blocked.length > 0 ? (
+              <p className="text-[11px] leading-snug text-text-muted">{t("backlog.blockedHint")}</p>
+            ) : null}
+            {blocked.map((candidate) => {
+              const summary = conflictByCandidate.get(candidate.id);
+              const body = <CandidateCardBody candidate={candidate} summary={summary} />;
+              const path = candidateSourcePath(candidate);
+              return (
+                <div
+                  key={candidate.id}
+                  className="rounded-lg border border-surface-border bg-surface-0"
+                >
+                  {path ? (
+                    <button
+                      type="button"
+                      className="w-full rounded-lg p-3 text-left transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      aria-label={t("backlog.openSource", {
+                        code: candidateDisplayCode(candidate),
+                      })}
+                      onClick={() => void navigate(path)}
+                    >
+                      {body}
+                    </button>
+                  ) : (
+                    <div className="p-3">{body}</div>
+                  )}
+                  <ConflictReasonList
+                    reasons={summary?.reasons ?? []}
+                    onOpenWindows={onOpenWindows}
+                    className="px-3 pb-3"
+                  />
+                </div>
+              );
+            })}
             {blocked.length === 0 && (
               <p className="text-xs text-text-muted">{t("backlog.emptyBlocked")}</p>
             )}
@@ -122,14 +161,30 @@ export function PlanningBacklogRail({
 
 function CandidateCardBody({
   candidate,
-  blockers,
+  summary,
 }: {
   candidate: ScheduleCandidate;
-  blockers: string[];
+  summary: CandidateConflictSummary | undefined;
 }) {
   const { t } = useTranslation("planning");
   const code = candidateDisplayCode(candidate);
   const title = candidateDisplayTitle(candidate);
+  // One badge per kind of conflict: red when one of its reasons blocks, amber when all warn.
+  const reasons: ConflictReason[] = summary?.reasons ?? [];
+  const kinds = [...new Set(summary?.blocker_codes ?? [])];
+  const kindBlocks = (kind: string) => {
+    const ofKind = reasons.filter((r) => r.conflict_type === kind);
+    return ofKind.length === 0 || ofKind.some((r) => isBlockingSeverity(r.severity));
+  };
+  // Duration × crew size, or what is missing (no duration → not estimated; no crew → said so).
+  const hours = candidate.estimated_duration_hours;
+  const crew = candidate.planned_crew_size;
+  const estimateLabel =
+    hours == null || hours <= 0
+      ? t("backlog.notEstimated")
+      : crew == null || crew < 1
+        ? t("backlog.noCrew", { hours: hours.toFixed(1) })
+        : t("backlog.estimate", { hours: hours.toFixed(1), crew });
 
   return (
     <div className="space-y-2">
@@ -154,11 +209,9 @@ function CandidateCardBody({
             {t("backlog.skillMatch")}: {Math.round(candidate.skill_match_score * 100)}%
           </Badge>
         )}
-        {candidate.estimated_assignment_risk != null && (
-          <Badge variant={riskTone(candidate.estimated_assignment_risk)} className="text-[10px]">
-            {t("backlog.risk")}: {Math.round(candidate.estimated_assignment_risk * 100)}%
-          </Badge>
-        )}
+        <Badge variant="outline" className="text-[10px]">
+          {estimateLabel}
+        </Badge>
         {candidate.priority_label ? (
           <Badge variant="outline" className="text-[10px]">
             {candidate.priority_label}
@@ -166,13 +219,23 @@ function CandidateCardBody({
         ) : null}
       </div>
 
-      {blockers.length > 0 && (
+      {kinds.length > 0 && (
         <div className="flex flex-wrap gap-1">
-          {blockers.slice(0, 6).map((codeKey) => (
-            <Badge key={codeKey} variant="destructive" className="text-[10px] font-normal">
-              {t(`blockers.${codeKey}`, { defaultValue: codeKey })}
-            </Badge>
-          ))}
+          {kinds.slice(0, 6).map((codeKey) =>
+            kindBlocks(codeKey) ? (
+              <Badge key={codeKey} variant="destructive" className="text-[10px] font-normal">
+                {t(`blockers.${codeKey}`, { defaultValue: codeKey })}
+              </Badge>
+            ) : (
+              <Badge
+                key={codeKey}
+                variant="outline"
+                className={cn("text-[10px] font-normal", mfTone.warning.chip)}
+              >
+                {t(`blockers.${codeKey}`, { defaultValue: codeKey })}
+              </Badge>
+            ),
+          )}
         </div>
       )}
     </div>

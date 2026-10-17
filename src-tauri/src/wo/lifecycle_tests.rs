@@ -5,7 +5,6 @@
 use std::collections::HashSet;
 
 use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
-use sea_orm_migration::MigratorTrait;
 
 use super::*;
 
@@ -267,8 +266,7 @@ fn shared_cases_file_matches_derive() {
 // ── Workflow integration ──────────────────────────────────────────────────────────────────────
 
 mod workflow {
-    use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
-    use sea_orm_migration::MigratorTrait;
+    use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
     use crate::wo::domain::WoCreateInput;
     use crate::wo::execution::{
@@ -295,10 +293,7 @@ mod workflow {
     }
 
     async fn setup() -> (DatabaseConnection, i64) {
-        let db = Database::connect("sqlite::memory:").await.expect("sqlite");
-        exec(&db, "PRAGMA foreign_keys = ON").await;
-        crate::migrations::Migrator::up(&db, None).await.expect("migrations");
-        crate::db::seeder::seed_system_data(&db).await.expect("seeder");
+        let db = crate::db::test_db::seeded().await;
         for sql in [
             "INSERT OR IGNORE INTO org_structure_models (id, entity_sync_id, version_number, status, created_at, \
              updated_at) VALUES (1, 'lc-model', 1, 'active', datetime('now'), datetime('now'))",
@@ -364,7 +359,8 @@ mod workflow {
                 source_rca_cause_text: None,
                 entity_id: None,
                 planner_id: None,
-                urgency_id: Some(3),
+                urgency_code: Some("normal".into()),
+                subtype_code: None,
                 title: title.into(),
                 description: None,
                 notes: None,
@@ -427,9 +423,13 @@ mod workflow {
                 planned_start: Some("2026-10-13T08:00:00Z".into()),
                 planned_end: Some("2026-10-13T16:00:00Z".into()),
                 shift: None,
+                shift_class_version_id: None,
+                clear_shift: false,
                 expected_duration_hours: Some(8.0),
+                planned_crew_size: None,
+                clear_crew_size: false,
                 planned_downtime_hours: None,
-                urgency_id: None,
+                urgency_code: None,
             },
         )
         .await
@@ -539,11 +539,13 @@ mod workflow {
                 entity_id: None,
                 planner_id: None,
                 primary_responsible_id: None,
-                urgency_level: None,
+                urgency_code: None,
                 source_di_id: None,
                 search: None,
                 date_from: None,
                 date_to: None,
+                open_only: None,
+                overdue_only: None,
                 limit: 50,
                 offset: 0,
             },
@@ -598,11 +600,13 @@ mod workflow {
                 entity_id: None,
                 planner_id: None,
                 primary_responsible_id: None,
-                urgency_level: None,
+                urgency_code: None,
                 source_di_id: None,
                 search: None,
                 date_from: None,
                 date_to: None,
+                open_only: None,
+                overdue_only: None,
                 limit: 50,
                 offset: 0,
             },
@@ -617,8 +621,7 @@ mod workflow {
 #[tokio::test]
 async fn inbound_delay_segment_hold_kind_is_checked() {
     use crate::sync::materialize::{ApplyOutcome, DEFER_MISSING_FIELD};
-    let db = Database::connect("sqlite::memory:").await.expect("sqlite");
-    crate::migrations::Migrator::up(&db, None).await.expect("migrations");
+    let db = crate::db::test_db::migrated().await;
     let layout = crate::sync::row_layout::layout(&db, "work_order_delay_segments")
         .await
         .expect("layout");
@@ -645,8 +648,7 @@ async fn inbound_delay_segment_hold_kind_is_checked() {
 async fn migration_backfills_prerequisite_holds_from_reason_codes() {
     // The real migration chain with a segment created before 175 is covered by the codes list;
     // here: every prerequisite code exists in the seeded WORK.DELAY_REASONS domain.
-    let db = Database::connect("sqlite::memory:").await.expect("sqlite");
-    crate::migrations::Migrator::up(&db, None).await.expect("migrations");
+    let db = crate::db::test_db::migrated().await;
     for code in crate::migrations::m20261012_000175_wo_lifecycle_facts::PREREQUISITE_REASON_CODES {
         let n = db
             .query_one(Statement::from_sql_and_values(

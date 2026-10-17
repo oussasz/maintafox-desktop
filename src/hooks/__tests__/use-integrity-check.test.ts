@@ -41,7 +41,7 @@ describe("useIntegrityCheck", () => {
     });
 
     expect(result.current.status).toBe("error");
-    expect(result.current.error).toBe("IPC failed");
+    expect((result.current.error as Error).message).toBe("IPC failed");
     expect(result.current.report).toBeNull();
   });
 
@@ -69,7 +69,7 @@ describe("useIntegrityCheck", () => {
     });
 
     expect(result.current.status).toBe("error");
-    expect(result.current.error).toBe("Repair failed");
+    expect((result.current.error as Error).message).toBe("Repair failed");
   });
 
   it("check() with unhealthy report exposes issues", async () => {

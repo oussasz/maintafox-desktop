@@ -16,12 +16,55 @@ use uuid::Uuid;
 
 use crate::errors::AppResult;
 
-/// Session duration: 8 hours of activity before forced re-login.
+/// Default session duration (8 hours) when no session policy is loaded.
+/// Login uses the active policy (`absolute_session_minutes`, Settings → Security).
 pub const SESSION_DURATION_HOURS: i64 = 8;
-/// Idle timeout: session is locked (not expired) after 30 minutes of no activity.
+/// Default idle timeout (30 minutes) when no session policy is loaded.
+/// Login uses the active policy (`idle_timeout_minutes`, Settings → Security).
 pub const IDLE_LOCK_MINUTES: i64 = 30;
-/// Step-up verification window: 120 seconds after re-entering password.
-pub const STEP_UP_DURATION_SECS: u64 = 120;
+/// Default step-up window (15 minutes, the policy default) when no session policy is loaded.
+/// Login uses the active policy (`step_up_window_minutes`), clamped to 1-30 minutes.
+pub const STEP_UP_WINDOW_MINUTES: i64 = 15;
+pub const STEP_UP_WINDOW_MIN_MINUTES: i64 = 1;
+pub const STEP_UP_WINDOW_MAX_MINUTES: i64 = 30;
+
+/// Session timeouts resolved from the session policy (Settings -> Security).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionTimeouts {
+    /// Minutes without activity before the session locks.
+    pub idle_minutes: i64,
+    /// Minutes after login before the session expires.
+    pub absolute_minutes: i64,
+    /// Minutes a password re-confirmation (step-up) stays valid.
+    pub step_up_minutes: i64,
+}
+
+impl Default for SessionTimeouts {
+    fn default() -> Self {
+        Self {
+            idle_minutes: IDLE_LOCK_MINUTES,
+            absolute_minutes: SESSION_DURATION_HOURS * 60,
+            step_up_minutes: STEP_UP_WINDOW_MINUTES,
+        }
+    }
+}
+
+impl SessionTimeouts {
+    /// Policy values; non-positive idle/absolute values fall back to the defaults and the step-up
+    /// window is clamped to 1-30 minutes.
+    pub fn from_policy(idle_minutes: i64, absolute_minutes: i64, step_up_minutes: i64) -> Self {
+        let d = Self::default();
+        Self {
+            idle_minutes: if idle_minutes > 0 { idle_minutes } else { d.idle_minutes },
+            absolute_minutes: if absolute_minutes > 0 {
+                absolute_minutes
+            } else {
+                d.absolute_minutes
+            },
+            step_up_minutes: step_up_minutes.clamp(STEP_UP_WINDOW_MIN_MINUTES, STEP_UP_WINDOW_MAX_MINUTES),
+        }
+    }
+}
 
 /// The identity of an authenticated user, embedded in the active session.
 #[derive(Debug, Clone, Serialize)]
@@ -45,6 +88,10 @@ pub struct LocalSession {
     pub expires_at: DateTime<Utc>,
     pub last_activity_at: DateTime<Utc>,
     pub is_locked: bool,
+    /// Minutes without activity before the session locks (from the session policy at login).
+    pub idle_timeout_minutes: i64,
+    /// Minutes a step-up verification stays valid (from the session policy at login).
+    pub step_up_window_minutes: i64,
     pub password_expires_in_days: Option<i64>,
     pub pin_configured: bool,
     pub pin_failed_attempts: u8,
@@ -61,16 +108,17 @@ impl LocalSession {
         Utc::now() > self.expires_at
     }
 
-    /// True if the session is idle-locked (no activity for `IDLE_LOCK_MINUTES`).
+    /// True if the session is idle-locked (no activity for `idle_timeout_minutes`).
     pub fn is_idle_locked(&self) -> bool {
-        let idle_deadline = self.last_activity_at + TimeDelta::minutes(IDLE_LOCK_MINUTES);
+        let idle_deadline = self.last_activity_at + TimeDelta::minutes(self.idle_timeout_minutes);
         self.is_locked || Utc::now() > idle_deadline
     }
 
-    /// True if a step-up verification was completed within `STEP_UP_DURATION_SECS`.
+    /// True if a step-up verification was completed within `step_up_window_minutes`.
     pub fn is_step_up_valid(&self) -> bool {
+        let window_secs = u64::try_from(self.step_up_window_minutes.max(0)).unwrap_or(0) * 60;
         self.step_up_verified_at
-            .is_some_and(|t| t.elapsed().as_secs() < STEP_UP_DURATION_SECS)
+            .is_some_and(|t| t.elapsed().as_secs() < window_secs)
     }
 }
 
@@ -162,16 +210,28 @@ impl SessionManager {
         }
     }
 
-    /// Create a new session after a successful authentication check.
+    /// Create a new session with the default timeouts (tests and callers without a policy).
     pub fn create_session(&mut self, user: AuthenticatedUser) -> &LocalSession {
+        self.create_session_with_timeouts(user, SessionTimeouts::default())
+    }
+
+    /// Create a new session after a successful authentication check, with the timeouts of the
+    /// active session policy.
+    pub fn create_session_with_timeouts(
+        &mut self,
+        user: AuthenticatedUser,
+        timeouts: SessionTimeouts,
+    ) -> &LocalSession {
         let now = Utc::now();
         let session = LocalSession {
             session_db_id: Uuid::new_v4().to_string(),
             user,
             created_at: now,
-            expires_at: now + TimeDelta::hours(SESSION_DURATION_HOURS),
+            expires_at: now + TimeDelta::minutes(timeouts.absolute_minutes),
             last_activity_at: now,
             is_locked: false,
+            idle_timeout_minutes: timeouts.idle_minutes,
+            step_up_window_minutes: timeouts.step_up_minutes,
             password_expires_in_days: None,
             pin_configured: false,
             pin_failed_attempts: 0,
@@ -276,18 +336,22 @@ pub async fn resolve_tenant_scope_for_user(
     user_id: i32,
     activated_tenant_id: &str,
 ) -> AppResult<Option<TenantScopeResolution>> {
-    let now = chrono::Utc::now().to_rfc3339();
+    // Tenant-scope assignments in force (the shared rule and clock of `rbac::resolver`).
+    let now = crate::rbac::resolver::assignment_clock();
+    let mut values: Vec<sea_orm::Value> = vec![user_id.into()];
+    values.extend(crate::rbac::resolver::in_force_binds(&now));
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            r"SELECT scope_reference
-               FROM user_scope_assignments
-               WHERE user_id = ?
-                 AND scope_type = 'tenant'
-                 AND deleted_at IS NULL
-                 AND (valid_from IS NULL OR valid_from <= ?)
-                 AND (valid_to   IS NULL OR valid_to   >= ?)",
-            [user_id.into(), now.clone().into(), now.into()],
+            format!(
+                "SELECT usa.scope_reference
+                   FROM user_scope_assignments usa
+                  WHERE usa.user_id = ?
+                    AND usa.scope_type = 'tenant'
+                    AND {}",
+                crate::rbac::resolver::ASSIGNMENT_IN_FORCE_SQL
+            ),
+            values,
         ))
         .await?;
 
@@ -414,6 +478,244 @@ pub async fn record_successful_login(db: &DatabaseConnection, user_id: i32) -> A
     Ok(())
 }
 
+/// Error message prefix of a command refused because the user must change their password first.
+pub const PASSWORD_CHANGE_REQUIRED: &str = "PASSWORD_CHANGE_REQUIRED";
+
+/// Clock tolerance when comparing a password change with a session start: the change may have
+/// been made on another device whose clock runs ahead. A session ends when the password changed
+/// more than this after it started. A forced change (administrator reset) does not rely on it:
+/// its flag refuses every command at once.
+pub const PASSWORD_CHANGE_CLOCK_TOLERANCE: TimeDelta = TimeDelta::minutes(2);
+
+/// What the stored rows say about an in-memory session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StoredSessionState {
+    /// The account must change its password before anything else.
+    pub must_change_password: bool,
+}
+
+/// Parse a stored RFC 3339 instant (`app_sessions.created_at`, `password_changed_at`).
+fn parse_instant(raw: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(raw).ok().map(|t| t.with_timezone(&Utc))
+}
+
+/// The session is still alive in the database, or it is ended here and refused. Ended when:
+/// - there is no stored session row for this user (fail closed: no row, no session);
+/// - the row was closed (`app_sessions.is_revoked`: an administrator, a disable, a reset);
+/// - the account was disabled or deleted (also by a change received from another device);
+/// - the password changed after the session started (a reset or change made on any device:
+///   `password_changed_at` travels with the account) — the row is closed too.
+///
+/// Used by `require_session!` (through [`enforce_stored_session`]) and by the change-password
+/// command, which must work while a change is required but never on an ended session.
+pub async fn enforce_session_alive(
+    db: &DatabaseConnection,
+    session: &tokio::sync::RwLock<SessionManager>,
+    user: &AuthenticatedUser,
+    session_db_id: Option<&str>,
+) -> crate::errors::AppResult<StoredSessionState> {
+    use crate::errors::AppError;
+    let row = match session_db_id {
+        None => None,
+        Some(id) => {
+            db.query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT ua.is_active, ua.deleted_at, ua.force_password_change, ua.password_changed_at, \
+                        s.is_revoked, s.created_at AS session_created_at \
+                 FROM user_accounts ua \
+                 INNER JOIN app_sessions s ON s.id = ? AND s.user_id = CAST(ua.id AS TEXT) \
+                 WHERE ua.id = ?",
+                [id.into(), user.user_id.into()],
+            ))
+            .await?
+        }
+    };
+    let mut password_newer = false;
+    let ended = match &row {
+        None => true,
+        Some(r) => {
+            let created = r
+                .try_get::<Option<String>>("", "session_created_at")
+                .ok()
+                .flatten()
+                .as_deref()
+                .and_then(parse_instant);
+            let changed_raw = r.try_get::<Option<String>>("", "password_changed_at").ok().flatten();
+            let changed = changed_raw.as_deref().and_then(parse_instant);
+            if changed_raw.is_some() && changed.is_none() {
+                tracing::warn!(
+                    user_id = user.user_id,
+                    "unreadable password_changed_at: the session start is not compared with it"
+                );
+            }
+            password_newer =
+                matches!((changed, created), (Some(c), Some(s)) if c > s + PASSWORD_CHANGE_CLOCK_TOLERANCE);
+            r.try_get::<i32>("", "is_active").unwrap_or(0) != 1
+                || r.try_get::<Option<String>>("", "deleted_at").ok().flatten().is_some()
+                || r.try_get::<i32>("", "is_revoked").unwrap_or(1) == 1
+                // A session row we cannot date is not trusted.
+                || created.is_none()
+                || password_newer
+        }
+    };
+    if ended {
+        if password_newer {
+            if let Some(id) = session_db_id {
+                db.execute(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "UPDATE app_sessions SET is_revoked = 1 WHERE id = ?",
+                    [id.into()],
+                ))
+                .await?;
+            }
+        }
+        let mut guard = session.write().await;
+        if guard.current.as_ref().map(|s| s.session_db_id.as_str()) == session_db_id {
+            guard.clear_session();
+        }
+        return Err(AppError::Auth(
+            "Session fermée : le compte a été désactivé, le mot de passe a changé ou la session a été révoquée. \
+             Veuillez vous reconnecter."
+                .into(),
+        ));
+    }
+    Ok(StoredSessionState {
+        must_change_password: row
+            .as_ref()
+            .and_then(|r| r.try_get::<i32>("", "force_password_change").ok())
+            .unwrap_or(0)
+            == 1,
+    })
+}
+
+/// Checks of the stored state behind an in-memory session, run by `require_session!` on every
+/// command:
+/// - an ended session ([`enforce_session_alive`]) ends here and the command is refused;
+/// - the account must change its password (`force_password_change`, set at creation or by an
+///   administrator's reset, possibly on another device) → every command is refused with
+///   `PASSWORD_CHANGE_REQUIRED`; only the change-password and sign-out commands (which do not
+///   use `require_session!`) work. The in-memory flag is raised so the shell shows the
+///   change-password screen, and lowered again once the change is no longer required (made on
+///   another device).
+pub async fn enforce_stored_session(
+    db: &DatabaseConnection,
+    session: &tokio::sync::RwLock<SessionManager>,
+    user: &AuthenticatedUser,
+    session_db_id: Option<&str>,
+) -> crate::errors::AppResult<()> {
+    let state = enforce_session_alive(db, session, user, session_db_id).await?;
+    let mut guard = session.write().await;
+    let same_session = guard.current.as_ref().map(|s| s.session_db_id.as_str()) == session_db_id;
+    if state.must_change_password {
+        if let Some(current) = guard.current.as_mut().filter(|_| same_session) {
+            current.user.force_password_change = true;
+        }
+        return Err(crate::errors::AppError::PasswordChangeRequired(format!(
+            "{PASSWORD_CHANGE_REQUIRED}: le mot de passe doit être changé avant de continuer."
+        )));
+    }
+    if let Some(current) = guard.current.as_mut().filter(|_| same_session) {
+        current.user.force_password_change = false;
+    }
+    Ok(())
+}
+
+/// A password change by the user, in one transaction with the session rotation: the new hash
+/// (and, for a forced change, the cleared flag), a new stored row for the current session, and
+/// every other stored session of the account closed (`id <> new`, other devices included). The
+/// in-memory session is held while this runs and switches to the new row only once committed:
+/// no window where the current session is closed, and never "password written but rotation
+/// failed". [`enforce_session_alive`] then ends any session older than the password.
+pub async fn change_password_and_rotate(
+    db: &DatabaseConnection,
+    session: &tokio::sync::RwLock<SessionManager>,
+    user_id: i32,
+    new_hash: &str,
+    clear_forced_change: bool,
+) -> crate::errors::AppResult<()> {
+    use sea_orm::TransactionTrait;
+    let mut guard = session.write().await;
+    let Some(current) = guard.current.as_mut().filter(|s| s.user.user_id == user_id) else {
+        return Err(crate::errors::AppError::Auth(
+            "Session expirée ou absente. Veuillez vous reconnecter.".into(),
+        ));
+    };
+    let now = Utc::now().to_rfc3339();
+    let new_id = Uuid::new_v4().to_string();
+    let tx = db.begin().await?;
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        if clear_forced_change {
+            "UPDATE user_accounts SET password_hash = ?, force_password_change = 0, password_changed_at = ?, \
+             updated_at = ? WHERE id = ?"
+        } else {
+            "UPDATE user_accounts SET password_hash = ?, password_changed_at = ?, updated_at = ? WHERE id = ?"
+        },
+        [new_hash.into(), now.clone().into(), now.clone().into(), user_id.into()],
+    ))
+    .await?;
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO app_sessions (id, user_id, created_at, expires_at, last_activity_at, is_revoked) \
+         VALUES (?, ?, ?, ?, ?, 0)",
+        [
+            new_id.clone().into(),
+            user_id.to_string().into(),
+            now.clone().into(),
+            current.expires_at.to_rfc3339().into(),
+            now.into(),
+        ],
+    ))
+    .await?;
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE app_sessions SET is_revoked = 1 WHERE user_id = CAST(? AS TEXT) AND id <> ? AND is_revoked = 0",
+        [user_id.into(), new_id.clone().into()],
+    ))
+    .await?;
+    tx.commit().await?;
+    current.session_db_id = new_id;
+    if clear_forced_change {
+        current.user.force_password_change = false;
+        current.password_expires_in_days = None;
+    }
+    Ok(())
+}
+
+/// Close every stored session of a user (disable, administrator password reset). The in-memory
+/// session of this device, if it is one of them, ends at its next command.
+pub async fn revoke_user_sessions<C: ConnectionTrait>(conn: &C, user_id: i64) -> crate::errors::AppResult<u64> {
+    Ok(conn
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE app_sessions SET is_revoked = 1 WHERE user_id = CAST(? AS TEXT) AND is_revoked = 0",
+            [user_id.into()],
+        ))
+        .await?
+        .rows_affected())
+}
+
+/// At sign-in, with the session lock held: record the login and write the session's stored row
+/// before the new session is usable. If either write fails, the in-memory session is cleared, so
+/// a session without its `app_sessions` row never exists in memory.
+pub async fn store_session_or_clear(
+    db: &DatabaseConnection,
+    manager: &mut SessionManager,
+    user_id: i32,
+    session_db_id: &str,
+    expires_at: &str,
+) -> AppResult<()> {
+    let stored = async {
+        record_successful_login(db, user_id).await?;
+        create_session_record(db, session_db_id, user_id, expires_at).await
+    }
+    .await;
+    if stored.is_err() {
+        manager.clear_session();
+    }
+    stored
+}
+
 /// Write an `app_sessions` row for audit purposes.
 pub async fn create_session_record(
     db: &DatabaseConnection,
@@ -508,6 +810,47 @@ mod tests {
             mgr.require_active_user().unwrap_err(),
             RequireSessionFailure::IdleLocked
         );
+    }
+
+    #[test]
+    fn idle_lock_follows_the_session_policy_timeout() {
+        let mut mgr = SessionManager::new();
+        mgr.create_session_with_timeouts(make_user(), SessionTimeouts::from_policy(10, 120, 15));
+        let session = mgr.current.as_mut().unwrap();
+        assert_eq!(session.idle_timeout_minutes, 10);
+        session.last_activity_at = Utc::now() - TimeDelta::minutes(9);
+        assert!(!session.is_idle_locked(), "9 minutes idle < 10-minute policy");
+        session.last_activity_at = Utc::now() - TimeDelta::minutes(11);
+        assert!(session.is_idle_locked(), "11 minutes idle > 10-minute policy");
+        let lifetime = session.expires_at - session.created_at;
+        assert_eq!(lifetime.num_minutes(), 120);
+    }
+
+    #[test]
+    fn invalid_policy_timeouts_fall_back_to_defaults() {
+        let mut mgr = SessionManager::new();
+        mgr.create_session_with_timeouts(make_user(), SessionTimeouts::from_policy(0, -5, 15));
+        let session = mgr.current.as_ref().unwrap();
+        assert_eq!(session.idle_timeout_minutes, IDLE_LOCK_MINUTES);
+        assert_eq!(
+            (session.expires_at - session.created_at).num_hours(),
+            SESSION_DURATION_HOURS
+        );
+    }
+
+    #[test]
+    fn step_up_window_follows_policy_and_is_clamped() {
+        assert_eq!(SessionTimeouts::from_policy(30, 480, 15).step_up_minutes, 15);
+        assert_eq!(SessionTimeouts::from_policy(30, 480, 0).step_up_minutes, 1);
+        assert_eq!(SessionTimeouts::from_policy(30, 480, 120).step_up_minutes, 30);
+        let mut mgr = SessionManager::new();
+        mgr.create_session_with_timeouts(make_user(), SessionTimeouts::from_policy(30, 480, 5));
+        let session = mgr.current.as_mut().unwrap();
+        assert!(!session.is_step_up_valid(), "no step-up yet");
+        session.step_up_verified_at = Instant::now().checked_sub(std::time::Duration::from_secs(4 * 60));
+        assert!(session.is_step_up_valid(), "4 minutes < 5-minute window");
+        session.step_up_verified_at = Instant::now().checked_sub(std::time::Duration::from_secs(6 * 60));
+        assert!(!session.is_step_up_valid(), "6 minutes > 5-minute window");
     }
 
     #[test]

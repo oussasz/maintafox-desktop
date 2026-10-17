@@ -10,7 +10,6 @@ import { create } from "zustand";
 
 import { createLatestRequestGuard } from "@/lib/latest-request";
 import { getOrgDesignerSnapshot, previewOrgChange } from "@/services/org-designer-service";
-import { formatOrgIpcError } from "@/utils/errors";
 import type {
   OrgDesignerSnapshot,
   OrgImpactPreview,
@@ -29,6 +28,23 @@ export function isOrgStructureDesignMode(
   return snapshot?.draft_model_id != null && mode === "draft";
 }
 
+/**
+ * Id of the published node that carries a unit's operational records (responsibilities, external
+ * links, equipment, work). On the published tree that is the node itself; a draft copy points at
+ * it through `origin_node_id`; a unit that exists only in the draft has none yet (`null`).
+ */
+export function operationalNodeIdOf(
+  snapshot: OrgDesignerSnapshot | null,
+  nodeId: number,
+): number | null {
+  const row = snapshot?.nodes.find((n) => n.node_id === nodeId);
+  if (!snapshot || !row) return nodeId;
+  if (row.structure_model_id == null || row.structure_model_id === snapshot.active_model_id) {
+    return nodeId;
+  }
+  return row.origin_node_id ?? null;
+}
+
 interface OrgDesignerStoreState {
   snapshot: OrgDesignerSnapshot | null;
   /** published = viewing live org; draft = working on a draft (when a draft model exists). */
@@ -39,10 +55,13 @@ interface OrgDesignerStoreState {
   selectedNodeId: number | null;
   preview: OrgImpactPreview | null;
   previewPayload: PreviewOrgChangePayload | null;
+  /** Human name of the change target (new parent unit, new assignee) for the drawer. */
+  previewTargetLabel: string | null;
   previewOpen: boolean;
   loading: boolean;
   previewLoading: boolean;
-  error: string | null;
+  /** Failure of the last snapshot load (raw; render with ErrorState / describeAppError). */
+  error: unknown;
 
   loadSnapshot: () => Promise<void>;
   setWorkspaceMode: (value: OrgDesignerWorkspaceMode) => void;
@@ -50,7 +69,10 @@ interface OrgDesignerStoreState {
   setStatusFilter: (value: string | null) => void;
   setTypeFilter: (value: string | null) => void;
   setSelectedNodeId: (nodeId: number | null) => void;
-  openPreview: (payload: PreviewOrgChangePayload) => Promise<void>;
+  openPreview: (
+    payload: PreviewOrgChangePayload,
+    context?: { targetLabel?: string | null },
+  ) => Promise<void>;
   closePreview: () => void;
 }
 
@@ -63,6 +85,7 @@ export const useOrgDesignerStore = create<OrgDesignerStoreState>()((set, get) =>
   selectedNodeId: null,
   preview: null,
   previewPayload: null,
+  previewTargetLabel: null,
   previewOpen: false,
   loading: false,
   previewLoading: false,
@@ -96,7 +119,7 @@ export const useOrgDesignerStore = create<OrgDesignerStoreState>()((set, get) =>
       });
     } catch (err) {
       if (!isCurrent()) return;
-      set({ error: formatOrgIpcError(err), loading: false });
+      set({ error: err, loading: false });
     }
   },
 
@@ -113,20 +136,27 @@ export const useOrgDesignerStore = create<OrgDesignerStoreState>()((set, get) =>
 
   setSelectedNodeId: (nodeId) => set({ selectedNodeId: nodeId }),
 
-  openPreview: async (payload) => {
+  openPreview: async (payload, context) => {
     // Only the preview of the latest request may fill the drawer; a closed drawer stays empty.
     const isCurrent = requests.begin("preview");
-    set({ previewLoading: true, previewOpen: true, preview: null, previewPayload: payload });
+    set({
+      previewLoading: true,
+      previewOpen: true,
+      preview: null,
+      previewPayload: payload,
+      previewTargetLabel: context?.targetLabel ?? null,
+    });
     try {
       const preview = await previewOrgChange(payload);
       if (!isCurrent()) return;
       set({ preview, previewLoading: false });
-    } catch (err) {
+    } catch {
       if (!isCurrent()) return;
+      // The global IPC toast reports the failure; the page keeps its tree.
       set({
-        error: formatOrgIpcError(err),
         previewOpen: false,
         previewPayload: null,
+        previewTargetLabel: null,
         previewLoading: false,
       });
     }
@@ -134,6 +164,12 @@ export const useOrgDesignerStore = create<OrgDesignerStoreState>()((set, get) =>
 
   closePreview: () => {
     requests.invalidate("preview");
-    set({ preview: null, previewPayload: null, previewOpen: false, previewLoading: false });
+    set({
+      preview: null,
+      previewPayload: null,
+      previewTargetLabel: null,
+      previewOpen: false,
+      previewLoading: false,
+    });
   },
 }));

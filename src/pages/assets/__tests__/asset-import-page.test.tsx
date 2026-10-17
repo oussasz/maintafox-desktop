@@ -6,7 +6,7 @@
  * V3 — Outcome summary displays created/updated/skipped/errored counts.
  */
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 // ── i18n mock ─────────────────────────────────────────────────────────────────
@@ -191,6 +191,25 @@ describe("AssetImportPage — S3 Supervisor Verification", () => {
       expect(screen.getByTestId("apply-button")).not.toBeDisabled();
     });
 
+    it("asks before applying the import", async () => {
+      const applyBatch = vi.fn().mockResolvedValue(undefined);
+      useAssetImportStore.setState({
+        step: "preview",
+        batch: validatedBatch as never,
+        previewRows: previewRows as never,
+        applyBatch,
+      });
+
+      render(<AssetImportPage />);
+      fireEvent.click(await screen.findByTestId("apply-button"));
+
+      expect(await screen.findByText("import.apply.confirmTitle")).toBeInTheDocument();
+      expect(applyBatch).not.toHaveBeenCalled();
+      const buttons = screen.getAllByRole("button", { name: "Apply Import" });
+      fireEvent.click(buttons[buttons.length - 1] as HTMLElement);
+      await waitFor(() => expect(applyBatch).toHaveBeenCalled());
+    });
+
     it("disables apply button when saving is in progress", async () => {
       useAssetImportStore.setState({
         step: "preview",
@@ -228,9 +247,10 @@ describe("AssetImportPage — S3 Supervisor Verification", () => {
       // Conflict messages should show [category] message
       const messages = screen.getAllByTestId("conflict-message");
       expect(messages).toHaveLength(2);
-      expect(messages[0]?.textContent).toContain("[UnknownClassCode]");
+      // The category is shown as a translated label (never "[Code]"); the server text stays
+      // available under the details.
+      expect(messages[0]?.textContent).not.toContain("[UnknownClassCode]");
       expect(messages[0]?.textContent).toContain("Unknown class code.");
-      expect(messages[1]?.textContent).toContain("[Reclassification]");
       expect(messages[1]?.textContent).toContain("Asset will be re-classified.");
     });
 

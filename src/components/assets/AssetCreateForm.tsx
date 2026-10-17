@@ -14,8 +14,8 @@ import {
   EquipmentSearchSelect,
   type EquipmentSearchOption,
 } from "@/components/assets/EquipmentSearchSelect";
+import { isRetiredStatus } from "@/components/assets/asset-tones";
 import {
-  EntityFormAttachments,
   EntityFormCollapsible,
   EntityFormDialog,
   EntityFormFieldGroup,
@@ -32,15 +32,15 @@ import { FormField } from "@/components/ui/FormField";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
+import { appErrorReason } from "@/lib/app-error";
 import { useZodForm } from "@/lib/form-helpers";
 import { assetCreateSchema } from "@/schemas/asset-create.schema";
 import { uploadAssetPhoto } from "@/services/asset-lifecycle-service";
 import { getEquipmentTaxonomyCatalog } from "@/services/asset-service";
 import { listOrgTree } from "@/services/org-node-service";
 import { useAssetStore } from "@/stores/asset-store";
-import { toErrorMessage } from "@/utils/errors";
+import { useEquipmentTaxonomy } from "@/stores/equipment-taxonomy-store";
 import type { CreateAssetPayload, OrgTreeRow } from "@shared/ipc-types";
 
 const FORM_ID = "asset-create-form";
@@ -59,8 +59,16 @@ export function AssetCreateForm() {
   const closeForm = useAssetStore((s) => s.closeCreateForm);
   const submitCreate = useAssetStore((s) => s.createAsset);
   const saving = useAssetStore((s) => s.saving);
-  const storeError = useAssetStore((s) => s.error);
   const parentPreFill = useAssetStore((s) => s.parentPreFill);
+  // A new asset is never created retired: retirement goes through Decommission.
+  const { catalog: taxonomy } = useEquipmentTaxonomy();
+  const retiredStatusCodes = useMemo(
+    () =>
+      (taxonomy?.statuses ?? [])
+        .filter((s) => isRetiredStatus(taxonomy, s.code))
+        .map((s) => s.code),
+    [taxonomy],
+  );
 
   const fieldError = (message: string | undefined) => translateFieldError(message, t);
 
@@ -89,7 +97,6 @@ export function AssetCreateForm() {
     commissioned_at: null,
     rams_schedule_reference_value_id: null,
     rams_utilization_factor: 1.0,
-    description: null,
   });
 
   const {
@@ -112,14 +119,14 @@ export function AssetCreateForm() {
       .then(setOrgNodes)
       .catch((err) => {
         console.error("[AssetCreateForm] listOrgTree failed", err);
-        setOrgTreeError(`${t("createForm.orgTreeLoadFailed")} (${toErrorMessage(err)})`);
+        setOrgTreeError(`${t("createForm.orgTreeLoadFailed")} ${appErrorReason(err)}`);
       });
     void getEquipmentTaxonomyCatalog()
       .then(() => setCatalogReady(true))
       .catch((err) => {
         console.error("[AssetCreateForm] getEquipmentTaxonomyCatalog failed", err);
         setReferenceCatalogError(
-          `${t("createForm.referenceCatalogLoadFailed")} (${toErrorMessage(err)})`,
+          `${t("createForm.referenceCatalogLoadFailed")} ${appErrorReason(err)}`,
         );
         setCatalogReady(false);
       });
@@ -150,7 +157,6 @@ export function AssetCreateForm() {
       commissioned_at: null,
       rams_schedule_reference_value_id: null,
       rams_utilization_factor: 1.0,
-      description: null,
     });
   }, [open, parentPreFill, reset]);
 
@@ -262,8 +268,7 @@ export function AssetCreateForm() {
 
       closeForm();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setSubmitError(msg);
+      setSubmitError(appErrorReason(err));
     }
   };
 
@@ -333,9 +338,6 @@ export function AssetCreateForm() {
               placeholder={t("form.identity.name.placeholder")}
               {...register("asset_name")}
             />
-          </FormField>
-          <FormField name="description" label={t("createForm.descriptionLabel")}>
-            <Textarea id="description" rows={3} maxLength={2000} {...register("description")} />
           </FormField>
         </EntityFormSection>
 
@@ -463,6 +465,7 @@ export function AssetCreateForm() {
               onChange={(v) => setValue("status_code", v ?? "", { shouldValidate: true })}
               placeholder={t("createForm.selectStatus")}
               allowClear={false}
+              excludeCodes={retiredStatusCodes}
               aria-invalid={!!errors.status_code}
             />
           </FormField>
@@ -483,14 +486,6 @@ export function AssetCreateForm() {
             primaryLabel={t("createForm.images.primary")}
             removeLabel={t("createForm.images.remove")}
             addLabel={t("createForm.images.add")}
-          />
-        </EntityFormSection>
-
-        <EntityFormSection title={t("createForm.sections.attachments")}>
-          <EntityFormAttachments
-            items={[]}
-            deferred
-            deferredLabel={t("createForm.attachments.deferred")}
           />
         </EntityFormSection>
 
@@ -530,8 +525,8 @@ export function AssetCreateForm() {
           </FormField>
           <FormField
             name="rams_utilization_factor"
-            label="Utilization Factor (K_u)"
-            error={errors.rams_utilization_factor?.message}
+            label={t("rams.utilization")}
+            error={fieldError(errors.rams_utilization_factor?.message)}
           >
             <Input
               id="rams_utilization_factor"
@@ -542,14 +537,17 @@ export function AssetCreateForm() {
               {...register("rams_utilization_factor", { valueAsNumber: true })}
             />
             <p className="mt-1 text-[11px] text-text-muted">
-              Typical value is 1.00. Lower values model intermittent utilization.
+              {t("createForm.fields.utilizationHint")}
             </p>
           </FormField>
         </EntityFormCollapsible>
 
-        {(submitError || storeError) && (
-          <div className="rounded-md border border-status-danger/30 bg-status-danger/10 px-3 py-2 text-sm text-status-danger">
-            {submitError || storeError}
+        {submitError && (
+          <div
+            role="alert"
+            className="rounded-md border border-status-danger/30 bg-status-danger/10 px-3 py-2 text-sm text-status-danger"
+          >
+            {submitError}
           </div>
         )}
       </form>

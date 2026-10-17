@@ -5,11 +5,12 @@
 //! Permission gates:
 //!   di.view         — list, get, review events, SLA status, list attachments
 //!   di.create       — create any DI
-//!   di.create.own   — create DI as self, upload attachment on own DI, cancel own DI
+//!   di.create.own   — create DI as self, upload attachment on own DI, cancel own DI,
+//!                     answer and resubmit own DI returned for information
 //!   di.screen       — triage submitted DIs (submitted → in_review)
 //!   di.review       — update draft, return, close from in_review, upload attachment on any DI
 //!   di.approve      — approve, defer, reactivate, close from awaiting_approval/approved
-//!   di.convert      — convert DI to WO (step-up required)
+//!   di.convert      — convert DI to WO (confirmed in a dialog; no step-up)
 //!   di.admin        — SLA rule management, delete attachment records
 
 use tauri::{Manager, State};
@@ -46,10 +47,25 @@ pub struct DiGetResponse {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
-pub async fn list_di(filter: queries::DiListFilter, state: State<'_, AppState>) -> AppResult<queries::DiListPage> {
+pub async fn list_di(mut filter: queries::DiListFilter, state: State<'_, AppState>) -> AppResult<queries::DiListPage> {
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::DI_VIEW, PermissionScope::Global);
+    // "My requests" is always the signed-in user's, whatever submitter the caller sent.
+    if filter.queue.as_deref().map(str::trim) == Some("mine") {
+        filter.submitter_id = Some(i64::from(user.user_id));
+    }
     queries::list_intervention_requests(&state.db, filter).await
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// A2) get_di_queue_counts — requires di.view
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[tauri::command]
+pub async fn get_di_queue_counts(state: State<'_, AppState>) -> AppResult<queries::DiQueueCounts> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::DI_VIEW, PermissionScope::Global);
+    queries::count_di_queues(&state.db, i64::from(user.user_id)).await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -361,6 +377,41 @@ pub async fn return_di(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// F2) resubmit_di — requires di.create.own; actor must be the requester (enforced in domain)
+//     returned_for_clarification → in_review, with the requester's answer
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[tauri::command]
+pub async fn resubmit_di(
+    mut input: review::DiResubmitInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::di::domain::InterventionRequest> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::DI_CREATE_OWN,
+        PermissionScope::Global
+    );
+    input.actor_id = i64::from(user.user_id);
+    let di = review::resubmit_returned_di(&state.db, input).await?;
+    audit::record_di_change_event(
+        &state.db,
+        audit::DiAuditInput {
+            di_id: Some(di.id),
+            action: "resubmitted".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some("DI answered by the requester and resubmitted for review.".into()),
+            details_json: None,
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
+    Ok(di)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // G) close_di — permission depends on current DI status
 //    in_review       → requires di.review
 //    awaiting_approval | approved → requires di.approve
@@ -535,7 +586,7 @@ pub async fn close_di_as_non_executable(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// H) approve_di — requires di.approve + step-up
+// H) approve_di — requires di.approve (confirmed in a dialog; no step-up)
 //    awaiting_approval → approved
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -552,26 +603,6 @@ pub async fn approve_di(
         PermissionScope::Global
     );
 
-    {
-        let guard = state.session.read().await;
-        if !guard.is_step_up_valid() {
-            audit::record_di_change_event(
-                &state.db,
-                audit::DiAuditInput {
-                    di_id: Some(input.di_id),
-                    action: "approved".into(),
-                    actor_id: Some(i64::from(user.user_id)),
-                    summary: Some("Approval blocked: step-up verification failed".into()),
-                    details_json: None,
-                    requires_step_up: true,
-                    apply_result: "blocked".into(),
-                },
-            )
-            .await;
-            return Err(AppError::StepUpRequired);
-        }
-    }
-
     input.actor_id = i64::from(user.user_id);
     let di = review::approve_di(&state.db, input).await?;
     audit::record_di_change_event(
@@ -582,7 +613,7 @@ pub async fn approve_di(
             actor_id: Some(i64::from(user.user_id)),
             summary: Some("DI approuvée.".into()),
             details_json: None,
-            requires_step_up: true,
+            requires_step_up: false,
             apply_result: "applied".into(),
         },
     )
@@ -878,7 +909,7 @@ pub async fn delete_di_attachment(attachment_id: i64, state: State<'_, AppState>
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// P) convert_di_to_wo — requires di.convert + step-up
+// P) convert_di_to_wo — requires di.convert (confirmed in a dialog; no step-up)
 //    approved → closed (disposition=converted_to_wo)
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -894,26 +925,6 @@ pub async fn convert_di_to_wo(
         crate::rbac::permissions::DI_CONVERT,
         PermissionScope::Global
     );
-
-    {
-        let guard = state.session.read().await;
-        if !guard.is_step_up_valid() {
-            audit::record_di_change_event(
-                &state.db,
-                audit::DiAuditInput {
-                    di_id: Some(input.di_id),
-                    action: "converted".into(),
-                    actor_id: Some(i64::from(user.user_id)),
-                    summary: Some("Conversion blocked: step-up verification failed".into()),
-                    details_json: None,
-                    requires_step_up: true,
-                    apply_result: "blocked".into(),
-                },
-            )
-            .await;
-            return Err(AppError::StepUpRequired);
-        }
-    }
 
     input.actor_id = i64::from(user.user_id);
     let result = conversion::convert_di_to_work_order(&state.db, input).await?;
@@ -931,7 +942,7 @@ pub async fn convert_di_to_wo(
                 })
                 .to_string(),
             ),
-            requires_step_up: true,
+            requires_step_up: false,
             apply_result: "applied".into(),
         },
     )
@@ -1039,24 +1050,12 @@ pub async fn get_di_stats(
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
-    use sea_orm_migration::MigratorTrait;
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
     use crate::auth::rbac::{self, PermissionScope};
 
     async fn setup() -> sea_orm::DatabaseConnection {
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("in-memory SQLite should connect");
-        db.execute(Statement::from_string(
-            DbBackend::Sqlite,
-            "PRAGMA foreign_keys = ON;".to_string(),
-        ))
-        .await
-        .expect("PRAGMA");
-        crate::migrations::Migrator::up(&db, None).await.expect("migrations");
-        crate::db::seeder::seed_system_data(&db).await.expect("seeder");
-        db
+        crate::db::test_db::seeded().await
     }
 
     async fn assign_role(db: &sea_orm::DatabaseConnection, user_id: i32, role_name: &str) {
@@ -1143,7 +1142,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn v1_di_approve_requires_step_up() {
+    async fn v1_di_approve_does_not_require_step_up() {
         let db = setup().await;
 
         let row = db
@@ -1156,7 +1155,8 @@ mod tests {
             .expect("query")
             .expect("di.approve permission must exist in seed data");
         let requires: i64 = row.try_get("", "requires_step_up").expect("column");
-        assert_eq!(requires, 1, "di.approve must require step-up authentication");
+        // Owner decision (2026-10-14): approval is confirmed in a dialog, not by password re-entry.
+        assert_eq!(requires, 0, "di.approve must not require step-up authentication");
     }
 
     // ─── V2 — screen_di permission ──────────────────────────────────────
@@ -1259,7 +1259,7 @@ mod tests {
                 safety_flag: false,
                 environmental_flag: false,
                 quality_flag: false,
-                reported_urgency: "medium".into(),
+                reported_urgency: "normal".into(),
                 observed_at: None,
                 source_inspection_anomaly_id: None,
                 submitter_id: user_id,
@@ -1328,13 +1328,15 @@ mod tests {
             "list_di_change_events",
             "list_all_di_change_events",
             "get_di_stats",
+            "get_di_queue_counts",
+            "resubmit_di",
         ];
         let unique: std::collections::HashSet<&str> = fns.iter().copied().collect();
         assert_eq!(fns.len(), unique.len(), "All DI command names must be unique");
         assert_eq!(
             fns.len(),
-            28,
-            "Expected exactly 28 DI commands (incl. close/reject compat paths)"
+            30,
+            "Expected exactly 30 DI commands (incl. close/reject compat paths)"
         );
     }
 
@@ -1427,7 +1429,7 @@ mod tests {
                 actor_id: Some(1),
                 summary: Some("DI approuvée.".into()),
                 details_json: None,
-                requires_step_up: true,
+                requires_step_up: false,
                 apply_result: "applied".into(),
             },
         )
@@ -1444,7 +1446,7 @@ mod tests {
 
         assert_eq!(approved_events.len(), 1, "Exactly 1 audit event with action='approved'");
         assert_eq!(approved.status, "approved");
-        assert_eq!(approved_events[0].requires_step_up, 1);
+        assert_eq!(approved_events[0].requires_step_up, 0);
     }
 
     // ─── Lifecycle V3 — Audit on blocked step-up ─────────────────────────
@@ -1498,7 +1500,7 @@ mod tests {
                 actor_id: Some(1),
                 summary: Some("DI convertie en OT".into()),
                 details_json: Some(r#"{"wo_id":1,"wo_code":"OT-0001"}"#.into()),
-                requires_step_up: true,
+                requires_step_up: false,
                 apply_result: "applied".into(),
             },
         )
@@ -1511,7 +1513,10 @@ mod tests {
         let converted: Vec<_> = events.iter().filter(|e| e.action == "converted").collect();
 
         assert_eq!(converted.len(), 1, "One converted audit event");
-        assert_eq!(converted[0].requires_step_up, 1, "Conversion must require step-up");
+        assert_eq!(
+            converted[0].requires_step_up, 0,
+            "Conversion is confirmed in a dialog, no step-up"
+        );
         assert_eq!(converted[0].apply_result, "applied");
     }
 

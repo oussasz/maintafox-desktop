@@ -25,10 +25,23 @@ async fn load_anomaly(db: &impl ConnectionTrait, id: i64) -> AppResult<Inspectio
     map_anomaly(&row)
 }
 
+/// The follow-up title is written (or confirmed) by a person: it is what planners read in the
+/// request list, so it is never generated from an internal anomaly code.
+fn required_title(title: Option<String>) -> AppResult<String> {
+    title
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            AppError::ValidationFailed(vec![
+                "GATE_INSP_FOLLOW_UP_TITLE_REQUIRED: give the request or work order a title.".into(),
+            ])
+        })
+}
+
 fn assert_routable(a: &InspectionAnomaly) -> AppResult<()> {
     if a.linked_di_id.is_some() || a.linked_work_order_id.is_some() {
         return Err(AppError::ValidationFailed(vec![
-            "Cette anomalie est déjà liée à un DI ou un OT.".into(),
+            "GATE_INSP_ANOMALY_ALREADY_ROUTED: this anomaly is already linked to a request or a work order.".into(),
         ]));
     }
     Ok(())
@@ -51,7 +64,7 @@ pub async fn route_inspection_anomaly_to_di(
     assert_routable(&a)?;
     let Some(rid) = a.result_id else {
         return Err(AppError::ValidationFailed(vec![
-            "L'anomalie doit être liée à un résultat pour créer un DI.".into(),
+            "GATE_INSP_ANOMALY_NO_RESULT: the anomaly is not attached to a recorded result.".into(),
         ]));
     };
     let res_row = db
@@ -72,9 +85,10 @@ pub async fn route_inspection_anomaly_to_di(
             id: checkpoint_id.to_string(),
         })?;
     let Some(asset_id) = cp.asset_id else {
-        return Err(AppError::ValidationFailed(vec![
-            "Le point de contrôle n'a pas d'équipement (asset_id).".into(),
-        ]));
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_INSP_ANOMALY_NO_EQUIPMENT: checkpoint {} has no equipment; a request needs one.",
+            cp.checkpoint_code
+        )]));
     };
     let node_row = db
         .query_one(Statement::from_sql_and_values(
@@ -83,26 +97,24 @@ pub async fn route_inspection_anomaly_to_di(
             [asset_id.into()],
         ))
         .await?
-        .ok_or_else(|| AppError::ValidationFailed(vec![format!("Équipement introuvable (id={asset_id}).")]))?;
+        .ok_or_else(|| AppError::NotFound {
+            entity: "Equipment".into(),
+            id: asset_id.to_string(),
+        })?;
     let org_node_id: Option<i64> = node_row.try_get("", "installed_at_node_id").ok();
     let Some(org_node_id) = org_node_id else {
         return Err(AppError::ValidationFailed(vec![
-            "L'équipement n'a pas de nœud d'installation (installed_at_node_id).".into(),
+            "GATE_INSP_EQUIPMENT_NO_LOCATION: the equipment has no installation location; a request needs one.".into(),
         ]));
     };
 
-    let title = title_override
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| format!("Inspection — {}", a.anomaly_type));
+    let title = required_title(title_override)?;
     let description = description_override
-        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
         .unwrap_or_else(|| a.description.clone());
 
-    let reported_urgency = match a.severity {
-        1 | 2 => "low",
-        3 => "normal",
-        _ => "high",
-    };
+    let reported_urgency = severity_urgency_code(a.severity);
 
     let symptom_code_id = crate::di::reference_catalog::resolve_system_di_symptom_id(db, &a.anomaly_type).await?;
 
@@ -114,7 +126,8 @@ pub async fn route_inspection_anomaly_to_di(
         origin_type: "inspection".into(),
         request_type: "repair".to_string(),
         symptom_code_id: Some(symptom_code_id),
-        impact_level: "medium".into(),
+        // A reading tells nothing about production impact: the reviewer assesses it.
+        impact_level: "unknown".into(),
         production_impact: false,
         safety_flag: a.severity >= 4,
         environmental_flag: false,
@@ -155,6 +168,7 @@ pub async fn route_inspection_anomaly_to_wo(
     creator_user_id: i64,
     type_code: String,
     title_override: Option<String>,
+    description_override: Option<String>,
 ) -> AppResult<(crate::wo::domain::WorkOrder, InspectionAnomaly)> {
     let a = load_anomaly(db, anomaly_id).await?;
     if a.row_version != expected_row_version {
@@ -174,13 +188,13 @@ pub async fn route_inspection_anomaly_to_wo(
         .await?;
     if open.is_some() {
         return Err(AppError::ValidationFailed(vec![
-            "Un ordre de travail ouvert existe déjà pour cette anomalie.".into(),
+            "GATE_INSP_ANOMALY_OPEN_WO_EXISTS: an open work order already exists for this anomaly.".into(),
         ]));
     }
 
     let Some(rid) = a.result_id else {
         return Err(AppError::ValidationFailed(vec![
-            "L'anomalie doit être liée à un résultat pour créer un OT.".into(),
+            "GATE_INSP_ANOMALY_NO_RESULT: the anomaly is not attached to a recorded result.".into(),
         ]));
     };
     let res_row = db
@@ -200,11 +214,20 @@ pub async fn route_inspection_anomaly_to_wo(
             entity: "InspectionCheckpoint".into(),
             id: checkpoint_id.to_string(),
         })?;
+    // A work order is always on an equipment (`wo::queries` refuses orphan work orders).
+    if cp.asset_id.is_none() {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_INSP_ANOMALY_NO_EQUIPMENT: checkpoint {} has no equipment; a work order needs one.",
+            cp.checkpoint_code
+        )]));
+    }
     let equipment_id = cp.asset_id;
 
-    let title = title_override
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| format!("Inspection — {}", a.anomaly_type));
+    let title = required_title(title_override)?;
+    let description = description_override
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| a.description.clone());
 
     let wo_in = WoCreateInput {
         type_code,
@@ -217,9 +240,10 @@ pub async fn route_inspection_anomaly_to_wo(
         source_rca_cause_text: None,
         entity_id: None,
         planner_id: None,
-        urgency_id: None,
+        urgency_code: Some(severity_urgency_code(a.severity).to_string()),
+        subtype_code: None,
         title,
-        description: Some(a.description.clone()),
+        description: Some(description),
         notes: None,
         planned_start: None,
         planned_end: None,
@@ -276,4 +300,10 @@ pub async fn defer_inspection_anomaly(
     let updated = load_anomaly(&txn, anomaly_id).await?;
     txn.commit().await?;
     Ok(updated)
+}
+
+/// Urgency of a request or work order raised from a finding: a level of the shared DI / OT
+/// scale (`reference::urgency_scale::severity_urgency`, one severity step per level).
+pub(crate) fn severity_urgency_code(severity: i64) -> &'static str {
+    crate::reference::urgency_scale::severity_urgency(severity).as_str()
 }

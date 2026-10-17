@@ -3,8 +3,10 @@ import { Suspense, lazy, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router-dom";
 
-import { AdminMetricCards } from "@/components/admin/AdminMetricCards";
-import { mfLayout } from "@/design-system/tokens";
+import { AdminMetricCards, type AdminMetricTarget } from "@/components/admin/AdminMetricCards";
+import { ModulePageShell } from "@/components/layout/ModulePageShell";
+import { LoadingState } from "@/components/ui/data-state";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { usePermissions } from "@/hooks/use-permissions";
 import { P, type PermissionName } from "@shared/rbac/permissions.generated";
 
@@ -25,11 +27,6 @@ const SessionVisibilityPanel = lazy(() =>
     default: m.SessionVisibilityPanel,
   })),
 );
-const DelegationManagerPanel = lazy(() =>
-  import("../components/admin/DelegationManagerPanel").then((m) => ({
-    default: m.DelegationManagerPanel,
-  })),
-);
 const EmergencyElevationPanel = lazy(() =>
   import("../components/admin/EmergencyElevationPanel").then((m) => ({
     default: m.EmergencyElevationPanel,
@@ -47,6 +44,8 @@ const AdminAuditTimeline = lazy(() =>
 );
 
 // ── Tab configuration ─────────────────────────────────────────────────────
+// Delegated-administration policies (DelegationManagerPanel) are not offered: nothing in the
+// permission checks reads them yet, so a policy saved there would change nothing.
 
 interface AdminTab {
   key: string;
@@ -76,12 +75,6 @@ const ADMIN_TABS: AdminTab[] = [
     component: SessionVisibilityPanel,
   },
   {
-    key: "delegation",
-    labelKey: "admin:tabs.delegation",
-    permission: P.ADM_ROLES,
-    component: DelegationManagerPanel,
-  },
-  {
     key: "emergency",
     labelKey: "admin:tabs.emergency",
     permission: P.ADM_USERS,
@@ -104,11 +97,7 @@ const ADMIN_TABS: AdminTab[] = [
 // ── Panel suspense wrapper ────────────────────────────────────────────────
 
 function PanelFallback() {
-  return (
-    <div className="flex h-48 items-center justify-center">
-      <div className="h-5 w-5 animate-spin rounded-full border-2 border-surface-3 border-t-primary" />
-    </div>
-  );
+  return <LoadingState className="h-48" />;
 }
 
 // ── AdminPage ─────────────────────────────────────────────────────────────
@@ -145,8 +134,8 @@ export function AdminPage() {
     return (
       <div className="flex h-full items-center justify-center px-4">
         <div className="text-center max-w-md">
-          <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-status-danger/10">
-            <Lock className="h-8 w-8 text-status-danger" />
+          <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-tone-danger-bg">
+            <Lock className="h-8 w-8 text-tone-danger-fg" aria-hidden />
           </div>
           <h1 className="text-xl font-semibold text-text-primary">
             {t("auth:unauthorized.title")}
@@ -161,49 +150,34 @@ export function AdminPage() {
   const activeTabDef = visibleTabs.find((t) => t.key === activeTab) ?? visibleTabs[0];
   const PanelComponent = activeTabDef?.component;
 
+  const metricTab: Record<AdminMetricTarget, string> = {
+    users: "users",
+    roles: "roles",
+    sessions: "sessions",
+  };
+
   return (
-    <div className={mfLayout.moduleRoot}>
-      <div className={mfLayout.moduleHeader}>
-        <div className={mfLayout.moduleTitleRow}>
-          <Shield className={mfLayout.moduleHeaderIcon} />
-          <div>
-            <h1 className={mfLayout.moduleTitle}>{t("admin:page.title")}</h1>
-            <p className="text-sm text-text-secondary">{t("admin:page.subtitle")}</p>
-          </div>
-        </div>
-      </div>
+    <ModulePageShell
+      icon={Shield}
+      title={t("admin:page.title")}
+      description={t("admin:page.subtitle")}
+    >
+      <div className="flex min-h-0 flex-col gap-4">
+        <AdminMetricCards
+          onOpen={(target) => setActiveTab(metricTab[target])}
+          canOpen={(target) => visibleTabs.some((tab) => tab.key === metricTab[target])}
+        />
 
-      <div className={mfLayout.moduleContent}>
-        {/* KPI metric cards */}
-        <AdminMetricCards />
+        <Tabs value={activeTabDef?.key ?? ""} onValueChange={setActiveTab}>
+          <TabsList className="h-auto w-full flex-wrap justify-start">
+            {visibleTabs.map((tab) => (
+              <TabsTrigger key={tab.key} value={tab.key} className="min-h-10">
+                {t(tab.labelKey)}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
 
-        {/* Tab bar */}
-        <div className="shrink-0 border-b border-surface-border">
-          <nav className="-mb-px flex gap-1 overflow-x-auto" role="tablist">
-            {visibleTabs.map((tab) => {
-              const isActive = tab.key === (activeTabDef?.key ?? "");
-              return (
-                <button
-                  key={tab.key}
-                  type="button"
-                  role="tab"
-                  aria-selected={isActive}
-                  onClick={() => setActiveTab(tab.key)}
-                  className={`whitespace-nowrap border-b-2 px-4 py-2.5 text-sm font-medium transition-colors
-                  ${
-                    isActive
-                      ? "border-primary text-primary"
-                      : "border-transparent text-text-secondary hover:border-surface-border hover:text-text-primary"
-                  }`}
-                >
-                  {t(tab.labelKey)}
-                </button>
-              );
-            })}
-          </nav>
-        </div>
-
-        {/* Active panel */}
         <div className="min-h-0 flex-1">
           {PanelComponent && (
             <Suspense fallback={<PanelFallback />}>
@@ -212,6 +186,6 @@ export function AdminPage() {
           )}
         </div>
       </div>
-    </div>
+    </ModulePageShell>
   );
 }

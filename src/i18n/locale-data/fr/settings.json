@@ -71,9 +71,12 @@
     "diagnostics.log_retention_days": "Rétention des logs (jours)",
     "ram.fmeca_rpn_critical_threshold": "Seuil RPN critique FMECA",
     "documents.default_header": "En-tête de document par défaut",
-    "wo.reopen_window_days": "Délai de réouverture après clôture (jours)"
+    "wo.reopen_window_days": "Délai de réouverture après clôture (jours)",
+    "locale.fiscal_year_start_month": "Début de l'exercice comptable"
   },
   "documentHeader": {
+    "removeLogoConfirmTitle": "Retirer le logo ?",
+    "removeLogoConfirmBody": "Le logo ne figurera plus dans l'en-tête des documents imprimés (OT, bons de commande…). Vous pourrez en téléverser un autre.",
     "title": "Documents et identité visuelle",
     "description": "Configurez l'en-tête par défaut injecté en haut des ordres de travail, demandes d'intervention et bons de commande imprimés.",
     "logoLabel": "Logo de l'entreprise",
@@ -114,7 +117,8 @@
     "summary": "Résumé",
     "changedAt": "Date",
     "changedBy": "Par",
-    "stepUp": "Élévation"
+    "stepUp": "Élévation",
+    "loadError": "Le journal des modifications n'a pas pu être chargé."
   },
   "sidebar": {
     "search": "Rechercher…"
@@ -169,7 +173,9 @@
       "retention_days": "Rétention (jours)",
       "include_photos": "Inclure les photos",
       "compression_level": "Niveau de compression"
-    }
+    },
+    "loadError": "La politique n'a pas pu être chargée.",
+    "unreadable": "La politique enregistrée est illisible : elle ne peut pas être modifiée ici. Contactez le support."
   },
   "permissionDenied": "Vous n'avez pas la permission d'accéder aux paramètres",
   "options": {
@@ -190,18 +196,6 @@
       "monday": "Lundi",
       "sunday": "Dimanche"
     },
-    "currency": {
-      "DZD": "Dinar algérien (DZD)",
-      "MAD": "Dirham marocain (MAD)",
-      "TND": "Dinar tunisien (TND)",
-      "EUR": "Euro (EUR)",
-      "USD": "Dollar américain (USD)",
-      "GBP": "Livre sterling (GBP)",
-      "CHF": "Franc suisse (CHF)",
-      "CAD": "Dollar canadien (CAD)",
-      "SAR": "Riyal saoudien (SAR)",
-      "AED": "Dirham des Émirats (AED)"
-    },
     "colorMode": {
       "light": "Clair",
       "dark": "Sombre"
@@ -220,6 +214,20 @@
     "channel": {
       "stable": "Stable",
       "beta": "Bêta"
+    },
+    "month": {
+      "1": "Janvier",
+      "2": "Février",
+      "3": "Mars",
+      "4": "Avril",
+      "5": "Mai",
+      "6": "Juin",
+      "7": "Juillet",
+      "8": "Août",
+      "9": "Septembre",
+      "10": "Octobre",
+      "11": "Novembre",
+      "12": "Décembre"
     }
   },
   "tabs": {
@@ -231,7 +239,7 @@
     "integrations": "Système & Sync",
     "profileHint": "Informations du compte, mot de passe, PIN, appareils de confiance et historique de session.",
     "notificationsHint": "Boîte de réception, accusés, reports et préférences par catégorie.",
-    "generalHint": "Langue, apparence et préférences système.",
+    "generalHint": "Langue, devise et exercice fiscal, ordres de travail, fiabilité, en-tête des documents imprimés. Chaque paramètre montre sa valeur livrée, qui peut le modifier et son historique.",
     "securityHint": "Politique mot de passe, session, journal d'activité et audit.",
     "integrationsHint": "État de sync, licence, connexions et diagnostics."
   },
@@ -265,7 +273,7 @@
     },
     "resetTitle": "Réinitialisation usine",
     "resetDescription": "Efface toutes les données de cet appareil et redémarre sur la configuration initiale. Une dernière sauvegarde est d'abord enregistrée dans le dossier « backups ». Les données non encore synchronisées avec le serveur n'existent que dans cette sauvegarde.",
-    "resetPhraseLabel": "Phrase de confirmation",
+    "resetPhraseLabel": "Saisissez « EFFACER TOUTES LES DONNÉES » (ou « ERASE ALL DATA ») pour confirmer",
     "resetPhrasePlaceholder": "Saisir la phrase de confirmation",
     "resetAction": "Tout effacer et redémarrer",
     "resetError": "Échec de la réinitialisation",
@@ -311,5 +319,122 @@
     "copied": "Clé copiée dans le presse-papiers",
     "copyError": "Copie impossible",
     "revealError": "Impossible d’afficher la clé de récupération"
+  },
+  "catalog": {
+    "shipped": "Valeur livrée",
+    "changed": "Modifiée",
+    "lastChange": "Modifiée par {{who}} le {{when}}",
+    "restoreShipped": "Revenir à la valeur livrée",
+    "restoredSummary": "Paramètre '{{key}}' remis à la valeur livrée",
+    "showHistory": "Historique des changements",
+    "hideHistory": "Masquer l'historique",
+    "system": "Système",
+    "whoMayChange": "Modifiable par les rôles : {{roles}} (permission adm.settings)",
+    "nobodyMayChange": "Aucun rôle actif ne détient la permission adm.settings.",
+    "outOfRange": "Valeur hors limites ({{min}} à {{max}}).",
+    "locked": {
+      "locale.fiscal_year_start_month": "Verrouillé : des réalisés budgétaires, des périodes clôturées ou des imputations sont déjà enregistrés par période fiscale. Changer le mois de début déplacerait tout le passé.",
+      "locale.currency_code": "Verrouillé : du stock, des réceptions ou des imputations sont déjà valorisés dans cette devise. La changer réétiquetterait tous les montants enregistrés."
+    },
+    "help": {
+      "locale.primary_language": "Langue de l'interface par défaut pour tous les utilisateurs.",
+      "locale.fallback_language": "Langue utilisée quand un texte manque dans la langue principale.",
+      "locale.currency_code": "Devise de valorisation du stock, des achats et des coûts (code ISO 4217).",
+      "locale.fiscal_year_start_month": "Mois de début de l'exercice : périodes budgétaires, imputations, clôtures.",
+      "wo.reopen_window_days": "Nombre de jours après clôture pendant lesquels un OT clôturé peut être rouvert (0 = jamais).",
+      "ram.fmeca_rpn_critical_threshold": "À partir de cet indice de priorité de risque (G × O × D), un mode de défaillance AMDEC est critique.",
+      "backup.retention_daily": "Nombre de sauvegardes planifiées quotidiennes conservées (au moins une).",
+      "backup.retention_weekly": "Nombre de sauvegardes hebdomadaires conservées en plus.",
+      "backup.retention_monthly": "Nombre de sauvegardes mensuelles conservées en plus."
+    },
+    "units": {
+      "wo.reopen_window_days_one": "{{count}} jour",
+      "wo.reopen_window_days_other": "{{count}} jours",
+      "ram.fmeca_rpn_critical_threshold": "{{count}}",
+      "backup.retention_daily_one": "{{count}} sauvegarde",
+      "backup.retention_daily_other": "{{count}} sauvegardes",
+      "backup.retention_weekly_one": "{{count}} semaine",
+      "backup.retention_weekly_other": "{{count}} semaines",
+      "backup.retention_monthly_one": "{{count}} mois",
+      "backup.retention_monthly_other": "{{count}} mois"
+    },
+    "currencyLoadError": "La liste des devises (Données de référence › Devises) n'a pas pu être chargée : la devise ne peut pas être modifiée.",
+    "currencyLoading": "Chargement des devises…",
+    "historyLoadError": "L'historique de ce paramètre n'a pas pu être chargé."
+  },
+  "license": {
+    "title": "Licence",
+    "loadError": "L'état de la licence n'a pas pu être chargé",
+    "entitlement": "Licence",
+    "activation": "Activation",
+    "trust": "Ce poste",
+    "policySyncPending": "Synchronisation de la politique en attente",
+    "edition": "Édition {{edition}}",
+    "pendingWrites": "Modifications en attente d'envoi :",
+    "lastAction": "Dernière action d'administration :",
+    "traces_one": "{{count}} événement de licence récent (détails techniques)",
+    "traces_other": "{{count}} événements de licence récents (détails techniques)",
+    "reason": "Motif",
+    "reasonHint": "Au moins {{min}} caractères. Conservé dans la piste d'audit de la licence.",
+    "states": {
+      "active": "active",
+      "suspended": "suspendue",
+      "revoked": "révoquée",
+      "trusted": "de confiance",
+      "untrusted": "non approuvé",
+      "verified": "vérifiée",
+      "soft_accepted": "acceptée",
+      "not_activated": "non activée",
+      "pending_online_validation": "en attente de validation en ligne",
+      "degraded_api_unavailable": "dégradée (serveur injoignable)",
+      "denied_revoked": "refusée (révoquée)",
+      "denied_expired": "refusée (expirée)",
+      "denied_slot_limit": "refusée (nombre de postes atteint)",
+      "denied_force_update_required": "refusée (mise à jour requise)",
+      "denied_invalid": "refusée (invalide)",
+      "denied_offline_grace_expired": "refusée (durée hors ligne dépassée)",
+      "other": "autre état"
+    },
+    "advice": {
+      "policySync": "La synchronisation de la politique est en attente : actualisez la politique avant toute modification.",
+      "revoked": "La licence est révoquée. Demandez à votre administrateur de la réactiver, puis actualisez la politique.",
+      "suspended": "La licence est suspendue : l'application est en lecture seule jusqu'à sa réactivation.",
+      "activationDenied": "L'activation du produit a été refusée. Réactivez ou contactez le support.",
+      "activationDegraded": "L'activation est dégradée : le serveur de licences est injoignable. Actualisez une fois en ligne.",
+      "activationPending": "L'activation du produit attend une validation en ligne.",
+      "machinePendingRevocation": "L'activation de ce poste sera révoquée à la prochaine connexion.",
+      "machineRevoked": "L'activation de ce poste est révoquée. Demandez à votre administrateur de le réactiver.",
+      "untrusted": "Ce poste n'est pas encore approuvé. Terminez le premier démarrage en ligne sur un poste de confiance.",
+      "healthy": "La licence est en règle : toutes les opérations sont autorisées.",
+      "activationIncomplete": "L'activation n'est pas terminée. Finalisez l'activation du produit."
+    },
+    "actions": {
+      "other": "autre action",
+      "suspend": {
+        "label": "Suspendre la licence",
+        "confirmTitle": "Suspendre la licence ?",
+        "confirmBody": "Tous les utilisateurs du site passent en lecture seule jusqu'à la réactivation. Les modifications non envoyées restent sur ce poste.",
+        "confirm": "Suspendre la licence"
+      },
+      "revoke": {
+        "label": "Révoquer la licence",
+        "confirmTitle": "Révoquer la licence ?",
+        "confirmBody": "La licence cesse d'être valable pour ce site. Seule une réactivation par un administrateur la rétablit.",
+        "confirm": "Révoquer la licence"
+      },
+      "reactivate": {
+        "label": "Réactiver la licence",
+        "confirmTitle": "Réactiver la licence ?",
+        "confirmBody": "Les utilisateurs retrouvent les opérations que leur licence autorise.",
+        "confirm": "Réactiver la licence"
+      },
+      "compromise": {
+        "label": "Déclarer la clé de signature compromise",
+        "confirmTitle": "Déclarer la clé de signature compromise ?",
+        "confirmBody": "La clé qui a signé la licence en cours est marquée compromise et la licence est révoquée immédiatement. À utiliser uniquement en cas de fuite de la clé.",
+        "confirm": "Déclarer compromise",
+        "noEnvelope": "Aucune licence signée n'est active : il n'y a pas de clé de signature à déclarer compromise."
+      }
+    }
   }
 }

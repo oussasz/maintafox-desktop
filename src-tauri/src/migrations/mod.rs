@@ -164,6 +164,44 @@ mod m20261012_000173_audit_hash_chain;
 mod m20261012_000174_unit_conversions;
 pub(crate) mod m20261012_000175_wo_lifecycle_facts;
 mod m20261012_000176_notification_daily_digest;
+mod m20261014_000178_wo_failure_coding_reference;
+mod m20261014_000179_reliability_studies;
+mod m20261014_000180_reliability_study_models;
+mod m20261014_000182_pm_windows_fanout_timing;
+mod m20261014_000183_meter_lifetime;
+mod m20261014_000184_inventory_lots_fx_periods_approvals;
+mod m20261014_000185_asset_spares_criticality;
+mod m20261014_000190_wo_labor_personnel;
+mod m20261014_000191_qualification_requirements;
+mod m20261014_000192_work_calendar_holidays;
+mod m20261014_000193_cert_expiry_routing;
+mod m20261015_000186_wo_cost_settlement;
+mod m20261015_000187_wo_settlement_labor_snapshot;
+mod m20261015_000194_inspection_schedules;
+mod m20261015_000195_inspection_round_scheduling;
+mod m20261015_000196_reference_domain_audience;
+mod m20261015_000197_schedule_class_timetables;
+mod m20261015_000198_shared_urgency_and_wo_natures;
+mod m20261015_000199_shared_failure_symptoms;
+pub(crate) mod m20261015_000200_pm_follow_up_corrective_and_governed_lists;
+pub(crate) mod m20261015_000201_governed_units_of_measure;
+mod m20261015_000202_wo_shift_from_timetable;
+pub(crate) mod m20261015_000204_entered_units_on_receipts_and_issues;
+mod m20261016_000205_commitment_planned_labor;
+mod m20261016_000206_planned_crew_size;
+mod m20261016_000208_notification_inbox;
+mod m20261016_000209_notification_subscriptions;
+mod m20261017_000207_crew_size_bounds;
+mod m20261017_000210_commitment_person_hours;
+mod m20261017_000211_planning_window_equipment;
+pub(crate) mod m20261017_000212_weekly_schedules;
+mod m20261017_000213_settings_change_values;
+mod m20261017_000214_currency_reference_list;
+mod m20261017_000217_di_decision_reasons;
+mod m20261017_000218_di_transition_log_index;
+mod m20261017_000221_fmeca_item_review_required;
+mod m20261017_000225_permit_energy_isolation_lists;
+mod m20261017_000226_pm_reason_lists;
 mod m20261101_000036_activity_audit_log;
 mod m20261201_000037_observability_permissions;
 mod m_test;
@@ -340,7 +378,45 @@ impl MigratorTrait for Migrator {
             Box::new(m20261012_000174_unit_conversions::Migration),
             Box::new(m20261012_000175_wo_lifecycle_facts::Migration),
             Box::new(m20261012_000176_notification_daily_digest::Migration),
+            Box::new(m20261014_000178_wo_failure_coding_reference::Migration),
+            Box::new(m20261014_000179_reliability_studies::Migration),
+            Box::new(m20261014_000180_reliability_study_models::Migration),
+            Box::new(m20261014_000182_pm_windows_fanout_timing::Migration),
+            Box::new(m20261014_000183_meter_lifetime::Migration),
+            Box::new(m20261014_000184_inventory_lots_fx_periods_approvals::Migration),
+            Box::new(m20261014_000185_asset_spares_criticality::Migration),
+            Box::new(m20261015_000186_wo_cost_settlement::Migration),
+            Box::new(m20261015_000187_wo_settlement_labor_snapshot::Migration),
+            Box::new(m20261014_000190_wo_labor_personnel::Migration),
+            Box::new(m20261014_000191_qualification_requirements::Migration),
+            Box::new(m20261014_000192_work_calendar_holidays::Migration),
+            Box::new(m20261014_000193_cert_expiry_routing::Migration),
             Box::new(m_test::Migration),
+            Box::new(m20261015_000194_inspection_schedules::Migration),
+            Box::new(m20261015_000195_inspection_round_scheduling::Migration),
+            Box::new(m20261015_000196_reference_domain_audience::Migration),
+            Box::new(m20261015_000197_schedule_class_timetables::Migration),
+            Box::new(m20261015_000198_shared_urgency_and_wo_natures::Migration),
+            Box::new(m20261015_000199_shared_failure_symptoms::Migration),
+            Box::new(m20261015_000200_pm_follow_up_corrective_and_governed_lists::Migration),
+            Box::new(m20261015_000201_governed_units_of_measure::Migration),
+            Box::new(m20261015_000202_wo_shift_from_timetable::Migration),
+            Box::new(m20261015_000204_entered_units_on_receipts_and_issues::Migration),
+            Box::new(m20261016_000205_commitment_planned_labor::Migration),
+            Box::new(m20261016_000206_planned_crew_size::Migration),
+            Box::new(m20261017_000207_crew_size_bounds::Migration),
+            Box::new(m20261016_000208_notification_inbox::Migration),
+            Box::new(m20261016_000209_notification_subscriptions::Migration),
+            Box::new(m20261017_000210_commitment_person_hours::Migration),
+            Box::new(m20261017_000211_planning_window_equipment::Migration),
+            Box::new(m20261017_000212_weekly_schedules::Migration),
+            Box::new(m20261017_000213_settings_change_values::Migration),
+            Box::new(m20261017_000214_currency_reference_list::Migration),
+            Box::new(m20261017_000217_di_decision_reasons::Migration),
+            Box::new(m20261017_000218_di_transition_log_index::Migration),
+            Box::new(m20261017_000221_fmeca_item_review_required::Migration),
+            Box::new(m20261017_000225_permit_energy_isolation_lists::Migration),
+            Box::new(m20261017_000226_pm_reason_lists::Migration),
         ]
     }
 }

@@ -22,7 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { createOperationalReferenceValue } from "@/services/reference-service";
-import { toErrorMessage } from "@/utils/errors";
+import { referenceErrorText } from "@/stores/reference-error-text";
 import type { ReferenceValue } from "@shared/ipc-types";
 
 export interface ReferenceCreateModalProps {
@@ -86,7 +86,7 @@ export function ReferenceCreateModal({
       onCreated(created);
       onClose();
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(referenceErrorText(err));
     } finally {
       setSaving(false);
     }

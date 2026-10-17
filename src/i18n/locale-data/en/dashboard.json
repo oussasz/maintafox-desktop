@@ -1,4 +1,14 @@
 {
+  "overdueChooser": {
+    "title": "Which list to open?",
+    "description": "The \"Overdue\" figure adds up three lists. Choose the one to open.",
+    "pm": "Overdue PM occurrences",
+    "pmHint": "Due queue, filtered on \"overdue\".",
+    "wo": "Overdue work orders",
+    "woHint": "Open work orders whose planned end has passed.",
+    "di": "Requests waiting 7 days or more",
+    "diHint": "Requests being handled that were submitted at least 7 days ago."
+  },
   "page": {
     "title": "Overview",
     "welcome": "Welcome, {{name}}"
@@ -39,10 +49,13 @@
     "diCreated": "DI Created",
     "woCompleted": "WO Completed",
     "pmDue": "PM Due",
-    "loading": "Loading…",
-    "empty": "Not enough data yet",
     "ariaLabel": "Workload chart",
-    "openRamEvidence": "Open RAM data quality (evidence)"
+    "sectionTitle": "Activity per day",
+    "noSeries": "You have access to none of the series of this chart.",
+    "emptyPeriod_one": "No activity in the last day.",
+    "emptyPeriod_other": "No activity in the last {{count}} days.",
+    "empty": "Not enough data yet",
+    "loading": "Loading…"
   },
   "quickActions": {
     "title": "Quick Actions",
@@ -68,10 +81,12 @@
       "danger": "Danger"
     },
     "labels": {
-      "kpis": "Overview KPI strip",
-      "workload": "Workload chart",
-      "diStatus": "DI status distribution",
-      "reliability": "Reliability KPI snapshots (365d)"
+      "kpis": "Indicators",
+      "workload": "Activity per day",
+      "diStatus": "Open requests by status",
+      "myWork": "My work",
+      "supervision": "Supervision",
+      "planning": "Planning"
     }
   },
   "overviewKpi": {
@@ -81,7 +96,7 @@
     "otInProgress": "WOs in progress",
     "otOverdue": "Overdue WOs",
     "mttr": "Avg MTTR",
-    "pmCompliance": "PM overdue",
+    "pmCompliance": "PM compliance",
     "pmDueToday": "PM due today",
     "maintBacklog": "Maint. backlog",
     "availability": "Fleet operational availability (A_o)",
@@ -90,7 +105,6 @@
     "dataQuality": "Data quality",
     "stockOut": "Stock-outs",
     "reorderAlert": "Reorder alerts",
-    "totalCost": "Maintenance cost",
     "contextOpenQueue": "Live operational queue",
     "contextExecution": "Active execution",
     "contextWoOverdue": "WO past planned end",
@@ -100,7 +114,6 @@
     "contextFleet": "Fleet snapshot (30d)",
     "contextCriticalAssets": "Critical equipment not in service",
     "contextInventory": "Inventory signals",
-    "contextCost": "Closed WO cost (30d)",
     "unit": {
       "di": "DI",
       "wo": "WO",
@@ -108,27 +121,259 @@
       "percent": "%"
     },
     "alertNormal": "Normal",
-    "alertAttention": "Attention"
-  },
-  "dev": {
-    "kpiValidation": "KPI validation (SQL samples)",
-    "kpiValidationHint": "Cross-check counts and sample row ids against the local database (development only)."
+    "alertAttention": "Attention",
+    "contextPmCompliance": "Done within their window, last 30 days"
   },
   "widgets": {
     "diStatus": {
-      "title": "DIs by status",
-      "empty": "No intervention requests yet.",
-      "openList": "Open requests",
-      "aria": "DI status bar chart"
-    },
-    "reliability": {
-      "title": "Reliability snapshots",
-      "subtitle": "Aggregates from stored reliability_kpi_snapshots (last 365 days).",
-      "openEvidence": "RAM data quality",
-      "snapshots": "Snapshots",
-      "dqScore": "Avg data quality",
-      "mtbf": "Avg MTBF (h)",
-      "events": "Failure events"
+      "title": "Open requests by status",
+      "empty": "No open request.",
+      "aria": "DI status bar chart",
+      "section": "Open requests",
+      "avgAge": "avg. age {{days}} d",
+      "openQueue": "Open the “{{status}}” queue",
+      "queuesAria": "Request work queues"
     }
+  },
+  "home": {
+    "refresh": "Refresh — {{title}}",
+    "staleTitle": "The refresh failed; the figures shown are from the previous load",
+    "layoutError": "Your saved layout could not be read; the default layout is shown",
+    "nothingToShow": "No panel to show: your rights open none of the home page modules, or you hid them all (Customize).",
+    "noPermission": "You do not have access to this module.",
+    "definitionsAria": "Definitions — {{title}}",
+    "overdueBadge": "Overdue",
+    "noUrgency": "No urgency",
+    "none": "—",
+    "hours": "{{value}} h",
+    "period": {
+      "label": "Period",
+      "days_one": "{{count}} d",
+      "days_other": "{{count}} d"
+    },
+    "open": {
+      "workOrders": "Work orders",
+      "requests": "Requests",
+      "inspections": "Inspections",
+      "pm": "Preventive maintenance",
+      "planning": "Planning",
+      "inventory": "Inventory",
+      "permits": "Permits",
+      "equipment": "Equipment"
+    },
+    "myWork": {
+      "title": "My work",
+      "subtitle": "What is assigned to you, up to date now",
+      "wo": {
+        "title": "My work orders",
+        "open": "To do",
+        "overdue": "Overdue",
+        "today": "Today",
+        "byUrgency": "My work orders by urgency",
+        "listAria": "My most urgent work orders",
+        "empty": "No work order is assigned to you."
+      },
+      "di": {
+        "title": "My requests",
+        "open": "Open",
+        "awaiting": "Awaiting my answer"
+      },
+      "rounds": {
+        "title": "My inspection rounds",
+        "overdue": "Overdue",
+        "today": "Today",
+        "next7": "Next 7 days",
+        "listAria": "My rounds to do",
+        "empty": "No round to do is assigned to you.",
+        "notLinked": "Your account is linked to no personnel record, so no round can be assigned to you. Ask the administrator to link your account (Personnel)."
+      },
+      "pm": {
+        "title": "My PM",
+        "overdue": "Overdue",
+        "next7": "Due within 7 days",
+        "listAria": "My PM occurrences",
+        "empty": "No pending PM on your work orders."
+      },
+      "notifications": {
+        "title": "My notifications",
+        "toAck": "To acknowledge",
+        "unread": "Unread"
+      }
+    },
+    "planning": {
+      "title": "Planning",
+      "subtitle": "Schedulable backlog, this week's load, schedule compliance",
+      "backlog": {
+        "title": "Schedulable backlog",
+        "ready": "Ready",
+        "blocked": "Blocked",
+        "blockedBy": "Blocked work by cause",
+        "truncated": "The backlog holds at least {{count}} jobs: the figures cover the first {{count}} read by the planning board."
+      },
+      "blocker": {
+        "parts": "Parts",
+        "skills": "Skills",
+        "permits": "Permits",
+        "windows": "Windows",
+        "prerequisites": "Prerequisites"
+      },
+      "week": {
+        "title": "Week {{from}} to {{to}}",
+        "load": "Loading",
+        "hoursOf": "{{baseline}} planned / {{available}} available",
+        "noCapacity": "No available hours",
+        "titleNoWeek": "Current week",
+        "overtime": "Overtime possible",
+        "reliesOnOvertime": "Above 100 %: this week's schedule relies on overtime.",
+        "awaitingApproval_one": "{{count}} current week frozen without approval.",
+        "awaitingApproval_other": "{{count}} current weeks frozen without approval.",
+        "sitesNotFrozen_one": "{{count}} site has no frozen current week: it is not counted.",
+        "sitesNotFrozen_other": "{{count}} sites have no frozen current week: they are not counted.",
+        "unavailable": {
+          "WEEK_NO_PLANNING_SITE": "No planning site has a crew: there is no week to load.",
+          "WEEK_NOT_FROZEN": "The current week is frozen at no site: loading is measured on the frozen baseline."
+        }
+      },
+      "compliance": {
+        "title": "Schedule compliance",
+        "value": "Compliance (hours)",
+        "hint": "{{done}} done of {{scheduled}} planned, last {{count}} days",
+        "released_one": "{{count}} baseline job was later released or cancelled (counted as not done).",
+        "released_other": "{{count}} baseline jobs were later released or cancelled (counted as not done).",
+        "unavailable": {
+          "NO_FROZEN_BASELINE": "No frozen week ended in the period: schedule compliance is measured on the frozen baseline."
+        }
+      }
+    },
+    "supervision": {
+      "title": "Supervision",
+      "subtitle": "Requests, work orders, PM, stock, safety and critical assets",
+      "noModule": "You have access to none of the modules of this panel.",
+      "di": {
+        "title": "Requests and SLA",
+        "breached": "SLA breached",
+        "atRisk": "SLA at risk",
+        "onTrack": "On track",
+        "paused": "Paused",
+        "closing": "Met at closing",
+        "closingHint_one": "{{met}} of {{total}} closed, last day",
+        "closingHint_other": "{{met}} of {{total}} closed, last {{count}} days",
+        "toScreen": "To screen",
+        "toReview": "To review",
+        "toApprove": "To approve",
+        "noTarget_one": "{{count}} open request has no SLA target (urgency level without target times).",
+        "noTarget_other": "{{count}} open requests have no SLA target (urgency level without target times)."
+      },
+      "wo": {
+        "title": "Work order backlog",
+        "open": "To do",
+        "overdue": "Overdue",
+        "planned": "Planned",
+        "reactive": "Reactive",
+        "emergency": "Emergency",
+        "nature": "Nature",
+        "noNature": "No nature",
+        "matrixCaption": "Work orders to do by maintenance nature and urgency",
+        "empty": "No work order to do."
+      },
+      "pm": {
+        "title": "Preventive maintenance",
+        "overdue": "Overdue",
+        "today": "Due today",
+        "next7": "Due within 7 days",
+        "compliance": "PM compliance",
+        "complianceHint_one": "{{done}} in window of {{due}}, last day",
+        "complianceHint_other": "{{done}} in window of {{due}}, last {{count}} days"
+      },
+      "stock": {
+        "title": "Stock to reorder",
+        "toReorder": "Articles below threshold",
+        "out": "Out of stock",
+        "lines_one": "across {{count}} article × store line",
+        "lines_other": "across {{count}} article × store lines",
+        "line": "{{warehouse}} · available {{available}} · threshold {{threshold}}",
+        "outBadge": "Out of stock",
+        "listAria": "Articles to reorder",
+        "empty": "No article below its threshold."
+      },
+      "safety": {
+        "title": "Safety: permits and lockout",
+        "open": "Open permits",
+        "expiring": "Expiring soon",
+        "expired": "Expired, still open",
+        "locks": "Locks in place",
+        "within": "within {{hours}} h",
+        "locksOn_one": "on {{count}} permit",
+        "locksOn_other": "on {{count}} permits",
+        "expiredBadge": "Expired",
+        "expiringBadge": "Expiring",
+        "rule": {
+          "disabled": "The “Permit expiring” rule is switched off (Reference data → Notifications)",
+          "no_lead": "No alert lead time set (Reference data → Notifications)",
+          "missing": "No “Permit expiring” rule (Reference data → Notifications)",
+          "active": "Rule active"
+        },
+        "expiredListAria": "Expired permits still open",
+        "expiringListAria": "Permits expiring soon",
+        "withoutRecord_one": "{{count}} permit found has no record to open: check synchronisation.",
+        "withoutRecord_other": "{{count}} permits found have no record to open: check synchronisation."
+      },
+      "assets": {
+        "title": "Critical assets down",
+        "down": "Critical down",
+        "noLevel": "no level defined",
+        "noDownStatus": "no status marked “down”",
+        "listAria": "Critical assets down",
+        "empty": "No critical asset is down."
+      }
+    },
+    "indicators": {
+      "title": "Indicators",
+      "subtitle_one": "Current value and change over {{count}} day",
+      "subtitle_other": "Current value and change over {{count}} days"
+    },
+    "def": {
+      "myWoOpen": "Work orders you are primary responsible for whose work is still ahead (draft, planning, ready, in progress, on hold).",
+      "woOverdue": "Work orders whose work is still ahead (draft to on hold) and whose planned end is past — the work order module's one rule.",
+      "myWoToday": "Work orders whose planned period includes today (local day) and that are not overdue.",
+      "myDiOpen": "Requests you submitted, neither closed nor turned into a work order (queue “My requests”).",
+      "myDiAwaiting": "Your requests returned for clarification: they are waiting for your answer.",
+      "roundOverdue": "Rounds assigned to you, still to do (scheduled, released, in progress) whose planned time is past (same rule as the Inspections module).",
+      "roundToday": "Rounds to do planned later today (local day).",
+      "roundNext7": "Rounds to do planned in the next 7 days, after today.",
+      "pmOverdue": "Pending PM occurrences past the end of their tolerance window (or their due date when they have none) — same rule as the PM page.",
+      "pmNext7": "Pending PM occurrences due in the next 7 days.",
+      "pmToday": "Pending PM occurrences due today.",
+      "pmCompliance": "SMRP indicator: occurrences done inside their tolerance window ÷ occurrences due in the period whose outcome is known (cancelled excluded) — the PM page's figure. Period: the last N days, today included.",
+      "toAck": "Notifications whose rule asks for an acknowledgement, not resolved and not acknowledged yet.",
+      "unread": "Unread notifications in your inbox (the bell's figure).",
+      "backlogReady": "Planning board jobs with no blocker.",
+      "backlogBlocked": "Planning board jobs with at least one blocker (parts, skills, permits, windows, prerequisites).",
+      "weekLoad": "Hours planned in the frozen baseline of each site's current week (Planning → weekly schedule) ÷ the site crews' available hours over the week (timetables, site calendar, absences), without the overtime ceiling. Same definition as the planning KPIs.",
+      "scheduleCompliance": "SMRP indicator: baseline hours of the frozen weeks that ended in the period whose work was finished by the end of its week ÷ baseline hours. A baseline job later released or cancelled counts as not done. Period: the last N days, today included.",
+      "slaBreached": "Open requests past a target (response or resolution), paused time excluded (same rule as the request lists).",
+      "slaAtRisk": "Open requests past the escalation threshold, not yet past their target.",
+      "slaPaused": "Open requests waiting for the requester or deferred: the clock is paused.",
+      "slaClosing": "Requests closed in the period (with or without a work order) with no target missed, pauses excluded ÷ closed requests that had a target. Period: the last N days, today included.",
+      "backlogOpen": "Work orders whose work is still ahead (draft to on hold), by the EN 13306 nature of their type and by urgency level.",
+      "woOverdueAll": "Of the work orders to do, those past their planned end — the work order module's one rule (a completed work order is no longer overdue).",
+      "planned": "Work orders of a preventive or improvement nature (SMRP planned work).",
+      "reactive": "Work orders of a corrective nature (immediate or deferred).",
+      "emergency": "Immediate corrective maintenance work orders (part of reactive).",
+      "stockReorder": "Articles with at least one store whose available quantity is at or below the reorder point (or under minimum stock) — the Inventory replenishment rule. The line below gives the article × store lines concerned.",
+      "stockOut": "Of those lines, the ones with nothing available.",
+      "permitsOpen": "Permits issued, active, suspended or awaiting revalidation, and not expired.",
+      "permitsExpiring": "Open permits expiring within the lead time of the “Permit expiring” rule (Reference data → Notifications); none when the rule is switched off.",
+      "permitsExpired": "Open permits (issued, active, suspended or awaiting revalidation) past their expiry.",
+      "locks": "Isolation points applied whose lock removal is not verified yet, whatever the permit's status.",
+      "criticalDown": "Equipment at the highest criticality level of the reference list ({{level}}) whose status is marked “down” ({{statuses}}).",
+      "diOpenByStatus": "Requests neither closed nor turned into a work order, by status, with their average age since submission (the request page's figure).",
+      "chartDi": "Requests submitted that day.",
+      "chartWo": "Work orders closed that day.",
+      "chartPm": "PM occurrences due that day, cancelled excluded.",
+      "weekOvertime": "Overtime hours planning may still add over the week (the crews' overtime ceiling). Above 100 %, the schedule relies on them."
+    },
+    "more_one": "+{{count}} more — full list in the module",
+    "more_other": "+{{count}} more — full list in the module"
   }
 }

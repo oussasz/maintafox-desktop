@@ -81,7 +81,7 @@ export function WoArchivePanel({ onRowClick }: WoArchivePanelProps) {
           return (
             <Badge
               variant="outline"
-              className={`text-[10px] border-0 ${isCancelled ? "bg-red-100 text-red-700" : "bg-neutral-100 text-neutral-500"}`}
+              className={`text-[10px] border-0 ${isCancelled ? "bg-tone-danger-bg text-tone-danger-fg" : "bg-tone-neutral-bg text-tone-neutral-fg"}`}
             >
               {isCancelled ? t("status.cancelled") : t("status.closed")}
             </Badge>

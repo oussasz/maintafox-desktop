@@ -50,6 +50,28 @@ pub struct WoFailureDetail {
     pub failure_cause_label: Option<String>,
     #[serde(default)]
     pub failure_effect_label: Option<String>,
+    /// ISO 14224 B.2 failure mechanism (`WORK.FAILURE_MECHANISMS`).
+    #[serde(default)]
+    pub failure_mechanism_id: Option<i64>,
+    #[serde(default)]
+    pub failure_mechanism_label: Option<String>,
+    /// ISO 14224 B.4 detection method (`WORK.DETECTION_METHODS`).
+    #[serde(default)]
+    pub detection_method_id: Option<i64>,
+    #[serde(default)]
+    pub detection_method_label: Option<String>,
+}
+
+/// IPC input for saving failure coding: the base taxonomy plus the ISO 14224 mechanism and
+/// detection method (kept apart so existing `SaveFailureDetailInput` callers are unchanged).
+#[derive(Debug, Clone, Deserialize)]
+pub struct SaveFailureCodingInput {
+    #[serde(flatten)]
+    pub base: SaveFailureDetailInput,
+    #[serde(default)]
+    pub failure_mechanism_id: Option<i64>,
+    #[serde(default)]
+    pub detection_method_id: Option<i64>,
 }
 
 /// Row from `work_order_verifications`.
@@ -172,20 +194,21 @@ const VALID_VERIFICATION_RESULTS: &[&str] = &["pass", "fail", "monitor"];
 
 const VALID_RECURRENCE_LEVELS: &[&str] = &["none", "low", "medium", "high"];
 
-/// WO types that require failure coding and root cause before closure.
-const FAILURE_REQUIRED_TYPE_CODES: &[&str] = &["corrective", "emergency"];
-
 const FAILURE_DETAIL_SELECT: &str = "\
     SELECT fd.id, fd.work_order_id, fd.symptom_id, fd.failure_mode_id, fd.failure_cause_id, \
            fd.failure_effect_id, fd.is_temporary_repair, fd.is_permanent_repair, \
            fd.cause_not_determined, fd.notes, \
            fm.label AS failure_mode_label, \
            fc.label AS failure_cause_label, \
-           fe.label AS failure_effect_label \
+           fe.label AS failure_effect_label, \
+           fd.failure_mechanism_id, fmech.label AS failure_mechanism_label, \
+           fd.detection_method_id, fdet.label AS detection_method_label \
     FROM work_order_failure_details fd \
     LEFT JOIN reference_values fm ON fm.id = fd.failure_mode_id \
     LEFT JOIN reference_values fc ON fc.id = fd.failure_cause_id \
-    LEFT JOIN reference_values fe ON fe.id = fd.failure_effect_id";
+    LEFT JOIN reference_values fe ON fe.id = fd.failure_effect_id \
+    LEFT JOIN reference_values fmech ON fmech.id = fd.failure_mechanism_id \
+    LEFT JOIN reference_values fdet ON fdet.id = fd.detection_method_id";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Row mapping
@@ -287,6 +310,14 @@ fn map_failure_detail(row: &sea_orm::QueryResult) -> AppResult<WoFailureDetail> 
         failure_cause_label: row.try_get::<Option<String>>("", "failure_cause_label").unwrap_or(None),
         failure_effect_label: row
             .try_get::<Option<String>>("", "failure_effect_label")
+            .unwrap_or(None),
+        failure_mechanism_id: row.try_get::<Option<i64>>("", "failure_mechanism_id").unwrap_or(None),
+        failure_mechanism_label: row
+            .try_get::<Option<String>>("", "failure_mechanism_label")
+            .unwrap_or(None),
+        detection_method_id: row.try_get::<Option<i64>>("", "detection_method_id").unwrap_or(None),
+        detection_method_label: row
+            .try_get::<Option<String>>("", "detection_method_label")
             .unwrap_or(None),
     })
 }
@@ -405,26 +436,6 @@ async fn log_transition(
     .await
 }
 
-/// Load the WO type code (e.g. "corrective", "preventive").
-async fn load_wo_type_code(txn: &impl ConnectionTrait, wo_id: i64) -> AppResult<String> {
-    let row = txn
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT wot.code AS type_code \
-             FROM work_orders wo \
-             JOIN work_order_types wot ON wot.id = wo.type_id \
-             WHERE wo.id = ?",
-            [wo_id.into()],
-        ))
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            entity: "WorkOrder".into(),
-            id: wo_id.to_string(),
-        })?;
-    row.try_get::<String>("", "type_code")
-        .map_err(|e| decode_err("type_code", e))
-}
-
 struct CloseoutPolicyRow {
     require_downtime_if_production_impact: bool,
     allow_close_with_cause_not_determined: bool,
@@ -540,7 +551,7 @@ async fn verify_user_password(db: &impl ConnectionTrait, user_id: i64, password_
     password::verify_password(password_raw, &hash)
 }
 
-async fn has_supervisor_override_role(
+pub(crate) async fn has_supervisor_override_role(
     db: &impl ConnectionTrait,
     user_id: i64,
     allowed_role_names: &[String],
@@ -553,21 +564,22 @@ async fn has_supervisor_override_role(
         .map(|v| format!("'{}'", v.replace('\'', "''").to_lowercase()))
         .collect::<Vec<_>>()
         .join(",");
+    // An assignment in force only: an expired or lapsed emergency grant signs nothing.
     let sql = format!(
         "SELECT COUNT(*) AS c
          FROM user_scope_assignments usa
          INNER JOIN roles r ON r.id = usa.role_id
          WHERE usa.user_id = ?
-           AND usa.deleted_at IS NULL
+           AND {}
            AND r.deleted_at IS NULL
-           AND LOWER(TRIM(r.name)) IN ({role_list})"
+           AND LOWER(TRIM(r.name)) IN ({role_list})",
+        crate::rbac::resolver::ASSIGNMENT_IN_FORCE_SQL
     );
+    let now = crate::rbac::resolver::assignment_clock();
+    let mut values: Vec<sea_orm::Value> = vec![user_id.into()];
+    values.extend(crate::rbac::resolver::in_force_binds(&now));
     let row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            &sql,
-            [user_id.into()],
-        ))
+        .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("override role count missing")))?;
     let count: i64 = row.try_get("", "c").map_err(|e| decode_err("override_role_count", e))?;
@@ -589,6 +601,7 @@ async fn has_critical_fmeca_part_suggestions(
              INNER JOIN fmeca_item_parts fip ON fip.fmeca_item_id = fi.id
              WHERE fa.equipment_id = ?
                AND fi.failure_mode_id = ?
+               AND fi.review_required = 0
                AND COALESCE(fi.rpn, COALESCE(fi.severity, 0) * COALESCE(fi.occurrence, 0) * COALESCE(fi.detectability, 0)) >= ?",
             [equipment_id.into(), failure_mode_id.into(), rpn_critical.into()],
         ))
@@ -621,6 +634,7 @@ async fn has_consumed_critical_suggested_part(
                  INNER JOIN fmeca_item_parts fip ON fip.fmeca_item_id = fi.id
                  WHERE fa.equipment_id = ?
                    AND fi.failure_mode_id = ?
+                   AND fi.review_required = 0
                    AND COALESCE(fi.rpn, COALESCE(fi.severity, 0) * COALESCE(fi.occurrence, 0) * COALESCE(fi.detectability, 0)) >= ?
                )",
             [
@@ -761,6 +775,63 @@ pub async fn save_failure_detail(db: &DatabaseConnection, input: SaveFailureDeta
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to re-fetch failure detail after upsert")))?;
 
+    map_failure_detail(&row)
+}
+
+/// True when `id` is an active value of the reference domain `domain_code`.
+async fn is_value_of_domain(db: &impl ConnectionTrait, id: i64, domain_code: &str) -> AppResult<bool> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS ok FROM reference_values rv \
+               JOIN reference_sets rs ON rs.id = rv.set_id \
+               JOIN reference_domains d ON d.id = rs.domain_id \
+              WHERE rv.id = ? AND rv.is_active = 1 AND UPPER(TRIM(d.code)) = ?",
+            [id.into(), domain_code.into()],
+        ))
+        .await?;
+    Ok(row.is_some())
+}
+
+/// Save failure coding including the ISO 14224 mechanism and detection method.
+pub async fn save_failure_coding(db: &DatabaseConnection, input: SaveFailureCodingInput) -> AppResult<WoFailureDetail> {
+    use crate::wo::closeout_reference_catalog::{DOMAIN_DETECTION_METHODS, DOMAIN_FAILURE_MECHANISMS};
+    let mut errors = Vec::new();
+    if let Some(id) = input.failure_mechanism_id {
+        if !is_value_of_domain(db, id, DOMAIN_FAILURE_MECHANISMS).await? {
+            errors.push("Le mécanisme de défaillance choisi n'existe plus dans le référentiel.".to_string());
+        }
+    }
+    if let Some(id) = input.detection_method_id {
+        if !is_value_of_domain(db, id, DOMAIN_DETECTION_METHODS).await? {
+            errors.push("La méthode de détection choisie n'existe plus dans le référentiel.".to_string());
+        }
+    }
+    if !errors.is_empty() {
+        return Err(AppError::ValidationFailed(errors));
+    }
+
+    let wo_id = input.base.wo_id;
+    save_failure_detail(db, input.base).await?;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE work_order_failure_details SET failure_mechanism_id = ?, detection_method_id = ? \
+         WHERE work_order_id = ?",
+        [
+            input.failure_mechanism_id.into(),
+            input.detection_method_id.into(),
+            wo_id.into(),
+        ],
+    ))
+    .await?;
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!("{FAILURE_DETAIL_SELECT} WHERE fd.work_order_id = ?"),
+            [wo_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to re-fetch failure detail after coding")))?;
     map_failure_detail(&row)
 }
 
@@ -963,9 +1034,10 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
     assert_action_allowed(&current_status, WoAction::Close).map_err(|e| AppError::ValidationFailed(vec![e]))?;
     guard_wo_transition(&current_status, &WoStatus::Closed).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
-    // ── Load WO type code for type-dependent checks ───────────────────────
-    let type_code = load_wo_type_code(&txn, input.wo_id).await?;
-    let is_failure_required = FAILURE_REQUIRED_TYPE_CODES.contains(&type_code.as_str());
+    // ── Corrective work (EN 13306 nature) requires failure coding and root cause ──
+    let is_failure_required = crate::wo::types::work_order_nature(&txn, input.wo_id)
+        .await?
+        .is_some_and(|n| n.is_corrective());
 
     let wo_scope = txn
         .query_one(Statement::from_sql_and_values(
@@ -1427,6 +1499,11 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
     // aborts the close instead of silently losing the reliability record.
     reliability_queries::ingest_failure_event_from_closed_wo(&txn, input.wo_id, input.actor_id).await?;
 
+    // Cost settlement into the budget, once per close (pending with its reason when it cannot post).
+    crate::finance::settlement::settle_closed_work_order(&txn, input.wo_id, input.actor_id).await?;
+
+    // Its schedule commitments are closed with it (`planning::lifecycle`).
+    crate::planning::lifecycle::close_commitments_of_work_order(&txn, input.wo_id).await?;
     txn.commit().await?;
 
     crate::pm::generation_control::on_work_order_closed_for_pm(db, input.wo_id, Some(input.actor_id)).await;
@@ -1519,6 +1596,11 @@ pub async fn reopen_wo(db: &DatabaseConnection, input: WoReopenInput) -> AppResu
         }
     }
 
+    // Work restarts: the same permit / LOTO gate as starting or resuming it.
+    if target == WoStatus::InProgress {
+        crate::permit::wo_gate::assert_in_progress_permit_gate(&txn, input.wo_id).await?;
+    }
+
     let target_status_id = resolve_status_id(&txn, target.as_str()).await?;
     let now = now_utc_z();
 
@@ -1556,6 +1638,9 @@ pub async fn reopen_wo(db: &DatabaseConnection, input: WoReopenInput) -> AppResu
         &now,
     )
     .await?;
+
+    // Reverse the cost settlement of the closed cycle (nothing to do when reopened from completed).
+    crate::finance::settlement::reverse_work_order_settlement(&txn, input.wo_id, input.actor_id, &input.reason).await?;
 
     crate::wo::workflow::events::emit_action_event(
         &txn,

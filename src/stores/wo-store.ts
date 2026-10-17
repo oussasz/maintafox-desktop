@@ -49,7 +49,10 @@ export interface WoDetailPayload {
   transitions: WoTransitionRow[];
 }
 
-const DEFAULT_FILTER: WoListFilter = { limit: 50, offset: 0 };
+/** Page size of the work-order list; matches the backend maximum (`wo/queries.rs` clamps to 200). */
+export const WO_LIST_PAGE_SIZE = 200;
+
+const DEFAULT_FILTER: WoListFilter = { limit: WO_LIST_PAGE_SIZE, offset: 0 };
 
 const requests = createLatestRequestGuard();
 
@@ -75,11 +78,17 @@ interface WoStoreState {
   filter: WoListFilter;
   // Flags
   loading: boolean;
+  loadingMore: boolean;
   saving: boolean;
   error: string | null;
+  /** Raw failure of the last list load (for `ErrorState`); null when the list loaded. */
+  listError: unknown;
 
   setFilter: (patch: Partial<WoListFilter>) => void;
+  /** Reloads the list from the first page with the current filter. */
   loadWos: () => Promise<void>;
+  /** Appends the next page (offset = items already loaded). */
+  loadMoreWos: () => Promise<void>;
   openWo: (id: number) => Promise<void>;
   closeActiveWo: () => void;
   openCreateForm: (wo?: WorkOrder, prefillAsset?: AssetSearchResult | null) => void;
@@ -117,8 +126,10 @@ export const useWoStore = create<WoStoreState>()((set, get) => ({
   completionErrors: [],
   filter: { ...DEFAULT_FILTER },
   loading: false,
+  loadingMore: false,
   saving: false,
   error: null,
+  listError: null,
 
   setFilter: (patch) => {
     set((s) => ({ filter: { ...s.filter, ...patch } }));
@@ -151,14 +162,34 @@ export const useWoStore = create<WoStoreState>()((set, get) => ({
   loadWos: async () => {
     // Filters change faster than the list loads: only the latest list may land.
     const isCurrent = requests.begin("loadWos");
-    set({ loading: true, error: null });
+    set({ loading: true, error: null, listError: null });
     try {
-      const page = await listWos(get().filter);
+      const page = await listWos({ ...get().filter, offset: 0 });
       if (!isCurrent()) return;
       set({ items: page.items, total: page.total, loading: false });
     } catch (err) {
       if (!isCurrent()) return;
-      set({ error: toErrorMessage(err), loading: false });
+      set({ error: toErrorMessage(err), listError: err, loading: false });
+    }
+  },
+
+  loadMoreWos: async () => {
+    const { items, total, loadingMore, loading } = get();
+    if (loadingMore || loading || items.length >= total) return;
+    const isCurrent = requests.begin("loadWos");
+    set({ loadingMore: true });
+    try {
+      const page = await listWos({ ...get().filter, offset: items.length });
+      if (!isCurrent()) return;
+      const known = new Set(items.map((w) => w.id));
+      set({
+        items: [...items, ...page.items.filter((w) => !known.has(w.id))],
+        total: page.total,
+        loadingMore: false,
+      });
+    } catch {
+      // The global IPC toast reports the failure; the loaded pages stay usable.
+      if (isCurrent()) set({ loadingMore: false });
     }
   },
 

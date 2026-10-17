@@ -1,23 +1,26 @@
+/**
+ * Activity chart (`get_dashboard_workload_chart`, one query): requests submitted, work orders
+ * closed and PM occurrences due per day. A series the user may not see is not drawn (the backend
+ * sends `null`, never 0). Loading, error with retry and empty states are the panel's own.
+ */
 import * as d3 from "d3";
-import { useEffect, useRef, useState } from "react";
+import { BarChart3 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useNavigate } from "react-router-dom";
 
 import {
   CHART_COLORS,
   DEFAULT_MARGIN,
   getInnerDimensions,
-  renderXAxis,
   renderYAxis,
   useContainerSize,
 } from "@/components/charts/chart-utils";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { cn } from "@/lib/utils";
+import { useFormatters } from "@/hooks/use-formatters";
 import { getDashboardWorkloadChart } from "@/services/dashboard-service";
-import type { WorkloadDay } from "@shared/ipc-types";
-import { RELIABILITY_RAM_EVIDENCE_HASH } from "@shared/kpi-definitions";
+import type { HomePeriod } from "@/services/home-service";
+import type { DashboardWorkloadChart as Chart } from "@shared/ipc-types";
 
-type Period = 7 | 30;
+import { HomeNote, HomePanel, HomeSection, usePanelLoad } from "./home/HomeParts";
 
 const SERIES = [
   { key: "di_created" as const, color: CHART_COLORS.primary, labelKey: "chart.diCreated" as const },
@@ -31,185 +34,132 @@ const SERIES = [
 
 const MARGIN = { ...DEFAULT_MARGIN, bottom: 40 };
 
-export function DashboardWorkloadChart() {
+export function DashboardWorkloadChart({ refreshSignal = 0 }: { refreshSignal?: number }) {
   const { t } = useTranslation("dashboard");
-  const navigate = useNavigate();
-  const [period, setPeriod] = useState<Period>(7);
-  const [days, setDays] = useState<WorkloadDay[]>([]);
-  const [qualityBadge, setQualityBadge] = useState<string | null | undefined>(undefined);
-  const [loading, setLoading] = useState(true);
+  const [period, setPeriod] = useState<HomePeriod>(7);
+  const load = useCallback(() => getDashboardWorkloadChart(period), [period]);
+  const state = usePanelLoad<Chart>(load, refreshSignal);
+  return (
+    <HomePanel
+      icon={BarChart3}
+      title={t("chart.title", { days: period })}
+      period={period}
+      onPeriodChange={setPeriod}
+      state={state}
+      testId="home-workload"
+    >
+      {state.data ? <WorkloadBody chart={state.data} /> : null}
+    </HomePanel>
+  );
+}
 
+function WorkloadBody({ chart }: { chart: Chart }) {
+  const { t } = useTranslation("dashboard");
+  const { formatDate } = useFormatters();
   const [containerRef, containerSize] = useContainerSize<HTMLDivElement>();
   const xAxisRef = useRef<SVGGElement | null>(null);
   const yAxisRef = useRef<SVGGElement | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    getDashboardWorkloadChart(period)
-      .then((result) => {
-        if (!cancelled) {
-          setDays(result.days);
-          setQualityBadge(result.quality_badge ?? null);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setDays([]);
-          setQualityBadge(null);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [period]);
+  const { days } = chart;
+  const series = SERIES.filter((s) => days.some((d) => d[s.key] !== null));
+  const total = (d: (typeof days)[number]) => series.reduce((acc, s) => acc + (d[s.key] ?? 0), 0);
 
   const width = containerSize.width;
   const height = Math.max(250, containerSize.height);
   const { innerWidth, innerHeight } = getInnerDimensions(width, height, MARGIN);
-
-  // Scales
   const xScale = d3
     .scaleBand()
     .domain(days.map((d) => d.date))
     .range([0, innerWidth])
     .padding(0.3);
-
-  const maxY = d3.max(days, (d) => d.di_created + d.wo_completed + d.pm_due) ?? 1;
-  const yScale = d3.scaleLinear().domain([0, maxY]).nice().range([innerHeight, 0]);
+  const maxY = d3.max(days, total) ?? 1;
+  const yScale = d3
+    .scaleLinear()
+    .domain([0, Math.max(1, maxY)])
+    .nice()
+    .range([innerHeight, 0]);
+  const tickEvery = Math.max(1, Math.ceil(days.length / 10));
 
   useEffect(() => {
-    renderXAxis(xAxisRef.current, xScale, innerHeight);
+    if (!xAxisRef.current) return;
+    d3.select(xAxisRef.current)
+      .attr("transform", `translate(0,${innerHeight})`)
+      .call(
+        d3
+          .axisBottom(xScale)
+          .tickValues(days.filter((_, i) => i % tickEvery === 0).map((d) => d.date))
+          .tickFormat((v) => formatDate(`${String(v)}T12:00:00`)) as never,
+      )
+      .selectAll("text")
+      .attr("class", "fill-current text-[10px]");
     renderYAxis(yAxisRef.current, yScale);
-  }, [xScale, yScale, innerHeight]);
+  }, [xScale, yScale, innerHeight, days, tickEvery, formatDate]);
 
-  const hasData = days.some((d) => d.di_created + d.wo_completed + d.pm_due > 0);
-
-  // Format x-axis label (short day name)
-  const formatDate = (dateStr: string) => {
-    try {
-      return new Date(`${dateStr}T00:00:00`).toLocaleDateString(undefined, {
-        weekday: "short",
-      });
-    } catch {
-      return dateStr;
-    }
-  };
+  const hasData = days.some((d) => total(d) > 0);
 
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between pb-2">
-        <div className="flex flex-col gap-1">
-          <CardTitle className="text-base font-medium">
-            {t("chart.title", { days: period })}
-          </CardTitle>
-          {qualityBadge ? (
-            <p className="flex items-center gap-1 text-xs font-normal text-amber-700 dark:text-amber-500">
-              {t(`kpi.qualityBadge.${qualityBadge}`)}
-            </p>
-          ) : null}
-        </div>
-        <div className="flex rounded-md border border-surface-border text-xs">
-          <button
-            type="button"
-            className={cn(
-              "px-3 py-1 rounded-l-md transition-colors",
-              period === 7 ? "bg-primary text-primary-foreground" : "hover:bg-surface-2",
+    <HomeSection
+      title={t("chart.sectionTitle")}
+      definitions={[
+        { label: t("chart.diCreated"), text: t("home.def.chartDi") },
+        { label: t("chart.woCompleted"), text: t("home.def.chartWo") },
+        { label: t("chart.pmDue"), text: t("home.def.chartPm") },
+      ]}
+    >
+      {series.length === 0 ? (
+        <HomeNote>{t("chart.noSeries")}</HomeNote>
+      ) : !hasData ? (
+        <HomeNote>{t("chart.emptyPeriod", { count: chart.period_days })}</HomeNote>
+      ) : (
+        <>
+          <div ref={containerRef} className="h-[250px] w-full">
+            {width > 0 && (
+              <svg width={width} height={height} role="img" aria-label={t("chart.ariaLabel")}>
+                <g transform={`translate(${MARGIN.left},${MARGIN.top})`}>
+                  {days.map((d) => {
+                    const x = xScale(d.date) ?? 0;
+                    const bw = xScale.bandwidth();
+                    let y0 = innerHeight;
+                    return series.map((s) => {
+                      const val = d[s.key] ?? 0;
+                      if (val === 0) return null;
+                      const barH = innerHeight - yScale(val);
+                      y0 -= barH;
+                      return (
+                        <rect
+                          key={`${d.date}-${s.key}`}
+                          x={x}
+                          y={y0}
+                          width={bw}
+                          height={Math.max(0, barH)}
+                          fill={s.color}
+                          rx={2}
+                        >
+                          <title>
+                            {formatDate(`${d.date}T12:00:00`)} — {t(s.labelKey)} : {val}
+                          </title>
+                        </rect>
+                      );
+                    });
+                  })}
+                  <g ref={xAxisRef} />
+                  <g ref={yAxisRef} />
+                </g>
+              </svg>
             )}
-            onClick={() => setPeriod(7)}
-          >
-            7d
-          </button>
-          <button
-            type="button"
-            className={cn(
-              "px-3 py-1 rounded-r-md transition-colors",
-              period === 30 ? "bg-primary text-primary-foreground" : "hover:bg-surface-2",
-            )}
-            onClick={() => setPeriod(30)}
-          >
-            30d
-          </button>
-        </div>
-      </CardHeader>
-      <CardContent className="pb-4">
-        {loading ? (
-          <div className="flex h-[250px] items-center justify-center text-text-muted">
-            {t("chart.loading")}
           </div>
-        ) : !hasData ? (
-          <div className="flex h-[250px] flex-col items-center justify-center gap-2 text-text-muted">
-            <p className="text-sm">{t("chart.empty")}</p>
-            {qualityBadge ? (
-              <button
-                type="button"
-                className="text-sm font-medium text-primary underline-offset-2 hover:underline"
-                onClick={() =>
-                  navigate(`/analytics/rams/foundation${RELIABILITY_RAM_EVIDENCE_HASH}`)
-                }
-              >
-                {t("chart.openRamEvidence")}
-              </button>
-            ) : null}
+          <div className="mt-3 flex flex-wrap gap-4 text-xs text-text-muted">
+            {series.map((s) => (
+              <div key={s.key} className="flex items-center gap-1.5">
+                <span
+                  className="inline-block h-2.5 w-2.5 rounded-sm"
+                  style={{ backgroundColor: s.color }}
+                />
+                {t(s.labelKey)}
+              </div>
+            ))}
           </div>
-        ) : (
-          <>
-            <div ref={containerRef} className="h-[250px] w-full">
-              {width > 0 && (
-                <svg width={width} height={height} role="img" aria-label={t("chart.ariaLabel")}>
-                  <g transform={`translate(${MARGIN.left},${MARGIN.top})`}>
-                    {days.map((d) => {
-                      const x = xScale(d.date) ?? 0;
-                      const bw = xScale.bandwidth();
-                      let y0 = innerHeight;
-
-                      return SERIES.map((series) => {
-                        const val = d[series.key];
-                        if (val === 0) return null;
-                        const barH = innerHeight - yScale(val);
-                        y0 -= barH;
-                        return (
-                          <rect
-                            key={`${d.date}-${series.key}`}
-                            x={x}
-                            y={y0}
-                            width={bw}
-                            height={Math.max(0, barH)}
-                            fill={series.color}
-                            rx={2}
-                          >
-                            <title>
-                              {formatDate(d.date)}: {val}
-                            </title>
-                          </rect>
-                        );
-                      });
-                    })}
-                    <g ref={xAxisRef} />
-                    <g ref={yAxisRef} />
-                  </g>
-                </svg>
-              )}
-            </div>
-
-            {/* Legend */}
-            <div className="mt-3 flex flex-wrap gap-4 text-xs text-text-muted">
-              {SERIES.map((s) => (
-                <div key={s.key} className="flex items-center gap-1.5">
-                  <span
-                    className="inline-block h-2.5 w-2.5 rounded-sm"
-                    style={{ backgroundColor: s.color }}
-                  />
-                  {t(s.labelKey)}
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-      </CardContent>
-    </Card>
+        </>
+      )}
+    </HomeSection>
   );
 }

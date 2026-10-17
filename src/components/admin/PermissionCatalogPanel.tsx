@@ -14,6 +14,7 @@ import { useTranslation } from "react-i18next";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import {
   Dialog,
   DialogContent,
@@ -23,15 +24,17 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { StatusChip } from "@/components/ui/status-chip";
 import { mfChip, mfPermissionDomainChip } from "@/design-system/tokens";
 import { usePermissions } from "@/hooks/use-permissions";
-import { useToast } from "@/hooks/use-toast";
+import { describeAppError } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import {
   createCustomPermission,
   getPermissionDependencies,
   listPermissions,
 } from "@/services/rbac-service";
+import { pushAppToast } from "@/store/app-toast-store";
 import type { PermissionDependencyRow, PermissionWithSystem } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -110,7 +113,8 @@ function CreatePermissionDialog({
   onCreated: () => void;
 }) {
   const { t } = useTranslation("admin");
-  const { toast } = useToast();
+  // The global toast host shows them (a local useToast list was never rendered here).
+  const toast = pushAppToast;
   const [name, setName] = useState("cst.");
   const [description, setDescription] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -148,9 +152,14 @@ function CreatePermissionDialog({
       onClose();
       setName("cst.");
       setDescription("");
-    } catch {
+    } catch (err) {
+      // The real cause (FR/EN message for the error code), not only "creation failed".
+      const described = describeAppError(err);
       toast({
         title: t("permissions.errors.createFailed"),
+        description: described.description
+          ? `${described.title} — ${described.description}`
+          : described.title,
         variant: "destructive",
       });
     } finally {
@@ -174,7 +183,7 @@ function CreatePermissionDialog({
               onChange={(e) => setName(e.target.value)}
               placeholder="cst.my_permission"
             />
-            {nameError && <p className="text-xs text-red-600">{nameError}</p>}
+            {nameError && <p className="text-xs text-tone-danger-fg">{nameError}</p>}
           </div>
           <div className="space-y-1.5">
             <label className="text-sm font-medium">{t("permissions.fields.description")}</label>
@@ -211,14 +220,24 @@ function DependencyViewer({
   const { t } = useTranslation("admin");
   const [deps, setDeps] = useState<PermissionDependencyRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<unknown>(null);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     setLoading(true);
+    setLoadError(null);
     getPermissionDependencies(permissionName)
       .then(setDeps)
-      .catch(() => setDeps([]))
+      .catch((err: unknown) => {
+        // Shown with a retry: never "no dependencies" when they could not be read.
+        setDeps([]);
+        setLoadError(err);
+      })
       .finally(() => setLoading(false));
   }, [permissionName]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
 
   const hardDeps = deps.filter((d) => d.dependency_type === "hard");
   const warnDeps = deps.filter((d) => d.dependency_type !== "hard");
@@ -229,28 +248,43 @@ function DependencyViewer({
         <h4 className="text-sm font-semibold text-text-primary">
           {t("permissions.dependencies.title")}
         </h4>
-        <Button variant="ghost" size="sm" onClick={onClose}>
-          <X className="h-4 w-4" />
+        <Button
+          variant="ghost"
+          className="h-10 w-10 p-0"
+          onClick={onClose}
+          aria-label={t("permissions.dependencies.close")}
+          title={t("permissions.dependencies.close")}
+        >
+          <X className="h-4 w-4" aria-hidden />
         </Button>
       </div>
       <p className="mt-1 font-mono text-xs text-text-secondary">{permissionName}</p>
 
-      {loading && <p className="mt-3 text-xs text-text-secondary">{t("common.loading")}</p>}
+      {loading && <LoadingState className="mt-3 py-4" />}
 
-      {!loading && deps.length === 0 && (
+      {!loading && loadError != null ? (
+        <ErrorState
+          error={loadError}
+          title={t("permissions.dependencies.loadError")}
+          onRetry={load}
+          className="mt-3 px-3 py-4"
+        />
+      ) : null}
+
+      {!loading && loadError == null && deps.length === 0 && (
         <p className="mt-3 text-xs text-text-secondary">{t("permissions.dependencies.none")}</p>
       )}
 
       {!loading && hardDeps.length > 0 && (
         <div className="mt-3 space-y-1">
-          <h5 className="flex items-center gap-1 text-xs font-medium text-red-600">
-            <AlertTriangle className="h-3.5 w-3.5" />
+          <h5 className="flex items-center gap-1 text-xs font-medium text-tone-danger-fg">
+            <AlertTriangle className="h-3.5 w-3.5" aria-hidden />
             {t("permissions.dependencies.hard")}
           </h5>
           {hardDeps.map((d) => (
             <div
               key={d.id}
-              className="rounded-md border border-red-200 bg-red-50 px-2 py-1 text-xs dark:border-red-900 dark:bg-red-950"
+              className="rounded-md border border-tone-danger-border bg-tone-danger-bg px-2 py-1 text-xs"
             >
               {d.permission_name === permissionName ? (
                 <span>
@@ -269,14 +303,14 @@ function DependencyViewer({
 
       {!loading && warnDeps.length > 0 && (
         <div className="mt-3 space-y-1">
-          <h5 className="flex items-center gap-1 text-xs font-medium text-orange-600">
-            <Info className="h-3.5 w-3.5" />
+          <h5 className="flex items-center gap-1 text-xs font-medium text-tone-warning-fg">
+            <Info className="h-3.5 w-3.5" aria-hidden />
             {t("permissions.dependencies.warn")}
           </h5>
           {warnDeps.map((d) => (
             <div
               key={d.id}
-              className="rounded-md border border-orange-200 bg-orange-50 px-2 py-1 text-xs dark:border-orange-900 dark:bg-orange-950"
+              className="rounded-md border border-tone-warning-border bg-tone-warning-bg px-2 py-1 text-xs"
             >
               {d.permission_name === permissionName ? (
                 <span>
@@ -325,10 +359,10 @@ function exportToCSV(permissions: PermissionWithSystem[]) {
 export function PermissionCatalogPanel() {
   const { t } = useTranslation("admin");
   const { can } = usePermissions();
-  const { toast } = useToast();
 
   const [allPermissions, setAllPermissions] = useState<PermissionWithSystem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [selectedDomain, setSelectedDomain] = useState<string>("eq");
   const [searchQuery, setSearchQuery] = useState("");
   const [showCreate, setShowCreate] = useState(false);
@@ -339,18 +373,18 @@ export function PermissionCatalogPanel() {
 
   const fetchPermissions = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const perms = await listPermissions({});
       setAllPermissions(perms);
-    } catch {
-      toast({
-        title: t("permissions.errors.loadFailed"),
-        variant: "destructive",
-      });
+    } catch (err) {
+      // Shown in place of the list with a retry (never an empty catalog).
+      setAllPermissions([]);
+      setLoadError(err);
     } finally {
       setLoading(false);
     }
-  }, [toast, t]);
+  }, []);
 
   useEffect(() => {
     void fetchPermissions();
@@ -400,6 +434,7 @@ export function PermissionCatalogPanel() {
               variant="ghost"
               size="sm"
               onClick={() => exportToCSV(allPermissions)}
+              disabled={loading || loadError != null}
               title={t("permissions.export")}
             >
               <Download className="h-4 w-4" />
@@ -484,8 +519,17 @@ export function PermissionCatalogPanel() {
         {/* Loading */}
         {loading && <p className="text-sm text-text-secondary">{t("common.loading")}</p>}
 
+        {/* Load failure */}
+        {!loading && loadError != null ? (
+          <ErrorState
+            error={loadError}
+            title={t("permissions.errors.loadFailed")}
+            onRetry={() => void fetchPermissions()}
+          />
+        ) : null}
+
         {/* Empty state */}
-        {!loading && filteredPermissions.length === 0 && (
+        {!loading && loadError == null && filteredPermissions.length === 0 && (
           <p className="text-sm text-text-secondary">{t("permissions.empty")}</p>
         )}
 
@@ -506,30 +550,40 @@ export function PermissionCatalogPanel() {
                 {filteredPermissions.map((perm) => (
                   <tr
                     key={perm.id}
-                    onClick={() => setDepViewerPerm(perm.name)}
-                    className="cursor-pointer border-b border-surface-border transition-colors hover:bg-surface-2"
+                    aria-selected={depViewerPerm === perm.name}
+                    className={cn(
+                      "border-b border-surface-border transition-colors hover:bg-surface-2",
+                      depViewerPerm === perm.name && "bg-surface-2",
+                    )}
                   >
-                    <td className="px-3 py-2">
-                      <span className="font-mono text-xs">{perm.name}</span>
+                    <td className="px-3 py-1">
+                      {/* The row action is a real button: reachable with Tab, opened with Enter. */}
+                      <button
+                        type="button"
+                        className="min-h-9 rounded text-start font-mono text-xs text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        aria-label={t("permissions.dependencies.open", { name: perm.name })}
+                        onClick={() => setDepViewerPerm(perm.name)}
+                      >
+                        {perm.name}
+                      </button>
                     </td>
                     <td className="px-3 py-2 text-text-secondary">{perm.description ?? "—"}</td>
                     <td className="px-3 py-2 text-center">
                       {perm.is_dangerous && (
-                        <Badge variant="destructive" className="text-[10px]">
-                          <ShieldAlert className="mr-1 h-3 w-3" />
-                          {t("permissions.badges.dangerous")}
-                        </Badge>
+                        <StatusChip
+                          tone="danger"
+                          icon={ShieldAlert}
+                          label={t("permissions.badges.dangerous")}
+                        />
                       )}
                     </td>
                     <td className="px-3 py-2 text-center">
                       {perm.requires_step_up && (
-                        <Badge
-                          variant="outline"
-                          className="border-orange-300 text-[10px] text-orange-600"
-                        >
-                          <Lock className="mr-1 h-3 w-3" />
-                          {t("permissions.badges.stepUp")}
-                        </Badge>
+                        <StatusChip
+                          tone="attention"
+                          icon={Lock}
+                          label={t("permissions.badges.stepUp")}
+                        />
                       )}
                     </td>
                     <td className="px-3 py-2 text-center">

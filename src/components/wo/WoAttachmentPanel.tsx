@@ -36,6 +36,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { describeAppError } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import {
   listWoAttachments,
@@ -46,7 +47,6 @@ import {
   type WoAttachment,
   type WoAttachmentPhase,
 } from "@/services/wo-closeout-service";
-import { toErrorMessage } from "@/utils/errors";
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -72,12 +72,12 @@ function attachmentIcon(mime: string) {
   const category = inferMimeCategory(mime);
   switch (category) {
     case "photo":
-      return <Image className="h-5 w-5 text-blue-500" />;
+      return <Image className="h-5 w-5 text-tone-info-fg" />;
     case "pdf":
-      return <FileText className="h-5 w-5 text-red-500" />;
+      return <FileText className="h-5 w-5 text-tone-danger-fg" />;
     default:
       if (mime.startsWith("text/")) {
-        return <Activity className="h-5 w-5 text-green-500" />;
+        return <Activity className="h-5 w-5 text-tone-success-fg" />;
       }
       return <FileIcon className="h-5 w-5 text-muted-foreground" />;
   }
@@ -137,7 +137,7 @@ export function WoAttachmentPanel({ woId, canUpload, canDelete }: WoAttachmentPa
       const items = await listWoAttachments(woId);
       setAttachments(items);
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(describeAppError(err).title);
     } finally {
       setLoading(false);
     }
@@ -176,7 +176,7 @@ export function WoAttachmentPanel({ woId, canUpload, canDelete }: WoAttachmentPa
         }
         await loadAttachments();
       } catch (err) {
-        setError(toErrorMessage(err));
+        setError(describeAppError(err).title);
       } finally {
         setUploading(false);
         setPendingFiles(null);
@@ -212,7 +212,7 @@ export function WoAttachmentPanel({ woId, canUpload, canDelete }: WoAttachmentPa
         await deleteWoAttachment(attachmentId);
         await loadAttachments();
       } catch (err) {
-        setError(toErrorMessage(err));
+        setError(describeAppError(err).title);
       }
     },
     [loadAttachments],

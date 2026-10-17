@@ -22,6 +22,10 @@
     "audit": "Audit"
   },
   "metrics": {
+    "loadError": "Impossible de charger les indicateurs d'administration",
+    "rolesSplit": "{{system}} système · {{custom}} personnalisés",
+    "unassignedHint": "Utilisateurs actifs sans rôle",
+    "stale": "Dernière actualisation impossible : chiffres de la lecture précédente.",
     "activeUsers": "Utilisateurs actifs",
     "roles": "Rôles",
     "activeSessions": "Sessions actives",
@@ -130,6 +134,7 @@
       "resetPassword": "Réinitialiser le mot de passe"
     },
     "resetPassword": {
+      "copyFailed": "La copie automatique a échoué : sélectionnez le mot de passe et copiez-le avec Ctrl+C.",
       "confirm": "Réinitialiser le mot de passe de cet utilisateur ? Un mot de passe temporaire sera généré et affiché une seule fois. L’utilisateur devra le changer à la prochaine connexion.",
       "success": "Mot de passe temporaire créé",
       "failed": "Échec de la réinitialisation du mot de passe",
@@ -244,7 +249,6 @@
     "pinMismatch": "Les PIN ne correspondent pas.",
     "pinFormat": "Le PIN doit contenir 4 à 6 chiffres.",
     "pinError": "Échec de la configuration du PIN.",
-    "enterPasswordToClearPin": "Entrez votre mot de passe pour supprimer le PIN",
     "trustedDevices": "Appareils de confiance",
     "viewDevices": "Voir / Révoquer",
     "trustedDevicesTitle": "Appareils de confiance",
@@ -281,7 +285,13 @@
     "recentWorkHistory": "Historique de travail recent",
     "noHistory": "Aucun historique.",
     "skillDeclared": "Competence declaree.",
-    "skillDeclareError": "Echec de declaration de competence."
+    "skillDeclareError": "Echec de declaration de competence.",
+    "removePinTitle": "Supprimer le code PIN de déverrouillage",
+    "removePinDescription": "Saisissez le mot de passe de votre compte pour supprimer le PIN. Vous déverrouillerez ensuite l'application avec votre mot de passe.",
+    "removePinConfirm": "Supprimer le PIN",
+    "removingPin": "Suppression…",
+    "passwordRequired": "Saisissez votre mot de passe.",
+    "pinRemoved": "PIN supprimé."
   },
   "passwordPolicy": {
     "title": "Politique de mot de passe",
@@ -305,7 +315,12 @@
     "save": "Enregistrer la politique",
     "saving": "Enregistrement...",
     "saved": "Politique enregistrée avec succès.",
-    "saveError": "Échec de l'enregistrement de la politique de mot de passe."
+    "saveError": "Échec de l'enregistrement de la politique de mot de passe.",
+    "minLengthHint": "8 caractères au minimum, 128 au maximum.",
+    "loadError": "La politique de mot de passe n'a pas pu être chargée.",
+    "unreadableTitle": "Politique enregistrée illisible — valeurs livrées appliquées",
+    "unreadableBody": "Certains réglages enregistrés n'ont pas pu être lus ({{keys}}). Pour chaque règle, la plus stricte entre la valeur enregistrée et la valeur livrée s'applique. Vérifiez les valeurs ci-dessous et enregistrez la politique pour corriger.",
+    "unreadableFix": "Enregistrer ces valeurs"
   },
   "permissions": {
     "domains": "Domaines",
@@ -345,6 +360,8 @@
       "systemPrefix": "Préfixe système réservé"
     },
     "dependencies": {
+      "close": "Fermer les dépendances",
+      "open": "Voir les dépendances de {{name}}",
       "title": "Dépendances",
       "none": "Aucune dépendance",
       "hard": "Obligatoire (hard)",
@@ -352,7 +369,8 @@
       "requires": "Requiert",
       "requiredBy": "Requis par",
       "suggests": "Suggère",
-      "suggestedBy": "Suggéré par"
+      "suggestedBy": "Suggéré par",
+      "loadError": "Les dépendances de cette permission n'ont pas pu être chargées."
     },
     "domainLabels": {
       "eq": "Équipements",
@@ -407,7 +425,8 @@
     "errors": {
       "loadFailed": "Erreur de chargement des sessions",
       "revokeFailed": "Erreur lors de la révocation"
-    }
+    },
+    "refresh": "Actualiser"
   },
   "delegation": {
     "title": "Politiques de délégation",
@@ -495,7 +514,7 @@
     },
     "noGrants": "Aucune élévation d'urgence.",
     "errors": {
-      "loadFailed": "Erreur de chargement",
+      "loadFailed": "Les accès d'urgence n'ont pas pu être chargés.",
       "grantFailed": "Erreur lors de l'attribution",
       "revokeFailed": "Erreur lors de la révocation",
       "reasonTooShort": "La raison doit contenir au moins 20 caractères"
@@ -557,5 +576,223 @@
     "viewDiff": "Voir le diff",
     "empty": "Aucun événement d'audit enregistré.",
     "loadError": "Impossible de charger l'historique d'audit. {{error}}"
+  },
+  "console": {
+    "never": "Jamais",
+    "noRole": "Aucun rôle",
+    "openUser": "Ouvrir le compte {{name}}",
+    "searchUsers": "Rechercher un nom, un identifiant ou un e-mail…",
+    "columns": {
+      "user": "Utilisateur",
+      "status": "État",
+      "roles": "Rôles et périmètre",
+      "signIn": "Connexion",
+      "lastLogin": "Dernière connexion"
+    },
+    "filters": {
+      "status": "État",
+      "all": "Tous",
+      "role": "Rôle",
+      "allRoles": "Tous les rôles",
+      "site": "Site / zone",
+      "allSites": "Tous les sites",
+      "signIn": "Connexion",
+      "siteHint": "Comptes ayant un rôle limité à ce site ou à une zone en dessous. Les comptes à l'échelle de l'usine n'apparaissent pas ici."
+    },
+    "status": {
+      "active": "Actif",
+      "disabled": "Désactivé",
+      "inactive": "Désactivé",
+      "locked": "Verrouillé",
+      "mustChangePassword": "Doit changer son mot de passe"
+    },
+    "identityMode": {
+      "local": "Mot de passe local",
+      "sso": "SSO",
+      "hybrid": "Hybride"
+    },
+    "scope": {
+      "label": "Périmètre",
+      "choose": "Choisir un périmètre",
+      "plant": "Toute l'usine",
+      "unknown": "Périmètre inconnu",
+      "hint": "Un rôle limité à un nœud de l'organisation vaut pour ce nœud et tout ce qui est en dessous."
+    },
+    "assign": {
+      "title": "Attribuer un rôle — {{username}}",
+      "description": "Choisissez le rôle, son périmètre et, si besoin, sa période de validité.",
+      "role": "Rôle",
+      "chooseRole": "Choisir un rôle",
+      "validFrom": "Valable à partir du",
+      "validTo": "Valable jusqu'au",
+      "validityHint": "Sans dates, le rôle est valable jusqu'à ce qu'on le retire. La date de fin est incluse.",
+      "windowInvalid": "La date de début doit précéder la date de fin.",
+      "replaces": "Ce compte a déjà le rôle « {{role}} » sur ce périmètre : il sera remplacé.",
+      "confirm": "Attribuer"
+    },
+    "user": {
+      "tabs": {
+        "overview": "Compte",
+        "roles": "Rôles ({{count}})",
+        "sessions": "Sessions ({{count}})",
+        "permissions": "Permissions",
+        "history": "Historique"
+      },
+      "lastLogin": "Dernière connexion",
+      "lastActivity": "Dernière activité",
+      "lockedUntil": "Verrouillé jusqu'au",
+      "edit": "Modifier les informations",
+      "reset": "Réinitialiser le mot de passe",
+      "resetTitle": "Réinitialiser le mot de passe de {{name}} ?",
+      "resetBody": "Un mot de passe temporaire est créé et affiché une seule fois. L'utilisateur devra le changer à sa prochaine connexion ; le verrouillage éventuel est levé.",
+      "unlock": "Déverrouiller",
+      "unlockTitle": "Déverrouiller le compte de {{name}} ?",
+      "unlockBody": "Le compte a été verrouillé après des échecs de connexion. Le déverrouillage remet le compteur à zéro.",
+      "disable": "Désactiver",
+      "disableTitle": "Désactiver le compte de {{name}} ?",
+      "disableBody": "La personne ne pourra plus se connecter. Le compte et tout son historique (OT, validations, signatures) sont conservés et il pourra être réactivé.",
+      "enable": "Réactiver",
+      "enableTitle": "Réactiver le compte de {{name}} ?",
+      "enableBody": "La personne pourra de nouveau se connecter avec ses rôles actuels.",
+      "cannotDisableSelf": "Vous ne pouvez pas désactiver votre propre compte.",
+      "noDeleteHint": "Un compte n'est jamais supprimé : son historique doit rester lisible. On le désactive.",
+      "loadError": "Le compte n'a pas pu être chargé."
+    },
+    "roles": {
+      "scopeHint": "Un compte peut avoir un rôle par périmètre. Les accès d'urgence expirent d'eux-mêmes.",
+      "assign": "Attribuer un rôle",
+      "revoke": "Retirer",
+      "revokeTitle": "Retirer le rôle « {{role}} » ?",
+      "revokeBody": "Le compte perd immédiatement les permissions de ce rôle sur ce périmètre.",
+      "emergency": "Urgence",
+      "emergencyUntil": "jusqu'au {{date}}",
+      "validBetween": "du {{from}} au {{to}}",
+      "validFrom": "à partir du {{date}}",
+      "validUntil": "jusqu'au {{date}}"
+    },
+    "sessions": {
+      "hint": "Sessions ouvertes sur cet ordinateur.",
+      "none": "Aucune session ouverte.",
+      "unknownDevice": "Appareil non enregistré",
+      "started": "ouverte le {{date}}",
+      "lastActivity": "dernière activité {{date}}",
+      "current": "Votre session",
+      "revoke": "Fermer la session",
+      "revokeTitle": "Fermer cette session ?",
+      "revokeBody": "La personne devra se reconnecter sur cet appareil."
+    },
+    "permissions": {
+      "hint": "{{count}} permissions effectives à l'échelle de l'usine (rôles valides et accès d'urgence en cours)."
+    },
+    "reason": {
+      "required": "Motif (obligatoire)",
+      "optional": "Motif (facultatif)",
+      "ledgerHint": "Le motif est enregistré dans le journal d'administration."
+    },
+    "results": {
+      "applied": "Appliqué",
+      "blocked": "Refusé",
+      "partial": "Partiel"
+    },
+    "actions": {
+      "user_created": "Compte créé",
+      "user_updated": "Compte modifié",
+      "user_deactivated": "Compte désactivé",
+      "user_reactivated": "Compte réactivé",
+      "role_assigned": "Rôle attribué",
+      "role_revoked": "Rôle retiré",
+      "session_revoked": "Session fermée",
+      "emergency_grant_created": "Accès d'urgence accordé",
+      "emergency_grant_revoked": "Accès d'urgence retiré",
+      "emergency_grant_expired": "Accès d'urgence expiré",
+      "account_locked": "Compte verrouillé (échecs de connexion)",
+      "account_unlocked": "Compte déverrouillé",
+      "password_reset_by_admin": "Mot de passe réinitialisé par un administrateur",
+      "role_created": "Rôle créé",
+      "role_updated": "Rôle modifié",
+      "role_deleted": "Rôle supprimé",
+      "role_retired": "Rôle retiré du service",
+      "role_imported": "Rôle importé",
+      "role_exported": "Rôles exportés",
+      "permission_created": "Permission personnalisée créée",
+      "permission_granted": "Permission accordée",
+      "permission_revoked": "Permission retirée",
+      "delegation_policy_created": "Délégation créée",
+      "delegation_policy_updated": "Délégation modifiée",
+      "delegation_policy_deleted": "Délégation supprimée",
+      "admin_events_exported": "Journal d'administration exporté"
+    },
+    "audit": {
+      "all": "Tous",
+      "action": "Action",
+      "actor": "Auteur",
+      "targetUser": "Compte concerné",
+      "targetRole": "Rôle concerné",
+      "result": "Résultat",
+      "from": "Du",
+      "to": "Au",
+      "reset": "Effacer les filtres",
+      "exportCsv": "Exporter en CSV",
+      "rangeInvalid": "La date de début doit précéder la date de fin.",
+      "firstN": "Les {{count}} événements les plus récents sont affichés ; l'export CSV contient tous ceux du filtre.",
+      "count": "{{count}} événement(s)",
+      "facetsLoadError": "Les choix de filtre du journal n'ont pas pu être chargés : les filtres sont désactivés."
+    },
+    "roleEditor": {
+      "unsavedTitle": "Abandonner les modifications ?",
+      "unsavedBody": "Le rôle « {{name}} » a des modifications non enregistrées (droits ou description). Elles seront perdues si vous ouvrez un autre rôle.",
+      "discardChanges": "Abandonner les modifications",
+      "new": "Nouveau",
+      "holders": "Comptes actifs ayant ce rôle",
+      "holdersCount_one": "{{count}} compte actif",
+      "holdersCount_other": "{{count}} comptes actifs",
+      "permissionsCount_one": "{{count}} permission",
+      "permissionsCount_other": "{{count}} permissions",
+      "compare": "Comparer",
+      "clone": "Dupliquer",
+      "retire": "Retirer du service",
+      "retireBlocked": "Retirez d'abord ce rôle des comptes qui l'ont.",
+      "retireTitle": "Retirer le rôle « {{name}} » du service ?",
+      "retireBody": "Le rôle ne pourra plus être attribué. Son historique reste dans le journal.",
+      "systemReadOnly": "Rôle livré avec l'application : ses permissions ne se modifient pas. Dupliquez-le pour l'adapter.",
+      "missingDependency": "« {{perm}} » exige « {{required}} »",
+      "filterPermissions": "Filtrer les permissions…",
+      "discard": "Annuler les changements",
+      "save": "Enregistrer (+{{added}} / −{{removed}})",
+      "noMatch": "Aucune permission ne correspond.",
+      "grantedOf": "{{granted}} / {{total}} accordées",
+      "sensitive": "Sensible",
+      "stepUp": "Revalidation",
+      "requires": "exige {{perm}}",
+      "suggests": "recommande {{perm}}",
+      "granted": "Accordée",
+      "copyName": "{{name}} (copie)",
+      "cloneTitle": "Dupliquer « {{name}} »",
+      "cloneBody_one": "Le nouveau rôle reprend {{count}} permission ; vous pourrez l'adapter ensuite.",
+      "cloneBody_other": "Le nouveau rôle reprend les {{count}} permissions ; vous pourrez l'adapter ensuite.",
+      "compareTitle": "Comparer « {{name}} »",
+      "compareBody": "Différences de permissions, module par module.",
+      "compareWith": "Comparer avec",
+      "chooseRole": "Choisir un rôle",
+      "module": "Module",
+      "onlyIn": "Seulement dans {{name}}",
+      "common": "En commun",
+      "loadError": "Les rôles n'ont pas pu être chargés.",
+      "validationError": "La vérification des dépendances n'a pas pu être effectuée. Le serveur la refait à l'enregistrement.",
+      "templateUnreadable": "Ce modèle de rôle est illisible : le rôle n'a pas été créé. Choisissez un autre modèle ou aucun modèle."
+    },
+    "choicesLoadError": "Les listes de rôles et de sites n'ont pas pu être chargées : les filtres par rôle et par site et l'attribution de rôles sont indisponibles.",
+    "usersLoadError": "Les comptes n'ont pas pu être chargés."
+  },
+  "lockoutPolicy": {
+    "title": "Verrouillage des comptes",
+    "hint": "Valeurs appliquées à la connexion : nombre d'échecs avant verrouillage, durée, verrouillage progressif (la durée augmente à chaque verrouillage).",
+    "maxAttempts": "Échecs avant verrouillage",
+    "lockoutMinutes": "Durée du verrouillage (minutes)",
+    "progressive": "Verrouillage progressif",
+    "save": "Enregistrer le verrouillage",
+    "saved": "Verrouillage enregistré.",
+    "saveError": "Échec de l'enregistrement du verrouillage.",
+    "loadError": "La politique de verrouillage n'a pas pu être chargée."
   }
 }

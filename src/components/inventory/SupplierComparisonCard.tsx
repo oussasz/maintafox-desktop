@@ -15,13 +15,13 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useFormatters } from "@/hooks/use-formatters";
+import { describeAppError } from "@/lib/app-error";
 import { formatAssetLabel } from "@/lib/display";
 import { cn } from "@/lib/utils";
 import {
   listSupplierArticleSources,
   upsertSupplierArticleSource,
 } from "@/services/inventory-service";
-import { toErrorMessage } from "@/utils/errors";
 import type { SupplierArticleSource } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -58,7 +58,7 @@ export function SupplierComparisonCard({
       const rows = await listSupplierArticleSources(null, articleId);
       setSources(rows.filter((row) => row.is_active === 1));
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(describeAppError(err).title);
     }
   }, [articleId]);
 
@@ -67,7 +67,7 @@ export function SupplierComparisonCard({
   }, [load, refreshToken]);
 
   const ratings = useMemo(() => {
-    const byId = new Map(computeCompositeRatings(sources).map((r) => [r.sourceId, r.stars]));
+    const byId = new Map(computeCompositeRatings(sources).map((r) => [r.sourceId, r]));
     return byId;
   }, [sources]);
 
@@ -89,7 +89,7 @@ export function SupplierComparisonCard({
       await load();
       onPreferredChanged?.();
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(describeAppError(err).title);
     } finally {
       setSaving(false);
     }
@@ -101,7 +101,11 @@ export function SupplierComparisonCard({
     <DetailSectionCard title={t("procurement.suppliers.comparison.title")} icon={Scale}>
       <p className="text-xs text-text-muted">{t("procurement.suppliers.comparison.hint")}</p>
 
-      {error ? <p className="text-xs text-status-danger">{error}</p> : null}
+      {error ? (
+        <p role="alert" className="text-xs text-tone-danger-fg">
+          {error}
+        </p>
+      ) : null}
 
       <Table>
         <TableHeader>
@@ -130,7 +134,15 @@ export function SupplierComparisonCard({
         </TableHeader>
         <TableBody>
           {sources.map((source) => {
-            const stars = ratings.get(source.id) ?? 0;
+            const rating = ratings.get(source.id);
+            const stars = rating?.stars ?? 0;
+            const rank = (n: number | null | undefined) =>
+              n == null ? t("procurement.suppliers.comparison.unknown") : `${n}/${sources.length}`;
+            const basis = t("procurement.suppliers.comparison.basis", {
+              price: rank(rating?.priceRank),
+              lead: rank(rating?.leadRank),
+              risk: rank(rating?.riskRank),
+            });
             const price = effectiveUnitPrice(source);
             return (
               <TableRow key={source.id}>
@@ -140,7 +152,7 @@ export function SupplierComparisonCard({
                       {formatAssetLabel(source.supplier_code, source.supplier_name)}
                     </span>
                     {source.is_preferred === 1 ? (
-                      <Badge className="h-4 text-[9px]">
+                      <Badge className="h-5 text-xs">
                         {t("procurement.suppliers.sources.preferred")}
                       </Badge>
                     ) : null}
@@ -154,7 +166,7 @@ export function SupplierComparisonCard({
                 </TableCell>
                 <TableCell className="px-2 py-1.5 text-xs">
                   {source.risk_level ? (
-                    <Badge variant={riskBadgeVariant(source.risk_level)} className="h-4 text-[9px]">
+                    <Badge variant={riskBadgeVariant(source.risk_level)} className="h-5 text-xs">
                       {t(`procurement.suppliers.risk.${source.risk_level}`, {
                         defaultValue: source.risk_level,
                       })}
@@ -166,10 +178,11 @@ export function SupplierComparisonCard({
                 <TableCell className="px-2 py-1.5">
                   <span
                     className="flex items-center gap-0.5"
-                    aria-label={t("procurement.suppliers.comparison.ratingValue", {
+                    title={basis}
+                    aria-label={`${t("procurement.suppliers.comparison.ratingValue", {
                       stars,
                       max: MAX_STARS,
-                    })}
+                    })} — ${basis}`}
                   >
                     {Array.from({ length: MAX_STARS }, (_, index) => (
                       <Star
@@ -178,7 +191,7 @@ export function SupplierComparisonCard({
                         className={cn(
                           "h-3 w-3",
                           index < stars
-                            ? "fill-status-warning text-status-warning"
+                            ? "fill-tone-warning-fg text-tone-warning-fg"
                             : "text-text-muted",
                         )}
                       />
@@ -191,7 +204,7 @@ export function SupplierComparisonCard({
                       <Button
                         size="sm"
                         variant="outline"
-                        className="h-6 px-1.5 text-[11px]"
+                        className="h-9 px-2 text-xs"
                         disabled={saving}
                         onClick={() => void setPreferred(source)}
                       >

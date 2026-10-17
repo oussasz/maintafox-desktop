@@ -1,1 +1,501 @@
-{}
+{
+  "page": {
+    "fiscalStartLoadError": "The fiscal-year start (Settings › Localization) could not be read — the current fiscal year cannot be determined",
+    "versionsLoadError": "The budget versions could not be loaded — the version choice above is incomplete",
+    "title": "Budget and maintenance costs",
+    "description": "Budget, commitments, actuals and forecast by cost centre, fed by closed work orders.",
+    "fiscalYear": "Fiscal year",
+    "version": "Budget version",
+    "versionAuto": "Reference version: {{title}}",
+    "noVersion": "No version for this year"
+  },
+  "tabs": {
+    "cockpit": "Cockpit",
+    "settlements": "WO settlements",
+    "planning": "Budget",
+    "reviews": "Variance reviews",
+    "assets": "Asset costs",
+    "periods": "Period close"
+  },
+  "actions": {
+    "cancel": "Cancel",
+    "save": "Save",
+    "saving": "Saving…",
+    "create": "Create"
+  },
+  "month": {
+    "1": "January",
+    "2": "February",
+    "3": "March",
+    "4": "April",
+    "5": "May",
+    "6": "June",
+    "7": "July",
+    "8": "August",
+    "9": "September",
+    "10": "October",
+    "11": "November",
+    "12": "December"
+  },
+  "monthShort": {
+    "1": "Jan",
+    "2": "Feb",
+    "3": "Mar",
+    "4": "Apr",
+    "5": "May",
+    "6": "Jun",
+    "7": "Jul",
+    "8": "Aug",
+    "9": "Sep",
+    "10": "Oct",
+    "11": "Nov",
+    "12": "Dec"
+  },
+  "versionStatus": {
+    "draft": "Draft",
+    "submitted": "Submitted",
+    "approved": "Approved",
+    "frozen": "Frozen",
+    "closed": "Closed",
+    "superseded": "Superseded"
+  },
+  "versionAction": {
+    "submitted": "Submit",
+    "approved": "Approve",
+    "frozen": "Freeze",
+    "closed": "Close"
+  },
+  "scenario": {
+    "original": "Original budget",
+    "approved": "Approved budget",
+    "reforecast": "Reforecast",
+    "what_if": "What-if"
+  },
+  "periodStatus": {
+    "open": "Open",
+    "closed": "Closed"
+  },
+  "reviewStatus": {
+    "open": "Open",
+    "in_review": "In review",
+    "actioned": "Action taken",
+    "accepted": "Accepted",
+    "closed": "Closed"
+  },
+  "reviewAction": {
+    "in_review": "Take ownership",
+    "actioned": "Action taken",
+    "accepted": "Accept variance",
+    "closed": "Close",
+    "open": "Reopen"
+  },
+  "settlement": {
+    "status": {
+      "posted": "Settled",
+      "pending": "Settlement pending",
+      "reversed": "Reversed"
+    },
+    "reason": {
+      "no_cost_center": "No cost centre for this work order.",
+      "no_budget_version": "No approved budget version for the year.",
+      "currency_mismatch": "The budget currency differs from the company currency.",
+      "period_closed": "Every remaining period of the year is closed.",
+      "no_currency": "The company currency is not configured.",
+      "unknown": "Unknown cause.",
+      "no_fiscal_calendar": "The fiscal-year start month is not configured.",
+      "unpriced_labor": "Some recorded hours have no hourly rate."
+    },
+    "fix": {
+      "no_cost_center": "Set the cost centre on the asset (or its location), or choose one in the work order estimate, then retry the settlement.",
+      "no_budget_version": "Create and approve the year's budget (Budget tab), then retry the settlement.",
+      "currency_mismatch": "Create a budget version in the company currency, then retry the settlement.",
+      "period_closed": "Reopen a period of the year (Period close tab), then retry the settlement.",
+      "no_currency": "Set the currency in Settings › Localization, then retry the settlement.",
+      "unknown": "Retry the settlement; if it stays pending, contact the administrator.",
+      "no_fiscal_calendar": "Choose the fiscal-year start month in Settings › Localization, then retry the settlement.",
+      "unpriced_labor": "Enter the hourly rate on the time entries concerned, or create a rate card for the technician in force on the work date (Personnel), then retry the settlement."
+    }
+  },
+  "woCost": {
+    "title": "Work order costs",
+    "loading": "Loading costs…",
+    "loadError": "The work order costs could not be loaded.",
+    "costCenter": "Cost centre: {{code}} — {{name}} ({{source}})",
+    "noCostCenter": "No cost centre found",
+    "ccSource": {
+      "estimate_override": "chosen on the work order",
+      "asset": "from the asset",
+      "asset_location": "from the asset location",
+      "work_order_entity": "from the work order entity"
+    },
+    "addEstimate": "Estimate",
+    "editEstimate": "Edit estimate",
+    "tableCaption": "Costs of work order {{code}} by category: estimated, planned, committed, actual and variance",
+    "col": {
+      "category": "Category",
+      "estimated": "Estimated",
+      "planned": "Planned",
+      "committed": "Committed",
+      "actual": "Actual",
+      "variance": "Variance"
+    },
+    "varianceBase": {
+      "estimated": "Actual minus estimate",
+      "planned": "Actual minus plan"
+    },
+    "overtimeShare": "Of which overtime: {{amount}}",
+    "plannedGap": {
+      "no_expected_hours": "Planned labour: set the expected duration of the work order.",
+      "no_responsible": "Planned labour: assign a responsible person to the work order.",
+      "no_rate_card": "Planned labour: the responsible person has no rate card."
+    },
+    "notice": {
+      "noCostCenter": "Without a cost centre the settlement will stay pending at close: set it on the asset or in the estimate.",
+      "unpricedHours": "{{hours}} h recorded without an hourly rate are not costed: enter the rate on those entries, or create a rate card in force on the work date.",
+      "unvaluedParts": "{{qty}} part(s) issued without a cost (article never costed in that store).",
+      "overtimeNotCaptured": "Overtime is not yet distinguished in the recorded hours: all labour is costed at the regular rate.",
+      "duplicateSettlement": "This work order has more than one active settlement (offline closes on two devices): Finance must check this work order's budget."
+    },
+    "settlement": {
+      "posted": "{{amount}} settled to {{cc}}, period {{period}}, on {{date}}.",
+      "pending": "Settlement pending: {{reason}}",
+      "reversed": "Settlement reversed on {{date}} (reopened: {{reason}}).",
+      "onClose": "The costs are settled to the budget when the work order is closed.",
+      "lateCosts": "Costs that arrived after the close, settled on top: {{amount}}."
+    },
+    "details": "Details ({{labor}} time entries, {{parts}} parts, {{purchases}} purchases)",
+    "lines": {
+      "labor": "Labour",
+      "parts": "Parts",
+      "purchases": "Purchases for this work order",
+      "noLabor": "No time recorded.",
+      "noParts": "No parts issued.",
+      "noPurchases": "No linked order.",
+      "who": "Technician",
+      "craft": "Craft",
+      "hours": "Hours",
+      "rate": "Rate",
+      "amount": "Amount",
+      "overtime": "overtime",
+      "noRate": "no rate",
+      "article": "Article",
+      "issued": "Issued",
+      "returned": "Returned",
+      "nonStock": "non-stock",
+      "po": "Order",
+      "item": "Item",
+      "ordered": "Ordered",
+      "received": "Received",
+      "open": "Still committed",
+      "demand": {
+        "WORK_ORDER": "service",
+        "WORK_ORDER_PART": "part"
+      },
+      "laborHidden": "The per-technician detail (names, hourly rates) is reserved for Finance; the labour total stays visible.",
+      "rateCard": "rate card"
+    },
+    "total": "Total"
+  },
+  "estimate": {
+    "title": "Estimate for work order {{code}}",
+    "description": "Estimated amounts by category, in {{currency}}. The estimate is the reference for the actual variance.",
+    "invalidAmount": "Enter a positive amount.",
+    "total": "Estimated total: {{amount}}",
+    "costCenter": "Settlement cost centre",
+    "ccAutoResolved": "Automatic: {{cc}}",
+    "ccAutoNone": "Automatic (none found)",
+    "ccHint": "By default, the cost centre of the asset or its location.",
+    "notes": "Assumptions",
+    "saved": "Estimate for work order {{code}} saved.",
+    "saveError": "The estimate was not saved.",
+    "ccReadOnly": "Choosing the settlement cost centre is reserved for people allowed to post (Finance)."
+  },
+  "kpi": {
+    "budget": "Budget",
+    "budgetHint": "Fiscal year {{year}}",
+    "committed": "Committed",
+    "committedHint": "Open orders",
+    "actual": "Actual",
+    "actualHint": "Settled work orders and entries",
+    "forecast": "Year-end forecast",
+    "forecastHint": "Actual + committed + remaining budget",
+    "variance": "Variance",
+    "overrun": "Forecast overrun",
+    "underrun": "Forecast margin",
+    "consumed": "Consumption",
+    "consumedHint": "Actual / budget",
+    "consumedHintMonth": "Actual / annual budget, end of {{month}}"
+  },
+  "cockpit": {
+    "loading": "Loading the cockpit…",
+    "loadError": "The budget cockpit could not be loaded.",
+    "tableTitle": "By cost centre and category",
+    "export": "Export (CSV)",
+    "exported": "File saved: {{path}}",
+    "exportError": "The export failed.",
+    "analyse": "Analyse variance",
+    "openReviews_one": "{{count}} open review",
+    "openReviews_other": "{{count}} open reviews",
+    "consumedAria": "Share of budget consumed",
+    "method": "Forecast = actual + open commitments + budget of the remaining months (annual lines pro rata). Commitments are approved purchase orders and requisitions raised for work orders, at today's exchange rate.",
+    "col": {
+      "costCenter": "Cost centre",
+      "costCenterCode": "Cost centre code",
+      "costCenterName": "Cost centre",
+      "category": "Category",
+      "budget": "Budget",
+      "committed": "Committed",
+      "actual": "Actual",
+      "forecast": "Forecast",
+      "variance": "Variance",
+      "consumed": "Consumed",
+      "reviews": "Review"
+    },
+    "empty": {
+      "noCostCenterTitle": "No cost centre",
+      "noCostCenterBody": "Create your cost centres and attach them to organisation entities: work order costs are settled to them.",
+      "noBudgetTitle": "No budget for {{year}}",
+      "noBudgetBody": "Create the {{year}} budget version, enter its lines by cost centre and get it approved to receive work order costs.",
+      "openPlanning": "Open the budget",
+      "noRowsTitle": "No amount in this version",
+      "noRowsBody": "Add budget lines; actuals appear when work orders are closed."
+    },
+    "notice": {
+      "notApproved": "This version is \"{{status}}\": closed work orders are only settled to an approved or frozen version.",
+      "pending_one": "{{count}} closed work order is waiting for settlement ({{amount}}).",
+      "pending_other": "{{count}} closed work orders are waiting for settlement ({{amount}}).",
+      "openPending": "Show pending settlements",
+      "unassignedCommitments": "{{amount}} of commitments belong to work orders without a cost centre and appear on no line."
+    }
+  },
+  "burn": {
+    "title": "Budget and actual by month",
+    "budget": "Budget",
+    "actual": "Actual",
+    "monthAria": "{{month}}: budget {{budget}}, actual {{actual}}",
+    "cumulative": "To date: actual {{actual}} against a budget of {{budget}}."
+  },
+  "drill": {
+    "title": "{{cc}} · {{bucket}}",
+    "summary": "Actual {{actual}} · committed {{committed}} · budget {{budget}}",
+    "loadError": "The details could not be loaded.",
+    "actuals_one": "{{count}} actual entry",
+    "actuals_other": "{{count}} actual entries",
+    "commitments_one": "{{count}} open commitment",
+    "commitments_other": "{{count}} open commitments",
+    "noActuals": "No actual on this line.",
+    "noCommitments": "No open commitment.",
+    "reversal": "Reversal",
+    "reversed": "Reversed",
+    "col": {
+      "period": "Period",
+      "source": "Source",
+      "asset": "Asset",
+      "amount": "Amount",
+      "document": "Document",
+      "workOrder": "Work order",
+      "due": "Expected delivery",
+      "open": "Still committed"
+    },
+    "kind": {
+      "purchase_order": "Purchase order",
+      "requisition": "Requisition",
+      "manual": "Manual commitment"
+    },
+    "lane": {
+      "regular": "Regular hours",
+      "overtime": "Overtime"
+    },
+    "sourceType": {
+      "wo_settlement": "Work order settlement",
+      "reversal": "Reversal",
+      "manual": "Manual entry"
+    }
+  },
+  "settlements": {
+    "intro": "Each closed work order — or one cancelled after consuming labour, parts or services — is settled once to the cost centre and period of its close. If a settled work order's cost changes later (a receipt, issue, return or time entry arriving after the close, even one recorded offline before it), only the difference with what is already settled is added. A pending settlement says what to fix; reopening a work order reverses its settlement.",
+    "filter": "Show",
+    "filters": {
+      "pending": "Pending",
+      "posted": "Settled",
+      "reversed": "Reversed",
+      "all": "All"
+    },
+    "empty": {
+      "pending": "No pending settlement",
+      "posted": "No settled work order",
+      "reversed": "No reversed settlement",
+      "all": "No closed work order"
+    },
+    "emptyBody": "Fiscal year {{year}}.",
+    "loadError": "The settlements could not be loaded.",
+    "retry": "Settle",
+    "retryPosted": "Work order {{code}} settled: {{amount}}.",
+    "retryStillPending": "Work order {{code}} is still pending.",
+    "col": {
+      "workOrder": "Work order",
+      "asset": "Asset",
+      "closedAt": "Closed on",
+      "status": "Settlement",
+      "costCenter": "Cost centre",
+      "period": "Period",
+      "total": "Amount"
+    },
+    "duplicate": "More than one active settlement for this work order: to be checked.",
+    "lateCatchUp": "Settle late costs",
+    "lateHint": "Settles the cost difference of already settled work orders (for instance after a sync).",
+    "lateBooked_one": "Late costs settled on {{count}} work order.",
+    "lateBooked_other": "Late costs settled on {{count}} work orders.",
+    "lateNone": "No late cost to settle."
+  },
+  "planning": {
+    "sameScenarioExists": "{{count}} \"{{scenario}}\" version is already open for {{year}}. A second one is rarely intended: check before creating.",
+    "confirmMoveTitle": "{{action}} this version?",
+    "confirmMove": {
+      "submitted": "\"{{title}}\" is submitted for approval and can no longer be edited by its authors until it is approved or sent back.",
+      "approved": "\"{{title}}\" becomes the approved version actual spending is compared with. Identity confirmation is required.",
+      "frozen": "\"{{title}}\" is frozen: its lines can no longer be changed. A reforecast remains possible.",
+      "closed": "\"{{title}}\" is closed for good. This step cannot be undone."
+    },
+    "loadError": "The budget could not be loaded.",
+    "saveError": "The change was not saved.",
+    "costCenters": "Cost centres",
+    "costCentersHint": "Work orders settle to the asset's cost centre, else to that of its location or of the work order entity.",
+    "newCostCenter": "New cost centre",
+    "editCostCenter": "Edit {{code}}",
+    "costCenterDialogHint": "The code must match the code entered on assets and organisation entities.",
+    "costCenterSaved": "Cost centre {{code}} saved.",
+    "noCostCenters": "No cost centre",
+    "noCostCentersBody": "Create the first maintenance cost centre.",
+    "orgNodeHint": "Work orders of this entity (and its sub-entities) without another cost centre settle to it.",
+    "none": "None",
+    "active": "Active",
+    "inactive": "Inactive",
+    "versions": "{{year}} budget versions",
+    "versionsHint": "Draft → submitted → approved → frozen. Only an approved or frozen version receives work order costs.",
+    "newVersion": "New version",
+    "newVersionHint": "Fiscal year {{year}}, in {{currency}} (company currency).",
+    "noVersions": "No version for {{year}}",
+    "noVersionsBody": "Create the year's original budget version.",
+    "untitled": "Untitled",
+    "scenario": "Scenario",
+    "versionTitle": "Title",
+    "versionMoved": "Version moved to \"{{status}}\".",
+    "reforecast": "Reforecast",
+    "reforecastTitle": "Reforecast — {{title}}",
+    "lines": "Budget lines — {{title}}",
+    "linesHint": "Amount by cost centre, category and month (or annual).",
+    "linesLocked": "Version \"{{status}}\": lines can no longer be edited. Create a reforecast to change them.",
+    "newLine": "New line",
+    "editLine": "Edit line",
+    "lineHint": "Amount in {{currency}}.",
+    "noLines": "No budget line",
+    "noLinesBody": "Add the planned amounts by cost centre and category.",
+    "annual": "Annual",
+    "total": "Total",
+    "col": {
+      "code": "Code",
+      "name": "Name",
+      "orgNode": "Entity",
+      "parent": "Parent centre",
+      "state": "State",
+      "actions": "Actions",
+      "costCenter": "Cost centre",
+      "category": "Category",
+      "period": "Period",
+      "amount": "Amount",
+      "justification": "Justification"
+    }
+  },
+  "reviews": {
+    "intro": "A variance review records the cause of an overrun, the action decided and its acceptance.",
+    "noVersion": "No budget version",
+    "noVersionBody": "Variance reviews belong to a budget version.",
+    "loadError": "The reviews could not be loaded.",
+    "empty": "No variance review",
+    "emptyBody": "Open a review from the cockpit, on a line that overruns.",
+    "opened": "Opened on {{date}}",
+    "reopenReason": "Reopened: {{reason}}",
+    "moved": "Review moved to \"{{status}}\".",
+    "commentLabel": "Comment",
+    "reopenLabel": "Reopen reason",
+    "confirm": {
+      "in_review": "The review moves to in review.",
+      "actioned": "A corrective action has been taken.",
+      "accepted": "The variance is accepted (approval required).",
+      "closed": "The review is closed (approval required).",
+      "open": "The review is reopened with the given reason."
+    },
+    "newTitle": "Analyse variance — {{cc}} · {{bucket}}",
+    "newBody": "Budget {{budget}}, forecast {{forecast}}, variance {{variance}}.",
+    "driver": "Cause",
+    "commentary": "Explanation",
+    "commentaryPlaceholder": "What happened and what will be done",
+    "owner": "Action owner: {{name}}",
+    "open": "Open review",
+    "created": "Variance review opened.",
+    "saveError": "The review was not created."
+  },
+  "assets": {
+    "intro": "Cumulative maintenance cost of each asset (closed work orders) against its replacement value. The mean cost of a corrective work order is the failure cost used by RAMS studies.",
+    "search": "Search an asset",
+    "loadError": "The asset costs could not be loaded.",
+    "emptyTitle": "No maintenance cost",
+    "emptyBody": "Costs appear when work orders on assets are closed.",
+    "replaceReview": "Repair or replace?",
+    "noRav": "replacement value not set",
+    "ofRav": "{{pct}} of replacement value",
+    "correctiveCount_one": "{{count}} corrective work order · mean {{avg}}",
+    "correctiveCount_other": "{{count}} corrective work orders · mean {{avg}}",
+    "col": {
+      "asset": "Asset",
+      "rav": "Replacement value",
+      "lifetime": "Lifetime cost",
+      "lifetimeRav": "Lifetime / value",
+      "cost12m": "Last 12 months",
+      "corrective": "Corrective",
+      "years": "5 years",
+      "lastClosed": "Last work order"
+    },
+    "kpi": {
+      "rav": "Fleet replacement value",
+      "cost12m": "Maintenance cost",
+      "cost12mHint": "12 months, valued assets",
+      "costRav": "Cost / replacement value",
+      "costRavHint": "SMRP indicator",
+      "withoutRav": "Without replacement value",
+      "withoutRavHint": "Set it on the asset record"
+    }
+  },
+  "periods": {
+    "intro": "Closing a month freezes its actuals: no entry is accepted in it any more and work orders closed later are settled to the next open month. A month is closed once it has ended and all its work orders are settled.",
+    "caption": "{{year}} budget periods",
+    "loadError": "The periods could not be loaded.",
+    "close": "Close",
+    "reopen": "Reopen",
+    "closeTitle": "Close {{month}}",
+    "closeDescription": "The month's actuals will be frozen. Later entries go to the next open month.",
+    "reopenTitle": "Reopen {{month}}",
+    "reopenDescription": "The month will accept entries again: figures already reported may change.",
+    "notes": "Comment",
+    "reason": "Reopen reason",
+    "closedToast": "{{month}} closed.",
+    "reopenedToast": "{{month}} reopened.",
+    "closedBy": "By {{who}} on {{at}}",
+    "reopenedAt": "Reopened on {{at}}",
+    "blocker": {
+      "closed": "Already closed.",
+      "future": "The month has not ended.",
+      "pending_one": "{{count}} work order of the month is waiting for settlement.",
+      "pending_other": "{{count}} work orders of the month are waiting for settlement."
+    },
+    "col": {
+      "month": "Month",
+      "status": "State",
+      "actual": "Actual",
+      "pending": "Pending work orders",
+      "closedBy": "Close",
+      "actions": "Actions"
+    }
+  }
+}

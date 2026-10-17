@@ -17,10 +17,10 @@ import {
   Shield,
   XCircle,
 } from "lucide-react";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { Badge } from "@/components/ui/badge";
+import { ModulePageShell } from "@/components/layout/ModulePageShell";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -30,7 +30,10 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Label } from "@/components/ui/label";
+import { StatusChip } from "@/components/ui/status-chip";
 import {
   Table,
   TableBody,
@@ -39,7 +42,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { mfLayout } from "@/design-system/tokens";
+import type { Tone } from "@/design-system/tone";
 import { cn } from "@/lib/utils";
 import { useAssetImportStore, type ImportStep } from "@/stores/asset-import-store";
 
@@ -58,7 +61,7 @@ function StepIndicator({ current }: { current: ImportStep }) {
   const currentIdx = STEPS.findIndex((s) => s.key === current);
 
   return (
-    <nav aria-label="Import steps" className="flex items-center gap-2">
+    <nav aria-label={t("import.steps.label")} className="flex items-center gap-2">
       {STEPS.map((step, idx) => {
         const Icon = step.icon;
         const isActive = idx === currentIdx;
@@ -67,13 +70,17 @@ function StepIndicator({ current }: { current: ImportStep }) {
         return (
           <div key={step.key} className="flex items-center gap-2">
             {idx > 0 && (
-              <div className={cn("h-px w-6", isDone ? "bg-status-success" : "bg-surface-border")} />
+              <div
+                className={cn("h-px w-6", isDone ? "bg-tone-success-fg" : "bg-surface-border")}
+                aria-hidden
+              />
             )}
             <div
+              aria-current={isActive ? "step" : undefined}
               className={cn(
                 "flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium",
                 isActive && "bg-primary/10 text-primary",
-                isDone && "text-status-success",
+                isDone && "text-tone-success-fg",
                 !isActive && !isDone && "text-text-muted",
               )}
             >
@@ -91,32 +98,15 @@ function StepIndicator({ current }: { current: ImportStep }) {
 
 function StatusBadge({ status }: { status: string }) {
   const { t } = useTranslation("equipment");
-
-  switch (status) {
-    case "valid":
-      return (
-        <Badge variant="outline" className="border-status-success text-status-success">
-          <CheckCircle2 className="mr-1 h-3 w-3" />
-          {t("import.status.valid")}
-        </Badge>
-      );
-    case "warning":
-      return (
-        <Badge variant="outline" className="border-status-warning text-status-warning">
-          <AlertTriangle className="mr-1 h-3 w-3" />
-          {t("import.status.warning")}
-        </Badge>
-      );
-    case "error":
-      return (
-        <Badge variant="outline" className="border-status-danger text-status-danger">
-          <XCircle className="mr-1 h-3 w-3" />
-          {t("import.status.error")}
-        </Badge>
-      );
-    default:
-      return <Badge variant="outline">{status}</Badge>;
-  }
+  const tone: Tone = status === "valid" ? "success" : status === "warning" ? "warning" : "danger";
+  const Icon = status === "valid" ? CheckCircle2 : status === "warning" ? AlertTriangle : XCircle;
+  return (
+    <StatusChip
+      icon={Icon}
+      tone={tone}
+      label={t(`import.status.${status}`, { defaultValue: t("import.status.unknown") })}
+    />
+  );
 }
 
 // ── Upload step ───────────────────────────────────────────────────────────────
@@ -162,7 +152,11 @@ function UploadStep() {
             {t("import.upload.selectFile")}
           </Button>
         </div>
-        {error && <p className="mt-3 text-sm text-status-danger">{error}</p>}
+        {error && (
+          <p role="alert" className="mt-3 text-sm text-tone-danger-fg">
+            {error}
+          </p>
+        )}
       </CardContent>
     </Card>
   );
@@ -202,7 +196,11 @@ function ValidateStep() {
             </span>
           </div>
         )}
-        {error && <p className="text-sm text-status-danger">{error}</p>}
+        {error && (
+          <p role="alert" className="text-sm text-tone-danger-fg">
+            {error}
+          </p>
+        )}
       </CardContent>
       <CardFooter>
         <Button onClick={() => void validateBatch()} disabled={loading}>
@@ -227,6 +225,7 @@ function PreviewStep() {
   const error = useAssetImportStore((s) => s.error);
 
   const canApply = batch?.status === "validated";
+  const [confirmApply, setConfirmApply] = useState(false);
 
   return (
     <Card>
@@ -241,18 +240,26 @@ function PreviewStep() {
         {/* Summary badges */}
         {batch && (
           <div className="flex flex-wrap gap-3" data-testid="summary-badges">
-            <Badge variant="outline">
-              {t("import.preview.total")}: {batch.total_rows}
-            </Badge>
-            <Badge variant="outline" className="border-status-success text-status-success">
-              {t("import.status.valid")}: {batch.valid_rows}
-            </Badge>
-            <Badge variant="outline" className="border-status-warning text-status-warning">
-              {t("import.status.warning")}: {batch.warning_rows}
-            </Badge>
-            <Badge variant="outline" className="border-status-danger text-status-danger">
-              {t("import.status.error")}: {batch.error_rows}
-            </Badge>
+            <StatusChip
+              size="md"
+              tone="neutral"
+              label={`${t("import.preview.total")}: ${batch.total_rows}`}
+            />
+            <StatusChip
+              size="md"
+              tone="success"
+              label={`${t("import.status.valid")}: ${batch.valid_rows}`}
+            />
+            <StatusChip
+              size="md"
+              tone="warning"
+              label={`${t("import.status.warning")}: ${batch.warning_rows}`}
+            />
+            <StatusChip
+              size="md"
+              tone="danger"
+              label={`${t("import.status.error")}: ${batch.error_rows}`}
+            />
           </div>
         )}
 
@@ -274,8 +281,8 @@ function PreviewStep() {
                 <TableRow
                   key={row.id}
                   className={cn(
-                    row.validation_status === "error" && "bg-status-danger/5",
-                    row.validation_status === "warning" && "bg-status-warning/5",
+                    row.validation_status === "error" && "bg-tone-danger-bg/40",
+                    row.validation_status === "warning" && "bg-tone-warning-bg/40",
                   )}
                   data-testid={`preview-row-${row.row_no}`}
                 >
@@ -291,7 +298,18 @@ function PreviewStep() {
                   </TableCell>
                   <TableCell>
                     {row.proposed_action ? (
-                      <Badge variant="secondary">{row.proposed_action}</Badge>
+                      <StatusChip
+                        tone={
+                          row.proposed_action === "create"
+                            ? "info"
+                            : row.proposed_action === "update"
+                              ? "progress"
+                              : "danger"
+                        }
+                        label={t(`import.action.${row.proposed_action}`, {
+                          defaultValue: t("import.action.unknown"),
+                        })}
+                      />
                     ) : (
                       "—"
                     )}
@@ -304,12 +322,22 @@ function PreviewStep() {
                             key={idx}
                             className={cn(
                               "text-xs",
-                              msg.severity === "error" && "text-status-danger",
-                              msg.severity === "warning" && "text-status-warning",
+                              msg.severity === "error" && "text-tone-danger-fg",
+                              msg.severity === "warning" && "text-tone-warning-fg",
                             )}
                             data-testid="conflict-message"
                           >
-                            <span className="font-medium">[{msg.category}]</span> {msg.message}
+                            <span className="font-medium">
+                              {t(`import.category.${msg.category}`, {
+                                defaultValue: t("import.category.other"),
+                              })}
+                            </span>
+                            <details className="text-text-muted">
+                              <summary className="cursor-pointer select-none">
+                                {t("import.messageDetail")}
+                              </summary>
+                              {msg.message}
+                            </details>
                           </li>
                         ))}
                       </ul>
@@ -325,21 +353,23 @@ function PreviewStep() {
 
         {/* Policy toggles */}
         <div className="flex items-center gap-3">
-          <input
-            type="checkbox"
+          <Checkbox
             id="include-warnings"
             checked={includeWarnings}
-            onChange={(e) => setIncludeWarnings(e.target.checked)}
-            className="h-4 w-4 rounded border"
+            onCheckedChange={(v) => setIncludeWarnings(v === true)}
           />
           <Label htmlFor="include-warnings">{t("import.preview.includeWarnings")}</Label>
         </div>
 
-        {error && <p className="text-sm text-status-danger">{error}</p>}
+        {error && (
+          <p role="alert" className="text-sm text-tone-danger-fg">
+            {error}
+          </p>
+        )}
       </CardContent>
       <CardFooter className="flex gap-3">
         <Button
-          onClick={() => void applyBatch()}
+          onClick={() => setConfirmApply(true)}
           disabled={!canApply || saving}
           data-testid="apply-button"
         >
@@ -348,6 +378,21 @@ function PreviewStep() {
           {t("import.apply.run")}
         </Button>
       </CardFooter>
+      <ConfirmDialog
+        open={confirmApply}
+        onOpenChange={setConfirmApply}
+        title={t("import.apply.confirmTitle")}
+        description={t("import.apply.confirmBody", {
+          valid: batch?.valid_rows ?? 0,
+          warning: includeWarnings ? (batch?.warning_rows ?? 0) : 0,
+          error: batch?.error_rows ?? 0,
+        })}
+        confirmLabel={t("import.apply.run")}
+        onConfirm={() => {
+          setConfirmApply(false);
+          void applyBatch();
+        }}
+      />
     </Card>
   );
 }
@@ -433,24 +478,17 @@ export function AssetImportPage() {
   }, [resetFlow]);
 
   return (
-    <div className={mfLayout.moduleRoot}>
-      <div className={mfLayout.moduleHeader}>
-        <div className={mfLayout.moduleTitleRow}>
-          <h1 className={mfLayout.moduleTitle}>{t("import.page.title")}</h1>
-        </div>
-        <div className={mfLayout.moduleHeaderActions}>
-          <StepIndicator current={step} />
-        </div>
+    <ModulePageShell
+      icon={FileUp}
+      title={t("import.page.title")}
+      actions={<StepIndicator current={step} />}
+    >
+      <div className="flex flex-1 flex-col">
+        {step === "upload" && <UploadStep />}
+        {step === "validate" && <ValidateStep />}
+        {(step === "preview" || step === "apply") && <PreviewStep />}
+        {step === "done" && <DoneStep />}
       </div>
-
-      <div className={mfLayout.moduleWorkspace}>
-        <div className={cn(mfLayout.moduleWorkspaceInner, "flex flex-1 flex-col")}>
-          {step === "upload" && <UploadStep />}
-          {step === "validate" && <ValidateStep />}
-          {(step === "preview" || step === "apply") && <PreviewStep />}
-          {step === "done" && <DoneStep />}
-        </div>
-      </div>
-    </div>
+    </ModulePageShell>
   );
 }

@@ -33,20 +33,34 @@ mod auth_integration_tests;
 #[macro_export]
 macro_rules! require_session {
     ($state:expr) => {{
-        let mut guard = $state.session.write().await;
-        match guard.require_active_user() {
-            Ok(user) => user,
-            Err($crate::auth::session_manager::RequireSessionFailure::IdleLocked) => {
-                return Err($crate::errors::AppError::SessionLocked(
-                    "Session verrouillée pour inactivité. Veuillez vous déverrouiller.".into(),
-                ));
+        let (user, session_db_id) = {
+            let mut guard = $state.session.write().await;
+            match guard.require_active_user() {
+                Ok(user) => {
+                    let id = guard.current.as_ref().map(|s| s.session_db_id.clone());
+                    (user, id)
+                }
+                Err($crate::auth::session_manager::RequireSessionFailure::IdleLocked) => {
+                    return Err($crate::errors::AppError::SessionLocked(
+                        "Session verrouillée pour inactivité. Veuillez vous déverrouiller.".into(),
+                    ));
+                }
+                Err($crate::auth::session_manager::RequireSessionFailure::MissingOrExpired) => {
+                    return Err($crate::errors::AppError::Auth(
+                        "Session expirée ou absente. Veuillez vous reconnecter.".into(),
+                    ));
+                }
             }
-            Err($crate::auth::session_manager::RequireSessionFailure::MissingOrExpired) => {
-                return Err($crate::errors::AppError::Auth(
-                    "Session expirée ou absente. Veuillez vous reconnecter.".into(),
-                ));
-            }
-        }
+        };
+        // Stored state: revoked session, disabled account, password change required.
+        $crate::auth::session_manager::enforce_stored_session(
+            &$state.db,
+            &$state.session,
+            &user,
+            session_db_id.as_deref(),
+        )
+        .await?;
+        user
     }};
 }
 

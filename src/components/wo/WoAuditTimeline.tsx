@@ -6,7 +6,6 @@
  */
 
 import {
-  AlertCircle,
   Calendar,
   Check,
   Dot,
@@ -18,41 +17,76 @@ import {
   User,
   Wrench,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Timeline } from "@/components/timeline";
 import type { TimelineEntry, TimelineTone } from "@/components/timeline";
+import { mfTone } from "@/design-system/tone";
+import { useLatestHistory } from "@/hooks/use-latest-history";
 import { formatPersonLabel } from "@/lib/display";
 import { cn } from "@/lib/utils";
 import { listWoChangeEvents, type WoChangeEvent } from "@/services/wo-audit-service";
-import { toErrorMessage } from "@/utils/errors";
+
+/** Page of the history and backend maximum (`wo::audit::WO_CHANGE_EVENTS_MAX_LIMIT`). */
+const HISTORY_PAGE = 100;
+const HISTORY_MAX = 500;
+
+/** Actions recorded by the backend (`wo_change_events.action`) that have a translated label. */
+const KNOWN_ACTIONS = new Set([
+  "created",
+  "submitted",
+  "planned",
+  "planning_approved",
+  "marked_ready",
+  "returned_to_planning",
+  "assigned",
+  "emergency_reassigned",
+  "started",
+  "paused",
+  "held",
+  "resumed",
+  "mechanically_completed",
+  "failure_detail_saved",
+  "verification_saved",
+  "verified",
+  "closed",
+  "reopened",
+  "cancelled",
+  "rca_updated",
+  "attachment_uploaded",
+  "service_cost_updated",
+  "permit_requirement_changed",
+]);
 
 function actionIcon(action: string) {
   const cls = "h-4 w-4";
   switch (action) {
     case "planned":
-      return <Calendar className={cn(cls, "text-blue-500")} />;
+    case "planning_approved":
+      return <Calendar className={cn(cls, mfTone.info.text)} />;
     case "assigned":
-      return <User className={cn(cls, "text-indigo-500")} />;
+    case "emergency_reassigned":
+      return <User className={cn(cls, mfTone.info.text)} />;
     case "started":
-      return <Play className={cn(cls, "text-green-600")} />;
-    case "paused":
-      return <Pause className={cn(cls, "text-orange-500")} />;
     case "resumed":
-      return <PlayCircle className={cn(cls, "text-green-500")} />;
-    case "mech_completed":
-      return <Wrench className={cn(cls, "text-teal-500")} />;
+      return <Play className={cn(cls, mfTone.progress.text)} />;
+    case "paused":
+    case "held":
+      return <Pause className={cn(cls, mfTone.attention.text)} />;
+    case "mechanically_completed":
+      return <Wrench className={cn(cls, mfTone.success.text)} />;
     case "verified":
-      return <Check className={cn(cls, "text-emerald-600")} />;
+    case "verification_saved":
+      return <Check className={cn(cls, mfTone.success.text)} />;
     case "closed":
-      return <Lock className={cn(cls, "text-neutral-500")} />;
+      return <Lock className={cn(cls, mfTone.neutral.text)} />;
     case "reopened":
-      return <PlayCircle className={cn(cls, "text-amber-500")} />;
-    case "blocked":
-      return <ShieldX className={cn(cls, "text-red-600")} />;
+      return <PlayCircle className={cn(cls, mfTone.warning.text)} />;
+    case "cancelled":
+      return <ShieldX className={cn(cls, mfTone.danger.text)} />;
     default:
-      return <Dot className={cn(cls, "text-muted-foreground")} />;
+      return <Dot className={cn(cls, mfTone.neutral.text)} />;
   }
 }
 
@@ -63,32 +97,29 @@ function resultTone(result: string): TimelineTone {
   return "default";
 }
 
+/** `{"requires_permit": true}` of a permit-requirement change; null when absent. */
+function requiresPermitOf(detailsJson: string | null): boolean | null {
+  if (!detailsJson) return null;
+  try {
+    const parsed = JSON.parse(detailsJson) as { requires_permit?: unknown };
+    return typeof parsed.requires_permit === "boolean" ? parsed.requires_permit : null;
+  } catch {
+    return null;
+  }
+}
+
 interface WoAuditTimelineProps {
   woId: number;
 }
 
 export function WoAuditTimeline({ woId }: WoAuditTimelineProps) {
   const { t, i18n } = useTranslation("ot");
-  const [events, setEvents] = useState<WoChangeEvent[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const loadEvents = useCallback(async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const items = await listWoChangeEvents(woId, 100);
-      setEvents(items);
-    } catch (err) {
-      setError(toErrorMessage(err));
-    } finally {
-      setLoading(false);
-    }
-  }, [woId]);
-
-  useEffect(() => {
-    void loadEvents();
-  }, [loadEvents]);
+  const fetchLatest = useCallback((limit: number) => listWoChangeEvents(woId, limit), [woId]);
+  const history = useLatestHistory<WoChangeEvent>(fetchLatest, {
+    pageSize: HISTORY_PAGE,
+    maxLimit: HISTORY_MAX,
+  });
+  const events = history.items;
 
   const entries: TimelineEntry[] = useMemo(
     () =>
@@ -101,19 +132,23 @@ export function WoAuditTimeline({ woId }: WoAuditTimelineProps) {
               : evt.apply_result === "partial"
                 ? "audit.partial"
                 : null;
-        const badges = [
-          {
-            label: resultKey ? t(resultKey) : evt.apply_result,
-            tone: resultTone(evt.apply_result),
-          },
-        ];
+        const badges = resultKey
+          ? [{ label: t(resultKey), tone: resultTone(evt.apply_result) }]
+          : [];
         if (evt.requires_step_up === 1) {
           badges.push({ label: t("audit.stepUp"), tone: "info" as TimelineTone });
         }
+        // The stored summary is the backend's own record (English); the screen reads the action
+        // in the UI language instead.
+        const known = KNOWN_ACTIONS.has(evt.action);
+        const permit =
+          evt.action === "permit_requirement_changed" ? requiresPermitOf(evt.details_json) : null;
         return {
           id: String(evt.id),
-          title: evt.action.replace(/_/g, " "),
-          description: evt.summary ?? undefined,
+          title: known ? t(`audit.actions.${evt.action}`) : t("audit.actions.other"),
+          ...(permit !== null
+            ? { description: t(permit ? "audit.permitRequired" : "audit.permitNotRequired") }
+            : {}),
           timestamp: evt.acted_at,
           actor:
             evt.actor_id != null ? formatPersonLabel(evt.actor_display_name) : t("audit.system"),
@@ -127,21 +162,15 @@ export function WoAuditTimeline({ woId }: WoAuditTimelineProps) {
   return (
     <Timeline
       items={entries}
-      loading={loading}
+      loading={history.loading}
       locale={i18n.language}
-      aria-label={t("audit.title", { defaultValue: "Work order audit" })}
+      aria-label={t("audit.title")}
       empty={t("audit.empty")}
-      error={
-        error ? (
-          <div className="flex items-start gap-2 rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
-            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-            <span>
-              {t("audit.loadError")}
-              {error}
-            </span>
-          </div>
-        ) : null
-      }
+      error={history.error ?? undefined}
+      onRetry={history.reload}
+      hasOlder={history.hasOlder}
+      {...(history.canLoadOlder ? { onLoadOlder: history.loadOlder } : {})}
+      loadingOlder={history.loadingOlder}
     />
   );
 }

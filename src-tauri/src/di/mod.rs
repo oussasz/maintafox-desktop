@@ -15,6 +15,8 @@ pub mod attachments;
 pub mod audit;
 pub mod conversion;
 pub mod disposition;
+// The SLA pause SQL macros of `domain` are reused by `sla` and `stats`.
+#[macro_use]
 pub mod domain;
 pub mod notifications;
 pub mod permissions;

@@ -138,6 +138,7 @@ const InventoryArticleSchema = z.object({
   unit_value_id: z.number(),
   unit_code: z.string(),
   unit_label: z.string(),
+  unit_symbol: z.string(),
   criticality_value_id: z.number().nullable(),
   criticality_code: z.string().nullable(),
   criticality_label: z.string().nullable(),
@@ -160,11 +161,85 @@ const InventoryArticleSchema = z.object({
   max_stock: z.number().nullable(),
   reorder_point: z.number(),
   safety_stock: z.number(),
+  manufacturer_name: z.string().nullable(),
+  manufacturer_part_number: z.string().nullable(),
+  oem_part_number: z.string().nullable(),
+  replenishment_policy_code: z.string().nullable(),
+  economic_order_qty: z.number().nullable(),
+  minimum_order_qty: z.number().nullable(),
+  maximum_order_qty: z.number().nullable(),
+  order_multiple_qty: z.number().nullable(),
+  lead_time_days: z.number().nullable(),
+  review_period_days: z.number().nullable(),
+  abc_class_code: z.string().nullable(),
+  xyz_class_code: z.string().nullable(),
+  is_critical_spare: z.number(),
+  requires_expiration: z.number(),
+  shelf_life_days: z.number().nullable(),
+  requires_batch_tracking: z.number(),
   is_active: z.number(),
   row_version: z.number(),
   created_at: z.string(),
   updated_at: z.string(),
+  on_hand_qty: z.number(),
+  reserved_qty: z.number(),
+  available_qty: z.number(),
+  avg_unit_cost: z.number().nullable(),
+  stock_value: z.number().nullable(),
+  unvalued_qty: z.number(),
+  barcode: z.string().nullable(),
+  requires_serial_tracking: z.number(),
+  reorder_trigger: z.string().nullable(),
 });
+
+/**
+ * Article master row as returned by `list_inventory_articles`: the item master plus its stock
+ * totals summed over every location (one backend query, no per-article balance calls) and its
+ * valuation — weighted-average unit cost and stock value in the tenant currency.
+ */
+export type InventoryArticleRow = InventoryArticle & {
+  on_hand_qty: number;
+  reserved_qty: number;
+  available_qty: number;
+  /** Weighted-average unit cost over valued locations; null when never costed. */
+  avg_unit_cost: number | null;
+  /** On hand × location average cost over valued locations; null when nothing is valued. */
+  stock_value: number | null;
+  /** On-hand quantity at locations without a cost yet (not in `stock_value`). */
+  unvalued_qty: number;
+  /** Barcode printed on the item / bin label (scanned at the issue desk). */
+  barcode: string | null;
+  /** 1 when each unit carries its own serial number. */
+  requires_serial_tracking: number;
+  /**
+   * Why the article needs replenishing in at least one store (`reorder_point` / `min_stock`),
+   * from the backend's `evaluate_reorder` — the same rule as the procurement dashboard.
+   */
+  reorder_trigger: string | null;
+};
+
+/** Article payload with the scan and serial-tracking fields. */
+export type InventoryArticleInputFull = InventoryArticleInput & {
+  barcode?: string | null;
+  requires_serial_tracking?: boolean | null;
+};
+
+/** True when stock of the article is held by lot or serial number. */
+export function isLotTracked(
+  article: Pick<InventoryArticleRow, "requires_batch_tracking" | "requires_serial_tracking">,
+): boolean {
+  return article.requires_batch_tracking === 1 || article.requires_serial_tracking === 1;
+}
+
+/**
+ * True when the article needs replenishing in at least one store — the backend's one low-stock
+ * definition (`evaluate_reorder`), shared with the procurement dashboard and its alerts.
+ */
+export function isBelowReorderPoint(
+  article: Pick<InventoryArticleRow, "reorder_trigger" | "is_active">,
+): boolean {
+  return article.is_active === 1 && article.reorder_trigger != null;
+}
 
 const InventoryArticleInputSchema = z.object({
   article_code: z.string().trim().min(1),
@@ -181,8 +256,73 @@ const InventoryArticleInputSchema = z.object({
   max_stock: z.number().min(0).nullable().optional(),
   reorder_point: z.number().min(0),
   safety_stock: z.number().min(0),
+  manufacturer_name: z.string().trim().nullable().optional(),
+  manufacturer_part_number: z.string().trim().nullable().optional(),
+  oem_part_number: z.string().trim().nullable().optional(),
+  replenishment_policy_code: z.string().nullable().optional(),
+  economic_order_qty: z.number().min(0).nullable().optional(),
+  minimum_order_qty: z.number().min(0).nullable().optional(),
+  maximum_order_qty: z.number().min(0).nullable().optional(),
+  order_multiple_qty: z.number().min(0).nullable().optional(),
+  lead_time_days: z.number().int().min(0).nullable().optional(),
+  review_period_days: z.number().int().min(0).nullable().optional(),
+  abc_class_code: z.string().nullable().optional(),
+  xyz_class_code: z.string().nullable().optional(),
+  is_critical_spare: z.boolean().nullable().optional(),
+  requires_expiration: z.boolean().nullable().optional(),
+  shelf_life_days: z.number().int().min(0).nullable().optional(),
+  requires_batch_tracking: z.boolean().nullable().optional(),
   is_active: z.boolean().optional(),
+  barcode: z.string().trim().nullable().optional(),
+  requires_serial_tracking: z.boolean().nullable().optional(),
 });
+
+/**
+ * Full update payload for an existing article. `update_inventory_article` replaces every
+ * item-master column, so edits and deactivation must start from the stored values.
+ */
+export function articleToInput(
+  article: InventoryArticle &
+    Partial<Pick<InventoryArticleRow, "barcode" | "requires_serial_tracking">>,
+  overrides: Partial<InventoryArticleInputFull> = {},
+): InventoryArticleInputFull {
+  return {
+    article_code: article.article_code,
+    article_name: article.article_name,
+    family_id: article.family_id,
+    unit_value_id: article.unit_value_id,
+    criticality_value_id: article.criticality_value_id,
+    stocking_type_value_id: article.stocking_type_value_id,
+    tax_category_value_id: article.tax_category_value_id,
+    procurement_category_value_id: article.procurement_category_value_id,
+    preferred_warehouse_id: article.preferred_warehouse_id,
+    preferred_location_id: article.preferred_location_id,
+    min_stock: article.min_stock,
+    max_stock: article.max_stock,
+    reorder_point: article.reorder_point,
+    safety_stock: article.safety_stock,
+    manufacturer_name: article.manufacturer_name,
+    manufacturer_part_number: article.manufacturer_part_number,
+    oem_part_number: article.oem_part_number,
+    replenishment_policy_code: article.replenishment_policy_code,
+    economic_order_qty: article.economic_order_qty,
+    minimum_order_qty: article.minimum_order_qty,
+    maximum_order_qty: article.maximum_order_qty,
+    order_multiple_qty: article.order_multiple_qty,
+    lead_time_days: article.lead_time_days,
+    review_period_days: article.review_period_days,
+    abc_class_code: article.abc_class_code,
+    xyz_class_code: article.xyz_class_code,
+    is_critical_spare: article.is_critical_spare === 1,
+    requires_expiration: article.requires_expiration === 1,
+    shelf_life_days: article.shelf_life_days,
+    requires_batch_tracking: article.requires_batch_tracking === 1,
+    is_active: article.is_active === 1,
+    barcode: article.barcode ?? null,
+    requires_serial_tracking: article.requires_serial_tracking === 1,
+    ...overrides,
+  };
+}
 
 const InventoryStockBalanceSchema = z.object({
   id: z.number(),
@@ -198,8 +338,14 @@ const InventoryStockBalanceSchema = z.object({
   on_hand_qty: z.number(),
   reserved_qty: z.number(),
   available_qty: z.number(),
+  moving_avg_unit_cost: z.number().nullable(),
   updated_at: z.string(),
 });
+
+/** Stock balance of one location, with its weighted-average unit cost (tenant currency). */
+export type InventoryStockBalanceRow = InventoryStockBalance & {
+  moving_avg_unit_cost: number | null;
+};
 
 const InventoryTaxCategorySchema = z.object({
   id: z.number(),
@@ -269,7 +415,23 @@ const InventoryTransactionSchema = z.object({
   notes: z.string().nullable(),
   performed_by_id: z.number().nullable(),
   performed_at: z.string(),
+  lot_id: z.number().nullable(),
+  lot_number: z.string().nullable(),
+  serial_number: z.string().nullable(),
+  posting_date: z.string().nullable(),
+  unit_cost: z.number().nullable(),
+  extended_cost: z.number().nullable(),
 });
+
+/** Ledger movement with its lot / serial, business date and valuation. */
+export type InventoryTransactionRow = InventoryTransaction & {
+  lot_id: number | null;
+  lot_number: string | null;
+  serial_number: string | null;
+  posting_date: string | null;
+  unit_cost: number | null;
+  extended_cost: number | null;
+};
 
 const InventoryReorderRecommendationSchema = z.object({
   article_id: z.number(),
@@ -302,6 +464,7 @@ const InventorySupplierSchema = z.object({
   status_code: z.string(),
   payment_terms_code: z.string().nullable(),
   currency_value_id: z.number().nullable(),
+  currency_code: z.string().nullable(),
   incoterms_code: z.string().nullable(),
   default_lead_time_days: z.number().nullable(),
   default_buyer_person_id: z.number().nullable(),
@@ -310,6 +473,12 @@ const InventorySupplierSchema = z.object({
   created_at: z.string(),
   updated_at: z.string(),
 });
+
+/** Supplier with its invoicing currency (null = tenant currency). */
+export type InventorySupplierRow = InventorySupplier & { currency_code: string | null };
+export type InventorySupplierInputFull = InventorySupplierInput & {
+  currency_code?: string | null;
+};
 
 const SupplierArticleSourceSchema = z.object({
   id: z.number(),
@@ -436,7 +605,6 @@ const InventoryReplenishmentRecommendationSchema = z.object({
   suggested_supplier_name: z.string().nullable(),
   estimated_cost: z.number().nullable(),
   expected_arrival: z.string().nullable(),
-  reason: z.string().nullable(),
   transfer_options: z.array(
     z.object({
       warehouse_id: z.number(),
@@ -449,11 +617,10 @@ const InventoryReplenishmentRecommendationSchema = z.object({
 const ProcurementAlertSchema = z.object({
   kind: z.string(),
   severity: z.string(),
-  title: z.string(),
-  detail: z.string().nullable(),
   entity_type: z.string().nullable(),
   entity_id: z.number().nullable(),
   entity_code: z.string().nullable(),
+  params: z.record(z.string()),
 });
 
 const ArticleConsumptionMonthSchema = z.object({
@@ -484,6 +651,9 @@ const ProcurementDashboardSummarySchema = z.object({
   repairables_in_repair: z.number(),
   active_suppliers_count: z.number(),
   receiving_today_count: z.number(),
+  open_requisition_statuses: z.array(z.string()),
+  open_po_statuses: z.array(z.string()),
+  late_po_statuses: z.array(z.string()),
 });
 
 const ArticleRepairableHistorySchema = z.object({
@@ -545,10 +715,24 @@ const ProcurementRequisitionSchema = z.object({
   posting_state: z.string(),
   posting_error: z.string().nullable(),
   requested_by_id: z.number().nullable(),
+  requested_by_name: z.string().nullable(),
+  line_count: z.number(),
+  estimated_total: z.number().nullable(),
+  estimate_complete: z.boolean(),
   row_version: z.number(),
   created_at: z.string(),
   updated_at: z.string(),
 });
+
+/** Requisition as listed by the backend, with the requester's name and its line totals. */
+export type ProcurementRequisitionRow = ProcurementRequisition & {
+  requested_by_name: string | null;
+  line_count: number;
+  /** Sum of qty × estimated unit cost over the estimated lines (tenant currency). */
+  estimated_total: number | null;
+  /** False when at least one line has no estimated cost. */
+  estimate_complete: boolean;
+};
 
 const ProcurementRequisitionLineSchema = z.object({
   id: z.number(),
@@ -559,6 +743,7 @@ const ProcurementRequisitionLineSchema = z.object({
   preferred_location_id: z.number().nullable(),
   preferred_location_code: z.string().nullable(),
   requested_qty: z.number(),
+  estimated_unit_cost: z.number().nullable(),
   source_reservation_id: z.number().nullable(),
   source_reorder_trigger: z.string().nullable(),
   status: z.string(),
@@ -577,14 +762,28 @@ const PurchaseOrderSchema = z.object({
   posting_state: z.string(),
   posting_error: z.string().nullable(),
   ordered_by_id: z.number().nullable(),
+  ordered_by_name: z.string().nullable(),
   ordered_at: z.string().nullable(),
   approved_by_id: z.number().nullable(),
   approved_at: z.string().nullable(),
   expected_delivery_date: z.string().nullable(),
+  currency_code: z.string().nullable(),
+  line_count: z.number(),
+  total_amount: z.number().nullable(),
   row_version: z.number(),
   created_at: z.string(),
   updated_at: z.string(),
 });
+
+/** Purchase order as listed by the backend, with the buyer's name, currency and totals. */
+export type PurchaseOrderRow = PurchaseOrder & {
+  ordered_by_name: string | null;
+  /** Currency the PO is priced in; null = tenant currency. */
+  currency_code: string | null;
+  line_count: number;
+  /** Sum of qty × price over priced lines, in the PO currency. */
+  total_amount: number | null;
+};
 
 const PurchaseOrderLineSchema = z.object({
   id: z.number(),
@@ -632,6 +831,10 @@ const GoodsReceiptSchema = z.object({
   posting_error: z.string().nullable(),
   received_by_id: z.number().nullable(),
   received_at: z.string().nullable(),
+  currency_code: z.string().nullable(),
+  exchange_rate: z.number().nullable(),
+  exchange_rate_source: z.string().nullable(),
+  posting_date: z.string().nullable(),
   row_version: z.number(),
   created_at: z.string(),
   updated_at: z.string(),
@@ -650,9 +853,51 @@ const GoodsReceiptLineSchema = z.object({
   accepted_qty: z.number(),
   rejected_qty: z.number(),
   rejection_reason: z.string().nullable(),
+  unit_price: z.number().nullable(),
+  unit_cost_tenant: z.number().nullable(),
   status: z.string(),
   created_at: z.string(),
 });
+
+/** Goods receipt with the currency and the rate captured when it was posted. */
+export type GoodsReceiptRow = GoodsReceipt & {
+  currency_code: string | null;
+  exchange_rate: number | null;
+  /** TENANT_CURRENCY, ENTERED or RATE_TABLE. */
+  exchange_rate_source: string | null;
+  posting_date: string | null;
+};
+export type GoodsReceiptLineRow = GoodsReceiptLine & {
+  /** PO price in the PO currency. */
+  unit_price: number | null;
+  /** Price converted at the receipt rate (tenant currency) — the stock cost. */
+  unit_cost_tenant: number | null;
+};
+
+/** Lot or serial received on a receipt line (tracked articles). */
+export interface ReceiptLotInput {
+  lot_number: string | null;
+  serial_number: string | null;
+  expiry_date: string | null;
+  quantity: number;
+}
+
+export type ReceiveGoodsLineInput = ReceiveGoodsInput["lines"][number] & {
+  lots?: ReceiptLotInput[] | null;
+  /**
+   * Unit the received / rejected quantities are entered in (a supplier or purchase unit of
+   * MEASURE.UNITS); null = the article's stock unit. Converted to the stock unit on receipt.
+   */
+  entered_unit_value_id?: number | null;
+};
+
+export type ReceiveGoodsInputFull = Omit<ReceiveGoodsInput, "lines"> & {
+  lines: ReceiveGoodsLineInput[];
+  /** Rate PO currency → tenant currency; null = stored rate valid on the posting date. */
+  exchange_rate?: number | null;
+  /** Business date of the receipt (YYYY-MM-DD); null = today. */
+  posting_date?: string | null;
+};
 
 const RepairableOrderSchema = z.object({
   id: z.number(),
@@ -765,6 +1010,7 @@ const InventoryCountLineSchema = z.object({
   is_critical: z.number(),
   approval_required: z.number(),
   approved_by_id: z.number().nullable(),
+  approved_by_name: z.string().nullable(),
   approved_at: z.string().nullable(),
   approval_note: z.string().nullable(),
   posted_transaction_id: z.number().nullable(),
@@ -773,6 +1019,9 @@ const InventoryCountLineSchema = z.object({
   created_at: z.string(),
   updated_at: z.string(),
 });
+
+/** Count line with the display name of the reviewer who approved its variance. */
+export type InventoryCountLineRow = InventoryCountLine & { approved_by_name: string | null };
 
 const InventoryReconciliationRunSchema = z.object({
   id: z.number(),
@@ -957,11 +1206,15 @@ export function evaluateInventoryUnitCost(
   );
 }
 
-export function listInventoryArticles(filter: InventoryArticleFilter): Promise<InventoryArticle[]> {
+export function listInventoryArticles(
+  filter: InventoryArticleFilter,
+): Promise<InventoryArticleRow[]> {
   return invokeParsed("list_inventory_articles", { filter }, z.array(InventoryArticleSchema));
 }
 
-export function createInventoryArticle(input: InventoryArticleInput): Promise<InventoryArticle> {
+export function createInventoryArticle(
+  input: InventoryArticleInputFull,
+): Promise<InventoryArticleRow> {
   return invokeParsed(
     "create_inventory_article",
     { input: InventoryArticleInputSchema.parse(input) },
@@ -972,8 +1225,8 @@ export function createInventoryArticle(input: InventoryArticleInput): Promise<In
 export function updateInventoryArticle(
   articleId: number,
   expectedRowVersion: number,
-  input: InventoryArticleInput,
-): Promise<InventoryArticle> {
+  input: InventoryArticleInputFull,
+): Promise<InventoryArticleRow> {
   return invokeParsed(
     "update_inventory_article",
     { articleId, expectedRowVersion, input: InventoryArticleInputSchema.parse(input) },
@@ -983,7 +1236,7 @@ export function updateInventoryArticle(
 
 export function listInventoryStockBalances(
   filter: InventoryStockFilter,
-): Promise<InventoryStockBalance[]> {
+): Promise<InventoryStockBalanceRow[]> {
   return invokeParsed(
     "list_inventory_stock_balances",
     { filter },
@@ -991,10 +1244,42 @@ export function listInventoryStockBalances(
   );
 }
 
+/**
+ * Manual stock movement. `unitCost` (tenant currency) is accepted on entries only: it updates the
+ * location's weighted-average cost. Exits and entries without a cost are valued at the average.
+ */
 export function adjustInventoryStock(
   input: InventoryStockAdjustInput,
-): Promise<InventoryStockBalance> {
-  return invokeParsed("adjust_inventory_stock", { input }, InventoryStockBalanceSchema);
+  unitCost: number | null = null,
+  options: AdjustStockOptions = {},
+): Promise<InventoryStockBalanceRow> {
+  return invokeParsed(
+    "adjust_inventory_stock",
+    {
+      input,
+      unitCost,
+      lotId: options.lotId ?? null,
+      newLot: options.newLot ?? null,
+      postingDate: options.postingDate ?? null,
+    },
+    InventoryStockBalanceSchema,
+  );
+}
+
+/** Lot / serial and business date of a manual movement. */
+export interface AdjustStockOptions {
+  /** Existing lot to move (exits, or an entry into a known lot). */
+  lotId?: number | null;
+  /** New lot or serial number for an entry of a tracked article. */
+  newLot?: NewLotInput | null;
+  /** Back-dated movement (YYYY-MM-DD); refused inside a closed valuation period. */
+  postingDate?: string | null;
+}
+
+export interface NewLotInput {
+  lot_number: string | null;
+  serial_number: string | null;
+  expiry_date: string | null;
 }
 
 export function reserveInventoryStock(input: InventoryReserveInput): Promise<StockReservation> {
@@ -1029,7 +1314,7 @@ export function listInventoryReservations(
 
 export function listInventoryTransactions(
   filter: InventoryTransactionFilter,
-): Promise<InventoryTransaction[]> {
+): Promise<InventoryTransactionRow[]> {
   return invokeParsed(
     "list_inventory_transactions",
     { filter },
@@ -1055,7 +1340,7 @@ export function listInventoryProcurementSuppliers(): Promise<ProcurementSupplier
   );
 }
 
-export function listInventoryProcurementRequisitions(): Promise<ProcurementRequisition[]> {
+export function listInventoryProcurementRequisitions(): Promise<ProcurementRequisitionRow[]> {
   return invokeParsed(
     "list_inventory_procurement_requisitions",
     undefined,
@@ -1063,9 +1348,14 @@ export function listInventoryProcurementRequisitions(): Promise<ProcurementRequi
   );
 }
 
+export type ProcurementRequisitionLineRow = ProcurementRequisitionLine & {
+  /** Estimated unit cost (tenant currency); used for the approval amount. */
+  estimated_unit_cost: number | null;
+};
+
 export function listInventoryProcurementRequisitionLines(
   requisitionId: number,
-): Promise<ProcurementRequisitionLine[]> {
+): Promise<ProcurementRequisitionLineRow[]> {
   return invokeParsed(
     "list_inventory_procurement_requisition_lines",
     { requisitionId },
@@ -1085,7 +1375,7 @@ export function createInventoryProcurementRequisition(
 
 export function transitionInventoryProcurementRequisition(
   input: TransitionProcurementRequisitionInput,
-): Promise<ProcurementRequisition> {
+): Promise<ProcurementRequisitionRow> {
   return invokeParsed(
     "transition_inventory_procurement_requisition",
     { input },
@@ -1094,8 +1384,8 @@ export function transitionInventoryProcurementRequisition(
 }
 
 export function createInventoryPurchaseOrderFromRequisition(
-  input: CreatePurchaseOrderFromRequisitionInput,
-): Promise<PurchaseOrder> {
+  input: CreatePurchaseOrderFromRequisitionInput & { currency_code?: string | null },
+): Promise<PurchaseOrderRow> {
   return invokeParsed(
     "create_inventory_purchase_order_from_requisition",
     { input },
@@ -1105,11 +1395,11 @@ export function createInventoryPurchaseOrderFromRequisition(
 
 export function transitionInventoryPurchaseOrder(
   input: TransitionPurchaseOrderInput,
-): Promise<PurchaseOrder> {
+): Promise<PurchaseOrderRow> {
   return invokeParsed("transition_inventory_purchase_order", { input }, PurchaseOrderSchema);
 }
 
-export function listInventoryPurchaseOrders(): Promise<PurchaseOrder[]> {
+export function listInventoryPurchaseOrders(): Promise<PurchaseOrderRow[]> {
   return invokeParsed("list_inventory_purchase_orders", undefined, z.array(PurchaseOrderSchema));
 }
 
@@ -1123,9 +1413,14 @@ export function listInventoryPurchaseOrderLines(
   );
 }
 
+/** Purchase order detail with the buyer's display name on the order. */
+export type PurchaseOrderDetailView = Omit<PurchaseOrderDetail, "order"> & {
+  order: PurchaseOrderRow;
+};
+
 export function getInventoryPurchaseOrderDetail(
   purchaseOrderId: number,
-): Promise<PurchaseOrderDetail> {
+): Promise<PurchaseOrderDetailView> {
   return invokeParsed(
     "get_inventory_purchase_order_detail",
     { purchaseOrderId },
@@ -1152,18 +1447,18 @@ export function projectInventoryStockImpact(params: {
 }
 
 export function receiveInventoryPurchaseOrderGoods(
-  input: ReceiveGoodsInput,
-): Promise<GoodsReceipt> {
+  input: ReceiveGoodsInputFull,
+): Promise<GoodsReceiptRow> {
   return invokeParsed("receive_inventory_purchase_order_goods", { input }, GoodsReceiptSchema);
 }
 
-export function listInventoryGoodsReceipts(): Promise<GoodsReceipt[]> {
+export function listInventoryGoodsReceipts(): Promise<GoodsReceiptRow[]> {
   return invokeParsed("list_inventory_goods_receipts", undefined, z.array(GoodsReceiptSchema));
 }
 
 export function listInventoryGoodsReceiptLines(
   goodsReceiptId: number,
-): Promise<GoodsReceiptLine[]> {
+): Promise<GoodsReceiptLineRow[]> {
   return invokeParsed(
     "list_inventory_goods_receipt_lines",
     { goodsReceiptId },
@@ -1270,7 +1565,7 @@ export function listInventoryCountSessions(): Promise<InventoryCountSession[]> {
   );
 }
 
-export function listInventoryCountLines(sessionId: number): Promise<InventoryCountLine[]> {
+export function listInventoryCountLines(sessionId: number): Promise<InventoryCountLineRow[]> {
   return invokeParsed(
     "list_inventory_count_lines",
     { sessionId },
@@ -1304,19 +1599,19 @@ export function listInventoryReconciliationFindings(
 
 // ── Supplier functions ────────────────────────────────────────────────────────
 
-export function listInventorySuppliers(): Promise<InventorySupplier[]> {
+export function listInventorySuppliers(): Promise<InventorySupplierRow[]> {
   return invokeParsed("list_inventory_suppliers", undefined, z.array(InventorySupplierSchema));
 }
 
-export function getInventorySupplier(supplierId: number): Promise<InventorySupplier> {
+export function getInventorySupplier(supplierId: number): Promise<InventorySupplierRow> {
   return invokeParsed("get_inventory_supplier", { supplierId }, InventorySupplierSchema);
 }
 
 export function upsertInventorySupplier(
   supplierId: number | null | undefined,
   expectedRowVersion: number | null | undefined,
-  input: InventorySupplierInput,
-): Promise<InventorySupplier> {
+  input: InventorySupplierInputFull,
+): Promise<InventorySupplierRow> {
   return invokeParsed(
     "upsert_inventory_supplier",
     { supplierId: supplierId ?? null, expectedRowVersion: expectedRowVersion ?? null, input },
@@ -1558,5 +1853,318 @@ export function suggestInventoryInternalTransfer(
     "suggest_inventory_internal_transfer",
     { articleId, targetWarehouseId },
     z.array(InventoryStockBalanceSchema),
+  );
+}
+
+// ── Issue desk, lots, currencies, valuation, approval limits (migration 184) ──
+
+const LotStockSchema = z.object({
+  lot_id: z.number(),
+  article_id: z.number(),
+  article_code: z.string(),
+  article_name: z.string(),
+  lot_number: z.string().nullable(),
+  serial_number: z.string().nullable(),
+  expiry_date: z.string().nullable(),
+  location_id: z.number(),
+  location_code: z.string(),
+  warehouse_id: z.number(),
+  warehouse_code: z.string(),
+  quantity: z.number(),
+  days_to_expiry: z.number().nullable(),
+});
+export type LotStock = z.infer<typeof LotStockSchema>;
+
+const IssuedLineSchema = z.object({
+  transaction_id: z.number(),
+  lot_id: z.number().nullable(),
+  lot_number: z.string().nullable(),
+  serial_number: z.string().nullable(),
+  /** Stock-unit quantity; the unit cost is per stock unit. */
+  quantity: z.number(),
+  /** Part of the entered quantity (null when entered in the stock unit). */
+  entered_quantity: z.number().nullable(),
+  unit_cost: z.number().nullable(),
+  extended_cost: z.number().nullable(),
+});
+
+const IssueOutcomeSchema = z.object({
+  reservation_id: z.number(),
+  work_order_id: z.number().nullable(),
+  work_order_code: z.string().nullable(),
+  /** Quantity issued in the stock unit. */
+  stock_quantity: z.number(),
+  entered_unit_value_id: z.number().nullable(),
+  entered_quantity: z.number(),
+  lines: z.array(IssuedLineSchema),
+  total_cost: z.number().nullable(),
+});
+export type IssueOutcome = z.infer<typeof IssueOutcomeSchema>;
+
+export interface IssueStockRequest {
+  article_id: number;
+  location_id: number;
+  quantity: number;
+  /** Work order the parts go to; required without a reservation. */
+  work_order_id: number | null;
+  /** Planned-part reservation to consume. */
+  reservation_id: number | null;
+  /** Chosen lot / serial; tracked articles without one are picked first-expired-first-out. */
+  lot_id: number | null;
+  notes: string | null;
+  /** Unit `quantity` is entered in (MEASURE.UNITS); null = the article's stock unit. */
+  entered_unit_value_id?: number | null;
+}
+
+const ScanResolutionSchema = z.object({
+  article_id: z.number(),
+  article_code: z.string(),
+  article_name: z.string(),
+  unit_code: z.string(),
+  lot_id: z.number().nullable(),
+  /** barcode | article_code | lot */
+  matched_on: z.string(),
+});
+export type ScanResolution = z.infer<typeof ScanResolutionSchema>;
+
+/** Issues stock to a work order from the store — the same ISSUE posting as OT part usage. */
+export function issueInventoryStockToWorkOrder(request: IssueStockRequest): Promise<IssueOutcome> {
+  return invokeParsed(
+    "issue_inventory_stock_to_work_order",
+    { request: { ...request, actor_id: null } },
+    IssueOutcomeSchema,
+  );
+}
+
+/** Resolves a scanned barcode, article code, lot or serial number. */
+export function resolveInventoryScan(value: string): Promise<ScanResolution> {
+  return invokeParsed("resolve_inventory_scan", { value }, ScanResolutionSchema);
+}
+
+/** Lots in stock for an article (first-expired first), optionally at one location. */
+export function listInventoryLotStock(
+  articleId: number,
+  locationId: number | null = null,
+): Promise<LotStock[]> {
+  return invokeParsed(
+    "list_inventory_lot_stock",
+    { articleId, locationId },
+    z.array(LotStockSchema),
+  );
+}
+
+/** Lots in stock that expire within `withinDays` days (expired lots included). */
+export function listInventoryExpiringLots(withinDays: number): Promise<LotStock[]> {
+  return invokeParsed("list_inventory_expiring_lots", { withinDays }, z.array(LotStockSchema));
+}
+
+const CurrencyExchangeRateSchema = z.object({
+  id: z.number(),
+  from_currency: z.string(),
+  to_currency: z.string(),
+  rate: z.number(),
+  valid_from: z.string(),
+  source: z.string().nullable(),
+  is_active: z.number(),
+  created_by_name: z.string().nullable(),
+  created_at: z.string(),
+});
+export type CurrencyExchangeRate = z.infer<typeof CurrencyExchangeRateSchema>;
+
+export interface CurrencyExchangeRateInput {
+  from_currency: string;
+  /** Defaults to the tenant currency. */
+  to_currency: string | null;
+  rate: number;
+  valid_from: string;
+  source: string | null;
+}
+
+const ResolvedExchangeRateSchema = z.object({
+  from_currency: z.string(),
+  to_currency: z.string(),
+  rate: z.number().nullable(),
+  valid_from: z.string().nullable(),
+});
+export type ResolvedExchangeRate = z.infer<typeof ResolvedExchangeRateSchema>;
+
+export function listCurrencyExchangeRates(): Promise<CurrencyExchangeRate[]> {
+  return invokeParsed(
+    "list_currency_exchange_rates",
+    undefined,
+    z.array(CurrencyExchangeRateSchema),
+  );
+}
+
+export function createCurrencyExchangeRate(
+  input: CurrencyExchangeRateInput,
+): Promise<CurrencyExchangeRate> {
+  return invokeParsed("create_currency_exchange_rate", { input }, CurrencyExchangeRateSchema);
+}
+
+export function deactivateCurrencyExchangeRate(rateId: number): Promise<void> {
+  return invokeParsed("deactivate_currency_exchange_rate", { rateId }, z.unknown()).then(
+    () => undefined,
+  );
+}
+
+/** Stored rate `fromCurrency` → tenant currency valid on `onDate` (today by default). */
+export function resolveCurrencyExchangeRate(
+  fromCurrency: string,
+  onDate: string | null = null,
+): Promise<ResolvedExchangeRate> {
+  return invokeParsed(
+    "resolve_currency_exchange_rate",
+    { fromCurrency, onDate },
+    ResolvedExchangeRateSchema,
+  );
+}
+
+const ValuationReportRowSchema = z.object({
+  group_id: z.number().nullable(),
+  group_code: z.string(),
+  group_name: z.string(),
+  quantity: z.number(),
+  value: z.number(),
+  unvalued_qty: z.number(),
+  article_count: z.number(),
+});
+
+const ValuationReportSchema = z.object({
+  as_at: z.string(),
+  group_by: z.string(),
+  currency_code: z.string(),
+  frozen_period_code: z.string().nullable(),
+  total_value: z.number(),
+  unvalued_qty: z.number(),
+  rows: z.array(ValuationReportRowSchema),
+});
+export type ValuationReport = z.infer<typeof ValuationReportSchema>;
+export type ValuationGroupBy = "article" | "warehouse" | "family";
+
+const InventoryValuationPeriodSchema = z.object({
+  id: z.number(),
+  period_code: z.string(),
+  period_start: z.string(),
+  period_end: z.string(),
+  status: z.string(),
+  currency_code: z.string(),
+  total_value: z.number(),
+  unvalued_qty: z.number(),
+  notes: z.string().nullable(),
+  closed_by_name: z.string().nullable(),
+  closed_at: z.string(),
+});
+export type InventoryValuationPeriod = z.infer<typeof InventoryValuationPeriodSchema>;
+
+/** Stock value by article, warehouse or family as at a date (today by default). */
+export function getInventoryValuationReport(
+  groupBy: ValuationGroupBy,
+  asAt: string | null = null,
+): Promise<ValuationReport> {
+  return invokeParsed("get_inventory_valuation_report", { groupBy, asAt }, ValuationReportSchema);
+}
+
+export function listInventoryValuationPeriods(): Promise<InventoryValuationPeriod[]> {
+  return invokeParsed(
+    "list_inventory_valuation_periods",
+    undefined,
+    z.array(InventoryValuationPeriodSchema),
+  );
+}
+
+/** Closes a past period: freezes its valuation and refuses later postings dated inside it. */
+export function closeInventoryValuationPeriod(input: {
+  period_start: string;
+  period_end: string;
+  notes: string | null;
+}): Promise<InventoryValuationPeriod> {
+  return invokeParsed(
+    "close_inventory_valuation_period",
+    { input: { ...input, actor_id: null } },
+    InventoryValuationPeriodSchema,
+  );
+}
+
+const ProcurementApprovalLimitSchema = z.object({
+  id: z.number(),
+  role_id: z.number(),
+  role_name: z.string(),
+  document_type: z.string(),
+  max_amount: z.number().nullable(),
+  is_active: z.number(),
+  row_version: z.number(),
+  updated_at: z.string(),
+});
+export type ProcurementApprovalLimit = z.infer<typeof ProcurementApprovalLimitSchema>;
+export type ApprovalDocumentType = "REQUISITION" | "PURCHASE_ORDER";
+
+export function listProcurementApprovalLimits(): Promise<ProcurementApprovalLimit[]> {
+  return invokeParsed(
+    "list_procurement_approval_limits",
+    undefined,
+    z.array(ProcurementApprovalLimitSchema),
+  );
+}
+
+/** Sets a role's approval ceiling for a document type (null = unlimited). */
+export function upsertProcurementApprovalLimit(input: {
+  role_id: number;
+  document_type: ApprovalDocumentType;
+  max_amount: number | null;
+  is_active: boolean;
+}): Promise<ProcurementApprovalLimit> {
+  return invokeParsed(
+    "upsert_procurement_approval_limit",
+    { input: { ...input, actor_id: null } },
+    ProcurementApprovalLimitSchema,
+  );
+}
+
+export interface RequisitionLineInput {
+  article_id: number;
+  preferred_location_id: number | null;
+  requested_qty: number;
+  /** Estimated unit cost (tenant currency); sets the approval amount. */
+  estimated_unit_cost: number | null;
+}
+
+/** Creates a requisition with several lines (the requester is the signed-in user). */
+export function createInventoryMultiLineRequisition(input: {
+  lines: RequisitionLineInput[];
+  demand_source_type: string;
+  demand_source_ref: string | null;
+  purchase_priority: string | null;
+  reason: string | null;
+}): Promise<ProcurementRequisitionRow> {
+  return invokeParsed(
+    "create_inventory_multi_line_requisition",
+    { input: { ...input, actor_id: null } },
+    ProcurementRequisitionSchema,
+  );
+}
+
+/** Replaces the lines of a draft requisition. */
+export function replaceInventoryRequisitionLines(input: {
+  requisition_id: number;
+  expected_row_version: number;
+  lines: RequisitionLineInput[];
+}): Promise<ProcurementRequisitionRow> {
+  return invokeParsed(
+    "replace_inventory_requisition_lines",
+    { input: { ...input, actor_id: null } },
+    ProcurementRequisitionSchema,
+  );
+}
+
+/** Sets the agreed unit price of a draft PO line, in the PO currency (null clears it). */
+export function setInventoryPurchaseOrderLinePrice(
+  poLineId: number,
+  unitPrice: number | null,
+): Promise<PurchaseOrderLine> {
+  return invokeParsed(
+    "set_inventory_purchase_order_line_price",
+    { poLineId, unitPrice },
+    PurchaseOrderLineSchema,
   );
 }

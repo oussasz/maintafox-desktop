@@ -49,7 +49,7 @@ export function DocumentationModuleLayout() {
                   to={`/documentation/${slug}`}
                   className={({ isActive }) =>
                     cn(
-                      "flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors",
+                      "flex min-h-10 items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                       isActive
                         ? "border border-primary/30 bg-surface-2 text-text-primary shadow-sm"
                         : "border border-transparent text-text-muted hover:border-surface-border hover:bg-surface-2/80 hover:text-text-primary",

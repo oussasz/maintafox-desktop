@@ -692,7 +692,8 @@ pub struct ScheduleClass {
     pub name: String,
     pub shift_pattern_code: String,
     pub is_continuous: i64,
-    pub nominal_hours_per_day: f64,
+    /// As typed on the class; `None` when not set (never assumed).
+    pub nominal_hours_per_day: Option<f64>,
     pub is_active: i64,
     pub created_at: String,
 }
@@ -937,30 +938,10 @@ mod masking_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
-    use sea_orm_migration::MigratorTrait;
+    use sea_orm::ConnectionTrait;
 
     async fn setup_migrated_db() -> DatabaseConnection {
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("in-memory SQLite should connect");
-
-        db.execute(Statement::from_string(
-            DbBackend::Sqlite,
-            "PRAGMA foreign_keys = ON;".to_string(),
-        ))
-        .await
-        .expect("PRAGMA foreign_keys");
-
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("migrations should apply");
-
-        crate::db::seeder::seed_system_data(&db)
-            .await
-            .expect("seeder should run");
-
-        db
+        crate::db::test_db::seeded().await
     }
 
     #[test]

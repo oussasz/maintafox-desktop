@@ -412,7 +412,8 @@ async fn create_and_close_corrective_wo(db: &DatabaseConnection, ctx: CreateWoSe
             source_rca_cause_text: None,
             entity_id: Some(ctx.org_node_id),
             planner_id: Some(ctx.actor_id),
-            urgency_id: Some(3),
+            urgency_code: Some("normal".into()),
+            subtype_code: None,
             title: ctx.title,
             description: Some("RAMS presentation seed — governed corrective close-out.".into()),
             notes: None,
@@ -436,8 +437,12 @@ async fn create_and_close_corrective_wo(db: &DatabaseConnection, ctx: CreateWoSe
             planned_start: Some(ctx.fail_start.clone()),
             planned_end: Some(ctx.fail_end.clone()),
             shift: None,
+            shift_class_version_id: None,
+            clear_shift: false,
             expected_duration_hours: Some(ctx.repair_hours),
-            urgency_id: None,
+            planned_crew_size: None,
+            clear_crew_size: false,
+            urgency_code: None,
             planned_downtime_hours: None,
         },
     )
@@ -687,8 +692,8 @@ async fn ensure_failure_reference_prerequisites(db: &DatabaseConnection) -> AppR
     } else {
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "INSERT INTO reference_domains (code, name, structure_type, governance_level, governance_category, is_extendable, created_at, updated_at) \
-             VALUES ('WORK.FAILURE_MODES', 'Modes de défaillance', 'hierarchical', 'system_seeded', 'controlled_catalog', 0, ?, ?)",
+            "INSERT INTO reference_domains (code, name, structure_type, governance_level, governance_category, audience, is_extendable, created_at, updated_at) \
+             VALUES ('WORK.FAILURE_MODES', 'Modes de défaillance', 'hierarchical', 'system_seeded', 'controlled_catalog', 'company', 0, ?, ?)",
             [now.clone().into(), now.clone().into()],
         ))
         .await?;

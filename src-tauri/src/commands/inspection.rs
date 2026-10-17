@@ -7,18 +7,23 @@ use tauri::{Manager, State};
 use crate::auth::rbac::PermissionScope;
 use crate::errors::{AppError, AppResult};
 use crate::inspection::domain::{
-    AddInspectionEvidenceInput, AddInspectionPhotoInput, CreateInspectionTemplateInput, InspectionAnomaliesFilter,
-    InspectionAnomaly, InspectionCheckpoint, InspectionCheckpointsFilter, InspectionEvidence, InspectionEvidenceFilter,
-    InspectionReliabilitySignal, InspectionReliabilitySignalsFilter, InspectionResult, InspectionResultsFilter,
-    InspectionRound, InspectionRoundActionInput, InspectionRoundRunner, InspectionRoundSummary,
-    InspectionRoundSummaryFilter, InspectionTemplate, InspectionTemplateVersion, InspectionTemplateVersionsFilter,
-    PublishInspectionTemplateVersionInput, RecordInspectionResultInput, RefreshInspectionReliabilitySignalsInput,
-    ScheduleInspectionRoundInput, UpdateInspectionAnomalyInput,
+    AddInspectionEvidenceInput, AddInspectionPhotoInput, CreateInspectionTemplateInput, GenerateInspectionRoundsInput,
+    GenerateInspectionRoundsResult, InspectionAnomaliesFilter, InspectionAnomaly, InspectionAnomalyPage,
+    InspectionAnomalyRow, InspectionAnomalyRowFilter, InspectionCheckpoint, InspectionCheckpointsFilter,
+    InspectionEvidence, InspectionEvidenceFilter, InspectionKpis, InspectionKpisInput, InspectionReliabilitySignal,
+    InspectionReliabilitySignalsFilter, InspectionResult, InspectionResultsFilter, InspectionRound,
+    InspectionRoundActionInput, InspectionRoundPage, InspectionRoundRunner, InspectionRoundSummary,
+    InspectionRoundSummaryFilter, InspectionScheduleSummary, InspectionTemplate, InspectionTemplateVersion,
+    InspectionTemplateVersionsFilter, PublishInspectionTemplateVersionInput, RecordInspectionResultInput,
+    RefreshInspectionReliabilitySignalsInput, SaveInspectionScheduleInput, ScheduleInspectionRoundInput,
+    UpdateInspectionAnomalyInput,
 };
+use crate::inspection::insights;
 use crate::inspection::queries;
 use crate::inspection::results;
 use crate::inspection::routing;
 use crate::inspection::runner;
+use crate::inspection::scheduling;
 use crate::inspection::signals;
 use crate::state::AppState;
 use crate::wo::audit;
@@ -38,6 +43,8 @@ pub struct RouteInspectionAnomalyToWoInput {
     pub expected_row_version: i64,
     pub type_code: String,
     pub title: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -424,6 +431,7 @@ pub async fn route_inspection_anomaly_to_wo(
         i64::from(user.user_id),
         input.type_code,
         input.title,
+        input.description,
     )
     .await?;
     audit::record_wo_change_event(
@@ -485,4 +493,108 @@ pub async fn refresh_inspection_reliability_signals(
         PermissionScope::Global
     );
     signals::refresh_inspection_reliability_signals(&state.db, input).await
+}
+
+// ── Recurring rounds, module figures, anomaly follow-up (Phase 6.3) ──────────────────────
+
+/// Rounds with the number matching the filter (the list says when it shows part of them).
+#[tauri::command]
+pub async fn list_inspection_round_page(
+    filter: InspectionRoundSummaryFilter,
+    state: State<'_, AppState>,
+) -> AppResult<InspectionRoundPage> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INS_VIEW,
+        PermissionScope::Global
+    );
+    runner::list_inspection_round_page(&state.db, filter).await
+}
+
+#[tauri::command]
+pub async fn get_inspection_kpis(input: InspectionKpisInput, state: State<'_, AppState>) -> AppResult<InspectionKpis> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INS_VIEW,
+        PermissionScope::Global
+    );
+    insights::get_inspection_kpis(&state.db, input).await
+}
+
+#[tauri::command]
+pub async fn list_inspection_anomaly_rows(
+    filter: InspectionAnomalyRowFilter,
+    state: State<'_, AppState>,
+) -> AppResult<InspectionAnomalyPage> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INS_VIEW,
+        PermissionScope::Global
+    );
+    insights::list_inspection_anomaly_rows(&state.db, filter).await
+}
+
+#[tauri::command]
+pub async fn get_inspection_anomaly_row(
+    anomaly_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<InspectionAnomalyRow> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INS_VIEW,
+        PermissionScope::Global
+    );
+    insights::get_inspection_anomaly_row(&state.db, anomaly_id).await
+}
+
+#[tauri::command]
+pub async fn list_inspection_schedules(state: State<'_, AppState>) -> AppResult<Vec<InspectionScheduleSummary>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INS_VIEW,
+        PermissionScope::Global
+    );
+    scheduling::list_inspection_schedules(&state.db).await
+}
+
+/// Creates or updates a recurring schedule and generates its rounds.
+#[tauri::command]
+pub async fn save_inspection_schedule(
+    input: SaveInspectionScheduleInput,
+    state: State<'_, AppState>,
+) -> AppResult<InspectionScheduleSummary> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INS_ADMIN,
+        PermissionScope::Global
+    );
+    scheduling::save_inspection_schedule(&state.db, input).await
+}
+
+/// Generates the due rounds of the active schedules and marks the missed ones.
+#[tauri::command]
+pub async fn generate_inspection_rounds(
+    input: GenerateInspectionRoundsInput,
+    state: State<'_, AppState>,
+) -> AppResult<GenerateInspectionRoundsResult> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INS_ADMIN,
+        PermissionScope::Global
+    );
+    scheduling::generate_inspection_rounds(&state.db, input).await
 }

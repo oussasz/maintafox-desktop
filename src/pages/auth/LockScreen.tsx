@@ -1,8 +1,11 @@
+import { Loader2 } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { AuthAlert, AuthButton } from "@/components/auth/shell/AuthPrimitives";
 import { MaintafoxWordmark } from "@/components/branding/MaintafoxWordmark";
 import { mfAuth } from "@/design-system/tokens";
+import { cn } from "@/lib/utils";
 
 interface LockScreenProps {
   displayName: string | null;
@@ -217,7 +220,10 @@ export function LockScreen({
             <p className="text-xs text-text-muted">{t("session.pin.hint")}</p>
             {loading && (
               <div className="flex justify-center">
-                <div className="h-4 w-4 animate-spin rounded-full border-2 border-surface-3 border-t-primary" />
+                <Loader2
+                  className="h-4 w-4 animate-spin text-primary"
+                  aria-label={t("session.idleLocked.unlocking")}
+                />
               </div>
             )}
           </div>
@@ -249,24 +255,17 @@ export function LockScreen({
               />
             </div>
 
-            <button
-              type="submit"
-              disabled={loading}
-              className="btn-primary w-full py-2 text-sm font-medium"
-            >
+            <AuthButton type="submit" loading={loading} disabled={loading}>
               {loading ? t("session.idleLocked.unlocking") : t("session.idleLocked.unlockAction")}
-            </button>
+            </AuthButton>
           </form>
         )}
 
         {/* Error display */}
         {error && (
-          <div
-            role="alert"
-            className="mt-4 rounded-md bg-status-danger/10 px-3 py-2 text-sm text-status-danger"
-          >
+          <AuthAlert tone="danger" role="alert" className="mt-4 text-left">
             {error}
-          </div>
+          </AuthAlert>
         )}
 
         {/* Mode toggle */}
@@ -277,7 +276,7 @@ export function LockScreen({
               setMode((m) => (m === "pin" ? "password" : "pin"));
               setError(null);
             }}
-            className="mt-4 text-xs text-primary hover:text-primary/80 transition-colors"
+            className={cn("mt-4 min-h-11 px-2 text-xs", mfAuth.linkPrimary)}
           >
             {mode === "pin" ? t("session.pin.usePassword") : t("session.pin.usePin")}
           </button>
@@ -287,8 +286,9 @@ export function LockScreen({
         <button
           type="button"
           onClick={onLogout}
-          className="mt-4 block w-full text-xs text-text-muted hover:text-text-secondary
-                     transition-colors"
+          className="mt-2 block min-h-11 w-full rounded-md text-xs text-text-muted transition-colors
+                     hover:text-text-secondary focus-visible:outline-none focus-visible:ring-2
+                     focus-visible:ring-ring"
         >
           {t("logout.label")}
         </button>

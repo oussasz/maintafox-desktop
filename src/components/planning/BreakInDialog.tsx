@@ -1,13 +1,18 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import {
-  fromDateTimeLocal,
-  PLANNING_BREAK_IN_REASONS,
-  toDateTimeLocal,
-  type PlanningBreakInReason,
-} from "@/components/planning/planning-model";
+  AssigneeCapacityDetails,
+  assigneeOptionSuffix,
+} from "@/components/planning/AssigneeCapacityDetails";
+import {
+  breakInReasonLabel,
+  isUrgentBreakInReason,
+  useBreakInReasons,
+} from "@/components/planning/break-in-reasons";
+import { fromDateTimeLocal, toDateTimeLocal } from "@/components/planning/planning-model";
+import { useAssigneeCapacity } from "@/components/planning/use-assignee-capacity";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -26,7 +31,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { useFormatters } from "@/hooks/use-formatters";
 import { formatOrDash, formatPersonLabel } from "@/lib/display";
+import { listTeamMembers } from "@/services/personnel-service";
+import { extractIpcValidationDetails } from "@/utils/errors";
 import type {
   CreateScheduleBreakInInput,
   ScheduleBreakIn,
@@ -43,6 +51,8 @@ type BreakInDialogProps = {
   commitments: ScheduleCommitment[];
   breakIns: ScheduleBreakIn[];
   teamId: number | null;
+  /** Commitment to move when the dialog opens (from the commitment inspector). */
+  initialCommitmentId?: number | null;
   approvers: ApproverOption[];
   personnel: PersonnelOption[];
   saving: boolean;
@@ -55,22 +65,91 @@ export function BreakInDialog({
   commitments,
   breakIns,
   teamId,
+  initialCommitmentId = null,
   approvers,
   personnel,
   saving,
   onSubmit,
 }: BreakInDialogProps) {
-  const { t } = useTranslation("planning");
+  const { t, i18n } = useTranslation("planning");
+  const { formatDateTime } = useFormatters();
+  const reasons = useBreakInReasons(open);
   const [commitmentId, setCommitmentId] = useState<number | null>(null);
-  const [reason, setReason] = useState<PlanningBreakInReason>("emergency");
+  const [reason, setReason] = useState<string>("");
+  // The plant's list decides the reasons: the first one until the planner picks.
+  useEffect(() => {
+    if (reason === "" && reasons.length > 0) setReason(reasons[0]?.code ?? "");
+  }, [reason, reasons]);
+  const urgent = isUrgentBreakInReason(reasons.find((r) => r.code === reason));
   const [approverUserId, setApproverUserId] = useState<number | null>(null);
   const [newStart, setNewStart] = useState("");
   const [newEnd, setNewEnd] = useState("");
   const [newPersonnelId, setNewPersonnelId] = useState<number | null>(null);
   const [overrideReason, setOverrideReason] = useState("");
   const [dangerousOverrideReason, setDangerousOverrideReason] = useState("");
+  const [slotError, setSlotError] = useState<string | null>(null);
+  const [crew, setCrew] = useState<PersonnelOption[] | null>(null);
+  /** Assignee refusals returned for this break-in, and whether the planner overrides them. */
+  const [refusals, setRefusals] = useState<string[]>([]);
+  const [acknowledged, setAcknowledged] = useState(false);
+
+  // Opened on a commitment (inspector): that one is selected.
+  useEffect(() => {
+    if (open && initialCommitmentId != null) setCommitmentId(initialCommitmentId);
+  }, [open, initialCommitmentId]);
 
   const selected = commitments.find((c) => c.id === commitmentId) ?? null;
+  // The crew it moves to: the crew in scope, else the commitment's own crew.
+  const targetTeamId = teamId ?? selected?.assigned_team_id ?? null;
+
+  // Technicians offered: the target crew's members (all personnel only if it cannot be read).
+  useEffect(() => {
+    if (!open || targetTeamId == null) {
+      setCrew(null);
+      return;
+    }
+    let cancelled = false;
+    listTeamMembers(targetTeamId)
+      .then((members) => {
+        if (cancelled) return;
+        setCrew(
+          members.map((m) => ({
+            id: m.personnel_id,
+            label: m.employee_code
+              ? `${formatPersonLabel(m.full_name)} (${m.employee_code})`
+              : formatPersonLabel(m.full_name),
+          })),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setCrew(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, targetTeamId]);
+  const capacity = useAssigneeCapacity({
+    enabled: open && selected != null,
+    teamId: targetTeamId,
+    startIso: newStart.trim() ? fromDateTimeLocal(newStart) : "",
+    endIso: newEnd.trim() ? fromDateTimeLocal(newEnd) : "",
+    commitmentId: selected?.id ?? null,
+  });
+  const assigneeOptions = useMemo(
+    () =>
+      (crew ?? personnel).map((person) => {
+        const cap = capacity.get(person.id);
+        return cap
+          ? { ...person, label: `${person.label} — ${assigneeOptionSuffix(cap, t)}` }
+          : person;
+      }),
+    [crew, personnel, capacity, t],
+  );
+  // A new slot or technician: earlier refusals no longer apply.
+  useEffect(() => {
+    setRefusals([]);
+    setAcknowledged(false);
+  }, [newStart, newEnd, newPersonnelId, commitmentId]);
 
   useEffect(() => {
     if (!selected || !open) return;
@@ -81,20 +160,41 @@ export function BreakInDialog({
 
   async function handleSubmit() {
     if (!selected) return;
-    await onSubmit({
-      schedule_commitment_id: selected.id,
-      expected_commitment_row_version: selected.row_version,
-      break_in_reason: reason,
-      approved_by_user_id: approverUserId,
-      new_slot_start: fromDateTimeLocal(newStart),
-      new_slot_end: fromDateTimeLocal(newEnd),
-      new_assigned_team_id: teamId,
-      new_assigned_personnel_id: newPersonnelId,
-      bypass_availability: false,
-      bypass_qualification: false,
-      override_reason: overrideReason.trim() || null,
-      dangerous_override_reason: dangerousOverrideReason.trim() || null,
-    });
+    const startIso = fromDateTimeLocal(newStart);
+    const endIso = fromDateTimeLocal(newEnd);
+    if (!startIso || !endIso || new Date(endIso).getTime() <= new Date(startIso).getTime()) {
+      setSlotError(t("commitment.errors.endAfterStart"));
+      return;
+    }
+    setSlotError(null);
+    try {
+      await onSubmit({
+        schedule_commitment_id: selected.id,
+        expected_commitment_row_version: selected.row_version,
+        break_in_reason: reason,
+        approved_by_user_id: approverUserId,
+        new_slot_start: startIso,
+        new_slot_end: endIso,
+        new_assigned_team_id: targetTeamId,
+        new_assigned_personnel_id: newPersonnelId,
+        // "Unassigned" chosen on a commitment that has a technician removes them.
+        clear_assignee: newPersonnelId == null && selected.assigned_personnel_id != null,
+        bypass_availability: false,
+        override_reason: overrideReason.trim() || null,
+        dangerous_override_reason: dangerousOverrideReason.trim() || null,
+        // Only refusals the planner saw and ticked are overridden, with the reason above.
+        acknowledged_assignee_issues: acknowledged ? refusals : [],
+      });
+    } catch (err) {
+      const codes = extractIpcValidationDetails(err)
+        .map((d) => d.code)
+        .filter((c) => c.startsWith("PLANNING_ASSIGNEE_"));
+      if (codes.length > 0) {
+        setRefusals(codes);
+        setAcknowledged(false);
+      }
+      return;
+    }
     setOverrideReason("");
     setDangerousOverrideReason("");
     onOpenChange(false);
@@ -131,18 +231,21 @@ export function BreakInDialog({
             </div>
             <div>
               <Label>{t("breakIns.reason")}</Label>
-              <Select value={reason} onValueChange={(v) => setReason(v as PlanningBreakInReason)}>
-                <SelectTrigger className="h-8 text-sm">
+              <Select value={reason} onValueChange={setReason}>
+                <SelectTrigger className="h-8 text-sm" aria-label={t("breakIns.reason")}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {PLANNING_BREAK_IN_REASONS.map((code) => (
-                    <SelectItem key={code} value={code}>
-                      {t(`breakIns.reasons.${code}`)}
+                  {reasons.map((value) => (
+                    <SelectItem key={value.code} value={value.code}>
+                      {breakInReasonLabel(value.code, reasons, i18n.language)}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+              {urgent ? (
+                <p className="mt-1 text-xs text-text-warning">{t("breakIns.urgentHint")}</p>
+              ) : null}
             </div>
           </div>
 
@@ -198,16 +301,24 @@ export function BreakInDialog({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__unassigned__">{t("commitment.unassigned")}</SelectItem>
-                  {personnel.map((person) => (
+                  {assigneeOptions.map((person) => (
                     <SelectItem key={person.id} value={String(person.id)}>
                       {person.label}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+              {newPersonnelId != null ? (
+                <AssigneeCapacityDetails capacity={capacity.get(newPersonnelId)} assigned />
+              ) : null}
             </div>
           </div>
 
+          {slotError ? (
+            <p className="text-xs text-tone-danger-fg" role="alert">
+              {slotError}
+            </p>
+          ) : null}
           <div>
             <Label>{t("breakIns.overrideReason")}</Label>
             <Textarea
@@ -215,6 +326,27 @@ export function BreakInDialog({
               value={overrideReason}
               onChange={(e) => setOverrideReason(e.target.value)}
             />
+            {refusals.length > 0 ? (
+              <div className="mt-2 space-y-1 rounded border border-surface-border bg-surface-1 px-2 py-1.5">
+                <p className="text-xs text-text-primary">{t("override.assigneeDescription")}</p>
+                <ul
+                  className="list-disc space-y-0.5 pl-5 text-xs text-tone-attention-fg"
+                  role="status"
+                >
+                  {refusals.map((code) => (
+                    <li key={code}>{t(`assignee.issues.${code}`)}</li>
+                  ))}
+                </ul>
+                <label className="flex items-center gap-2 text-xs text-text-primary">
+                  <input
+                    type="checkbox"
+                    checked={acknowledged}
+                    onChange={(e) => setAcknowledged(e.target.checked)}
+                  />
+                  {t("breakIns.acknowledgeRefusals")}
+                </label>
+              </div>
+            ) : null}
           </div>
           <div>
             <Label>{t("breakIns.dangerousOverrideReason")}</Label>
@@ -234,13 +366,12 @@ export function BreakInDialog({
                 <span className="font-medium text-text-primary">
                   {formatOrDash(entry.commitment_source_code)}
                 </span>{" "}
-                {t(`breakIns.reasons.${entry.break_in_reason}`, {
-                  defaultValue: entry.break_in_reason,
-                })}
+                {breakInReasonLabel(entry.break_in_reason, reasons, i18n.language)}
                 {" · "}
-                {new Date(entry.old_slot_start).toLocaleString()}
-                {" → "}
-                {new Date(entry.new_slot_start).toLocaleString()}
+                {entry.old_slot_start
+                  ? `${formatDateTime(entry.old_slot_start)} → `
+                  : `${t("breakIns.inserted")} `}
+                {formatDateTime(entry.new_slot_start)}
                 {entry.old_assignee_name || entry.new_assignee_name
                   ? ` · ${formatPersonLabel(entry.old_assignee_name)} → ${formatPersonLabel(entry.new_assignee_name)}`
                   : null}

@@ -39,7 +39,10 @@ pub struct CostPostingHook {
     pub entity_id: Option<i64>,
     pub asset_id: Option<i64>,
     pub type_code: String,
-    pub urgency_level: Option<i64>,
+    /// Level of the shared DI / OT urgency scale.
+    pub urgency_code: Option<String>,
+    /// EN 13306 maintenance nature of the OT type.
+    pub nature_code: Option<String>,
     pub total_cost: f64,
     pub labor_cost: f64,
     pub parts_cost: f64,
@@ -169,7 +172,7 @@ pub async fn get_cost_posting_hook(db: &impl ConnectionTrait, wo_id: i64) -> App
                 wo.entity_id, \
                 wo.equipment_id AS asset_id, \
                 wot.code AS type_code, \
-                ul.level AS urgency_level, \
+                ul.code AS urgency_code, wot.semantic_tag AS nature_code, \
                 COALESCE(wo.total_cost, 0) AS total_cost, \
                 COALESCE(wo.labor_cost, 0) AS labor_cost, \
                 COALESCE(wo.parts_cost, 0) AS parts_cost, \
@@ -177,9 +180,9 @@ pub async fn get_cost_posting_hook(db: &impl ConnectionTrait, wo_id: i64) -> App
                 wo.closed_at, \
                 wos.code AS status_code \
              FROM work_orders wo \
-             JOIN work_order_types    wot ON wot.id = wo.type_id \
+             JOIN reference_values    wot ON wot.id = wo.type_id \
              JOIN work_order_statuses wos ON wos.id = wo.status_id \
-             LEFT JOIN urgency_levels  ul ON ul.id  = wo.urgency_id \
+             LEFT JOIN reference_values ul ON ul.id = wo.urgency_id \
              WHERE wo.id = ?",
             [wo_id.into()],
         ))
@@ -214,9 +217,12 @@ pub async fn get_cost_posting_hook(db: &impl ConnectionTrait, wo_id: i64) -> App
         type_code: row
             .try_get::<String>("", "type_code")
             .map_err(|e| decode_err("type_code", e))?,
-        urgency_level: row
-            .try_get::<Option<i64>>("", "urgency_level")
-            .map_err(|e| decode_err("urgency_level", e))?,
+        urgency_code: row
+            .try_get::<Option<String>>("", "urgency_code")
+            .map_err(|e| decode_err("urgency_code", e))?,
+        nature_code: row
+            .try_get::<Option<String>>("", "nature_code")
+            .map_err(|e| decode_err("nature_code", e))?,
         total_cost: row
             .try_get::<f64>("", "total_cost")
             .map_err(|e| decode_err("total_cost", e))?,

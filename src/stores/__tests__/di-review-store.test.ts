@@ -79,7 +79,7 @@ function makeDi(overrides: Partial<InterventionRequest> = {}): InterventionReque
     safety_flag: false,
     environmental_flag: false,
     quality_flag: false,
-    reported_urgency: "medium",
+    reported_urgency: "normal",
     validated_urgency: null,
     observed_at: null,
     submitted_at: "2026-04-01T10:00:00Z",
@@ -96,7 +96,6 @@ function makeDi(overrides: Partial<InterventionRequest> = {}): InterventionReque
     classification_code_id: null,
     is_recurrence_flag: false,
     recurrence_di_id: null,
-    is_modified: false,
     row_version: 1,
     submitter_id: 42,
     created_at: "2026-04-01T10:00:00Z",
@@ -334,7 +333,13 @@ type VoidAction = {
 
 function voidActions(): VoidAction[] {
   const store = useDiReviewStore.getState();
-  const returnInput = { di_id: 1, actor_id: 7, expected_row_version: 1, reviewer_note: "why?" };
+  const returnInput = {
+    di_id: 1,
+    actor_id: 7,
+    expected_row_version: 1,
+    reviewer_note: "why?",
+    reason_code: "unclear_description",
+  };
   const closeInput = {
     di_id: 1,
     actor_id: 7,

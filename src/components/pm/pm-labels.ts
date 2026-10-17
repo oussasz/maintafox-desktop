@@ -45,6 +45,18 @@ export const PM_EXECUTION_RESULTS = [
   "cancelled",
 ] as const;
 
+export const PM_FINDING_SEVERITIES = ["low", "medium", "high", "critical"] as const;
+/** Finding types written by the backend when an OT closes (see pm/generation_control.rs). */
+export const PM_WO_FINDING_TYPES = ["WO_FAILURE", "WO_TASK_NOK"] as const;
+/** Readiness blocker codes returned by `list_pm_planning_readiness`. */
+export const PM_READINESS_BLOCKERS = [
+  "missing_parts",
+  "missing_qualification",
+  "permit_not_ready",
+  "locked_window",
+  "prerequisite_incomplete",
+] as const;
+
 export type PmStrategyType = (typeof PM_STRATEGY_TYPES)[number];
 export type PmLifecycleStatus = (typeof PM_LIFECYCLE_STATUSES)[number];
 export type PmOccurrenceStatus = (typeof PM_OCCURRENCE_STATUSES)[number];

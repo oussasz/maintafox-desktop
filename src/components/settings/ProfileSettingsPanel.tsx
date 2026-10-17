@@ -8,11 +8,15 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { mfAlert, mfTable } from "@/design-system/tokens";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { mfAlert, mfInput, mfTable } from "@/design-system/tokens";
+import { describeAppError } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import { clearPin, setPin } from "@/services/auth-service";
 import {
@@ -90,6 +94,7 @@ export function ProfileSettingsPanel() {
   // dialogs
   const [pwDialogOpen, setPwDialogOpen] = useState(false);
   const [pinDialogOpen, setPinDialogOpen] = useState(false);
+  const [pinRemoveOpen, setPinRemoveOpen] = useState(false);
   const [devicesDialogOpen, setDevicesDialogOpen] = useState(false);
 
   // toast
@@ -134,14 +139,13 @@ export function ProfileSettingsPanel() {
         setSelectedSkillRef(null);
       }
     } catch (err) {
-      const msg =
-        err instanceof Error ? err.message : t("profile.loadError", "Failed to load profile.");
+      const msg = describeAppError(err).title;
       setLoadError(msg);
       setProfile(null);
     } finally {
       setLoading(false);
     }
-  }, [t]);
+  }, []);
 
   useEffect(() => {
     void loadData();
@@ -157,7 +161,7 @@ export function ProfileSettingsPanel() {
       setEditing(false);
       setToast({ type: "success", message: t("profile.saveSuccess", "Changes saved.") });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : t("profile.saveError", "Save failed.");
+      const msg = describeAppError(err).title;
       setToast({ type: "error", message: msg });
     } finally {
       setSaving(false);
@@ -180,10 +184,7 @@ export function ProfileSettingsPanel() {
       });
       setMySkills(refreshed);
     } catch (err) {
-      const msg =
-        err instanceof Error
-          ? err.message
-          : t("profile.skillDeclareError", "Skill declaration failed.");
+      const msg = describeAppError(err).title;
       setToast({ type: "error", message: msg });
     } finally {
       setDeclaringSkill(false);
@@ -348,7 +349,8 @@ export function ProfileSettingsPanel() {
                 placeholder={t("profile.selectSkill", "Select a skill")}
               />
               <select
-                className="h-9 rounded-md border border-surface-border bg-surface-1 px-2 text-sm"
+                aria-label={t("profile.level", "Level")}
+                className={cn(mfInput.nativeSelect, "h-9 w-auto")}
                 value={selectedSkillLevel}
                 onChange={(e) => setSelectedSkillLevel(Number(e.target.value))}
               >
@@ -491,18 +493,7 @@ export function ProfileSettingsPanel() {
                   variant="ghost"
                   size="sm"
                   className="h-auto px-2 py-1 text-xs text-text-danger hover:bg-status-danger/10 hover:text-text-danger"
-                  onClick={async () => {
-                    const pw = window.prompt(
-                      t("profile.enterPasswordToClearPin", "Enter your password to remove PIN"),
-                    );
-                    if (!pw) return;
-                    try {
-                      await clearPin({ current_password: pw });
-                      await loadData();
-                    } catch {
-                      /* ignore */
-                    }
-                  }}
+                  onClick={() => setPinRemoveOpen(true)}
                 >
                   {t("profile.removePin", "Remove")}
                 </Button>
@@ -607,6 +598,18 @@ export function ProfileSettingsPanel() {
           onClose={() => setPinDialogOpen(false)}
           onSuccess={() => {
             setPinDialogOpen(false);
+            void loadData();
+          }}
+        />
+      )}
+
+      {/* ── PIN removal (password check in a masked field) ─────────────── */}
+      {pinRemoveOpen && (
+        <PinRemoveDialog
+          onClose={() => setPinRemoveOpen(false)}
+          onRemoved={() => {
+            setPinRemoveOpen(false);
+            setToast({ type: "success", message: t("profile.pinRemoved") });
             void loadData();
           }}
         />
@@ -846,6 +849,96 @@ function PinSetupDialog({ onClose, onSuccess }: { onClose: () => void; onSuccess
             </Button>
             <Button type="submit" variant="default" size="sm" disabled={submitting}>
               {submitting ? t("profile.saving", "Saving...") : t("profile.save", "Save")}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── PinRemoveDialog ───────────────────────────────────────────────────────
+
+/**
+ * Removing the unlock PIN needs the account password (checked by the backend). The password is
+ * typed in a masked, labelled field — never a native prompt — and a refusal is shown on the field.
+ */
+export function PinRemoveDialog({
+  onClose,
+  onRemoved,
+}: {
+  onClose: () => void;
+  onRemoved: () => void;
+}) {
+  const { t } = useTranslation("admin");
+  const [password, setPassword] = useState("");
+  const [fieldError, setFieldError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (password.length === 0) {
+      setFieldError(t("profile.passwordRequired"));
+      return;
+    }
+    setFieldError(null);
+    setSubmitting(true);
+    try {
+      await clearPin({ current_password: password });
+      onRemoved();
+    } catch (err) {
+      // The backend refuses a wrong password: it belongs to this field.
+      setFieldError(describeAppError(err).title);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && !submitting && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-left text-base">
+            <KeyRound className="h-4 w-4 shrink-0 text-text-muted" aria-hidden />
+            {t("profile.removePinTitle")}
+          </DialogTitle>
+          <DialogDescription className="text-sm text-text-secondary">
+            {t("profile.removePinDescription")}
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-2" noValidate>
+          <Label htmlFor="pin-remove-password">{t("profile.currentPassword")}</Label>
+          <Input
+            id="pin-remove-password"
+            type="password"
+            autoComplete="current-password"
+            autoFocus
+            value={password}
+            onChange={(e) => {
+              setPassword(e.target.value);
+              if (fieldError) setFieldError(null);
+            }}
+            aria-invalid={fieldError ? true : undefined}
+            aria-describedby={fieldError ? "pin-remove-password-error" : undefined}
+            disabled={submitting}
+          />
+          {fieldError ? (
+            <p id="pin-remove-password-error" role="alert" className="text-xs text-text-danger">
+              {fieldError}
+            </p>
+          ) : null}
+          <DialogFooter className="gap-2 pt-2 sm:justify-end">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11"
+              onClick={onClose}
+              disabled={submitting}
+            >
+              {t("profile.cancel")}
+            </Button>
+            <Button type="submit" variant="destructive" className="h-11" disabled={submitting}>
+              {submitting ? t("profile.removingPin") : t("profile.removePinConfirm")}
             </Button>
           </DialogFooter>
         </form>

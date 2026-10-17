@@ -1,22 +1,23 @@
 import {
-  Menu,
-  RefreshCw,
   AlertCircle,
-  User,
-  LogOut,
-  Settings,
-  UserCircle,
-  Shield,
-  ShieldAlert,
   Clock,
   Cloud,
+  LogOut,
+  Menu,
+  RefreshCw,
+  Settings,
+  Shield,
+  ShieldAlert,
+  User,
+  UserCircle,
 } from "lucide-react";
-import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useNavigate, Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
 import { MaintafoxWordmark } from "@/components/branding/MaintafoxWordmark";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
+import { OPEN_SYNC_CENTER_EVENT } from "@/components/notifications/notification-links";
 import { CommandPalette } from "@/components/shell/CommandPalette";
 import { SyncCenterModal } from "@/components/sync/SyncCenterModal";
 import { useDeviceTrustStatus } from "@/hooks/use-device-trust-status";
@@ -44,6 +45,13 @@ export function TopBar() {
   const rejectedOutbox = useSyncOrchestratorStore((s) => s.rejectedOutboxCount);
   const syncNeedsAttention = syncConflicts > 0 || rejectedOutbox > 0;
   const userMenuRef = useRef<HTMLDivElement>(null);
+
+  // A synchronisation-conflict notification opens the sync center (`notification-links`).
+  useEffect(() => {
+    const open = () => setSyncCenterOpen(true);
+    window.addEventListener(OPEN_SYNC_CENTER_EVENT, open);
+    return () => window.removeEventListener(OPEN_SYNC_CENTER_EVENT, open);
+  }, []);
 
   // Ctrl+K / ⌘K global shortcut for command palette
   useEffect(() => {
@@ -99,20 +107,20 @@ export function TopBar() {
 
       {/* Search — opens command palette */}
       <div className="flex-1 hidden md:flex items-center">
-        <div
+        <button
+          type="button"
           onClick={() => setCommandPaletteOpen(true)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") setCommandPaletteOpen(true);
-          }}
-          role="button"
-          tabIndex={0}
-          className="flex items-center gap-2 rounded-md border border-surface-border
-                     bg-surface-2 px-3 py-1 text-sm text-text-muted cursor-pointer
-                     hover:border-primary-light transition-colors duration-fast w-72"
+          aria-keyshortcuts="Control+K"
+          className="flex h-9 w-72 items-center gap-2 rounded-md border border-surface-border
+                     bg-surface-2 px-3 text-sm text-text-muted transition-colors duration-fast
+                     hover:border-primary-light focus-visible:outline-none focus-visible:ring-2
+                     focus-visible:ring-ring"
         >
-          <span>⌘K</span>
-          <span>{t("search.placeholder")}</span>
-        </div>
+          <span className="truncate">{t("commandPalette.open")}</span>
+          <kbd className="ms-auto rounded border border-surface-border bg-surface-1 px-1.5 font-mono text-2xs">
+            Ctrl K
+          </kbd>
+        </button>
       </div>
       <CommandPalette open={commandPaletteOpen} onOpenChange={setCommandPaletteOpen} />
 

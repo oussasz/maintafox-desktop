@@ -9,7 +9,13 @@
     "pick": "Select…",
     "add": "Add rule",
     "remove": "Remove rule",
-    "duplicatePair": "This parent → child rule already exists."
+    "duplicatePair": "This parent → child rule already exists.",
+    "loadError": "The rules of this draft could not be loaded",
+    "unknownType": "Unknown type",
+    "contains": "may contain",
+    "pairLabel": "{{parent}} → {{child}}",
+    "removeConfirmTitle": "Remove this rule?",
+    "removeConfirmBody": "The rule \"{{pair}}\" will be removed from the draft. If the tree already contains this link, publishing stays blocked until the rule is restored."
   },
   "createNode": {
     "titleRoot": "Add root org node",
@@ -73,7 +79,7 @@
     "statusDraft": "Draft",
     "modelSummary": "Model summary",
     "totalNodes": "Total nodes",
-    "nodeTypesCount": "Node types",
+    "nodeTypesCount": "Types in use",
     "searchPlaceholder": "Search by code, name, or type…",
     "addRootNode": "Add root",
     "addChildNode": "Add child",
@@ -113,15 +119,10 @@
       "details": "Details",
       "responsibilities": "Responsibilities",
       "bindings": "External Bindings",
-      "actions": "Preview Actions",
+      "actions": "Structure changes",
       "equipment": "Equipment",
-      "nodeId": "Node ID",
       "type": "Type",
-      "typeCode": "Type code",
-      "depth": "Depth",
-      "ancestorPath": "Ancestor path",
       "childCount": "Children",
-      "rowVersion": "Row version",
       "capabilitiesLabel": "Capabilities",
       "noCaps": "No capabilities assigned",
       "noResponsibilities": "No active responsibilities",
@@ -130,17 +131,32 @@
       "equipSearchPlaceholder": "Search equipment to assign…",
       "searching": "Searching…",
       "equipCurrentlyAssigned": "Currently assigned to {{node}}",
-      "equipmentDraftReadOnly": "Equipment assignment applies to the published structure only. Draft nodes cannot receive operational assignments.",
-      "ended": "Ended",
-      "person": "Person",
-      "team": "Team",
       "primary": "Primary",
-      "actionsDescription": "Preview the impact of structural changes before committing them."
+      "actionsDescription": "Each change shows its impact (sub-units, responsibilities, equipment, open work) before you confirm it.",
+      "actionsNeedDraft": "Moving or deactivating a unit is done in a draft of the structure. Switch to the draft (or create one) first.",
+      "alreadyInactive": "This unit is already inactive.",
+      "location": "Location",
+      "costCentre": "Cost centre",
+      "costCentreNotUsed": "Not used at this level",
+      "costCentreNotSet": "Not set",
+      "responsible": "Responsible",
+      "nobodyResponsible": "Nobody assigned — assign someone",
+      "equipmentCount": "Equipment",
+      "equipmentCountValue_one": "{{count}} piece of equipment",
+      "equipmentCountValue_other": "{{count}} pieces of equipment",
+      "noEquipmentHint": "Search for equipment below to place it in this unit.",
+      "openEquipment": "Open {{code}} in the equipment register",
+      "assignEquipment": "Place equipment in this unit",
+      "unassignEquipment": "Remove {{code}} from this unit",
+      "unassignTitle": "Remove equipment from this unit?",
+      "unassignDescription": "{{code}} — {{name}} will no longer be placed in {{unit}}. Its history is kept and you can place it again later.",
+      "unassignConfirm": "Remove from unit",
+      "equipmentCountUnavailable": "Not loaded — see the Equipment tab"
     },
     "actions": {
-      "moveNode": "Move Node",
-      "deactivateNode": "Deactivate Node",
-      "reassignResponsibility": "Reassign Responsibility"
+      "moveNode": "Move unit…",
+      "deactivateNode": "Deactivate unit…",
+      "reassignResponsibility": "Manage responsibilities"
     },
     "inspectorTab": "Inspector",
     "auditTab": "Audit",
@@ -151,11 +167,16 @@
       "collapse": "Collapse property panel",
       "resize": "Resize property panel",
       "drawerDescription": "Inspect node details, bindings, and audit history."
-    }
+    },
+    "statusOther": "Other status",
+    "loading": "Loading the organization…",
+    "expandUnit": "Show the sub-units of {{name}}",
+    "collapseUnit": "Hide the sub-units of {{name}}",
+    "refreshFailed": "The structure could not be refreshed — the tree shown may be out of date"
   },
   "nodeTypes": {
     "title": "Node Type Manager",
-    "description": "Define node types with icons, colors, and capability flags.",
+    "description": "Define node types with their icon and capabilities.",
     "loading": "Loading node types…",
     "empty": "No node types defined yet.",
     "addType": "Add Type",
@@ -189,13 +210,37 @@
       "hard-hat": "Hard Hat",
       "zap": "Energy",
       "circuit-board": "Circuit Board"
-    }
+    },
+    "loadError": "The node types could not be loaded",
+    "editTypeNamed": "Edit type {{label}}",
+    "deactivate": "Deactivate type",
+    "deactivateNamed": "Deactivate type {{label}}",
+    "deactivateConfirmTitle": "Deactivate this node type?",
+    "deactivateConfirmBody": "The type \"{{label}}\" can no longer be chosen for new nodes in this draft. No node uses it today."
   },
   "export": {
     "title": "Export",
     "print": "Print",
     "exportPng": "Export PNG",
-    "exportCsv": "Export CSV"
+    "exportCsv": "Export CSV",
+    "failed": "Export failed",
+    "saved": "File saved",
+    "printTitle": "Organization structure",
+    "printedAt": "Printed on {{date}}",
+    "fileBase": "organization",
+    "imageFailed": "The image of the structure could not be produced.",
+    "nothingToExport": "The structure is empty: nothing to export.",
+    "columns": {
+      "code": "Code",
+      "name": "Name",
+      "level": "Level",
+      "parentCode": "Parent code",
+      "depth": "Depth",
+      "status": "Status",
+      "subUnits": "Sub-units",
+      "responsibilities": "Active responsibilities",
+      "externalLinks": "External links"
+    }
   },
   "governance": {
     "blockingIssues_one": "Publishing is blocked by 1 problem — fix it below, then try again.",
@@ -220,7 +265,9 @@
       "PARENT_CHILD_DRIFT": "A parent–child relationship used in the tree is no longer allowed by the rules. Move the unit or restore the rule.",
       "COST_CENTER_INCOMPATIBLE": "«{{nodeName}}» has a cost center, but its level «{{typeCode}}» does not allow cost centers. Remove the cost center or allow them on that level.",
       "UNMAPPED_ACTIVE_NODE_WITH_OPS_REFS": "«{{nodeName}}» is still used by live data but is missing from this draft. Repair the draft copies, or detach those links before publishing."
-    }
+    },
+    "refreshTimeline": "Refresh the change timeline",
+    "auditLoadError": "The change history could not be loaded"
   },
   "errors": {
     "ORG_VALIDATE_NOT_DRAFT": "This model is «{{status}}», not a draft. Only drafts can be checked for publish.",
@@ -266,7 +313,10 @@
     "ORG_INVALID_DATE_RANGE": "The end date must be on or after the start date.",
     "ORG_BINDING_FIELDS_REQUIRED": "Fill in all required external link fields.",
     "ORG_BINDING_DUPLICATE": "An active external link of this type already exists on this unit.",
-    "ORG_LEGACY_PUBLISH_REMOVED": "This publish action is no longer available. Use the current Publish action, which checks the draft and updates live links safely."
+    "ORG_LEGACY_PUBLISH_REMOVED": "This publish action is no longer available. Use the current Publish action, which checks the draft and updates live links safely.",
+    "ORG_ASSIGNEE_UNCHANGED": "This person or team already holds this responsibility on the unit.",
+    "ORG_NODE_CANNOT_HOST_ASSETS": "This organization level cannot host equipment. Choose a unit whose level hosts equipment.",
+    "ORG_EQUIPMENT_RETIRED": "Decommissioned or scrapped equipment cannot be placed in the structure."
   },
   "audit": {
     "changeType": {
@@ -285,7 +335,8 @@
       "create_node_type": "Create level",
       "update_node_type": "Update level",
       "create_relationship_rule": "Add relationship rule",
-      "delete_relationship_rule": "Remove relationship rule"
+      "delete_relationship_rule": "Remove relationship rule",
+      "expire_binding": "End external link"
     },
     "applyResult": {
       "applied": "Applied",
@@ -298,7 +349,9 @@
       "org_node_type": "Organization level",
       "relationship_rule": "Relationship rule",
       "responsibility": "Responsibility",
-      "entity_binding": "External link"
+      "entity_binding": "External link",
+      "org_node_responsibility": "Responsibility",
+      "org_entity_binding": "External link"
     }
   },
   "draftStatus": {
@@ -312,14 +365,22 @@
       "ready": "Ready",
       "warning": "Warning",
       "error": "Blocked"
-    }
+    },
+    "retryValidation": "Run the check again"
   },
   "capabilities": {
     "asset": "ASSET",
     "work": "WORK",
     "cost": "COST",
     "kpi": "KPI",
-    "permit": "PERMIT"
+    "permit": "PERMIT",
+    "long": {
+      "asset": "Hosts equipment",
+      "work": "Owns work",
+      "cost": "Carries a cost centre",
+      "kpi": "Aggregates KPIs",
+      "permit": "Receives work permits"
+    }
   },
   "preview": {
     "title": "Impact Preview",
@@ -337,24 +398,16 @@
     "blocked": "Blocked",
     "moveRequiresParent": "Select a new parent before confirming a move.",
     "staleNodeContext": "Reload the selected unit, then try again.",
-    "actionNotSupported": "This action cannot be applied from here yet.",
-    "dependencyUnavailable": "Impact details for this area are not available yet.",
     "dependencyDomain": {
-      "assets": "Assets",
-      "open_work": "Open work",
+      "assets": "Equipment placed here",
+      "open_work": "Open work orders",
       "permits": "Permits",
       "inventory": "Inventory"
     },
     "dependencyStatus": {
-      "unavailable": "Not available yet",
-      "ok": "OK",
-      "impacted": "Impacted"
-    },
-    "dependencyNote": {
-      "assets": "Asset impact for this change is not available yet.",
-      "open_work": "Open work-order impact for this change is not available yet.",
-      "permits": "Permit impact for this change is not available yet.",
-      "inventory": "Inventory impact for this change is not available yet."
+      "unavailable": "Not computed",
+      "ok": "None",
+      "impacted": "Concerned"
     },
     "actionLabel": {
       "MoveNode": "Move unit to a new parent",
@@ -370,11 +423,78 @@
       "ORG_PREVIEW_ACTIVE_RESPONSIBILITIES": "End {{count}} active responsibility assignment(s) on this unit first.",
       "ORG_PREVIEW_ORPHANED_BINDINGS": "{{count}} external link(s) would be left without an active unit.",
       "ORG_PREVIEW_REPLACEMENT_REQUIRED": "Choose a replacement person or team before reassigning.",
-      "ORG_PREVIEW_ASSIGNMENT_ENDED": "The previous assignment will be ended.",
-      "ORG_PREVIEW_NO_ASSIGNMENT": "No active assignment of this type was found to reassign.",
+      "ORG_PREVIEW_ASSIGNMENT_ENDED": "The last assignment of this responsibility has already ended — a new assignment will be created.",
+      "ORG_PREVIEW_NO_ASSIGNMENT": "Nobody holds this responsibility on the unit yet — this creates the first assignment.",
       "ORG_PREVIEW_NEW_PARENT_REQUIRED": "Select a new parent for this move.",
       "ORG_PREVIEW_RESPONSIBILITY_TYPE_REQUIRED": "Choose which responsibility type to reassign.",
-      "ORG_PREVIEW_UNKNOWN_ACTION": "This preview action is not supported."
+      "ORG_PREVIEW_UNKNOWN_ACTION": "This preview action is not supported.",
+      "ORG_PREVIEW_SAME_ASSIGNEE": "This person or team already holds this responsibility.",
+      "ORG_PREVIEW_PARENT_WRONG_MODEL": "The target unit belongs to another version of the structure."
+    },
+    "loading": "Computing the impact…",
+    "target": {
+      "MoveNode": "Move «{{unit}}» under «{{target}}».",
+      "DeactivateNode": "Deactivate «{{unit}}».",
+      "ReassignResponsibility": "Hand the responsibility on «{{unit}}» over to {{target}}."
+    },
+    "reassignIncomplete": "Choose the responsibility and the new person or team, then try again.",
+    "applying": "Applying…",
+    "confirmAction": {
+      "MoveNode": "Move unit",
+      "DeactivateNode": "Deactivate unit",
+      "ReassignResponsibility": "Hand over"
+    },
+    "dependenciesHint": "Counts of live records attached to the units concerned."
+  },
+  "responsibilities": {
+    "assign": "Assign a responsible…",
+    "emptyHint": "Name who is responsible for this unit (maintenance owner, planner, approver…). Notifications and approvals use these assignments.",
+    "personLine": "Person: {{name}}",
+    "teamLine": "Team: {{name}}",
+    "since": "Since {{date}}",
+    "replace": "Hand over…",
+    "end": "End",
+    "endTitle": "End this responsibility?",
+    "endDescription": "{{name}} will no longer be {{type}} for {{unit}}. The assignment stays in the history.",
+    "endConfirm": "End responsibility",
+    "unknownAssignee": "Unknown person or team",
+    "notPublished": "This unit exists only in the draft. Responsibilities and equipment can be set once the draft is published.",
+    "draftReadOnly": "Shown from the published structure. Responsibilities and equipment are changed in the published view.",
+    "dialog": {
+      "title": "Assign a responsible",
+      "description": "Who is responsible for {{unit}}, and for what.",
+      "type": "Responsibility",
+      "typePlaceholder": "Choose a responsibility",
+      "currentHolder": "Currently held by {{name}}. Choosing someone else hands it over.",
+      "assignee": "Responsible",
+      "kind": {
+        "person": "Person",
+        "team": "Team"
+      },
+      "needPersonnelView": "Choosing a person or a team requires permission to view personnel (per.view).",
+      "personSearch": "Search by name or employee code",
+      "noPerson": "No active person matches.",
+      "teamPlaceholder": "Choose a team",
+      "handoverHint": "The current assignment will end and the new one starts at the same moment. You will see the impact before confirming.",
+      "needType": "Choose a responsibility.",
+      "needAssignee": "Choose a person or a team.",
+      "cancel": "Cancel",
+      "reviewHandover": "Review handover",
+      "saving": "Saving…",
+      "assign": "Assign"
     }
+  },
+  "move": {
+    "title": "Move {{unit}}",
+    "currentParent": "Currently under: {{parent}}",
+    "topLevel": "top of the structure",
+    "loadingRules": "Loading the hierarchy rules…",
+    "noCandidates": "No unit can receive this one",
+    "noCandidatesHint": "No active unit of a level allowed above «{{level}}» exists in this structure. Add a hierarchy rule or create the parent unit first.",
+    "searchPlaceholder": "Search a unit by name, code or level",
+    "targetLabel": "New parent unit",
+    "noMatch": "No unit matches your search.",
+    "cancel": "Cancel",
+    "review": "Review impact"
   }
 }

@@ -374,8 +374,9 @@ async fn advance_occurrence_to_in_progress(
                 occurrence_id: occurrence.id,
                 expected_row_version: occurrence.row_version,
                 next_status: next.to_string(),
-                reason_code: None,
-                note: Some("Advanced by WO close auto-pilot".to_string()),
+                // Coded reason (shown translated by the UI); no fixed-language note.
+                reason_code: Some(PM_REASON_WO_CLOSED.to_string()),
+                note: None,
                 generate_work_order: Some(false),
                 work_order_type_id: None,
                 actor_id,
@@ -386,8 +387,118 @@ async fn advance_occurrence_to_in_progress(
     Ok(occurrence)
 }
 
+/// Reason code of the occurrence transitions made when the linked OT is closed.
+pub const PM_REASON_WO_CLOSED: &str = "WO_CLOSED";
+/// Finding recorded from a failure (mode / cause / effect) written on the closed OT.
+pub const PM_FINDING_WO_FAILURE: &str = "WO_FAILURE";
+/// Finding recorded from an OT checklist task closed as not OK.
+pub const PM_FINDING_WO_TASK_NOK: &str = "WO_TASK_NOK";
+
+/// What the closed OT says about the PM: its close-out text and what was found.
+#[derive(Debug, Default)]
+pub(crate) struct WorkOrderOutcome {
+    pub close_out_note: Option<String>,
+    pub findings: Vec<crate::pm::domain::PmExecutionFindingInput>,
+}
+
+impl WorkOrderOutcome {
+    pub fn execution_result(&self) -> &'static str {
+        if self.findings.is_empty() {
+            "completed_no_findings"
+        } else {
+            "completed_with_findings"
+        }
+    }
+}
+
+fn non_empty(value: Option<String>) -> Option<String> {
+    value.map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
+}
+
+fn outcome_finding(finding_type: &str, description: String) -> crate::pm::domain::PmExecutionFindingInput {
+    crate::pm::domain::PmExecutionFindingInput {
+        finding_type: finding_type.to_string(),
+        // The OT does not grade what it found; the planner rates it when following up.
+        severity: None,
+        description,
+        create_follow_up_di: None,
+        create_follow_up_work_order: None,
+        follow_up_work_order_type_id: None,
+    }
+}
+
+/// Reads the closed OT: corrective-action summary as the execution note, each recorded failure
+/// and each checklist task closed "not OK" as a finding. An OT closed with neither is a PM
+/// completed without findings — that is what the technician recorded.
+pub(crate) async fn read_work_order_outcome(
+    db: &DatabaseConnection,
+    work_order_id: i64,
+) -> AppResult<WorkOrderOutcome> {
+    let wo_row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT corrective_action_summary FROM work_orders WHERE id = ?",
+            [work_order_id.into()],
+        ))
+        .await?;
+    let close_out_note = match wo_row {
+        Some(row) => non_empty(row.try_get::<Option<String>>("", "corrective_action_summary")?),
+        None => None,
+    };
+
+    let mut findings = Vec::new();
+    for detail in crate::wo::closeout::get_failure_details(db, work_order_id).await? {
+        let labels: Vec<String> = [
+            detail.failure_mode_label,
+            detail.failure_cause_label,
+            detail.failure_effect_label,
+        ]
+        .into_iter()
+        .filter_map(non_empty)
+        .collect();
+        let mut description = labels.join(" / ");
+        if let Some(notes) = non_empty(detail.notes) {
+            if description.is_empty() {
+                description = notes;
+            } else {
+                description = format!("{description} — {notes}");
+            }
+        }
+        if !description.is_empty() {
+            findings.push(outcome_finding(PM_FINDING_WO_FAILURE, description));
+        }
+    }
+
+    let nok_tasks = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT task_description, notes FROM work_order_tasks
+             WHERE work_order_id = ? AND result_code = 'nok'
+             ORDER BY sequence_order, id",
+            [work_order_id.into()],
+        ))
+        .await?;
+    for row in nok_tasks {
+        let task: String = row.try_get("", "task_description")?;
+        let notes = non_empty(row.try_get::<Option<String>>("", "notes")?);
+        let description = match notes {
+            Some(n) => format!("{} — {n}", task.trim()),
+            None => task.trim().to_string(),
+        };
+        if !description.is_empty() {
+            findings.push(outcome_finding(PM_FINDING_WO_TASK_NOK, description));
+        }
+    }
+
+    Ok(WorkOrderOutcome {
+        close_out_note,
+        findings,
+    })
+}
+
 /// Best-effort: when a WO linked to a PM occurrence is closed, complete the occurrence
-/// (if still open) and ensure plan-scoped regeneration is audited.
+/// (if still open) with the OT outcome (see `read_work_order_outcome`) and ensure plan-scoped
+/// regeneration is audited.
 pub async fn on_work_order_closed_for_pm(db: &DatabaseConnection, work_order_id: i64, actor_id: Option<i64>) {
     let result = on_work_order_closed_for_pm_inner(db, work_order_id, actor_id).await;
     if let Err(err) = result {
@@ -452,21 +563,34 @@ async fn on_work_order_closed_for_pm_inner(
         plan_code: None,
         plan_title: None,
         strategy_type: None,
+        asset_code: None,
+        asset_name: None,
+        equipment_id: None,
+        window_start_at: None,
+        window_end_at: None,
+        window_start_meter: None,
+        window_end_meter: None,
+        timing_status: None,
     };
 
     let occurrence = advance_occurrence_to_in_progress(db, occurrence, actor_id).await?;
+    let outcome = read_work_order_outcome(db, work_order_id).await?;
     let _ = execute_pm_occurrence(
         db,
         ExecutePmOccurrenceInput {
             occurrence_id: occurrence.id,
             expected_occurrence_row_version: occurrence.row_version,
-            execution_result: "completed_no_findings".to_string(),
-            note: Some("Completed by WO close auto-pilot".to_string()),
+            execution_result: outcome.execution_result().to_string(),
+            note: outcome.close_out_note,
             actor_id,
             work_order_id: Some(work_order_id),
             defer_reason_code: None,
             miss_reason_code: None,
-            findings: None,
+            findings: if outcome.findings.is_empty() {
+                None
+            } else {
+                Some(outcome.findings)
+            },
         },
     )
     .await?;

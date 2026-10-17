@@ -35,6 +35,13 @@ vi.mock("@/services/org-node-service", () => ({
   getOrgNode: (...args: unknown[]) => mockGetOrgNode(...args),
   listOrgNodeResponsibilities: (...args: unknown[]) => mockListOrgNodeResponsibilities(...args),
   listOrgEntityBindings: (...args: unknown[]) => mockListOrgEntityBindings(...args),
+  listOrgNodeEquipment: vi.fn().mockResolvedValue([]),
+  searchUnassignedEquipment: vi.fn().mockResolvedValue([]),
+  VersionConflictError: class VersionConflictError extends Error {},
+}));
+
+vi.mock("@/services/lookup-service", () => ({
+  getLookupValues: vi.fn().mockResolvedValue([]),
 }));
 
 // i18n pass-through: returns the key as text
@@ -199,8 +206,8 @@ describe("Supervisor Verification — Sprint S2 Org Designer UI", () => {
 
       // Filters sidebar should not appear
       expect(screen.queryByText("designer.filters")).not.toBeInTheDocument();
-      // Treegrid should not appear
-      expect(screen.queryByRole("treegrid")).not.toBeInTheDocument();
+      // Tree should not appear
+      expect(screen.queryByRole("tree")).not.toBeInTheDocument();
     });
   });
 
@@ -233,8 +240,8 @@ describe("Supervisor Verification — Sprint S2 Org Designer UI", () => {
       expect(screen.getByText("designer.totalNodes")).toBeInTheDocument();
       expect(screen.getByText("designer.nodeTypesCount")).toBeInTheDocument();
 
-      // Refresh button
-      expect(screen.getByText("designer.refresh")).toBeInTheDocument();
+      // Refresh button (shared header control, accessible name)
+      expect(screen.getByLabelText("ds.toolbar.refresh")).toBeInTheDocument();
     });
 
     it("tree panel search placeholder goes through i18n", async () => {
@@ -275,7 +282,7 @@ describe("Supervisor Verification — Sprint S2 Org Designer UI", () => {
         expect(screen.getByText("Site Alpha")).toBeInTheDocument();
       });
 
-      const rows = screen.getAllByRole("row");
+      const rows = screen.getAllByRole("treeitem");
       expect(rows).toHaveLength(3);
 
       // Verify depth-based indentation via inline style
@@ -384,7 +391,7 @@ describe("Supervisor Verification — Sprint S2 Org Designer UI", () => {
       expect(screen.getByText("designer.inspector.noSelection")).toBeInTheDocument();
 
       // Click the second row (Maintenance Dept)
-      const rows = screen.getAllByRole("row");
+      const rows = screen.getAllByRole("treeitem");
       const secondRow = rows[1] as HTMLElement;
       fireEvent.click(secondRow);
 
@@ -413,7 +420,7 @@ describe("Supervisor Verification — Sprint S2 Org Designer UI", () => {
         expect(screen.getByText("Site Alpha")).toBeInTheDocument();
       });
 
-      const rows = screen.getAllByRole("row");
+      const rows = screen.getAllByRole("treeitem");
       const firstRow = rows[0] as HTMLElement;
 
       // Select

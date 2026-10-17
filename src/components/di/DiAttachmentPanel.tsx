@@ -20,6 +20,7 @@ import { useTranslation } from "react-i18next";
 
 import { MediaFileStateBadge, useMediaFileStates } from "@/components/sync/MediaFileStatus";
 import { Button } from "@/components/ui";
+import { describeAppError } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import {
   listDiAttachments,
@@ -30,7 +31,6 @@ import {
   fileToNumberArray,
   MAX_ATTACHMENT_SIZE_BYTES,
 } from "@/services/di-attachment-service";
-import { toErrorMessage } from "@/utils/errors";
 import { intlLocaleForLanguage } from "@/utils/format-date";
 import type { DiAttachment, DiAttachmentType } from "@shared/ipc-types";
 
@@ -55,11 +55,11 @@ function inferAttachmentType(mime: string): DiAttachmentType {
 function attachmentIcon(type: string) {
   switch (type) {
     case "photo":
-      return <Image className="h-5 w-5 text-blue-500" />;
+      return <Image className="h-5 w-5 text-tone-info-fg" />;
     case "pdf":
-      return <FileText className="h-5 w-5 text-red-500" />;
+      return <FileText className="h-5 w-5 text-tone-danger-fg" />;
     case "sensor_snapshot":
-      return <Activity className="h-5 w-5 text-green-500" />;
+      return <Activity className="h-5 w-5 text-tone-success-fg" />;
     default:
       return <FileIcon className="h-5 w-5 text-muted-foreground" />;
   }
@@ -111,7 +111,7 @@ export function DiAttachmentPanel({ diId, canUpload, canDelete }: DiAttachmentPa
       );
       setPreviews(nextPreviews);
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(describeAppError(err).title);
     } finally {
       setLoading(false);
     }
@@ -171,7 +171,7 @@ export function DiAttachmentPanel({ diId, canUpload, canDelete }: DiAttachmentPa
         }
         await loadAttachments();
       } catch (err) {
-        setError(toErrorMessage(err));
+        setError(describeAppError(err).title);
       } finally {
         setUploading(false);
       }
@@ -229,7 +229,7 @@ export function DiAttachmentPanel({ diId, canUpload, canDelete }: DiAttachmentPa
         }
         await loadAttachments();
       } catch (err) {
-        setError(toErrorMessage(err));
+        setError(describeAppError(err).title);
       } finally {
         setUploading(false);
       }
@@ -250,7 +250,7 @@ export function DiAttachmentPanel({ diId, canUpload, canDelete }: DiAttachmentPa
         await deleteDiAttachment(attachmentId);
         await loadAttachments();
       } catch (err) {
-        setError(toErrorMessage(err));
+        setError(describeAppError(err).title);
       }
     },
     [loadAttachments],
@@ -294,7 +294,7 @@ export function DiAttachmentPanel({ diId, canUpload, canDelete }: DiAttachmentPa
             }
             await loadAttachments();
           } catch (err) {
-            setError(toErrorMessage(err));
+            setError(describeAppError(err).title);
           } finally {
             setUploading(false);
           }

@@ -17,6 +17,65 @@ const AnalyticsKpiValueSchema = z.object({
   catalog_id: z.string().nullable(),
 });
 
+const SmrpRatioSchema = z.object({
+  numerator: z.number(),
+  denominator: z.number(),
+  value_pct: z.number().nullable(),
+});
+const SmrpMetricSchema = z.object({ current: SmrpRatioSchema, previous: SmrpRatioSchema });
+
+/** SMRP indicators computed in Rust (`analytics::smrp`); see that module for the formulas. */
+export const SmrpKpisSchema = z.object({
+  from: z.string(),
+  to: z.string(),
+  days: z.number(),
+  schedule_compliance: SmrpMetricSchema.nullable(),
+  work_mix: z
+    .object({
+      basis: z.enum(["hours", "count"]),
+      planned: SmrpMetricSchema,
+      reactive: SmrpMetricSchema,
+      emergency: SmrpMetricSchema,
+      work_orders: z.number(),
+    })
+    .nullable(),
+  pm_compliance: SmrpMetricSchema.nullable(),
+  backlog: z
+    .object({
+      backlog_hours: z.number(),
+      previous_backlog_hours: z.number(),
+      ready_backlog_hours: z.number(),
+      open_work_orders: z.number(),
+      work_orders_without_estimate: z.number(),
+      weekly_capacity_hours: z.number(),
+      people_counted: z.number(),
+      people_without_schedule: z.number(),
+      weeks: z.number().nullable(),
+      previous_weeks: z.number().nullable(),
+      ready_weeks: z.number().nullable(),
+    })
+    .nullable(),
+  cost_to_rav: z
+    .object({
+      period_cost: z.number(),
+      annualized_cost: z.number(),
+      replacement_value_total: z.number(),
+      assets_with_value: z.number(),
+      assets_total: z.number(),
+      value_pct: z.number().nullable(),
+      previous_value_pct: z.number().nullable(),
+    })
+    .nullable(),
+});
+
+export type SmrpKpis = z.infer<typeof SmrpKpisSchema>;
+export type SmrpMetric = z.infer<typeof SmrpMetricSchema>;
+
+/** Executive dashboard payload plus the SMRP set (not yet in `shared/ipc-types.ts`). */
+export type AnalyticsExecutiveDashboardWithSmrp = AnalyticsExecutiveDashboard & {
+  smrp: SmrpKpis | null;
+};
+
 const AnalyticsExecutiveDashboardSchema = z.object({
   horizon_days: z.number(),
   org_node_id: z.number().nullable(),
@@ -32,6 +91,7 @@ const AnalyticsExecutiveDashboardSchema = z.object({
   avg_availability: AnalyticsKpiValueSchema,
   avg_data_quality: AnalyticsKpiValueSchema,
   maintenance_cost: AnalyticsKpiValueSchema,
+  maintenance_cost_pending: z.number().nullable(),
   reliability_snapshot_count: z.number(),
   reliability_total_events: z.number(),
   workload_days: z.array(
@@ -71,11 +131,12 @@ const AnalyticsExecutiveDashboardSchema = z.object({
       cost_available: z.boolean(),
     }),
   ),
+  smrp: SmrpKpisSchema.nullable().default(null),
 });
 
 export async function getAnalyticsExecutiveDashboard(
   filter: AnalyticsExecutiveFilter,
-): Promise<AnalyticsExecutiveDashboard> {
+): Promise<AnalyticsExecutiveDashboardWithSmrp> {
   const raw = await invoke<unknown>("get_analytics_executive_dashboard", { filter });
   return AnalyticsExecutiveDashboardSchema.parse(raw);
 }

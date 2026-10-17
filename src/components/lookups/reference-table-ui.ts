@@ -24,9 +24,12 @@ export function refTableDisabledActionTitle(opts: {
   return undefined;
 }
 
-/** Ghost icon button used for edit / delete / confirm / cancel in reference tables. */
+/**
+ * Ghost icon button used for edit / delete / confirm / cancel in reference tables.
+ * 36 px: the dense-table minimum of the design system (module chrome uses 44 px).
+ */
 export const REF_TABLE_ICON_BTN_CLASS =
-  "h-6 w-6 shrink-0 hover:bg-muted/90 focus-visible:ring-1 focus-visible:ring-ring";
+  "h-9 w-9 shrink-0 hover:bg-muted/90 focus-visible:ring-2 focus-visible:ring-ring";
 
 export function refTableIconButtonClass(extra?: string): string {
   return cn(REF_TABLE_ICON_BTN_CLASS, extra);

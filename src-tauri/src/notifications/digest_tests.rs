@@ -324,3 +324,32 @@ fn delivery_modes_are_validated() {
     assert!(validate_digest_mode(DIGEST_CATEGORY, "daily_digest").is_err());
     assert!(validate_digest_mode(DIGEST_CATEGORY, "off").is_err());
 }
+
+#[tokio::test]
+async fn the_digest_catches_up_a_week_at_most_and_is_rendered_from_category_codes() {
+    let f = setup().await;
+    // Ten days ago: older than the catch-up window, no digest for that day.
+    notify_at(&f.db, f.alice, "wo_assigned", "2026-10-02T09:00:00Z").await;
+    notify_at(&f.db, f.alice, "wo_assigned", "2026-10-10T09:00:00Z").await;
+    assert_eq!(round(&f.db, &Utc, "2026-10-12T06:00:00Z").await, 1);
+    assert!(digest_for_day(&f.db, f.alice, "2026-10-02").await.is_none());
+    let params = scalar_opt_text(
+        &f.db,
+        "SELECT message_params_json FROM notification_events WHERE category_code = 'daily_digest'",
+        vec![],
+    )
+    .await
+    .expect("params");
+    let params: serde_json::Value = serde_json::from_str(&params).expect("json");
+    assert_eq!(params["counts"]["wo_assigned"], 1);
+    assert_eq!(params["date"], "2026-10-10");
+    // Archived or resolved notifications are not counted.
+    let late = notify_at(&f.db, f.alice, "wo_assigned", "2026-10-11T09:00:00Z").await;
+    exec(
+        &f.db,
+        "UPDATE notifications SET archived_at = '2026-10-11T10:00:00Z' WHERE id = ?",
+        vec![late.into()],
+    )
+    .await;
+    assert_eq!(round(&f.db, &Utc, "2026-10-12T07:00:00Z").await, 0);
+}
