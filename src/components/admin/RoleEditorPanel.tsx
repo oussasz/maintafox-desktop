@@ -37,6 +37,7 @@ import {
 import { StatusChip } from "@/components/ui/status-chip";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { UnsavedChangesGuard } from "@/components/ui/unsaved-changes-guard";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useStepUp } from "@/hooks/use-step-up";
 import { cn } from "@/lib/utils";
@@ -624,16 +625,6 @@ export function RoleEditorPanel() {
     else setSelectedId(id);
   };
 
-  // Leaving the app or reloading with unsaved role changes asks the browser's own question.
-  useEffect(() => {
-    if (!dirty) return;
-    const warn = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-    };
-    window.addEventListener("beforeunload", warn);
-    return () => window.removeEventListener("beforeunload", warn);
-  }, [dirty]);
-
   useEffect(() => {
     if (!selected || selected.is_system || !permsChanged) {
       setValidation(null);
@@ -930,6 +921,14 @@ export function RoleEditorPanel() {
           setSelectedId(null);
           await load();
         }}
+      />
+      {/* Leaving with unsaved role changes — another Administration tab, another page, or closing
+          the app — asks first (the shared guard; switching role has its own dialog above). */}
+      <UnsavedChangesGuard
+        when={dirty}
+        title={t("console.roleEditor.unsavedTitle")}
+        description={t("console.roleEditor.unsavedLeaveBody", { name: selected?.name ?? "" })}
+        confirmLabel={t("console.roleEditor.discardChanges")}
       />
       <ConfirmDialog
         open={pendingSwitchId !== null}
