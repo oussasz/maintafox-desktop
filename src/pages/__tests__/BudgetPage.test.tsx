@@ -262,6 +262,13 @@ describe("BudgetPage", () => {
     expect(screen.queryByRole("button", { name: "New line" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Reforecast" })).toBeInTheDocument();
   });
+  it("says so when the fiscal-year start cannot be read, with a retry", async () => {
+    finance.listFinanceCatalogs.mockRejectedValue({ code: "DATABASE_ERROR", message: "down" });
+    budget.listBudgetVersions.mockResolvedValue([]);
+    renderPage();
+    expect(await screen.findByText(/The fiscal-year start/)).toBeInTheDocument();
+  });
+
   it("says so when the budget versions cannot be loaded, with a retry", async () => {
     budget.listBudgetVersions.mockRejectedValue({ code: "DATABASE_ERROR", message: "down" });
     renderPage();

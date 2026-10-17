@@ -79,7 +79,7 @@ export function BudgetPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get("tab");
   const tab: Tab = isTab(tabParam) ? tabParam : "cockpit";
-  const { fiscalStartMonth } = useFinanceCatalogs();
+  const { fiscalStartMonth, error: catalogsError, retry: retryCatalogs } = useFinanceCatalogs();
   // Current fiscal year (named by the calendar year it starts in, like the backend's
   // `fiscal_period`): a July-start plant is still in fiscal 2025 in March 2026.
   const thisYear = currentFiscalYear(new Date(), fiscalStartMonth);
@@ -185,6 +185,16 @@ export function BudgetPage() {
         </>
       }
     >
+      {catalogsError != null ? (
+        // Without the fiscal-year start the page cannot know the current fiscal year: say so
+        // instead of quietly showing the calendar year.
+        <ErrorState
+          className="mb-4 py-4"
+          error={catalogsError}
+          title={t("page.fiscalStartLoadError")}
+          onRetry={retryCatalogs}
+        />
+      ) : null}
       {versionsError != null ? (
         <ErrorState
           className="mb-4 py-4"

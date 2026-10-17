@@ -658,8 +658,12 @@ function VersionsSection({
         }
         confirmLabel={pendingMove ? t(`versionAction.${pendingMove.next}`) : ""}
         destructive={pendingMove?.next === "closed"}
-        onConfirm={async () => {
-          if (pendingMove) await transition(pendingMove.version, pendingMove.next);
+        onConfirm={() => {
+          // Close the confirmation before the move runs, so the identity check (approval)
+          // opens alone instead of on top of it. The move reports its own failure.
+          const move = pendingMove;
+          setPendingMove(null);
+          if (move) void transition(move.version, move.next);
         }}
       />
       {StepUpDialogElement}

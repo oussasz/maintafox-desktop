@@ -1,5 +1,6 @@
 {
   "page": {
+    "fiscalStartLoadError": "The fiscal-year start (Settings › Localization) could not be read — the current fiscal year cannot be determined",
     "versionsLoadError": "The budget versions could not be loaded — the version choice above is incomplete",
     "title": "Budget and maintenance costs",
     "description": "Budget, commitments, actuals and forecast by cost centre, fed by closed work orders.",

@@ -1,5 +1,6 @@
 {
   "page": {
+    "fiscalStartLoadError": "Impossible de lire le début de l'exercice (Paramètres › Localisation) — l'exercice en cours ne peut pas être déterminé",
     "versionsLoadError": "Impossible de charger les versions de budget — le choix de version ci-dessus est incomplet",
     "title": "Budget et coûts de maintenance",
     "description": "Budget, engagements, réalisé et prévision par centre de coût, alimentés par les OT clôturés.",

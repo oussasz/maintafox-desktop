@@ -52,11 +52,13 @@ export function ForcePasswordChangePage({ onComplete }: ForcePasswordChangePageP
     try {
       await onComplete(newPassword);
     } catch (err) {
-      // The session store rethrows the server's message (password policy, history …).
+      // Translated text for the failure's code; the policy details (length, history …) as the
+      // description when the server gives them.
+      const described = describeAppError(err);
       setError(
-        err instanceof Error && err.message
-          ? err.message
-          : describeAppError(err).title || t("login.error.unknown"),
+        [described.title || t("login.error.unknown"), described.description]
+          .filter(Boolean)
+          .join(" — "),
       );
     } finally {
       setLoading(false);
