@@ -425,10 +425,35 @@
     }
   },
   "import": {
+    "action": {
+      "create": "Création",
+      "update": "Mise à jour",
+      "conflict": "Conflit : non importé",
+      "unknown": "Action inconnue"
+    },
+    "messageDetail": "Détail",
+    "category": {
+      "duplicate_asset_code": "Code déjà utilisé par un équipement",
+      "duplicate_asset_code_in_batch": "Code en double dans le fichier",
+      "unknown_class_code": "Classe inconnue ou inactive",
+      "unknown_family_code": "Famille inconnue ou inactive",
+      "family_class_mismatch": "Famille incompatible avec la classe",
+      "unknown_criticality_code": "Criticité inconnue",
+      "unknown_status_code": "Statut inconnu",
+      "org_node_missing": "Emplacement introuvable",
+      "org_node_inactive": "Emplacement inactif",
+      "hierarchy_cycle_risk": "Le parent créerait une boucle dans la hiérarchie",
+      "forbidden_status_transition": "Changement de statut interdit",
+      "reclassification_requires_review": "Reclassement à valider",
+      "missing_required_field": "Champ obligatoire manquant",
+      "invalid_asset_code_format": "Format de code invalide",
+      "other": "Autre contrôle"
+    },
     "page": {
       "title": "Import d'équipements"
     },
     "steps": {
+      "label": "Étapes de l'import",
       "upload": "Téléverser",
       "validate": "Valider",
       "preview": "Aperçu",
@@ -436,6 +461,7 @@
       "done": "Terminé"
     },
     "status": {
+      "unknown": "Statut inconnu",
       "valid": "Valide",
       "warning": "Avertissement",
       "error": "Erreur"
@@ -467,6 +493,8 @@
       "includeWarnings": "Inclure les lignes avec avertissements"
     },
     "apply": {
+      "confirmTitle": "Appliquer l'import ?",
+      "confirmBody": "{{valid}} ligne(s) valide(s) et {{warning}} avec avertissement seront créées ou mises à jour dans le registre ; {{error}} ligne(s) en erreur ne seront pas importées. Les équipements modifiés ne reviennent pas automatiquement à leur état précédent.",
       "run": "Appliquer l'import"
     },
     "done": {

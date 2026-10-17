@@ -425,10 +425,35 @@
     }
   },
   "import": {
+    "action": {
+      "create": "Create",
+      "update": "Update",
+      "conflict": "Conflict: not imported",
+      "unknown": "Unknown action"
+    },
+    "messageDetail": "Detail",
+    "category": {
+      "duplicate_asset_code": "Code already used by an asset",
+      "duplicate_asset_code_in_batch": "Code repeated in the file",
+      "unknown_class_code": "Unknown or inactive class",
+      "unknown_family_code": "Unknown or inactive family",
+      "family_class_mismatch": "Family does not match the class",
+      "unknown_criticality_code": "Unknown criticality",
+      "unknown_status_code": "Unknown status",
+      "org_node_missing": "Location not found",
+      "org_node_inactive": "Location inactive",
+      "hierarchy_cycle_risk": "The parent would create a loop in the hierarchy",
+      "forbidden_status_transition": "Status change not allowed",
+      "reclassification_requires_review": "Reclassification needs review",
+      "missing_required_field": "Required field missing",
+      "invalid_asset_code_format": "Invalid code format",
+      "other": "Other check"
+    },
     "page": {
       "title": "Equipment Import"
     },
     "steps": {
+      "label": "Import steps",
       "upload": "Upload",
       "validate": "Validate",
       "preview": "Preview",
@@ -436,6 +461,7 @@
       "done": "Done"
     },
     "status": {
+      "unknown": "Unknown status",
       "valid": "Valid",
       "warning": "Warning",
       "error": "Error"
@@ -467,6 +493,8 @@
       "includeWarnings": "Include rows with warnings"
     },
     "apply": {
+      "confirmTitle": "Apply the import?",
+      "confirmBody": "{{valid}} valid row(s) and {{warning}} with warnings will be created or updated in the register; {{error}} row(s) in error are not imported. Changed assets do not return to their previous state automatically.",
       "run": "Apply Import"
     },
     "done": {
