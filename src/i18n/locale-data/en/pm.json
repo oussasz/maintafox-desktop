@@ -424,6 +424,13 @@
     "loadError": "Failed to load retired plans."
   },
   "autopilot": {
+    "runTime": "Daily generation time",
+    "runTimeHint": "Occurrences are generated every day at this time (device time).",
+    "everyDayAt": "Every day at {{time}}",
+    "customSchedule": "Custom schedule",
+    "customScheduleKept": "This schedule is not a daily one; it is kept as it is.",
+    "technicalSchedule": "Technical expression",
+    "switchToDaily": "Switch to a daily generation",
     "autoOn": "Auto on",
     "autoOff": "Auto off",
     "lastRun": "Last run",
@@ -439,6 +446,8 @@
     "horizonDays": "Horizon (days)"
   },
   "errors": {
+    "listLoad": "The list of choices could not be loaded.",
+    "articleSearchFailed": "The article search failed (this is not an empty result).",
     "optionsLoad": "The reasons and severities could not be loaded.",
     "assetRequired": "Select an asset when scope is equipment.",
     "eventCodeRequired": "Event code is required for event strategies.",

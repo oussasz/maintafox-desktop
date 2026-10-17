@@ -424,6 +424,13 @@
     "loadError": "Échec du chargement des plans retirés."
   },
   "autopilot": {
+    "runTime": "Heure de génération quotidienne",
+    "runTimeHint": "Les échéances sont générées chaque jour à cette heure (heure de l'appareil).",
+    "everyDayAt": "Chaque jour à {{time}}",
+    "customSchedule": "Planification personnalisée",
+    "customScheduleKept": "Cette planification n'est pas quotidienne ; elle est conservée telle quelle.",
+    "technicalSchedule": "Expression technique",
+    "switchToDaily": "Passer à une génération quotidienne",
     "autoOn": "Génération auto activée",
     "autoOff": "Génération auto désactivée",
     "lastRun": "Dernière exécution",
@@ -439,6 +446,8 @@
     "horizonDays": "Horizon (jours)"
   },
   "errors": {
+    "listLoad": "La liste de choix n'a pas pu être chargée.",
+    "articleSearchFailed": "La recherche d'articles a échoué (ce n'est pas une absence de résultat).",
     "optionsLoad": "Les motifs et gravités n’ont pas pu être chargés.",
     "assetRequired": "Sélectionnez un équipement lorsque la portée est « équipement ».",
     "eventCodeRequired": "Le code événement est requis pour une stratégie sur événement.",

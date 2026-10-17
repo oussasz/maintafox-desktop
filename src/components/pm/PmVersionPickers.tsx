@@ -137,17 +137,26 @@ export function PmMeterSpecFields({
   const { formatNumber } = useFormatters();
   const [meters, setMeters] = useState<PmAssetMeter[] | null>(null);
   const [types, setTypes] = useState<LookupValueOption[]>([]);
+  /** A failed load is said next to the field: "no meter" would be a false statement. */
+  const [metersFailed, setMetersFailed] = useState(false);
+  const [typesFailed, setTypesFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: attempt = explicit retry
   useEffect(() => {
     let cancelled = false;
+    setMetersFailed(false);
+    setTypesFailed(false);
     if (equipmentId != null) {
       listPmAssetMeters(equipmentId)
         .then((rows) => {
           if (!cancelled) setMeters(rows);
         })
         .catch(() => {
-          // Reported by the global IPC toast; no meter can be chosen.
-          if (!cancelled) setMeters([]);
+          if (!cancelled) {
+            setMeters(null);
+            setMetersFailed(true);
+          }
         });
     } else {
       setMeters(null);
@@ -157,12 +166,30 @@ export function PmMeterSpecFields({
         if (!cancelled) setTypes(rows.filter((r) => r.is_active === 1));
       })
       .catch(() => {
-        // Reported by the global IPC toast.
+        if (!cancelled) setTypesFailed(true);
       });
     return () => {
       cancelled = true;
     };
-  }, [equipmentId]);
+  }, [equipmentId, attempt]);
+
+  const loadFailedNotice =
+    metersFailed || typesFailed ? (
+      <p
+        role="alert"
+        className="flex flex-wrap items-center gap-2 text-xs text-tone-danger-fg md:col-span-2"
+      >
+        {t("errors.listLoad")}
+        <Button
+          type="button"
+          variant="outline"
+          className="h-8 px-2 text-xs"
+          onClick={() => setAttempt((n) => n + 1)}
+        >
+          {t("actions.retry")}
+        </Button>
+      </p>
+    ) : null;
 
   const selected = meters?.find((m) => m.id === value.assetMeterId) ?? null;
   const unit = selected?.unit?.trim() || null;
@@ -172,7 +199,9 @@ export function PmMeterSpecFields({
   return (
     <div className="grid gap-2 md:col-span-2 md:grid-cols-2">
       {equipmentId != null ? (
-        meters != null && meters.length === 0 ? (
+        metersFailed ? (
+          loadFailedNotice
+        ) : meters != null && meters.length === 0 ? (
           <p className="text-sm text-tone-warning-fg md:col-span-2">{t("hints.noMeters")}</p>
         ) : (
           <div className="grid gap-1 md:col-span-2">
@@ -230,6 +259,7 @@ export function PmMeterSpecFields({
             </SelectContent>
           </Select>
           <p className="text-xs text-text-muted">{t("hints.meterTypePerAsset")}</p>
+          {typesFailed ? loadFailedNotice : null}
         </div>
       )}
       <div className="grid gap-1">
@@ -276,10 +306,13 @@ export function PmPartsPicker({
   const { formatNumber } = useFormatters();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<InventoryArticleRow[]>([]);
+  /** The search failed (not "no article matches"). */
+  const [searchFailed, setSearchFailed] = useState(false);
   const [names, setNames] = useState<Record<string, InventoryArticleRow>>({});
 
   useEffect(() => {
     const q = query.trim();
+    setSearchFailed(false);
     if (q.length < 2) {
       setResults([]);
       return;
@@ -292,8 +325,10 @@ export function PmPartsPicker({
             setResults(rows.filter((r) => r.is_active === 1).slice(0, ARTICLE_SEARCH_LIMIT));
         })
         .catch(() => {
-          // Reported by the global IPC toast.
-          if (!cancelled) setResults([]);
+          if (!cancelled) {
+            setResults([]);
+            setSearchFailed(true);
+          }
         });
     }, 250);
     return () => {
@@ -403,6 +438,11 @@ export function PmPartsPicker({
           placeholder={t("fields.articleSearchPlaceholder")}
           onChange={(e) => setQuery(e.target.value)}
         />
+        {searchFailed ? (
+          <p role="alert" className="text-xs text-tone-danger-fg">
+            {t("errors.articleSearchFailed")}
+          </p>
+        ) : null}
         {results.length > 0 ? (
           <ul className="rounded-md border" role="listbox" aria-label={t("fields.addPart")}>
             {results.map((row) => (

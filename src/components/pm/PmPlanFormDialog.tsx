@@ -73,19 +73,28 @@ export function PmPlanFormDialog({
   const [scopeOptions, setScopeOptions] = useState<PmScopeOption[]>([]);
   const [scopeAssets, setScopeAssets] = useState<PmScopeAsset[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** A choice list that failed to load says so next to its field (never a silent empty list). */
+  const [teamsFailed, setTeamsFailed] = useState(false);
+  const [scopeFailed, setScopeFailed] = useState(false);
+  const [listAttempt, setListAttempt] = useState(0);
+  const retryLists = () => setListAttempt((n) => n + 1);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: listAttempt = explicit retry
   useEffect(() => {
     if (!open) return;
+    setTeamsFailed(false);
     void listActiveTeams()
       .then((rows) => setTeams(rows.map((r) => ({ id: r.id, code: r.code, name: r.name }))))
       .catch(() => {
-        // The global IPC toast reports the failure; the crew list stays empty.
         setTeams([]);
+        setTeamsFailed(true);
       });
-  }, [open]);
+  }, [open, listAttempt]);
 
   // Values of a fanned-out scope (family, location, criticality group).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: listAttempt = explicit retry
   useEffect(() => {
+    setScopeFailed(false);
     if (!open || scopeType === "equipment") {
       setScopeOptions([]);
       return;
@@ -96,13 +105,15 @@ export function PmPlanFormDialog({
         if (!cancelled) setScopeOptions(rows);
       })
       .catch(() => {
-        // Reported by the global IPC toast.
-        if (!cancelled) setScopeOptions([]);
+        if (!cancelled) {
+          setScopeOptions([]);
+          setScopeFailed(true);
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [open, scopeType]);
+  }, [open, scopeType, listAttempt]);
 
   // The assets the scope covers today (one occurrence stream each).
   useEffect(() => {
@@ -312,6 +323,7 @@ export function PmPlanFormDialog({
                       ))}
                     </SelectContent>
                   </Select>
+                  {scopeFailed ? <ListLoadFailed onRetry={retryLists} /> : null}
                   {scopeAssets ? (
                     <p className="text-xs text-text-muted">
                       {scopeAssets.length === 0
@@ -347,6 +359,7 @@ export function PmPlanFormDialog({
                 ))}
               </SelectContent>
             </Select>
+            {teamsFailed ? <ListLoadFailed onRetry={retryLists} /> : null}
           </div>
           <div className="grid gap-1">
             <Label>{t("fields.criticality")}</Label>
@@ -394,5 +407,18 @@ export function PmPlanFormDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** Field-level notice: the choices could not be loaded, with a retry. */
+function ListLoadFailed({ onRetry }: { onRetry: () => void }) {
+  const { t } = useTranslation("pm");
+  return (
+    <p role="alert" className="flex flex-wrap items-center gap-2 text-xs text-tone-danger-fg">
+      {t("errors.listLoad")}
+      <Button type="button" variant="outline" className="h-8 px-2 text-xs" onClick={onRetry}>
+        {t("actions.retry")}
+      </Button>
+    </p>
   );
 }
