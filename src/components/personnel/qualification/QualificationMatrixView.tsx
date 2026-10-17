@@ -34,6 +34,8 @@ const RENEWABLE = new Set(["expired", "expiring_soon", "rejected"]);
 export interface QualificationMatrixViewProps {
   teams: TeamSummary[];
   companies: ExternalCompany[];
+  /** Teams and companies were not read (no personnel right): those filters are not offered. */
+  peopleRestricted?: boolean;
   /** Bumped by the page after a change elsewhere (catalogue, training) to reload. */
   refreshKey?: number;
 }
@@ -41,6 +43,7 @@ export interface QualificationMatrixViewProps {
 export function QualificationMatrixView({
   teams,
   companies,
+  peopleRestricted = false,
   refreshKey = 0,
 }: QualificationMatrixViewProps) {
   const { t } = useTranslation("training");
@@ -126,24 +129,29 @@ export function QualificationMatrixView({
   }, [matrix]);
 
   const filters: SmartFilterDef[] = [
-    {
-      id: "team",
-      kind: "select",
-      label: t("filter.team"),
-      allLabel: t("filter.allTeams"),
-      options: teams.map((tm) => ({ value: String(tm.id), label: tm.name })),
-      value: teamId,
-      onChange: setTeamId,
-    },
-    {
-      id: "company",
-      kind: "select",
-      label: t("filter.company"),
-      allLabel: t("filter.allCompanies"),
-      options: companies.map((co) => ({ value: String(co.id), label: co.name })),
-      value: companyId,
-      onChange: setCompanyId,
-    },
+    // Without the personnel right the team and company lists cannot be read: no empty filter.
+    ...(peopleRestricted
+      ? []
+      : ([
+          {
+            id: "team",
+            kind: "select",
+            label: t("filter.team"),
+            allLabel: t("filter.allTeams"),
+            options: teams.map((tm) => ({ value: String(tm.id), label: tm.name })),
+            value: teamId,
+            onChange: setTeamId,
+          },
+          {
+            id: "company",
+            kind: "select",
+            label: t("filter.company"),
+            allLabel: t("filter.allCompanies"),
+            options: companies.map((co) => ({ value: String(co.id), label: co.name })),
+            value: companyId,
+            onChange: setCompanyId,
+          },
+        ] satisfies SmartFilterDef[])),
     {
       id: "family",
       kind: "select",

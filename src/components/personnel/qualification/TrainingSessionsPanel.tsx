@@ -113,6 +113,8 @@ function newDraft(certTypeId: number | null, certTypes: CertificationType[]): Se
 
 export interface TrainingSessionsPanelProps {
   people: Personnel[];
+  /** The people list is empty because the user may not read personnel (pickers say so). */
+  peopleRestricted?: boolean;
   certTypes: CertificationType[];
   /** Opens the "new session" form for this certification (from the renewal plan). */
   presetCertificationTypeId?: number | null;
@@ -122,6 +124,7 @@ export interface TrainingSessionsPanelProps {
 
 export function TrainingSessionsPanel({
   people,
+  peopleRestricted = false,
   certTypes,
   presetCertificationTypeId,
   onPresetConsumed,
@@ -393,7 +396,11 @@ export function TrainingSessionsPanel({
                   label={t("sessions.registerPerson")}
                   className="min-w-[240px] flex-1"
                 >
-                  <Select value={newAttendee} onValueChange={setNewAttendee}>
+                  <Select
+                    value={newAttendee}
+                    onValueChange={setNewAttendee}
+                    disabled={peopleRestricted}
+                  >
                     <SelectTrigger id="attendee">
                       <SelectValue placeholder={t("sessions.choosePerson")} />
                     </SelectTrigger>
@@ -407,6 +414,9 @@ export function TrainingSessionsPanel({
                         ))}
                     </SelectContent>
                   </Select>
+                  {peopleRestricted ? (
+                    <p className="mt-1 text-xs text-text-muted">{t("sessions.peopleRestricted")}</p>
+                  ) : null}
                 </FormField>
                 <Button
                   variant="outline"
@@ -559,6 +569,9 @@ export function TrainingSessionsPanel({
                     ))}
                   </SelectContent>
                 </Select>
+                {peopleRestricted ? (
+                  <p className="mt-1 text-xs text-text-muted">{t("sessions.peopleRestricted")}</p>
+                ) : null}
               </FormField>
             </div>
           ) : null}

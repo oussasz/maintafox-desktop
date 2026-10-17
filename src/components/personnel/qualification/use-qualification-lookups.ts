@@ -33,6 +33,11 @@ export interface QualificationLookups {
   loading: boolean;
   error: unknown;
   reload: () => Promise<void>;
+  /**
+   * People, teams and companies were not read because the user lacks the personnel view right:
+   * pickers fed by them are empty for that reason, not because there is nobody.
+   */
+  peopleRestricted: boolean;
 }
 
 /** `enabled = false` skips loading (the user may not read these lists). */
@@ -82,7 +87,17 @@ export function useQualificationLookups(enabled = true): QualificationLookups {
     if (enabled) void reload();
   }, [reload, enabled]);
 
-  return { certTypes, skills, people, teams, companies, loading, error, reload };
+  return {
+    certTypes,
+    skills,
+    people,
+    teams,
+    companies,
+    loading,
+    error,
+    reload,
+    peopleRestricted: !canPersonnel,
+  };
 }
 
 /** "Name (CODE)" for pickers and tables — never a bare id. */

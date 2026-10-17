@@ -61,6 +61,8 @@ describe("useQualificationLookups", () => {
     expect(svc.listActiveTeams).not.toHaveBeenCalled();
     expect(svc.listExternalCompanies).not.toHaveBeenCalled();
     expect(result.current.error).toBeNull();
+    // Pickers can say why they are empty.
+    expect(result.current.peopleRestricted).toBe(true);
   });
 
   it("reload does nothing when the lookups are disabled", async () => {

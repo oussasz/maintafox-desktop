@@ -252,6 +252,7 @@
     "emptyHint": "No certification expires within {{count}} days and none waits for verification."
   },
   "sessions": {
+    "peopleRestricted": "Reading people requires the personnel view right: this choice is not available to you.",
     "belowPassMark": "Below pass mark {{score}}: will be recorded as failed",
     "recordedAsFailedTitle": "Recorded as failed",
     "recordedAsFailed": "{{person}}: score {{score}}, below the pass mark {{passMark}}. The result is recorded as failed (no certification).",
