@@ -112,6 +112,10 @@
     "more": "Plus d'actions"
   },
   "history": {
+    "loadError": "Impossible de charger l'historique de cet équipement",
+    "partial": "Les {{count}} événements les plus récents sont affichés ; des événements plus anciens peuvent exister.",
+    "loadOlder": "Charger les plus anciens",
+    "loadOlderError": "Les événements plus anciens n'ont pas pu être chargés",
     "tabs": {
       "details": "Détails",
       "history": "Historique"
@@ -352,6 +356,7 @@
     "fieldRequired": "Ce champ est obligatoire."
   },
   "tree": {
+    "loading": "Chargement des équipements…",
     "search": "Rechercher dans l'arbre",
     "empty": "Aucun actif correspondant dans l'arbre.",
     "ariaLabel": "Arbre des actifs",
@@ -392,6 +397,7 @@
     }
   },
   "binding": {
+    "loadError": "Impossible de charger les enregistrements liés",
     "title": "Liaisons inter-modules",
     "notImplemented": "Pas encore disponible",
     "domains": {
@@ -497,6 +503,10 @@
     "hint": "Score de suivi indicatif (0–100) issu de l'activité récente, des DI et OT ouverts et des relevés de compteurs. Ce n'est ni une disponibilité ni une mesure d'état."
   },
   "photos": {
+    "loadError": "Impossible de charger les photos",
+    "open": "Agrandir la photo {{name}}",
+    "previous": "Photo précédente",
+    "next": "Photo suivante",
     "title": "Photos",
     "upload": "Téléverser",
     "uploadFirst": "Téléverser une photo",
@@ -683,6 +693,8 @@
     "primary": "Compteur principal de l’équipement"
   },
   "spares": {
+    "searchFailed": "La recherche d'articles a échoué (ce n'est pas une absence de résultat).",
+    "moreMatches": "Plus de {{count}} articles correspondent : précisez la recherche.",
     "criticalShort_one": "{{count}} pièce critique en rupture ou en stock insuffisant.",
     "criticalShort_other": "{{count}} pièces critiques en rupture ou en stock insuffisant.",
     "summary_one": "{{count}} pièce de rechange référencée.",

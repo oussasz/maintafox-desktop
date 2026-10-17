@@ -26,22 +26,22 @@ export function EquipmentTreeToolbar({
         type="button"
         variant="outline"
         size="sm"
-        className="h-7 gap-1.5 text-xs"
+        className="h-10 gap-1.5 text-xs"
         disabled={disabled}
         onClick={onExpandAll}
       >
-        <ChevronsUpDown className="h-3.5 w-3.5" />
+        <ChevronsUpDown className="h-4 w-4" aria-hidden />
         {t("tree.expandAll")}
       </Button>
       <Button
         type="button"
         variant="outline"
         size="sm"
-        className="h-7 gap-1.5 text-xs"
+        className="h-10 gap-1.5 text-xs"
         disabled={disabled}
         onClick={onCollapseAll}
       >
-        <ChevronsDownUp className="h-3.5 w-3.5" />
+        <ChevronsDownUp className="h-4 w-4" aria-hidden />
         {t("tree.collapseAll")}
       </Button>
     </div>

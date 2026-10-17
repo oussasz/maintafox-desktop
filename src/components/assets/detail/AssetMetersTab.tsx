@@ -27,7 +27,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { StatusChip } from "@/components/ui/status-chip";
+import { mfTable } from "@/design-system/tokens";
 import { useFormatters } from "@/hooks/use-formatters";
+import { cn } from "@/lib/utils";
 import {
   createAssetMeter,
   listAssetMeters,
@@ -205,7 +207,7 @@ function MeterHistory({ meter, sources }: { meter: AssetMeter; sources: LookupVa
     <table className="w-full text-xs">
       <caption className="sr-only">{t("meters.historyCaption", { name: meter.name })}</caption>
       <thead>
-        <tr className="text-left text-text-muted">
+        <tr className={cn("text-start", mfTable.header)}>
           <th className="py-1 font-medium">{t("meters.readingAt")}</th>
           <th className="py-1 text-right font-medium">{t("meters.value")}</th>
           <th className="py-1 pl-3 font-medium">{t("meters.source")}</th>

@@ -17,6 +17,7 @@ import {
   buildEquipmentForest,
   flattenVisibleRows,
 } from "@/components/assets/tree/equipment-tree-model";
+import { LoadingState } from "@/components/ui/data-state";
 import {
   Table,
   TableBody,
@@ -25,6 +26,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { mfTable } from "@/design-system/tokens";
 import { cn } from "@/lib/utils";
 import { useAssetSearchStore } from "@/stores/asset-search-store";
 import type { AssetSearchResult } from "@shared/ipc-types";
@@ -48,6 +50,10 @@ export function AssetResultTable() {
     selectAsset(asset.id);
   };
 
+  if (loading && results.length === 0) {
+    return <LoadingState label={t("tree.loading")} />;
+  }
+
   if (!loading && results.length === 0) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center p-6 text-center">
@@ -67,7 +73,7 @@ export function AssetResultTable() {
       <div className="flex-1 overflow-auto">
         <Table>
           <TableHeader>
-            <TableRow>
+            <TableRow className={mfTable.header}>
               <TableHead className="w-[180px]">{t("list.columns.code")}</TableHead>
               <TableHead>{t("list.columns.name")}</TableHead>
               <TableHead className="w-[100px]">{t("list.columns.class")}</TableHead>

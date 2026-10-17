@@ -2,7 +2,8 @@
  * AssetBindingSummary.tsx
  *
  * Renders cross-module binding summary cards for an asset.
- * Each domain shows either a live count or a "not implemented" placeholder.
+ * Each domain shows its count ("—" when not reported) or that the module does not report one.
+ * A failed load is an error with retry, never a card of zeros.
  */
 
 import {
@@ -10,7 +11,6 @@ import {
   ClipboardList,
   FileText,
   HardHat,
-  Loader2,
   Radio,
   RefreshCw,
   Server,
@@ -21,8 +21,9 @@ import { useTranslation } from "react-i18next";
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ErrorState, LoadingState } from "@/components/ui/data-state";
+import { useFormatters } from "@/hooks/use-formatters";
 import { getAssetBindingSummary } from "@/services/asset-lifecycle-service";
-import { toErrorMessage } from "@/utils/errors";
 import type {
   AssetBindingSummary as AssetBindingSummaryType,
   DomainBindingEntry,
@@ -90,7 +91,7 @@ export function AssetBindingSummary({ assetId }: AssetBindingSummaryProps) {
   const { t } = useTranslation("equipment");
   const [summary, setSummary] = useState<AssetBindingSummaryType | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
 
   // Monotonic request id: when the user switches assets quickly, a slower response for a
   // previously selected asset must not overwrite the summary of the asset now on screen.
@@ -106,7 +107,7 @@ export function AssetBindingSummary({ assetId }: AssetBindingSummaryProps) {
       setSummary(data);
     } catch (err) {
       if (requestId !== latestRequest.current) return;
-      setError(toErrorMessage(err));
+      setError(err);
     } finally {
       if (requestId === latestRequest.current) setLoading(false);
     }
@@ -119,18 +120,22 @@ export function AssetBindingSummary({ assetId }: AssetBindingSummaryProps) {
   if (loading) {
     return (
       <Card>
-        <CardContent className="flex items-center justify-center py-6">
-          <Loader2 className="h-4 w-4 animate-spin text-text-muted" />
+        <CardContent className="py-2">
+          <LoadingState />
         </CardContent>
       </Card>
     );
   }
 
-  if (error) {
+  if (error != null) {
     return (
       <Card>
         <CardContent className="py-4">
-          <p className="text-xs text-status-danger">{error}</p>
+          <ErrorState
+            error={error}
+            title={t("binding.loadError")}
+            onRetry={() => void load(assetId)}
+          />
         </CardContent>
       </Card>
     );
@@ -142,7 +147,7 @@ export function AssetBindingSummary({ assetId }: AssetBindingSummaryProps) {
     <Card>
       <CardHeader className="pb-3">
         <div className="flex items-center gap-2">
-          <HardHat className="h-4 w-4 text-text-muted" />
+          <HardHat className="h-4 w-4 text-text-muted" aria-hidden />
           <CardTitle className="text-base">{t("binding.title")}</CardTitle>
         </div>
       </CardHeader>
@@ -174,6 +179,7 @@ function DomainCard({
   icon: React.ReactNode;
   unavailableLabel: string;
 }) {
+  const { formatNumber } = useFormatters();
   const isAvailable = entry.status === "available";
 
   return (
@@ -182,9 +188,11 @@ function DomainCard({
       <div className="flex flex-1 flex-col min-w-0">
         <span className="text-xs font-medium truncate">{label}</span>
         {isAvailable ? (
-          <span className="text-xs text-text-muted">{entry.count ?? 0}</span>
+          <span className="text-xs text-text-muted">
+            {entry.count == null ? "—" : formatNumber(entry.count)}
+          </span>
         ) : (
-          <Badge variant="outline" className="w-fit text-[10px] text-text-muted mt-0.5">
+          <Badge variant="outline" className="mt-0.5 w-fit text-xs text-text-muted">
             {unavailableLabel}
           </Badge>
         )}

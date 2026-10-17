@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 
+import { KpiTile } from "@/components/metrics/KpiTile";
 import { useFormatters } from "@/hooks/use-formatters";
 import type { AssetHistorySummary } from "@shared/ipc-types";
 
@@ -57,17 +58,18 @@ export function AssetLifeSummaryStrip({ summary }: { summary: AssetHistorySummar
   }, [summary, t, formatDate, formatNumber, formatPercent]);
 
   return (
-    <div className="rounded-md border border-surface-border bg-surface-1 p-3">
-      <h3 className="mb-2 text-sm font-semibold">{t("history.summary.title")}</h3>
-      <dl className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+    <section aria-label={t("history.summary.title")} className="space-y-2">
+      <h3 className="text-sm font-semibold">{t("history.summary.title")}</h3>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
         {rows.map((row) => (
-          <div key={row.label} className="rounded border border-surface-border/70 px-2 py-1.5">
-            <dt className="text-xs text-text-muted">{row.label}</dt>
-            <dd className="text-sm font-medium">{row.value}</dd>
-            {row.hint ? <dd className="text-xs text-text-muted">{row.hint}</dd> : null}
-          </div>
+          <KpiTile
+            key={row.label}
+            label={row.label}
+            value={row.value}
+            {...(row.hint ? { hint: row.hint } : {})}
+          />
         ))}
-      </dl>
-    </div>
+      </div>
+    </section>
   );
 }

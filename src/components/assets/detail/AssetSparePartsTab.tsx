@@ -19,10 +19,12 @@ import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { StatusChip } from "@/components/ui/status-chip";
+import { mfTable } from "@/design-system/tokens";
 import type { Tone } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import { cn } from "@/lib/utils";
 import {
   addAssetSparePart,
   listAssetSpareParts,
@@ -108,7 +110,7 @@ export function AssetSparePartsTab({ asset }: { asset: Asset }) {
           <table className="w-full text-sm">
             <caption className="sr-only">{t("spares.caption", { code: asset.asset_code })}</caption>
             <thead>
-              <tr className="bg-surface-1 text-left text-xs text-text-muted">
+              <tr className={cn("text-start", mfTable.header)}>
                 <th className="px-3 py-2 font-medium">{t("spares.article")}</th>
                 <th className="px-3 py-2 font-medium">{t("spares.position")}</th>
                 <th className="px-3 py-2 text-right font-medium">{t("spares.quantity")}</th>
@@ -122,7 +124,10 @@ export function AssetSparePartsTab({ asset }: { asset: Asset }) {
               {data.map((line) => {
                 const state = stockState(line);
                 return (
-                  <tr key={line.id} className="border-t border-surface-border">
+                  <tr
+                    key={line.id}
+                    className={cn("border-t border-surface-border", mfTable.rowHover)}
+                  >
                     <td className="px-3 py-2">
                       {canPickArticles ? (
                         <Button
@@ -246,6 +251,10 @@ function SparePartDialog({
   const [search, setSearch] = useState("");
   const debounced = useDebouncedValue(search, 300);
   const [articles, setArticles] = useState<InventoryArticle[]>([]);
+  /** More articles match than shown: the user is told to refine the search. */
+  const [moreMatches, setMoreMatches] = useState(false);
+  /** The search failed: never shown as "no article". */
+  const [searchFailed, setSearchFailed] = useState(false);
   const [article, setArticle] = useState<InventoryArticle | null>(null);
   const [quantity, setQuantity] = useState(line ? String(line.quantity) : "1");
   const [position, setPosition] = useState(line?.position_label ?? "");
@@ -258,11 +267,16 @@ function SparePartDialog({
     let cancelled = false;
     listInventoryArticles({ search: debounced.trim() || null })
       .then((rows) => {
-        if (!cancelled) setArticles(rows.slice(0, ARTICLE_RESULTS));
+        if (cancelled) return;
+        setSearchFailed(false);
+        setArticles(rows.slice(0, ARTICLE_RESULTS));
+        setMoreMatches(rows.length > ARTICLE_RESULTS);
       })
       .catch(() => {
-        // Reported by the global IPC toast.
-        if (!cancelled) setArticles([]);
+        if (cancelled) return;
+        setArticles([]);
+        setMoreMatches(false);
+        setSearchFailed(true);
       });
     return () => {
       cancelled = true;
@@ -350,7 +364,11 @@ function SparePartDialog({
               className="max-h-56 overflow-y-auto rounded-md border border-surface-border"
               aria-label={t("spares.article")}
             >
-              {articles.length === 0 ? (
+              {searchFailed ? (
+                <li role="alert" className="px-3 py-2 text-sm text-tone-danger-fg">
+                  {t("spares.searchFailed")}
+                </li>
+              ) : articles.length === 0 ? (
                 <li className="px-3 py-2 text-sm text-text-muted">{t("spares.noArticle")}</li>
               ) : (
                 articles.map((a) => {
@@ -378,6 +396,11 @@ function SparePartDialog({
                 })
               )}
             </ul>
+            {moreMatches ? (
+              <p role="status" className="text-xs text-text-muted">
+                {t("spares.moreMatches", { count: ARTICLE_RESULTS })}
+              </p>
+            ) : null}
           </div>
         ) : null}
         <FormField name={`${formId}-qty`} label={t("spares.quantity")} required error={qtyError}>

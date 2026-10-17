@@ -155,7 +155,7 @@ describe("AssetBindingSummary — S3 Supervisor Verification", () => {
       expect(screen.getByText("0")).toBeInTheDocument();
     });
 
-    it("handles null count on available domain gracefully (falls back to 0)", async () => {
+    it("shows an unreported count as unknown, never as 0", async () => {
       // Edge case: available status but null count
       setupMock(
         makeSummary({
@@ -168,8 +168,9 @@ describe("AssetBindingSummary — S3 Supervisor Verification", () => {
         expect(screen.getByText("Cross-Module Bindings")).toBeInTheDocument();
       });
 
-      // The component does `entry.count ?? 0`, so should show 0
-      expect(screen.getByText("0")).toBeInTheDocument();
+      // An available domain without a count reads "—": a silent 0 would be a false figure.
+      expect(screen.getByText("—")).toBeInTheDocument();
+      expect(screen.queryByText("0")).not.toBeInTheDocument();
     });
   });
 

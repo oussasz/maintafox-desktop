@@ -112,6 +112,10 @@
     "more": "More actions"
   },
   "history": {
+    "loadError": "This equipment's history could not be loaded",
+    "partial": "The {{count}} most recent events are shown; older events may exist.",
+    "loadOlder": "Load older events",
+    "loadOlderError": "The older events could not be loaded",
     "tabs": {
       "details": "Details",
       "history": "History"
@@ -352,6 +356,7 @@
     "fieldRequired": "This field is required."
   },
   "tree": {
+    "loading": "Loading equipment…",
     "search": "Search in tree",
     "empty": "No matching assets in tree.",
     "ariaLabel": "Asset tree",
@@ -392,6 +397,7 @@
     }
   },
   "binding": {
+    "loadError": "The linked records could not be loaded",
     "title": "Cross-Module Bindings",
     "notImplemented": "Not yet available",
     "domains": {
@@ -497,6 +503,10 @@
     "hint": "Indicative follow-up score (0–100) from recent activity, open requests and work orders and meter readings. Not an availability or condition measurement."
   },
   "photos": {
+    "loadError": "The photos could not be loaded",
+    "open": "Enlarge photo {{name}}",
+    "previous": "Previous photo",
+    "next": "Next photo",
     "title": "Photos",
     "upload": "Upload",
     "uploadFirst": "Upload a photo",
@@ -683,6 +693,8 @@
     "primary": "Main meter of the asset"
   },
   "spares": {
+    "searchFailed": "The article search failed (this is not an empty result).",
+    "moreMatches": "More than {{count}} articles match: refine the search.",
     "criticalShort_one": "{{count}} critical spare is short in stock.",
     "criticalShort_other": "{{count}} critical spares are short in stock.",
     "summary_one": "{{count}} spare part listed.",
