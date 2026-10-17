@@ -11,12 +11,20 @@
     "save": "Save",
     "cancel": "Cancel",
     "close": "Close",
-    "select": "Select {{code}}"
+    "select": "Select {{code}}",
+    "retry": "Retry"
   },
   "kpi": {
     "title": "LOTO compliance (30 days)",
     "summary": "Activations: {{activated}} · Handed back on time: {{onTime}}",
-    "rate": "Rate: {{rate}} %"
+    "rate": "Rate: {{rate}} %",
+    "loadError": "The permit indicators could not be loaded",
+    "open": "Open permits",
+    "openHint": "Not closed, handed back, cancelled or expired",
+    "activated": "Permits activated",
+    "period30d": "Last 30 days",
+    "onTimeRate": "Handed back on time",
+    "onTimeHint": "{{onTime}} of {{activated}} activated permits, last 30 days"
   },
   "open": {
     "title": "Open permits (not expired)",
@@ -66,7 +74,8 @@
     "closedAt": "Closed",
     "handedBackAt": "Handed back",
     "none": "—",
-    "dialogDescription": "Permit status, LOTO isolations, suspensions and handovers."
+    "dialogDescription": "Permit status, LOTO isolations, suspensions and handovers.",
+    "linkError": "This permit could not be opened"
   },
   "transition": {
     "submitReview": "Submit for review",
@@ -82,12 +91,13 @@
     "confirmCancel": "Cancel this permit? This cannot be undone."
   },
   "gate": {
-    "noIsolation": "LOTO permits need at least one isolation before activation.",
+    "noIsolation": "This permit type requires at least one energy isolation before activation.",
     "unverified": "Every isolation must be applied and verified by a second person before activation.",
     "removed": "A lock has already been removed; this permit can no longer protect work.",
     "expired": "This permit has expired.",
     "pendingRemoval": "Every lock removal must be verified before the permit can be closed.",
-    "handoverRequired": "Record a handover before handing back."
+    "handoverRequired": "Record a handover before handing back.",
+    "isolationsUnavailable": "The isolations of this permit could not be read: no lifecycle step until they are."
   },
   "isolation": {
     "title": "LOTO isolation points",
@@ -111,7 +121,17 @@
       "verified": "Verified",
       "removed": "Removed"
     },
-    "editLocked": "Isolations can only be added while the permit is not active."
+    "editLocked": "Isolations can only be added while the permit is not active.",
+    "loadError": "The isolations of this permit could not be loaded",
+    "loading": "Loading isolations…",
+    "notSet": "Not set",
+    "toReview": "To review",
+    "toReviewHint": "The text typed before the lists existed could not be matched: choose the energy type and the method.",
+    "originalEntry": "Original entry: {{text}}",
+    "energyPlaceholder": "Choose the energy",
+    "methodPlaceholder": "Choose the method",
+    "optionsError": "The energy and method lists could not be loaded.",
+    "listsHint": "Energy types follow ISO 14118 / OSHA 1910.147; isolation methods are your site’s list (Reference data)."
   },
   "card": {
     "title": "LOTO card",
@@ -176,7 +196,12 @@
     "maxHours": "Max duration (h)",
     "version": "Version",
     "save": "Save type",
-    "empty": "No permit types."
+    "empty": "No permit types.",
+    "energyIsolation": "Energy isolation required (LOTO)",
+    "energyIsolationHint": "A permit of this type cannot start without at least one isolation applied and verified by a second person.",
+    "energyIsolationShort": "Isolation",
+    "yes": "Yes",
+    "no": "No"
   },
   "woGate": {
     "title": "Work permit",

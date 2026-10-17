@@ -60,6 +60,8 @@ const svc = vi.hoisted(() => ({
   permitComplianceKpi30d: vi.fn(),
   listOpenPermitsReport: vi.fn(),
   listPermitIsolations: vi.fn(),
+  listPermitIsolationOptions: vi.fn(),
+  getWorkPermit: vi.fn(),
   listPermitSuspensions: vi.fn(),
   listPermitHandoverLogs: vi.fn(),
   getLotoCardView: vi.fn(),
@@ -103,7 +105,36 @@ const LOTO_TYPE: PermitTypeRecord = {
   max_duration_hours: 24,
   mandatory_ppe_ids_json: "[]",
   mandatory_control_rules_json: "{}",
+  requires_energy_isolation: true,
   row_version: 1,
+};
+
+const OPTIONS = {
+  energy_types: [
+    {
+      id: 11,
+      code: "ELECTRICAL",
+      label: "Électrique",
+      label_en: "Electrical",
+      review_required: false,
+    },
+    {
+      id: 12,
+      code: "HYDRAULIC",
+      label: "Hydraulique",
+      label_en: "Hydraulic",
+      review_required: false,
+    },
+  ],
+  isolation_methods: [
+    {
+      id: 21,
+      code: "BREAKER_LOCKOUT",
+      label: "Disjoncteur / sectionneur consigné",
+      label_en: "Breaker / disconnect locked out",
+      review_required: false,
+    },
+  ],
 };
 
 function permit(overrides: Partial<WorkPermitRecord> = {}): WorkPermitRecord {
@@ -128,6 +159,7 @@ function permit(overrides: Partial<WorkPermitRecord> = {}): WorkPermitRecord {
     asset_code: "PMP-101",
     asset_label: "Feed pump",
     linked_work_order_code: "OT-0042",
+    permit_type_requires_energy_isolation: true,
     ...overrides,
   };
 }
@@ -139,8 +171,14 @@ function isolation(overrides: Partial<PermitIsolationRecord> = {}): PermitIsolat
     entity_sync_id: "i300",
     permit_id: 41,
     isolation_point: "MCC-1 breaker",
-    energy_type: "electrical",
-    isolation_method: "breaker lock-out",
+    energy_type: "",
+    isolation_method: "",
+    energy_type_id: 11,
+    energy_type_code: "ELECTRICAL",
+    energy_type_label: "Électrique",
+    isolation_method_id: 21,
+    isolation_method_label: "Disjoncteur / sectionneur consigné",
+    mapping_review_required: false,
     lock_number: "L-12",
     applied_by_id: 7,
     verified_by_id: null,
@@ -191,6 +229,7 @@ describe("PermitsPage", () => {
     svc.listPermitSuspensions.mockResolvedValue([]);
     svc.listPermitHandoverLogs.mockResolvedValue([]);
     svc.listPermitIsolations.mockResolvedValue([isolation()]);
+    svc.listPermitIsolationOptions.mockResolvedValue(OPTIONS);
   });
 
   it("lists permits with business labels instead of internal ids", async () => {
@@ -284,7 +323,8 @@ describe("PermitsPage", () => {
 
     // Submitting without a permit type is rejected client-side and never reaches IPC.
     fireEvent.click(within(dialog).getByRole("button", { name: enPermits.create.submit }));
-    expect(await within(dialog).findByText(enPermits.errors.required)).toBeInTheDocument();
+    // Type and expiry (the type has not proposed one yet) are both required.
+    expect((await within(dialog).findAllByText(enPermits.errors.required)).length).toBe(2);
     expect(svc.createWorkPermit).not.toHaveBeenCalled();
   });
 
@@ -297,21 +337,105 @@ describe("PermitsPage", () => {
     expect(row.getByRole("link", { name: "Open work order OT-0042" })).toBeInTheDocument();
   });
 
-  it("filters by status through the backend and searches client-side", async () => {
-    svc.listWorkPermits.mockResolvedValue([
-      permit(),
-      permit({ id: 42, code: "PTW-2026-000042", asset_code: "CMP-7", asset_label: "Compressor" }),
-    ]);
+  it("searches on the server over every permit, not only the loaded page", async () => {
+    const compressor = permit({
+      id: 42,
+      code: "PTW-2026-000042",
+      asset_code: "CMP-7",
+      asset_label: "Compressor",
+    });
+    svc.listWorkPermits.mockImplementation(async (filter: { search?: string }) =>
+      filter.search ? [compressor] : [permit(), compressor],
+    );
     renderPage();
     await screen.findByRole("button", { name: "Select PTW-2026-000042" });
+    expect(svc.listWorkPermits).toHaveBeenCalledWith({ limit: 201 });
     fireEvent.change(screen.getByPlaceholderText(enPermits.filters.searchPlaceholder), {
       target: { value: "compressor" },
     });
     await waitFor(() =>
+      expect(svc.listWorkPermits).toHaveBeenCalledWith({ limit: 201, search: "compressor" }),
+    );
+    await waitFor(() =>
       expect(screen.queryByRole("button", { name: "Select PTW-2026-000041" })).toBeNull(),
     );
     expect(screen.getByRole("button", { name: "Select PTW-2026-000042" })).toBeInTheDocument();
-    expect(svc.listWorkPermits).toHaveBeenCalledWith({ limit: 201 });
+  });
+
+  it("opens a deep-linked permit by id even when it is beyond the loaded page", async () => {
+    svc.getWorkPermit.mockResolvedValue(permit({ id: 977, code: "PTW-2025-000977" }));
+    renderPage("/permits?permit=977");
+    expect(
+      await screen.findByRole("region", { name: "Permit PTW-2025-000977" }),
+    ).toBeInTheDocument();
+    expect(svc.getWorkPermit).toHaveBeenCalledWith(977);
+  });
+
+  it("says so when a deep-linked permit cannot be read", async () => {
+    svc.getWorkPermit.mockRejectedValue({ code: "NOT_FOUND", message: "WorkPermit 977" });
+    renderPage("/permits?permit=977");
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(enPermits.detail.linkError)).toBeInTheDocument();
+  });
+
+  it("keeps the list when the KPIs fail, and shows the KPI failure instead of zeros", async () => {
+    svc.permitComplianceKpi30d.mockRejectedValue({ code: "DATABASE_ERROR", message: "kpi" });
+    renderPage();
+    expect(
+      await screen.findByRole("button", { name: "Select PTW-2026-000041" }),
+    ).toBeInTheDocument();
+    expect(await screen.findByText(enPermits.kpi.loadError)).toBeInTheDocument();
+    expect(screen.queryByTestId("permits-kpis")).toBeNull();
+  });
+
+  it("shows the KPIs as tiles with their period", async () => {
+    svc.permitComplianceKpi30d.mockResolvedValue({
+      activated_count: 4,
+      handed_back_on_time_count: 3,
+      rate: 0.75,
+    });
+    svc.listOpenPermitsReport.mockResolvedValue([permit(), permit({ id: 2 })]);
+    renderPage();
+    const tiles = await screen.findByTestId("permits-kpis");
+    expect(within(tiles).getByText(enPermits.kpi.open)).toBeInTheDocument();
+    expect(within(tiles).getByText(enPermits.kpi.onTimeRate)).toBeInTheDocument();
+    expect(within(tiles).getAllByText(enPermits.kpi.period30d).length).toBeGreaterThan(0);
+  });
+
+  it("never shows 'no isolation' when the isolations could not be read", async () => {
+    svc.listPermitIsolations.mockRejectedValue({ code: "DATABASE_ERROR", message: "iso" });
+    const panel = await openPermit();
+    expect(await within(panel).findByText(enPermits.isolation.loadError)).toBeInTheDocument();
+    expect(within(panel).queryByText(enPermits.isolation.empty)).toBeNull();
+    expect(within(panel).getByRole("button", { name: "Activate" })).toBeDisabled();
+    expect(within(panel).getByText(enPermits.gate.isolationsUnavailable)).toBeInTheDocument();
+  });
+
+  it("shows list labels, the original entry of a migrated row and its review flag", async () => {
+    svc.listPermitIsolations.mockResolvedValue([
+      isolation({
+        energy_type: "plasma",
+        isolation_method: "clé captive",
+        energy_type_id: 19,
+        energy_type_code: "OTHER",
+        energy_type_label: "Autre (préciser)",
+        mapping_review_required: true,
+      }),
+    ]);
+    const panel = await openPermit();
+    expect(await within(panel).findByText(/Autre \(préciser\)/)).toBeInTheDocument();
+    expect(within(panel).getByTestId("isolation-original-entry")).toHaveTextContent(
+      "plasma · clé captive",
+    );
+    expect(within(panel).getByText(enPermits.isolation.toReview)).toBeInTheDocument();
+  });
+
+  it("labels an isolation from the lists in the UI language", async () => {
+    const panel = await openPermit();
+    expect(
+      await within(panel).findByText("Electrical · Breaker / disconnect locked out"),
+    ).toBeInTheDocument();
+    expect(within(panel).queryByTestId("isolation-original-entry")).toBeNull();
   });
 
   it("shows an error state with retry when the list cannot load", async () => {
@@ -329,7 +453,7 @@ describe("PermitsPage", () => {
     const card = {
       permit_code: "PTW-2026-000041",
       equipment_label: "PMP-101 — Feed pump",
-      energy_type: "electrical",
+      energy_type: "Électrique",
       isolation_id: 300,
       isolation_point: "MCC-1 breaker",
       lock_number: "L-12",

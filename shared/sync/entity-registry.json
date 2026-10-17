@@ -1198,7 +1198,8 @@
       "apply_priority": 13,
       "parents": [
         "work_permits",
-        "user_accounts"
+        "user_accounts",
+        "reference_values"
       ],
       "sync_status": "synced"
     },

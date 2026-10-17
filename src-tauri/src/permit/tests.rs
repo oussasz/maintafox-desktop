@@ -50,6 +50,25 @@ async fn admin_id(db: &DatabaseConnection) -> i64 {
     scalar_i64(db, "SELECT id FROM user_accounts WHERE username = 'admin' LIMIT 1").await
 }
 
+/// Id of a value of a LOTO list (`permit::energy_reference`).
+async fn list_value_id(db: &DatabaseConnection, domain: &str, code: &str) -> i64 {
+    scalar_i64(
+        db,
+        &format!(
+            "SELECT rv.id FROM reference_values rv JOIN reference_sets rs ON rs.id = rv.set_id              JOIN reference_domains d ON d.id = rs.domain_id              WHERE d.code = '{domain}' AND rv.code = '{code}'"
+        ),
+    )
+    .await
+}
+
+async fn energy(db: &DatabaseConnection, code: &str) -> Option<i64> {
+    Some(list_value_id(db, crate::permit::energy_reference::ENERGY_TYPES_DOMAIN, code).await)
+}
+
+async fn method(db: &DatabaseConnection, code: &str) -> Option<i64> {
+    Some(list_value_id(db, crate::permit::energy_reference::ISOLATION_METHODS_DOMAIN, code).await)
+}
+
 async fn type_id(db: &DatabaseConnection, code: &str) -> i64 {
     scalar_i64(db, &format!("SELECT id FROM permit_types WHERE code = '{code}'")).await
 }
@@ -127,8 +146,8 @@ async fn add_isolation(db: &DatabaseConnection, permit_id: i64, point: &str) -> 
             id: None,
             permit_id,
             isolation_point: point.into(),
-            energy_type: "electrical".into(),
-            isolation_method: "breaker lock-out".into(),
+            energy_type_id: energy(db, "ELECTRICAL").await,
+            isolation_method_id: method(db, "BREAKER_LOCKOUT").await,
             lock_number: None,
         },
     )
@@ -356,8 +375,8 @@ async fn isolations_cannot_be_added_to_an_active_permit() {
             id: None,
             permit_id: wp.id,
             isolation_point: "Late addition".into(),
-            energy_type: "hydraulic".into(),
-            isolation_method: "valve lock".into(),
+            energy_type_id: energy(&db, "HYDRAULIC").await,
+            isolation_method_id: method(&db, "VALVE_LOCKOUT").await,
             lock_number: None,
         },
     )
@@ -415,8 +434,8 @@ async fn applied_isolation_cannot_be_edited() {
             id: Some(iso.id),
             permit_id: wp.id,
             isolation_point: "Renamed".into(),
-            energy_type: "electrical".into(),
-            isolation_method: "breaker lock-out".into(),
+            energy_type_id: energy(&db, "ELECTRICAL").await,
+            isolation_method_id: method(&db, "BREAKER_LOCKOUT").await,
             lock_number: None,
         },
     )
@@ -709,4 +728,282 @@ async fn locks_cannot_be_removed_while_linked_work_is_running() {
     queries::verify_permit_isolation_removal(&db, action(&iso), VERIFIER)
         .await
         .expect("removal after work completed");
+}
+
+// ── Governed LOTO lists and the energy-isolation rule (migration 225) ──
+
+#[tokio::test]
+async fn the_isolation_rule_is_the_type_flag_and_the_loto_type_keeps_it() {
+    let db = setup().await;
+    let types = queries::list_permit_types(&db).await.expect("types");
+    let loto = types.iter().find(|t| t.code == "loto").expect("loto type").clone();
+    let hot = types
+        .iter()
+        .find(|t| t.code == "hot_work")
+        .expect("hot work type")
+        .clone();
+    assert!(loto.requires_energy_isolation, "migration 225 sets the flag on loto");
+    assert!(!hot.requires_energy_isolation);
+
+    // A hot-work permit starts without an isolation...
+    let asset = insert_equipment(&db, "EQ-PTW-60").await;
+    let wp = advance_to_issued(&db, create_permit(&db, "hot_work", asset).await).await;
+    assert!(!wp.permit_type_requires_energy_isolation);
+    set_status(&db, &wp, "active")
+        .await
+        .expect("hot work without isolation");
+
+    // ...until the plant says the type needs one: then the same gate as LOTO refuses it.
+    let updated = queries::upsert_permit_type(
+        &db,
+        crate::permit::domain::PermitTypeUpsertInput {
+            id: Some(hot.id),
+            code: hot.code.clone(),
+            name: hot.name.clone(),
+            description: Some(hot.description.clone()),
+            requires_hse_approval: hot.requires_hse_approval,
+            requires_operations_approval: hot.requires_operations_approval,
+            requires_atmospheric_test: hot.requires_atmospheric_test,
+            max_duration_hours: hot.max_duration_hours,
+            mandatory_ppe_ids_json: Some(hot.mandatory_ppe_ids_json.clone()),
+            mandatory_control_rules_json: Some(hot.mandatory_control_rules_json.clone()),
+            requires_energy_isolation: Some(true),
+        },
+    )
+    .await
+    .expect("flag hot work");
+    assert!(updated.requires_energy_isolation);
+    let asset = insert_equipment(&db, "EQ-PTW-61").await;
+    let wp = advance_to_issued(&db, create_permit(&db, "hot_work", asset).await).await;
+    assert_validation(set_status(&db, &wp, "active").await, "LOTO_NO_ISOLATION");
+
+    // An update that does not send the flag keeps it (no silent reset of the LOTO rule).
+    let kept = queries::upsert_permit_type(
+        &db,
+        crate::permit::domain::PermitTypeUpsertInput {
+            id: Some(loto.id),
+            code: loto.code.clone(),
+            name: loto.name.clone(),
+            description: Some(loto.description.clone()),
+            requires_hse_approval: loto.requires_hse_approval,
+            requires_operations_approval: loto.requires_operations_approval,
+            requires_atmospheric_test: loto.requires_atmospheric_test,
+            max_duration_hours: loto.max_duration_hours,
+            mandatory_ppe_ids_json: None,
+            mandatory_control_rules_json: None,
+            requires_energy_isolation: None,
+        },
+    )
+    .await
+    .expect("rename loto");
+    assert!(kept.requires_energy_isolation);
+}
+
+#[tokio::test]
+async fn isolations_record_list_links_only() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-PTW-62").await;
+    let wp = create_permit(&db, "loto", asset).await;
+    let iso = add_isolation(&db, wp.id, "Q4 feeder").await;
+    assert_eq!(iso.energy_type, "", "no original entry on a new isolation");
+    assert_eq!(iso.isolation_method, "");
+    assert_eq!(iso.energy_type_code.as_deref(), Some("ELECTRICAL"));
+    assert_eq!(iso.energy_type_label.as_deref(), Some("Électrique"));
+    assert!(iso.isolation_method_label.is_some());
+    assert!(!iso.mapping_review_required);
+
+    let input = |energy_id: Option<i64>, method_id: Option<i64>| PermitIsolationUpsertInput {
+        id: None,
+        permit_id: wp.id,
+        isolation_point: "Valve V-2".into(),
+        energy_type_id: energy_id,
+        isolation_method_id: method_id,
+        lock_number: None,
+    };
+    let valve = method(&db, "VALVE_LOCKOUT").await;
+    assert_validation(
+        queries::upsert_permit_isolation(&db, input(None, valve)).await,
+        "energy_type_id is required",
+    );
+    // A method id is not an energy type.
+    assert_validation(
+        queries::upsert_permit_isolation(&db, input(valve, valve)).await,
+        "not a value of PERMIT.ENERGY_TYPES",
+    );
+    let blind = method(&db, "BLIND").await;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE reference_values SET is_active = 0 WHERE id = ?",
+        [blind.into()],
+    ))
+    .await
+    .expect("retire method");
+    assert_validation(
+        queries::upsert_permit_isolation(&db, input(energy(&db, "HYDRAULIC").await, blind)).await,
+        "no longer active",
+    );
+
+    let options = crate::permit::energy_reference::list_isolation_options(&db)
+        .await
+        .expect("options");
+    assert_eq!(
+        options.energy_types.len(),
+        crate::permit::energy_reference::ENERGY_TYPES.len()
+    );
+    assert!(
+        options.isolation_methods.iter().all(|m| m.code != "BLIND"),
+        "inactive method not offered"
+    );
+    assert_eq!(
+        options
+            .energy_types
+            .iter()
+            .find(|e| e.code == "PNEUMATIC")
+            .and_then(|e| e.label_en.clone()),
+        Some("Pneumatic".to_string())
+    );
+}
+
+#[tokio::test]
+async fn typed_texts_are_linked_kept_and_unmatched_ones_flagged() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-PTW-63").await;
+    let wp = create_permit(&db, "loto", asset).await;
+    let rows: [(&str, &str, &str); 5] = [
+        ("P1", "Électrique 400V", "Cadenas disjoncteur"),
+        ("P2", "VAPEUR", "vanne fermée"),
+        ("P3", "plasma", "clé captive"),
+        ("P4", "", ""),
+        ("P5", "pneumatic", "Clé captive"),
+    ];
+    for (i, (point, e, m)) in rows.iter().enumerate() {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO permit_isolations (entity_sync_id, permit_id, isolation_point, energy_type, \
+             isolation_method, row_version) VALUES (?, ?, ?, ?, ?, 1)",
+            [
+                format!("iso-legacy-{i}").into(),
+                wp.id.into(),
+                (*point).into(),
+                (*e).into(),
+                (*m).into(),
+            ],
+        ))
+        .await
+        .expect("legacy isolation");
+    }
+    let report = crate::permit::energy_reference::map_isolation_texts(&db)
+        .await
+        .expect("map");
+    assert_eq!(report.rows, 5);
+    assert_eq!(
+        report.methods_created, 1,
+        "one plant method for both spellings of 'clé captive'"
+    );
+    assert_eq!(
+        report.to_review, 3,
+        "P3 (unknown energy + created method), P4 (empty texts), P5 (created method)"
+    );
+
+    let isos = queries::list_permit_isolations(&db, wp.id).await.expect("list");
+    let by_point = |p: &str| isos.iter().find(|i| i.isolation_point == p).expect("row").clone();
+    let p1 = by_point("P1");
+    assert_eq!(p1.energy_type_code.as_deref(), Some("ELECTRICAL"));
+    assert_eq!(p1.energy_type, "Électrique 400V", "original entry kept as history");
+    assert!(!p1.mapping_review_required);
+    assert_eq!(by_point("P2").energy_type_code.as_deref(), Some("THERMAL"));
+    let p3 = by_point("P3");
+    assert_eq!(p3.energy_type_code.as_deref(), Some("OTHER"));
+    assert!(p3.mapping_review_required);
+    assert_eq!(p3.energy_type, "plasma");
+    let p4 = by_point("P4");
+    assert!(p4.energy_type_id.is_none() && p4.mapping_review_required);
+    assert_eq!(by_point("P5").isolation_method_id, p3.isolation_method_id);
+
+    // The created method is a plant value flagged for review; the original spelling of a matched
+    // text is a legacy alias.
+    let flagged = scalar_i64(
+        &db,
+        "SELECT COUNT(*) FROM reference_values WHERE label = 'clé captive' \
+           AND json_extract(metadata_json, '$.review_required') = 1",
+    )
+    .await;
+    assert_eq!(flagged, 1);
+    let aliases = scalar_i64(
+        &db,
+        "SELECT COUNT(*) FROM reference_aliases WHERE alias_type = 'legacy' AND alias_label = 'Électrique 400V'",
+    )
+    .await;
+    assert_eq!(aliases, 1);
+
+    // A second run (the startup pass) changes nothing.
+    let again = crate::permit::energy_reference::map_isolation_texts(&db)
+        .await
+        .expect("rerun");
+    assert_eq!(again.rows, 0);
+
+    // A person choosing the values clears the review flag; the original text stays.
+    let edited = queries::upsert_permit_isolation(
+        &db,
+        PermitIsolationUpsertInput {
+            id: Some(p3.id),
+            permit_id: wp.id,
+            isolation_point: "P3".into(),
+            energy_type_id: energy(&db, "RADIATION").await,
+            isolation_method_id: method(&db, "OTHER").await,
+            lock_number: None,
+        },
+    )
+    .await
+    .expect("review P3");
+    assert!(!edited.mapping_review_required);
+    assert_eq!(edited.energy_type, "plasma");
+    assert_eq!(edited.energy_type_code.as_deref(), Some("RADIATION"));
+}
+
+#[test]
+fn energy_and_method_texts_match_in_french_and_english() {
+    use crate::permit::energy_reference::{match_entry, ENERGY_TYPES, ISOLATION_METHODS};
+    assert_eq!(match_entry(ENERGY_TYPES, "électricité"), Some("ELECTRICAL"));
+    assert_eq!(match_entry(ENERGY_TYPES, "Air comprimé 6 bar"), Some("PNEUMATIC"));
+    assert_eq!(match_entry(ENERGY_TYPES, "Gravity"), Some("GRAVITATIONAL"));
+    assert_eq!(match_entry(ENERGY_TYPES, "ressort comprimé"), Some("STORED"));
+    // Two energies named in one text: not guessed.
+    assert_eq!(match_entry(ENERGY_TYPES, "électrique et hydraulique"), None);
+    assert_eq!(match_entry(ENERGY_TYPES, "  "), None);
+    assert_eq!(
+        match_entry(ISOLATION_METHODS, "Double block & bleed"),
+        Some("DOUBLE_BLOCK_BLEED")
+    );
+    assert_eq!(match_entry(ISOLATION_METHODS, "joint plein DN50"), Some("BLIND"));
+}
+
+#[tokio::test]
+async fn permit_search_runs_on_the_server_over_every_permit() {
+    let db = setup().await;
+    let a = insert_equipment(&db, "EQ-PTW-SEARCH-A").await;
+    let b = insert_equipment(&db, "EQ-PTW-OTHER-B").await;
+    let pa = create_permit(&db, "loto", a).await;
+    create_permit(&db, "hot_work", b).await;
+    let filter = |search: &str| crate::permit::domain::WorkPermitListFilter {
+        search: Some(search.into()),
+        limit: Some(5),
+        ..Default::default()
+    };
+    let hits = queries::list_work_permits(&db, filter("search-a"))
+        .await
+        .expect("search");
+    assert_eq!(hits.iter().map(|p| p.id).collect::<Vec<_>>(), vec![pa.id]);
+    // LIKE wildcards in the text are literal.
+    assert!(queries::list_work_permits(&db, filter("%"))
+        .await
+        .expect("literal")
+        .is_empty());
+    assert_eq!(
+        queries::list_work_permits(&db, filter("Hot work"))
+            .await
+            .expect("type")
+            .len(),
+        1
+    );
 }

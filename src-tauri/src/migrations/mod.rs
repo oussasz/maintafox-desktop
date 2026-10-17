@@ -198,6 +198,7 @@ mod m20261017_000213_settings_change_values;
 mod m20261017_000214_currency_reference_list;
 mod m20261017_000217_di_decision_reasons;
 mod m20261017_000218_di_transition_log_index;
+mod m20261017_000225_permit_energy_isolation_lists;
 mod m20261101_000036_activity_audit_log;
 mod m20261201_000037_observability_permissions;
 mod m_test;
@@ -409,6 +410,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261017_000214_currency_reference_list::Migration),
             Box::new(m20261017_000217_di_decision_reasons::Migration),
             Box::new(m20261017_000218_di_transition_log_index::Migration),
+            Box::new(m20261017_000225_permit_energy_isolation_lists::Migration),
         ]
     }
 }

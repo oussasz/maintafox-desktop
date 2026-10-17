@@ -115,6 +115,22 @@ pub async fn set_work_permit_status(input: WorkPermitStatusInput, state: State<'
     queries::set_work_permit_status(&state.db, input, i64::from(user.user_id)).await
 }
 
+/// Choices of the isolation form (energy types, the plant's isolation methods). Read with the
+/// permit view right: a technician recording a LOTO needs no reference-data permission.
+#[tauri::command]
+pub async fn list_permit_isolation_options(
+    state: State<'_, AppState>,
+) -> AppResult<crate::permit::energy_reference::IsolationOptions> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PTW_VIEW,
+        PermissionScope::Global
+    );
+    crate::permit::energy_reference::list_isolation_options(&state.db).await
+}
+
 #[tauri::command]
 pub async fn list_permit_isolations(permit_id: i64, state: State<'_, AppState>) -> AppResult<Vec<PermitIsolation>> {
     let user = require_session!(state);

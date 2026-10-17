@@ -10499,6 +10499,8 @@ export interface PermitTypeUpsertInput {
   max_duration_hours: number | null;
   mandatory_ppe_ids_json: string | null;
   mandatory_control_rules_json: string | null;
+  /** Permits of this type need a verified energy isolation before they start (LOTO). */
+  requires_energy_isolation: boolean;
 }
 
 export interface WorkPermitCreateInput {
@@ -10558,8 +10560,10 @@ export interface PermitIsolationUpsertInput {
   id: number | null;
   permit_id: number;
   isolation_point: string;
-  energy_type: string;
-  isolation_method: string;
+  /** Active `PERMIT.ENERGY_TYPES` value. */
+  energy_type_id: number;
+  /** Active `PERMIT.ISOLATION_METHODS` value (the plant's list). */
+  isolation_method_id: number;
   lock_number: string | null;
 }
 
@@ -10575,6 +10579,8 @@ export interface WorkPermitListFilter {
   permit_type_id?: number;
   asset_id?: number;
   linked_work_order_id?: number;
+  /** Code, type, equipment or work order text (searched on the server). */
+  search?: string;
   limit?: number;
 }
 

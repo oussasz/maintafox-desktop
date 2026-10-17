@@ -36,6 +36,10 @@ pub async fn ensure_system_reference_catalog_integrity(db: &DatabaseConnection) 
     crate::qualification::catalog::ensure_qualification_catalog(db).await?;
     // Planning window types (production, maintenance, shutdown, freeze).
     crate::planning::windows::ensure_window_type_catalog(db).await?;
+    // LOTO energy types (SYSTEM) and isolation methods (COMPANY); isolations that arrived without
+    // links (replayed history) are linked from their typed texts.
+    crate::permit::energy_reference::ensure_permit_energy_catalogs(db).await?;
+    crate::permit::energy_reference::map_isolation_texts(db).await?;
     Ok(())
 }
 

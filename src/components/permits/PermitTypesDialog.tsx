@@ -13,8 +13,8 @@ import {
   Textarea,
 } from "@/components/ui";
 import { Checkbox } from "@/components/ui/checkbox";
+import { describeAppError } from "@/lib/app-error";
 import { upsertPermitType, type PermitTypeRecord } from "@/services/permit-service";
-import { toErrorMessage } from "@/utils/errors";
 
 interface PermitTypesDialogProps {
   open: boolean;
@@ -31,6 +31,8 @@ interface TypeDraft {
   hse: boolean;
   operations: boolean;
   atmospheric: boolean;
+  /** Needs a verified energy isolation before it starts (LOTO rule). */
+  energyIsolation: boolean;
   maxHours: string;
   ppeJson: string | null;
   rulesJson: string | null;
@@ -44,6 +46,7 @@ const EMPTY: TypeDraft = {
   hse: false,
   operations: false,
   atmospheric: false,
+  energyIsolation: false,
   maxHours: "",
   ppeJson: null,
   rulesJson: null,
@@ -58,6 +61,7 @@ function toDraft(ty: PermitTypeRecord): TypeDraft {
     hse: ty.requires_hse_approval,
     operations: ty.requires_operations_approval,
     atmospheric: ty.requires_atmospheric_test,
+    energyIsolation: ty.requires_energy_isolation,
     maxHours: ty.max_duration_hours == null ? "" : String(ty.max_duration_hours),
     ppeJson: ty.mandatory_ppe_ids_json,
     rulesJson: ty.mandatory_control_rules_json,
@@ -101,18 +105,19 @@ export function PermitTypesDialog({ open, onOpenChange, types, onSaved }: Permit
         max_duration_hours: maxHoursValue,
         mandatory_ppe_ids_json: draft.ppeJson,
         mandatory_control_rules_json: draft.rulesJson,
+        requires_energy_isolation: draft.energyIsolation,
       });
       setDraft(EMPTY);
       setSubmitted(false);
       onSaved();
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(describeAppError(err).title);
     } finally {
       setBusy(false);
     }
   };
 
-  const flag = (key: "hse" | "operations" | "atmospheric", label: string) => (
+  const flag = (key: "hse" | "operations" | "atmospheric" | "energyIsolation", label: string) => (
     <label className="flex items-center gap-2 text-sm text-text-primary">
       <Checkbox
         checked={draft[key]}
@@ -136,6 +141,7 @@ export function PermitTypesDialog({ open, onOpenChange, types, onSaved }: Permit
                 <th className="px-2 py-1.5 font-medium">{t("types.code")}</th>
                 <th className="px-2 py-1.5 font-medium">{t("types.name")}</th>
                 <th className="px-2 py-1.5 font-medium">{t("types.maxHours")}</th>
+                <th className="px-2 py-1.5 font-medium">{t("types.energyIsolationShort")}</th>
                 <th className="px-2 py-1.5" />
               </tr>
             </thead>
@@ -145,6 +151,9 @@ export function PermitTypesDialog({ open, onOpenChange, types, onSaved }: Permit
                   <td className="px-2 py-1.5 font-mono text-xs">{ty.code}</td>
                   <td className="px-2 py-1.5">{ty.name}</td>
                   <td className="px-2 py-1.5">{ty.max_duration_hours ?? t("detail.none")}</td>
+                  <td className="px-2 py-1.5">
+                    {ty.requires_energy_isolation ? t("types.yes") : t("types.no")}
+                  </td>
                   <td className="px-2 py-1.5 text-right">
                     <Button
                       type="button"
@@ -225,9 +234,11 @@ export function PermitTypesDialog({ open, onOpenChange, types, onSaved }: Permit
             {flag("hse", t("types.hse"))}
             {flag("operations", t("types.operations"))}
             {flag("atmospheric", t("types.atmospheric"))}
+            {flag("energyIsolation", t("types.energyIsolation"))}
+            <p className="pl-6 text-xs text-text-muted">{t("types.energyIsolationHint")}</p>
           </div>
           {error ? (
-            <p role="alert" className="text-sm text-status-danger">
+            <p role="alert" className="text-sm text-tone-danger-fg">
               {error}
             </p>
           ) : null}

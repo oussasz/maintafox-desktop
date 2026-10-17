@@ -55,6 +55,7 @@ const WORK_PERMIT_SELECT: &str = "SELECT wp.id, wp.entity_sync_id, wp.code, wp.l
      wp.permit_type_id, wp.asset_id, wp.entity_id, wp.status, wp.requested_at, wp.issued_at, \
      wp.activated_at, wp.expires_at, wp.closed_at, wp.handed_back_at, wp.row_version, \
      pt.code AS permit_type_code, pt.name AS permit_type_name, \
+     COALESCE(pt.requires_energy_isolation, 0) AS permit_type_requires_energy_isolation, \
      e.asset_id_code AS asset_code, e.name AS asset_label, wo.code AS linked_work_order_code \
      FROM work_permits wp \
      LEFT JOIN permit_types pt ON pt.id = wp.permit_type_id \
@@ -62,12 +63,16 @@ const WORK_PERMIT_SELECT: &str = "SELECT wp.id, wp.entity_sync_id, wp.code, wp.l
      LEFT JOIN work_orders wo ON wo.id = wp.linked_work_order_id";
 
 const PERMIT_ISOLATION_SELECT: &str = "SELECT pi.id, pi.entity_sync_id, pi.permit_id, pi.isolation_point, \
-     pi.energy_type, pi.isolation_method, pi.lock_number, pi.applied_by_id, pi.verified_by_id, \
+     pi.energy_type, pi.isolation_method, pi.energy_type_id, et.code AS energy_type_code, \
+     et.label AS energy_type_label, pi.isolation_method_id, im.label AS isolation_method_label, \
+     pi.mapping_review_required, pi.lock_number, pi.applied_by_id, pi.verified_by_id, \
      pi.applied_at, pi.verified_at, pi.removal_verified_at, pi.removal_verified_by_id, pi.row_version, \
      COALESCE(ua.display_name, ua.username) AS applied_by_name, \
      COALESCE(uv.display_name, uv.username) AS verified_by_name, \
      COALESCE(ur.display_name, ur.username) AS removal_verified_by_name \
      FROM permit_isolations pi \
+     LEFT JOIN reference_values et ON et.id = pi.energy_type_id \
+     LEFT JOIN reference_values im ON im.id = pi.isolation_method_id \
      LEFT JOIN user_accounts ua ON ua.id = pi.applied_by_id \
      LEFT JOIN user_accounts uv ON uv.id = pi.verified_by_id \
      LEFT JOIN user_accounts ur ON ur.id = pi.removal_verified_by_id";
@@ -161,6 +166,10 @@ fn map_permit_type(row: &sea_orm::QueryResult) -> AppResult<PermitType> {
         mandatory_control_rules_json: row
             .try_get("", "mandatory_control_rules_json")
             .map_err(|e| decode_err("mandatory_control_rules_json", e))?,
+        requires_energy_isolation: i64_to_bool(
+            row.try_get::<i64>("", "requires_energy_isolation")
+                .map_err(|e| decode_err("requires_energy_isolation", e))?,
+        ),
         row_version: row
             .try_get("", "row_version")
             .map_err(|e| decode_err("row_version", e))?,
@@ -195,6 +204,10 @@ fn map_work_permit(row: &sea_orm::QueryResult) -> AppResult<WorkPermit> {
         asset_code: row.try_get("", "asset_code").ok(),
         asset_label: row.try_get("", "asset_label").ok(),
         linked_work_order_code: row.try_get("", "linked_work_order_code").ok(),
+        permit_type_requires_energy_isolation: i64_to_bool(
+            row.try_get::<i64>("", "permit_type_requires_energy_isolation")
+                .map_err(|e| decode_err("permit_type_requires_energy_isolation", e))?,
+        ),
     })
 }
 
@@ -214,6 +227,15 @@ fn map_permit_isolation(row: &sea_orm::QueryResult) -> AppResult<PermitIsolation
         isolation_method: row
             .try_get("", "isolation_method")
             .map_err(|e| decode_err("isolation_method", e))?,
+        energy_type_id: row.try_get("", "energy_type_id").ok().flatten(),
+        energy_type_code: row.try_get("", "energy_type_code").ok().flatten(),
+        energy_type_label: row.try_get("", "energy_type_label").ok().flatten(),
+        isolation_method_id: row.try_get("", "isolation_method_id").ok().flatten(),
+        isolation_method_label: row.try_get("", "isolation_method_label").ok().flatten(),
+        mapping_review_required: i64_to_bool(
+            row.try_get::<i64>("", "mapping_review_required")
+                .map_err(|e| decode_err("mapping_review_required", e))?,
+        ),
         lock_number: row.try_get("", "lock_number").ok(),
         applied_by_id: row.try_get("", "applied_by_id").ok(),
         verified_by_id: row.try_get("", "verified_by_id").ok(),
@@ -369,11 +391,16 @@ async fn ensure_wo_asset_aligned(
     Ok(())
 }
 
-async fn permit_type_code(db: &impl ConnectionTrait, permit_type_id: i64) -> AppResult<String> {
+/// Whether permits of the type need at least one energy isolation before they start
+/// (`permit_types.requires_energy_isolation`, migration 225 — set for the LOTO type).
+pub(crate) async fn permit_type_requires_energy_isolation(
+    db: &impl ConnectionTrait,
+    permit_type_id: i64,
+) -> AppResult<bool> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT code FROM permit_types WHERE id = ?",
+            "SELECT requires_energy_isolation FROM permit_types WHERE id = ?",
             [permit_type_id.into()],
         ))
         .await?
@@ -381,7 +408,10 @@ async fn permit_type_code(db: &impl ConnectionTrait, permit_type_id: i64) -> App
             entity: "PermitType".into(),
             id: permit_type_id.to_string(),
         })?;
-    row.try_get("", "code").map_err(|e| decode_err("code", e))
+    Ok(i64_to_bool(
+        row.try_get::<i64>("", "requires_energy_isolation")
+            .map_err(|e| decode_err("requires_energy_isolation", e))?,
+    ))
 }
 
 async fn count_isolations(db: &impl ConnectionTrait, permit_id: i64) -> AppResult<i64> {
@@ -451,9 +481,10 @@ pub(crate) async fn activation_ready(db: &impl ConnectionTrait, wp: &WorkPermit)
             code_param(),
         ));
     }
-    let code = permit_type_code(db, wp.permit_type_id).await?;
+    // Read from the type itself (not the joined copy on `wp`, which a caller may hold stale).
+    let needs_isolation = permit_type_requires_energy_isolation(db, wp.permit_type_id).await?;
     let n = count_isolations(db, wp.id).await?;
-    if code == "loto" && n < 1 {
+    if needs_isolation && n < 1 {
         return Err(crate::errors::org_validation_failed(
             "LOTO_NO_ISOLATION",
             format!(
@@ -609,7 +640,7 @@ pub async fn list_permit_types(db: &impl ConnectionTrait) -> AppResult<Vec<Permi
             DbBackend::Sqlite,
             "SELECT id, entity_sync_id, code, name, description, requires_hse_approval, \
              requires_operations_approval, requires_atmospheric_test, max_duration_hours, \
-             mandatory_ppe_ids_json, mandatory_control_rules_json, row_version \
+             mandatory_ppe_ids_json, mandatory_control_rules_json, requires_energy_isolation, row_version \
              FROM permit_types ORDER BY code ASC"
                 .to_string(),
         ))
@@ -627,7 +658,7 @@ pub async fn get_permit_type(db: &impl ConnectionTrait, id: i64) -> AppResult<Op
             DbBackend::Sqlite,
             "SELECT id, entity_sync_id, code, name, description, requires_hse_approval, \
              requires_operations_approval, requires_atmospheric_test, max_duration_hours, \
-             mandatory_ppe_ids_json, mandatory_control_rules_json, row_version \
+             mandatory_ppe_ids_json, mandatory_control_rules_json, requires_energy_isolation, row_version \
              FROM permit_types WHERE id = ?",
             [id.into()],
         ))
@@ -666,7 +697,7 @@ async fn upsert_permit_type_in(db: &impl ConnectionTrait, input: PermitTypeUpser
                 "UPDATE permit_types SET code = ?, name = ?, description = ?, \
                  requires_hse_approval = ?, requires_operations_approval = ?, requires_atmospheric_test = ?, \
                  max_duration_hours = ?, mandatory_ppe_ids_json = ?, mandatory_control_rules_json = ?, \
-                 row_version = ? \
+                 requires_energy_isolation = ?, row_version = ? \
                  WHERE id = ? AND row_version = ?",
                 [
                     input.code.into(),
@@ -678,6 +709,12 @@ async fn upsert_permit_type_in(db: &impl ConnectionTrait, input: PermitTypeUpser
                     opt_f64(input.max_duration_hours),
                     ppe.into(),
                     rules.into(),
+                    i64::from(
+                        input
+                            .requires_energy_isolation
+                            .unwrap_or(current.requires_energy_isolation),
+                    )
+                    .into(),
                     new_rv.into(),
                     id.into(),
                     current.row_version.into(),
@@ -698,8 +735,9 @@ async fn upsert_permit_type_in(db: &impl ConnectionTrait, input: PermitTypeUpser
         DbBackend::Sqlite,
         "INSERT INTO permit_types (entity_sync_id, code, name, description, \
          requires_hse_approval, requires_operations_approval, requires_atmospheric_test, \
-         max_duration_hours, mandatory_ppe_ids_json, mandatory_control_rules_json, row_version) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
+         max_duration_hours, mandatory_ppe_ids_json, mandatory_control_rules_json, \
+         requires_energy_isolation, row_version) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
         [
             sync_id.into(),
             input.code.into(),
@@ -711,6 +749,7 @@ async fn upsert_permit_type_in(db: &impl ConnectionTrait, input: PermitTypeUpser
             opt_f64(input.max_duration_hours),
             ppe.into(),
             rules.into(),
+            i64::from(input.requires_energy_isolation.unwrap_or(false)).into(),
         ],
     ))
     .await?;
@@ -745,6 +784,18 @@ pub async fn list_work_permits(db: &impl ConnectionTrait, filter: WorkPermitList
     if let Some(w) = filter.linked_work_order_id {
         sql.push_str(" AND wp.linked_work_order_id = ?");
         params.push(w.into());
+    }
+    if let Some(term) = filter.search.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
+        let escaped = term.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+        let pattern = format!("%{escaped}%");
+        sql.push_str(
+            " AND (wp.code LIKE ? ESCAPE '\\' OR pt.name LIKE ? ESCAPE '\\' \
+               OR e.asset_id_code LIKE ? ESCAPE '\\' OR e.name LIKE ? ESCAPE '\\' \
+               OR wo.code LIKE ? ESCAPE '\\')",
+        );
+        for _ in 0..5 {
+            params.push(pattern.clone().into());
+        }
     }
     sql.push_str(" ORDER BY wp.id DESC LIMIT ?");
     params.push(limit.into());
@@ -837,7 +888,8 @@ pub async fn create_work_permit(db: &DatabaseConnection, input: WorkPermitCreate
 }
 
 async fn create_work_permit_in(db: &impl ConnectionTrait, input: WorkPermitCreateInput) -> AppResult<WorkPermit> {
-    let _ = permit_type_code(db, input.permit_type_id).await?;
+    // The type must exist (NotFound otherwise).
+    let _ = permit_type_requires_energy_isolation(db, input.permit_type_id).await?;
     let (asset_id, entity_id) = resolve_permit_scope(db, &input).await?;
     ensure_wo_asset_aligned(db, input.linked_work_order_id, asset_id).await?;
     let expires_at = normalize_future_expiry(input.expires_at.clone())?;
@@ -1277,17 +1329,25 @@ async fn upsert_permit_isolation_in(
     ensure_permit_status_in(&permit, ISOLATION_SETUP_STATUSES, "define isolations")?;
 
     let point = input.isolation_point.trim().to_string();
-    let energy = input.energy_type.trim().to_string();
-    let method = input.isolation_method.trim().to_string();
     if point.is_empty() {
         return Err(AppError::ValidationFailed(vec!["isolation_point is required.".into()]));
     }
-    if energy.is_empty() {
-        return Err(AppError::ValidationFailed(vec!["energy_type is required.".into()]));
-    }
-    if method.is_empty() {
-        return Err(AppError::ValidationFailed(vec!["isolation_method is required.".into()]));
-    }
+    // Links only (migration 225): the energy type from the SYSTEM list, the method from the
+    // plant's list, both active. The texts typed before stay on migrated rows as history.
+    let energy_id = crate::permit::energy_reference::require_active_value(
+        db,
+        crate::permit::energy_reference::ENERGY_TYPES_DOMAIN,
+        "energy_type_id",
+        input.energy_type_id,
+    )
+    .await?;
+    let method_id = crate::permit::energy_reference::require_active_value(
+        db,
+        crate::permit::energy_reference::ISOLATION_METHODS_DOMAIN,
+        "isolation_method_id",
+        input.isolation_method_id,
+    )
+    .await?;
     let lock_number = input
         .lock_number
         .map(|l| l.trim().to_string())
@@ -1310,13 +1370,15 @@ async fn upsert_permit_isolation_in(
         let affected = db
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "UPDATE permit_isolations SET isolation_point = ?, energy_type = ?, isolation_method = ?, \
-                 lock_number = ?, row_version = ? \
+                // A person chose both values: the row no longer needs review. The original texts
+                // are not touched (history).
+                "UPDATE permit_isolations SET isolation_point = ?, energy_type_id = ?, \
+                 isolation_method_id = ?, mapping_review_required = 0, lock_number = ?, row_version = ? \
                  WHERE id = ? AND row_version = ? AND applied_at IS NULL",
                 [
                     point.into(),
-                    energy.into(),
-                    method.into(),
+                    energy_id.into(),
+                    method_id.into(),
                     opt_string(lock_number),
                     new_rv.into(),
                     id.into(),
@@ -1336,15 +1398,17 @@ async fn upsert_permit_isolation_in(
     let sync_id = Uuid::new_v4().to_string();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
+        // `energy_type` / `isolation_method` are the pre-225 texts (NOT NULL): empty = recorded on
+        // the lists, no original entry.
         "INSERT INTO permit_isolations (entity_sync_id, permit_id, isolation_point, energy_type, \
-         isolation_method, lock_number, row_version) \
-         VALUES (?, ?, ?, ?, ?, ?, 1)",
+         isolation_method, energy_type_id, isolation_method_id, lock_number, row_version) \
+         VALUES (?, ?, ?, '', '', ?, ?, ?, 1)",
         [
             sync_id.into(),
             input.permit_id.into(),
             point.into(),
-            energy.into(),
-            method.into(),
+            energy_id.into(),
+            method_id.into(),
             opt_string(lock_number),
         ],
     ))
@@ -1610,10 +1674,12 @@ pub async fn get_loto_card_view(
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT wp.code AS permit_code, wp.expires_at AS permit_expires, pi.id AS isolation_id, \
-             pi.isolation_point, pi.energy_type, pi.lock_number, pi.verified_by_id, pi.verified_at, \
+             pi.isolation_point, COALESCE(et.label, pi.energy_type) AS energy_type, pi.lock_number, \
+             pi.verified_by_id, pi.verified_at, \
              e.asset_id_code, e.name AS equipment_name, ua.username AS verifier_username \
              FROM permit_isolations pi \
              JOIN work_permits wp ON wp.id = pi.permit_id \
+             LEFT JOIN reference_values et ON et.id = pi.energy_type_id \
              LEFT JOIN equipment e ON e.id = wp.asset_id \
              LEFT JOIN user_accounts ua ON ua.id = pi.verified_by_id \
              WHERE pi.id = ? AND pi.permit_id = ?",

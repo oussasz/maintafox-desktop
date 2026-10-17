@@ -11,12 +11,20 @@
     "save": "Enregistrer",
     "cancel": "Annuler",
     "close": "Fermer",
-    "select": "Sélectionner {{code}}"
+    "select": "Sélectionner {{code}}",
+    "retry": "Réessayer"
   },
   "kpi": {
     "title": "Conformité LOTO (30 j.)",
     "summary": "Activations : {{activated}} · Mainlevées à temps : {{onTime}}",
-    "rate": "Taux : {{rate}} %"
+    "rate": "Taux : {{rate}} %",
+    "loadError": "Les indicateurs des permis n’ont pas pu être chargés",
+    "open": "Permis ouverts",
+    "openHint": "Ni clôturés, ni levés, ni annulés, ni expirés",
+    "activated": "Permis activés",
+    "period30d": "30 derniers jours",
+    "onTimeRate": "Mainlevées à temps",
+    "onTimeHint": "{{onTime}} sur {{activated}} permis activés, 30 derniers jours"
   },
   "open": {
     "title": "Permis ouverts (non expirés)",
@@ -66,7 +74,8 @@
     "closedAt": "Clôturé",
     "handedBackAt": "Mainlevée",
     "none": "—",
-    "dialogDescription": "Statut, isolations LOTO, suspensions et passations du permis."
+    "dialogDescription": "Statut, isolations LOTO, suspensions et passations du permis.",
+    "linkError": "Ce permis n’a pas pu être ouvert"
   },
   "transition": {
     "submitReview": "Soumettre en revue",
@@ -82,12 +91,13 @@
     "confirmCancel": "Annuler ce permis ? Cette action est irréversible."
   },
   "gate": {
-    "noIsolation": "Un permis LOTO exige au moins une isolation avant activation.",
+    "noIsolation": "Ce type de permis exige au moins une isolation d’énergie avant activation.",
     "unverified": "Chaque isolation doit être posée puis vérifiée par une seconde personne avant activation.",
     "removed": "Un cadenas a déjà été retiré : ce permis ne protège plus l'intervention.",
     "expired": "Ce permis a expiré.",
     "pendingRemoval": "Chaque retrait de cadenas doit être vérifié avant de clôturer le permis.",
-    "handoverRequired": "Enregistrez une passation avant la mainlevée."
+    "handoverRequired": "Enregistrez une passation avant la mainlevée.",
+    "isolationsUnavailable": "Les isolations de ce permis n’ont pas pu être lues : aucune étape du cycle tant qu’elles ne le sont pas."
   },
   "isolation": {
     "title": "Points d'isolation LOTO",
@@ -111,7 +121,17 @@
       "verified": "Vérifiée",
       "removed": "Retirée"
     },
-    "editLocked": "Les isolations ne peuvent être ajoutées que si le permis n'est pas actif."
+    "editLocked": "Les isolations ne peuvent être ajoutées que si le permis n'est pas actif.",
+    "loadError": "Les isolations de ce permis n’ont pas pu être chargées",
+    "loading": "Chargement des isolations…",
+    "notSet": "Non renseigné",
+    "toReview": "À revoir",
+    "toReviewHint": "Le texte saisi avant les listes n’a pas pu être reconnu : choisissez le type d’énergie et la méthode.",
+    "originalEntry": "Saisie d’origine : {{text}}",
+    "energyPlaceholder": "Choisir l’énergie",
+    "methodPlaceholder": "Choisir la méthode",
+    "optionsError": "Les listes des énergies et des méthodes n’ont pas pu être chargées.",
+    "listsHint": "Types d’énergie selon ISO 14118 / OSHA 1910.147 ; les méthodes d’isolement sont la liste de votre site (Données de référence)."
   },
   "card": {
     "title": "Fiche LOTO",
@@ -176,7 +196,12 @@
     "maxHours": "Durée max (h)",
     "version": "Version",
     "save": "Enregistrer le type",
-    "empty": "Aucun type de permis."
+    "empty": "Aucun type de permis.",
+    "energyIsolation": "Isolation d’énergie obligatoire (LOTO)",
+    "energyIsolationHint": "Un permis de ce type ne peut pas démarrer sans au moins une isolation posée puis vérifiée par une seconde personne.",
+    "energyIsolationShort": "Isolation",
+    "yes": "Oui",
+    "no": "Non"
   },
   "woGate": {
     "title": "Permis de travail",
