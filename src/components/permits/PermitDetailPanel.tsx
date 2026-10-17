@@ -105,6 +105,8 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
   const [isoSubmitted, setIsoSubmitted] = useState(false);
   const [handover, setHandover] = useState({ from: "", to: "", note: "" });
   const [handoverSubmitted, setHandoverSubmitted] = useState(false);
+  /** The last hand-over save failed: its reason is shown under the form, not only at the top. */
+  const [handoverFailed, setHandoverFailed] = useState(false);
   const [suspendOpen, setSuspendOpen] = useState(false);
   const [suspendDraft, setSuspendDraft] = useState({ reason: "", conditions: "" });
   const [cancelOpen, setCancelOpen] = useState(false);
@@ -234,6 +236,7 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
   const handleHandover = async (e: FormEvent) => {
     e.preventDefault();
     setHandoverSubmitted(true);
+    setHandoverFailed(false);
     if (!handover.from.trim() || !handover.to.trim()) return;
     const ok = await run(async () => {
       await appendPermitHandoverLog({
@@ -246,6 +249,8 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
     if (ok) {
       setHandover({ from: "", to: "", note: "" });
       setHandoverSubmitted(false);
+    } else {
+      setHandoverFailed(true);
     }
   };
 
@@ -756,48 +761,67 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
           {handovers.length === 0 ? (
             <p className="text-sm text-text-muted">{t("handover.empty")}</p>
           ) : (
-            <ul className="space-y-2 text-sm">
+            <ol className="space-y-2 text-sm">
               {handovers.map((h) => (
-                <li key={h.id} className="rounded border border-surface-border/60 p-2">
-                  <div className="text-text-primary">
-                    {h.handed_from_role} → {h.handed_to_role}
+                <li key={h.id} className="rounded-md border border-surface-border bg-surface-1 p-2">
+                  <div className="flex flex-wrap items-center gap-1.5 text-text-primary">
+                    <span className="font-medium">{h.handed_from_role}</span>
+                    <span aria-hidden className="text-text-muted">
+                      →
+                    </span>
+                    <span className="sr-only">{t("handover.handedTo")}</span>
+                    <span className="font-medium">{h.handed_to_role}</span>
+                    <time className="ms-auto text-xs text-text-muted" dateTime={h.signed_at}>
+                      {fmt(h.signed_at)}
+                    </time>
                   </div>
                   {h.confirmation_note ? (
-                    <div className="text-xs text-text-muted">{h.confirmation_note}</div>
+                    <p className="mt-1 text-xs text-text-secondary">{h.confirmation_note}</p>
                   ) : null}
-                  <div className="text-xs text-text-muted">{fmt(h.signed_at)}</div>
                 </li>
               ))}
-            </ul>
+            </ol>
           )}
           {permit.status === "closed" && canClose ? (
-            <form className="space-y-2" onSubmit={(e) => void handleHandover(e)}>
-              <FormField
-                name="handover-from"
-                label={t("handover.from")}
-                required
-                error={
-                  handoverSubmitted && !handover.from.trim() ? t("errors.required") : undefined
-                }
-              >
-                <Input
-                  id="handover-from"
-                  value={handover.from}
-                  onChange={(e) => setHandover((h) => ({ ...h, from: e.target.value }))}
-                />
-              </FormField>
-              <FormField
-                name="handover-to"
-                label={t("handover.to")}
-                required
-                error={handoverSubmitted && !handover.to.trim() ? t("errors.required") : undefined}
-              >
-                <Input
-                  id="handover-to"
-                  value={handover.to}
-                  onChange={(e) => setHandover((h) => ({ ...h, to: e.target.value }))}
-                />
-              </FormField>
+            <form
+              className="space-y-2 rounded-md border border-surface-border p-3"
+              aria-labelledby="handover-form-title"
+              onSubmit={(e) => void handleHandover(e)}
+            >
+              <h4 id="handover-form-title" className="text-sm font-medium text-text-primary">
+                {t("handover.add")}
+              </h4>
+              <p className="text-xs text-text-muted">{t("handover.rolesHint")}</p>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <FormField
+                  name="handover-from"
+                  label={t("handover.from")}
+                  required
+                  error={
+                    handoverSubmitted && !handover.from.trim() ? t("errors.required") : undefined
+                  }
+                >
+                  <Input
+                    id="handover-from"
+                    value={handover.from}
+                    onChange={(e) => setHandover((h) => ({ ...h, from: e.target.value }))}
+                  />
+                </FormField>
+                <FormField
+                  name="handover-to"
+                  label={t("handover.to")}
+                  required
+                  error={
+                    handoverSubmitted && !handover.to.trim() ? t("errors.required") : undefined
+                  }
+                >
+                  <Input
+                    id="handover-to"
+                    value={handover.to}
+                    onChange={(e) => setHandover((h) => ({ ...h, to: e.target.value }))}
+                  />
+                </FormField>
+              </div>
               <FormField name="handover-note" label={t("handover.note")}>
                 <Textarea
                   id="handover-note"
@@ -806,10 +830,17 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
                   onChange={(e) => setHandover((h) => ({ ...h, note: e.target.value }))}
                 />
               </FormField>
-              <Button type="submit" size="sm" disabled={busy}>
+              {handoverFailed && error ? (
+                <p role="alert" className="text-xs text-tone-danger-fg">
+                  {error}
+                </p>
+              ) : null}
+              <Button type="submit" className="h-10" disabled={busy}>
                 {t("handover.submit")}
               </Button>
             </form>
+          ) : canClose ? (
+            <p className="text-xs text-text-muted">{t("handover.onlyWhenClosed")}</p>
           ) : null}
         </section>
       </div>

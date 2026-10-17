@@ -159,6 +159,9 @@
     "submit": "Suspendre"
   },
   "handover": {
+    "handedTo": "remis à",
+    "rolesHint": "Indiquez la fonction de la personne qui remet et de celle qui reçoit (texte libre).",
+    "onlyWhenClosed": "La remise se consigne une fois le permis clôturé.",
     "title": "Mainlevées / passations",
     "empty": "Aucune passation enregistrée.",
     "add": "Enregistrer une passation",

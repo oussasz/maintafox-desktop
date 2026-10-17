@@ -159,6 +159,9 @@
     "submit": "Suspend"
   },
   "handover": {
+    "handedTo": "handed to",
+    "rolesHint": "Enter the role of the person handing over and of the one receiving (free text).",
+    "onlyWhenClosed": "The hand-over is recorded once the permit is closed.",
     "title": "Handovers",
     "empty": "No handover recorded.",
     "add": "Record handover",
