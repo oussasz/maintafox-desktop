@@ -87,7 +87,7 @@ export function PublishReadinessPanel({
 
   const readiness = useReferenceGovernanceStore((s) => s.readiness);
   const readinessLoading = useReferenceGovernanceStore((s) => s.readinessLoading);
-  const governanceError = useReferenceGovernanceStore((s) => s.error);
+  const readinessError = useReferenceGovernanceStore((s) => s.readinessError);
   const impactSummary = useReferenceGovernanceStore((s) => s.impactSummary);
   const impactLoading = useReferenceGovernanceStore((s) => s.impactLoading);
   const loadReadiness = useReferenceGovernanceStore((s) => s.loadReadiness);
@@ -183,10 +183,10 @@ export function PublishReadinessPanel({
         {!mayPublish ? (
           <p className="mt-1 text-xs text-text-secondary">{t("publish.noPublishPermission")}</p>
         ) : null}
-        {!readinessLoading && currentReadiness == null && governanceError ? (
+        {!readinessLoading && currentReadiness == null && readinessError?.setId === setId ? (
           <ErrorState
             className="mt-2 py-4"
-            error={governanceError}
+            error={readinessError.error}
             onRetry={() => void loadReadiness(setId)}
           />
         ) : null}
