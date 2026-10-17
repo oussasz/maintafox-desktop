@@ -287,10 +287,10 @@
       },
       "stock": {
         "title": "Stock to reorder",
-        "toReorder": "Lines below threshold",
+        "toReorder": "Articles below threshold",
         "out": "Out of stock",
-        "articles_one": "{{count}} article",
-        "articles_other": "{{count}} articles",
+        "lines_one": "across {{count}} article × store line",
+        "lines_other": "across {{count}} article × store lines",
         "line": "{{warehouse}} · available {{available}} · threshold {{threshold}}",
         "outBadge": "Out of stock",
         "listAria": "Articles to reorder",

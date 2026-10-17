@@ -1670,3 +1670,44 @@ async fn low_stock_is_one_definition_across_dashboard_alerts_and_list() {
     assert_eq!(critical.params.get("threshold_qty").map(String::as_str), Some("5"));
     assert_eq!(critical.params.get("available_qty").map(String::as_str), Some("0"));
 }
+
+/// "To reorder" is counted per article on the home page and the analytics overview — the article
+/// list's "below reorder point" filter — never per article × store line.
+#[tokio::test]
+async fn to_reorder_counts_articles_like_the_article_list() {
+    let db = setup_db().await;
+    let a = create_test_article(&db, "RO-ART-A").await; // reorder point 5, no stock
+    let b = create_test_article(&db, "RO-ART-B").await;
+    // A second active store: each never-stocked article is short in both.
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "INSERT INTO warehouses (entity_sync_id, code, name, is_active, row_version) \
+         VALUES ('ro-wh-2', 'RO-WH-2', 'Second store', 1, 1)"
+            .to_string(),
+    ))
+    .await
+    .expect("second store");
+
+    let listed = queries::list_articles(&db, InventoryArticleFilter::default())
+        .await
+        .expect("list");
+    let list_count = listed
+        .iter()
+        .filter(|x| x.is_active == 1 && x.reorder_trigger.is_some())
+        .count() as i64;
+    assert!(listed.iter().any(|x| x.id == a && x.reorder_trigger.is_some()));
+    assert!(listed.iter().any(|x| x.id == b && x.reorder_trigger.is_some()));
+
+    let home = crate::home::supervision::stock(&db).await.expect("home stock");
+    assert_eq!(home.articles_to_reorder, list_count, "home headline = article list");
+    assert!(
+        home.lines_to_reorder > home.articles_to_reorder,
+        "an article short in two stores is two lines but one article"
+    );
+    let per_article = queries::reorder_triggers_by_article(&db).await.expect("triggers");
+    assert_eq!(
+        i64::try_from(per_article.len()).unwrap(),
+        list_count,
+        "analytics overview count"
+    );
+}

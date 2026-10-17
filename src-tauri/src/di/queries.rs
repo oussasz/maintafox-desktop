@@ -34,6 +34,13 @@ pub struct DiListFilter {
     /// Work queue of the requests screen ([`DI_QUEUES`]); `None` lists every request.
     #[serde(default)]
     pub queue: Option<String>,
+    /// Only the open requests (`di::stats::OPEN_SQL`, the "open DI" count's rule).
+    #[serde(default)]
+    pub open_only: Option<bool>,
+    /// Only the open requests submitted at least this many days ago (`di::stats::WAITING_SQL`, the
+    /// "waiting more than N days" count of the home / analytics overdue figure). Implies open.
+    #[serde(default)]
+    pub waiting_days: Option<i64>,
     pub limit: i64,
     pub offset: i64,
 }
@@ -339,6 +346,15 @@ pub async fn list_intervention_requests(db: &DatabaseConnection, filter: DiListF
             where_clauses.push("ir.disposition_code = ?".to_string());
             binds.push(disposition_code.clone().into());
         }
+    }
+
+    // ── Shared scopes: the KPI counts' own predicates, so a drill lists exactly what was counted ──
+    if filter.open_only.unwrap_or(false) || filter.waiting_days.is_some() {
+        where_clauses.push(super::stats::OPEN_SQL.to_string());
+    }
+    if let Some(days) = filter.waiting_days {
+        where_clauses.push(super::stats::WAITING_SQL.to_string());
+        binds.push(super::stats::waiting_since(chrono::Utc::now(), days).into());
     }
 
     // ── Free-text search (title + description + code) ─────────────────────

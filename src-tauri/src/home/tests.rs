@@ -636,3 +636,96 @@ fn a_permit_list_counts_everything_and_keeps_the_first_ones() {
     assert_eq!(list.items.len(), super::ITEM_LIMIT as usize);
     assert_eq!(list.items[0].code, "PTW-1");
 }
+
+// ── List drills: a KPI opens the list of exactly what it counted ──────────────────────────────
+
+fn wo_scope(open_only: bool, overdue_only: bool) -> crate::wo::queries::WoListFilter {
+    crate::wo::queries::WoListFilter {
+        open_only: Some(open_only),
+        overdue_only: Some(overdue_only),
+        limit: 200,
+        offset: 0,
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn the_ot_list_scopes_list_what_the_open_and_overdue_counts_count() {
+    let db = setup().await;
+    let me = admin_id(&db).await;
+    let late = "strftime('%Y-%m-%dT%H:%M:%SZ','now','-1 days')";
+    let later = "strftime('%Y-%m-%dT%H:%M:%SZ','now','+3 days')";
+    work_order(&db, "L-LATE", "corrective", "in_progress", me, None, "NULL", late).await;
+    work_order(&db, "L-HOLD", "corrective", "on_hold", me, None, "NULL", late).await;
+    work_order(&db, "L-AHEAD", "corrective", "ready", me, None, "NULL", later).await;
+    work_order(&db, "L-NOEND", "preventive", "draft", me, None, "NULL", "NULL").await;
+    work_order(&db, "L-DONE", "corrective", "completed", me, None, "NULL", late).await;
+    work_order(&db, "L-CLOSED", "corrective", "closed", me, None, "NULL", late).await;
+
+    let w = work_orders(&db, Utc::now()).await.expect("backlog");
+    let open = crate::wo::queries::list_work_orders(&db, wo_scope(true, false))
+        .await
+        .expect("open list");
+    assert_eq!(open.total, w.open);
+    assert_eq!(open.total, 4);
+
+    let overdue = crate::wo::queries::list_work_orders(&db, wo_scope(false, true))
+        .await
+        .expect("overdue list");
+    assert_eq!(overdue.total, w.overdue);
+    assert_eq!(
+        overdue.total,
+        crate::wo::stats::get_wo_stats(&db).await.expect("stats").overdue
+    );
+    let mut codes: Vec<&str> = overdue.items.iter().map(|x| x.code.as_str()).collect();
+    codes.sort_unstable();
+    assert_eq!(codes, ["L-HOLD", "L-LATE"]);
+}
+
+fn di_scope(open_only: bool, waiting_days: Option<i64>) -> crate::di::queries::DiListFilter {
+    crate::di::queries::DiListFilter {
+        open_only: Some(open_only),
+        waiting_days,
+        limit: 200,
+        offset: 0,
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn the_di_list_scopes_list_what_the_open_and_waiting_counts_count() {
+    let db = setup().await;
+    let me = admin_id(&db).await;
+    request(&db, "W-NEW", "submitted", me, false).await; // 2 days
+    request(&db, "W-OLD", "in_review", me, false).await;
+    request(&db, "W-OLD-CLOSED", "closed", me, false).await;
+    request(&db, "W-OLD-CONV", "approved", me, true).await;
+    request(&db, "W-OLD-INFO", "returned_for_clarification", me, false).await;
+    exec(
+        &db,
+        "UPDATE intervention_requests SET submitted_at = datetime('now', '-10 days') \
+         WHERE code IN ('W-OLD', 'W-OLD-CLOSED', 'W-OLD-CONV', 'W-OLD-INFO')",
+    )
+    .await;
+
+    let now = Utc::now();
+    let open = crate::di::queries::list_intervention_requests(&db, di_scope(true, None))
+        .await
+        .expect("open list");
+    let open_count = crate::analytics::as_of::di_open_at(&db, now, None, None)
+        .await
+        .expect("open count");
+    assert_eq!(open.total, open_count);
+    assert_eq!(open.total, 3, "W-NEW, W-OLD, W-OLD-INFO");
+
+    let waiting = crate::di::queries::list_intervention_requests(&db, di_scope(false, Some(7)))
+        .await
+        .expect("waiting list");
+    let waiting_count = crate::analytics::as_of::di_open_at(&db, now, Some(7), None)
+        .await
+        .expect("waiting count");
+    assert_eq!(waiting.total, waiting_count);
+    let mut codes: Vec<&str> = waiting.items.iter().map(|x| x.code.as_str()).collect();
+    codes.sort_unstable();
+    assert_eq!(codes, ["W-OLD", "W-OLD-INFO"]);
+}

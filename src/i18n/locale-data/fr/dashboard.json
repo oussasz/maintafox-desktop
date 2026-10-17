@@ -287,10 +287,10 @@
       },
       "stock": {
         "title": "Stock à réapprovisionner",
-        "toReorder": "Lignes sous le seuil",
+        "toReorder": "Articles sous le seuil",
         "out": "Ruptures",
-        "articles_one": "{{count}} article",
-        "articles_other": "{{count}} articles",
+        "lines_one": "sur {{count}} ligne article × magasin",
+        "lines_other": "sur {{count}} lignes article × magasin",
         "line": "{{warehouse}} · disponible {{available}} · seuil {{threshold}}",
         "outBadge": "Rupture",
         "listAria": "Articles à réapprovisionner",

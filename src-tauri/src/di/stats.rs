@@ -128,6 +128,16 @@ pub struct DiStatsPayload {
 /// Open requests: not closed and not yet turned into a work order.
 pub const OPEN_SQL: &str = "(ir.status <> 'closed' AND ir.converted_at IS NULL)";
 
+/// Requests waiting since a given instant (alias `ir`, one bind: [`waiting_since`]): submitted (or,
+/// for a draft, created) at or before it. With [`OPEN_SQL`], the "waiting more than N days" rule of
+/// the overdue figure (`analytics::as_of::di_open_at` with `waiting_days`, at now).
+pub const WAITING_SQL: &str = "datetime(COALESCE(ir.submitted_at, ir.created_at)) <= datetime(?)";
+
+/// Bind of [`WAITING_SQL`]: the instant `days` before `now` (negative days read as 0).
+pub fn waiting_since(now: chrono::DateTime<chrono::Utc>, days: i64) -> String {
+    crate::analytics::as_of::instant(crate::analytics::as_of::days_before(now, days.max(0)))
+}
+
 /// Site scope only (the open backlog is a current state, the period does not apply).
 fn entity_scope_sql() -> &'static str {
     " (? IS NULL OR ir.org_node_id = ?) "

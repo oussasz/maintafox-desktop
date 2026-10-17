@@ -7,7 +7,7 @@ use crate::analytics::as_of::{self, PmDueWindow};
 use crate::analytics::smrp;
 use crate::commands::dashboard::kpi_quality_badge;
 use crate::errors::{AppError, AppResult};
-use crate::inventory::queries::evaluate_reorder;
+use crate::inventory::queries::reorder_triggers_by_article;
 use crate::kpi_definitions;
 use crate::reliability::fleet::{pooled_fleet_kpis, FleetWindow};
 use crate::reliability::readiness::DQ_GREEN_THRESHOLD;
@@ -356,8 +356,9 @@ pub async fn build_overview_kpis(
              )",
         )
         .await?;
-        let reorder = evaluate_reorder(db, None).await?;
-        (stock_out, reorder.len() as i64)
+        // Per article (the article list's "below reorder point" filter), not per article × store.
+        let reorder = reorder_triggers_by_article(db).await?;
+        (stock_out, i64::try_from(reorder.len()).unwrap_or(i64::MAX))
     } else {
         (0, 0)
     };

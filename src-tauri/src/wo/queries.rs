@@ -88,6 +88,12 @@ pub struct WoListFilter {
     pub search: Option<String>,
     pub date_from: Option<String>,
     pub date_to: Option<String>,
+    /// Only the work still ahead (`wo::backlog::OPEN_STATUS_SQL`, the "open OT" count's rule).
+    #[serde(default)]
+    pub open_only: Option<bool>,
+    /// Only the overdue work (`wo::backlog::WO_OVERDUE_SQL`, the dashboard / home "overdue" count).
+    #[serde(default)]
+    pub overdue_only: Option<bool>,
     pub limit: i64,
     pub offset: i64,
 }
@@ -290,6 +296,19 @@ pub async fn list_work_orders(db: &DatabaseConnection, filter: WoListFilter) -> 
             where_clauses.push("wo.created_at <= ?".to_string());
             binds.push(date_to.clone().into());
         }
+    }
+
+    // ── Shared scopes: the KPI counts' own predicates, so a drill lists exactly what was counted ──
+    if filter.open_only.unwrap_or(false) {
+        where_clauses.push(format!("wos.code IN {}", crate::wo::backlog::OPEN_STATUS_SQL));
+    }
+    if filter.overdue_only.unwrap_or(false) {
+        // `WO_OVERDUE_SQL` reads the aliases `wo` / `s`: evaluated in its own scope.
+        where_clauses.push(format!(
+            "wo.id IN (SELECT wo.id FROM work_orders wo              JOIN work_order_statuses s ON s.id = wo.status_id WHERE {})",
+            crate::wo::backlog::WO_OVERDUE_SQL
+        ));
+        binds.push(crate::analytics::as_of::instant(chrono::Utc::now()).into());
     }
 
     // ── Free-text search (code + title + equipment name) ─────────────────
