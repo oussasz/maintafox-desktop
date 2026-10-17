@@ -241,6 +241,9 @@ pub fn run() {
             commands::settings::upload_document_branding_logo,
             commands::settings::clear_document_branding_logo,
             commands::settings::read_document_branding_logo_preview,
+            commands::settings::list_site_settings,
+            commands::settings::set_site_setting,
+            commands::settings::list_site_setting_events,
             // ── Document library (PRD §6.15) ──
             commands::library_documents::list_library_documents,
             commands::library_documents::upload_library_document,

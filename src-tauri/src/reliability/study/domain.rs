@@ -566,9 +566,16 @@ pub struct StudyDecision {
     pub status: String,
     pub approver_id: Option<i64>,
     pub approver_name: Option<String>,
+    pub proposed_by_id: Option<i64>,
     pub proposed_by_name: Option<String>,
+    pub decided_by_id: Option<i64>,
     pub proposed_at: String,
     pub decided_by_name: Option<String>,
+    /// Approved (or applied) by the person who proposed it: under its site's opt-out, or an older
+    /// record. Derived at read.
+    pub self_approved: bool,
+    /// The decision's site opted out of four-eyes: its proposer may approve it.
+    pub site_allows_self_approval: bool,
     pub decided_at: Option<String>,
     pub decision_note: Option<String>,
     pub applied_at: Option<String>,

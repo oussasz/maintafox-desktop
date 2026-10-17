@@ -348,6 +348,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn retiring_through_the_identity_form_is_refused() {
+        let db = setup().await;
+        let org_node_id = setup_org_node(&db).await;
+        setup_equipment_class(&db).await;
+        // Tags the published statuses (retired: decommissioned, scrapped).
+        crate::assets::taxonomy_reference::ensure_equipment_taxonomy_reference_integrity(&db)
+            .await
+            .expect("status tags");
+        let asset = identity::create_asset(&db, valid_payload(org_node_id), 1)
+            .await
+            .expect("create");
+        let payload = |status: Option<&str>, decom: Option<Option<&str>>| identity::UpdateAssetIdentityPayload {
+            asset_name: None,
+            class_code: None,
+            family_code: None,
+            subfamily_code: None,
+            criticality_code: None,
+            status_code: status.map(str::to_string),
+            manufacturer: None,
+            model: None,
+            serial_number: None,
+            maintainable_boundary: None,
+            rams_schedule_reference_value_id: None,
+            rams_utilization_factor: None,
+            commissioned_at: None,
+            decommissioned_at: decom.map(|d| d.map(str::to_string)),
+        };
+        let refused = |r: Result<_, AppError>| matches!(r, Err(AppError::ValidationFailed(m)) if m[0] == identity::RETIRE_THROUGH_DECOMMISSION);
+        for status in ["DECOMMISSIONED", "SCRAPPED"] {
+            let r =
+                identity::update_asset_identity(&db, asset.id, payload(Some(status), None), asset.row_version, 1).await;
+            assert!(refused(r), "{status} is set by Déclasser");
+        }
+        let r = identity::update_asset_identity(
+            &db,
+            asset.id,
+            payload(None, Some(Some("2026-10-01T00:00:00Z"))),
+            asset.row_version,
+            1,
+        )
+        .await;
+        assert!(refused(r), "the end-of-life date is set by Déclasser");
+        // Another in-service status, and the unchanged (empty) end-of-life date, are accepted.
+        let updated = identity::update_asset_identity(
+            &db,
+            asset.id,
+            payload(Some("UNDER_MAINTENANCE"), Some(None)),
+            asset.row_version,
+            1,
+        )
+        .await
+        .expect("in-service status change");
+        assert_eq!(updated.status_code, "UNDER_MAINTENANCE");
+    }
+
+    #[tokio::test]
     async fn v3_valid_lookup_codes_succeed() {
         let db = setup().await;
         let org_node_id = setup_org_node(&db).await;

@@ -6,7 +6,8 @@ use crate::errors::AppError;
 use crate::pm::domain::{CreatePmPlanInput, CreatePmPlanVersionInput};
 use crate::reliability::study::analysis::life_analysis;
 use crate::reliability::study::decisions::{
-    apply_decision, approve_decision, create_decision, list_decisions, reject_decision,
+    apply_decision, approve_decision, create_decision, inbound_self_approval_conflict, list_decisions, reject_decision,
+    SELF_APPROVAL_SETTING,
 };
 use crate::reliability::study::domain::{
     CreateDecisionInput, CreateStudyInput, DecideDecisionInput, FleetViewFilter, LifeAnalysisRequest,
@@ -46,6 +47,8 @@ struct Fixture {
     class_id: i64,
     mode_id: i64,
     admin: i64,
+    /// A second person: approves what the admin proposes (separation of duties).
+    reviewer: i64,
 }
 
 const ELIGIBLE: &str = r#"{"eligible_unplanned_mtbf":true,"eligible_for_strict_mtbf":true}"#;
@@ -124,7 +127,16 @@ async fn setup() -> Fixture {
         )
         .await;
     }
+    exec(
+        &db,
+        "INSERT INTO user_accounts (entity_sync_id, username, display_name, identity_mode, is_active, \
+         is_admin, force_password_change, created_at, updated_at) \
+         VALUES ('rs-user-reviewer', 'reviewer', 'Reviewer', 'local', 1, 0, 0, \
+         strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
+    )
+    .await;
     Fixture {
+        reviewer: scalar(&db, "SELECT id FROM user_accounts WHERE username = 'reviewer'").await,
         p101: scalar(&db, "SELECT id FROM equipment WHERE asset_id_code = 'P-101'").await,
         p102: scalar(&db, "SELECT id FROM equipment WHERE asset_id_code = 'P-102'").await,
         mode_id: scalar(&db, "SELECT id FROM reference_values WHERE code = 'ST_BRD'").await,
@@ -646,6 +658,36 @@ async fn decision_creates_a_pm_revision_with_the_new_interval_then_a_work_order(
     )
     .await;
     assert!(matches!(early, Err(AppError::ValidationFailed(m)) if m[0] == "DECISION_NOT_APPROVED"));
+    // Four-eyes: the proposer never approves their own decision.
+    let own_input = || DecideDecisionInput {
+        decision_id: decision.id,
+        expected_row_version: decision.row_version,
+        note: Some("OK".into()),
+    };
+    let refusal = |r: Result<_, AppError>| match r {
+        Err(AppError::ValidationFailed(m)) => m[0].clone(),
+        other => panic!("expected a refusal, got {other:?}"),
+    };
+    // Without a planning site for the equipment, four-eyes applies and the refusal says why.
+    exec(&f.db, "UPDATE org_node_types SET can_own_work = 0").await;
+    assert_eq!(
+        refusal(approve_decision(&f.db, own_input(), f.admin).await),
+        "DECISION_SELF_APPROVAL_SITE_UNKNOWN"
+    );
+    // The pumps' node becomes a planning site (no rule set there: four-eyes). With nobody else
+    // holding the approve right, the refusal says how to fix it.
+    make_site(&f, 1).await;
+    assert_eq!(
+        refusal(approve_decision(&f.db, own_input(), f.admin).await),
+        "DECISION_NO_SECOND_APPROVER"
+    );
+    grant_ram_manage(&f, f.reviewer).await;
+    assert_eq!(
+        refusal(approve_decision(&f.db, own_input(), f.admin).await),
+        "DECISION_SELF_APPROVAL"
+    );
+    assert_eq!(decision.proposed_by_id, Some(f.admin));
+    assert!(!decision.site_allows_self_approval);
     let approved = approve_decision(
         &f.db,
         DecideDecisionInput {
@@ -653,11 +695,13 @@ async fn decision_creates_a_pm_revision_with_the_new_interval_then_a_work_order(
             expected_row_version: decision.row_version,
             note: Some("OK".into()),
         },
-        f.admin,
+        f.reviewer,
     )
     .await
     .expect("approve");
     assert_eq!(approved.status, "approved");
+    assert!(!approved.self_approved, "approved by a second person");
+    assert_eq!(approved.decided_by_id, Some(f.reviewer));
     let applied = apply_decision(
         &f.db,
         DecideDecisionInput {
@@ -719,6 +763,16 @@ async fn decision_creates_a_pm_revision_with_the_new_interval_then_a_work_order(
     )
     .await;
     assert!(matches!(missing_reason, Err(AppError::ValidationFailed(m)) if m[0] == "DECISION_REJECT_REASON_REQUIRED"));
+    let self_designated = create_decision(
+        &f.db,
+        CreateDecisionInput {
+            approver_id: Some(f.admin),
+            ..wo_input()
+        },
+        f.admin,
+    )
+    .await;
+    assert!(matches!(self_designated, Err(AppError::ValidationFailed(m)) if m[0] == "DECISION_SELF_APPROVER"));
     let d = create_decision(&f.db, wo_input(), f.admin).await.expect("wo decision");
     let d = approve_decision(
         &f.db,
@@ -727,7 +781,7 @@ async fn decision_creates_a_pm_revision_with_the_new_interval_then_a_work_order(
             expected_row_version: d.row_version,
             note: None,
         },
-        f.admin,
+        f.reviewer,
     )
     .await
     .expect("approve");
@@ -745,6 +799,176 @@ async fn decision_creates_a_pm_revision_with_the_new_interval_then_a_work_order(
     assert!(d.linked_work_order_code.is_some());
     let all = list_decisions(&f.db, study_id).await.expect("list");
     assert_eq!(all.len(), 3);
+
+    // The pumps' site opts out: the proposer may name themselves approver and approve; the record
+    // says so.
+    grant_ram_manage(&f, f.admin).await;
+    set_opt_out(&f, 1, true, None).await;
+    let mine = create_decision(
+        &f.db,
+        CreateDecisionInput {
+            approver_id: Some(f.admin),
+            ..wo_input()
+        },
+        f.admin,
+    )
+    .await
+    .expect("self-designated under the site opt-out");
+    assert!(mine.site_allows_self_approval);
+    let mine = approve_decision(
+        &f.db,
+        DecideDecisionInput {
+            decision_id: mine.id,
+            expected_row_version: mine.row_version,
+            note: None,
+        },
+        f.admin,
+    )
+    .await
+    .expect("self-approval under the site opt-out");
+    assert!(mine.self_approved);
+
+    // A self-approval arriving by synchronisation follows the same site rule.
+    let study_sync: String = text(
+        &f,
+        &format!("SELECT entity_sync_id FROM reliability_studies WHERE id = {study_id}"),
+    )
+    .await;
+    let pump_sync: String = text(
+        &f,
+        &format!("SELECT entity_sync_id FROM equipment WHERE id = {}", f.p101),
+    )
+    .await;
+    let payload = |decider: &str, study: &str| {
+        serde_json::json!({
+            "entity_sync_id": "rsd-remote-1",
+            "title": "Contrôle d'alignement",
+            "status": "approved",
+            "study_id": study,
+            "equipment_id": pump_sync,
+            "proposed_by_id": "user-a",
+            "decided_by_id": decider,
+        })
+        .as_object()
+        .cloned()
+        .expect("object")
+    };
+    let db = &f.db;
+    let inbound = |p: serde_json::Map<String, serde_json::Value>| async move {
+        inbound_self_approval_conflict(db, &p).await.expect("check")
+    };
+    assert!(
+        inbound(payload("user-a", &study_sync)).await.is_none(),
+        "site opted out"
+    );
+
+    // Back to four-eyes (audited): the stored self-approval keeps its label, derived at read.
+    set_opt_out(&f, 1, false, Some(1)).await;
+    let audit = text(
+        &f,
+        &format!(
+            "SELECT COALESCE(old_value_json, '-') || '>' || new_value_json || '|' || changed_by_id || '|' || \
+                    required_step_up || '|' || reason || '|' || (changed_at IS NOT NULL) \
+             FROM site_setting_events WHERE site_node_id = 1 AND setting_key = '{SELF_APPROVAL_SETTING}' \
+             ORDER BY id DESC LIMIT 1"
+        ),
+    )
+    .await;
+    assert_eq!(
+        audit,
+        format!("true>false|{}|1|Single reliability engineer on this site|1", f.admin)
+    );
+    let listed = list_decisions(&f.db, study_id).await.expect("list");
+    assert!(listed
+        .iter()
+        .any(|d| d.id == mine.id && d.self_approved && !d.site_allows_self_approval));
+    assert_eq!(listed.iter().filter(|d| d.self_approved).count(), 1);
+    // A stale row version is refused (someone changed the rule meanwhile).
+    let stale = crate::settings::site::set_site_setting(
+        &f.db,
+        &crate::settings::site::SetSiteSettingInput {
+            site_node_id: 1,
+            key: SELF_APPROVAL_SETTING.into(),
+            value: true,
+            reason: "Single reliability engineer on this site".into(),
+            expected_row_version: Some(1),
+        },
+        i32::try_from(f.admin).expect("id"),
+        true,
+    )
+    .await;
+    assert!(matches!(stale, Err(AppError::ValidationFailed(m)) if m[0] == "SITE_SETTING_STALE"));
+
+    assert!(inbound(payload("user-a", &study_sync))
+        .await
+        .is_some_and(|m| m.contains("four-eyes")));
+    assert!(
+        inbound(payload("user-b", &study_sync)).await.is_none(),
+        "approved by a second person"
+    );
+    assert!(inbound(payload("user-a", "unknown-study"))
+        .await
+        .is_some_and(|m| m.contains("cannot be resolved")));
+    let mut proposed = payload("user-a", &study_sync);
+    proposed.insert("status".into(), "proposed".into());
+    assert!(inbound(proposed).await.is_none());
+}
+
+/// Makes `node`'s type able to own work: the node is a planning site.
+async fn make_site(f: &Fixture, node: i64) {
+    exec(
+        &f.db,
+        &format!("UPDATE org_node_types SET can_own_work = 1 WHERE id = (SELECT node_type_id FROM org_nodes WHERE id = {node})"),
+    )
+    .await;
+}
+
+async fn text(f: &Fixture, sql: &str) -> String {
+    f.db.query_one(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
+        .await
+        .expect("q")
+        .expect("row")
+        .try_get_by_index::<String>(0)
+        .expect("text")
+}
+
+/// Gives `user` a tenant-wide role holding the approve right of reliability decisions.
+async fn grant_ram_manage(f: &Fixture, user: i64) {
+    let role = scalar(
+        &f.db,
+        &format!(
+            "SELECT rp.role_id FROM role_permissions rp JOIN permissions p ON p.id = rp.permission_id              WHERE p.name = '{}' ORDER BY rp.role_id LIMIT 1",
+            crate::rbac::permissions::RAM_MANAGE
+        ),
+    )
+    .await;
+    exec(
+        &f.db,
+        &format!(
+            "INSERT OR IGNORE INTO user_scope_assignments (entity_sync_id, user_id, role_id, scope_type, \
+             created_at, updated_at, row_version) VALUES ('rs-usa-{user}', {user}, {role}, 'tenant', \
+             strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1)"
+        ),
+    )
+    .await;
+}
+
+/// Sets the site's four-eyes opt-out as Settings does (audited).
+async fn set_opt_out(f: &Fixture, site: i64, allowed: bool, expected_row_version: Option<i64>) {
+    crate::settings::site::set_site_setting(
+        &f.db,
+        &crate::settings::site::SetSiteSettingInput {
+            site_node_id: site,
+            key: SELF_APPROVAL_SETTING.into(),
+            value: allowed,
+            reason: "Single reliability engineer on this site".into(),
+            expected_row_version,
+        },
+        i32::try_from(f.admin).expect("id"),
+        true,
+    )
+    .await
+    .expect("site rule");
 }
 
 #[tokio::test]

@@ -836,6 +836,7 @@
     "ASSET_SPARE_POSITION_TOO_LONG": "La position est limitée à {{max}} caractères.",
     "ASSET_SPARE_NOTES_TOO_LONG": "Les notes sont limitées à {{max}} caractères.",
     "ASSET_SPARE_ARTICLE_INACTIVE": "L’article {{code}} est inactif.",
-    "ASSET_SPARE_DUPLICATE": "L’article {{code}} est déjà dans les pièces de rechange de cet équipement."
+    "ASSET_SPARE_DUPLICATE": "L’article {{code}} est déjà dans les pièces de rechange de cet équipement.",
+    "ASSET_RETIRE_THROUGH_DECOMMISSION": "Un équipement ne se retire qu'avec Déclasser : le déclassement vérifie les travaux ouverts et enregistre le motif. Utilisez Déclasser depuis la fiche de l'équipement."
   }
 }

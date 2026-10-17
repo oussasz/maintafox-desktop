@@ -202,6 +202,7 @@ mod m20261017_000218_di_transition_log_index;
 mod m20261017_000221_fmeca_item_review_required;
 mod m20261017_000225_permit_energy_isolation_lists;
 mod m20261017_000226_pm_reason_lists;
+mod m20261017_000227_site_settings;
 mod m20261101_000036_activity_audit_log;
 mod m20261201_000037_observability_permissions;
 mod m_test;
@@ -417,6 +418,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261017_000221_fmeca_item_review_required::Migration),
             Box::new(m20261017_000225_permit_energy_isolation_lists::Migration),
             Box::new(m20261017_000226_pm_reason_lists::Migration),
+            Box::new(m20261017_000227_site_settings::Migration),
         ]
     }
 }

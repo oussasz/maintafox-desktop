@@ -64,6 +64,67 @@ pub async fn get_setting(
     settings::get_setting(&state.db, &key, &resolved_scope).await
 }
 
+/// The reason recorded with a setting change. A high-risk change (step-up) must carry the
+/// person's reason: it is the audit trail's "why" next to who, when and old → new.
+fn change_reason(high_risk: bool, summary: Option<&str>) -> AppResult<Option<String>> {
+    let reason = summary.map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    if high_risk
+        && reason
+            .as_ref()
+            .is_none_or(|r| r.chars().count() < settings::catalog::MIN_REASON_CHARS)
+    {
+        return Err(AppError::ValidationFailed(vec!["SETTING_REASON_REQUIRED".to_string()]));
+    }
+    Ok(reason)
+}
+
+/// A per-site rule at every planning site. Requires `adm.settings`.
+#[tauri::command]
+pub async fn list_site_settings(
+    key: String,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<settings::site::SiteSettingView>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_SETTINGS,
+        PermissionScope::Global
+    );
+    settings::site::list_site_settings(&state.db, &key).await
+}
+
+/// Sets a per-site rule. Requires `adm.settings` and a fresh step-up; the reason is audited.
+#[tauri::command]
+pub async fn set_site_setting(input: settings::site::SetSiteSettingInput, state: State<'_, AppState>) -> AppResult<()> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_SETTINGS,
+        PermissionScope::Global
+    );
+    require_step_up!(state);
+    settings::site::set_site_setting(&state.db, &input, user.user_id, true).await
+}
+
+/// The audited changes of a per-site rule at one site, newest first. Requires `adm.settings`.
+#[tauri::command]
+pub async fn list_site_setting_events(
+    site_node_id: i64,
+    key: String,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<settings::site::SiteSettingEvent>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_SETTINGS,
+        PermissionScope::Global
+    );
+    settings::site::list_site_setting_events(&state.db, site_node_id, &key, 20).await
+}
+
 /// Any session may read the plant parameters it needs to display (currency, language, header,
 /// reopen window). Licence onboarding (activation token, machine fingerprint), bootstrap state
 /// and module-managed rows are read only through their own commands.
@@ -128,8 +189,7 @@ pub async fn set_setting(payload: SetSettingPayload, state: State<'_, AppState>)
         crate::reference::currencies::ensure_active_currency(&state.db, &code).await?;
     }
 
-    let summary = payload
-        .change_summary
+    let summary = change_reason(high_risk, payload.change_summary.as_deref())?
         .unwrap_or_else(|| format!("Setting '{}' updated via IPC", payload.key));
 
     settings::set_setting_recorded(
@@ -316,7 +376,23 @@ pub async fn ensure_settings_defaults(state: State<'_, AppState>) -> AppResult<(
 
 #[cfg(test)]
 mod tests {
-    use super::ensure_readable_by_any_session;
+    use super::{change_reason, ensure_readable_by_any_session};
+
+    #[test]
+    fn a_high_risk_change_needs_a_reason() {
+        let refused = change_reason(true, Some("  ok  "));
+        assert!(
+            matches!(refused, Err(crate::errors::AppError::ValidationFailed(m)) if m[0] == "SETTING_REASON_REQUIRED")
+        );
+        assert!(change_reason(true, None).is_err());
+        assert_eq!(
+            change_reason(true, Some(" Single engineer on site "))
+                .unwrap()
+                .as_deref(),
+            Some("Single engineer on site")
+        );
+        assert_eq!(change_reason(false, None).unwrap(), None);
+    }
 
     #[test]
     fn only_plant_parameters_are_readable_by_any_session() {

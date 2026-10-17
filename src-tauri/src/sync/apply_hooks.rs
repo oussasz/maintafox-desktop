@@ -13,6 +13,9 @@
 //!   it is deferred, never written with a guessed kind: it decides the PRD lifecycle state);
 //! - `app_settings`: a tenant setting whose change is locked here (fiscal start month, currency
 //!   once postings exist) is refused as a conflict (`before_upsert_checked`);
+//! - `reliability_study_decisions`: an approval by the decision's own proposer is refused as a
+//!   conflict unless the decision's site opted out of four-eyes
+//!   (`reliability::study::decisions::inbound_self_approval_conflict`, `before_upsert_checked`);
 //! - `weekly_schedules`: a received week that would go backwards in its lifecycle here (frozen
 //!   back to draft, a later baseline back to an earlier one) is refused as a conflict
 //!   (`planning::weekly_schedule::inbound_lifecycle_conflict`, `before_upsert_checked`);
@@ -59,6 +62,16 @@ pub(crate) async fn before_upsert_checked(
     payload: &serde_json::Map<String, serde_json::Value>,
 ) -> AppResult<Option<crate::sync::materialize::ApplyOutcome>> {
     use crate::sync::materialize::ApplyOutcome;
+    if layout.def.entity_type == "reliability_study_decisions" {
+        return Ok(
+            crate::reliability::study::decisions::inbound_self_approval_conflict(conn, payload)
+                .await?
+                .map(|message| ApplyOutcome::Conflict {
+                    code: "DECISION_SELF_APPROVAL".into(),
+                    message,
+                }),
+        );
+    }
     if layout.def.entity_type == "weekly_schedules" {
         return Ok(
             crate::planning::weekly_schedule::inbound_lifecycle_conflict(conn, payload)

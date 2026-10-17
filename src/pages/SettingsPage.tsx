@@ -26,6 +26,7 @@ import {
   SettingsCategorySidebar,
   type SettingsTabId,
 } from "@/components/settings/SettingsCategorySidebar";
+import { SiteRulesPanel } from "@/components/settings/SiteRulesPanel";
 import { SyncFeedbackPanel } from "@/components/sync/SyncFeedbackPanel";
 import { Timeline } from "@/components/timeline";
 import { Button } from "@/components/ui/button";
@@ -374,6 +375,7 @@ export function SettingsPage() {
                       ) : (
                         emptyState
                       )}
+                      <SiteRulesPanel onToast={onToast} />
                     </section>
                   ) : null}
 

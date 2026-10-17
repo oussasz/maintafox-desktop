@@ -1040,6 +1040,24 @@ pub async fn create_asset(db: &DatabaseConnection, payload: CreateAssetPayload, 
     Ok(asset)
 }
 
+/// Refusal code: an asset is retired only through Déclasser (`decommission_asset`).
+pub const RETIRE_THROUGH_DECOMMISSION: &str = "ASSET_RETIRE_THROUGH_DECOMMISSION";
+
+/// Whether `code` is a retired status (tag `retired` in the published `EQUIPMENT.STATUS` list).
+async fn is_retired_status_code<C: ConnectionTrait>(db: &C, code: &str) -> AppResult<bool> {
+    Ok(db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT 1 AS hit WHERE ? IN ({})",
+                crate::assets::taxonomy_reference::RETIRED_STATUS_CODES_SQL
+            ),
+            [code.into()],
+        ))
+        .await?
+        .is_some())
+}
+
 /// Update the identity fields of an existing asset.
 ///
 /// Uses optimistic concurrency control via `expected_row_version`.
@@ -1057,7 +1075,8 @@ pub async fn update_asset_identity(
     let current = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT e.row_version, e.lifecycle_status, e.asset_id_code, ec.code AS class_code \
+            "SELECT e.row_version, e.lifecycle_status, e.asset_id_code, ec.code AS class_code, \
+                    e.decommissioned_at \
              FROM equipment e \
              LEFT JOIN equipment_classes ec ON ec.id = e.class_id \
              WHERE e.id = ? AND e.deleted_at IS NULL",
@@ -1080,6 +1099,31 @@ pub async fn update_asset_identity(
             "Conflit de version : version attendue {expected_row_version}, \
              version actuelle {current_version}. L'enregistrement a été modifié."
         )]));
+    }
+
+    // Retiring an asset (a retired status, or its end-of-life date) is done by Déclasser, which
+    // checks open work and records the reason; the identity form keeps what is stored.
+    let current_status: String = current
+        .try_get("", "lifecycle_status")
+        .map_err(|e| decode_err("lifecycle_status", e))?;
+    let current_decommissioned_at: Option<String> = current
+        .try_get("", "decommissioned_at")
+        .map_err(|e| decode_err("decommissioned_at", e))?;
+    if let Some(ref raw_status) = payload.status_code {
+        let normalized = normalize_status_code_for_reference(raw_status)?;
+        if normalized != current_status && is_retired_status_code(&txn, &normalized).await? {
+            return Err(AppError::ValidationFailed(vec![RETIRE_THROUGH_DECOMMISSION.into()]));
+        }
+    }
+    if let Some(ref decom_at) = payload.decommissioned_at {
+        if decom_at.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            != current_decommissioned_at
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+        {
+            return Err(AppError::ValidationFailed(vec![RETIRE_THROUGH_DECOMMISSION.into()]));
+        }
     }
 
     // ── Build dynamic SET clause ─────────────────────────────────────────

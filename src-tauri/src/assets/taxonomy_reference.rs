@@ -70,6 +70,9 @@ pub const STATUS_DOWN_SQL: &str = status_tag_sql!("down");
 /// SQL predicate (alias `e`, no bind): the equipment is retired (decommissioned, scrapped).
 pub const STATUS_RETIRED_SQL: &str = status_tag_sql!("retired");
 
+/// Sub-select (no bind): the codes of the published `EQUIPMENT.STATUS` list tagged `retired`.
+pub const RETIRED_STATUS_CODES_SQL: &str = published_codes_sql!("EQUIPMENT.STATUS", " AND rv.semantic_tag = 'retired'");
+
 /// SQL predicate (alias `e`, no bind): the equipment is at the most critical level of the published
 /// `EQUIPMENT.CRITICALITY` list (lowest `sort_order`). Never NULL.
 macro_rules! most_critical_sql {

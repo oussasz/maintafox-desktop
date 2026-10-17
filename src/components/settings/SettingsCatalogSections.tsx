@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState } from "@/components/ui/data-state";
 import { Input } from "@/components/ui/input";
 import {
@@ -14,13 +15,18 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { StatusChip } from "@/components/ui/status-chip";
+import { Textarea } from "@/components/ui/textarea";
 import { useFormatters } from "@/hooks/use-formatters";
+import { useStepUp } from "@/hooks/use-step-up";
 import { applyI18nFallbackLanguage } from "@/lib/i18n-fallback";
 import { listSettingChangeEvents, setSetting } from "@/services/settings-service";
 import { useLocaleStore } from "@/stores/locale-store";
 import type { CurrencyOption, SettingDefinitionView, SettingsChangeEvent } from "@shared/ipc-types";
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
+
+/** Shortest reason accepted for a high-risk change (same rule as the server). */
+export const MIN_REASON_CHARS = 10;
 
 function parseJson(raw: string | null): unknown {
   if (raw == null) return null;
@@ -101,6 +107,10 @@ function SettingRow({ def, currencies, canEdit, onSaved, onToast }: RowProps) {
   const [history, setHistory] = useState<SettingsChangeEvent[] | null>(null);
   const [historyError, setHistoryError] = useState<unknown>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const { withStepUp, StepUpDialogElement } = useStepUp();
+  /** A high-risk change waiting for its reason (confirmation dialog). */
+  const [pendingHighRisk, setPendingHighRisk] = useState<string | null>(null);
+  const [reason, setReason] = useState("");
 
   const current = parseJson(def.current_value_json);
   const currentText = current == null ? "" : String(current);
@@ -119,15 +129,18 @@ function SettingRow({ def, currencies, canEdit, onSaved, onToast }: RowProps) {
     }
   }, [def.key]);
 
-  const save = async (valueJson: string, summary: string) => {
+  /** Writes the value (step-up when the server asks for it); throws when refused. */
+  const persist = async (valueJson: string, summary: string) => {
     setSaving(true);
     try {
-      await setSetting({
-        key: def.key,
-        scope: def.scope,
-        value_json: valueJson,
-        change_summary: summary,
-      });
+      await withStepUp(() =>
+        setSetting({
+          key: def.key,
+          scope: def.scope,
+          value_json: valueJson,
+          change_summary: summary,
+        }),
+      );
       const parsed = parseJson(valueJson);
       if (def.key === "locale.primary_language" && typeof parsed === "string") {
         await setLocale(parsed, true);
@@ -142,11 +155,27 @@ function SettingRow({ def, currencies, canEdit, onSaved, onToast }: RowProps) {
       onToast({ title: t("editor.saveSuccess"), variant: "success" });
       if (historyOpen) void loadHistory();
       onSaved();
-    } catch {
-      // The IPC layer reports the server's reason (validation, lock).
     } finally {
       setSaving(false);
     }
+  };
+
+  const save = async (valueJson: string, summary: string) => {
+    try {
+      await persist(valueJson, summary);
+    } catch {
+      // The IPC layer reports the server's reason (validation, lock).
+    }
+  };
+
+  /** A high-risk setting asks for the person's reason first (it is audited with the change). */
+  const requestSave = (valueJson: string, summary: string) => {
+    if (def.risk === "high") {
+      setReason("");
+      setPendingHighRisk(valueJson);
+      return;
+    }
+    void save(valueJson, summary);
   };
 
   const commitDraft = () => {
@@ -169,7 +198,7 @@ function SettingRow({ def, currencies, canEdit, onSaved, onToast }: RowProps) {
         return;
       }
     }
-    void save(toValueJson(def, draft.trim()), t("editor.auditUpdated", { key: def.key }));
+    requestSave(toValueJson(def, draft.trim()), t("editor.auditUpdated", { key: def.key }));
   };
 
   const label = t(`keys.${def.key}`);
@@ -192,7 +221,7 @@ function SettingRow({ def, currencies, canEdit, onSaved, onToast }: RowProps) {
       <Select
         value={currentText}
         onValueChange={(v) =>
-          void save(toValueJson(def, v), t("editor.auditUpdated", { key: def.key }))
+          requestSave(toValueJson(def, v), t("editor.auditUpdated", { key: def.key }))
         }
         disabled={disabled}
       >
@@ -270,7 +299,7 @@ function SettingRow({ def, currencies, canEdit, onSaved, onToast }: RowProps) {
               aria-label={t("catalog.restoreShipped")}
               disabled={saving || currencyUnavailable}
               onClick={() =>
-                void save(def.shipped_value_json, t("catalog.restoredSummary", { key: def.key }))
+                requestSave(def.shipped_value_json, t("catalog.restoredSummary", { key: def.key }))
               }
             >
               <RotateCcw className="h-4 w-4" aria-hidden />
@@ -294,6 +323,37 @@ function SettingRow({ def, currencies, canEdit, onSaved, onToast }: RowProps) {
           {t(`catalog.locked.${def.key}`)}
         </p>
       ) : null}
+
+      <ConfirmDialog
+        open={pendingHighRisk != null}
+        onOpenChange={(open) => {
+          if (!open) setPendingHighRisk(null);
+        }}
+        title={t("catalog.highRisk.title", { setting: label })}
+        description={t("catalog.highRisk.body", {
+          from: formatSettingValue(def, def.current_value_json, t),
+          to: formatSettingValue(def, pendingHighRisk, t),
+        })}
+        confirmLabel={t("catalog.highRisk.confirm")}
+        confirmDisabled={reason.trim().length < MIN_REASON_CHARS}
+        onConfirm={async () => {
+          if (pendingHighRisk != null) await persist(pendingHighRisk, reason.trim());
+        }}
+      >
+        <label className="grid gap-1.5 text-sm">
+          <span className="text-text-secondary">{t("catalog.highRisk.reason")}</span>
+          <Textarea
+            rows={3}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            aria-describedby={`${inputId}-reason-hint`}
+          />
+          <span id={`${inputId}-reason-hint`} className="text-xs text-text-muted">
+            {t("catalog.highRisk.reasonHint", { min: MIN_REASON_CHARS })}
+          </span>
+        </label>
+      </ConfirmDialog>
+      {StepUpDialogElement}
 
       <div>
         <button
@@ -333,6 +393,7 @@ function SettingRow({ def, currencies, canEdit, onSaved, onToast }: RowProps) {
                     <span>
                       {formatSettingValue(def, h.old_value_json, t)} →{" "}
                       {formatSettingValue(def, h.new_value_json, t)}
+                      {h.required_step_up ? ` · ${h.change_summary}` : null}
                     </span>
                   ) : (
                     <span>{h.change_summary}</span>
