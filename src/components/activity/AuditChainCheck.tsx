@@ -8,8 +8,8 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
+import { describeAppError } from "@/lib/app-error";
 import { type AuditChainReport, verifyAuditChain } from "@/services/activity-service";
-import { toErrorMessage } from "@/utils/errors";
 
 export function AuditChainCheck() {
   const { t } = useTranslation("activity");
@@ -24,7 +24,7 @@ export function AuditChainCheck() {
       setReport(await verifyAuditChain());
     } catch (e) {
       setReport(null);
-      setError(toErrorMessage(e));
+      setError(describeAppError(e).title);
     } finally {
       setRunning(false);
     }
@@ -45,7 +45,7 @@ export function AuditChainCheck() {
       ) : null}
       {report ? (
         <div className="mt-2 space-y-1" data-testid="audit-chain-report">
-          <p className={report.intact ? "text-emerald-600" : "font-medium text-destructive"}>
+          <p className={report.intact ? "text-tone-success-fg" : "font-medium text-tone-danger-fg"}>
             {report.intact ? (
               <ShieldCheck className="mr-1 inline h-3 w-3" />
             ) : (

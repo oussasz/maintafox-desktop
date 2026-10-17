@@ -9,7 +9,7 @@ import { useTranslation } from "react-i18next";
 import { useNavigate, useRouteError } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
-import { toErrorMessage } from "@/utils/errors";
+import { describeAppError } from "@/lib/app-error";
 
 function FallbackFrame({
   icon,
@@ -65,7 +65,7 @@ export function RouteErrorPage() {
       icon={<AlertTriangle className="h-8 w-8 text-tone-danger-fg" aria-hidden />}
       title={t("notFound.errorTitle")}
       body={t("notFound.errorBody")}
-      details={error == null ? null : toErrorMessage(error)}
+      details={error == null ? null : describeAppError(error).title}
     />
   );
 }
