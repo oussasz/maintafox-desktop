@@ -51,9 +51,9 @@ mod lifecycle_tests;
 #[cfg(test)]
 mod meters_tests;
 #[cfg(test)]
-mod upgrade_tests;
-#[cfg(test)]
 mod tree_tests;
+#[cfg(test)]
+mod upgrade_tests;
 
 // Re-export most-used types at module root for clean import in command handlers.
 pub use bindings::AssetBindingSummary;
