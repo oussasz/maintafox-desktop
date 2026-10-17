@@ -260,7 +260,8 @@ async fn initial_renewal(
 }
 
 async fn load_pm_removals(db: &DatabaseConnection, equipment_id: i64, start: &str, end: &str) -> AppResult<Vec<PmRow>> {
-    // Preventive renewals: work orders of a preventive nature (EN 13306).
+    // Preventive renewals: work orders of a preventive nature (EN 13306) whose work is done: no
+    // longer "open (work to do)" (`wo::backlog::OPEN_STATUS_SQL`) and not cancelled.
     let preventive = crate::wo::types::nature_sql_list(&crate::wo::types::MaintenanceNature::PREVENTIVE);
     let rows = db
         .query_all(Statement::from_sql_and_values(
@@ -271,11 +272,12 @@ async fn load_pm_removals(db: &DatabaseConnection, equipment_id: i64, start: &st
              JOIN reference_values t ON t.id = wo.type_id
              JOIN work_order_statuses st ON st.id = wo.status_id
              WHERE wo.equipment_id = ? AND t.semantic_tag IN ({preventive})
-               AND (st.macro_state IN ('completed', 'closed') OR st.code IN ('completed', 'closed'))
+               AND st.code NOT IN {open} AND st.code <> 'cancelled'
                AND COALESCE(wo.actual_end, wo.mechanically_completed_at, wo.closed_at) IS NOT NULL
                AND datetime(COALESCE(wo.actual_end, wo.mechanically_completed_at, wo.closed_at)) >= datetime(?)
                AND datetime(COALESCE(wo.actual_end, wo.mechanically_completed_at, wo.closed_at)) <= datetime(?)
-             ORDER BY datetime(done_at) ASC, wo.id ASC"
+             ORDER BY datetime(done_at) ASC, wo.id ASC",
+                open = crate::wo::backlog::OPEN_STATUS_SQL
             ),
             [equipment_id.into(), start.into(), end.into()],
         ))
@@ -749,4 +751,72 @@ pub async fn failures_since(
         total += clock.hours_between(since, now);
     }
     Ok((count, total))
+}
+
+#[cfg(test)]
+mod done_rule_tests {
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+
+    async fn exec(db: &sea_orm::DatabaseConnection, sql: &str) {
+        db.execute(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
+            .await
+            .unwrap_or_else(|e| panic!("{sql}: {e}"));
+    }
+
+    /// A preventive renewal is an OT whose work is done: no longer "open (work to do)"
+    /// (`wo::backlog::OPEN_STATUS_SQL`) — completed or closed — and never a cancelled one.
+    #[tokio::test]
+    async fn preventive_renewals_are_the_done_work_orders() {
+        let db = crate::db::test_db::seeded().await;
+        for sql in [
+            "INSERT OR IGNORE INTO org_structure_models (id, entity_sync_id, version_number, status, created_at, updated_at) \
+             VALUES (1, 'rr-model', 1, 'active', datetime('now'), datetime('now'))",
+            "INSERT OR IGNORE INTO org_node_types (id, entity_sync_id, structure_model_id, code, label, is_active, \
+             created_at, updated_at) VALUES (1, 'rr-type', 1, 'SITE', 'Site', 1, datetime('now'), datetime('now'))",
+            "INSERT OR IGNORE INTO org_nodes (id, entity_sync_id, code, name, node_type_id, status, created_at, \
+             updated_at, structure_model_id) VALUES (1, 'rr-node-1', 'SITE-A', 'Site A', 1, 'active', \
+             datetime('now'), datetime('now'), 1)",
+            "INSERT INTO equipment (entity_sync_id, asset_id_code, name, lifecycle_status, installed_at_node_id, \
+             created_at, updated_at) VALUES ('rr-eq', 'RR-EQ', 'Pump', 'active_in_service', 1, datetime('now'), datetime('now'))",
+        ] {
+            exec(&db, sql).await;
+        }
+        let eq: i64 = db
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT id FROM equipment WHERE asset_id_code = 'RR-EQ'".to_string(),
+            ))
+            .await
+            .expect("eq")
+            .expect("row")
+            .try_get_by_index(0)
+            .expect("id");
+        for (code, status) in [
+            ("RR-COMPLETED", "completed"),
+            ("RR-CLOSED", "closed"),
+            ("RR-CANCELLED", "cancelled"),
+            ("RR-HOLD", "on_hold"),
+            ("RR-PROGRESS", "in_progress"),
+        ] {
+            exec(
+                &db,
+                &format!(
+                    "INSERT INTO work_orders (code, type_id, status_id, equipment_id, entity_id, title, actual_end, \
+                     row_version, created_at, updated_at) VALUES ('{code}', \
+                     (SELECT v.id FROM reference_values v JOIN reference_sets s ON s.id = v.set_id \
+                      JOIN reference_domains d ON d.id = s.domain_id \
+                      WHERE d.code = 'WORK.ORDER_TYPES' AND v.code = 'preventive'), \
+                     (SELECT id FROM work_order_statuses WHERE code = '{status}'), {eq}, 1, 'Renewal', \
+                     '2025-06-01T10:00:00Z', 1, '2025-06-01T08:00:00Z', '2025-06-01T10:00:00Z')"
+                ),
+            )
+            .await;
+        }
+        let rows = super::load_pm_removals(&db, eq, "2025-01-01T00:00:00Z", "2025-12-31T00:00:00Z")
+            .await
+            .expect("removals");
+        let mut codes: Vec<&str> = rows.iter().map(|r| r.wo_code.as_str()).collect();
+        codes.sort_unstable();
+        assert_eq!(codes, ["RR-CLOSED", "RR-COMPLETED"]);
+    }
 }

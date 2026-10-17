@@ -809,3 +809,31 @@ async fn life_summary_availability_is_the_latest_reliability_snapshot_not_the_he
     assert_eq!(tag("UNDER_MAINTENANCE").as_deref(), Some("down"));
     assert_eq!(tag("SCRAPPED").as_deref(), Some("retired"));
 }
+
+/// The maintenance profile's open count is "not yet closed" (`wo::backlog::NOT_CLOSED_SQL`), the
+/// same rule and figure as the asset binding card.
+#[tokio::test]
+async fn maintenance_profile_open_count_is_the_not_yet_closed_rule() {
+    let db = setup().await;
+    let site = site_with_cost_center(&db).await;
+    let asset = identity::create_asset(&db, payload("PMP-301", site, None), 1)
+        .await
+        .expect("asset");
+    let at = chrono::Utc::now().to_rfc3339();
+    work_order(&db, "NC-HOLD", asset.id, "corrective", "on_hold", 10.0, &at).await;
+    work_order(&db, "NC-DONE", asset.id, "corrective", "completed", 10.0, &at).await;
+    work_order(&db, "NC-CLOSED", asset.id, "corrective", "closed", 10.0, &at).await;
+    work_order(&db, "NC-CANC", asset.id, "corrective", "cancelled", 10.0, &at).await;
+
+    let profile = maintenance_profile::get_asset_maintenance_profile(&db, asset.id, false, chrono::Utc::now())
+        .await
+        .expect("profile");
+    assert_eq!(profile.open_work_order_count, 2, "on hold + completed");
+    assert_eq!(profile.open_work_order_rule, crate::wo::backlog::RULE_NOT_YET_CLOSED);
+    assert_eq!(
+        crate::assets::bindings::count_open_wo(&db, asset.id)
+            .await
+            .expect("binding"),
+        profile.open_work_order_count
+    );
+}

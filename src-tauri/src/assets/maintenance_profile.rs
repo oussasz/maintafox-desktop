@@ -62,7 +62,10 @@ pub struct AssetMaintenanceProfile {
     /// Assets covered (1 without roll-up).
     pub asset_count: i64,
     pub work_order_count: i64,
+    /// OTs not yet closed (`wo::backlog::NOT_CLOSED_SQL`), the rule named by `open_work_order_rule`.
     pub open_work_order_count: i64,
+    /// `wo::backlog::RULE_NOT_YET_CLOSED`.
+    pub open_work_order_rule: String,
     pub failure_work_order_count: i64,
     pub planned_work_order_count: i64,
     pub downtime_hours: f64,
@@ -137,14 +140,16 @@ pub async fn get_asset_maintenance_profile(
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             format!(
-                "SELECT wo.id, t.semantic_tag AS nature_code, s.code AS status_code, s.macro_state, \
+                "SELECT wo.id, t.semantic_tag AS nature_code, s.code AS status_code, \
+                    CASE WHEN {not_closed} THEN 1 ELSE 0 END AS not_closed, \
                     COALESCE(wo.downtime_hours, 0.0) AS downtime_hours, \
                     COALESCE(wo.actual_start, wo.created_at) AS failure_at, \
                     COALESCE(wo.closed_at, wo.actual_end, wo.actual_start, wo.created_at) AS cost_at \
                  FROM work_orders wo \
                  LEFT JOIN reference_values t ON t.id = wo.type_id \
                  JOIN work_order_statuses s ON s.id = wo.status_id \
-                 WHERE wo.equipment_id IN ({placeholders}) AND s.code <> 'cancelled'"
+                 WHERE wo.equipment_id IN ({placeholders}) AND s.code <> 'cancelled'",
+                not_closed = crate::wo::backlog::NOT_CLOSED_SQL
             ),
             binds,
         ))
@@ -161,6 +166,7 @@ pub async fn get_asset_maintenance_profile(
         asset_count: i64::try_from(ids.len()).unwrap_or(i64::MAX),
         work_order_count: 0,
         open_work_order_count: 0,
+        open_work_order_rule: crate::wo::backlog::RULE_NOT_YET_CLOSED.to_string(),
         failure_work_order_count: 0,
         planned_work_order_count: 0,
         downtime_hours: 0.0,
@@ -181,10 +187,10 @@ pub async fn get_asset_maintenance_profile(
         let nature = nature_code
             .as_deref()
             .and_then(crate::wo::types::MaintenanceNature::parse);
-        let macro_state: String = get(row, "macro_state")?;
+        let not_closed: i64 = get(row, "not_closed")?;
         let cost_at: String = get(row, "cost_at")?;
         profile.work_order_count += 1;
-        if macro_state != "closed" && macro_state != "cancelled" {
+        if not_closed == 1 {
             profile.open_work_order_count += 1;
         }
         if nature.is_some_and(|n| n.is_corrective()) {
