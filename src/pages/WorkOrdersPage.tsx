@@ -93,6 +93,7 @@ const WO_FILTER_STATUSES = [
 export function WorkOrdersPage() {
   const { t, i18n } = useTranslation("ot");
   const items = useWoStore((s) => s.items);
+  const listFilter = useWoStore((s) => s.filter);
   const total = useWoStore((s) => s.total);
   const loading = useWoStore((s) => s.loading);
   const loadingMore = useWoStore((s) => s.loadingMore);
@@ -705,7 +706,11 @@ export function WorkOrdersPage() {
         </div>
       )}
       {activeView === "kanban" && !showListError && (
-        <WoKanbanView items={items} onCardClick={(wo) => void openWo(wo.id)} />
+        <WoKanbanView
+          filter={listFilter}
+          reloadSignal={items}
+          onCardClick={(wo) => void openWo(wo.id)}
+        />
       )}
       {activeView === "calendar" && !showListError && (
         <WoCalendarView items={items} onSelect={(wo) => void openWo(wo.id)} />
