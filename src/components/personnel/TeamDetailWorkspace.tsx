@@ -8,14 +8,16 @@ import { X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { PermissionGate } from "@/components/PermissionGate";
 import { DataTable } from "@/components/data/DataTable";
 import {
   DetailSectionCard,
-  EntityDetailHeader,
   ENTITY_DETAIL_HEADER_ACTION_BTN,
+  EntityDetailHeader,
 } from "@/components/detail";
 import { CrewBadge } from "@/components/personnel/CrewBadge";
 import { TeamCapacityDays } from "@/components/personnel/TeamCapacityDays";
+import { TeamOvertimeCeilingPanel } from "@/components/personnel/TeamOvertimeCeilingPanel";
 import { TeamSkillsHeatmap } from "@/components/personnel/TeamSkillsHeatmap";
 import { TeamTimetablePanel } from "@/components/personnel/TeamTimetablePanel";
 import { Badge } from "@/components/ui/badge";
@@ -39,6 +41,7 @@ import type {
   TeamMemberRow,
   TeamSummary,
 } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 export type TeamDetailWorkspaceProps = {
   teamId: number;
@@ -439,6 +442,14 @@ export function TeamDetailWorkspace({
               <DetailSectionCard title={t("capacityDays.title")}>
                 <TeamCapacityDays key={timetableRevision} teamId={teamId} />
               </DetailSectionCard>
+              <PermissionGate permission={P.PLAN_VIEW}>
+                <DetailSectionCard title={t("overtimeCeiling.title")}>
+                  <TeamOvertimeCeilingPanel
+                    teamId={teamId}
+                    onChanged={() => setTimetableRevision((n) => n + 1)}
+                  />
+                </DetailSectionCard>
+              </PermissionGate>
               <DetailSectionCard title={t("crews.detail.horizonKpis")}>
                 {capacity ? (
                   <p className="text-sm">

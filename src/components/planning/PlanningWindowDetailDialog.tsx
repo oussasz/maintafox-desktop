@@ -10,6 +10,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { useFormatters } from "@/hooks/use-formatters";
 import { formatOrDash } from "@/lib/display";
 import type { PlanningWindow } from "@shared/ipc-types";
 
@@ -24,7 +25,8 @@ export function PlanningWindowDetailDialog({
   onOpenChange,
   window: planningWindow,
 }: PlanningWindowDetailDialogProps) {
-  const { t, i18n } = useTranslation("planning");
+  const { t } = useTranslation("planning");
+  const { formatDateTime } = useFormatters();
 
   const typeLabel = planningWindow
     ? t(`windows.types.${planningWindow.window_type}`, {
@@ -61,7 +63,7 @@ export function PlanningWindowDetailDialog({
                 {windowScopeLabel(planningWindow, t("windows.plantWide"))}
               </div>
               {planningWindow.scope_review_required === 1 ? (
-                <p className="mt-1 text-xs text-amber-800">{t("windows.scopeReviewHint")}</p>
+                <p className="mt-1 text-xs text-text-warning">{t("windows.scopeReviewHint")}</p>
               ) : null}
             </div>
             <div>
@@ -69,16 +71,14 @@ export function PlanningWindowDetailDialog({
                 {t("windows.start")}
               </div>
               <div className="text-text-primary">
-                {new Date(planningWindow.start_datetime).toLocaleString(i18n.language)}
+                {formatDateTime(planningWindow.start_datetime)}
               </div>
             </div>
             <div>
               <div className="text-[10px] uppercase tracking-wide text-text-muted">
                 {t("windows.end")}
               </div>
-              <div className="text-text-primary">
-                {new Date(planningWindow.end_datetime).toLocaleString(i18n.language)}
-              </div>
+              <div className="text-text-primary">{formatDateTime(planningWindow.end_datetime)}</div>
             </div>
             <div>
               <div className="text-[10px] uppercase tracking-wide text-text-muted">

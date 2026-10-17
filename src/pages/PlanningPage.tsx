@@ -54,6 +54,7 @@ import {
   type PlanningBoardScope,
   type PlanningPageView,
   isAssigneeOverridableError,
+  overridableCodes,
 } from "@/components/planning/planning-model";
 import { useAssigneeCapacity } from "@/components/planning/use-assignee-capacity";
 import { Badge } from "@/components/ui/badge";
@@ -75,14 +76,17 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { mfLayout } from "@/design-system/tokens";
+import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
+import { useToast } from "@/hooks/use-toast";
+import { appErrorText } from "@/lib/app-error";
 import { formatPersonLabel } from "@/lib/display";
 import { listActiveTeams, listPersonnel } from "@/services/personnel-service";
 import { cancelScheduleCommitment, releaseScheduleCommitment } from "@/services/planning-service";
 import { listUsers } from "@/services/rbac-service";
 import { useSessionStore } from "@/store/session-store";
 import { usePlanningStore } from "@/stores/planning-store";
-import { extractIpcValidationDetails, toErrorMessage } from "@/utils/errors";
+import { extractIpcValidationDetails } from "@/utils/errors";
 import type {
   CreateScheduleBreakInInput,
   CreateScheduleCommitmentInput,
@@ -110,6 +114,10 @@ export function PlanningPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const { can } = usePermissions();
+  const { toast } = useToast();
+  const { formatDateTime } = useFormatters();
+  /** Confirms a planning action that went through (failures already have their toast). */
+  const done = (key: string) => toast({ title: t(`feedback.${key}`), variant: "success" });
 
   const backlog = usePlanningStore((s) => s.backlog);
   const commitments = usePlanningStore((s) => s.commitments);
@@ -294,7 +302,7 @@ export function PlanningPage() {
         setBoardScope({ kind: "all" });
         writeStoredBoardScope(userId, { kind: "all" });
       } catch (err) {
-        setPageError(toErrorMessage(err));
+        setPageError(appErrorText(err));
       }
     })();
   }, []);
@@ -469,10 +477,11 @@ export function PlanningPage() {
     setPageError(null);
     try {
       await createCommitment(input);
+      done("committed");
       await refreshBacklog();
       await reloadBoard();
     } catch (err) {
-      setPageError(toErrorMessage(err));
+      setPageError(appErrorText(err));
       throw err;
     }
   }
@@ -483,13 +492,13 @@ export function PlanningPage() {
       await rescheduleCommitment(input);
       await reloadBoard();
     } catch (err) {
-      const text = toErrorMessage(err);
+      const text = appErrorText(err);
       const codes = extractIpcValidationDetails(err).map((d) => d.code);
-      const assigneeCodes = codes.filter((c) => c.startsWith("PLANNING_ASSIGNEE_"));
+      const assigneeCodes = overridableCodes(codes);
       const acknowledged = input.acknowledged_assignee_issues ?? [];
       const unacknowledged = assigneeCodes.some((c) => !acknowledged.includes(c));
       if (
-        isAssigneeOverridableError(codes, text) &&
+        isAssigneeOverridableError(codes) &&
         (!input.allow_double_booking_override || unacknowledged)
       ) {
         const pending = { input, needsOverride: true, codes: assigneeCodes };
@@ -535,9 +544,10 @@ export function PlanningPage() {
     setPageError(null);
     try {
       await createPlanningWindow(input);
+      done("windowCreated");
       await reloadBoard();
     } catch (err) {
-      setPageError(toErrorMessage(err));
+      setPageError(appErrorText(err));
       throw err;
     }
   }
@@ -546,9 +556,10 @@ export function PlanningPage() {
     setPageError(null);
     try {
       await createBreakIn(input);
+      done("breakInRecorded");
       await reloadBoard();
     } catch (err) {
-      setPageError(toErrorMessage(err));
+      setPageError(appErrorText(err));
       throw err;
     }
   }
@@ -565,6 +576,7 @@ export function PlanningPage() {
       reason,
     };
     await (to === "released" ? releaseScheduleCommitment(input) : cancelScheduleCommitment(input));
+    done(to === "released" ? "slotReleased" : "commitmentCancelled");
     setInspectorOpen(false);
     await Promise.all([loadBacklog(), reloadBoard()]);
   }
@@ -577,9 +589,10 @@ export function PlanningPage() {
         period_end: periodEndIso,
         reason,
       });
+      done("periodFrozen");
       await reloadBoard();
     } catch (err) {
-      setPageError(toErrorMessage(err));
+      setPageError(appErrorText(err));
       throw err;
     }
   }
@@ -593,8 +606,9 @@ export function PlanningPage() {
         team_id: teamId,
         include_break_ins: true,
       });
+      done("teamsNotified");
     } catch (err) {
-      setPageError(toErrorMessage(err));
+      setPageError(appErrorText(err));
     }
   }
 
@@ -603,7 +617,7 @@ export function PlanningPage() {
       <div className={mfLayout.moduleHeader}>
         <div className={mfLayout.moduleTitleRow}>
           <CalendarRange className={mfLayout.moduleHeaderIcon} aria-hidden />
-          <h1 className={mfLayout.moduleTitle}>{t("page.title", "Planning")}</h1>
+          <h1 className={mfLayout.moduleTitle}>{t("page.title")}</h1>
           <Badge variant="secondary" className="text-xs">
             {backlog?.candidate_count ?? commitments.length}
           </Badge>
@@ -908,7 +922,7 @@ export function PlanningPage() {
                 onReschedule={handleBoardReschedule}
                 loading={loading && !ganttSnapshot}
                 error={null}
-                canDrag
+                canDrag={can(P.PLAN_CONFIRM)}
                 laneMode={boardScope.kind === "all" ? "crew" : "technician"}
                 remountKey={`${dateFrom}_${dateTo}_${boardScope.kind === "all" ? "all" : boardScope.teamId}`}
                 maxZoom={PLANNING_TIMELINE_MAX_ZOOM_MS}
@@ -987,8 +1001,8 @@ export function PlanningPage() {
       <FreezeConfirmDialog
         open={freezeOpen}
         onOpenChange={setFreezeOpen}
-        periodStartLabel={new Date(periodStartIso).toLocaleString()}
-        periodEndLabel={new Date(periodEndIso).toLocaleString()}
+        periodStartLabel={formatDateTime(periodStartIso)}
+        periodEndLabel={formatDateTime(periodEndIso)}
         saving={saving}
         onConfirm={handleFreeze}
       />
@@ -1001,11 +1015,15 @@ export function PlanningPage() {
         onLoadChangeLog={(id) => {
           void loadChangeLog(id);
         }}
-        onRequestBreakIn={() => {
-          setInspectorOpen(false);
-          setBreakInCommitmentId(selectedCommitment?.id ?? null);
-          setBreakInOpen(true);
-        }}
+        {...(can(P.PLAN_CONFIRM)
+          ? {
+              onRequestBreakIn: () => {
+                setInspectorOpen(false);
+                setBreakInCommitmentId(selectedCommitment?.id ?? null);
+                setBreakInOpen(true);
+              },
+            }
+          : {})}
         {...(pageView === "calendar" ? { onOpenOnBoard: handleOpenOnBoard } : {})}
         {...(can(P.PLAN_CONFIRM) ? { onEndCommitment: handleEndCommitment } : {})}
       />

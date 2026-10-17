@@ -152,9 +152,9 @@ describe("assigneeOptionSuffix", () => {
 
 describe("isAssigneeOverridableError", () => {
   it("recognises the assignee refusals and a double booking", () => {
-    expect(isAssigneeOverridableError(["PLANNING_ASSIGNEE_NOT_IN_CREW"], "")).toBe(true);
-    expect(isAssigneeOverridableError([], "Double-booking detected.")).toBe(true);
-    expect(isAssigneeOverridableError(["PLANNING_NOT_ESTIMATED"], "Not estimated")).toBe(false);
+    expect(isAssigneeOverridableError(["PLANNING_ASSIGNEE_NOT_IN_CREW"])).toBe(true);
+    expect(isAssigneeOverridableError(["PLANNING_DOUBLE_BOOKING"])).toBe(true);
+    expect(isAssigneeOverridableError(["PLANNING_NOT_ESTIMATED"])).toBe(false);
   });
 });
 

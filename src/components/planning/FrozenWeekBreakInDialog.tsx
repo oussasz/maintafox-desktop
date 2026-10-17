@@ -92,7 +92,7 @@ export function FrozenWeekBreakInDialog({
               </SelectContent>
             </Select>
             {urgent ? (
-              <p className="mt-1 text-xs text-amber-800">{t("breakIns.urgentHint")}</p>
+              <p className="mt-1 text-xs text-text-warning">{t("breakIns.urgentHint")}</p>
             ) : null}
           </div>
           <div>

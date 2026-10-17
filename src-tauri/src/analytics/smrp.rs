@@ -4,7 +4,7 @@
 //!
 //! | Indicator | Formula (window `[from, to)`) |
 //! |---|---|
-//! | Schedule compliance | committed hours whose work order was completed by the end of the committed day ÷ committed hours (`schedule_commitments`, commitments ending in the window) |
+//! | Schedule compliance | baseline hours whose work was finished by the end of their week ÷ baseline hours (`weekly_schedule_baseline_items`: the latest frozen baseline of each week that ended in the window — `planning::kpis`, the same number as the planning KPIs) |
 //! | Planned / reactive / emergency work | labour hours (`work_order_interveners`, else `actual_duration_hours`) of work orders completed in the window, by type; work-order counts when no hours are recorded |
 //! | PM compliance | PM occurrences done inside their tolerance window (not early, not late; window = `window_start_at`–`window_end_at`, else the due day) ÷ occurrences due in the window that are done or whose window has closed (cancelled excluded) — `pm::compliance`, the same number as the PM page |
 //! | Backlog | planned hours of work orders not done ÷ weekly crew hours (active personnel × weekly hours of their work schedule) |
@@ -169,57 +169,20 @@ pub async fn has_column(db: &DatabaseConnection, table: &str, column: &str) -> A
 
 // ── Schedule compliance ────────────────────────────────────────────────────────────────────
 
-/// SMRP 5.4.2 schedule compliance (hours): labour hours of scheduled work completed as scheduled ÷
-/// labour hours scheduled, for commitments ending in the window. A commitment weighs its planned
-/// labour hours (duration × crew size, `planning::load`); one from before those were recorded weighs
-/// its slot. Cancelled work (work order or PM occurrence cancelled, request declined or archived)
-/// left the schedule and does not count, nor does a slot given back or cancelled by the planner
-/// (`schedule_commitments.status` released / cancelled, migration 212): the job is planned again
-/// elsewhere or not at all.
+/// SMRP 5.4.2 schedule compliance (hours), measured against the frozen weekly baseline (planning
+/// step E, `planning::kpis`): baseline hours whose work was finished by the end of their week ÷
+/// baseline hours, over the frozen weeks that ended in the window, of the sites at or under `org`.
+/// A week never frozen has no baseline and is not measured; a baseline job later released or
+/// cancelled counts as not done. Periods before weekly baselines existed give no value.
 pub async fn schedule_compliance(
     db: &DatabaseConnection,
     window: SmrpWindow,
     now: DateTime<Utc>,
     org: Option<i64>,
 ) -> AppResult<SmrpRatio> {
-    let row = one_row(
-        db,
-        "WITH c AS ( \
-           SELECT COALESCE(sc.planned_labor_hours, \
-                           (julianday(sc.committed_end) - julianday(sc.committed_start)) * 24.0) AS hours, \
-                  sc.committed_end AS committed_end, \
-                  CASE sc.source_type \
-                    WHEN 'work_order' THEN sc.source_id \
-                    WHEN 'pm_occurrence' THEN (SELECT po.linked_work_order_id FROM pm_occurrences po \
-                                               WHERE po.id = sc.source_id) \
-                  END AS wo_id \
-           FROM schedule_commitments sc \
-           WHERE datetime(sc.committed_end) >= datetime(?) AND datetime(sc.committed_end) < datetime(?) \
-             AND sc.status IN ('committed', 'closed') \
-             AND julianday(sc.committed_end) > julianday(sc.committed_start) \
-             AND NOT ( \
-               (sc.source_type = 'work_order' AND EXISTS (SELECT 1 FROM work_orders cw \
-                  WHERE cw.id = sc.source_id AND cw.cancelled_at IS NOT NULL)) \
-               OR (sc.source_type = 'pm_occurrence' AND EXISTS (SELECT 1 FROM pm_occurrences cp \
-                  WHERE cp.id = sc.source_id AND cp.status = 'cancelled')) \
-               OR (sc.source_type = 'inspection_follow_up' AND EXISTS (SELECT 1 FROM intervention_requests cr \
-                  WHERE cr.id = sc.source_id AND (cr.declined_at IS NOT NULL OR cr.archived_at IS NOT NULL)))) \
-         ) \
-         SELECT COALESCE(SUM(c.hours), 0) AS scheduled, \
-                COALESCE(SUM(CASE WHEN COALESCE(w.mechanically_completed_at, w.actual_end, w.closed_at) IS NOT NULL \
-                  AND date(COALESCE(w.mechanically_completed_at, w.actual_end, w.closed_at)) <= date(c.committed_end) \
-                  THEN c.hours ELSE 0 END), 0) AS done \
-         FROM c LEFT JOIN work_orders w ON w.id = c.wo_id \
-         WHERE (? IS NULL OR w.entity_id = ?)",
-        vec![
-            instant(window.from).into(),
-            instant(window.until(now)).into(),
-            org.into(),
-            org.into(),
-        ],
-    )
-    .await?;
-    Ok(SmrpRatio::of(f(&row, "done")?, f(&row, "scheduled")?))
+    let measured =
+        crate::planning::kpis::baseline_schedule_compliance(db, window.from, window.until(now), org, now).await?;
+    Ok(SmrpRatio::of(measured.done_hours, measured.baseline_hours))
 }
 
 // ── Planned / reactive / emergency work ────────────────────────────────────────────────────

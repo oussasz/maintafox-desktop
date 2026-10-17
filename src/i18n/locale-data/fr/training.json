@@ -396,6 +396,14 @@
     "PLANNING_UNFREEZE_NOT_REQUESTED": "Aucun dégel de cette semaine n'attend de décision.",
     "PLANNING_UNFREEZE_SAME_PERSON": "Le dégel doit être décidé par un autre planificateur détenant le droit de confirmation (quatre yeux).",
     "PLANNING_BREAK_IN_REASON_UNKNOWN": "« {{code}} » n'est pas un motif de break-in actif (Données de référence, PLANNING.BREAK_IN_REASONS).",
-    "PLANNING_BREAK_IN_APPROVAL_REQUIRED": "Un break-in urgent (urgence, sécurité) exige un approbateur ou un motif de dérogation dangereuse enregistré."
+    "PLANNING_BREAK_IN_APPROVAL_REQUIRED": "Un break-in urgent (urgence, sécurité) exige un approbateur ou un motif de dérogation dangereuse enregistré.",
+    "PLANNING_CAPACITY_RULE_HOURS_NEGATIVE": "Le plafond d'heures supplémentaires est un nombre d'heures, zéro ou plus.",
+    "PLANNING_CAPACITY_RULE_END_BEFORE_START": "La règle ne peut pas finir avant de commencer.",
+    "PLANNING_CAPACITY_RULE_STALE": "Cette règle de capacité a été modifiée ailleurs : rechargez-la puis recommencez.",
+    "PLANNING_CAPACITY_RULE_OVERLAP": "Cette équipe a déjà un plafond d'heures supplémentaires sur une partie de cette période : terminez-le d'abord ou changez ses dates.",
+    "PLANNING_CAPACITY_EXCEEDED": "La charge de l'équipe dépasserait sa capacité plus son plafond d'heures supplémentaires le {{day}}.",
+    "PLANNING_DOUBLE_BOOKING": "Le technicien a déjà un autre travail sur ce créneau : choisissez quelqu'un d'autre, déplacez le créneau ou dérogez avec un motif.",
+    "PLANNING_OVERRIDE_REASON_REQUIRED": "Indiquez le motif de la dérogation aux contrôles sur le technicien.",
+    "PLANNING_BREAK_IN_CAPACITY_OVERRIDE_REQUIRED": "Ce break-in dépasse la capacité de l'équipe : indiquez un motif de dérogation dangereuse pour continuer."
   }
 }

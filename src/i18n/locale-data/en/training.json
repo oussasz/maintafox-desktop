@@ -396,6 +396,14 @@
     "PLANNING_UNFREEZE_NOT_REQUESTED": "No unfreeze of this week is waiting for a decision.",
     "PLANNING_UNFREEZE_SAME_PERSON": "The unfreeze must be decided by another planner holding the planning confirm right (four-eyes).",
     "PLANNING_BREAK_IN_REASON_UNKNOWN": "'{{code}}' is not an active break-in reason (Reference data, PLANNING.BREAK_IN_REASONS).",
-    "PLANNING_BREAK_IN_APPROVAL_REQUIRED": "An urgent break-in (emergency, safety) needs an approver or a recorded dangerous-override reason."
+    "PLANNING_BREAK_IN_APPROVAL_REQUIRED": "An urgent break-in (emergency, safety) needs an approver or a recorded dangerous-override reason.",
+    "PLANNING_CAPACITY_RULE_HOURS_NEGATIVE": "The overtime ceiling is a number of hours, zero or more.",
+    "PLANNING_CAPACITY_RULE_END_BEFORE_START": "The rule cannot end before it starts.",
+    "PLANNING_CAPACITY_RULE_STALE": "This capacity rule was changed elsewhere: reload it and try again.",
+    "PLANNING_CAPACITY_RULE_OVERLAP": "This crew already has an overtime ceiling over part of this period: end it first, or change its dates.",
+    "PLANNING_CAPACITY_EXCEEDED": "The crew's load would exceed its capacity plus its overtime ceiling on {{day}}.",
+    "PLANNING_DOUBLE_BOOKING": "The technician already holds another job at this time: choose someone else, move the slot or override with a reason.",
+    "PLANNING_OVERRIDE_REASON_REQUIRED": "Give the reason for overriding the checks on the technician.",
+    "PLANNING_BREAK_IN_CAPACITY_OVERRIDE_REQUIRED": "This break-in exceeds the crew's capacity: give a dangerous-override reason to proceed."
   }
 }

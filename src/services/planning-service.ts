@@ -1,6 +1,7 @@
 import { ZodError, z } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
+import type { PlanningKpiFilter, PlanningKpis } from "@shared/ipc-types";
 import type {
   AssigneeCapacity,
   AssigneeCapacityInput,
@@ -573,6 +574,57 @@ export function decideWeeklyUnfreeze(input: UnfreezeDecisionInput): Promise<Week
 
 export function publishWeeklySchedule(input: WeeklyScheduleRef): Promise<WeeklyScheduleView> {
   return invokeParsed("publish_weekly_schedule", { input }, WeeklyScheduleViewSchema);
+}
+
+const WeekKpiSchema = z.object({
+  weekly_schedule_id: z.number(),
+  site_id: z.number(),
+  site_name: z.string(),
+  week_start: z.string(),
+  week_end: z.string(),
+  status: z.string(),
+  awaiting_approval: z.boolean(),
+  reopened: z.boolean(),
+  baseline_no: z.number(),
+  baseline_jobs: z.number(),
+  baseline_hours: z.number(),
+  baseline_released_jobs: z.number(),
+  done_hours: z.number().nullable(),
+  compliance_pct: z.number().nullable(),
+  break_in_jobs: z.number(),
+  break_in_hours: z.number(),
+  break_in_pct: z.number().nullable(),
+  displaced_jobs: z.number(),
+  available_hours: z.number(),
+  overtime_hours: z.number(),
+  loading_pct: z.number().nullable(),
+});
+
+const PlanningKpisSchema = z.object({
+  weeks: z.array(WeekKpiSchema),
+  totals: z.object({
+    weeks: z.number(),
+    weeks_judged: z.number(),
+    weeks_awaiting_approval: z.number(),
+    weeks_reopened: z.number(),
+    weeks_not_frozen: z.number(),
+    baseline_hours: z.number(),
+    baseline_released_jobs: z.number(),
+    judged_baseline_hours: z.number(),
+    done_hours: z.number(),
+    compliance_pct: z.number().nullable(),
+    break_in_hours: z.number(),
+    break_in_pct: z.number().nullable(),
+    displaced_jobs: z.number(),
+    available_hours: z.number(),
+    overtime_hours: z.number(),
+    loading_pct: z.number().nullable(),
+  }),
+});
+
+/** Planning KPIs against the frozen weekly baseline (planning step E). */
+export function getPlanningKpis(filter: PlanningKpiFilter): Promise<PlanningKpis> {
+  return invokeParsed("get_planning_kpis", { filter }, PlanningKpisSchema);
 }
 
 export function releaseScheduleCommitment(input: EndCommitmentInput): Promise<void> {

@@ -1,5 +1,6 @@
 import { create } from "zustand";
 
+import { appErrorText } from "@/lib/app-error";
 import {
   createCapacityRule,
   createPlanningWindow,
@@ -19,7 +20,6 @@ import {
   refreshScheduleCandidates,
   rescheduleScheduleCommitment,
 } from "@/services/planning-service";
-import { toErrorMessage } from "@/utils/errors";
 import type {
   CapacityRule,
   CapacityRuleFilter,
@@ -114,7 +114,7 @@ export const usePlanningStore = create<PlanningStoreState>()((set, get) => ({
       });
       set({ backlog });
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorText(err) });
     } finally {
       set({ loading: false });
     }
@@ -131,7 +131,7 @@ export const usePlanningStore = create<PlanningStoreState>()((set, get) => ({
       });
       await get().loadBacklog();
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorText(err) });
       throw err;
     } finally {
       set({ saving: false });
@@ -144,7 +144,7 @@ export const usePlanningStore = create<PlanningStoreState>()((set, get) => ({
       const commitments = await listScheduleCommitments(filter);
       set({ commitments });
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorText(err) });
     } finally {
       set({ loading: false });
     }
@@ -156,7 +156,7 @@ export const usePlanningStore = create<PlanningStoreState>()((set, get) => ({
       const capacityRules = await listCapacityRules(filter);
       set({ capacityRules });
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorText(err) });
     } finally {
       set({ loading: false });
     }
@@ -168,7 +168,7 @@ export const usePlanningStore = create<PlanningStoreState>()((set, get) => ({
       const planningWindows = await listPlanningWindows(filter);
       set({ planningWindows });
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorText(err) });
     } finally {
       set({ loading: false });
     }
@@ -180,7 +180,7 @@ export const usePlanningStore = create<PlanningStoreState>()((set, get) => ({
       const capacityLoad = await listTeamCapacityLoad(periodStart, periodEnd, teamId);
       set({ capacityLoad });
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorText(err) });
     } finally {
       set({ loading: false });
     }
@@ -196,7 +196,7 @@ export const usePlanningStore = create<PlanningStoreState>()((set, get) => ({
         capacityLoad: ganttSnapshot.capacity,
       });
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorText(err) });
     } finally {
       set({ loading: false });
     }
@@ -208,7 +208,7 @@ export const usePlanningStore = create<PlanningStoreState>()((set, get) => ({
       const changeLog = await listScheduleChangeLog(commitmentId);
       set({ changeLog });
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorText(err) });
     } finally {
       set({ loading: false });
     }
@@ -220,7 +220,7 @@ export const usePlanningStore = create<PlanningStoreState>()((set, get) => ({
       const breakIns = await listScheduleBreakIns(filter);
       set({ breakIns });
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorText(err) });
     } finally {
       set({ loading: false });
     }
@@ -233,7 +233,7 @@ export const usePlanningStore = create<PlanningStoreState>()((set, get) => ({
       await get().loadCapacityRules({});
       return created;
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorText(err) });
       throw err;
     } finally {
       set({ saving: false });
@@ -247,7 +247,7 @@ export const usePlanningStore = create<PlanningStoreState>()((set, get) => ({
       await get().loadPlanningWindows({});
       return created;
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorText(err) });
       throw err;
     } finally {
       set({ saving: false });
@@ -260,7 +260,7 @@ export const usePlanningStore = create<PlanningStoreState>()((set, get) => ({
       const created = await createScheduleCommitment(input);
       return created;
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorText(err) });
       throw err;
     } finally {
       set({ saving: false });
@@ -273,7 +273,7 @@ export const usePlanningStore = create<PlanningStoreState>()((set, get) => ({
       const updated = await rescheduleScheduleCommitment(input);
       return updated;
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorText(err) });
       throw err;
     } finally {
       set({ saving: false });
@@ -286,7 +286,7 @@ export const usePlanningStore = create<PlanningStoreState>()((set, get) => ({
       const created = await createScheduleBreakIn(input);
       return created;
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorText(err) });
       throw err;
     } finally {
       set({ saving: false });
@@ -299,7 +299,7 @@ export const usePlanningStore = create<PlanningStoreState>()((set, get) => ({
       const count = await freezeSchedulePeriod(input);
       return count;
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorText(err) });
       throw err;
     } finally {
       set({ saving: false });
@@ -311,7 +311,7 @@ export const usePlanningStore = create<PlanningStoreState>()((set, get) => ({
     try {
       return await notifyScheduleTeams(input);
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorText(err) });
       throw err;
     } finally {
       set({ saving: false });
@@ -329,7 +329,7 @@ export const usePlanningStore = create<PlanningStoreState>()((set, get) => ({
       });
       downloadBinary(doc.file_name, doc.mime_type, doc.bytes);
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorText(err) });
       throw err;
     } finally {
       set({ saving: false });

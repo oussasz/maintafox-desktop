@@ -31,6 +31,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { useFormatters } from "@/hooks/use-formatters";
 import { formatOrDash, formatPersonLabel } from "@/lib/display";
 import { listTeamMembers } from "@/services/personnel-service";
 import { extractIpcValidationDetails } from "@/utils/errors";
@@ -71,6 +72,7 @@ export function BreakInDialog({
   onSubmit,
 }: BreakInDialogProps) {
   const { t, i18n } = useTranslation("planning");
+  const { formatDateTime } = useFormatters();
   const reasons = useBreakInReasons(open);
   const [commitmentId, setCommitmentId] = useState<number | null>(null);
   const [reason, setReason] = useState<string>("");
@@ -242,7 +244,7 @@ export function BreakInDialog({
                 </SelectContent>
               </Select>
               {urgent ? (
-                <p className="mt-1 text-xs text-amber-800">{t("breakIns.urgentHint")}</p>
+                <p className="mt-1 text-xs text-text-warning">{t("breakIns.urgentHint")}</p>
               ) : null}
             </div>
           </div>
@@ -367,9 +369,9 @@ export function BreakInDialog({
                 {breakInReasonLabel(entry.break_in_reason, reasons, i18n.language)}
                 {" · "}
                 {entry.old_slot_start
-                  ? `${new Date(entry.old_slot_start).toLocaleString()} → `
+                  ? `${formatDateTime(entry.old_slot_start)} → `
                   : `${t("breakIns.inserted")} `}
-                {new Date(entry.new_slot_start).toLocaleString()}
+                {formatDateTime(entry.new_slot_start)}
                 {entry.old_assignee_name || entry.new_assignee_name
                   ? ` · ${formatPersonLabel(entry.old_assignee_name)} → ${formatPersonLabel(entry.new_assignee_name)}`
                   : null}

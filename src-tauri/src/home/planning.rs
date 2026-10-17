@@ -1,22 +1,18 @@
-//! Planner's start panel: the schedule backlog by readiness, this week's committed load against
-//! the crews' capacity, and schedule compliance — all three are the planning module's figures.
-//!
-//! The week is the site's work week (Données de référence → Calendrier, `site_work_weeks`): it
-//! starts the day after the site's weekly rest days, the rule of the weekly schedule. Without a
-//! work week that applies, the week figure is not given (a coded reason instead), never a guessed
-//! Monday-to-Sunday.
+//! Planner's start panel: the schedule backlog by readiness, this week's load and schedule
+//! compliance — all three are the planning module's figures, with the planning KPIs' definitions
+//! (`planning::kpis`): measured against the frozen weekly baseline of each planning site. Without a
+//! frozen baseline the figure is not given (a coded reason instead), never computed another way.
 
 use std::collections::BTreeMap;
 
-use chrono::{DateTime, Datelike, Duration, NaiveDate, Utc};
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
+use chrono::{DateTime, Utc};
+use sea_orm::DatabaseConnection;
 use serde::Serialize;
 
-use super::{decode, period_window};
+use super::period_window;
 use crate::analytics::smrp;
 use crate::errors::AppResult;
-use crate::personnel::calendar::SiteWeekBook;
-use crate::planning::domain::{ScheduleCandidateFilter, TeamCapacityLoad};
+use crate::planning::domain::ScheduleCandidateFilter;
 
 /// Largest backlog the planning board reads at once (`planning::queries::list_schedule_candidates`).
 pub const BACKLOG_READ_LIMIT: i64 = 2_000;
@@ -42,55 +38,51 @@ pub struct PlanningBacklog {
     pub truncated: bool,
 }
 
-/// No work week is set for any site (Données de référence → Calendrier).
-pub const WORK_WEEK_NOT_CONFIGURED: &str = "WORK_WEEK_NOT_CONFIGURED";
-/// Sites have different work weeks and the person's own site gives none.
-pub const WORK_WEEK_SITE_AMBIGUOUS: &str = "WORK_WEEK_SITE_AMBIGUOUS";
-/// The work week has no rest day: no day starts it.
-pub const WORK_WEEK_NO_REST_DAY: &str = "WORK_WEEK_NO_REST_DAY";
-/// The rest days are split over the week: more than one day follows a rest day.
-pub const WORK_WEEK_SPLIT_REST: &str = "WORK_WEEK_SPLIT_REST";
+/// No planning site has crews: there is no week to load.
+pub const WEEK_NO_PLANNING_SITE: &str = "WEEK_NO_PLANNING_SITE";
+/// No planning site's current week is frozen: there is no baseline to measure yet.
+pub const WEEK_NOT_FROZEN: &str = "WEEK_NOT_FROZEN";
+/// No frozen week ended in the period: compliance has nothing to be measured on.
+pub const NO_FROZEN_BASELINE: &str = "NO_FROZEN_BASELINE";
 
-/// Which work week was used.
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct WorkWeekBasis {
-    /// ISO weekdays (1 = Monday … 7 = Sunday) of the weekly rest.
-    pub rest_days: Vec<i64>,
-    /// `all_sites`: every site with a work week has this one; `own_site`: the person's own site
-    /// (sites differ).
-    pub scope: String,
-    /// Name of the person's site when `scope` is `own_site`.
-    pub site_name: Option<String>,
-}
-
-/// This week's committed labour hours against the crews' capacity
-/// (`planning::scheduling::list_team_capacity_load`, the board's capacity view).
+/// This week's load (`planning::kpis`, the planning KPIs' definition): baseline hours of the
+/// current frozen week of every planning site ÷ the crews' available hours, WITHOUT the overtime
+/// ceiling — the overtime capacity is given beside it, and above 100 % the plan relies on overtime.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct WeekLoad {
-    /// First and last day of the current work week (local days).
+    /// Earliest first day and latest last day of the sites' current weeks (local days).
     pub week_start: String,
     pub week_end: String,
-    pub basis: WorkWeekBasis,
-    pub teams: i64,
-    /// Available + overtime hours of every active crew over the week.
-    pub capacity_hours: f64,
-    pub committed_hours: f64,
-    /// committed ÷ capacity × 100 over the week (pooled, never a mean of daily ratios); `None` when
-    /// the crews have no hours this week.
+    /// Planning sites whose current week is frozen (measured).
+    pub sites: i64,
+    /// Planning sites whose current week is not frozen (not measured).
+    pub sites_not_frozen: i64,
+    pub baseline_hours: f64,
+    pub available_hours: f64,
+    pub overtime_hours: f64,
+    /// baseline ÷ available × 100 (pooled over the sites); `None` when the crews have no hours.
     pub load_pct: Option<f64>,
-    /// Crew-days whose commitments exceed their hours (including days with no hours at all).
-    pub overloaded_team_days: i64,
+    /// Above 100 %: the plan relies on overtime.
+    pub relies_on_overtime: bool,
+    /// Current weeks frozen without approval and not approved since.
+    pub weeks_awaiting_approval: i64,
 }
 
-/// SMRP schedule compliance (`analytics::smrp::schedule_compliance`): committed hours completed by
-/// the end of their committed day ÷ committed hours, commitments ending in the period.
+/// SMRP schedule compliance (`analytics::smrp::schedule_compliance`): baseline hours of the frozen
+/// weeks ended in the period whose work was finished by the end of their week ÷ baseline hours
+/// (`planning::kpis`, the same number as the planning KPIs).
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct ScheduleComplianceFigure {
     pub period_days: i64,
+    /// Baseline hours of the frozen weeks ended in the period.
     pub scheduled_hours: f64,
     pub done_hours: f64,
-    /// `None` when nothing was committed in the period.
+    /// Baseline jobs later released or cancelled (counted as not done).
+    pub released_jobs: i64,
+    /// `None` when no frozen week ended in the period (see `unavailable`).
     pub value_pct: Option<f64>,
+    /// Why there is no value: [`NO_FROZEN_BASELINE`].
+    pub unavailable: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -99,92 +91,9 @@ pub struct HomePlanning {
     pub backlog: PlanningBacklog,
     /// `None` with `week_unavailable` set when no work week applies.
     pub week: Option<WeekLoad>,
-    /// Why there is no week figure: one of the `WORK_WEEK_*` codes.
+    /// Why there is no week figure: [`WEEK_NO_PLANNING_SITE`] or [`WEEK_NOT_FROZEN`].
     pub week_unavailable: Option<String>,
     pub schedule_compliance: ScheduleComplianceFigure,
-}
-
-/// The work week holding `day` for the weekly rest days `rest` (ISO weekdays): it starts the day
-/// after the rest days and runs 7 days. Refused (a `WORK_WEEK_*` code) without a rest day or when
-/// the rest days are split, as no single day then starts the week.
-pub fn work_week_bounds(day: NaiveDate, rest: &[i64]) -> Result<(NaiveDate, NaiveDate), &'static str> {
-    if rest.is_empty() {
-        return Err(WORK_WEEK_NO_REST_DAY);
-    }
-    let is_rest = |iso: i64| rest.contains(&iso);
-    let previous = |iso: i64| if iso == 1 { 7 } else { iso - 1 };
-    let starts: Vec<i64> = (1..=7).filter(|d| !is_rest(*d) && is_rest(previous(*d))).collect();
-    let [start] = starts.as_slice() else {
-        return Err(WORK_WEEK_SPLIT_REST);
-    };
-    let today = i64::from(day.weekday().number_from_monday());
-    let back = (today - start).rem_euclid(7);
-    let first = day - Duration::days(back);
-    Ok((first, first + Duration::days(6)))
-}
-
-/// The work week rest days that apply to the person on `today`: the one every configured site
-/// shares, else the person's own site's; a `WORK_WEEK_*` code when none can be told.
-pub async fn applicable_work_week(
-    db: &DatabaseConnection,
-    user_id: i64,
-    today: NaiveDate,
-) -> AppResult<Result<WorkWeekBasis, &'static str>> {
-    let configured = db
-        .query_all(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT DISTINCT entity_id FROM site_work_weeks".to_string(),
-        ))
-        .await?;
-    let mut sets: Vec<Vec<i64>> = Vec::new();
-    for r in &configured {
-        let entity: Option<i64> = decode(r, "entity_id")?;
-        let book = SiteWeekBook::load(db, entity).await?;
-        if let Some(days) = book.rest_days_on(today) {
-            if !sets.iter().any(|s| s.as_slice() == days) {
-                sets.push(days.to_vec());
-            }
-        }
-    }
-    match sets.as_slice() {
-        [] => return Ok(Err(WORK_WEEK_NOT_CONFIGURED)),
-        [only] => {
-            return Ok(Ok(WorkWeekBasis {
-                rest_days: only.clone(),
-                scope: "all_sites".into(),
-                site_name: None,
-            }))
-        }
-        _ => {}
-    }
-    // Sites differ: the person's own site (their personnel record's entity).
-    let Some(personnel_id) = crate::qualification::gate::personnel_for_user(db, user_id).await? else {
-        return Ok(Err(WORK_WEEK_SITE_AMBIGUOUS));
-    };
-    let site = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT p.primary_entity_id AS entity_id, n.name AS site_name FROM personnel p \
-             LEFT JOIN org_nodes n ON n.id = p.primary_entity_id WHERE p.id = ?",
-            [personnel_id.into()],
-        ))
-        .await?;
-    let (entity, site_name): (Option<i64>, Option<String>) = match &site {
-        Some(r) => (decode(r, "entity_id")?, decode(r, "site_name")?),
-        None => (None, None),
-    };
-    let Some(entity) = entity else {
-        return Ok(Err(WORK_WEEK_SITE_AMBIGUOUS));
-    };
-    let book = SiteWeekBook::load(db, Some(entity)).await?;
-    Ok(match book.rest_days_on(today) {
-        Some(days) => Ok(WorkWeekBasis {
-            rest_days: days.to_vec(),
-            scope: "own_site".into(),
-            site_name,
-        }),
-        None => Err(WORK_WEEK_SITE_AMBIGUOUS),
-    })
 }
 
 pub async fn backlog(db: &DatabaseConnection) -> AppResult<PlanningBacklog> {
@@ -221,87 +130,55 @@ pub async fn backlog(db: &DatabaseConnection) -> AppResult<PlanningBacklog> {
     })
 }
 
-/// Sums the crews' days into the week figure.
-pub fn week_load(
-    rows: &[TeamCapacityLoad],
-    week_start: NaiveDate,
-    week_end: NaiveDate,
-    basis: WorkWeekBasis,
-) -> WeekLoad {
-    let mut capacity = 0.0_f64;
-    let mut committed = 0.0_f64;
-    let mut overloaded = 0_i64;
-    let mut teams: Vec<i64> = Vec::new();
-    for r in rows {
-        let hours = r.available_hours + r.overtime_hours;
-        capacity += hours;
-        committed += r.committed_hours;
-        if r.committed_hours > hours + 1e-9 {
-            overloaded += 1;
-        }
-        if !teams.contains(&r.team_id) {
-            teams.push(r.team_id);
-        }
+/// This week's load on the planning KPIs' definition, or the code saying why it cannot be given.
+pub async fn this_week(db: &DatabaseConnection, now: DateTime<Utc>) -> AppResult<Result<WeekLoad, &'static str>> {
+    let (weeks, sites) = crate::planning::kpis::current_weeks(db, now).await?;
+    if sites == 0 {
+        return Ok(Err(WEEK_NO_PLANNING_SITE));
     }
-    WeekLoad {
-        week_start: week_start.to_string(),
-        week_end: week_end.to_string(),
-        basis,
-        teams: teams.len() as i64,
-        capacity_hours: capacity,
-        committed_hours: committed,
-        load_pct: (capacity > 0.0).then(|| committed / capacity * 100.0),
-        overloaded_team_days: overloaded,
+    if weeks.is_empty() {
+        return Ok(Err(WEEK_NOT_FROZEN));
     }
+    let baseline: f64 = weeks.iter().map(|w| w.baseline_hours).sum();
+    let available: f64 = weeks.iter().map(|w| w.available_hours).sum();
+    let overtime: f64 = weeks.iter().map(|w| w.overtime_hours).sum();
+    let load_pct = (available > 0.0).then(|| ((baseline / available * 100.0) * 10.0).round() / 10.0);
+    Ok(Ok(WeekLoad {
+        week_start: weeks.iter().map(|w| w.week_start.clone()).min().unwrap_or_default(),
+        week_end: weeks.iter().map(|w| w.week_end.clone()).max().unwrap_or_default(),
+        sites: weeks.len() as i64,
+        sites_not_frozen: sites.saturating_sub(weeks.len()) as i64,
+        baseline_hours: baseline,
+        available_hours: available,
+        overtime_hours: overtime,
+        load_pct,
+        relies_on_overtime: load_pct.is_some_and(|p| p > 100.0),
+        weeks_awaiting_approval: weeks.iter().filter(|w| w.awaiting_approval).count() as i64,
+    }))
 }
 
-/// This work week's load, or the `WORK_WEEK_*` code saying why it cannot be given.
-pub async fn this_week(
-    db: &DatabaseConnection,
-    user_id: i64,
-    today: NaiveDate,
-) -> AppResult<Result<WeekLoad, &'static str>> {
-    let basis = match applicable_work_week(db, user_id, today).await? {
-        Ok(b) => b,
-        Err(code) => return Ok(Err(code)),
-    };
-    let (first, last) = match work_week_bounds(today, &basis.rest_days) {
-        Ok(bounds) => bounds,
-        Err(code) => return Ok(Err(code)),
-    };
-    // Same period form as the crew screen: whole local days, first to last.
-    let rows = crate::planning::scheduling::list_team_capacity_load(
-        db,
-        format!("{first}T00:00:00Z"),
-        format!("{last}T23:59:59Z"),
-        None,
-    )
-    .await?;
-    Ok(Ok(week_load(&rows, first, last, basis)))
-}
-
+/// Schedule compliance over the period on the planning KPIs' definition (the analytics number).
 pub async fn schedule_compliance(
     db: &DatabaseConnection,
     period_days: i64,
     now: DateTime<Utc>,
 ) -> AppResult<ScheduleComplianceFigure> {
-    let ratio = smrp::schedule_compliance(db, period_window(now, period_days), now, None).await?;
+    let window = period_window(now, period_days);
+    let measured =
+        crate::planning::kpis::baseline_schedule_compliance(db, window.from, window.to.min(now), None, now).await?;
+    let ratio = smrp::SmrpRatio::of(measured.done_hours, measured.baseline_hours);
     Ok(ScheduleComplianceFigure {
         period_days,
         scheduled_hours: ratio.denominator,
         done_hours: ratio.numerator,
+        released_jobs: measured.released_jobs,
         value_pct: ratio.value_pct,
+        unavailable: (measured.weeks == 0).then(|| NO_FROZEN_BASELINE.to_string()),
     })
 }
 
-pub async fn build_planning(
-    db: &DatabaseConnection,
-    user_id: i64,
-    period_days: i64,
-    now: DateTime<Utc>,
-    today: NaiveDate,
-) -> AppResult<HomePlanning> {
-    let (week, week_unavailable) = match this_week(db, user_id, today).await? {
+pub async fn build_planning(db: &DatabaseConnection, period_days: i64, now: DateTime<Utc>) -> AppResult<HomePlanning> {
+    let (week, week_unavailable) = match this_week(db, now).await? {
         Ok(w) => (Some(w), None),
         Err(code) => (None, Some(code.to_string())),
     };

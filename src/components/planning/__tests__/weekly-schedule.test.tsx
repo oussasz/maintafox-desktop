@@ -99,8 +99,55 @@ const planning = vi.hoisted(() => ({
   publishWeeklySchedule: vi.fn(),
   requestWeeklyUnfreeze: vi.fn(),
   decideWeeklyUnfreeze: vi.fn(),
+  getPlanningKpis: vi.fn(),
 }));
 vi.mock("@/services/planning-service", () => planning);
+
+const kpisFixture = {
+  weeks: [
+    {
+      weekly_schedule_id: 4,
+      site_id: 10,
+      site_name: "Usine Nord",
+      week_start: "2026-10-11",
+      week_end: "2026-10-17",
+      status: "frozen",
+      awaiting_approval: true,
+      reopened: true,
+      baseline_no: 1,
+      baseline_jobs: 2,
+      baseline_hours: 5,
+      baseline_released_jobs: 1,
+      done_hours: 2,
+      compliance_pct: 40,
+      break_in_jobs: 1,
+      break_in_hours: 1,
+      break_in_pct: 20,
+      displaced_jobs: 1,
+      available_hours: 40,
+      overtime_hours: 8,
+      loading_pct: 12.5,
+    },
+  ],
+  totals: {
+    weeks: 1,
+    weeks_judged: 1,
+    weeks_awaiting_approval: 1,
+    weeks_reopened: 1,
+    weeks_not_frozen: 2,
+    baseline_hours: 5,
+    baseline_released_jobs: 1,
+    judged_baseline_hours: 5,
+    done_hours: 2,
+    compliance_pct: 40,
+    break_in_hours: 1,
+    break_in_pct: 20,
+    displaced_jobs: 1,
+    available_hours: 40,
+    overtime_hours: 8,
+    loading_pct: 12.5,
+  },
+};
 
 vi.mock("@/services/org-node-service", () => ({
   listOrgTree: vi.fn(() =>
@@ -273,6 +320,21 @@ describe("WeeklySchedulePanel", () => {
       { team_id: 8, team_code: "ELEC", team_name: "Électricité" },
     ]);
     planning.getWeeklySchedule.mockResolvedValue(weekView());
+    planning.getPlanningKpis.mockResolvedValue(kpisFixture);
+  });
+
+  it("shows the site's KPIs against the frozen baseline and flags weeks frozen without approval", async () => {
+    render(<WeeklySchedulePanel />);
+    const kpis = await screen.findByRole("region", { name: enPlanning.kpis.title });
+    expect(planning.getPlanningKpis).toHaveBeenCalledWith(
+      expect.objectContaining({ site_id: 10, to_day: "2026-10-18", exclude_unapproved: false }),
+    );
+    await waitFor(() => expect(kpis).toHaveTextContent("40 %"));
+    expect(kpis).toHaveTextContent("20 %");
+    expect(kpis).toHaveTextContent(enPlanning.kpis.notFrozen);
+    expect(kpis).toHaveTextContent(enPlanning.weekly.frozenWithoutApproval);
+    expect(kpis).toHaveTextContent("1 later released or cancelled");
+    expect(kpis).toHaveTextContent(enPlanning.kpis.reopened);
   });
 
   it("shows the crews' week and marks a week frozen without approval", async () => {

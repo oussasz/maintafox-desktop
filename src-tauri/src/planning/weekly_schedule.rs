@@ -60,14 +60,14 @@ pub(crate) fn first_instant_of_day(
 }
 
 /// The first instant of the local `day` (its midnight, or the end of a daylight-saving gap).
-fn local_midnight_utc(day: NaiveDate) -> AppResult<DateTime<Utc>> {
+pub(crate) fn local_midnight_utc(day: NaiveDate) -> AppResult<DateTime<Utc>> {
     first_instant_of_day(day, |local| {
         Local.from_local_datetime(&local).map(|t| t.with_timezone(&Utc))
     })
     .ok_or_else(|| AppError::Internal(anyhow::anyhow!("local day {day} has no valid instant")))
 }
 
-fn rfc3339(t: DateTime<Utc>) -> String {
+pub(crate) fn rfc3339(t: DateTime<Utc>) -> String {
     t.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
 
@@ -97,11 +97,12 @@ pub struct WeeklySchedule {
     pub updated_at: String,
 }
 
-const SCHEDULE_COLS: &str = "id, entity_id, week_start, week_end, status, approved_by_id, approved_at, frozen_at, \
+pub(crate) const SCHEDULE_COLS: &str =
+    "id, entity_id, week_start, week_end, status, approved_by_id, approved_at, frozen_at, \
     frozen_by_id, frozen_without_approval, baseline_no, published_by_id, published_at, unfreeze_requested_by_id, \
     unfreeze_requested_at, unfreeze_reason, row_version, created_at, updated_at";
 
-fn map_schedule(r: &QueryResult) -> AppResult<WeeklySchedule> {
+pub(crate) fn map_schedule(r: &QueryResult) -> AppResult<WeeklySchedule> {
     Ok(WeeklySchedule {
         id: r.try_get("", "id").map_err(|e| decode_err("id", e))?,
         entity_id: r.try_get("", "entity_id").map_err(|e| decode_err("entity_id", e))?,
@@ -210,7 +211,7 @@ pub async fn planning_site_of_node(db: &impl ConnectionTrait, node_id: i64) -> A
 }
 
 /// Active crews and their planning site (`None`: no site).
-async fn crews_with_sites(db: &impl ConnectionTrait) -> AppResult<Vec<(WeeklyCrew, Option<i64>)>> {
+pub(crate) async fn crews_with_sites(db: &impl ConnectionTrait) -> AppResult<Vec<(WeeklyCrew, Option<i64>)>> {
     let rows = db
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
@@ -383,7 +384,7 @@ async fn list_events(db: &impl ConnectionTrait, schedule_id: i64) -> AppResult<V
 
 /// When `week` freezes automatically: local midnight after the previous week's last working day
 /// (after the previous week's end when it had none).
-async fn freeze_due_at(db: &impl ConnectionTrait, week: &SiteWeek) -> AppResult<DateTime<Utc>> {
+pub(crate) async fn freeze_due_at(db: &impl ConnectionTrait, week: &SiteWeek) -> AppResult<DateTime<Utc>> {
     let previous = site_week(db, week.entity_id, week.week_start - Duration::days(1)).await?;
     let last = previous.last_working_day.unwrap_or(previous.week_end);
     local_midnight_utc(last + Duration::days(1))

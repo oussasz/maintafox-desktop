@@ -245,9 +245,9 @@
     "unitPercentYear": "Percentage of replacement value per year (%)",
     "schedule": {
       "title": "Schedule compliance",
-      "none": "No scheduled work ended in this period.",
-      "detail": "{{done}} completed as scheduled out of {{total}} committed",
-      "formula": "Hours of schedule commitments whose work order was completed by the end of the committed day ÷ hours committed. Commitments that end later are not counted yet."
+      "none": "No frozen week ended in the period: schedule compliance is measured on the frozen baseline.",
+      "detail": "{{done}} done of {{total}} planned in the frozen baseline",
+      "formula": "Baseline hours of the frozen weeks that ended in the period whose work was finished by the end of its week ÷ baseline hours. A job later released or cancelled counts as not done; weeks never frozen are not measured."
     },
     "mix": {
       "basisHours": "Based on recorded labour hours",

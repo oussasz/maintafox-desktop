@@ -1,12 +1,11 @@
 /** Pure helpers of the weekly schedule view (planning step D). */
 
-import { describeAppError } from "@/lib/app-error";
+import { appErrorText } from "@/lib/app-error";
 import type { ScheduleCommitment } from "@shared/ipc-types";
 
 /** The coded reasons of a refusal when there are some, else its translated title. */
 export function errorText(err: unknown): string {
-  const { title, description } = describeAppError(err);
-  return description ?? title;
+  return appErrorText(err);
 }
 
 /** `YYYY-MM-DD` of a local date. */

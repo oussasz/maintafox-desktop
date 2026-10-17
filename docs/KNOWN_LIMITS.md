@@ -77,7 +77,7 @@ Last updated: 2026-10-17 (step 5 in progress, planning step E in progress).
 | Stock checks for planning use stock available over all locations (reservations netted); other jobs' planned-but-unreserved needs are not subtracted. | Data | After pilot |
 | Part quantities on work-order / PM lines carry no unit; they are taken in stock units. | Data | After pilot |
 
-## Planning and scheduling (steps A–D; E in progress)
+## Planning and scheduling (steps A–E)
 
 | Limit | Impact | Handled in |
 |---|---|---|
@@ -89,7 +89,15 @@ Last updated: 2026-10-17 (step 5 in progress, planning step E in progress).
 | A week that spans a change of the site's weekend rule lasts 6–13 days. | Data | Accepted |
 | Crews without a planning site (no organisation unit able to own work above them) appear on no weekly schedule; a banner lists them. | Data | Release (setup) |
 | The suggested-technician skill score on backlog cards is a simple skill-code match. | UX | After pilot |
-| When sites have different work weeks and a planner has no home site, the home planning panel says so instead of showing a week. | UX | Accepted |
+| Schedule compliance changed definition in step E: it is now measured against the frozen weekly baseline (the earlier "committed slots done on their day" figure is retired everywhere — planning, home, analytics, monthly report). Values before and after the upgrade are not comparable; periods before weekly baselines existed show "not measured". | Data | Release (tell users) |
+| Planning KPIs (loading, compliance, break-ins) are measured only on frozen weeks; a site or week never frozen shows "not measured" with its reason, never a number. | Data | Accepted |
+| A baseline job counts as done when the work order behind it is mechanically completed, ended or closed by the end of its week; a PM occurrence completed without a work order is not counted as done. | Data | After pilot |
+| A baseline job without planned labour hours weighs its slot length in the KPIs. | Data | Accepted |
+| A week unfrozen for editing keeps being measured on its last frozen baseline, flagged "reopened", until it is frozen again. | Data | Accepted |
+| A job moved from one frozen week into another counts as displaced in both weeks. | Data | After pilot |
+| Break-ins, displaced jobs and available hours use the site's crews of today, not the crews at freeze time (a crew moved to another site takes its history with it). | Data | After pilot |
+| The planning page shows a fixed window of 8 weeks of KPIs (the current one and the 7 before it). | UX | After pilot |
+| The home week load pools the current frozen week of every site; sites with different weeks are shown as one range (earliest start to latest end), with the sites not frozen counted apart. | UX | Accepted |
 
 ## Personnel, qualifications, shifts
 

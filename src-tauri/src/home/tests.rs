@@ -5,14 +5,10 @@ use chrono::{NaiveDate, Utc};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 use super::my_work::{build_my_work, my_pm, my_requests, my_rounds, my_work_orders, MyWorkAccess};
-use super::planning::{
-    applicable_work_week, week_load, work_week_bounds, WorkWeekBasis, WORK_WEEK_NOT_CONFIGURED, WORK_WEEK_NO_REST_DAY,
-    WORK_WEEK_SITE_AMBIGUOUS, WORK_WEEK_SPLIT_REST,
-};
+use super::planning::{build_planning, NO_FROZEN_BASELINE, WEEK_NOT_FROZEN, WEEK_NO_PLANNING_SITE};
 use super::supervision::{assets, build_supervision, permit_list, work_orders, SupervisionAccess};
 use super::{checked_period, period_first_day, period_window, urgency_rank_sql};
 use crate::commands::dashboard::{build_workload_chart, WorkloadSeries};
-use crate::planning::domain::TeamCapacityLoad;
 
 async fn setup() -> DatabaseConnection {
     let db = crate::db::test_db::seeded().await;
@@ -175,38 +171,6 @@ fn date(y: i32, m: u32, d: u32) -> NaiveDate {
 }
 
 #[test]
-fn the_work_week_starts_the_day_after_the_rest_days() {
-    // Thursday 15 October 2026. Rest Friday–Saturday (5, 6): the week runs Sunday 11 → Saturday 17.
-    let thursday = date(2026, 10, 15);
-    assert_eq!(
-        work_week_bounds(thursday, &[5, 6]),
-        Ok((date(2026, 10, 11), date(2026, 10, 17)))
-    );
-    // On the rest days themselves the week is still the one they close.
-    assert_eq!(
-        work_week_bounds(date(2026, 10, 17), &[5, 6]),
-        Ok((date(2026, 10, 11), date(2026, 10, 17)))
-    );
-    // The Sunday after starts the next week.
-    assert_eq!(
-        work_week_bounds(date(2026, 10, 18), &[5, 6]),
-        Ok((date(2026, 10, 18), date(2026, 10, 24)))
-    );
-    // Rest Saturday–Sunday: Monday 12 → Sunday 18.
-    assert_eq!(
-        work_week_bounds(thursday, &[6, 7]),
-        Ok((date(2026, 10, 12), date(2026, 10, 18)))
-    );
-    // Rest Sunday only (wraps): Monday 12 → Sunday 18.
-    assert_eq!(
-        work_week_bounds(thursday, &[7]),
-        Ok((date(2026, 10, 12), date(2026, 10, 18)))
-    );
-    assert_eq!(work_week_bounds(thursday, &[]), Err(WORK_WEEK_NO_REST_DAY));
-    assert_eq!(work_week_bounds(thursday, &[3, 6]), Err(WORK_WEEK_SPLIT_REST));
-}
-
-#[test]
 fn the_period_is_the_last_days_today_included() {
     let now = chrono::DateTime::parse_from_rfc3339("2026-10-16T09:30:00Z")
         .expect("now")
@@ -217,95 +181,37 @@ fn the_period_is_the_last_days_today_included() {
     assert_eq!(w.to, now);
 }
 
-async fn set_week(db: &DatabaseConnection, sid: &str, entity: Option<i64>, rest: &str) {
-    let entity = entity.map_or("NULL".to_string(), |e| e.to_string());
-    exec(
-        db,
-        &format!(
-            "INSERT INTO site_work_weeks (entity_sync_id, entity_id, effective_from, weekend_days, created_at, \
-             updated_at) VALUES ('{sid}', {entity}, '2020-01-01', '{rest}', datetime('now'), datetime('now'))"
-        ),
-    )
-    .await;
-}
-
+/// The planner panel's week load and compliance are the planning KPIs' (`planning::kpis`, measured
+/// against the frozen weekly baseline — proved by `planning::tests::planning_kpis_measure_the_frozen_baseline`).
+/// Without a planning site or a frozen week they give their reason, never a number.
 #[tokio::test]
-async fn the_work_week_comes_from_the_site_calendar_never_a_default() {
+async fn the_planner_panel_says_why_when_there_is_no_frozen_baseline() {
     let db = setup().await;
-    let me = admin_id(&db).await;
-    let today = date(2026, 10, 15);
-    exec(&db, "DELETE FROM site_work_weeks").await;
+    let now = Utc::now();
+    let panel = build_planning(&db, 30, now).await.expect("panel");
+    assert!(panel.week.is_none());
+    assert_eq!(panel.week_unavailable.as_deref(), Some(WEEK_NO_PLANNING_SITE));
+    assert_eq!(panel.schedule_compliance.value_pct, None);
     assert_eq!(
-        applicable_work_week(&db, me, today).await.expect("week"),
-        Err(WORK_WEEK_NOT_CONFIGURED)
+        panel.schedule_compliance.unavailable.as_deref(),
+        Some(NO_FROZEN_BASELINE)
     );
 
-    set_week(&db, "hm-week-all", None, "5,6").await;
-    assert_eq!(
-        applicable_work_week(&db, me, today).await.expect("week"),
-        Ok(WorkWeekBasis {
-            rest_days: vec![5, 6],
-            scope: "all_sites".into(),
-            site_name: None
-        })
-    );
-
-    // Site A rests Saturday–Sunday: sites differ, and the admin's login has no personnel site.
-    set_week(&db, "hm-week-a", Some(1), "6,7").await;
+    // A planning site with a crew, its week never frozen: still no number.
+    exec(&db, "UPDATE org_node_types SET can_own_work = 1 WHERE id = 1").await;
     exec(
         &db,
-        &format!("UPDATE user_accounts SET personnel_id = NULL WHERE id = {me}"),
+        "INSERT INTO teams (entity_sync_id, code, name, team_type, primary_node_id, status, created_at, updated_at) \
+         VALUES ('hm-crew', 'HM-CREW', 'Home crew', 'maintenance', 1, 'active', datetime('now'), datetime('now'))",
     )
     .await;
+    let panel = build_planning(&db, 30, now).await.expect("panel");
+    assert!(panel.week.is_none());
+    assert_eq!(panel.week_unavailable.as_deref(), Some(WEEK_NOT_FROZEN));
     assert_eq!(
-        applicable_work_week(&db, me, today).await.expect("week"),
-        Err(WORK_WEEK_SITE_AMBIGUOUS)
+        panel.schedule_compliance.unavailable.as_deref(),
+        Some(NO_FROZEN_BASELINE)
     );
-}
-
-fn day(team_id: i64, available: f64, overtime: f64, committed: f64) -> TeamCapacityLoad {
-    TeamCapacityLoad {
-        team_id,
-        work_date: "2026-10-12".into(),
-        available_hours: available,
-        overtime_hours: overtime,
-        committed_hours: committed,
-        utilization_ratio: None,
-        basis: "roster".into(),
-        work_windows: Vec::new(),
-        unwindowed_hours: 0.0,
-    }
-}
-
-#[test]
-fn week_load_is_pooled_and_counts_overloaded_crew_days() {
-    let mon = NaiveDate::from_ymd_opt(2026, 10, 12).expect("date");
-    let sun = NaiveDate::from_ymd_opt(2026, 10, 18).expect("date");
-    // Team 1: 8 h + 2 h overtime, 12 h committed (overloaded); team 2: 16 h, 4 h; team 2 rest day
-    // with 3 h committed (overloaded: no hours at all).
-    let rows = [day(1, 8.0, 2.0, 12.0), day(2, 16.0, 0.0, 4.0), day(2, 0.0, 0.0, 3.0)];
-    let basis = WorkWeekBasis {
-        rest_days: vec![6, 7],
-        scope: "all_sites".into(),
-        site_name: None,
-    };
-    let w = week_load(&rows, mon, sun, basis.clone());
-    assert_eq!(
-        (w.week_start.as_str(), w.week_end.as_str()),
-        ("2026-10-12", "2026-10-18")
-    );
-    assert_eq!(w.teams, 2);
-    assert!((w.capacity_hours - 26.0).abs() < 1e-9);
-    assert!((w.committed_hours - 19.0).abs() < 1e-9);
-    let pct = w.load_pct.expect("capacity");
-    assert!(
-        (pct - 19.0 / 26.0 * 100.0).abs() < 1e-9,
-        "pooled, not a mean of daily ratios: {pct}"
-    );
-    assert_eq!(w.overloaded_team_days, 2);
-
-    let none = week_load(&[day(1, 0.0, 0.0, 0.0)], mon, sun, basis);
-    assert_eq!(none.load_pct, None, "no hours: no percentage, never 0 % or 100 %");
 }
 
 // ── My work ────────────────────────────────────────────────────────────────────────────────

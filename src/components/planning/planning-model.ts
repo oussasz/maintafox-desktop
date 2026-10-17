@@ -905,24 +905,22 @@ export const ASSIGNEE_OVERRIDABLE_CODES = [
   "PLANNING_ASSIGNEE_NOT_IN_CREW",
   "PLANNING_ASSIGNEE_NOT_WORKING",
   "PLANNING_ASSIGNEE_OVERLOADED",
+  "PLANNING_DOUBLE_BOOKING",
 ] as const;
 
 /** A refusal about the technician (crew, shift, hours left, double booking): overridable with a reason. */
-export function isAssigneeOverridableError(codes: string[], message: string): boolean {
-  return (
-    codes.some((c) => (ASSIGNEE_OVERRIDABLE_CODES as readonly string[]).includes(c)) ||
-    isDoubleBookingErrorMessage(message)
-  );
+export function isAssigneeOverridableError(codes: string[]): boolean {
+  return codes.some((c) => (ASSIGNEE_OVERRIDABLE_CODES as readonly string[]).includes(c));
 }
 
-export function isDoubleBookingErrorMessage(message: string): boolean {
-  const lower = message.toLowerCase();
-  return lower.includes("double-booking") || lower.includes("double booking");
+/** The overridable refusals among `codes` (shown in the override dialog, acknowledged on retry). */
+export function overridableCodes(codes: string[]): string[] {
+  return codes.filter((c) => (ASSIGNEE_OVERRIDABLE_CODES as readonly string[]).includes(c));
 }
 
-export function isCapacityGateErrorMessage(message: string): boolean {
-  const lower = message.toLowerCase();
-  return lower.includes("capacity gate") || lower.includes("exceeds capacity");
+/** The crew's load would exceed its capacity plus overtime ceiling (`PLANNING_CAPACITY_EXCEEDED`). */
+export function isCapacityGateError(codes: string[]): boolean {
+  return codes.includes("PLANNING_CAPACITY_EXCEEDED");
 }
 
 export function parseLaborCostRange(

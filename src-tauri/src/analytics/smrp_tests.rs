@@ -341,59 +341,40 @@ async fn pm_compliance_and_pm_overdue_from_occurrences() {
 
 // ── Schedule compliance ────────────────────────────────────────────────────────────────────
 
-/// S1 committed −3 d 08:00–12:00 (4 h), completed −3 d 11:00 → on schedule.
-/// S2 committed −4 d 08:00–10:00 (2 h), completed −2 d → late.
-/// S3 committed −1 d 01:00–04:00 (3 h), never completed → missed.
-/// S4 committed +1 d → not judged yet.
+/// Schedule compliance is measured against the frozen weekly baseline (`planning::kpis`; the full
+/// computation is proved by `planning::tests::planning_kpis_measure_the_frozen_baseline`): live
+/// commitments of weeks never frozen are not measured — no value, never a guess.
 #[tokio::test]
-async fn schedule_compliance_counts_hours_completed_on_their_day() {
+async fn schedule_compliance_without_a_frozen_baseline_gives_no_value() {
     let db = setup().await;
     let now = fixed_now();
     let day = |d: i64, h: i64| ts(now, d, h - 12);
-    let mut cases = Vec::new();
-    for (code, start, end, completed) in [
-        ("S1", day(-3, 8), day(-3, 12), Some(day(-3, 11))),
-        ("S2", day(-4, 8), day(-4, 10), Some(day(-2, 9))),
-        ("S3", day(-1, 1), day(-1, 4), None),
-        ("S4", day(1, 8), day(1, 10), None),
-    ] {
-        let (status, cols, vals) = match &completed {
-            Some(c) => ("completed", "mechanically_completed_at", c.clone()),
-            None => ("ready", "expected_duration_hours", "2.0".to_string()),
-        };
-        let wo = insert_wo(&db, code, "preventive", status, &ts(now, -20, 0), cols, &vals).await;
-        cases.push((wo, start, end));
-    }
-    for (i, (wo, start, end)) in cases.iter().enumerate() {
-        exec(
-            &db,
-            &format!(
-                "INSERT INTO schedule_commitments (schedule_candidate_id, source_type, source_id, \
-                 schedule_period_start, schedule_period_end, committed_start, committed_end, assigned_team_id) \
-                 VALUES ({c}, 'work_order', {wo}, date({start}), date({end}), {start}, {end}, 1)",
-                c = i + 1
-            ),
-        )
-        .await;
-    }
-    // A slot the planner gave back (released) is not a schedule obligation: S3 had one before.
+    let wo = insert_wo(
+        &db,
+        "S1",
+        "preventive",
+        "completed",
+        &ts(now, -20, 0),
+        "mechanically_completed_at",
+        &day(-3, 11),
+    )
+    .await;
     exec(
         &db,
         &format!(
             "INSERT INTO schedule_commitments (schedule_candidate_id, source_type, source_id, \
-             schedule_period_start, schedule_period_end, committed_start, committed_end, assigned_team_id, status) \
-             VALUES (9, 'work_order', {wo}, date({start}), date({end}), {start}, {end}, 1, 'released')",
-            wo = cases[2].0,
-            start = day(-2, 1),
-            end = day(-2, 4)
+             schedule_period_start, schedule_period_end, committed_start, committed_end, assigned_team_id) \
+             VALUES (1, 'work_order', {wo}, date({start}), date({end}), {start}, {end}, 1)",
+            start = day(-3, 8),
+            end = day(-3, 12)
         ),
     )
     .await;
     let r = smrp::schedule_compliance(&db, SmrpWindow::last_days(now, 30), now, None)
         .await
         .unwrap();
-    assert!((r.denominator - 9.0).abs() < 1e-6, "{r:?}");
-    assert!((r.numerator - 4.0).abs() < 1e-6, "{r:?}");
+    assert_eq!(r.denominator, 0.0, "{r:?}");
+    assert_eq!(r.value_pct, None, "{r:?}");
 }
 
 // ── Work mix ───────────────────────────────────────────────────────────────────────────────

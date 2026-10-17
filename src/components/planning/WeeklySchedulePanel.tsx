@@ -10,6 +10,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
+import { PlanningKpiSection } from "@/components/planning/PlanningKpiSection";
 import {
   addDays,
   commitmentsOnDay,
@@ -36,7 +37,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { mfAlert } from "@/design-system/tokens";
+import { mfTone } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
+import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { listOrgTree } from "@/services/org-node-service";
 import {
@@ -47,6 +51,7 @@ import {
   publishWeeklySchedule,
   requestWeeklyUnfreeze,
 } from "@/services/planning-service";
+import { useSessionStore } from "@/store/session-store";
 import type { OrgTreeRow, WeeklyScheduleRef, WeeklyScheduleView } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -61,6 +66,8 @@ export function WeeklySchedulePanel() {
   const [error, setError] = useState<string | null>(null);
   const [unfreezeOpen, setUnfreezeOpen] = useState(false);
   const [unfreezeReason, setUnfreezeReason] = useState("");
+  const { toast } = useToast();
+  const currentUserId = useSessionStore((st) => st.info?.user_id ?? null);
 
   useEffect(() => {
     let cancelled = false;
@@ -100,11 +107,13 @@ export function WeeklySchedulePanel() {
     expected_row_version: view?.schedule?.row_version ?? null,
   });
 
-  async function act(action: () => Promise<WeeklyScheduleView>) {
+  /** Runs a week action; `doneKey` names its success message (`feedback.*`). */
+  async function act(action: () => Promise<WeeklyScheduleView>, doneKey: string) {
     setBusy(true);
     setError(null);
     try {
       setView(await action());
+      toast({ title: t(`feedback.${doneKey}`), variant: "success" });
     } catch (err) {
       setError(errorText(err));
     } finally {
@@ -195,7 +204,7 @@ export function WeeklySchedulePanel() {
           </Badge>
         ) : null}
         {view?.awaiting_approval ? (
-          <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-800">
+          <Badge variant="outline" className={mfTone.warning.chip}>
             <AlertTriangle className="mr-1 h-3 w-3" />
             {t("weekly.frozenWithoutApproval")}
           </Badge>
@@ -209,7 +218,7 @@ export function WeeklySchedulePanel() {
                   size="sm"
                   variant="outline"
                   disabled={busy}
-                  onClick={() => void act(() => approveWeeklySchedule(ref()))}
+                  onClick={() => void act(() => approveWeeklySchedule(ref()), "weekApproved")}
                 >
                   {view.awaiting_approval ? t("weekly.approveAfterFreeze") : t("weekly.approve")}
                 </Button>
@@ -219,7 +228,7 @@ export function WeeklySchedulePanel() {
                   type="button"
                   size="sm"
                   disabled={busy}
-                  onClick={() => void act(() => freezeWeeklySchedule(ref()))}
+                  onClick={() => void act(() => freezeWeeklySchedule(ref()), "weekFrozen")}
                 >
                   <Lock className="mr-1 h-3 w-3" />
                   {t("weekly.freeze")}
@@ -230,7 +239,7 @@ export function WeeklySchedulePanel() {
                   type="button"
                   size="sm"
                   disabled={busy}
-                  onClick={() => void act(() => publishWeeklySchedule(ref()))}
+                  onClick={() => void act(() => publishWeeklySchedule(ref()), "weekPublished")}
                 >
                   {t("weekly.publish")}
                 </Button>
@@ -262,46 +271,52 @@ export function WeeklySchedulePanel() {
       ) : null}
 
       {view?.awaiting_approval ? (
-        <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-sm text-amber-900">
-          {t("weekly.frozenWithoutApprovalHint")}
-        </div>
+        <div className={mfAlert.warning}>{t("weekly.frozenWithoutApprovalHint")}</div>
       ) : null}
 
       {freezeLine ? <p className="text-xs text-text-muted">{freezeLine}</p> : null}
 
       {pendingUnfreeze && schedule ? (
-        <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-sm text-amber-900">
+        <div className={mfAlert.warning}>
           <p>
             {t("weekly.unfreezePending", {
               reason: schedule.unfreeze_reason ?? "",
               at: formatDateTime(schedule.unfreeze_requested_at),
             })}
           </p>
-          <PermissionGate permission={P.PLAN_CONFIRM}>
-            <div className="mt-2 flex gap-2">
-              <Button
-                type="button"
-                size="sm"
-                disabled={busy}
-                onClick={() =>
-                  void act(() => decideWeeklyUnfreeze({ ...ref(), approve: true, comment: null }))
-                }
-              >
-                {t("weekly.approveUnfreeze")}
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={busy}
-                onClick={() =>
-                  void act(() => decideWeeklyUnfreeze({ ...ref(), approve: false, comment: null }))
-                }
-              >
-                {t("weekly.rejectUnfreeze")}
-              </Button>
-            </div>
-          </PermissionGate>
+          {schedule.unfreeze_requested_by_id === currentUserId ? null : (
+            <PermissionGate permission={P.PLAN_CONFIRM}>
+              <div className="mt-2 flex gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() =>
+                    void act(
+                      () => decideWeeklyUnfreeze({ ...ref(), approve: true, comment: null }),
+                      "unfreezeApproved",
+                    )
+                  }
+                >
+                  {t("weekly.approveUnfreeze")}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() =>
+                    void act(
+                      () => decideWeeklyUnfreeze({ ...ref(), approve: false, comment: null }),
+                      "unfreezeRejected",
+                    )
+                  }
+                >
+                  {t("weekly.rejectUnfreeze")}
+                </Button>
+              </div>
+            </PermissionGate>
+          )}
         </div>
       ) : null}
 
@@ -366,7 +381,8 @@ export function WeeklySchedulePanel() {
                                 aria-label={t("weekly.frozenJob")}
                               />
                             ) : null}
-                            {c.source_code ?? `${c.source_type} #${c.source_id}`}
+                            {c.source_code ??
+                              `${t(`filters.sourceTypes.${c.source_type}`, { defaultValue: c.source_type })} #${c.source_id}`}
                             {c.assigned_personnel_name ? ` · ${c.assigned_personnel_name}` : ""}
                             {c.status === "closed" ? ` (${t("commitmentStatus.closed")})` : ""}
                           </li>
@@ -386,6 +402,10 @@ export function WeeklySchedulePanel() {
             </tbody>
           </table>
         </div>
+      ) : null}
+
+      {view && siteId != null ? (
+        <PlanningKpiSection siteId={siteId} weekStart={view.week.week_start} />
       ) : null}
 
       {view && view.events.length > 0 ? (
@@ -438,7 +458,7 @@ export function WeeklySchedulePanel() {
                   setUnfreezeOpen(false);
                   setUnfreezeReason("");
                   return next;
-                })
+                }, "unfreezeRequested")
               }
             >
               {t("weekly.sendUnfreezeRequest")}
