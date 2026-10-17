@@ -53,9 +53,9 @@ function computeStrength(password: string): PasswordStrength {
 }
 
 const STRENGTH_STYLES: Record<PasswordStrength, { bar: string }> = {
-  weak: { bar: "bg-red-500 w-1/3" },
-  medium: { bar: "bg-amber-500 w-2/3" },
-  strong: { bar: "bg-emerald-500 w-full" },
+  weak: { bar: "bg-tone-danger-fg w-1/3" },
+  medium: { bar: "bg-tone-warning-fg w-2/3" },
+  strong: { bar: "bg-tone-success-fg w-full" },
 };
 
 function PasswordStrengthBar({ password }: { password: string }) {
@@ -299,11 +299,11 @@ export function CreateUserDialog({
             {rolesLoading ? (
               <p className="text-xs text-text-secondary">{t("common.loading")}</p>
             ) : rolesLoadError ? (
-              <p className="text-xs text-red-600" role="alert">
+              <p className="text-xs text-tone-danger-fg" role="alert">
                 {rolesLoadError}
               </p>
             ) : assignableRoles.length === 0 ? (
-              <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-100">
+              <p className="rounded-md border border-tone-warning-border bg-tone-warning-bg px-3 py-2 text-xs text-tone-warning-fg">
                 {t("users.create.noRolesAvailable")}
               </p>
             ) : (
@@ -352,7 +352,7 @@ export function CreateUserDialog({
                 />
               )
             ) : (
-              <p className="text-xs text-amber-800 dark:text-amber-200">
+              <p className="text-xs text-tone-warning-fg">
                 {t("users.create.noPersonnelPermission")}
               </p>
             )}
@@ -404,7 +404,7 @@ export function CreateUserDialog({
                     {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
                 </div>
-                {passwordError && <p className="text-xs text-red-600">{passwordError}</p>}
+                {passwordError && <p className="text-xs text-tone-danger-fg">{passwordError}</p>}
                 <PasswordStrengthBar password={password} />
               </div>
 
@@ -416,7 +416,7 @@ export function CreateUserDialog({
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   autoComplete="new-password"
                 />
-                {confirmError && <p className="text-xs text-red-600">{confirmError}</p>}
+                {confirmError && <p className="text-xs text-tone-danger-fg">{confirmError}</p>}
               </div>
 
               <div className="flex items-center gap-2">

@@ -338,7 +338,7 @@ export function RoleImportExportPanel() {
                     return (
                       <TableRow
                         key={idx}
-                        className={status === "blocked" ? "bg-red-50/50 dark:bg-red-950/20" : ""}
+                        className={status === "blocked" ? "bg-tone-danger-bg" : ""}
                       >
                         <TableCell className="font-medium">{row.entry.name}</TableCell>
                         <TableCell>
@@ -376,7 +376,7 @@ export function RoleImportExportPanel() {
                               {row.validation?.warn_deps.map((d) => (
                                 <div
                                   key={`${d.permission_name}-${d.required_permission_name}`}
-                                  className="flex items-center gap-1 text-xs text-orange-600"
+                                  className="flex items-center gap-1 text-xs text-tone-attention-fg"
                                 >
                                   <AlertTriangle className="h-3 w-3" />
                                   <strong>{d.permission_name}</strong> →{" "}
@@ -399,7 +399,7 @@ export function RoleImportExportPanel() {
                           ) : status === "warnings" ? (
                             <Badge
                               variant="outline"
-                              className="border-orange-300 text-orange-600 text-[10px]"
+                              className="border-tone-attention-border text-tone-attention-fg text-[10px]"
                             >
                               <AlertTriangle className="mr-1 h-3 w-3" />
                               {t("importExport.import.badges.hasWarnings", "Warnings")}
@@ -419,7 +419,7 @@ export function RoleImportExportPanel() {
             </div>
 
             {hasBlockedRoles && (
-              <div className="rounded-md border border-orange-300 bg-orange-50 p-3 text-xs text-orange-800 dark:bg-orange-950/30 dark:text-orange-200">
+              <div className="rounded-md border border-tone-attention-border bg-tone-attention-bg p-3 text-xs text-tone-attention-fg">
                 <AlertTriangle className="mr-1.5 inline h-3.5 w-3.5" />
                 {t("importExport.import.skipped", "{{count}} role(s) skipped", {
                   count: importPreview.filter((r) => getPreviewStatus(r) === "blocked").length,

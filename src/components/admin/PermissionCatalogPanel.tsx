@@ -183,7 +183,7 @@ function CreatePermissionDialog({
               onChange={(e) => setName(e.target.value)}
               placeholder="cst.my_permission"
             />
-            {nameError && <p className="text-xs text-red-600">{nameError}</p>}
+            {nameError && <p className="text-xs text-tone-danger-fg">{nameError}</p>}
           </div>
           <div className="space-y-1.5">
             <label className="text-sm font-medium">{t("permissions.fields.description")}</label>

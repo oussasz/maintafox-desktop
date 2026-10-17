@@ -318,7 +318,7 @@ export function EmergencyElevationPanel() {
           if (!row.original.emergency_expires_at) return "—";
           return (
             <div className="flex items-center gap-1.5">
-              <Clock className="h-3 w-3 text-orange-500" />
+              <Clock className="h-3 w-3 text-tone-attention-fg" />
               <Countdown
                 expiresAt={row.original.emergency_expires_at}
                 t={t}
@@ -342,7 +342,7 @@ export function EmergencyElevationPanel() {
               {t("emergency.badges.expired", "Expired")}
             </Badge>
           ) : (
-            <Badge variant="default" className="bg-orange-500 text-[10px]">
+            <Badge variant="default" className="bg-tone-attention-fg text-[10px]">
               {t("emergency.badges.active", "Active")}
             </Badge>
           ),

@@ -190,7 +190,7 @@ export function EditUserDialog({
                 placeholder={t("users.edit.emailPlaceholder")}
                 autoComplete="email"
               />
-              {emailError && <p className="text-xs text-red-600">{emailError}</p>}
+              {emailError && <p className="text-xs text-tone-danger-fg">{emailError}</p>}
             </div>
 
             <div className="space-y-1.5">
@@ -203,7 +203,7 @@ export function EditUserDialog({
                 placeholder="+33 6 12 34 56 78"
                 autoComplete="tel"
               />
-              {phoneError && <p className="text-xs text-red-600">{phoneError}</p>}
+              {phoneError && <p className="text-xs text-tone-danger-fg">{phoneError}</p>}
             </div>
           </div>
 
@@ -232,7 +232,7 @@ export function EditUserDialog({
                 />
               )
             ) : (
-              <p className="text-xs text-amber-800 dark:text-amber-200">
+              <p className="text-xs text-tone-warning-fg">
                 {t("users.create.noPersonnelPermission")}
               </p>
             )}

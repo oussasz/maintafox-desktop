@@ -251,7 +251,7 @@ export function BackupOperationsPanel({ onToast }: BackupOperationsPanelProps) {
             {t("backupOps.computedChecksum")}: {validation.computed_checksum}
           </p>
           {validation.warnings.length > 0 ? (
-            <ul className="mt-2 list-disc pl-5 text-amber-700">
+            <ul className="mt-2 list-disc pl-5 text-tone-warning-fg">
               {validation.warnings.map((w) => (
                 <li key={w}>{w}</li>
               ))}
