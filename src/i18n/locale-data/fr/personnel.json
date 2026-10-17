@@ -495,7 +495,12 @@
     "list": {
       "minutesFree": "{{count}} min libres"
     },
+    "unknownBar": "Disponibilité inconnue — absences non lues",
+    "unknownTitle_one": "Les absences de {{count}} personne n’ont pas pu être lues : affichée comme inconnue, pas disponible",
+    "unknownTitle_other": "Les absences de {{count}} personnes n’ont pas pu être lues : affichées comme inconnues, pas disponibles",
+    "partialBlocks": "Toutes les absences de cet horizon n’ont pas pu être lues.",
     "badges": {
+      "unknown": "Disponibilité inconnue",
       "certExpired": "Qualification expirée",
       "certExpiring": "Certification bientôt expirée"
     },

@@ -495,7 +495,12 @@
     "list": {
       "minutesFree": "{{count}} min free"
     },
+    "unknownBar": "Availability unknown — absences could not be read",
+    "unknownTitle_one": "The absences of {{count}} person could not be read: shown as unknown, not available",
+    "unknownTitle_other": "The absences of {{count}} people could not be read: shown as unknown, not available",
+    "partialBlocks": "Not every absence of this horizon could be read.",
     "badges": {
+      "unknown": "Availability unknown",
       "certExpired": "Qualification expired",
       "certExpiring": "Certification expiring"
     },
