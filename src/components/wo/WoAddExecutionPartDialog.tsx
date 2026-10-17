@@ -361,7 +361,7 @@ export function WoAddExecutionPartDialog({
           </div>
 
           {formError ? (
-            <p role="alert" className="text-sm text-status-danger">
+            <p role="alert" className="text-sm text-tone-danger-fg">
               {formError}
             </p>
           ) : null}

@@ -786,7 +786,7 @@ export function RequestsPage() {
       ) : null}
       {actionError ? (
         <div className="px-4 pt-3">
-          <p role="alert" className="text-sm text-status-danger">
+          <p role="alert" className="text-sm text-tone-danger-fg">
             {actionError}
           </p>
         </div>

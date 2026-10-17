@@ -542,7 +542,7 @@ export function DiDetailDialog({
         <Separator />
         {actionError && (
           <div className="px-6 pt-3">
-            <p role="alert" className="text-xs text-status-danger">
+            <p role="alert" className="text-xs text-tone-danger-fg">
               {actionError}
             </p>
           </div>

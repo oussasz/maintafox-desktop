@@ -105,7 +105,7 @@ export function DiResubmitDialog({ di, question, open, onOpenChange }: DiResubmi
               onBlur={() => setTouched(true)}
             />
             {touched && missing ? (
-              <p id="di-resubmit-answer-error" className="text-xs text-status-danger">
+              <p id="di-resubmit-answer-error" className="text-xs text-tone-danger-fg">
                 {t("resubmit.answerRequired")}
               </p>
             ) : null}

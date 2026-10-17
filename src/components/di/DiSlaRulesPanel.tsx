@@ -138,7 +138,7 @@ export function DiSlaRulesPanel({ open, onClose }: DiSlaRulesPanelProps) {
           <p className="text-xs text-text-muted">{t("sla.scaleHint")}</p>
         </DialogHeader>
         {saveError ? (
-          <p className="text-sm text-status-danger" role="alert">
+          <p className="text-sm text-tone-danger-fg" role="alert">
             {saveError}
           </p>
         ) : null}

@@ -115,7 +115,7 @@ export function DiDeferDialog({ di, open, onOpenChange, onDeferred }: DiDeferDia
               onChange={(e) => setUntil(e.target.value)}
             />
             {touched && dateError ? (
-              <p id="di-defer-until-error" className="text-xs text-status-danger">
+              <p id="di-defer-until-error" className="text-xs text-tone-danger-fg">
                 {dateError}
               </p>
             ) : null}
@@ -134,7 +134,7 @@ export function DiDeferDialog({ di, open, onOpenChange, onDeferred }: DiDeferDia
               aria-invalid={touched && reasonError != null}
             />
             {touched && reasonError ? (
-              <p className="text-xs text-status-danger">{reasonError}</p>
+              <p className="text-xs text-tone-danger-fg">{reasonError}</p>
             ) : null}
           </div>
 
@@ -148,7 +148,7 @@ export function DiDeferDialog({ di, open, onOpenChange, onDeferred }: DiDeferDia
               onChange={(e) => setNotes(e.target.value)}
             />
             {touched && notesError ? (
-              <p className="text-xs text-status-danger">{notesError}</p>
+              <p className="text-xs text-tone-danger-fg">{notesError}</p>
             ) : null}
           </div>
         </div>

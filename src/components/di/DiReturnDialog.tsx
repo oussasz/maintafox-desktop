@@ -112,7 +112,7 @@ export function DiReturnDialog() {
               aria-invalid={reasonError}
             />
             {reasonError && (
-              <p className="text-xs text-status-danger">{t("review.returnReasonRequired")}</p>
+              <p className="text-xs text-tone-danger-fg">{t("review.returnReasonRequired")}</p>
             )}
           </div>
 
@@ -132,7 +132,7 @@ export function DiReturnDialog() {
               aria-invalid={noteError}
             />
             {noteError && (
-              <p className="text-xs text-status-danger">{t("review.clarificationRequired")}</p>
+              <p className="text-xs text-tone-danger-fg">{t("review.clarificationRequired")}</p>
             )}
             <p className="text-[10px] text-muted-foreground text-right">{note.length}/2000</p>
           </div>

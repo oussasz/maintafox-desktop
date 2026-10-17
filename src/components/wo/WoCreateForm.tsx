@@ -543,7 +543,7 @@ export function WoCreateForm({
 
       {/* ── Error banner ────────────────────────────────────────────── */}
       {(submitError || storeError || catalogError || prioritiesError) && (
-        <div className="rounded-md border border-status-danger/30 bg-status-danger/10 px-3 py-2 text-sm text-status-danger">
+        <div className="rounded-md border border-tone-danger-border bg-tone-danger-bg px-3 py-2 text-sm text-tone-danger-fg">
           {[submitError, storeError, catalogError, prioritiesError]
             .filter((e): e is string => Boolean(e))
             .join(" ")}

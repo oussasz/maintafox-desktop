@@ -774,7 +774,7 @@ export function DiCreateForm({
       {(submitError || storeError) && (
         <div
           role="alert"
-          className="rounded-md border border-status-danger/30 bg-status-danger/10 px-3 py-2 text-sm text-status-danger"
+          className="rounded-md border border-tone-danger-border bg-tone-danger-bg px-3 py-2 text-sm text-tone-danger-fg"
         >
           {submitError || storeError}
         </div>

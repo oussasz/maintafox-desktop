@@ -123,7 +123,7 @@ export function WoContextMenu({
             <DropdownMenuSeparator />
             <DropdownMenuItem
               onClick={() => onCancel(wo)}
-              className="gap-2 text-status-danger focus:text-status-danger"
+              className="gap-2 text-tone-danger-fg focus:text-tone-danger-fg"
             >
               <XCircle className="h-3.5 w-3.5" />
               {t("contextMenu.cancel")}

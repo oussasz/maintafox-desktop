@@ -225,7 +225,7 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
                   {wo.description}
                 </DialogDescription>
                 {printError ? (
-                  <p role="alert" className="text-sm text-status-danger">
+                  <p role="alert" className="text-sm text-tone-danger-fg">
                     {t("print.failed", { message: printError })}
                   </p>
                 ) : null}
