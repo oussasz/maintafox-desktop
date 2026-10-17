@@ -7,6 +7,7 @@ import { MaintafoxWordmark } from "@/components/branding/MaintafoxWordmark";
 import { mfAuth } from "@/design-system/tokens";
 import { describeAppError } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
+import { extractIpcErrorCode } from "@/utils/errors";
 
 /**
  * Text shown for a failed unlock: the translated error when the failure carries a code (or is an
@@ -93,10 +94,9 @@ export function LockScreen({
       } catch (err) {
         const message = err instanceof Error ? err.message : t("session.pin.invalid");
 
-        if (
-          message.toLowerCase().includes("pin désactivé") ||
-          message.toLowerCase().includes("pin disabled")
-        ) {
+        // A disabled PIN (server code PIN_DISABLED, plain IPC object or Error) goes straight to
+        // password unlock instead of using up the remaining PIN attempts.
+        if (extractIpcErrorCode(err) === "PIN_DISABLED") {
           setPinFailures(MAX_PIN_FAILURES);
         } else {
           setPinFailures((f) => f + 1);

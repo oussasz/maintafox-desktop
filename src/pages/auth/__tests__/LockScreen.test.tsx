@@ -50,4 +50,47 @@ describe("LockScreen error text", () => {
     ).not.toHaveLength(0);
     expect(screen.queryByText(String(i18n.t("errors:generic.unexpected")))).not.toBeInTheDocument();
   });
+
+  describe("disabled PIN (server code PIN_DISABLED)", () => {
+    function renderPin(onUnlockWithPin: (pin: string) => Promise<void>) {
+      const { container } = render(
+        <LockScreen
+          displayName="Amina"
+          onUnlock={vi.fn()}
+          onUnlockWithPin={onUnlockWithPin}
+          onLogout={vi.fn()}
+          pinConfigured
+        />,
+      );
+      return container;
+    }
+
+    const pinInput = (container: HTMLElement) =>
+      container.querySelector('input[inputmode="numeric"]') as HTMLInputElement | null;
+
+    function typePin(container: HTMLElement) {
+      fireEvent.change(pinInput(container) as HTMLInputElement, { target: { value: "123456" } });
+    }
+
+    it.each([
+      ["an IPC error object", { code: "PIN_DISABLED", message: "PIN désactivé" }],
+      ["an Error", Object.assign(new Error("disabled"), { code: "PIN_DISABLED" })],
+    ])("goes straight to password unlock for %s", async (_shape, failure) => {
+      const onUnlockWithPin = vi.fn().mockRejectedValue(failure);
+      const container = renderPin(onUnlockWithPin);
+      typePin(container);
+      await waitFor(() => expect(onUnlockWithPin).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(container.querySelector('input[type="password"]')).not.toBeNull());
+      expect(pinInput(container)).toBeNull();
+    });
+
+    it("keeps PIN mode after an ordinary wrong PIN", async () => {
+      const onUnlockWithPin = vi.fn().mockRejectedValue({ code: "AUTH_ERROR", message: "wrong" });
+      const container = renderPin(onUnlockWithPin);
+      typePin(container);
+      await waitFor(() => expect(onUnlockWithPin).toHaveBeenCalledTimes(1));
+      expect(pinInput(container)).not.toBeNull();
+      expect(container.querySelector('input[type="password"]')).toBeNull();
+    });
+  });
 });
