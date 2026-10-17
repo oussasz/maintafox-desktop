@@ -399,6 +399,8 @@ export const mfTimeline = {
   meta: "mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground",
   badge: "h-5 px-1.5 text-[10px] font-normal",
   groupHeader: "text-xs font-semibold uppercase tracking-wide text-text-muted",
+  olderNotice:
+    "flex flex-wrap items-center justify-between gap-2 rounded-md border border-tone-info-border bg-tone-info-bg px-3 py-2 text-xs text-tone-info-fg",
 } as const;
 
 /** Recharts / export — use CSS vars in SVG where supported; PNG needs resolved hex */

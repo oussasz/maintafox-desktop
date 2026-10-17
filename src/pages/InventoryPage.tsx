@@ -50,12 +50,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { mfLayout } from "@/design-system/tokens";
 import { mfTone } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
+import { LIST_PARAM, withoutParams } from "@/lib/list-links";
 import { cn } from "@/lib/utils";
 import {
   type InventoryArticleRow,
   articleToInput,
   calculateInventoryAbc,
   calculateInventoryXyz,
+  getInventoryValuationReport,
   isBelowReorderPoint,
 } from "@/services/inventory-service";
 import { getLookupValues } from "@/services/lookup-service";
@@ -183,6 +185,16 @@ export function InventoryPage() {
   // Deep link from other modules (asset spare parts, work orders): /inventory?articleId=<id>.
   const [searchParams, setSearchParams] = useSearchParams();
   const linkedArticleId = Number(searchParams.get("articleId"));
+
+  // A link may ask for the articles below their reorder point (?stock=below_reorder): it opens
+  // the article list with that stock filter as a visible chip, then leaves the address.
+  useEffect(() => {
+    const stock = searchParams.get(LIST_PARAM.stock);
+    if (stock !== "below_reorder") return;
+    setInvTab("master");
+    setMasterStockFilter("below_reorder");
+    setSearchParams(withoutParams(searchParams, LIST_PARAM.stock), { replace: true });
+  }, [searchParams, setSearchParams]);
   // The list starts empty: only resolve the link once a load has run and finished.
   const articleLoadSeenRef = useRef(false);
   useEffect(() => {
@@ -228,12 +240,8 @@ export function InventoryPage() {
         setStockingTypeOptions(activeStockingTypes);
         setTaxCategoryOptions(activeTaxCategories);
         setProcurementCategoryOptions(procurementCategories.filter((item) => item.is_active !== 0));
-        // New articles start on the first active value of each required list (backend order).
-        setArticleForm((prev) => ({
-          ...prev,
-          stocking_type_value_id: prev.stocking_type_value_id || activeStockingTypes[0]?.id || 0,
-          tax_category_value_id: prev.tax_category_value_id || activeTaxCategories[0]?.id || 0,
-        }));
+        // No value is pre-chosen: the unit, stocking type and tax category of a new article are
+        // picked by the person (Save stays disabled with the reason until they are).
       })
       .catch((err: unknown) => {
         if (!cancelled) setLookupError(err);
@@ -243,12 +251,6 @@ export function InventoryPage() {
     };
   }, [lookupVersion]);
 
-  // New articles start on the first unit of the published list (the list's own order).
-  useEffect(() => {
-    const first = unitOptions[0]?.id;
-    if (first == null) return;
-    setArticleForm((prev) => (prev.unit_value_id ? prev : { ...prev, unit_value_id: first }));
-  }, [unitOptions]);
   useEffect(() => {
     if (unitsError) setLookupError(unitsError);
   }, [unitsError]);
@@ -390,30 +392,53 @@ export function InventoryPage() {
     [formatCurrency, formatQty, t],
   );
 
-  /** Stock value of the listed articles (valued locations only). */
+  /**
+   * Stock value of the whole store, from the valuation report (backend total, same figure as the
+   * Valuation tab) — not a sum over the articles the search happens to show. When it cannot be
+   * read the header says so instead of showing a partial figure.
+   */
+  const [stockValue, setStockValue] = useState<{
+    total: number;
+    currency: string;
+    unvalued: boolean;
+  } | null>(null);
+  const [stockValueFailed, setStockValueFailed] = useState(false);
+  const [stockValueVersion, setStockValueVersion] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    setStockValueFailed(false);
+    getInventoryValuationReport("family")
+      .then((r) => {
+        if (!cancelled) {
+          setStockValue({
+            total: r.total_value,
+            currency: r.currency_code,
+            unvalued: r.unvalued_qty > 0,
+          });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setStockValue(null);
+          setStockValueFailed(true);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [stockValueVersion]);
+
   const stockValueSummary = useMemo(() => {
-    let total = 0;
-    let valued = 0;
-    let unvalued = 0;
-    for (const a of articles) {
-      if (a.stock_value != null) {
-        total += a.stock_value;
-        valued += 1;
-      }
-      if (a.unvalued_qty > 0) unvalued += 1;
-    }
-    if (valued === 0 && unvalued === 0) return null;
-    const value = t("page.stockValue", { value: formatCurrency(total) });
-    return unvalued > 0 ? `${value} · ${t("page.unvaluedArticles", { count: unvalued })}` : value;
-  }, [articles, formatCurrency, t]);
+    if (stockValueFailed) return t("page.stockValueUnavailable");
+    if (!stockValue) return null;
+    const value = t("page.stockValueTotal", {
+      value: formatCurrency(stockValue.total, stockValue.currency),
+    });
+    return stockValue.unvalued ? `${value} · ${t("page.stockValueSomeUnvalued")}` : value;
+  }, [stockValue, stockValueFailed, formatCurrency, t]);
 
   const resetArticleForm = () => {
-    setArticleForm((prev) => ({
-      ...EMPTY_ARTICLE_FORM,
-      unit_value_id: prev.unit_value_id || unitOptions[0]?.id || 0,
-      stocking_type_value_id: prev.stocking_type_value_id || stockingTypeOptions[0]?.id || 0,
-      tax_category_value_id: prev.tax_category_value_id || taxCategoryOptions[0]?.id || 0,
-    }));
+    setArticleForm(EMPTY_ARTICLE_FORM);
   };
 
   const openArticleDetails = (article: InventoryArticleRow) => {
@@ -674,6 +699,7 @@ export function InventoryPage() {
   );
 
   const refresh = () => {
+    setStockValueVersion((v) => v + 1);
     if (invTab === "procurement") {
       void procurementPanelRef.current?.reload();
     }
@@ -775,7 +801,8 @@ export function InventoryPage() {
     <ModulePageShell
       icon={PackageSearch}
       title={t("page.title")}
-      count={articles.length}
+      // The count belongs to the article list: other tabs list other things.
+      count={invTab === "master" ? articles.length : null}
       description={stockValueSummary}
       bodyClassName={null}
       actions={headerActions}
@@ -785,13 +812,21 @@ export function InventoryPage() {
         onValueChange={(value) => setInvTab(value as InventoryTab)}
         className="flex min-h-0 flex-1 flex-col px-4 py-4"
       >
-        <TabsList className="w-fit flex-wrap">
+        {/* Daily work first, then periodic / setup screens, with a visible separation. */}
+        <TabsList className="h-auto w-fit flex-wrap gap-y-1">
+          <span className="px-2 text-xs font-medium text-text-muted" aria-hidden>
+            {t("page.tabGroups.daily")}
+          </span>
           <TabsTrigger value="master">{t("page.tabs.master")}</TabsTrigger>
           <TabsTrigger value="issueDesk">{t("page.tabs.issueDesk")}</TabsTrigger>
-          <TabsTrigger value="topology">{t("page.tabs.topology")}</TabsTrigger>
           <TabsTrigger value="procurement">{t("page.tabs.procurement")}</TabsTrigger>
           <TabsTrigger value="controls">{t("page.tabs.controls")}</TabsTrigger>
+          <span className="mx-1 h-6 w-px bg-surface-border" aria-hidden />
+          <span className="px-2 text-xs font-medium text-text-muted" aria-hidden>
+            {t("page.tabGroups.setup")}
+          </span>
           <TabsTrigger value="valuation">{t("page.tabs.valuation")}</TabsTrigger>
+          <TabsTrigger value="topology">{t("page.tabs.topology")}</TabsTrigger>
           <TabsTrigger value="rules">{t("page.tabs.rules")}</TabsTrigger>
           <TabsTrigger value="units">{t("unitConversions.tab")}</TabsTrigger>
         </TabsList>

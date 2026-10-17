@@ -1,18 +1,17 @@
 {
   "hub": {
-    "title": "RAMS & Analytique",
-    "subtitle": "KPIs industriels denses, RAMS approfondi, générateur de rapports, planifications et historique d’exports.",
+    "title": "Analyses et rapports",
+    "subtitle": "Tableaux de bord de direction, générateur de rapports, planifications et historique des exports.",
     "navAria": "Sections du module Analytique",
     "tabs": {
       "dashboards": "Tableaux de bord",
-      "rams": "RAMS approfondi",
       "templates": "Générateur de rapports",
       "schedules": "Planifications",
       "history": "Historique & audit"
     },
     "dashboards": {
       "title": "Tableaux de bord exécutifs",
-      "subtitle": "Grille KPI dense selon le rôle, avec horizon et périmètre organisationnel. Les formules viennent de la projection Analytique (même SSOT que les snapshots RAMS).",
+      "subtitle": "Indicateurs selon votre rôle, sur la période et le périmètre choisis.",
       "comingSoon": "Les widgets KPI et filtres par rôle arriveront au prochain jalon. Le RAMS approfondi et les exports restent disponibles sur les autres onglets.",
       "customize": "Personnaliser",
       "customizeTitle": "Disposition du tableau de bord",
@@ -74,7 +73,7 @@
         "next7": "7 prochains jours",
         "horizon": "{{days}} derniers jours",
         "inService": "Enregistrés, non supprimés",
-        "overdue": "DI ouvertes > 7 jours + PM en retard",
+        "overdue": "DI ouvertes > 7 jours + PM en retard + OT en retard",
         "costSettled": "Comptabilisé au budget par la Finance, {{days}} derniers jours",
         "costPending_one": "{{days}} derniers jours · {{count}} OT clôturé pas encore valorisé",
         "costPending_other": "{{days}} derniers jours · {{count}} OT clôturés pas encore valorisés"
@@ -99,6 +98,10 @@
         "closed": "Clôturée",
         "archived": "Archivée"
       }
+    },
+    "customize": {
+      "moveUp": "Monter {{widget}}",
+      "moveDown": "Descendre {{widget}}"
     }
   },
   "page": {

@@ -55,6 +55,7 @@ const WORK_PERMIT_SELECT: &str = "SELECT wp.id, wp.entity_sync_id, wp.code, wp.l
      wp.permit_type_id, wp.asset_id, wp.entity_id, wp.status, wp.requested_at, wp.issued_at, \
      wp.activated_at, wp.expires_at, wp.closed_at, wp.handed_back_at, wp.row_version, \
      pt.code AS permit_type_code, pt.name AS permit_type_name, \
+     COALESCE(pt.requires_energy_isolation, 0) AS permit_type_requires_energy_isolation, \
      e.asset_id_code AS asset_code, e.name AS asset_label, wo.code AS linked_work_order_code \
      FROM work_permits wp \
      LEFT JOIN permit_types pt ON pt.id = wp.permit_type_id \
@@ -62,12 +63,16 @@ const WORK_PERMIT_SELECT: &str = "SELECT wp.id, wp.entity_sync_id, wp.code, wp.l
      LEFT JOIN work_orders wo ON wo.id = wp.linked_work_order_id";
 
 const PERMIT_ISOLATION_SELECT: &str = "SELECT pi.id, pi.entity_sync_id, pi.permit_id, pi.isolation_point, \
-     pi.energy_type, pi.isolation_method, pi.lock_number, pi.applied_by_id, pi.verified_by_id, \
+     pi.energy_type, pi.isolation_method, pi.energy_type_id, et.code AS energy_type_code, \
+     et.label AS energy_type_label, pi.isolation_method_id, im.label AS isolation_method_label, \
+     pi.mapping_review_required, pi.lock_number, pi.applied_by_id, pi.verified_by_id, \
      pi.applied_at, pi.verified_at, pi.removal_verified_at, pi.removal_verified_by_id, pi.row_version, \
      COALESCE(ua.display_name, ua.username) AS applied_by_name, \
      COALESCE(uv.display_name, uv.username) AS verified_by_name, \
      COALESCE(ur.display_name, ur.username) AS removal_verified_by_name \
      FROM permit_isolations pi \
+     LEFT JOIN reference_values et ON et.id = pi.energy_type_id \
+     LEFT JOIN reference_values im ON im.id = pi.isolation_method_id \
      LEFT JOIN user_accounts ua ON ua.id = pi.applied_by_id \
      LEFT JOIN user_accounts uv ON uv.id = pi.verified_by_id \
      LEFT JOIN user_accounts ur ON ur.id = pi.removal_verified_by_id";
@@ -80,6 +85,16 @@ const PERMIT_SUSPENSION_SELECT: &str = "SELECT ps.id, ps.entity_sync_id, ps.perm
      FROM permit_suspensions ps \
      LEFT JOIN user_accounts us ON us.id = ps.suspended_by_id \
      LEFT JOIN user_accounts ur ON ur.id = ps.reinstated_by_id";
+
+/// A coded refusal of a permit rule: the code is translated on screen (`training:errors`), the
+/// message stays for logs and tests.
+fn refused(code: &str, message: impl Into<String>, params: &[(&str, String)]) -> AppError {
+    crate::errors::org_validation_failed(
+        code,
+        message,
+        params.iter().map(|(k, v)| ((*k).to_string(), v.clone())).collect(),
+    )
+}
 
 fn decode_err(field: &str, err: impl std::fmt::Display) -> AppError {
     AppError::SyncError(format!("Failed to decode permit field '{field}': {err}"))
@@ -113,18 +128,66 @@ fn normalize_ts(field: &str, value: &str) -> AppResult<String> {
         .map_err(|_| AppError::ValidationFailed(vec![format!("{field} must be an RFC 3339 timestamp.")]))
 }
 
-/// Normalizes an optional expiry and rejects expiries that are already past.
-fn normalize_future_expiry(value: Option<String>) -> AppResult<Option<String>> {
-    let Some(raw) = value.filter(|v| !v.trim().is_empty()) else {
-        return Ok(None);
+/// Sync identity of the shipped LOTO permit type (migration 67): its energy-isolation rule is locked.
+const SHIPPED_LOTO_TYPE_SYNC_ID: &str = "11111111-1111-4111-8111-111111111111";
+
+/// A permit must expire: a non-empty expiry in the future and, when the type sets a maximum
+/// duration, no later than now + that duration. Coded refusals (translated on screen).
+async fn checked_expiry(db: &impl ConnectionTrait, permit_type_id: i64, value: Option<&str>) -> AppResult<String> {
+    let Some(raw) = value.map(str::trim).filter(|v| !v.is_empty()) else {
+        return Err(crate::errors::org_validation_failed(
+            "PERMIT_EXPIRY_REQUIRED",
+            "A permit needs an expiry date and time.",
+            std::collections::HashMap::new(),
+        ));
     };
-    let ts = normalize_ts("expires_at", &raw)?;
+    let ts = normalize_ts("expires_at", raw)?;
     if ts <= now_ts() {
-        return Err(AppError::ValidationFailed(vec![
-            "expires_at must be in the future.".into()
-        ]));
+        return Err(crate::errors::org_validation_failed(
+            "PERMIT_EXPIRY_PAST",
+            "The permit expiry must be in the future.",
+            std::collections::HashMap::new(),
+        ));
     }
-    Ok(Some(ts))
+    let max_hours: Option<f64> = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT max_duration_hours FROM permit_types WHERE id = ?",
+            [permit_type_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "PermitType".into(),
+            id: permit_type_id.to_string(),
+        })?
+        .try_get("", "max_duration_hours")
+        .map_err(|e| decode_err("max_duration_hours", e))?;
+    if let Some(hours) = max_hours.filter(|h| *h > 0.0) {
+        // Whole seconds: the stored form has no fractions.
+        #[allow(clippy::cast_possible_truncation)]
+        let limit = (Utc::now() + chrono::Duration::seconds((hours * 3600.0).round() as i64))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
+        if ts > limit {
+            return Err(crate::errors::org_validation_failed(
+                "PERMIT_EXPIRY_TOO_LONG",
+                format!("This permit type lasts at most {hours} h."),
+                std::collections::HashMap::from([("hours".to_string(), hours.to_string())]),
+            ));
+        }
+    }
+    Ok(ts)
+}
+
+/// The stored expiry of a permit, refused when missing (permits created before expiry was required).
+fn checked_expiry_present(wp: &WorkPermit) -> AppResult<String> {
+    wp.expires_at.clone().filter(|e| !e.trim().is_empty()).ok_or_else(|| {
+        crate::errors::org_validation_failed(
+            "PERMIT_EXPIRY_MISSING",
+            format!("Permit {} has no expiry: set one first.", wp.code),
+            std::collections::HashMap::from([("permit".to_string(), wp.code.clone())]),
+        )
+    })
 }
 
 fn is_expired(wp: &WorkPermit) -> bool {
@@ -161,6 +224,10 @@ fn map_permit_type(row: &sea_orm::QueryResult) -> AppResult<PermitType> {
         mandatory_control_rules_json: row
             .try_get("", "mandatory_control_rules_json")
             .map_err(|e| decode_err("mandatory_control_rules_json", e))?,
+        requires_energy_isolation: i64_to_bool(
+            row.try_get::<i64>("", "requires_energy_isolation")
+                .map_err(|e| decode_err("requires_energy_isolation", e))?,
+        ),
         row_version: row
             .try_get("", "row_version")
             .map_err(|e| decode_err("row_version", e))?,
@@ -195,6 +262,10 @@ fn map_work_permit(row: &sea_orm::QueryResult) -> AppResult<WorkPermit> {
         asset_code: row.try_get("", "asset_code").ok(),
         asset_label: row.try_get("", "asset_label").ok(),
         linked_work_order_code: row.try_get("", "linked_work_order_code").ok(),
+        permit_type_requires_energy_isolation: i64_to_bool(
+            row.try_get::<i64>("", "permit_type_requires_energy_isolation")
+                .map_err(|e| decode_err("permit_type_requires_energy_isolation", e))?,
+        ),
     })
 }
 
@@ -214,6 +285,15 @@ fn map_permit_isolation(row: &sea_orm::QueryResult) -> AppResult<PermitIsolation
         isolation_method: row
             .try_get("", "isolation_method")
             .map_err(|e| decode_err("isolation_method", e))?,
+        energy_type_id: row.try_get("", "energy_type_id").ok().flatten(),
+        energy_type_code: row.try_get("", "energy_type_code").ok().flatten(),
+        energy_type_label: row.try_get("", "energy_type_label").ok().flatten(),
+        isolation_method_id: row.try_get("", "isolation_method_id").ok().flatten(),
+        isolation_method_label: row.try_get("", "isolation_method_label").ok().flatten(),
+        mapping_review_required: i64_to_bool(
+            row.try_get::<i64>("", "mapping_review_required")
+                .map_err(|e| decode_err("mapping_review_required", e))?,
+        ),
         lock_number: row.try_get("", "lock_number").ok(),
         applied_by_id: row.try_get("", "applied_by_id").ok(),
         verified_by_id: row.try_get("", "verified_by_id").ok(),
@@ -357,9 +437,11 @@ async fn ensure_wo_asset_aligned(
         .try_get("", "equipment_id")
         .map_err(|e| decode_err("equipment_id", e))?;
     let Some(eq) = equipment_id else {
-        return Err(AppError::ValidationFailed(vec![
-            "Work order has no equipment_id; cannot align permit asset.".into(),
-        ]));
+        return Err(refused(
+            "PERMIT_WO_NO_EQUIPMENT",
+            "Work order has no equipment_id; cannot align permit asset.",
+            &[],
+        ));
     };
     if eq != asset_id {
         return Err(AppError::ValidationFailed(vec![format!(
@@ -369,11 +451,16 @@ async fn ensure_wo_asset_aligned(
     Ok(())
 }
 
-async fn permit_type_code(db: &impl ConnectionTrait, permit_type_id: i64) -> AppResult<String> {
+/// Whether permits of the type need at least one energy isolation before they start
+/// (`permit_types.requires_energy_isolation`, migration 225 — set for the LOTO type).
+pub(crate) async fn permit_type_requires_energy_isolation(
+    db: &impl ConnectionTrait,
+    permit_type_id: i64,
+) -> AppResult<bool> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT code FROM permit_types WHERE id = ?",
+            "SELECT requires_energy_isolation FROM permit_types WHERE id = ?",
             [permit_type_id.into()],
         ))
         .await?
@@ -381,7 +468,10 @@ async fn permit_type_code(db: &impl ConnectionTrait, permit_type_id: i64) -> App
             entity: "PermitType".into(),
             id: permit_type_id.to_string(),
         })?;
-    row.try_get("", "code").map_err(|e| decode_err("code", e))
+    Ok(i64_to_bool(
+        row.try_get::<i64>("", "requires_energy_isolation")
+            .map_err(|e| decode_err("requires_energy_isolation", e))?,
+    ))
 }
 
 async fn count_isolations(db: &impl ConnectionTrait, permit_id: i64) -> AppResult<i64> {
@@ -451,9 +541,10 @@ pub(crate) async fn activation_ready(db: &impl ConnectionTrait, wp: &WorkPermit)
             code_param(),
         ));
     }
-    let code = permit_type_code(db, wp.permit_type_id).await?;
+    // Read from the type itself (not the joined copy on `wp`, which a caller may hold stale).
+    let needs_isolation = permit_type_requires_energy_isolation(db, wp.permit_type_id).await?;
     let n = count_isolations(db, wp.id).await?;
-    if code == "loto" && n < 1 {
+    if needs_isolation && n < 1 {
         return Err(crate::errors::org_validation_failed(
             "LOTO_NO_ISOLATION",
             format!(
@@ -497,30 +588,36 @@ pub(crate) async fn activation_ready(db: &impl ConnectionTrait, wp: &WorkPermit)
 async fn close_ready(db: &impl ConnectionTrait, permit_id: i64) -> AppResult<()> {
     let pending = count_isolations_where(db, permit_id, "removal_verified_at IS NULL").await?;
     if pending > 0 {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "{pending} isolation(s) still need verified lock removal before the permit can be closed."
-        )]));
+        return Err(refused(
+            "PERMIT_REMOVAL_PENDING",
+            format!("{pending} isolation(s) still need verified lock removal before the permit can be closed."),
+            &[("pending", pending.to_string())],
+        ));
     }
     Ok(())
 }
 
 fn assert_transition_set_status(from: &str, to: &str) -> AppResult<()> {
     if from == to {
-        return Err(AppError::ValidationFailed(vec!["Status is already applied.".into()]));
+        return Err(refused("PERMIT_STATUS_UNCHANGED", "Status is already applied.", &[]));
     }
     if from == "handed_back" && to != "cancelled" {
-        return Err(AppError::ValidationFailed(vec![
-            "Only transition from handed_back is to cancelled.".into(),
-        ]));
+        return Err(refused(
+            "PERMIT_TRANSITION_NOT_ALLOWED",
+            "Only transition from handed_back is to cancelled.",
+            &[("from", from.to_string()), ("to", to.to_string())],
+        ));
     }
     if to == "cancelled" {
         if from == "handed_back" {
             return Ok(());
         }
         if matches!(from, "closed" | "handed_back" | "cancelled" | "expired") {
-            return Err(AppError::ValidationFailed(vec![
-                "Cancellation is not allowed from this status.".into(),
-            ]));
+            return Err(refused(
+                "PERMIT_CANCEL_NOT_ALLOWED",
+                "Cancellation is not allowed from this status.",
+                &[("status", from.to_string())],
+            ));
         }
         return Ok(());
     }
@@ -539,9 +636,13 @@ fn assert_transition_set_status(from: &str, to: &str) -> AppResult<()> {
     if ok {
         Ok(())
     } else {
-        Err(AppError::ValidationFailed(vec![format!(
-            "Transition {from} -> {to} is not allowed for set_work_permit_status (use suspend_work_permit for active -> suspended)."
-        )]))
+        Err(refused(
+            "PERMIT_TRANSITION_NOT_ALLOWED",
+            format!(
+                "Transition {from} -> {to} is not allowed for set_work_permit_status (use suspend_work_permit for active -> suspended)."
+            ),
+            &[("from", from.to_string()), ("to", to.to_string())],
+        ))
     }
 }
 
@@ -609,7 +710,7 @@ pub async fn list_permit_types(db: &impl ConnectionTrait) -> AppResult<Vec<Permi
             DbBackend::Sqlite,
             "SELECT id, entity_sync_id, code, name, description, requires_hse_approval, \
              requires_operations_approval, requires_atmospheric_test, max_duration_hours, \
-             mandatory_ppe_ids_json, mandatory_control_rules_json, row_version \
+             mandatory_ppe_ids_json, mandatory_control_rules_json, requires_energy_isolation, row_version \
              FROM permit_types ORDER BY code ASC"
                 .to_string(),
         ))
@@ -627,7 +728,7 @@ pub async fn get_permit_type(db: &impl ConnectionTrait, id: i64) -> AppResult<Op
             DbBackend::Sqlite,
             "SELECT id, entity_sync_id, code, name, description, requires_hse_approval, \
              requires_operations_approval, requires_atmospheric_test, max_duration_hours, \
-             mandatory_ppe_ids_json, mandatory_control_rules_json, row_version \
+             mandatory_ppe_ids_json, mandatory_control_rules_json, requires_energy_isolation, row_version \
              FROM permit_types WHERE id = ?",
             [id.into()],
         ))
@@ -635,14 +736,100 @@ pub async fn get_permit_type(db: &impl ConnectionTrait, id: i64) -> AppResult<Op
     row.as_ref().map(map_permit_type).transpose()
 }
 
-pub async fn upsert_permit_type(db: &DatabaseConnection, input: PermitTypeUpsertInput) -> AppResult<PermitType> {
+/// Who saves a permit type and what the command checked (`commands::permit::upsert_permit_type`).
+#[derive(Debug, Clone, Copy)]
+pub struct PermitTypeWriter {
+    pub actor_id: i64,
+    /// The caller holds `adm.settings` and a valid step-up: only then may the energy-isolation
+    /// rule of a type be switched off.
+    pub may_relax_isolation: bool,
+}
+
+/// True when the save would switch the energy-isolation rule of an existing type off.
+pub fn relaxes_energy_isolation(current: &PermitType, input: &PermitTypeUpsertInput) -> bool {
+    current.requires_energy_isolation && input.requires_energy_isolation == Some(false)
+}
+
+pub async fn upsert_permit_type(
+    db: &DatabaseConnection,
+    input: PermitTypeUpsertInput,
+    writer: PermitTypeWriter,
+) -> AppResult<PermitType> {
     let txn = db.begin().await?;
-    let out = upsert_permit_type_in(&txn, input).await?;
+    let out = upsert_permit_type_in(&txn, input, writer).await?;
     txn.commit().await?;
     Ok(out)
 }
 
-async fn upsert_permit_type_in(db: &impl ConnectionTrait, input: PermitTypeUpsertInput) -> AppResult<PermitType> {
+/// Switching the energy-isolation rule off weakens the start gate: never for the shipped LOTO
+/// type, otherwise only for an administrator with step-up and a reason, audited in the same
+/// transaction. Switching it on is a plain edit.
+async fn guard_isolation_relax(
+    db: &impl ConnectionTrait,
+    current: &PermitType,
+    input: &PermitTypeUpsertInput,
+    writer: PermitTypeWriter,
+) -> AppResult<()> {
+    if !relaxes_energy_isolation(current, input) {
+        return Ok(());
+    }
+    let params = std::collections::HashMap::from([("type".to_string(), current.code.clone())]);
+    if current.entity_sync_id == SHIPPED_LOTO_TYPE_SYNC_ID || current.code.trim().eq_ignore_ascii_case("loto") {
+        return Err(crate::errors::org_validation_failed(
+            "PERMIT_TYPE_LOTO_ISOLATION_LOCKED",
+            "The LOTO permit type always requires an energy isolation.",
+            params,
+        ));
+    }
+    if !writer.may_relax_isolation {
+        return Err(crate::errors::org_validation_failed(
+            "PERMIT_TYPE_ISOLATION_RELAX_FORBIDDEN",
+            "Only an administrator (with step-up) can stop requiring an energy isolation.",
+            params,
+        ));
+    }
+    let reason = input
+        .disable_isolation_reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|r| !r.is_empty())
+        .ok_or_else(|| {
+            crate::errors::org_validation_failed(
+                "PERMIT_TYPE_ISOLATION_RELAX_REASON",
+                "Give the reason for no longer requiring an energy isolation.",
+                params.clone(),
+            )
+        })?;
+    crate::audit::writer::write_audit_event_in(
+        db,
+        crate::audit::writer::AuditEventInput {
+            action_code: "permit_type.energy_isolation.disabled".to_string(),
+            target_type: Some("permit_type".to_string()),
+            target_id: Some(current.id.to_string()),
+            actor_id: Some(writer.actor_id),
+            auth_context: "step_up".to_string(),
+            result: "success".to_string(),
+            before_hash: None,
+            after_hash: None,
+            retention_class: "standard".to_string(),
+            details_json: Some(serde_json::json!({ "code": current.code, "reason": reason })),
+        },
+    )
+    .await?;
+    Ok(())
+}
+
+async fn upsert_permit_type_in(
+    db: &impl ConnectionTrait,
+    input: PermitTypeUpsertInput,
+    writer: PermitTypeWriter,
+) -> AppResult<PermitType> {
+    // Before any field is moved out of `input`: the energy-isolation off-switch guard.
+    if let Some(id) = input.id.filter(|id| *id > 0) {
+        if let Some(current) = get_permit_type(db, id).await? {
+            guard_isolation_relax(db, &current, &input, writer).await?;
+        }
+    }
     let ppe = input.mandatory_ppe_ids_json.unwrap_or_else(|| "[]".to_string());
     let rules = input.mandatory_control_rules_json.unwrap_or_else(|| "{}".to_string());
     let desc = input.description.unwrap_or_default();
@@ -666,7 +853,7 @@ async fn upsert_permit_type_in(db: &impl ConnectionTrait, input: PermitTypeUpser
                 "UPDATE permit_types SET code = ?, name = ?, description = ?, \
                  requires_hse_approval = ?, requires_operations_approval = ?, requires_atmospheric_test = ?, \
                  max_duration_hours = ?, mandatory_ppe_ids_json = ?, mandatory_control_rules_json = ?, \
-                 row_version = ? \
+                 requires_energy_isolation = ?, row_version = ? \
                  WHERE id = ? AND row_version = ?",
                 [
                     input.code.into(),
@@ -678,6 +865,12 @@ async fn upsert_permit_type_in(db: &impl ConnectionTrait, input: PermitTypeUpser
                     opt_f64(input.max_duration_hours),
                     ppe.into(),
                     rules.into(),
+                    i64::from(
+                        input
+                            .requires_energy_isolation
+                            .unwrap_or(current.requires_energy_isolation),
+                    )
+                    .into(),
                     new_rv.into(),
                     id.into(),
                     current.row_version.into(),
@@ -698,8 +891,9 @@ async fn upsert_permit_type_in(db: &impl ConnectionTrait, input: PermitTypeUpser
         DbBackend::Sqlite,
         "INSERT INTO permit_types (entity_sync_id, code, name, description, \
          requires_hse_approval, requires_operations_approval, requires_atmospheric_test, \
-         max_duration_hours, mandatory_ppe_ids_json, mandatory_control_rules_json, row_version) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
+         max_duration_hours, mandatory_ppe_ids_json, mandatory_control_rules_json, \
+         requires_energy_isolation, row_version) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
         [
             sync_id.into(),
             input.code.into(),
@@ -711,6 +905,7 @@ async fn upsert_permit_type_in(db: &impl ConnectionTrait, input: PermitTypeUpser
             opt_f64(input.max_duration_hours),
             ppe.into(),
             rules.into(),
+            i64::from(input.requires_energy_isolation.unwrap_or(false)).into(),
         ],
     ))
     .await?;
@@ -745,6 +940,18 @@ pub async fn list_work_permits(db: &impl ConnectionTrait, filter: WorkPermitList
     if let Some(w) = filter.linked_work_order_id {
         sql.push_str(" AND wp.linked_work_order_id = ?");
         params.push(w.into());
+    }
+    if let Some(term) = filter.search.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
+        let escaped = term.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+        let pattern = format!("%{escaped}%");
+        sql.push_str(
+            " AND (wp.code LIKE ? ESCAPE '\\' OR pt.name LIKE ? ESCAPE '\\' \
+               OR e.asset_id_code LIKE ? ESCAPE '\\' OR e.name LIKE ? ESCAPE '\\' \
+               OR wo.code LIKE ? ESCAPE '\\')",
+        );
+        for _ in 0..5 {
+            params.push(pattern.clone().into());
+        }
     }
     sql.push_str(" ORDER BY wp.id DESC LIMIT ?");
     params.push(limit.into());
@@ -837,18 +1044,20 @@ pub async fn create_work_permit(db: &DatabaseConnection, input: WorkPermitCreate
 }
 
 async fn create_work_permit_in(db: &impl ConnectionTrait, input: WorkPermitCreateInput) -> AppResult<WorkPermit> {
-    let _ = permit_type_code(db, input.permit_type_id).await?;
+    // The type must exist (NotFound otherwise).
+    let _ = permit_type_requires_energy_isolation(db, input.permit_type_id).await?;
     let (asset_id, entity_id) = resolve_permit_scope(db, &input).await?;
     ensure_wo_asset_aligned(db, input.linked_work_order_id, asset_id).await?;
-    let expires_at = normalize_future_expiry(input.expires_at.clone())?;
+    let expires_at = Some(checked_expiry(db, input.permit_type_id, input.expires_at.as_deref()).await?);
 
     if let Some(wo_id) = input.linked_work_order_id {
         if let Some(existing) = get_work_permit_linked_to_work_order(db, wo_id).await? {
             if !WP_TERMINAL_STATUSES.contains(&existing.status.as_str()) {
-                return Err(AppError::ValidationFailed(vec![format!(
-                    "Work order already has an open permit ({}).",
-                    existing.code
-                )]));
+                return Err(refused(
+                    "PERMIT_WO_ALREADY_HAS_OPEN",
+                    format!("Work order already has an open permit ({}).", existing.code),
+                    &[("permit", existing.code.clone())],
+                ));
             }
         }
     }
@@ -904,18 +1113,32 @@ async fn update_work_permit_in(db: &impl ConnectionTrait, input: WorkPermitUpdat
         ]));
     }
     if !WP_EDITABLE_STATUSES.contains(&current.status.as_str()) {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "Permit details cannot be edited in status '{}'.",
-            current.status
-        )]));
+        return Err(refused(
+            "PERMIT_NOT_EDITABLE",
+            format!("Permit details cannot be edited in status '{}'.", current.status),
+            &[("status", current.status.clone())],
+        ));
     }
     let asset_id = input.asset_id.unwrap_or(current.asset_id);
     let entity_id = input.entity_id.unwrap_or(current.entity_id);
     let linked = input.linked_work_order_id.or(current.linked_work_order_id);
+    // Same rule as creation: a work order has at most one open permit.
+    if let Some(wo_id) = linked.filter(|w| Some(*w) != current.linked_work_order_id) {
+        let others = list_live_permits_linked_to_work_order(db, wo_id).await?;
+        if let Some(existing) = others.iter().find(|p| p.id != current.id) {
+            return Err(refused(
+                "PERMIT_WO_ALREADY_HAS_OPEN",
+                format!("Work order already has an open permit ({}).", existing.code),
+                &[("permit", existing.code.clone())],
+            ));
+        }
+    }
     ensure_wo_asset_aligned(db, linked, asset_id).await?;
-    let expires = match input.expires_at {
-        Some(e) => normalize_future_expiry(Some(e))?,
-        None => current.expires_at.clone(),
+    // The permit keeps an expiry: a new one is checked like on creation; an update that leaves it
+    // unchanged needs one already (permits created before the rule must be given one).
+    let expires = match input.expires_at.as_deref() {
+        Some(e) => Some(checked_expiry(db, current.permit_type_id, Some(e)).await?),
+        None => Some(checked_expiry_present(&current)?),
     };
 
     let new_rv = current.row_version + 1;
@@ -978,15 +1201,21 @@ async fn set_work_permit_status_in(
     match (from, to) {
         ("draft", "pending_review") => {
             if !draft_fields_complete(&current) {
-                return Err(AppError::ValidationFailed(vec![
-                    "Draft permit must have a code and asset before review.".into(),
-                ]));
+                return Err(refused(
+                    "PERMIT_DRAFT_INCOMPLETE",
+                    "Draft permit must have a code and asset before review.",
+                    &[],
+                ));
             }
         }
         ("issued", "active") => {
+            // No open-ended permit is activated (permits created before expiry was required).
+            checked_expiry_present(&current)?;
             activation_ready(db, &current).await?;
         }
         ("revalidation_required", "active") => {
+            // No open-ended permit is activated (permits created before expiry was required).
+            checked_expiry_present(&current)?;
             activation_ready(db, &current).await?;
             finalize_open_suspension(db, input.id, actor_id, true).await?;
         }
@@ -995,9 +1224,11 @@ async fn set_work_permit_status_in(
         }
         ("closed", "handed_back") => {
             if count_handover_logs(db, input.id).await? < 1 {
-                return Err(AppError::ValidationFailed(vec![
-                    "At least one permit_handover_logs row is required before handed_back.".into(),
-                ]));
+                return Err(refused(
+                    "PERMIT_HANDOVER_REQUIRED",
+                    "At least one permit_handover_logs row is required before handed_back.",
+                    &[],
+                ));
             }
         }
         _ => {}
@@ -1067,9 +1298,11 @@ async fn suspend_work_permit_in(
     }
     let current = require_work_permit(db, input.permit_id).await?;
     if current.status != "active" {
-        return Err(AppError::ValidationFailed(vec![
-            "Only active permits can be suspended.".into(),
-        ]));
+        return Err(refused(
+            "PERMIT_SUSPEND_NOT_ACTIVE",
+            "Only active permits can be suspended.",
+            &[("status", current.status.clone())],
+        ));
     }
     if input.expected_row_version != current.row_version {
         return Err(AppError::ValidationFailed(vec![
@@ -1138,12 +1371,14 @@ async fn append_permit_handover_log_in(
 ) -> AppResult<PermitHandoverLog> {
     let current = require_work_permit(db, input.permit_id).await?;
     if current.status != "closed" {
-        return Err(AppError::ValidationFailed(vec![
-            "Handover logs can only be recorded when permit status is closed.".into(),
-        ]));
+        return Err(refused(
+            "PERMIT_HANDOVER_NOT_CLOSED",
+            "Handover logs can only be recorded when permit status is closed.",
+            &[],
+        ));
     }
     if input.handed_from_role.trim().is_empty() || input.handed_to_role.trim().is_empty() {
-        return Err(AppError::ValidationFailed(vec!["Roles are required.".into()]));
+        return Err(refused("PERMIT_HANDOVER_ROLES_REQUIRED", "Roles are required.", &[]));
     }
     let signed = now_ts();
     let sync_id = Uuid::new_v4().to_string();
@@ -1250,10 +1485,11 @@ fn ensure_permit_status_in(wp: &WorkPermit, allowed: &[&str], action: &str) -> A
     if allowed.contains(&wp.status.as_str()) {
         Ok(())
     } else {
-        Err(AppError::ValidationFailed(vec![format!(
-            "Cannot {action} while the permit is '{}'.",
-            wp.status
-        )]))
+        Err(refused(
+            "PERMIT_ISOLATION_WRONG_STATUS",
+            format!("Cannot {action} while the permit is '{}'.", wp.status),
+            &[("status", wp.status.clone())],
+        ))
     }
 }
 
@@ -1277,17 +1513,29 @@ async fn upsert_permit_isolation_in(
     ensure_permit_status_in(&permit, ISOLATION_SETUP_STATUSES, "define isolations")?;
 
     let point = input.isolation_point.trim().to_string();
-    let energy = input.energy_type.trim().to_string();
-    let method = input.isolation_method.trim().to_string();
     if point.is_empty() {
-        return Err(AppError::ValidationFailed(vec!["isolation_point is required.".into()]));
+        return Err(refused(
+            "PERMIT_ISOLATION_POINT_REQUIRED",
+            "isolation_point is required.",
+            &[],
+        ));
     }
-    if energy.is_empty() {
-        return Err(AppError::ValidationFailed(vec!["energy_type is required.".into()]));
-    }
-    if method.is_empty() {
-        return Err(AppError::ValidationFailed(vec!["isolation_method is required.".into()]));
-    }
+    // Links only (migration 225): the energy type from the SYSTEM list, the method from the
+    // plant's list, both active. The texts typed before stay on migrated rows as history.
+    let energy_id = crate::permit::energy_reference::require_active_value(
+        db,
+        crate::permit::energy_reference::ENERGY_TYPES_DOMAIN,
+        "energy_type_id",
+        input.energy_type_id,
+    )
+    .await?;
+    let method_id = crate::permit::energy_reference::require_active_value(
+        db,
+        crate::permit::energy_reference::ISOLATION_METHODS_DOMAIN,
+        "isolation_method_id",
+        input.isolation_method_id,
+    )
+    .await?;
     let lock_number = input
         .lock_number
         .map(|l| l.trim().to_string())
@@ -1302,21 +1550,25 @@ async fn upsert_permit_isolation_in(
             });
         }
         if current.applied_at.is_some() {
-            return Err(AppError::ValidationFailed(vec![
-                "An applied isolation cannot be edited.".into(),
-            ]));
+            return Err(refused(
+                "PERMIT_ISOLATION_APPLIED_LOCKED",
+                "An applied isolation cannot be edited.",
+                &[],
+            ));
         }
         let new_rv = current.row_version + 1;
         let affected = db
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "UPDATE permit_isolations SET isolation_point = ?, energy_type = ?, isolation_method = ?, \
-                 lock_number = ?, row_version = ? \
+                // A person chose both values: the row no longer needs review. The original texts
+                // are not touched (history).
+                "UPDATE permit_isolations SET isolation_point = ?, energy_type_id = ?, \
+                 isolation_method_id = ?, mapping_review_required = 0, lock_number = ?, row_version = ? \
                  WHERE id = ? AND row_version = ? AND applied_at IS NULL",
                 [
                     point.into(),
-                    energy.into(),
-                    method.into(),
+                    energy_id.into(),
+                    method_id.into(),
                     opt_string(lock_number),
                     new_rv.into(),
                     id.into(),
@@ -1336,15 +1588,17 @@ async fn upsert_permit_isolation_in(
     let sync_id = Uuid::new_v4().to_string();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
+        // `energy_type` / `isolation_method` are the pre-225 texts (NOT NULL): empty = recorded on
+        // the lists, no original entry.
         "INSERT INTO permit_isolations (entity_sync_id, permit_id, isolation_point, energy_type, \
-         isolation_method, lock_number, row_version) \
-         VALUES (?, ?, ?, ?, ?, ?, 1)",
+         isolation_method, energy_type_id, isolation_method_id, lock_number, row_version) \
+         VALUES (?, ?, ?, '', '', ?, ?, ?, 1)",
         [
             sync_id.into(),
             input.permit_id.into(),
             point.into(),
-            energy.into(),
-            method.into(),
+            energy_id.into(),
+            method_id.into(),
             opt_string(lock_number),
         ],
     ))
@@ -1422,9 +1676,11 @@ async fn ensure_linked_work_not_running(db: &impl ConnectionTrait, permit: &Work
         .try_get("", "status_code")
         .map_err(|e| decode_err("status_code", e))?;
     if crate::wo::domain::WoStatus::try_from_str(&status).is_ok_and(|s| s == crate::wo::domain::WoStatus::InProgress) {
-        return Err(AppError::ValidationFailed(vec![
-            "Work on the linked work order is still in progress; pause or complete it before removing locks.".into(),
-        ]));
+        return Err(refused(
+            "PERMIT_REMOVAL_WORK_IN_PROGRESS",
+            "Work on the linked work order is still in progress; pause or complete it before removing locks.",
+            &[],
+        ));
     }
     Ok(())
 }
@@ -1450,7 +1706,11 @@ async fn apply_permit_isolation_in(
     ensure_permit_status_in(&permit, ISOLATION_SETUP_STATUSES, "apply isolations")?;
     enforce_loto_role(db, actor_id, permit.id, "isolation_apply").await?;
     if iso.applied_at.is_some() {
-        return Err(AppError::ValidationFailed(vec!["Isolation is already applied.".into()]));
+        return Err(refused(
+            "PERMIT_ISOLATION_ALREADY_APPLIED",
+            "Isolation is already applied.",
+            &[],
+        ));
     }
     let lock_number = input
         .lock_number
@@ -1512,9 +1772,11 @@ async fn verify_permit_isolation_in(
     ensure_permit_status_in(&permit, ISOLATION_SETUP_STATUSES, "verify isolations")?;
     enforce_loto_role(db, actor_id, permit.id, "isolation_verify").await?;
     let Some(applied_by) = iso.applied_by_id.filter(|_| iso.applied_at.is_some()) else {
-        return Err(AppError::ValidationFailed(vec![
-            "Isolation must be applied before it can be verified.".into(),
-        ]));
+        return Err(refused(
+            "PERMIT_ISOLATION_NOT_APPLIED",
+            "Isolation must be applied before it can be verified.",
+            &[],
+        ));
     };
     if iso.verified_at.is_some() {
         return Err(AppError::ValidationFailed(
@@ -1522,9 +1784,11 @@ async fn verify_permit_isolation_in(
         ));
     }
     if applied_by == actor_id {
-        return Err(AppError::ValidationFailed(vec![
-            "Two-person rule: the person who applied an isolation cannot verify it.".into(),
-        ]));
+        return Err(refused(
+            "PERMIT_TWO_PERSON_VERIFY",
+            "Two-person rule: the person who applied an isolation cannot verify it.",
+            &[],
+        ));
     }
     write_isolation_action(
         db,
@@ -1557,19 +1821,25 @@ async fn verify_permit_isolation_removal_in(
     ensure_permit_status_in(&permit, ISOLATION_REMOVAL_STATUSES, "verify isolation removal")?;
     enforce_loto_role(db, actor_id, permit.id, "removal_verify").await?;
     if iso.verified_at.is_none() {
-        return Err(AppError::ValidationFailed(vec![
-            "Only a verified isolation can have its removal verified.".into(),
-        ]));
+        return Err(refused(
+            "PERMIT_REMOVAL_NOT_VERIFIABLE",
+            "Only a verified isolation can have its removal verified.",
+            &[],
+        ));
     }
     if iso.removal_verified_at.is_some() {
-        return Err(AppError::ValidationFailed(vec![
-            "Isolation removal is already verified.".into(),
-        ]));
+        return Err(refused(
+            "PERMIT_REMOVAL_ALREADY_VERIFIED",
+            "Isolation removal is already verified.",
+            &[],
+        ));
     }
     if iso.applied_by_id == Some(actor_id) {
-        return Err(AppError::ValidationFailed(vec![
-            "Two-person rule: the person who applied an isolation cannot verify its removal.".into(),
-        ]));
+        return Err(refused(
+            "PERMIT_TWO_PERSON_REMOVAL",
+            "Two-person rule: the person who applied an isolation cannot verify its removal.",
+            &[],
+        ));
     }
     ensure_linked_work_not_running(db, &permit).await?;
     write_isolation_action(
@@ -1610,10 +1880,12 @@ pub async fn get_loto_card_view(
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT wp.code AS permit_code, wp.expires_at AS permit_expires, pi.id AS isolation_id, \
-             pi.isolation_point, pi.energy_type, pi.lock_number, pi.verified_by_id, pi.verified_at, \
+             pi.isolation_point, COALESCE(et.label, pi.energy_type) AS energy_type, pi.lock_number, \
+             pi.verified_by_id, pi.verified_at, \
              e.asset_id_code, e.name AS equipment_name, ua.username AS verifier_username \
              FROM permit_isolations pi \
              JOIN work_permits wp ON wp.id = pi.permit_id \
+             LEFT JOIN reference_values et ON et.id = pi.energy_type_id \
              LEFT JOIN equipment e ON e.id = wp.asset_id \
              LEFT JOIN user_accounts ua ON ua.id = pi.verified_by_id \
              WHERE pi.id = ? AND pi.permit_id = ?",
@@ -1692,9 +1964,11 @@ async fn record_loto_card_print_in(
         })?;
     let verified_at: Option<String> = iso.try_get("", "verified_at").ok().flatten();
     if verified_at.is_none() {
-        return Err(AppError::ValidationFailed(vec![
-            "Isolation must be verified before LOTO card print.".into(),
-        ]));
+        return Err(refused(
+            "PERMIT_CARD_NOT_VERIFIED",
+            "Isolation must be verified before LOTO card print.",
+            &[],
+        ));
     }
     let sync_id = Uuid::new_v4().to_string();
     let printed_at = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();

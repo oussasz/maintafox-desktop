@@ -46,6 +46,7 @@ pub async fn fleet_view(db: &DatabaseConnection, filter: FleetViewFilter) -> App
         }
     };
     let limit = filter.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
+    let offset = filter.offset.unwrap_or(0).max(0);
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -163,7 +164,8 @@ pub async fn fleet_view(db: &DatabaseConnection, filter: FleetViewFilter) -> App
 
     let total_rows = aggs.len() as i64;
     let mut out_rows = Vec::new();
-    for a in aggs.iter().take(limit as usize) {
+    // Pages of the ranking: the fleet KPIs above always cover every asset.
+    for a in aggs.iter().skip(offset as usize).take(limit as usize) {
         let (hours, source) = asset_hours.get(&a.equipment_id).copied().unwrap_or((0.0, "calendar"));
         let last = db
             .query_one(Statement::from_sql_and_values(

@@ -8,19 +8,22 @@ import { AnalyticsDiStatusChart } from "@/components/analytics/AnalyticsDiStatus
 import { AnalyticsWorkloadChart } from "@/components/analytics/AnalyticsWorkloadChart";
 import { SmrpIndicatorsSection } from "@/components/analytics/SmrpIndicatorsSection";
 import { type KpiTrend, periodTrend } from "@/components/analytics/analytics-kpi-trend";
+import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
+import { RefreshButton } from "@/components/layout/ModuleHeaderControls";
 import { VisualMetricCard } from "@/components/metrics/VisualMetricCard";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
+import { listLinks } from "@/lib/list-links";
 import { isSessionActiveForBackgroundWork } from "@/lib/session-ready";
 import {
   getAnalyticsDashboardLayout,
@@ -50,7 +53,6 @@ type Horizon = 7 | 30 | 90;
 
 const REFRESH_MS = 5 * 60 * 1000;
 /** Select value for "no organization filter" (Radix Select does not accept ""). */
-const ALL_ORGS = "all";
 
 interface KpiProps {
   title: string;
@@ -86,6 +88,7 @@ export function AnalyticsDashboardsPage() {
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
   const [customOpen, setCustomOpen] = useState(false);
+  const [overdueChooserOpen, setOverdueChooserOpen] = useState(false);
 
   const isPlannerHeavy = canAny(P.PLAN_VIEW, P.PM_VIEW, P.PM_EDIT);
   const isSupervisorHeavy = canAny(P.DI_REVIEW, P.OT_CLOSE, P.DI_APPROVE) && !isPlannerHeavy;
@@ -236,7 +239,7 @@ export function AnalyticsDashboardsPage() {
               value: count(data?.open_dis.value),
               available: data?.open_dis.available ?? false,
               trend: periodTrend(data?.open_dis, "up-bad"),
-              onOpen: () => navigate(DASHBOARD_KPI_DRILL_PATH[DASHBOARD_KPI_KEYS.OPEN_DIS]),
+              onOpen: () => navigate(listLinks.requests({ scope: "open" })),
             })}
             {renderKpi({
               title: td("kpi.openWos"),
@@ -244,7 +247,7 @@ export function AnalyticsDashboardsPage() {
               value: count(data?.open_wos.value),
               available: data?.open_wos.available ?? false,
               trend: periodTrend(data?.open_wos, "up-bad"),
-              onOpen: () => navigate(DASHBOARD_KPI_DRILL_PATH[DASHBOARD_KPI_KEYS.OPEN_WOS]),
+              onOpen: () => navigate(listLinks.workOrders({ scope: "open" })),
             })}
             {renderKpi({
               title: td("kpi.totalAssets"),
@@ -260,7 +263,8 @@ export function AnalyticsDashboardsPage() {
               value: count(data?.overdue_items.value),
               available: data?.overdue_items.available ?? false,
               trend: periodTrend(data?.overdue_items, "up-bad"),
-              onOpen: () => navigate(DASHBOARD_KPI_DRILL_PATH[DASHBOARD_KPI_KEYS.OVERDUE_ITEMS]),
+              // Three lists stand behind this figure: the user picks which one to open.
+              onOpen: () => setOverdueChooserOpen(true),
             })}
           </div>
         );
@@ -273,7 +277,7 @@ export function AnalyticsDashboardsPage() {
               value: count(data?.pm_overdue.value),
               available: data?.pm_overdue.available ?? false,
               trend: periodTrend(data?.pm_overdue, "up-bad"),
-              onOpen: () => navigate("/pm"),
+              onOpen: () => navigate(listLinks.pmDue("overdue")),
             })}
             {renderKpi({
               title: t("hub.dashboards.kpi.pmDueToday"),
@@ -281,7 +285,7 @@ export function AnalyticsDashboardsPage() {
               value: count(data?.pm_due_today.value),
               available: data?.pm_due_today.available ?? false,
               trend: periodTrend(data?.pm_due_today, "up-bad"),
-              onOpen: () => navigate("/pm"),
+              onOpen: () => navigate(listLinks.pmDue("today")),
             })}
             {renderKpi({
               title: t("hub.dashboards.kpi.pmDueNext7d"),
@@ -289,7 +293,7 @@ export function AnalyticsDashboardsPage() {
               value: count(data?.pm_due_next_7d.value),
               available: data?.pm_due_next_7d.available ?? false,
               trend: periodTrend(data?.pm_due_next_7d, "up-bad"),
-              onOpen: () => navigate("/pm"),
+              onOpen: () => navigate(listLinks.pmDue("next7")),
             })}
           </div>
         );
@@ -407,42 +411,6 @@ export function AnalyticsDashboardsPage() {
           <p className="text-xs text-text-muted">{t("hub.dashboards.subtitle")}</p>
         </div>
         <div className="flex flex-wrap items-end gap-2">
-          <div className="flex flex-col gap-1 text-xs">
-            <label htmlFor="analytics-horizon" className="text-text-muted">
-              {t("hub.dashboards.filters.horizon")}
-            </label>
-            <Select value={String(horizon)} onValueChange={(v) => setHorizon(Number(v) as Horizon)}>
-              <SelectTrigger id="analytics-horizon" className="h-10 w-36">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="7">{t("hub.dashboards.filters.days7")}</SelectItem>
-                <SelectItem value="30">{t("hub.dashboards.filters.days30")}</SelectItem>
-                <SelectItem value="90">{t("hub.dashboards.filters.days90")}</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="flex min-w-[12rem] flex-col gap-1 text-xs">
-            <label htmlFor="analytics-org" className="text-text-muted">
-              {t("hub.dashboards.filters.orgScope")}
-            </label>
-            <Select
-              value={orgNodeId === null ? ALL_ORGS : String(orgNodeId)}
-              onValueChange={(v) => setOrgNodeId(v === ALL_ORGS ? null : Number(v))}
-            >
-              <SelectTrigger id="analytics-org" className="h-10 w-56">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={ALL_ORGS}>{t("hub.dashboards.filters.allOrgs")}</SelectItem>
-                {orgOptions.map((o) => (
-                  <SelectItem key={o.id} value={String(o.id)}>
-                    {o.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
           <Button
             type="button"
             variant="outline"
@@ -452,8 +420,46 @@ export function AnalyticsDashboardsPage() {
             <Settings2 className="mr-1.5 h-4 w-4" aria-hidden />
             {t("hub.dashboards.customize")}
           </Button>
+          <RefreshButton onRefresh={loadPayload} loading={loading} />
         </div>
       </div>
+
+      {/* One filter row, the same component as the OT/DI lists. */}
+      <SmartFilterBar
+        showSearch={false}
+        searchPlaceholder=""
+        searchValue=""
+        onSearchChange={() => undefined}
+        filters={[
+          {
+            id: "horizon",
+            kind: "select",
+            label: t("hub.dashboards.filters.horizon"),
+            options: [
+              { value: "7", label: t("hub.dashboards.filters.days7") },
+              { value: "30", label: t("hub.dashboards.filters.days30") },
+              { value: "90", label: t("hub.dashboards.filters.days90") },
+            ],
+            // 30 days is the dashboard's period when no other is chosen (shown as "all").
+            value: horizon === 30 ? null : String(horizon),
+            allLabel: t("hub.dashboards.filters.days30"),
+            onChange: (v) => setHorizon((v ? Number(v) : 30) as Horizon),
+          },
+          {
+            id: "org",
+            kind: "select",
+            label: t("hub.dashboards.filters.orgScope"),
+            options: orgOptions.map((o) => ({ value: String(o.id), label: o.label })),
+            value: orgNodeId === null ? null : String(orgNodeId),
+            allLabel: t("hub.dashboards.filters.allOrgs"),
+            onChange: (v) => setOrgNodeId(v ? Number(v) : null),
+          },
+        ]}
+        onReset={() => {
+          setHorizon(30);
+          setOrgNodeId(null);
+        }}
+      />
 
       {error ? (
         <ErrorState
@@ -472,6 +478,59 @@ export function AnalyticsDashboardsPage() {
           ))}
         </div>
       )}
+
+      <Dialog open={overdueChooserOpen} onOpenChange={setOverdueChooserOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{td("overdueChooser.title")}</DialogTitle>
+            <DialogDescription>{td("overdueChooser.description")}</DialogDescription>
+          </DialogHeader>
+          <ul className="space-y-2">
+            {canAny(P.PM_VIEW) ? (
+              <li>
+                <Button
+                  variant="outline"
+                  className="h-auto min-h-11 w-full flex-col items-start gap-0.5 py-2 text-start"
+                  onClick={() => navigate(listLinks.pmDue("overdue"))}
+                >
+                  <span>{td("overdueChooser.pm")}</span>
+                  <span className="text-xs font-normal text-text-muted">
+                    {td("overdueChooser.pmHint")}
+                  </span>
+                </Button>
+              </li>
+            ) : null}
+            {canAny(P.OT_VIEW) ? (
+              <li>
+                <Button
+                  variant="outline"
+                  className="h-auto min-h-11 w-full flex-col items-start gap-0.5 py-2 text-start"
+                  onClick={() => navigate(listLinks.workOrders({ scope: "open" }))}
+                >
+                  <span>{td("overdueChooser.wo")}</span>
+                  <span className="text-xs font-normal text-text-muted">
+                    {td("overdueChooser.woHint")}
+                  </span>
+                </Button>
+              </li>
+            ) : null}
+            {canAny(P.DI_VIEW) ? (
+              <li>
+                <Button
+                  variant="outline"
+                  className="h-auto min-h-11 w-full flex-col items-start gap-0.5 py-2 text-start"
+                  onClick={() => navigate(listLinks.requests({ scope: "open" }))}
+                >
+                  <span>{td("overdueChooser.di")}</span>
+                  <span className="text-xs font-normal text-text-muted">
+                    {td("overdueChooser.diHint")}
+                  </span>
+                </Button>
+              </li>
+            ) : null}
+          </ul>
+        </DialogContent>
+      </Dialog>
 
       <AnalyticsCustomizeDialog
         open={customOpen}

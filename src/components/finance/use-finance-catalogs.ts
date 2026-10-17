@@ -9,7 +9,7 @@
  * manager or a fiscal-year change in Settings shows on the next screen. Components mounting
  * together share the request in flight.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -52,15 +52,21 @@ export interface FinanceCatalogsState {
   periodLabel: (period: number) => string;
   loaded: boolean;
   error: unknown;
+  /** Loads the catalogs again after a failure. */
+  retry: () => void;
 }
 
 export function useFinanceCatalogs(): FinanceCatalogsState {
   const { i18n, t } = useTranslation("budget");
   const [catalogs, setCatalogs] = useState<FinanceCatalogs | null>(null);
   const [error, setError] = useState<unknown>(null);
+  const [attempt, setAttempt] = useState(0);
+  const retry = useCallback(() => setAttempt((n) => n + 1), []);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: attempt = explicit retry
   useEffect(() => {
     let cancelled = false;
+    setError(null);
     fetchFinanceCatalogs()
       .then((c) => {
         if (!cancelled) setCatalogs(c);
@@ -71,7 +77,7 @@ export function useFinanceCatalogs(): FinanceCatalogsState {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [attempt]);
 
   const language = i18n.language ?? "fr";
   return useMemo(() => {
@@ -91,6 +97,7 @@ export function useFinanceCatalogs(): FinanceCatalogsState {
           : String(period),
       loaded: catalogs != null,
       error,
+      retry,
     };
-  }, [catalogs, error, language, t]);
+  }, [catalogs, error, language, t, retry]);
 }

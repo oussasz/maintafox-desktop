@@ -13,8 +13,6 @@ import type { PurchaseOrderDetail } from "@shared/ipc-types";
 
 type TFn = (key: string, options?: Record<string, unknown>) => string;
 
-const DEFAULT_T: TFn = (key) => key;
-
 function fmtDate(iso: string | null | undefined, locale: string): string {
   if (!iso) return "—";
   try {
@@ -28,9 +26,14 @@ function fmtDate(iso: string | null | undefined, locale: string): string {
   }
 }
 
-function fmtMoney(n: number | null | undefined): string {
+/** Money in the tenant currency, in the sheet's language. */
+function fmtMoney(n: number | null | undefined, locale: string, currency: string): string {
   if (n == null || !Number.isFinite(n)) return "—";
-  return n.toFixed(2);
+  return new Intl.NumberFormat(locale, { style: "currency", currency }).format(n);
+}
+
+function fmtQty(n: number, locale: string): string {
+  return new Intl.NumberFormat(locale, { maximumFractionDigits: 3 }).format(n);
 }
 
 function esc(v: string | null | undefined): string {
@@ -47,6 +50,7 @@ function buildHtml(
   t: TFn,
   locale: string,
   letterheadHtml: string,
+  currency: string,
 ): string {
   const letterhead = wrapDocumentHeaderBlock(letterheadHtml);
   const { order, lines, grand_total, grand_total_partial } = detail;
@@ -61,16 +65,16 @@ function buildHtml(
       const article = formatAssetLabel(line.article_code, line.article_name);
       return `<tr>
         <td>${esc(article)}</td>
-        <td style="text-align:right">${line.ordered_qty}</td>
-        <td style="text-align:right">${fmtMoney(line.unit_price)}</td>
-        <td style="text-align:right">${fmtMoney(line.line_total)}</td>
+        <td style="text-align:right">${fmtQty(line.ordered_qty, locale)}</td>
+        <td style="text-align:right">${fmtMoney(line.unit_price, locale, currency)}</td>
+        <td style="text-align:right">${fmtMoney(line.line_total, locale, currency)}</td>
       </tr>`;
     })
     .join("");
 
   const grandLabel = grand_total_partial
-    ? `${fmtMoney(grand_total)} ${esc(t("procurement.poWorkspace.grandTotalPartial"))}`
-    : fmtMoney(grand_total);
+    ? `${fmtMoney(grand_total, locale, currency)} ${esc(t("procurement.poWorkspace.grandTotalPartial"))}`
+    : fmtMoney(grand_total, locale, currency);
 
   return `<!DOCTYPE html>
 <html lang="${locale}">
@@ -173,11 +177,13 @@ function buildHtml(
 
 export async function printPoFiche(
   detail: PurchaseOrderDetail,
-  t: TFn = DEFAULT_T,
-  locale = "fr",
+  t: TFn,
+  locale: string,
+  /** Tenant currency (`useFormatters().currencyCode`); prices carry no currency of their own. */
+  currency: string,
 ): Promise<void> {
   const letterheadHtml = await loadDocumentHeaderHtml();
-  const html = buildHtml(detail, t, locale, letterheadHtml);
+  const html = buildHtml(detail, t, locale, letterheadHtml, currency);
 
   const iframe = document.createElement("iframe");
   iframe.style.position = "fixed";

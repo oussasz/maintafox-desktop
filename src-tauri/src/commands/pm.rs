@@ -192,6 +192,17 @@ pub async fn get_pm_governance_kpi_report(
     require_permission!(state, &user, crate::rbac::permissions::PM_VIEW, PermissionScope::Global);
     queries::get_pm_governance_kpi_report(&state.db, input).await
 }
+/// Reasons (deferral / miss / cancel) and finding severities of the PM dialogs, read with the PM
+/// view right (no reference-data permission needed).
+#[tauri::command]
+pub async fn list_pm_execution_options(
+    state: State<'_, AppState>,
+) -> AppResult<crate::pm::reason_catalog::PmExecutionOptions> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::PM_VIEW, PermissionScope::Global);
+    crate::pm::reason_catalog::list_pm_execution_options(&state.db).await
+}
+
 #[tauri::command]
 pub async fn execute_pm_occurrence(
     mut input: ExecutePmOccurrenceInput,

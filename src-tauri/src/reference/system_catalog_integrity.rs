@@ -36,6 +36,15 @@ pub async fn ensure_system_reference_catalog_integrity(db: &DatabaseConnection) 
     crate::qualification::catalog::ensure_qualification_catalog(db).await?;
     // Planning window types (production, maintenance, shutdown, freeze).
     crate::planning::windows::ensure_window_type_catalog(db).await?;
+    // LOTO energy types (SYSTEM) and isolation methods (COMPANY); isolations that arrived without
+    // links (replayed history) are linked from their typed texts.
+    crate::permit::energy_reference::ensure_permit_energy_catalogs(db).await?;
+    crate::permit::energy_reference::map_isolation_texts(db).await?;
+    // PM deferral / miss reasons (COMPANY) and finding severities (SYSTEM).
+    crate::pm::reason_catalog::ensure_pm_reason_catalogs(db).await?;
+    // FMECA placeholder rows (former root-cause promotion) that arrived by sync from a device that
+    // had not run migration 221 yet are flagged "to review" (exact signature only).
+    crate::reliability::study::fmeca::flag_placeholder_rows(db).await?;
     // Break-in reasons (COMPANY list: each plant extends it).
     crate::planning::break_in_reasons::ensure_break_in_reason_catalog(db).await?;
     Ok(())

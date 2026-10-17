@@ -187,7 +187,9 @@ export function PmCalendarView({ occurrences, loading, onChipClick }: PmCalendar
               : formatMonthYear(cursor, dateLocale)}
           </span>
           {loading ? (
-            <span className="text-xs text-muted-foreground">{t("calendar.loading")}</span>
+            <span role="status" className="text-xs text-text-muted">
+              {t("calendar.loading")}
+            </span>
           ) : null}
         </div>
 
@@ -207,7 +209,7 @@ export function PmCalendarView({ occurrences, loading, onChipClick }: PmCalendar
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-3 border-b border-surface-border px-4 py-1.5 text-[10px] text-muted-foreground">
+      <div className="flex flex-wrap gap-3 border-b border-surface-border px-4 py-1.5 text-xs text-text-muted">
         {(["overdue", "today", "pipeline", "completed"] as const).map((key) => (
           <span key={key} className={`border-l-2 pl-1.5 ${PM_CALENDAR_TONE_BORDER[key]}`}>
             {t(`calendar.legend.${key}`)}
@@ -217,7 +219,7 @@ export function PmCalendarView({ occurrences, loading, onChipClick }: PmCalendar
 
       {mode === "month" && (
         <div className="flex-1 overflow-auto p-2">
-          <div className="mb-1 grid grid-cols-7 text-center text-[10px] font-medium text-text-muted">
+          <div className="mb-1 grid grid-cols-7 text-center text-xs font-medium text-text-muted">
             {dayNames.map((d) => (
               <div key={d} className="py-1">
                 {d}
@@ -236,7 +238,7 @@ export function PmCalendarView({ occurrences, loading, onChipClick }: PmCalendar
                   className={`min-h-[80px] bg-surface-0 p-1 ${!isCurrentMonth ? "opacity-40" : ""}`}
                 >
                   <span
-                    className={`text-[10px] font-medium ${isToday ? "rounded-full bg-primary px-1.5 py-0.5 text-primary-foreground" : "text-text-muted"}`}
+                    className={`text-xs font-medium ${isToday ? "rounded-full bg-primary px-1.5 py-0.5 text-primary-foreground" : "text-text-muted"}`}
                   >
                     {day.getDate()}
                   </span>
@@ -245,7 +247,7 @@ export function PmCalendarView({ occurrences, loading, onChipClick }: PmCalendar
                       <button
                         key={occ.id}
                         type="button"
-                        className={`w-full cursor-pointer truncate rounded border-l-2 bg-surface-1 px-1 py-0.5 text-left text-[9px] hover:bg-surface-2 ${chipBorderClass(occ)}`}
+                        className={`min-h-6 w-full cursor-pointer truncate rounded border-l-2 bg-surface-1 px-1.5 py-0.5 text-start text-xs hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${chipBorderClass(occ)}`}
                         onClick={() => onChipClick(occ)}
                         title={chipTitle(occ)}
                       >
@@ -255,7 +257,7 @@ export function PmCalendarView({ occurrences, loading, onChipClick }: PmCalendar
                     {items.length > MAX_CHIPS ? (
                       <button
                         type="button"
-                        className="text-[10px] text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        className="text-xs text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         onClick={() => openDay(day)}
                         aria-label={t("calendar.moreAria", {
                           count: items.length,
@@ -295,7 +297,7 @@ export function PmCalendarView({ occurrences, loading, onChipClick }: PmCalendar
                       <button
                         key={occ.id}
                         type="button"
-                        className={`w-full cursor-pointer rounded border-l-2 bg-surface-1 px-1.5 py-1 text-left text-[10px] hover:bg-surface-2 ${chipBorderClass(occ)}`}
+                        className={`w-full cursor-pointer rounded border-l-2 bg-surface-1 px-1.5 py-1 text-start text-xs hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${chipBorderClass(occ)}`}
                         onClick={() => onChipClick(occ)}
                         title={chipTitle(occ)}
                       >

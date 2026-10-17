@@ -3,7 +3,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 
-import type { NavItem } from "@/components/layout/Sidebar";
+import { canSeeNavItem, type NavItem } from "@/components/layout/Sidebar";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui";
 import { usePermissions } from "@/hooks/use-permissions";
 import { cn } from "@/lib/utils";
@@ -28,9 +28,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   const listRef = useRef<HTMLDivElement>(null);
 
   // Permission-filtered items (same logic as Sidebar)
-  const permittedItems = navigableItems.filter(
-    (item) => !item.requiredPermission || can(item.requiredPermission),
-  );
+  const permittedItems = navigableItems.filter((item) => canSeeNavItem(item, can));
 
   // Search filter — match against translated label
   const filtered = query.trim()
@@ -107,12 +105,19 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
 
         {/* Search input */}
         <div className="flex items-center gap-2 border-b border-surface-border px-3">
-          <Search className="h-4 w-4 text-text-muted shrink-0" />
+          <Search className="h-4 w-4 text-text-muted shrink-0" aria-hidden />
           <input
             ref={inputRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder={t("search.placeholder")}
+            placeholder={t("commandPalette.placeholder")}
+            aria-label={t("commandPalette.placeholder")}
+            role="combobox"
+            aria-expanded="true"
+            aria-controls="command-palette-list"
+            aria-activedescendant={
+              filtered[selectedIndex] ? `command-palette-${filtered[selectedIndex].key}` : undefined
+            }
             className="flex-1 bg-transparent py-3 text-sm text-text-primary
                        placeholder:text-text-muted outline-none"
             autoComplete="off"
@@ -128,28 +133,39 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
         </div>
 
         {/* Results list */}
-        <div ref={listRef} className="max-h-72 overflow-y-auto py-1" role="listbox">
+        <div
+          ref={listRef}
+          id="command-palette-list"
+          className="max-h-72 overflow-y-auto py-1"
+          role="listbox"
+          aria-label={t("commandPalette.title")}
+        >
           {filtered.length === 0 ? (
             <div className="px-3 py-6 text-center text-sm text-text-muted">
-              {t("search.noResults", { query })}
+              {t("commandPalette.noResults", { query })}
             </div>
           ) : (
             filtered.map((item, i) => (
               <button
                 key={item.key}
+                id={`command-palette-${item.key}`}
+                type="button"
+                tabIndex={-1}
                 role="option"
                 aria-selected={i === selectedIndex}
                 data-selected={i === selectedIndex}
                 onClick={() => selectItem(item)}
                 className={cn(
-                  "flex w-full items-center gap-3 px-3 py-2 text-sm text-left",
+                  "flex min-h-10 w-full items-center gap-3 px-3 py-2 text-sm text-start",
                   "transition-colors duration-fast",
                   i === selectedIndex
-                    ? "bg-primary-bg/10 text-primary-light"
+                    ? "bg-primary-bg text-primary"
                     : "text-text-secondary hover:bg-surface-2",
                 )}
               >
-                <span className="h-4 w-4 shrink-0">{item.icon}</span>
+                <span className="h-4 w-4 shrink-0" aria-hidden>
+                  {item.icon}
+                </span>
                 <span className="truncate">{t(item.labelKey as never)}</span>
               </button>
             ))

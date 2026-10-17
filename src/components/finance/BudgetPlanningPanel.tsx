@@ -12,6 +12,7 @@ import { parseAmount } from "@/components/finance/WoCostEstimateDialog";
 import { VERSION_STATUS_TONE } from "@/components/finance/finance-tone";
 import { useFinanceCatalogs } from "@/components/finance/use-finance-catalogs";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import {
   Dialog,
@@ -76,6 +77,8 @@ export interface BudgetPlanningPanelProps {
   selectedVersionId: number | null;
   onSelectVersion: (id: number | null) => void;
   onChanged: () => void;
+  /** Bumped by the page's Refresh button: reloads cost centres and versions. */
+  reloadToken?: number;
 }
 
 export function BudgetPlanningPanel({
@@ -83,6 +86,7 @@ export function BudgetPlanningPanel({
   selectedVersionId,
   onSelectVersion,
   onChanged,
+  reloadToken = 0,
 }: BudgetPlanningPanelProps) {
   const { t } = useTranslation("budget");
   const { can } = usePermissions();
@@ -109,9 +113,10 @@ export function BudgetPlanningPanel({
     }
   }, [fiscalYear]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reloadToken = the page's Refresh
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, reloadToken]);
 
   const refresh = useCallback(async () => {
     await load();
@@ -430,6 +435,11 @@ function VersionsSection({
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState<number | null>(null);
   const [error, setError] = useState<unknown>(null);
+  const [creatingBusy, setCreatingBusy] = useState(false);
+  /** Lifecycle move waiting for confirmation (every step changes who may edit the version). */
+  const [pendingMove, setPendingMove] = useState<{ version: BudgetVersion; next: string } | null>(
+    null,
+  );
 
   const transition = async (v: BudgetVersion, next: string) => {
     setBusy(v.id);
@@ -473,6 +483,8 @@ function VersionsSection({
   };
 
   const create = async () => {
+    if (creatingBusy) return;
+    setCreatingBusy(true);
     setError(null);
     try {
       const created = await createBudgetVersion({
@@ -487,8 +499,15 @@ function VersionsSection({
       await onChanged();
     } catch (err) {
       setError(err);
+    } finally {
+      setCreatingBusy(false);
     }
   };
+
+  /** Versions of the same scenario already open for the year (a second one is usually a mistake). */
+  const sameScenarioOpen = versions.filter(
+    (v) => v.scenario_type === scenario && v.status !== "closed",
+  );
 
   return (
     <section aria-labelledby="versions-title" className="space-y-2">
@@ -549,9 +568,9 @@ function VersionsSection({
                       key={next}
                       size="sm"
                       variant="outline"
-                      className="h-7 text-xs"
+                      className="h-9 text-xs"
                       disabled={busy === v.id}
-                      onClick={() => void transition(v, next)}
+                      onClick={() => setPendingMove({ version: v, next })}
                     >
                       {t(`versionAction.${next}`)}
                     </Button>
@@ -561,7 +580,7 @@ function VersionsSection({
                   <Button
                     size="sm"
                     variant="outline"
-                    className="h-7 text-xs"
+                    className="h-9 text-xs"
                     disabled={busy === v.id}
                     onClick={() => void successor(v)}
                   >
@@ -601,15 +620,52 @@ function VersionsSection({
               <Label htmlFor="v-title">{t("planning.versionTitle")}</Label>
               <Input id="v-title" value={title} onChange={(e) => setTitle(e.target.value)} />
             </div>
+            {sameScenarioOpen.length > 0 ? (
+              <p
+                className="rounded-md border border-tone-warning-border bg-tone-warning-bg px-3 py-2 text-xs text-tone-warning-fg"
+                role="status"
+              >
+                {t("planning.sameScenarioExists", {
+                  count: sameScenarioOpen.length,
+                  scenario: t(`scenario.${scenario}`),
+                  year: fiscalYear,
+                })}
+              </p>
+            ) : null}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreating(false)}>
               {t("actions.cancel")}
             </Button>
-            <Button onClick={() => void create()}>{t("actions.create")}</Button>
+            <Button onClick={() => void create()} disabled={creatingBusy}>
+              {t("actions.create")}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <ConfirmDialog
+        open={pendingMove != null}
+        onOpenChange={(o) => !o && setPendingMove(null)}
+        title={t("planning.confirmMoveTitle", {
+          action: pendingMove ? t(`versionAction.${pendingMove.next}`) : "",
+        })}
+        description={
+          pendingMove
+            ? t(`planning.confirmMove.${pendingMove.next}`, {
+                title: pendingMove.version.title ?? `v${pendingMove.version.version_no}`,
+              })
+            : ""
+        }
+        confirmLabel={pendingMove ? t(`versionAction.${pendingMove.next}`) : ""}
+        destructive={pendingMove?.next === "closed"}
+        onConfirm={() => {
+          // Close the confirmation before the move runs, so the identity check (approval)
+          // opens alone instead of on top of it. The move reports its own failure.
+          const move = pendingMove;
+          setPendingMove(null);
+          if (move) void transition(move.version, move.next);
+        }}
+      />
       {StepUpDialogElement}
     </section>
   );

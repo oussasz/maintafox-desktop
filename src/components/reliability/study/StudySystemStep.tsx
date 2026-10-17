@@ -65,6 +65,8 @@ export function StudySystemStep({
   const [rbdSel, setRbdSel] = useState<string | null>(null);
   const [ftaSel, setFtaSel] = useState<string | null>(null);
   const [rbdResult, setRbdResult] = useState<RbdResult | null>(null);
+  const [rbdError, setRbdError] = useState<unknown>(null);
+  const [ftaError, setFtaError] = useState<unknown>(null);
   const [ftaResult, setFtaResult] = useState<FtResult | null>(null);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
@@ -106,8 +108,15 @@ export function StudySystemStep({
         mission_hours: missionN,
         spec: cleanRbd(rbd),
       })
-        .then(setRbdResult)
-        .catch(() => setRbdResult(null));
+        .then((r) => {
+          setRbdResult(r);
+          setRbdError(null);
+        })
+        .catch((e: unknown) => {
+          // Shown in the results card (it read "computing…" forever).
+          setRbdResult(null);
+          setRbdError(e);
+        });
     }, 300);
     return () => clearTimeout(h);
   }, [rbd, missionN, missionOk, study.id]);
@@ -123,8 +132,14 @@ export function StudySystemStep({
         mission_hours: missionN,
         spec: cleanFt(fta),
       })
-        .then(setFtaResult)
-        .catch(() => setFtaResult(null));
+        .then((r) => {
+          setFtaResult(r);
+          setFtaError(null);
+        })
+        .catch((e: unknown) => {
+          setFtaResult(null);
+          setFtaError(e);
+        });
     }, 300);
     return () => clearTimeout(h);
   }, [fta, missionN, missionOk, study.id]);
@@ -304,6 +319,7 @@ export function StudySystemStep({
             selected={rbdSel}
             onSelect={setRbdSel}
             result={missionOk ? rbdResult : null}
+            evalError={missionOk ? rbdError : null}
             equipment={model.equipment}
             fit={fit}
             editable={canEdit}
@@ -339,6 +355,7 @@ export function StudySystemStep({
             selected={ftaSel}
             onSelect={setFtaSel}
             result={missionOk ? ftaResult : null}
+            evalError={missionOk ? ftaError : null}
             equipment={model.equipment}
             fit={fit}
             editable={canEdit}

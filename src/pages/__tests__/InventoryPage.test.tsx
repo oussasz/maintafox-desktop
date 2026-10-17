@@ -194,6 +194,7 @@ function article(overrides: Partial<InventoryArticleRow> = {}): InventoryArticle
     unvalued_qty: 0,
     barcode: null,
     requires_serial_tracking: 0,
+    reorder_trigger: null,
     ...overrides,
   };
 }
@@ -250,6 +251,8 @@ describe("InventoryPage", () => {
         avg_unit_cost: 12.5,
         stock_value: 50,
         unvalued_qty: 0,
+        // The backend's low-stock rule (evaluate_reorder) flagged it.
+        reorder_trigger: "reorder_point",
       }),
     ]);
 

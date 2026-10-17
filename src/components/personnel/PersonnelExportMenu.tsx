@@ -10,35 +10,52 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { saveBlobWithDialog } from "@/export/download";
+import { isExportCancelled } from "@/export/types";
+import { describeAppError } from "@/lib/app-error";
 import { exportWorkforceReportCsv } from "@/services/personnel-service";
+import { pushAppToast } from "@/store/app-toast-store";
 import { P } from "@shared/rbac/permissions.generated";
-
-function downloadCsv(fileName: string, data: string) {
-  const blob = new Blob([data], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = fileName;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
-}
 
 export function PersonnelExportMenu() {
   const { t } = useTranslation("personnel");
 
-  const handleExport = useCallback(async (kind: "summary" | "skills_gap" | "kpi") => {
-    const csv = await exportWorkforceReportCsv(kind);
-    downloadCsv(`workforce-${kind}.csv`, csv);
-  }, []);
+  const handleExport = useCallback(
+    async (kind: "summary" | "skills_gap" | "kpi") => {
+      let csv: string;
+      try {
+        csv = await exportWorkforceReportCsv(kind);
+      } catch {
+        return; // The IPC layer already reported the failure.
+      }
+      try {
+        const path = await saveBlobWithDialog(
+          new Blob([csv], { type: "text/csv;charset=utf-8;" }),
+          `workforce-${kind}.csv`,
+          {
+            title: t("reports.action.export"),
+            filters: [{ name: "CSV", extensions: ["csv"] }],
+          },
+        );
+        pushAppToast({ title: t("reports.export.saved"), description: path, variant: "success" });
+      } catch (err) {
+        if (isExportCancelled(err)) return;
+        pushAppToast({
+          title: t("reports.export.failed"),
+          description: describeAppError(err).title,
+          variant: "destructive",
+        });
+      }
+    },
+    [t],
+  );
 
   return (
     <PermissionGate permission={P.PER_REPORT}>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="outline" size="sm" className="gap-1.5">
-            <Download className="h-3.5 w-3.5" />
+          <Button variant="outline" className="h-11 gap-1.5">
+            <Download className="h-4 w-4" aria-hidden />
             {t("reports.action.export")}
           </Button>
         </DropdownMenuTrigger>

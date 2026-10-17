@@ -1176,40 +1176,32 @@ pub async fn get_pm_governance_kpi_report(
         .map(|value| value.trim().to_uppercase())
         .filter(|value| !value.is_empty());
 
-    let mut compliance_sql = String::from(
-        "SELECT
-            COALESCE(SUM(CASE WHEN po.status = 'completed' THEN 1 ELSE 0 END), 0) AS numerator,
-            COALESCE(SUM(CASE WHEN po.status != 'cancelled' THEN 1 ELSE 0 END), 0) AS denominator
-         FROM pm_occurrences po
-         JOIN pm_plans pp ON pp.id = po.pm_plan_id
-         LEFT JOIN lookup_values lv ON lv.id = pp.criticality_value_id
-         WHERE po.due_at IS NOT NULL
-           AND po.due_at >= ?
-           AND po.due_at <= ?",
-    );
-    let mut compliance_binds: Vec<sea_orm::Value> = vec![from.clone().into(), to.clone().into()];
-    if let Some(pm_plan_id) = input.pm_plan_id {
-        compliance_sql.push_str(" AND po.pm_plan_id = ?");
-        compliance_binds.push(pm_plan_id.into());
-    }
-    if let Some(code) = criticality_code.as_ref() {
-        compliance_sql.push_str(" AND UPPER(COALESCE(lv.code, '')) = ?");
-        compliance_binds.push(code.clone().into());
-    }
-    let compliance_row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            &compliance_sql,
-            compliance_binds,
-        ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("pm compliance KPI row missing")))?;
-    let compliance_numerator: i64 = compliance_row.try_get("", "numerator")?;
-    let compliance_denominator: i64 = compliance_row.try_get("", "denominator")?;
+    // PM compliance: the one definition (`pm::compliance`, SMRP 5.4.1 — done within the tolerance
+    // window ÷ due with a known outcome), never a second "completed ÷ not cancelled" rate.
+    let parse_bound = |value: &str| {
+        DateTime::parse_from_rfc3339(value)
+            .map(|d| d.with_timezone(&Utc))
+            .map_err(|_| AppError::Internal(anyhow::anyhow!("pm governance period bound '{value}'")))
+    };
+    let compliance = crate::pm::compliance::compliance_between_for_criticality(
+        db,
+        parse_bound(&from)?,
+        parse_bound(&to)?,
+        Utc::now(),
+        crate::pm::compliance::ComplianceScope {
+            pm_plan_id: input.pm_plan_id,
+            org_node_id: None,
+        },
+        criticality_code.as_deref(),
+    )
+    .await?;
+    let compliance_numerator = compliance.on_time_count;
+    let compliance_denominator = compliance.due_count;
 
-    let mut overdue_sql = String::from(
+    // Overdue = past the end of the tolerance window (the due date when none): `PM_OVERDUE_SQL`.
+    let mut overdue_sql = format!(
         "SELECT
-            COALESCE(SUM(CASE WHEN po.status NOT IN ('completed','cancelled','missed') AND po.due_at < ? THEN 1 ELSE 0 END), 0) AS numerator,
+            COALESCE(SUM(CASE WHEN po.status NOT IN ('completed','cancelled','missed') AND {PM_OVERDUE_FROM_SQL} < ? THEN 1 ELSE 0 END), 0) AS numerator,
             COALESCE(SUM(CASE WHEN po.status NOT IN ('completed','cancelled','missed') THEN 1 ELSE 0 END), 0) AS denominator
          FROM pm_occurrences po
          JOIN pm_plans pp ON pp.id = po.pm_plan_id
@@ -1362,13 +1354,13 @@ pub async fn get_pm_governance_kpi_report(
             numerator: compliance_numerator,
             denominator: compliance_denominator,
             value_pct: rate_pct(compliance_numerator, compliance_denominator),
-            derivation: "completed occurrences / all non-cancelled due occurrences in period".to_string(),
+            derivation: "pm::compliance (SMRP 5.4.1): occurrences done within their tolerance window / occurrences due in the period whose outcome is known".to_string(),
         },
         overdue_risk: PmRateKpi {
             numerator: overdue_numerator,
             denominator: overdue_denominator,
             value_pct: rate_pct(overdue_numerator, overdue_denominator),
-            derivation: "open overdue occurrences / all open occurrences with due_at <= period end".to_string(),
+            derivation: "open occurrences past their tolerance window (PM_OVERDUE_SQL) / all open occurrences with due_at <= period end".to_string(),
         },
         first_pass_completion: PmRateKpi {
             numerator: first_pass_numerator,
@@ -1452,6 +1444,13 @@ pub async fn transition_pm_occurrence(
         return Err(AppError::ValidationFailed(vec![
             "reason_code is required for deferred, missed, and cancelled transitions.".to_string(),
         ]));
+    }
+    // The reason of a deferral, miss or cancellation is a value of `PM.DEFERRAL_REASONS`.
+    let mut input = input;
+    if matches!(next_status.as_str(), "deferred" | "missed" | "cancelled") {
+        if let Some(code) = input.reason_code.as_deref() {
+            input.reason_code = Some(crate::pm::reason_catalog::checked_reason(db, "reason_code", code).await?);
+        }
     }
 
     let mut linked_work_order_id = current.linked_work_order_id;
@@ -2254,8 +2253,21 @@ pub async fn execute_pm_occurrence(
         ]));
     }
 
-    let defer_reason = normalize_optional_reason(input.defer_reason_code.clone());
-    let miss_reason = normalize_optional_reason(input.miss_reason_code.clone());
+    // Reasons and severities are values of the governed lists (`pm::reason_catalog`), checked
+    // before anything is written.
+    let defer_reason = match normalize_optional_reason(input.defer_reason_code.clone()) {
+        Some(code) => Some(crate::pm::reason_catalog::checked_reason(db, "defer_reason_code", &code).await?),
+        None => None,
+    };
+    let miss_reason = match normalize_optional_reason(input.miss_reason_code.clone()) {
+        Some(code) => Some(crate::pm::reason_catalog::checked_reason(db, "miss_reason_code", &code).await?),
+        None => None,
+    };
+    for finding in &findings_input {
+        if let Some(severity) = finding.severity.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            crate::pm::reason_catalog::checked_severity(db, severity).await?;
+        }
+    }
 
     if execution_result == "deferred" && defer_reason.is_none() {
         return Err(AppError::ValidationFailed(vec![

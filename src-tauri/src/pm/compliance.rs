@@ -44,6 +44,19 @@ pub async fn compliance_between(
     now: DateTime<Utc>,
     scope: ComplianceScope,
 ) -> AppResult<PmComplianceReport> {
+    compliance_between_for_criticality(db, from, to, now, scope, None).await
+}
+
+/// [`compliance_between`] limited to the plans of one criticality (`pm_plans.criticality_value_id`
+/// → `lookup_values.code`, compared upper-case) — the PM governance report's filter.
+pub async fn compliance_between_for_criticality(
+    db: &impl ConnectionTrait,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    now: DateTime<Utc>,
+    scope: ComplianceScope,
+    criticality_code: Option<&str>,
+) -> AppResult<PmComplianceReport> {
     let upper = to.min(now);
     // Timestamps are normalised to RFC3339 in SQL (rows written by SQLite defaults use another form).
     let mut sql = String::from(
@@ -59,6 +72,7 @@ pub async fn compliance_between(
          JOIN pm_plans pp ON pp.id = po.pm_plan_id
          LEFT JOIN equipment eq ON eq.id =
              COALESCE(po.equipment_id, CASE WHEN pp.asset_scope_type = 'equipment' THEN pp.asset_scope_id END)
+         LEFT JOIN lookup_values lv ON lv.id = pp.criticality_value_id
          LEFT JOIN pm_executions done ON done.id = (
              SELECT pe.id FROM pm_executions pe
              WHERE pe.pm_occurrence_id = po.id
@@ -75,6 +89,10 @@ pub async fn compliance_between(
     if let Some(node) = scope.org_node_id {
         sql.push_str(" AND eq.installed_at_node_id = ?");
         binds.push(node.into());
+    }
+    if let Some(code) = criticality_code {
+        sql.push_str(" AND UPPER(COALESCE(lv.code, '')) = ?");
+        binds.push(code.trim().to_uppercase().into());
     }
     let rows = db
         .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, binds))

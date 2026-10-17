@@ -104,6 +104,10 @@ pub struct FmecaItem {
     pub source_ram_ishikawa_diagram_id: Option<i64>,
     #[serde(default)]
     pub source_ishikawa_flow_node_id: Option<String>,
+    /// Ratings nobody chose (former root-cause placeholder, migration 221): listed with "to
+    /// review", never ranked or counted until a person saves the row.
+    #[serde(default)]
+    pub review_required: bool,
     pub row_version: i64,
     pub updated_at: String,
 }

@@ -229,11 +229,19 @@ export function InventoryValuationPanel({ reloadToken = 0 }: InventoryValuationP
               ),
             } satisfies ColumnDef<Row>,
           ]),
-      {
-        accessorKey: "quantity",
-        header: t("valuation.columns.quantity"),
-        cell: ({ row }) => <span className="tabular-nums">{qty(row.original.quantity)}</span>,
-      },
+      // Quantities are only added up within one article (one stock unit): a warehouse or family
+      // total would add metres to litres.
+      ...(groupBy === "article"
+        ? [
+            {
+              accessorKey: "quantity",
+              header: t("valuation.columns.quantity"),
+              cell: ({ row }: { row: { original: Row } }) => (
+                <span className="tabular-nums">{qty(row.original.quantity)}</span>
+              ),
+            } satisfies ColumnDef<Row>,
+          ]
+        : []),
       {
         accessorKey: "value",
         header: t("valuation.columns.value"),
@@ -246,7 +254,14 @@ export function InventoryValuationPanel({ reloadToken = 0 }: InventoryValuationP
         header: t("valuation.columns.unvalued"),
         cell: ({ row }) =>
           row.original.unvalued_qty > 0 ? (
-            <StatusChip label={qty(row.original.unvalued_qty)} tone="warning" />
+            <StatusChip
+              label={
+                groupBy === "article"
+                  ? qty(row.original.unvalued_qty)
+                  : t("valuation.unvaluedPresent")
+              }
+              tone="warning"
+            />
           ) : (
             <span className="text-text-muted">—</span>
           ),
@@ -364,9 +379,15 @@ export function InventoryValuationPanel({ reloadToken = 0 }: InventoryValuationP
               />
               <KpiTile
                 label={t("valuation.unvaluedKpi")}
-                value={report ? qty(report.unvalued_qty) : "—"}
+                value={
+                  report
+                    ? report.unvalued_qty > 0
+                      ? t("valuation.unvaluedPresent")
+                      : t("valuation.unvaluedNone")
+                    : "—"
+                }
                 {...(report && report.unvalued_qty > 0 ? { tone: "warning" as const } : {})}
-                hint={t("valuation.unvaluedHint")}
+                hint={t("valuation.unvaluedByArticle")}
               />
               <KpiTile
                 label={t("valuation.basis")}

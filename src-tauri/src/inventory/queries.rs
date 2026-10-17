@@ -1058,6 +1058,7 @@ pub async fn list_articles(
     filter: InventoryArticleFilter,
 ) -> AppResult<Vec<InventoryArticle>> {
     let article_list_select = article_list_select();
+    let triggers = reorder_triggers_by_article(db).await?;
     let rows = if let Some(search) = filter.search {
         let q = format!("%{}%", search.trim().to_lowercase());
         db.query_all(Statement::from_sql_and_values(
@@ -1149,9 +1150,26 @@ pub async fn list_articles(
                 avg_unit_cost,
                 stock_value,
                 unvalued_qty: row.try_get("", "unvalued_qty")?,
+                reorder_trigger: None,
             })
         })
-        .collect()
+        .collect::<AppResult<Vec<InventoryArticle>>>()
+        .map(|mut articles| {
+            for a in &mut articles {
+                a.reorder_trigger = triggers.get(&a.id).cloned();
+            }
+            articles
+        })
+}
+
+/// Articles that need replenishing in at least one store → trigger of the first such store
+/// (`evaluate_reorder`, the one low-stock definition: dashboard tiles, alerts, article list).
+pub async fn reorder_triggers_by_article(db: &DatabaseConnection) -> AppResult<std::collections::HashMap<i64, String>> {
+    let mut map = std::collections::HashMap::new();
+    for r in evaluate_reorder(db, None).await? {
+        map.entry(r.article_id).or_insert(r.trigger_type);
+    }
+    Ok(map)
 }
 
 pub async fn create_article(db: &DatabaseConnection, input: InventoryArticleInput) -> AppResult<InventoryArticle> {
@@ -3162,13 +3180,8 @@ pub async fn evaluate_replenishment(
     let base = evaluate_reorder(db, warehouse_id).await?;
 
     let mut result = Vec::new();
+    // The reason is `trigger_type` (worded by the screen); no backend sentence.
     for r in base {
-        let reason = match r.trigger_type.as_str() {
-            "reorder_point" => Some("Below reorder point".to_string()),
-            "min_stock" => Some("Below minimum stock".to_string()),
-            other => Some(format!("Replenishment trigger: {other}")),
-        };
-
         let transfer_balances = suggest_internal_transfer(db, r.article_id, r.warehouse_id).await?;
         let transfer_options: Vec<crate::inventory::domain::ReplenishmentTransferOption> = transfer_balances
             .into_iter()
@@ -3238,7 +3251,6 @@ pub async fn evaluate_replenishment(
             suggested_supplier_name,
             estimated_cost,
             expected_arrival,
-            reason,
             transfer_options,
         });
     }
@@ -3554,28 +3566,49 @@ pub async fn list_article_purchase_history(
         .collect()
 }
 
+/// Requisition statuses counted as open by the dashboard (and opened by its tile).
+pub const OPEN_REQUISITION_STATUSES: &[&str] = &["DRAFT", "SUBMITTED", "REJECTED"];
+/// Purchase-order statuses counted as open (submitted ones have their own "to approve" tile).
+pub const OPEN_PO_STATUSES: &[&str] = &["DRAFT", "APPROVED", "PARTIALLY_RECEIVED"];
+/// Purchase-order statuses that can be late (expected delivery before now).
+pub const LATE_PO_STATUSES: &[&str] = &["APPROVED", "PARTIALLY_RECEIVED"];
+
+fn sql_in(values: &[&str]) -> String {
+    values.iter().map(|v| format!("'{v}'")).collect::<Vec<_>>().join(",")
+}
+
+/// Ids of the active critical spares (`articles.is_critical_spare`).
+async fn critical_spare_ids(db: &DatabaseConnection) -> AppResult<std::collections::HashSet<i64>> {
+    let rows = db
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT id FROM articles WHERE is_active = 1 AND COALESCE(is_critical_spare, 0) = 1".to_string(),
+        ))
+        .await?;
+    rows.iter()
+        .map(|r| r.try_get::<i64>("", "id").map_err(AppError::from))
+        .collect()
+}
+
 pub async fn get_procurement_dashboard_summary(
     db: &DatabaseConnection,
 ) -> AppResult<crate::inventory::domain::ProcurementDashboardSummary> {
+    let open_req = sql_in(OPEN_REQUISITION_STATUSES);
+    let open_po = sql_in(OPEN_PO_STATUSES);
+    let late_po = sql_in(LATE_PO_STATUSES);
     let row = db
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT
-                (SELECT COUNT(*) FROM procurement_requisitions WHERE status NOT IN ('APPROVED','CLOSED','CANCELLED','PARTIALLY_RECEIVED')) AS open_requisitions,
+            format!(
+                "SELECT
+                (SELECT COUNT(*) FROM procurement_requisitions WHERE status IN ({open_req})) AS open_requisitions,
                 (SELECT COUNT(*) FROM purchase_orders WHERE status = 'SUBMITTED') AS pending_approval_pos,
-                (SELECT COUNT(*) FROM purchase_orders WHERE status IN ('DRAFT','APPROVED','PARTIALLY_RECEIVED')) AS open_pos,
+                (SELECT COUNT(*) FROM purchase_orders WHERE status IN ({open_po})) AS open_pos,
                 (SELECT COUNT(*) FROM purchase_orders
-                 WHERE status IN ('APPROVED','PARTIALLY_RECEIVED')
+                 WHERE status IN ({late_po})
                    AND expected_delivery_date IS NOT NULL
                    AND expected_delivery_date < strftime('%Y-%m-%dT%H:%M:%SZ','now')) AS overdue_pos,
                 (SELECT COUNT(*) FROM purchase_orders WHERE status IN ('APPROVED','PARTIALLY_RECEIVED')) AS pending_receipts,
-                (SELECT COUNT(DISTINCT a.id) FROM articles a
-                 JOIN stock_balances sb ON sb.article_id = a.id
-                 WHERE a.is_active = 1 AND sb.available_qty <= a.reorder_point AND a.reorder_point > 0) AS low_stock_articles,
-                (SELECT COUNT(DISTINCT a.id) FROM articles a
-                 JOIN stock_balances sb ON sb.article_id = a.id
-                 WHERE a.is_active = 1 AND COALESCE(a.is_critical_spare, 0) = 1
-                   AND sb.available_qty <= a.min_stock) AS critical_low_stock_articles,
                 (SELECT COUNT(*) FROM repairable_orders
                  WHERE status IN ('REQUESTED','RELEASED','SENT_FOR_REPAIR','RETURNED_FROM_REPAIR')) AS repairables_in_repair,
                 (SELECT COUNT(*) FROM inventory_suppliers
@@ -3584,121 +3617,136 @@ pub async fn get_procurement_dashboard_summary(
                  WHERE status IN ('APPROVED','PARTIALLY_RECEIVED')
                    AND expected_delivery_date IS NOT NULL
                    AND date(expected_delivery_date) = date('now')) AS receiving_today_count"
-                .to_string(),
+            ),
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("dashboard summary query failed")))?;
+    // Low stock: the one definition (`evaluate_reorder`), counted per article over every store.
+    let triggers = reorder_triggers_by_article(db).await?;
+    let critical = critical_spare_ids(db).await?;
+    let low_stock_articles = i64::try_from(triggers.len()).unwrap_or(i64::MAX);
+    let critical_low_stock_articles =
+        i64::try_from(triggers.keys().filter(|id| critical.contains(id)).count()).unwrap_or(i64::MAX);
+    let to_vec = |v: &[&str]| v.iter().map(|s| (*s).to_string()).collect::<Vec<_>>();
     Ok(crate::inventory::domain::ProcurementDashboardSummary {
-        open_requisitions: row.try_get("", "open_requisitions").unwrap_or(0),
-        pending_approval_pos: row.try_get("", "pending_approval_pos").unwrap_or(0),
-        open_pos: row.try_get("", "open_pos").unwrap_or(0),
-        overdue_pos: row.try_get("", "overdue_pos").unwrap_or(0),
-        pending_receipts: row.try_get("", "pending_receipts").unwrap_or(0),
-        low_stock_articles: row.try_get("", "low_stock_articles").unwrap_or(0),
-        critical_low_stock_articles: row.try_get("", "critical_low_stock_articles").unwrap_or(0),
-        repairables_in_repair: row.try_get("", "repairables_in_repair").unwrap_or(0),
-        active_suppliers_count: row.try_get("", "active_suppliers_count").unwrap_or(0),
-        receiving_today_count: row.try_get("", "receiving_today_count").unwrap_or(0),
+        open_requisitions: row.try_get("", "open_requisitions")?,
+        pending_approval_pos: row.try_get("", "pending_approval_pos")?,
+        open_pos: row.try_get("", "open_pos")?,
+        overdue_pos: row.try_get("", "overdue_pos")?,
+        pending_receipts: row.try_get("", "pending_receipts")?,
+        low_stock_articles,
+        critical_low_stock_articles,
+        repairables_in_repair: row.try_get("", "repairables_in_repair")?,
+        active_suppliers_count: row.try_get("", "active_suppliers_count")?,
+        receiving_today_count: row.try_get("", "receiving_today_count")?,
+        open_requisition_statuses: to_vec(OPEN_REQUISITION_STATUSES),
+        open_po_statuses: to_vec(OPEN_PO_STATUSES),
+        late_po_statuses: to_vec(LATE_PO_STATUSES),
     })
 }
 
-/// Operational alerts for the procurement dashboard. Top 3 per kind.
+fn alert_params(pairs: &[(&str, String)]) -> std::collections::BTreeMap<String, String> {
+    pairs.iter().map(|(k, v)| ((*k).to_string(), v.clone())).collect()
+}
+
+/// Operational alerts for the procurement dashboard, top 3 per kind. Coded (kind + params): the
+/// screen words them in the UI language. A failed read fails the call (never "no alert").
 pub async fn get_procurement_alerts(
     db: &DatabaseConnection,
 ) -> AppResult<Vec<crate::inventory::domain::ProcurementAlert>> {
+    use crate::inventory::domain::ProcurementAlert;
     let mut alerts = Vec::new();
 
-    let critical_rows = db
-        .query_all(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT a.id, a.article_code, a.article_name,
-                    COALESCE(SUM(sb.available_qty), 0.0) AS available_qty, a.min_stock
-             FROM articles a
-             JOIN stock_balances sb ON sb.article_id = a.id
-             WHERE a.is_active = 1 AND COALESCE(a.is_critical_spare, 0) = 1
-               AND a.min_stock > 0
-             GROUP BY a.id
-             HAVING available_qty <= a.min_stock
-             ORDER BY available_qty ASC
-             LIMIT 3"
-                .to_string(),
-        ))
-        .await
-        .unwrap_or_default();
-    for row in critical_rows {
-        let code: String = row.try_get("", "article_code").unwrap_or_default();
-        let name: String = row.try_get("", "article_name").unwrap_or_default();
-        let avail: f64 = row.try_get("", "available_qty").unwrap_or(0.0);
-        let min_stock: f64 = row.try_get("", "min_stock").unwrap_or(0.0);
-        alerts.push(crate::inventory::domain::ProcurementAlert {
+    // Critical spares that need replenishing — the one low-stock definition (`evaluate_reorder`),
+    // lowest availability first.
+    let critical = critical_spare_ids(db).await?;
+    let mut critical_recs: Vec<_> = evaluate_reorder(db, None)
+        .await?
+        .into_iter()
+        .filter(|r| critical.contains(&r.article_id))
+        .collect();
+    critical_recs.sort_by(|a, b| a.available_qty.total_cmp(&b.available_qty));
+    let mut seen = std::collections::HashSet::new();
+    for r in critical_recs.into_iter().filter(|r| seen.insert(r.article_id)).take(3) {
+        let threshold = if r.trigger_type == "reorder_point" {
+            r.reorder_point
+        } else {
+            r.min_stock
+        };
+        alerts.push(ProcurementAlert {
             kind: "CRITICAL_STOCK".to_string(),
             severity: "high".to_string(),
-            title: format!("Critical stock: {code}"),
-            detail: Some(format!("{name} available {avail} ≤ min {min_stock}")),
             entity_type: Some("ARTICLE".to_string()),
-            entity_id: row.try_get("", "id").ok(),
-            entity_code: Some(code),
+            entity_id: Some(r.article_id),
+            entity_code: Some(r.article_code.clone()),
+            params: alert_params(&[
+                ("name", r.article_name.clone()),
+                ("warehouse_code", r.warehouse_code.clone()),
+                ("available_qty", r.available_qty.to_string()),
+                ("threshold_qty", threshold.to_string()),
+                ("trigger", r.trigger_type.clone()),
+            ]),
         });
     }
 
     let late_rows = db
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT id, po_number, expected_delivery_date
-             FROM purchase_orders
-             WHERE status IN ('APPROVED','PARTIALLY_RECEIVED')
-               AND expected_delivery_date IS NOT NULL
-               AND expected_delivery_date < strftime('%Y-%m-%dT%H:%M:%SZ','now')
-             ORDER BY expected_delivery_date ASC
-             LIMIT 3"
-                .to_string(),
+            format!(
+                "SELECT id, po_number, expected_delivery_date
+                 FROM purchase_orders
+                 WHERE status IN ({})
+                   AND expected_delivery_date IS NOT NULL
+                   AND expected_delivery_date < strftime('%Y-%m-%dT%H:%M:%SZ','now')
+                 ORDER BY expected_delivery_date ASC
+                 LIMIT 3",
+                sql_in(LATE_PO_STATUSES)
+            ),
         ))
-        .await
-        .unwrap_or_default();
+        .await?;
     for row in late_rows {
-        let po_number: String = row.try_get("", "po_number").unwrap_or_default();
-        let eta: Option<String> = row.try_get("", "expected_delivery_date").ok().flatten();
-        alerts.push(crate::inventory::domain::ProcurementAlert {
+        let po_number: String = row.try_get("", "po_number")?;
+        let eta: String = row.try_get("", "expected_delivery_date")?;
+        alerts.push(ProcurementAlert {
             kind: "LATE_PO".to_string(),
             severity: "high".to_string(),
-            title: format!("Late PO: {po_number}"),
-            detail: eta.map(|d| format!("Expected {d}")),
             entity_type: Some("PURCHASE_ORDER".to_string()),
-            entity_id: row.try_get("", "id").ok(),
+            entity_id: Some(row.try_get("", "id")?),
             entity_code: Some(po_number),
+            params: alert_params(&[("expected_date", eta)]),
         });
     }
 
+    // Only orders whose repair lead time is known (supplier, else article): no assumed delay.
     let repair_rows = db
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
             "SELECT ro.id, ro.order_code, ro.sent_at, a.article_code,
-                    COALESCE(s.default_lead_time_days, a.lead_time_days, 14) AS lead_sla_days
+                    COALESCE(s.default_lead_time_days, a.lead_time_days) AS lead_sla_days
              FROM repairable_orders ro
              JOIN articles a ON a.id = ro.article_id
              LEFT JOIN inventory_suppliers s ON s.id = ro.vendor_supplier_id
              WHERE ro.status = 'SENT_FOR_REPAIR'
                AND ro.sent_at IS NOT NULL
-               AND datetime(ro.sent_at, '+' || COALESCE(s.default_lead_time_days, a.lead_time_days, 14) || ' days')
+               AND COALESCE(s.default_lead_time_days, a.lead_time_days) IS NOT NULL
+               AND datetime(ro.sent_at, '+' || COALESCE(s.default_lead_time_days, a.lead_time_days) || ' days')
                    < strftime('%Y-%m-%dT%H:%M:%SZ','now')
              ORDER BY ro.sent_at ASC
              LIMIT 3"
                 .to_string(),
         ))
-        .await
-        .unwrap_or_default();
+        .await?;
     for row in repair_rows {
-        let code: String = row.try_get("", "order_code").unwrap_or_default();
-        let article: String = row.try_get("", "article_code").unwrap_or_default();
-        let sla: i64 = row.try_get("", "lead_sla_days").unwrap_or(14);
-        alerts.push(crate::inventory::domain::ProcurementAlert {
+        let code: String = row.try_get("", "order_code")?;
+        let article: String = row.try_get("", "article_code")?;
+        let sla: i64 = row.try_get("", "lead_sla_days")?;
+        alerts.push(ProcurementAlert {
             kind: "REPAIRABLE_OVERDUE".to_string(),
             severity: "medium".to_string(),
-            title: format!("Repair overdue: {code}"),
-            detail: Some(format!("{article} past {sla}-day lead SLA")),
             entity_type: Some("REPAIRABLE_ORDER".to_string()),
-            entity_id: row.try_get("", "id").ok(),
+            entity_id: Some(row.try_get("", "id")?),
             entity_code: Some(code),
+            params: alert_params(&[("article_code", article), ("lead_days", sla.to_string())]),
         });
     }
 
@@ -3742,19 +3790,18 @@ pub async fn get_procurement_alerts(
              WHERE s.is_active = 1 AND s.status_code <> 'BLOCKED'"
                 .to_string(),
         ))
-        .await
-        .unwrap_or_default();
+        .await?;
 
     let mut high_risk = Vec::new();
     for row in supplier_rows {
-        let total: i64 = row.try_get("", "total_lines").unwrap_or(0);
+        let total: i64 = row.try_get::<Option<i64>>("", "total_lines")?.unwrap_or(0);
         if total <= 0 {
             continue;
         }
-        let on_time: i64 = row.try_get("", "on_time_lines").unwrap_or(0);
+        let on_time: i64 = row.try_get::<Option<i64>>("", "on_time_lines")?.unwrap_or(0);
         let avg_lt: Option<f64> = row.try_get("", "avg_lead_time").ok().flatten();
-        let total_recv: f64 = row.try_get("", "total_received").unwrap_or(0.0);
-        let total_rej: f64 = row.try_get("", "total_rejected").unwrap_or(0.0);
+        let total_recv: f64 = row.try_get::<Option<f64>>("", "total_received")?.unwrap_or(0.0);
+        let total_rej: f64 = row.try_get::<Option<f64>>("", "total_rejected")?.unwrap_or(0.0);
         let otif = Some(on_time as f64 / total as f64 * 100.0);
         let rejected = if total_recv > 0.0 {
             Some(total_rej / total_recv * 100.0)
@@ -3764,16 +3811,15 @@ pub async fn get_procurement_alerts(
         let promised: Option<i64> = row.try_get("", "default_lead_time_days").ok().flatten();
         let risk = crate::inventory::suppliers::compute_supplier_risk_level(otif, rejected, avg_lt, promised);
         if risk.as_deref() == Some("HIGH") {
-            let code: String = row.try_get("", "code").unwrap_or_default();
-            let name: String = row.try_get("", "name").unwrap_or_default();
-            high_risk.push(crate::inventory::domain::ProcurementAlert {
+            let code: String = row.try_get("", "code")?;
+            let name: String = row.try_get("", "name")?;
+            high_risk.push(ProcurementAlert {
                 kind: "SUPPLIER_DELAY".to_string(),
                 severity: "medium".to_string(),
-                title: format!("High-risk supplier: {code}"),
-                detail: Some(name),
                 entity_type: Some("SUPPLIER".to_string()),
-                entity_id: row.try_get("", "id").ok(),
+                entity_id: Some(row.try_get("", "id")?),
                 entity_code: Some(code),
+                params: alert_params(&[("name", name)]),
             });
         }
     }

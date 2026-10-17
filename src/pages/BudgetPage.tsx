@@ -26,8 +26,10 @@ import {
   VarianceReviewDialog,
   VarianceReviewsPanel,
 } from "@/components/finance/VarianceReviewsPanel";
+import { useFinanceCatalogs } from "@/components/finance/use-finance-catalogs";
 import { RefreshButton } from "@/components/layout/ModuleHeaderControls";
 import { ModulePageShell } from "@/components/layout/ModulePageShell";
+import { ErrorState } from "@/components/ui/data-state";
 import {
   Select,
   SelectContent,
@@ -64,15 +66,28 @@ export function defaultVersion(versions: BudgetVersion[]): BudgetVersion | null 
   return [...versions].sort((a, b) => b.version_no - a.version_no || b.id - a.id)[0] ?? null;
 }
 
+/** Fiscal year of `date` for a year starting in `startMonth` (1..12); calendar year until known. */
+export function currentFiscalYear(date: Date, startMonth: number | null): number {
+  const year = date.getFullYear();
+  if (startMonth == null) return year;
+  return date.getMonth() + 1 >= startMonth ? year : year - 1;
+}
+
 export function BudgetPage() {
   const { t } = useTranslation("budget");
   const { currencyCode } = useFormatters();
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get("tab");
   const tab: Tab = isTab(tabParam) ? tabParam : "cockpit";
-  const thisYear = new Date().getFullYear();
-  const [fiscalYear, setFiscalYear] = useState(thisYear);
+  const { fiscalStartMonth, error: catalogsError, retry: retryCatalogs } = useFinanceCatalogs();
+  // Current fiscal year (named by the calendar year it starts in, like the backend's
+  // `fiscal_period`): a July-start plant is still in fiscal 2025 in March 2026.
+  const thisYear = currentFiscalYear(new Date(), fiscalStartMonth);
+  const [yearChoice, setYearChoice] = useState<number | null>(null);
+  const fiscalYear = yearChoice ?? thisYear;
+  const setFiscalYear = (y: number) => setYearChoice(y);
   const [allVersions, setAllVersions] = useState<BudgetVersion[]>([]);
+  const [versionsError, setVersionsError] = useState<unknown>(null);
   const [versionChoice, setVersionChoice] = useState<string>(AUTO);
   const [reloadToken, setReloadToken] = useState(0);
   const [review, setReview] = useState<{ row: BudgetCockpitRow; cockpit: BudgetCockpit } | null>(
@@ -80,10 +95,12 @@ export function BudgetPage() {
   );
 
   const loadVersions = useCallback(async () => {
+    setVersionsError(null);
     try {
       setAllVersions(await listBudgetVersions({}));
-    } catch {
-      // The cockpit and planning tabs report load errors themselves.
+    } catch (err) {
+      // Said on screen: an empty version list would read "no budget version for this year".
+      setVersionsError(err);
       setAllVersions([]);
     }
   }, []);
@@ -133,7 +150,7 @@ export function BudgetPage() {
               setVersionChoice(AUTO);
             }}
           >
-            <SelectTrigger className="h-9 w-28" aria-label={t("page.fiscalYear")}>
+            <SelectTrigger className="h-11 w-28" aria-label={t("page.fiscalYear")}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -145,7 +162,7 @@ export function BudgetPage() {
             </SelectContent>
           </Select>
           <Select value={versionChoice} onValueChange={setVersionChoice}>
-            <SelectTrigger className="h-9 w-64" aria-label={t("page.version")}>
+            <SelectTrigger className="h-11 w-64" aria-label={t("page.version")}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -168,6 +185,24 @@ export function BudgetPage() {
         </>
       }
     >
+      {catalogsError != null ? (
+        // Without the fiscal-year start the page cannot know the current fiscal year: say so
+        // instead of quietly showing the calendar year.
+        <ErrorState
+          className="mb-4 py-4"
+          error={catalogsError}
+          title={t("page.fiscalStartLoadError")}
+          onRetry={retryCatalogs}
+        />
+      ) : null}
+      {versionsError != null ? (
+        <ErrorState
+          className="mb-4 py-4"
+          error={versionsError}
+          title={t("page.versionsLoadError")}
+          onRetry={() => void loadVersions()}
+        />
+      ) : null}
       <Tabs value={tab} onValueChange={setTab} className="space-y-4">
         <TabsList className="w-fit flex-wrap">
           {TABS.map((k) => (
@@ -198,6 +233,7 @@ export function BudgetPage() {
             selectedVersionId={selectedVersionId}
             onSelectVersion={(id) => setVersionChoice(id == null ? AUTO : String(id))}
             onChanged={refresh}
+            reloadToken={reloadToken}
           />
         </TabsContent>
         <TabsContent value="reviews">

@@ -3,7 +3,11 @@
  *
  * GAP EQ-04: Decommission / Retire modal with dependency analysis.
  * Shows binding dependencies, blocker banner, reason textarea,
- * and target state selector (Decommissioned / Scrapped).
+ * and target state selector (the EQUIPMENT.STATUS values tagged `retired`).
+ *
+ * Confirmation needs the dependency check: if it cannot be loaded the failure is shown with a
+ * retry and nothing can be confirmed (an unknown blocker count is never read as zero). The target
+ * status is chosen by the user; none is preset.
  */
 
 import {
@@ -18,8 +22,10 @@ import {
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { Badge } from "@/components/ui/badge";
+import { AssetStatusBadge } from "@/components/assets/AssetStatusBadge";
+import { findStatus, statusLabelKey } from "@/components/assets/asset-tones";
 import { Button } from "@/components/ui/button";
+import { ErrorState } from "@/components/ui/data-state";
 import {
   Dialog,
   DialogContent,
@@ -38,10 +44,8 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { decommissionAsset, getAssetBindingSummary } from "@/services/asset-lifecycle-service";
-import { toErrorMessage } from "@/utils/errors";
-import type { Asset, AssetBindingSummary, DecommissionAssetPayload } from "@shared/ipc-types";
-
-type TargetStatus = DecommissionAssetPayload["target_status"];
+import { useEquipmentTaxonomy } from "@/stores/equipment-taxonomy-store";
+import type { Asset, AssetBindingSummary } from "@shared/ipc-types";
 
 interface AssetDecommissionModalProps {
   open: boolean;
@@ -134,18 +138,21 @@ export function AssetDecommissionModal({
 
   const [summary, setSummary] = useState<AssetBindingSummary | null>(null);
   const [loadingSummary, setLoadingSummary] = useState(true);
-  const [targetStatus, setTargetStatus] = useState<TargetStatus>("DECOMMISSIONED");
+  const { catalog, error: catalogError, reload: reloadCatalog } = useEquipmentTaxonomy();
+  const [targetStatus, setTargetStatus] = useState("");
   const [reason, setReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [summaryError, setSummaryError] = useState<unknown>(null);
 
   const loadSummary = useCallback(async () => {
     setLoadingSummary(true);
+    setSummaryError(null);
     try {
       const data = await getAssetBindingSummary(asset.id);
       setSummary(data);
     } catch (err) {
-      setError(toErrorMessage(err));
+      setSummary(null);
+      setSummaryError(err);
     } finally {
       setLoadingSummary(false);
     }
@@ -154,11 +161,16 @@ export function AssetDecommissionModal({
   useEffect(() => {
     if (open) {
       setReason("");
-      setTargetStatus("DECOMMISSIONED");
-      setError(null);
+      setTargetStatus("");
       void loadSummary();
     }
   }, [open, loadSummary]);
+
+  const retiredStatuses = (catalog?.statuses ?? []).filter((s) => s.semantic_tag === "retired");
+  const statusName = (code: string) => {
+    const key = statusLabelKey(code);
+    return key ? t(key as never) : (findStatus(catalog, code)?.label ?? code);
+  };
 
   const dependencies = summary
     ? buildDependencies(summary, t as (key: string, opts?: Record<string, unknown>) => string)
@@ -167,11 +179,16 @@ export function AssetDecommissionModal({
     .filter((d) => d.level === "blocker" && d.available && d.count !== null && d.count > 0)
     .reduce((acc, d) => acc + (d.count ?? 0), 0);
   const hasBlockers = blockerCount > 0;
-  const canConfirm = !hasBlockers && reason.trim().length > 0 && !submitting;
+  const canConfirm =
+    summary != null &&
+    !hasBlockers &&
+    targetStatus !== "" &&
+    reason.trim().length > 0 &&
+    !submitting;
 
+  /** A refusal (open work found meanwhile…) is reported by the global toast; the dialog stays. */
   const handleConfirm = async () => {
     setSubmitting(true);
-    setError(null);
     try {
       const result = await decommissionAsset({
         asset_id: asset.id,
@@ -180,8 +197,8 @@ export function AssetDecommissionModal({
         notes: null,
       });
       onDecommissioned(result);
-    } catch (err) {
-      setError(toErrorMessage(err));
+    } catch {
+      // The global IPC toast reports the failure.
     } finally {
       setSubmitting(false);
     }
@@ -203,14 +220,21 @@ export function AssetDecommissionModal({
             </p>
             <p className="text-xs text-text-muted">{asset.class_name ?? "—"}</p>
           </div>
-          <Badge variant="outline">{asset.status_code}</Badge>
+          <AssetStatusBadge code={asset.status_code} />
         </div>
 
         {/* Dependency analysis */}
         {loadingSummary ? (
           <div className="flex items-center justify-center py-6">
-            <Loader2 className="h-5 w-5 animate-spin text-text-muted" />
+            <Loader2 className="h-5 w-5 animate-spin text-text-muted" aria-hidden />
           </div>
+        ) : summaryError != null || summary == null ? (
+          <ErrorState
+            error={summaryError}
+            title={t("decommission.dependenciesError")}
+            onRetry={() => void loadSummary()}
+            className="py-4"
+          />
         ) : (
           <div className="space-y-2">
             {hasBlockers && (
@@ -239,24 +263,31 @@ export function AssetDecommissionModal({
         )}
 
         {/* Target state + reason (only when no blockers) */}
-        {!loadingSummary && !hasBlockers && (
+        {!loadingSummary && summary != null && !hasBlockers && (
           <div className="space-y-3">
             <div className="space-y-1.5">
               <Label>{t("decommission.targetStatus")}</Label>
-              <Select
-                value={targetStatus}
-                onValueChange={(v) => setTargetStatus(v as TargetStatus)}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="DECOMMISSIONED">
-                    {t("decommission.statuses.decommissioned")}
-                  </SelectItem>
-                  <SelectItem value="SCRAPPED">{t("decommission.statuses.scrapped")}</SelectItem>
-                </SelectContent>
-              </Select>
+              {catalogError != null && catalog == null ? (
+                <ErrorState
+                  error={catalogError}
+                  title={t("decommission.statusesError")}
+                  onRetry={() => void reloadCatalog()}
+                  className="py-3"
+                />
+              ) : (
+                <Select value={targetStatus} onValueChange={setTargetStatus}>
+                  <SelectTrigger aria-label={t("decommission.targetStatus")}>
+                    <SelectValue placeholder={t("decommission.targetStatusPlaceholder")} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {retiredStatuses.map((s) => (
+                      <SelectItem key={s.code} value={s.code}>
+                        {statusName(s.code)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
             </div>
 
             <div className="space-y-1.5">
@@ -272,8 +303,6 @@ export function AssetDecommissionModal({
             </div>
           </div>
         )}
-
-        {error && <p className="text-sm text-status-danger">{error}</p>}
 
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={submitting}>

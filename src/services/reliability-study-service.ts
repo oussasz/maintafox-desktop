@@ -67,6 +67,8 @@ export interface FleetViewFilter {
   org_node_id?: number | null;
   equipment_class_id?: number | null;
   limit?: number | null;
+  /** Rows skipped (next page of the ranking). */
+  offset?: number | null;
 }
 
 export async function getReliabilityFleetView(filter: FleetViewFilter): Promise<FleetView> {

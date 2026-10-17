@@ -396,8 +396,22 @@ async fn loto_roles_require_the_authorisation_until_overridden() {
             id: None,
             permit_id: wp.id,
             isolation_point: "Départ 4 — disjoncteur Q4".into(),
-            energy_type: "electrical".into(),
-            isolation_method: "cadenas + étiquette".into(),
+            energy_type_id: Some(
+                crate::permit::energy_reference::value_id_for_tests(
+                    &db,
+                    crate::permit::energy_reference::ENERGY_TYPES_DOMAIN,
+                    "ELECTRICAL",
+                )
+                .await,
+            ),
+            isolation_method_id: Some(
+                crate::permit::energy_reference::value_id_for_tests(
+                    &db,
+                    crate::permit::energy_reference::ISOLATION_METHODS_DOMAIN,
+                    "BREAKER_LOCKOUT",
+                )
+                .await,
+            ),
             lock_number: None,
         },
     )

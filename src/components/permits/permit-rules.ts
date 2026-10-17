@@ -56,7 +56,9 @@ export function activationBlocker(
   isolations: PermitIsolationRecord[],
 ): string | null {
   if (isPermitExpired(permit)) return "gate.expired";
-  if (permit.permit_type_code === "loto" && isolations.length === 0) return "gate.noIsolation";
+  // The type's own rule (`requires_energy_isolation`, set for LOTO), never a code in the program.
+  if (permit.permit_type_requires_energy_isolation && isolations.length === 0)
+    return "gate.noIsolation";
   if (isolations.some((i) => i.removal_verified_at)) return "gate.removed";
   if (isolations.some((i) => !i.verified_at)) return "gate.unverified";
   return null;
@@ -127,4 +129,15 @@ export function formatAssetLabel(permit: WorkPermitRecord): string | null {
   if (permit.asset_code && permit.asset_label)
     return `${permit.asset_code} — ${permit.asset_label}`;
   return permit.asset_code ?? permit.asset_label ?? null;
+}
+
+/** Isolation choice label in the UI language: a shipped value's English label, else its label. */
+export function optionLabel(
+  option: { label: string; label_en: string | null } | null | undefined,
+  language: string,
+): string {
+  if (!option) return "";
+  return language.toLowerCase().startsWith("en") && option.label_en
+    ? option.label_en
+    : option.label;
 }

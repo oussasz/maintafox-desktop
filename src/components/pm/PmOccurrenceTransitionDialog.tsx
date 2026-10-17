@@ -24,7 +24,8 @@ import type { TransitionPmOccurrenceInput } from "@shared/ipc-types";
 
 import { formatPmAsset } from "./pm-cells";
 import { pmUnreportedErrorText } from "./pm-errors";
-import { PM_REASON_CODES, allowedOccurrenceTargets } from "./pm-labels";
+import { allowedOccurrenceTargets } from "./pm-labels";
+import { usePmExecutionOptions } from "./use-pm-execution-options";
 
 interface PmOccurrenceTransitionDialogProps {
   open: boolean;
@@ -42,6 +43,8 @@ export function PmOccurrenceTransitionDialog({
   onSubmit,
 }: PmOccurrenceTransitionDialogProps) {
   const { t } = useTranslation("pm");
+  // Reasons and severities come from Données de référence (PM.DEFERRAL_REASONS, PM.FINDING_SEVERITY).
+  const pmOptions = usePmExecutionOptions(open);
   const targets = useMemo(
     () => (occurrence ? allowedOccurrenceTargets(occurrence.status) : []),
     [occurrence],
@@ -130,13 +133,21 @@ export function PmOccurrenceTransitionDialog({
                     <SelectValue placeholder={t("errors.reasonRequired")} />
                   </SelectTrigger>
                   <SelectContent>
-                    {PM_REASON_CODES.map((r) => (
-                      <SelectItem key={r} value={r}>
-                        {t(`reasons.${r}`)}
+                    {pmOptions.reasons.map((r) => (
+                      <SelectItem key={r.code} value={r.code}>
+                        {pmOptions.label(r)}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+                {pmOptions.error != null ? (
+                  <p role="alert" className="flex items-center gap-2 text-xs text-tone-danger-fg">
+                    {t("errors.optionsLoad")}
+                    <Button type="button" size="sm" variant="outline" onClick={pmOptions.reload}>
+                      {t("actions.retry")}
+                    </Button>
+                  </p>
+                ) : null}
               </div>
             ) : null}
             <div className="grid gap-1">

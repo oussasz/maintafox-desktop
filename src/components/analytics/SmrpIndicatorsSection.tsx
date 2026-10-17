@@ -13,6 +13,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { type Tone, mfTone } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
+import { listLinks } from "@/lib/list-links";
 import { cn } from "@/lib/utils";
 import type { SmrpKpis, SmrpMetric } from "@/services/analytics-dashboard-service";
 
@@ -233,7 +234,7 @@ export function SmrpIndicatorsSection({ smrp }: { smrp: SmrpKpis | null }) {
           formula={t(`smrp.mix.${key}.formula`)}
           unit={t("smrp.unitPercent")}
           period={period}
-          onOpen={() => navigate("/work-orders")}
+          onOpen={() => navigate(listLinks.workOrders({ mix: key }))}
         />,
       );
     }
@@ -316,7 +317,7 @@ export function SmrpIndicatorsSection({ smrp }: { smrp: SmrpKpis | null }) {
         formula={t("smrp.backlog.formula")}
         unit={t("smrp.backlog.unit")}
         period={t("smrp.backlog.period")}
-        onOpen={() => navigate("/work-orders")}
+        onOpen={() => navigate(listLinks.workOrders({ scope: "open" }))}
       />,
     );
   }

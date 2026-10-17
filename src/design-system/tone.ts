@@ -398,28 +398,8 @@ export const RELIABILITY_TACTIC_TONE: Record<string, Tone> = {
 
 // ── Assets / Org ─────────────────────────────────────────────────────────────
 
-/** Equipment status (EQUIPMENT.STATUS codes and legacy aliases) → tone. */
-export const ASSET_STATUS_TONE: Record<string, Tone> = {
-  ACTIVE_IN_SERVICE: "success",
-  ACTIVE: "success",
-  OPERATIONAL: "success",
-  UNDER_MAINTENANCE: "progress",
-  MAINTENANCE: "progress",
-  STANDBY: "neutral",
-  IN_STOCK: "info",
-  SPARE: "info",
-  OUT_OF_SERVICE: "danger",
-  DECOMMISSIONED: "neutral",
-  SCRAPPED: "neutral",
-};
-
-/** Equipment criticality class → tone (A is the highest consequence). */
-export const CRITICALITY_TONE: Record<"A" | "B" | "C" | "D", Tone> = {
-  A: "danger",
-  B: "warning",
-  C: "info",
-  D: "neutral",
-};
+// Equipment status and criticality tones come from the reference lists (availability tag, rank):
+// `components/assets/asset-tones.ts`.
 
 /** Organisation unit status → tone. */
 export const ORG_NODE_STATUS_TONE: Record<string, Tone> = {

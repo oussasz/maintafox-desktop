@@ -1136,8 +1136,29 @@ async fn governance_kpi_report_returns_transparent_derivations() {
     .await
     .expect("load governance KPI report");
 
-    assert!(report.compliance.denominator >= 2);
-    assert!(report.compliance.numerator >= 2);
+    // The governance tile reads the one compliance definition (`pm::compliance`), not a second rate.
+    let canonical = crate::pm::compliance::compliance_between(
+        &db,
+        chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc),
+        chrono::DateTime::parse_from_rfc3339("2026-12-31T23:59:59Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc),
+        chrono::Utc::now(),
+        crate::pm::compliance::ComplianceScope {
+            pm_plan_id: Some(plan_id),
+            org_node_id: None,
+        },
+    )
+    .await
+    .expect("canonical compliance");
+    assert_eq!(report.compliance.numerator, canonical.on_time_count);
+    assert_eq!(report.compliance.denominator, canonical.due_count);
+    assert_eq!(
+        report.compliance.value_pct.is_some(),
+        canonical.compliance_pct.is_some()
+    );
     assert_eq!(report.first_pass_completion.numerator, 1);
     assert_eq!(report.first_pass_completion.denominator, 2);
     assert_eq!(report.follow_up_ratio.numerator, 0);
@@ -2147,4 +2168,139 @@ async fn a_pm_follow_up_work_order_of_a_preventive_type_is_refused() {
         matches!(err, AppError::ValidationFailed(ref m) if m.iter().any(|s| s.contains(queries::GATE_PM_FOLLOW_UP_NOT_CORRECTIVE))),
         "{err:?}"
     );
+}
+
+/// The governance "overdue" rate uses the one overdue rule (`PM_OVERDUE_SQL`): an occurrence past
+/// its due date but still inside its tolerance window is not overdue.
+#[tokio::test]
+async fn governance_overdue_respects_the_tolerance_window() {
+    let db = setup_db().await;
+    let (plan_id, _) = create_plan_with_published_version(
+        &db,
+        "PM-GOV-TOL",
+        "fixed",
+        r#"{"interval_unit":"day","interval_value":7}"#,
+    )
+    .await;
+    queries::generate_pm_occurrences(
+        &db,
+        GeneratePmOccurrencesInput {
+            as_of: Some("2026-01-10T00:00:00Z".to_string()),
+            horizon_days: Some(20),
+            pm_plan_id: Some(plan_id),
+            equipment_id: None,
+            event_codes: None,
+            condition_codes: None,
+        },
+    )
+    .await
+    .expect("generate");
+    let occurrences = queries::list_pm_occurrences(
+        &db,
+        PmOccurrenceFilter {
+            pm_plan_id: Some(plan_id),
+            status: None,
+            due_from: None,
+            due_to: None,
+            include_completed: Some(true),
+        },
+    )
+    .await
+    .expect("list");
+    assert!(occurrences.len() >= 2, "two occurrences to compare");
+    let now = chrono::Utc::now();
+    let yesterday = (now - chrono::Duration::days(1))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    let tomorrow = (now + chrono::Duration::days(1))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    let last_week = (now - chrono::Duration::days(7))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    // One past due but inside its window, one past the end of its window.
+    for (occ, window_end) in [(&occurrences[0], &tomorrow), (&occurrences[1], &last_week)] {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE pm_occurrences SET due_at = ?, window_end_at = ?, status = 'scheduled' WHERE id = ?",
+            [yesterday.clone().into(), window_end.clone().into(), occ.id.into()],
+        ))
+        .await
+        .expect("set window");
+    }
+    for occ in occurrences.iter().skip(2) {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE pm_occurrences SET status = 'cancelled' WHERE id = ?",
+            [occ.id.into()],
+        ))
+        .await
+        .expect("cancel the rest");
+    }
+    let report = queries::get_pm_governance_kpi_report(
+        &db,
+        PmGovernanceKpiInput {
+            from: Some("2000-01-01T00:00:00Z".to_string()),
+            to: Some("2100-01-01T00:00:00Z".to_string()),
+            pm_plan_id: Some(plan_id),
+            criticality_code: None,
+        },
+    )
+    .await
+    .expect("kpi report");
+    assert_eq!(report.overdue_risk.denominator, 2);
+    assert_eq!(report.overdue_risk.numerator, 1, "only the one past its window");
+}
+
+/// Reasons and finding severities of the PM dialogs are governed lists: shipped values listed,
+/// unknown codes refused before anything is written, known ones stored as the list code.
+#[tokio::test]
+async fn pm_reasons_and_severities_come_from_the_reference_lists() {
+    let db = setup_db().await;
+    let options = crate::pm::reason_catalog::list_pm_execution_options(&db)
+        .await
+        .expect("options");
+    let reasons: Vec<&str> = options.reasons.iter().map(|o| o.code.as_str()).collect();
+    assert!(reasons.contains(&"capacity_constraint") && reasons.contains(&"other"));
+    assert_eq!(
+        options.severities.iter().map(|o| o.code.as_str()).collect::<Vec<_>>(),
+        vec!["low", "medium", "high", "critical"]
+    );
+    assert!(options.reasons.iter().all(|o| o.label_en.is_some()));
+
+    seed_execution_asset(&db).await;
+    let (plan_id, _) = create_plan_with_published_version(
+        &db,
+        "PM-REASONS-001",
+        "fixed",
+        r#"{"interval_unit":"day","interval_value":1}"#,
+    )
+    .await;
+    let occ = occurrence_in_progress(&db, plan_id).await;
+
+    // Unknown miss reason / severity: coded refusal, nothing written.
+    let mut missed = execute_input(&occ, Vec::new());
+    missed.execution_result = "missed".to_string();
+    missed.findings = None;
+    missed.miss_reason_code = Some("forgot".to_string());
+    let err = queries::execute_pm_occurrence(&db, missed.clone())
+        .await
+        .expect_err("unknown reason");
+    assert!(format!("{err:?}").contains("PM_CODE_NOT_IN_LIST"), "{err:?}");
+    let mut bad_finding = finding("leak", false, false, None);
+    bad_finding.severity = Some("catastrophic".to_string());
+    let err = queries::execute_pm_occurrence(&db, execute_input(&occ, vec![bad_finding]))
+        .await
+        .expect_err("unknown severity");
+    assert!(format!("{err:?}").contains("PM_CODE_NOT_IN_LIST"), "{err:?}");
+
+    // A known reason (any case) is stored as the list code (deferral: allowed from in progress).
+    let mut deferred = missed;
+    deferred.execution_result = "deferred".to_string();
+    deferred.miss_reason_code = None;
+    deferred.defer_reason_code = Some("MATERIAL_MISSING".to_string());
+    let done = queries::execute_pm_occurrence(&db, deferred)
+        .await
+        .expect("known reason");
+    assert_eq!(done.occurrence.deferral_reason.as_deref(), Some("material_missing"));
 }

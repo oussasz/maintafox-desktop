@@ -39,7 +39,6 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { useZodForm } from "@/lib/form-helpers";
 import { assetEditSchema } from "@/schemas/asset-edit.schema";
@@ -105,7 +104,6 @@ export function AssetEditForm() {
     decommissioned_at: asset?.decommissioned_at ?? null,
     rams_schedule_reference_value_id: asset?.rams_schedule_reference_value_id ?? null,
     rams_utilization_factor: asset?.rams_utilization_factor ?? 1.0,
-    description: null,
   });
 
   const {
@@ -182,7 +180,6 @@ export function AssetEditForm() {
       decommissioned_at: asset.decommissioned_at ?? null,
       rams_schedule_reference_value_id: asset.rams_schedule_reference_value_id ?? null,
       rams_utilization_factor: asset.rams_utilization_factor ?? 1.0,
-      description: null,
     });
   }, [open, asset, reset, t, loadPhotos]);
 
@@ -404,9 +401,6 @@ export function AssetEditForm() {
                 placeholder={t("form.identity.name.placeholder")}
                 {...register("asset_name")}
               />
-            </FormField>
-            <FormField name="description" label={t("createForm.descriptionLabel")}>
-              <Textarea id="description" rows={3} maxLength={2000} {...register("description")} />
             </FormField>
           </EntityFormSection>
 

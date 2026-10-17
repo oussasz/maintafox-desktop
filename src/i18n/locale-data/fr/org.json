@@ -9,7 +9,13 @@
     "pick": "Sélectionner…",
     "add": "Ajouter la règle",
     "remove": "Supprimer la règle",
-    "duplicatePair": "Cette règle parent → enfant existe déjà."
+    "duplicatePair": "Cette règle parent → enfant existe déjà.",
+    "loadError": "Impossible de charger les règles de ce brouillon",
+    "unknownType": "Type inconnu",
+    "contains": "peut contenir",
+    "pairLabel": "{{parent}} → {{child}}",
+    "removeConfirmTitle": "Supprimer cette règle ?",
+    "removeConfirmBody": "La règle « {{pair}} » sera retirée du brouillon. Si l’arbre contient déjà ce lien, la publication sera bloquée tant que la règle n’est pas rétablie."
   },
   "createNode": {
     "titleRoot": "Ajouter un nœud racine",
@@ -73,7 +79,7 @@
     "statusDraft": "Brouillon",
     "modelSummary": "Résumé du modèle",
     "totalNodes": "Total des nœuds",
-    "nodeTypesCount": "Types de nœuds",
+    "nodeTypesCount": "Types utilisés",
     "searchPlaceholder": "Rechercher par code, nom ou type…",
     "addRootNode": "Racine",
     "addChildNode": "Enfant",
@@ -144,7 +150,8 @@
       "unassignEquipment": "Retirer {{code}} de cette unité",
       "unassignTitle": "Retirer l’équipement de cette unité ?",
       "unassignDescription": "{{code}} — {{name}} ne sera plus placé dans {{unit}}. Son historique est conservé et vous pourrez le replacer plus tard.",
-      "unassignConfirm": "Retirer de l’unité"
+      "unassignConfirm": "Retirer de l’unité",
+      "equipmentCountUnavailable": "Non chargé — voir l'onglet Équipements"
     },
     "actions": {
       "moveNode": "Déplacer l’unité…",
@@ -164,11 +171,12 @@
     "statusOther": "Autre statut",
     "loading": "Chargement de l’organisation…",
     "expandUnit": "Afficher les sous-unités de {{name}}",
-    "collapseUnit": "Masquer les sous-unités de {{name}}"
+    "collapseUnit": "Masquer les sous-unités de {{name}}",
+    "refreshFailed": "Impossible d'actualiser la structure — l'arbre affiché peut être ancien"
   },
   "nodeTypes": {
     "title": "Gestionnaire de types de nœuds",
-    "description": "Définir les types de nœuds avec icônes, couleurs et indicateurs de capacité.",
+    "description": "Définir les types de nœuds avec leur icône et leurs capacités.",
     "loading": "Chargement des types de nœuds…",
     "empty": "Aucun type de nœud défini.",
     "addType": "Ajouter un type",
@@ -202,7 +210,13 @@
       "hard-hat": "Casque",
       "zap": "Énergie",
       "circuit-board": "Circuit"
-    }
+    },
+    "loadError": "Impossible de charger les types de nœuds",
+    "editTypeNamed": "Modifier le type {{label}}",
+    "deactivate": "Désactiver le type",
+    "deactivateNamed": "Désactiver le type {{label}}",
+    "deactivateConfirmTitle": "Désactiver ce type de nœud ?",
+    "deactivateConfirmBody": "Le type « {{label}} » ne pourra plus être choisi pour de nouveaux nœuds de ce brouillon. Aucun nœud ne l’utilise aujourd’hui."
   },
   "export": {
     "title": "Exporter",
@@ -252,7 +266,8 @@
       "COST_CENTER_INCOMPATIBLE": "«{{nodeName}}» a un centre de coûts, mais son niveau «{{typeCode}}» ne les autorise pas. Retirez le centre de coûts ou autorisez-les sur ce niveau.",
       "UNMAPPED_ACTIVE_NODE_WITH_OPS_REFS": "«{{nodeName}}» est encore utilisé par des données en production mais est absent de ce brouillon. Réparez les copies du brouillon, ou détachez ces liens avant de publier."
     },
-    "refreshTimeline": "Actualiser l’historique des modifications"
+    "refreshTimeline": "Actualiser l’historique des modifications",
+    "auditLoadError": "Impossible de charger l'historique des modifications"
   },
   "errors": {
     "ORG_VALIDATE_NOT_DRAFT": "Ce modèle est «{{status}}», pas un brouillon. Seuls les brouillons peuvent être vérifiés pour publication.",
@@ -350,7 +365,8 @@
       "ready": "Prêt",
       "warning": "Avertissement",
       "error": "Bloqué"
-    }
+    },
+    "retryValidation": "Relancer la vérification"
   },
   "capabilities": {
     "asset": "ACTIF",

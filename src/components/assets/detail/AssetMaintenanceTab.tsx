@@ -27,13 +27,11 @@ import {
   toneOf,
 } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
-import { persistRamsEquipmentSelection } from "@/pages/reliability/rams-equipment-context";
 import { getAssetMaintenanceProfile } from "@/services/asset-registry-service";
 import { listDis } from "@/services/di-service";
 import { listWos } from "@/services/wo-service";
 import { statusToI18nKey } from "@/utils/wo-status";
 import type { Asset } from "@shared/ipc-types";
-import { analyticsRamsPath } from "@shared/kpi-definitions";
 import { P } from "@shared/rbac/permissions.generated";
 
 /** Most recent records listed per kind; the card titles show how many exist in total. */
@@ -78,10 +76,7 @@ export function AssetMaintenanceTab({ asset }: { asset: Asset }) {
           <Button
             variant="outline"
             className="h-11 gap-1.5"
-            onClick={() => {
-              persistRamsEquipmentSelection(asset.id);
-              void navigate(analyticsRamsPath("dashboard"));
-            }}
+            onClick={() => void navigate(`/reliability?equipment=${asset.id}`)}
           >
             <Activity className="h-4 w-4" aria-hidden />
             {t("maintenance.openRams")}

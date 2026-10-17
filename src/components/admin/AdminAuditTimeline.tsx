@@ -38,13 +38,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { describeAppError } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import {
   exportAdminEventsCsv,
   listAdminEventFacets,
   listAdminEvents,
 } from "@/services/rbac-service";
-import { toErrorMessage } from "@/utils/errors";
 import type { AdminChangeEventDetail, AdminEventFacets, AdminEventFilter } from "@shared/ipc-types";
 
 const ALL = "__all__";
@@ -192,7 +192,7 @@ export function AdminAuditTimeline({ fixedFilter, compact = false }: AdminAuditT
       setError(null);
       setEvents(await listAdminEvents({ ...query, limit: PAGE_SIZE }));
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(describeAppError(err).title);
     } finally {
       setLoading(false);
     }

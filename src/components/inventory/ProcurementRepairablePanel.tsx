@@ -1,6 +1,14 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import { Columns3, List, MoreHorizontal } from "lucide-react";
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
@@ -80,6 +88,7 @@ import {
 } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
+import { appErrorReason } from "@/lib/app-error";
 import { formatAssetLabel, formatEntityCode, formatOrDash } from "@/lib/display";
 import { cn } from "@/lib/utils";
 import {
@@ -205,6 +214,11 @@ const PURCHASE_PRIORITIES = ["EMERGENCY", "HIGH", "NORMAL", "LOW"] as const;
 const MANUAL_DEMAND_SOURCES = ["REORDER", "MANUAL"] as const;
 
 const ALL = "__all__";
+/** Status-set filters a dashboard tile opens (statuses sent by the backend with its counts). */
+const OPEN = "__open__";
+const LATE = "__late__";
+/** Element the low-stock tiles bring into view (the evaluate_reorder recommendations). */
+const RECOMMENDATIONS_ID = "procurement-recommendations";
 
 const REQ_KANBAN_STATUSES = [
   "DRAFT",
@@ -224,6 +238,20 @@ const PO_KANBAN_STATUSES = [
   "RECEIVED_CLOSED",
   "CANCELLED",
 ] as const;
+
+/**
+ * Board moves = the one-click lifecycle steps the row menu already offers (submit, approve),
+ * run through the same `transition_*` command and server guards. Reject (reason), cancel and
+ * close (confirmation) stay dialog-only and are never offered as a drop target.
+ */
+const BOARD_ONE_CLICK_MOVES: Record<string, string> = {
+  DRAFT: "SUBMITTED",
+  SUBMITTED: "APPROVED",
+};
+
+function isBoardOneClickMove(from: string, to: string): boolean {
+  return BOARD_ONE_CLICK_MOVES[from] === to;
+}
 
 const REPAIRABLE_STATUSES = [
   "REQUESTED",
@@ -733,12 +761,16 @@ export const ProcurementRepairablePanel = forwardRef<
    * Runs a mutation then reloads. Resolves to false when the mutation failed: the global IPC
    * toast already explains why, so callers only decide whether to keep their dialog open.
    */
+  /** Why the last mutation was refused (translated), for callers that announce it (board moves). */
+  const lastSaveErrorRef = useRef<string | null>(null);
   const runSaving = useCallback(
     async (work: () => Promise<void>): Promise<boolean> => {
       setSaving(true);
+      lastSaveErrorRef.current = null;
       try {
         await work();
-      } catch {
+      } catch (err) {
+        lastSaveErrorRef.current = appErrorReason(err);
         return false;
       } finally {
         setSaving(false);
@@ -1563,7 +1595,9 @@ export const ProcurementRepairablePanel = forwardRef<
   const filteredRequisitions = useMemo(() => {
     const term = reqSearch.trim().toLowerCase();
     return requisitions.filter((row) => {
-      if (reqStatusFilter !== ALL && row.status !== reqStatusFilter) return false;
+      if (reqStatusFilter === OPEN) {
+        if (!(dashboard?.open_requisition_statuses ?? []).includes(row.status)) return false;
+      } else if (reqStatusFilter !== ALL && row.status !== reqStatusFilter) return false;
       return includesTerm(
         term,
         row.req_number,
@@ -1572,16 +1606,23 @@ export const ProcurementRepairablePanel = forwardRef<
         row.requested_by_name,
       );
     });
-  }, [requisitions, reqSearch, reqStatusFilter, sourceLabel]);
+  }, [requisitions, reqSearch, reqStatusFilter, sourceLabel, dashboard]);
 
   const filteredPurchaseOrders = useMemo(() => {
     const term = poSearch.trim().toLowerCase();
     return purchaseOrders.filter((row) => {
-      if (poStatusFilter !== ALL && row.status !== poStatusFilter) return false;
+      if (poStatusFilter === OPEN) {
+        if (!(dashboard?.open_po_statuses ?? []).includes(row.status)) return false;
+      } else if (poStatusFilter === LATE) {
+        // Same rule as the "late" tile: a late-able status and an expected delivery before now.
+        if (!(dashboard?.late_po_statuses ?? []).includes(row.status)) return false;
+        if (!row.expected_delivery_date) return false;
+        if (new Date(row.expected_delivery_date).getTime() >= Date.now()) return false;
+      } else if (poStatusFilter !== ALL && row.status !== poStatusFilter) return false;
       if (poSupplierFilter !== ALL && String(row.supplier_id) !== poSupplierFilter) return false;
       return includesTerm(term, row.po_number, row.supplier_company_name, row.supplier_name);
     });
-  }, [purchaseOrders, poSearch, poStatusFilter, poSupplierFilter]);
+  }, [purchaseOrders, poSearch, poStatusFilter, poSupplierFilter, dashboard]);
 
   const reqKanbanColumns = useMemo<KanbanColumn[]>(
     () =>
@@ -1735,10 +1776,13 @@ export const ProcurementRepairablePanel = forwardRef<
         kind: "select",
         label: t("procurement.requisitions.filters.status"),
         value: reqStatusFilter,
-        options: REQ_KANBAN_STATUSES.map((status) => ({
-          value: status,
-          label: t(`procurement.statuses.${status}`, { defaultValue: status }),
-        })),
+        options: [
+          { value: OPEN, label: t("procurement.filters.open") },
+          ...REQ_KANBAN_STATUSES.map((status) => ({
+            value: status,
+            label: t(`procurement.statuses.${status}`, { defaultValue: status }),
+          })),
+        ],
         onChange: (next) => setReqStatusFilter(next ?? ALL),
       },
     ],
@@ -1752,10 +1796,14 @@ export const ProcurementRepairablePanel = forwardRef<
         kind: "select",
         label: t("procurement.purchaseOrders.filters.status"),
         value: poStatusFilter,
-        options: PO_KANBAN_STATUSES.map((status) => ({
-          value: status,
-          label: t(`procurement.statuses.${status}`, { defaultValue: status }),
-        })),
+        options: [
+          { value: OPEN, label: t("procurement.filters.open") },
+          { value: LATE, label: t("procurement.filters.late") },
+          ...PO_KANBAN_STATUSES.map((status) => ({
+            value: status,
+            label: t(`procurement.statuses.${status}`, { defaultValue: status }),
+          })),
+        ],
         onChange: (next) => setPoStatusFilter(next ?? ALL),
       },
       {
@@ -1946,7 +1994,7 @@ export const ProcurementRepairablePanel = forwardRef<
         value={formatNumber(dashboard.open_requisitions)}
         onOpen={() => {
           setActiveTab("requisitions");
-          setReqStatusFilter(ALL);
+          setReqStatusFilter(OPEN);
         }}
       />
       <KpiTile
@@ -1963,7 +2011,7 @@ export const ProcurementRepairablePanel = forwardRef<
         value={formatNumber(dashboard.open_pos)}
         onOpen={() => {
           setActiveTab("purchase-orders");
-          setPoStatusFilter(ALL);
+          setPoStatusFilter(OPEN);
         }}
       />
       <KpiTile
@@ -1972,7 +2020,7 @@ export const ProcurementRepairablePanel = forwardRef<
         {...(dashboard.overdue_pos > 0 ? { tone: "danger" as const } : {})}
         onOpen={() => {
           setActiveTab("purchase-orders");
-          setPoStatusFilter(ALL);
+          setPoStatusFilter(LATE);
         }}
       />
       <KpiTile
@@ -1991,12 +2039,14 @@ export const ProcurementRepairablePanel = forwardRef<
         value={formatNumber(dashboard.low_stock_articles)}
         hint={t("procurement.dashboard.stockoutsHint")}
         {...(dashboard.low_stock_articles > 0 ? { tone: "warning" as const } : {})}
+        onOpen={() => document.getElementById(RECOMMENDATIONS_ID)?.scrollIntoView()}
       />
       <KpiTile
         label={t("procurement.dashboard.criticalStockouts")}
         value={formatNumber(dashboard.critical_low_stock_articles)}
         hint={t("procurement.dashboard.criticalStockoutsHint")}
         {...(dashboard.critical_low_stock_articles > 0 ? { tone: "danger" as const } : {})}
+        onOpen={() => document.getElementById(RECOMMENDATIONS_ID)?.scrollIntoView()}
       />
       <KpiTile
         label={t("procurement.dashboard.repairablesInRepair")}
@@ -2041,13 +2091,14 @@ export const ProcurementRepairablePanel = forwardRef<
           />
 
           <ProcurementRecommendationsPanel
-            onCreateRequisitionPrefill={(rec) =>
+            id={RECOMMENDATIONS_ID}
+            onCreateRequisitionPrefill={(rec, reason) =>
               openRequisitionForm({
                 articleId: rec.article_id,
                 quantity: rec.suggested_reorder_qty,
                 sourceType: "REORDER",
                 sourceRef: rec.warehouse_code,
-                reason: rec.reason ?? null,
+                reason,
               })
             }
             onCreated={() => loadAll()}
@@ -2104,9 +2155,24 @@ export const ProcurementRepairablePanel = forwardRef<
                   </div>
                   {reqView === "kanban" ? (
                     <div className="mb-3">
+                      {canProcure ? (
+                        <p className="mb-2 px-1 text-xs text-text-muted">
+                          {t("procurement.boardMoveHint")}
+                        </p>
+                      ) : null}
                       <KanbanBoard
                         columns={reqKanbanColumns}
                         cards={reqKanbanCards}
+                        enableDrag={canProcure}
+                        canDrop={(_card, from, to) => isBoardOneClickMove(from, to)}
+                        onDrop={async (card, _from, to) => {
+                          const row = requisitions.find((r) => String(r.id) === card.id);
+                          if (!row) return false;
+                          const ok = await runRequisitionTransition(row, to);
+                          return ok
+                            ? true
+                            : { ok: false, reason: lastSaveErrorRef.current ?? undefined };
+                        }}
                         onCardClick={(card) => openRequisitionDetails(Number(card.id))}
                         emptyColumnLabel={t("kanban.emptyColumn", { ns: "common" })}
                         aria-label={t("procurement.requisitions.boardLabel")}
@@ -2167,9 +2233,24 @@ export const ProcurementRepairablePanel = forwardRef<
                   </div>
                   {reqView === "kanban" ? (
                     <div className="mb-3">
+                      {canProcure ? (
+                        <p className="mb-2 px-1 text-xs text-text-muted">
+                          {t("procurement.boardMoveHint")}
+                        </p>
+                      ) : null}
                       <KanbanBoard
                         columns={poKanbanColumns}
                         cards={poKanbanCards}
+                        enableDrag={canProcure}
+                        canDrop={(_card, from, to) => isBoardOneClickMove(from, to)}
+                        onDrop={async (card, _from, to) => {
+                          const row = purchaseOrders.find((r) => String(r.id) === card.id);
+                          if (!row) return false;
+                          const ok = await runPurchaseOrderTransition(row, to);
+                          return ok
+                            ? true
+                            : { ok: false, reason: lastSaveErrorRef.current ?? undefined };
+                        }}
                         onCardClick={(card) => openPoDetails(Number(card.id))}
                         emptyColumnLabel={t("kanban.emptyColumn", { ns: "common" })}
                         aria-label={t("procurement.purchaseOrders.boardLabel")}

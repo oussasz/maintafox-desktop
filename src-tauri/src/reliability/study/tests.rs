@@ -755,6 +755,7 @@ async fn fleet_view_ranks_equipment_by_downtime_with_pooled_kpis() {
             org_node_id: Some(1),
             equipment_class_id: Some(f.class_id),
             limit: None,
+            offset: None,
         },
     )
     .await
@@ -780,6 +781,24 @@ async fn fleet_view_ranks_equipment_by_downtime_with_pooled_kpis() {
     assert!(v.rows[0].last_study_id.is_some());
     assert!(v.equipment_classes.iter().any(|c| c.id == f.class_id));
     assert!(v.org_nodes.iter().any(|n| n.id == 1));
+
+    // Pages of the ranking: the second page holds the second asset; KPIs still cover both.
+    let page2 = fleet_view(
+        &f.db,
+        FleetViewFilter {
+            period_start: "2025-02-01T00:00:00Z".into(),
+            period_end: "2025-12-31T00:00:00Z".into(),
+            org_node_id: Some(1),
+            equipment_class_id: Some(f.class_id),
+            limit: Some(1),
+            offset: Some(1),
+        },
+    )
+    .await
+    .expect("page 2");
+    assert_eq!((page2.rows.len(), page2.total_rows), (1, 2));
+    assert_eq!(page2.rows[0].equipment_id, v.rows[1].equipment_id);
+    assert_eq!(page2.kpis.equipment_count, 2);
 
     let other = fleet_view(
         &f.db,
@@ -920,6 +939,8 @@ async fn fmeca_worksheet_proposes_modes_saves_rows_and_feeds_rcm_and_decisions()
             recommended_action: None,
             occurrence_source: "history".into(),
             occurrence_events_per_year: Some(brd.occurrence.events_per_year),
+            source_ram_ishikawa_diagram_id: None,
+            source_ishikawa_flow_node_id: None,
         },
         admin,
     )
@@ -1006,6 +1027,168 @@ async fn fmeca_worksheet_proposes_modes_saves_rows_and_feeds_rcm_and_decisions()
     assert_eq!(ws.rows[0].decision_status.as_deref(), Some("proposed"));
     let refused = crate::reliability::study::fmeca::delete_item(&f.db, study_id, row.item_id).await;
     assert!(matches!(refused, Err(AppError::ValidationFailed(m)) if m[0] == "FMECA_ITEM_HAS_DECISIONS"));
+
+    // A row whose ratings nobody chose (former root-cause placeholder, migration 221): listed and
+    // flagged, but out of the matrix, the RPN ranking, RCM and decisions until a person saves it.
+    let analysis = ws.analysis_id.expect("analysis");
+    exec(
+        &f.db,
+        &format!(
+            "INSERT INTO fmeca_items (entity_sync_id, analysis_id, functional_failure, failure_mode_id, failure_effect,              severity, occurrence, detectability, rpn, recommended_action, current_control, row_version, updated_at,              review_required) VALUES ('fm-placeholder', {analysis}, 'Desserrage', {mode}, 'Desserrage', 5, 5, 5, 125,              'Address RCA cause: Desserrage', '', 1, datetime('now'), 1)",
+            mode = f.mode_id
+        ),
+    )
+    .await;
+    let placeholder = scalar(
+        &f.db,
+        "SELECT id FROM fmeca_items WHERE entity_sync_id = 'fm-placeholder'",
+    )
+    .await;
+    let ws = crate::reliability::study::fmeca::get_worksheet(&f.db, study_id)
+        .await
+        .expect("worksheet");
+    assert_eq!(ws.rows_to_review, 1);
+    assert_eq!(ws.rows.len(), 2, "still listed");
+    let last = ws.rows.last().expect("row");
+    assert!(
+        last.review_required && last.item_id == placeholder,
+        "ranked after the rated rows"
+    );
+    assert_eq!(
+        ws.matrix.iter().map(|c| c.count).sum::<i64>(),
+        1,
+        "not counted in the matrix"
+    );
+    // The equipment FMECA list shows it flagged, after the ranked rows, never as a critical row.
+    let equipment = scalar(
+        &f.db,
+        &format!("SELECT equipment_id FROM fmeca_analyses WHERE id = {analysis}"),
+    )
+    .await;
+    let listed = crate::reliability::advanced_rams::queries::list_fmeca_items_for_equipment(
+        &f.db,
+        crate::reliability::advanced_rams::domain::FmecaItemsEquipmentFilter {
+            equipment_id: equipment,
+            severity: None,
+            occurrence: None,
+            limit: None,
+        },
+    )
+    .await
+    .expect("equipment fmeca");
+    let tail = listed.last().expect("listed");
+    assert!(tail.item.review_required && tail.item.id == placeholder);
+    assert_eq!(tail.inventory_status, "not_applicable");
+    // The RCM / criticality loop refuses to work on it.
+    let refused = crate::reliability::rcm_loop::fmeca_criticality_evidence(&f.db, placeholder).await;
+    assert!(
+        matches!(&refused, Err(AppError::ValidationFailed(m)) if m[0] == "FMECA_ITEM_REVIEW_REQUIRED"),
+        "{refused:?}"
+    );
+    let rcm = crate::reliability::study::rcm::get_worksheet(&f.db, study_id)
+        .await
+        .expect("rcm");
+    assert_eq!((rcm.rows.len(), rcm.rows_to_review), (1, 1));
+    let refused = create_decision(
+        &f.db,
+        CreateDecisionInput {
+            study_id,
+            title: "Sur une ligne non cotée".into(),
+            action_kind: "one_off_wo".into(),
+            equipment_id: Some(f.p101),
+            pm_plan_id: None,
+            proposed_interval_hours: None,
+            wo_type_code: Some("corrective".into()),
+            approver_id: None,
+            fmeca_item_id: Some(placeholder),
+            rcm_decision_id: None,
+            justification: None,
+            planned_cost: None,
+            failure_cost: None,
+        },
+        f.admin,
+    )
+    .await;
+    assert!(
+        matches!(&refused, Err(AppError::ValidationFailed(m)) if m[0] == "FMECA_ITEM_REVIEW_REQUIRED"),
+        "{refused:?}"
+    );
+    // The analyst rates it and saves: it counts again.
+    let ws = crate::reliability::study::fmeca::save_item(
+        &f.db,
+        crate::reliability::study::fmeca::SaveFmecaItemInput {
+            study_id,
+            item_id: Some(placeholder),
+            expected_row_version: Some(1),
+            failure_mode_id: f.mode_id,
+            component_label: None,
+            functional_failure: None,
+            failure_effect: Some("Desserrage du palier".into()),
+            failure_mechanism_id: None,
+            failure_cause_id: None,
+            severity: 6,
+            occurrence: 3,
+            detectability: 4,
+            current_control: None,
+            recommended_action: None,
+            occurrence_source: "analyst".into(),
+            occurrence_events_per_year: None,
+            source_ram_ishikawa_diagram_id: None,
+            source_ishikawa_flow_node_id: None,
+        },
+        admin,
+    )
+    .await
+    .expect("review saved");
+    assert_eq!(ws.rows_to_review, 0);
+    assert!(ws.rows.iter().all(|r| !r.review_required));
+    assert_eq!(ws.matrix.iter().map(|c| c.count).sum::<i64>(), 2);
+
+    // A placeholder row synced from a device that had not run migration 221 arrives unflagged:
+    // the startup pass flags it (exact signature only, once).
+    exec(
+        &f.db,
+        &format!(
+            "INSERT INTO ram_ishikawa_diagrams (entity_sync_id, equipment_id, title, flow_json, created_at, \
+             updated_at) VALUES ('ish-synced', {equipment}, 'Ishikawa', '{{}}', datetime('now'), datetime('now'))"
+        ),
+    )
+    .await;
+    for (key, action) in [
+        ("fm-synced", "Address RCA cause: Jeu"),
+        ("fm-rated", "Contrôler le jeu"),
+    ] {
+        exec(
+            &f.db,
+            &format!(
+                "INSERT INTO fmeca_items (entity_sync_id, analysis_id, functional_failure, failure_mode_id, \
+                 failure_effect, severity, occurrence, detectability, rpn, recommended_action, current_control, \
+                 source_ram_ishikawa_diagram_id, row_version, updated_at) \
+                 VALUES ('{key}', {analysis}, 'Jeu', {mode}, 'Jeu', 5, 5, 5, 125, '{action}', '', \
+                 (SELECT id FROM ram_ishikawa_diagrams WHERE entity_sync_id = 'ish-synced'), 1, datetime('now'))",
+                mode = f.mode_id
+            ),
+        )
+        .await;
+    }
+    let flagged = crate::reliability::study::fmeca::flag_placeholder_rows(&f.db)
+        .await
+        .expect("flag");
+    assert_eq!(flagged, 1, "the rated row with its own action is left alone");
+    assert_eq!(
+        crate::reliability::study::fmeca::flag_placeholder_rows(&f.db)
+            .await
+            .expect("again"),
+        0
+    );
+    assert_eq!(
+        scalar(
+            &f.db,
+            "SELECT review_required FROM fmeca_items WHERE entity_sync_id = 'fm-synced'"
+        )
+        .await,
+        1
+    );
 }
 
 #[tokio::test]

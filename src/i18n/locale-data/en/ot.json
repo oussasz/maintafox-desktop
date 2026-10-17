@@ -59,6 +59,15 @@
       "closedAt": "Closed on"
     },
     "filters": {
+      "mix": "Work mix",
+      "mixValue": {
+        "planned": "Planned (preventive and improvement)",
+        "reactive": "Reactive (corrective)",
+        "emergency": "Emergency (immediate corrective)"
+      },
+      "scope": "Scope",
+      "scopeOpen": "Open (not closed or cancelled)",
+      "equipment": "Equipment",
       "lifecycle": "Lifecycle",
       "status": "Status",
       "type": "Type",
@@ -696,6 +705,35 @@
     "linkedPermits": "Work permits: {{list}}"
   },
   "audit": {
+    "title": "Work order history",
+    "permitRequired": "Permit / lockout now required",
+    "permitNotRequired": "Permit / lockout no longer required",
+    "actions": {
+      "created": "Work order created",
+      "submitted": "Submitted to planning",
+      "planned": "Planned",
+      "planning_approved": "Planning approved",
+      "marked_ready": "Marked ready",
+      "returned_to_planning": "Returned to planning",
+      "assigned": "Assigned",
+      "emergency_reassigned": "Emergency reassignment",
+      "started": "Work started",
+      "paused": "Paused",
+      "held": "Put on hold",
+      "resumed": "Resumed",
+      "mechanically_completed": "Work completed",
+      "failure_detail_saved": "Failure details recorded",
+      "verification_saved": "Technical verification recorded",
+      "verified": "Verified",
+      "closed": "Closed",
+      "reopened": "Reopened",
+      "cancelled": "Cancelled",
+      "rca_updated": "Root cause analysis updated",
+      "attachment_uploaded": "Attachment added",
+      "service_cost_updated": "Service cost updated",
+      "permit_requirement_changed": "Permit requirement changed",
+      "other": "Change recorded"
+    },
     "created": "Created",
     "updated": "Last updated",
     "closed": "Closed",
@@ -758,10 +796,6 @@
     "resume": "Resume",
     "submitForPlanning": "Submit for Planning",
     "markReady": "Mark Ready"
-  },
-  "print": {
-    "button": "Print",
-    "title": "WO Print Sheet"
   },
   "cost": {
     "title": "Cost Summary",
@@ -898,12 +932,6 @@
     "statusFromDetailHint": "Click a card to open the work order: status changes are made from its detail, where each step checks its conditions (permit, parts, reasons).",
     "transitionNotAllowed": "Cannot move \"{{code}}\" from \"{{from}}\" to {{to}}. Transition not allowed."
   },
-  "shift": {
-    "morning": "Morning",
-    "afternoon": "Afternoon",
-    "night": "Night",
-    "full_day": "Full day"
-  },
   "print": {
     "pageTitle": "WO Sheet",
     "heading": "Work Order Sheet",
@@ -961,7 +989,9 @@
     "laborCost": "Labor",
     "partsCost": "Parts",
     "serviceCost": "Services",
-    "totalCost": "Total"
+    "totalCost": "Total",
+    "button": "Print",
+    "title": "WO Print Sheet"
   },
   "lifecycle": {
     "title": "PRD lifecycle state (derived from the work order's facts)",

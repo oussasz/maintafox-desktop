@@ -1,4 +1,14 @@
 {
+  "overdueChooser": {
+    "title": "Which list to open?",
+    "description": "The \"Overdue\" figure adds up three lists. Choose the one to open.",
+    "pm": "Overdue PM occurrences",
+    "pmHint": "Due queue, filtered on \"overdue\".",
+    "wo": "Open work orders",
+    "woHint": "The list cannot yet filter on a passed planned end: it shows all open work orders.",
+    "di": "Requests being handled",
+    "diHint": "The list cannot yet filter on \"waiting more than 7 days\": it shows all requests being handled."
+  },
   "page": {
     "title": "Overview",
     "welcome": "Welcome, {{name}}"

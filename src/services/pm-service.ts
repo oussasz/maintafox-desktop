@@ -526,6 +526,25 @@ export function getPmGovernanceKpiReport(
 ): Promise<PmGovernanceKpiReport> {
   return invokeParsed("get_pm_governance_kpi_report", { input }, PmGovernanceKpiReportSchema);
 }
+const PmOptionSchema = z.object({
+  code: z.string(),
+  label: z.string(),
+  label_en: z.string().nullable(),
+});
+
+const PmExecutionOptionsSchema = z.object({
+  reasons: z.array(PmOptionSchema),
+  severities: z.array(PmOptionSchema),
+});
+
+export type PmOption = z.infer<typeof PmOptionSchema>;
+export type PmExecutionOptions = z.infer<typeof PmExecutionOptionsSchema>;
+
+/** Deferral / miss / cancel reasons (PM.DEFERRAL_REASONS) and finding severities (PM.FINDING_SEVERITY). */
+export function listPmExecutionOptions(): Promise<PmExecutionOptions> {
+  return invokeParsed("list_pm_execution_options", undefined, PmExecutionOptionsSchema);
+}
+
 export function getPmDueMetrics(): Promise<PmDueMetrics> {
   return invokeParsed("get_pm_due_metrics", undefined, PmDueMetricsSchema);
 }

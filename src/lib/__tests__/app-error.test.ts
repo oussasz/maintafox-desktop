@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { i18n } from "@/i18n/config";
-import { describeAppError } from "@/lib/app-error";
+import { appErrorReason, describeAppError } from "@/lib/app-error";
 
 describe("describeAppError", () => {
   it("shows a plain message, not the raw schema dump, when a response has an unexpected format", () => {
@@ -25,5 +25,23 @@ describe("describeAppError", () => {
     // The technical detail is kept for diagnosis, in the console only.
     expect(consoleError).toHaveBeenCalled();
     consoleError.mockRestore();
+  });
+});
+
+describe("appErrorReason", () => {
+  it("gives the coded rule rather than a generic validation title", () => {
+    const err = {
+      code: "VALIDATION_FAILED",
+      message: "Validation failed: Two-person rule",
+      details: [{ code: "PERMIT_TWO_PERSON_VERIFY", message: "Two-person rule", params: {} }],
+    };
+    const reason = appErrorReason(err);
+    expect(reason).not.toBe(describeAppError(err).title);
+    expect(reason.length).toBeGreaterThan(0);
+  });
+
+  it("falls back to the title for other failures", () => {
+    const err = { code: "DATABASE_ERROR", message: "disk I/O error" };
+    expect(appErrorReason(err)).toBe(describeAppError(err).title);
   });
 });

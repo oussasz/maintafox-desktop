@@ -18,6 +18,7 @@
     "summaryBody_other": "{{first}} et {{rest}} autre(s)"
   },
   "preferences": {
+    "loadError": "Impossible de charger vos préférences de notification",
     "title": "Préférences de notification",
     "intro": "Choisissez ce que vous recevez et comment. Vos notifications sont dans la",
     "openInbox": "boîte de réception",

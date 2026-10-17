@@ -35,7 +35,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { StatusChip } from "@/components/ui/status-chip";
+import { mfTable } from "@/design-system/tokens";
 import { mfTone, type Tone, toneOf } from "@/design-system/tone";
+import { cn } from "@/lib/utils";
 import {
   applyRefImportBatch,
   createRefImportBatch,
@@ -220,15 +222,15 @@ export function ReferenceImportWizard({
 
         {/* Step indicator */}
         <div className="flex items-center gap-2 text-xs text-text-muted mb-2">
-          <Badge variant={step === "upload" ? "default" : "secondary"} className="text-[10px]">
+          <Badge variant={step === "upload" ? "default" : "secondary"} className="text-xs">
             1 – {t("import.stepUpload")}
           </Badge>
           <ChevronRight className="h-3 w-3" />
-          <Badge variant={step === "validate" ? "default" : "secondary"} className="text-[10px]">
+          <Badge variant={step === "validate" ? "default" : "secondary"} className="text-xs">
             2 – {t("import.stepValidate")}
           </Badge>
           <ChevronRight className="h-3 w-3" />
-          <Badge variant={step === "result" ? "default" : "secondary"} className="text-[10px]">
+          <Badge variant={step === "result" ? "default" : "secondary"} className="text-xs">
             3 – {t("import.stepResult")}
           </Badge>
         </div>
@@ -266,7 +268,7 @@ export function ReferenceImportWizard({
             {fileName && (
               <div className="flex items-center justify-between rounded bg-surface-1 px-3 py-2 text-sm">
                 <span className="truncate">{fileName}</span>
-                <Badge variant="secondary" className="text-[10px]">
+                <Badge variant="secondary" className="text-xs">
                   {t("import.rowCount", { count: parsedRows.length })}
                 </Badge>
               </div>
@@ -315,7 +317,7 @@ export function ReferenceImportWizard({
             {preview && (
               <div className="max-h-64 overflow-auto border border-surface-border rounded">
                 <table className="w-full text-xs">
-                  <thead className="bg-surface-1 sticky top-0">
+                  <thead className={cn("sticky top-0", mfTable.header)}>
                     <tr>
                       <th className="px-2 py-1.5 text-left">#</th>
                       <th className="px-2 py-1.5 text-left">{t("import.colCode")}</th>

@@ -115,7 +115,8 @@
         "h24": "24 heures"
       },
       "resume": "Reprendre",
-      "actionFailed": "L'action n'a pas abouti : {{message}}"
+      "actionFailed": "L'action n'a pas abouti : {{message}}",
+      "notReported": "non communiqué"
     },
     "indicator": {
       "idle": "À jour",
@@ -148,7 +149,73 @@
         "escalate": "Escalader",
         "dismiss": "Ignorer",
         "review": "Examiner"
-      }
+      },
+      "exported": "Diagnostic enregistré",
+      "exportFailed": "Le diagnostic n'a pas pu être enregistré"
+    },
+    "syncCenterDescription": "État de la synchronisation et éléments à examiner sur cet appareil.",
+    "rejectedCount": "Éléments refusés par le serveur : {{formatted}}",
+    "inboxLoadError": "Impossible de charger les conflits à examiner",
+    "inboxLoading": "Chargement des conflits…",
+    "versionNumber": "version {{version}}",
+    "detectedAt": "détecté le {{date}}",
+    "recordUnidentified": "(numéro non disponible)",
+    "technicalDetails": "Détails techniques",
+    "noRemoteVersion": "Le serveur n'a envoyé aucune version de cet enregistrement",
+    "recommendedShort": "recommandé",
+    "status": {
+      "escalated": "Escaladé"
+    },
+    "confirm": {
+      "title": "Confirmer le choix",
+      "accept_local": "La version de cet appareil pour « {{record}} » sera conservée et renvoyée au serveur ; la version reçue sera écartée.",
+      "accept_remote": "La version du serveur pour « {{record}} » remplacera celle de cet appareil. Les modifications faites ici sur cet enregistrement seront perdues.",
+      "renumber_local": "L'enregistrement de cet appareil reçoit un nouveau numéro ; l'enregistrement reçu garde le sien (« {{record}} »).",
+      "dismiss": "Le conflit sur « {{record}} » sera écarté sans appliquer aucune des deux versions."
+    },
+    "entity": {
+      "other": "Autre enregistrement",
+      "equipment": "Équipement",
+      "intervention_requests": "Demande d'intervention",
+      "work_orders": "Ordre de travail",
+      "work_order_tasks": "Tâche d'OT",
+      "work_order_parts": "Pièce d'OT",
+      "work_order_attachments": "Pièce jointe d'OT",
+      "di_attachments": "Pièce jointe de DI",
+      "pm_plans": "Plan préventif",
+      "pm_plan_versions": "Version de plan préventif",
+      "pm_occurrences": "Échéance préventive",
+      "pm_executions": "Exécution préventive",
+      "inspection_rounds": "Tournée d'inspection",
+      "inspection_templates": "Modèle d'inspection",
+      "inspection_results": "Résultat d'inspection",
+      "articles": "Article",
+      "inventory_transactions": "Mouvement de stock",
+      "stock_reservations": "Réservation de stock",
+      "purchase_orders": "Commande d'achat",
+      "procurement_requisitions": "Demande d'achat",
+      "goods_receipts": "Réception",
+      "inventory_suppliers": "Fournisseur",
+      "personnel": "Personne",
+      "personnel_availability_blocks": "Absence",
+      "teams": "Équipe",
+      "positions": "Poste",
+      "user_accounts": "Compte utilisateur",
+      "roles": "Rôle",
+      "org_nodes": "Unité d'organisation",
+      "org_node_types": "Type d'unité",
+      "org_structure_models": "Modèle d'organisation",
+      "permit_types": "Type de permis",
+      "permit_isolations": "Isolement de permis",
+      "library_documents": "Document de bibliothèque",
+      "reference_values": "Valeur de référence",
+      "lookup_values": "Valeur de liste",
+      "cost_centers": "Centre de coût",
+      "budget_versions": "Version de budget",
+      "budget_lines": "Ligne de budget",
+      "training_sessions": "Session de formation",
+      "failure_events": "Événement de défaillance",
+      "app_settings": "Paramètre"
     }
   },
   "status": {
@@ -156,7 +223,8 @@
     "offline": "Hors ligne",
     "db": "BDD",
     "dbHealthy": "Base de données opérationnelle",
-    "pendingSync": "{{count}} en attente"
+    "pendingSync": "{{count}} en attente",
+    "version": "Version {{version}}"
   },
   "statusBar": {
     "online": "En ligne",
@@ -172,7 +240,10 @@
     "quit": "Quitter"
   },
   "commandPalette": {
-    "title": "Palette de commandes"
+    "title": "Palette de commandes",
+    "open": "Aller à un module…",
+    "placeholder": "Nom du module (ex. Ordres de travail)…",
+    "noResults": "Aucun module ne correspond à « {{query}} »"
   },
   "session": {
     "timeRemaining": "Session expire dans {{minutes}} min",
@@ -212,7 +283,17 @@
     "issuesTitle": "{{count}} problème(s) détecté(s)",
     "autoRepairable": "(réparable)",
     "recheck": "Revérifier",
-    "repairBtn": "Réparer les données"
+    "repairBtn": "Réparer les données",
+    "technicalDetails": "Détails techniques",
+    "repairConfirmTitle": "Réparer les données de référence initiales ?",
+    "repairConfirmBody": "Les listes et valeurs de référence Maintafox manquantes sont réécrites. Les listes et valeurs ajoutées par votre site sont conservées.",
+    "issue": {
+      "INSUFFICIENT_VALUES": "Une liste de référence a moins de valeurs que Maintafox n'en exige.",
+      "MISSING_DOMAIN": "Une liste de référence Maintafox est absente.",
+      "MISSING_TABLE": "Une table de la base de données est absente.",
+      "SEED_NOT_APPLIED": "Les données de référence initiales n'ont pas été appliquées.",
+      "other": "Un contrôle d'intégrité a échoué."
+    }
   },
   "nav": {
     "groups": {

@@ -40,8 +40,12 @@ export function effectiveUnitPrice(source: SupplierArticleSource): number | null
 
 export interface SourceRating {
   sourceId: number;
-  /** 1–5 stars; higher is better. */
+  /** 1–5 stars; higher is better. Relative to the other suppliers of the same article. */
   stars: number;
+  /** Position among the candidates (1 = best) on each criterion; null when the value is unknown. */
+  priceRank: number | null;
+  leadRank: number | null;
+  riskRank: number | null;
 }
 
 /**
@@ -69,6 +73,17 @@ export function computeCompositeRatings(sources: SupplierArticleSource[]): Sourc
     return ranks;
   };
 
+  const knownRank = (score: (s: SupplierArticleSource) => number | null) => {
+    const ranks = rankBy(score);
+    return (s: SupplierArticleSource) => (score(s) == null ? null : (ranks.get(s.id) ?? 0) + 1);
+  };
+  const priceRankOf = knownRank(effectiveUnitPrice);
+  const leadRankOf = knownRank((s) => s.lead_time_days);
+  const riskRankOf = knownRank((s) => {
+    const risk = normalizeRiskLevel(s.risk_level);
+    return risk == null ? null : RISK_RANK[risk];
+  });
+
   const priceRanks = rankBy(effectiveUnitPrice);
   const leadRanks = rankBy((s) => s.lead_time_days);
   const riskRanks = rankBy((s) => {
@@ -86,9 +101,16 @@ export function computeCompositeRatings(sources: SupplierArticleSource[]): Sourc
   const worst = Math.max(...scores.map((s) => s.score));
   const span = worst - best;
 
-  return scores.map(({ sourceId, score }) => ({
-    sourceId,
-    // No spread between candidates → they are equally rated.
-    stars: span === 0 ? 5 : Math.max(1, Math.round(5 - ((score - best) / span) * 4)),
-  }));
+  const byId = new Map(sources.map((s) => [s.id, s]));
+  return scores.map(({ sourceId, score }) => {
+    const source = byId.get(sourceId) as SupplierArticleSource;
+    return {
+      sourceId,
+      // No spread between candidates → they are equally rated.
+      stars: span === 0 ? 5 : Math.max(1, Math.round(5 - ((score - best) / span) * 4)),
+      priceRank: priceRankOf(source),
+      leadRank: leadRankOf(source),
+      riskRank: riskRankOf(source),
+    };
+  });
 }

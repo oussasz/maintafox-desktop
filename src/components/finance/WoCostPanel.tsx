@@ -22,6 +22,7 @@ import { type Tone, mfTone, toneOf } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
 import { cn } from "@/lib/utils";
+import { onWoCostChanged } from "@/lib/wo-cost-events";
 import {
   type WoCostFigures,
   type WoCostView,
@@ -76,6 +77,9 @@ export function WoCostPanel({ woId, status }: WoCostPanelProps) {
   useEffect(() => {
     void load();
   }, [load, status]);
+
+  // Labour or parts booked on this work order (execution controls) change its actuals: re-read.
+  useEffect(() => onWoCostChanged(woId, () => void load()), [woId, load]);
 
   if (loading && !view) {
     return (

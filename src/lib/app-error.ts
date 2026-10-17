@@ -71,3 +71,15 @@ export function describeAppError(err: unknown): AppErrorDescription {
 
   return { title, description, code };
 }
+
+/**
+ * One line saying why an action was refused: the translated rule (coded validation details)
+ * when the backend gave one, otherwise the title. For inline messages and screen-reader
+ * announcements, where a generic "Validation failed." alone would hide the reason.
+ */
+export function appErrorReason(err: unknown): string {
+  const described = describeAppError(err);
+  return described.code === "VALIDATION_FAILED" && described.description
+    ? described.description
+    : described.title;
+}

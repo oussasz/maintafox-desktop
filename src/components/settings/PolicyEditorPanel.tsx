@@ -37,6 +37,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useStepUp } from "@/hooks/use-step-up";
 import { type AppErrorDescription, describeAppError } from "@/lib/app-error";
 import {
   activatePolicy,
@@ -159,6 +160,9 @@ export function PolicyEditorPanel({
   onToast,
 }: PolicyEditorPanelProps) {
   const { t } = useTranslation("settings");
+  // Session and password policies need a recent re-authentication (the backend requires it):
+  // the step-up dialog opens when it is missing, then the activation runs.
+  const { withStepUp, StepUpDialogElement } = useStepUp();
 
   const {
     draftPolicy,
@@ -312,10 +316,12 @@ export function PolicyEditorPanel({
     if (!draftPolicy) return;
     setPolicyOperationLoading(true);
     try {
-      await activatePolicy({
-        domain,
-        snapshot_id: draftPolicy.id,
-      });
+      await withStepUp(() =>
+        activatePolicy({
+          domain,
+          snapshot_id: draftPolicy.id,
+        }),
+      );
       setDraftPolicy(null);
       setTestResults(null);
       if (domain === "session") {
@@ -352,6 +358,8 @@ export function PolicyEditorPanel({
     setPolicyOperationLoading,
     setTestResults,
     t,
+    ,
+    withStepUp,
   ]);
 
   // ── Discard ───────────────────────────────────────────────────────────
@@ -764,6 +772,7 @@ export function PolicyEditorPanel({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      {StepUpDialogElement}
     </div>
   );
 }

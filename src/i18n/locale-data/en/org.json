@@ -9,7 +9,13 @@
     "pick": "Select…",
     "add": "Add rule",
     "remove": "Remove rule",
-    "duplicatePair": "This parent → child rule already exists."
+    "duplicatePair": "This parent → child rule already exists.",
+    "loadError": "The rules of this draft could not be loaded",
+    "unknownType": "Unknown type",
+    "contains": "may contain",
+    "pairLabel": "{{parent}} → {{child}}",
+    "removeConfirmTitle": "Remove this rule?",
+    "removeConfirmBody": "The rule \"{{pair}}\" will be removed from the draft. If the tree already contains this link, publishing stays blocked until the rule is restored."
   },
   "createNode": {
     "titleRoot": "Add root org node",
@@ -73,7 +79,7 @@
     "statusDraft": "Draft",
     "modelSummary": "Model summary",
     "totalNodes": "Total nodes",
-    "nodeTypesCount": "Node types",
+    "nodeTypesCount": "Types in use",
     "searchPlaceholder": "Search by code, name, or type…",
     "addRootNode": "Add root",
     "addChildNode": "Add child",
@@ -144,7 +150,8 @@
       "unassignEquipment": "Remove {{code}} from this unit",
       "unassignTitle": "Remove equipment from this unit?",
       "unassignDescription": "{{code}} — {{name}} will no longer be placed in {{unit}}. Its history is kept and you can place it again later.",
-      "unassignConfirm": "Remove from unit"
+      "unassignConfirm": "Remove from unit",
+      "equipmentCountUnavailable": "Not loaded — see the Equipment tab"
     },
     "actions": {
       "moveNode": "Move unit…",
@@ -164,11 +171,12 @@
     "statusOther": "Other status",
     "loading": "Loading the organization…",
     "expandUnit": "Show the sub-units of {{name}}",
-    "collapseUnit": "Hide the sub-units of {{name}}"
+    "collapseUnit": "Hide the sub-units of {{name}}",
+    "refreshFailed": "The structure could not be refreshed — the tree shown may be out of date"
   },
   "nodeTypes": {
     "title": "Node Type Manager",
-    "description": "Define node types with icons, colors, and capability flags.",
+    "description": "Define node types with their icon and capabilities.",
     "loading": "Loading node types…",
     "empty": "No node types defined yet.",
     "addType": "Add Type",
@@ -202,7 +210,13 @@
       "hard-hat": "Hard Hat",
       "zap": "Energy",
       "circuit-board": "Circuit Board"
-    }
+    },
+    "loadError": "The node types could not be loaded",
+    "editTypeNamed": "Edit type {{label}}",
+    "deactivate": "Deactivate type",
+    "deactivateNamed": "Deactivate type {{label}}",
+    "deactivateConfirmTitle": "Deactivate this node type?",
+    "deactivateConfirmBody": "The type \"{{label}}\" can no longer be chosen for new nodes in this draft. No node uses it today."
   },
   "export": {
     "title": "Export",
@@ -252,7 +266,8 @@
       "COST_CENTER_INCOMPATIBLE": "«{{nodeName}}» has a cost center, but its level «{{typeCode}}» does not allow cost centers. Remove the cost center or allow them on that level.",
       "UNMAPPED_ACTIVE_NODE_WITH_OPS_REFS": "«{{nodeName}}» is still used by live data but is missing from this draft. Repair the draft copies, or detach those links before publishing."
     },
-    "refreshTimeline": "Refresh the change timeline"
+    "refreshTimeline": "Refresh the change timeline",
+    "auditLoadError": "The change history could not be loaded"
   },
   "errors": {
     "ORG_VALIDATE_NOT_DRAFT": "This model is «{{status}}», not a draft. Only drafts can be checked for publish.",
@@ -350,7 +365,8 @@
       "ready": "Ready",
       "warning": "Warning",
       "error": "Blocked"
-    }
+    },
+    "retryValidation": "Run the check again"
   },
   "capabilities": {
     "asset": "ASSET",

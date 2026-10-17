@@ -260,20 +260,26 @@ pub async fn peek_active_envelope_meta(db: &DatabaseConnection) -> AppResult<Opt
     )))
 }
 
-/// key_id that signed the active envelope (used to target compromise responses at the real key).
-pub async fn active_envelope_key_id(db: &DatabaseConnection) -> AppResult<Option<String>> {
+/// Issuer and key_id that signed the active envelope (used to target compromise responses at the
+/// real key, never at a name written in the client).
+pub async fn active_envelope_signer(db: &DatabaseConnection) -> AppResult<Option<(String, String)>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
-            "SELECT e.key_id
+            "SELECT e.issuer, e.key_id
              FROM entitlement_cache_state s
              JOIN entitlement_envelopes e ON e.id = s.active_envelope_id
              WHERE s.id = 1",
             [],
         ))
         .await?;
-    row.map(|r| r.try_get::<String>("", "key_id").map_err(|e| decode_err("key_id", e)))
-        .transpose()
+    row.map(|r| {
+        Ok((
+            r.try_get::<String>("", "issuer").map_err(|e| decode_err("issuer", e))?,
+            r.try_get::<String>("", "key_id").map_err(|e| decode_err("key_id", e))?,
+        ))
+    })
+    .transpose()
 }
 
 fn is_soft_lineage_refresh(input: &EntitlementEnvelopeInput) -> bool {

@@ -220,14 +220,22 @@
     "promoteMenu": "Promouvoir en action corrective",
     "promoteTitle": "Créer une action corrective à partir de la cause",
     "promoteBody": "Crée un lien traçable vers ce diagramme Ishikawa. Enregistrez d'abord le diagramme si nécessaire.",
-    "promoteTargetWo": "Ordre de travail (correctif)",
+    "promoteTargetWo": "Ordre de travail correctif",
     "promoteTargetFmeca": "Ligne FMECA",
     "promoteNeedSave": "Enregistrez le diagramme avant de promouvoir une cause.",
     "promoteNeedUser": "Connexion requise pour créer un ordre de travail.",
-    "promoteNeedFmecaAnalysis": "Créez d'abord une analyse FMECA pour cet équipement.",
     "promoteSubmit": "Créer",
     "promoteSuccessWo": "Ordre de travail créé à partir de la cause RCA.",
-    "promoteSuccessFmeca": "Ligne FMECA créée à partir de la cause RCA."
+    "promoteSuccessFmeca": "Ligne d’AMDEC créée à partir de la cause racine.",
+    "unreadable": "Le diagramme enregistré est illisible. Il est conservé tel quel ; rien n'est enregistré par-dessus.",
+    "diagramTitle": "Diagramme des causes",
+    "promoteTarget": "Transformer la cause en",
+    "promoteWoType": "Type d'OT",
+    "promoteWoTypePlaceholder": "Choisir un type correctif",
+    "promoteWoTitle": "Cause racine : {{cause}}",
+    "promoteFmecaHint": "Le formulaire AMDEC de l'étude s'ouvre avec cette cause : choisissez le mode de défaillance et cotez gravité, occurrence et détection.",
+    "promoteOpenFmeca": "Ouvrir le formulaire AMDEC",
+    "promoteBusy": "Enregistrement…"
   },
   "foundation": {
     "title": "Socle données",
@@ -288,10 +296,10 @@
     "criticality": "Nombre de criticité (MIL-STD-1629A)",
     "beta": "Probabilité d'effet β",
     "betaOptions": {
+      "0": "0 — sans effet",
       "1": "1,0 — perte certaine",
       "0.5": "0,5 — perte probable",
-      "0.1": "0,1 — perte possible",
-      "0": "0 — sans effet"
+      "0.1": "0,1 — perte possible"
     },
     "alpha": "Ratio du mode α",
     "lambda": "Taux de défaillance λp (par heure)",
@@ -760,7 +768,9 @@
       "colData": "Données",
       "noStudy": "Aucune",
       "selectAsset": "Sélectionner {{code}}",
-      "shareLabel": "{{share}} de l'arrêt du parc"
+      "shareLabel": "{{share}} de l'arrêt du parc",
+      "handedError": "L'équipement transmis n'a pas pu être chargé",
+      "handedSelected": "{{code}} est sélectionné pour une étude."
     },
     "dataQuality": {
       "complete": "Complètes",
@@ -809,7 +819,8 @@
       "competingModes": "Autres modes de défaillance",
       "competingIgnore": "Autres modes : ignorés",
       "competingSuspend": "Autres modes : suspensions",
-      "competingNeedsMode": "Choisissez d'abord un mode de défaillance"
+      "competingNeedsMode": "Choisissez d'abord un mode de défaillance",
+      "periodOrder": "La période doit commencer avant de se terminer."
     },
     "data": {
       "title": "Défaillances et suspensions",
@@ -992,7 +1003,9 @@
       "hazardLegend": "h(t), échelle de droite",
       "hazardUnit": "/1 000 h",
       "proposedLegend": "Intervalle proposé",
-      "currentLegend": "Pratique actuelle"
+      "currentLegend": "Pratique actuelle",
+      "recomputeError": "L'analyse n'a pas pu être recalculée : les chiffres affichés sont ceux du dernier calcul réussi",
+      "recomputeRetry": "Recalculer"
     },
     "cost": {
       "title": "Intervalle de remplacement optimal",
@@ -1091,7 +1104,8 @@
       "approver": "Approbateur",
       "anyApprover": "Toute personne habilitée",
       "justification": "Justification",
-      "submit": "Envoyer pour approbation"
+      "submit": "Envoyer pour approbation",
+      "loadError": "Les plans, types d'OT ou approbateurs n'ont pas pu être chargés"
     },
     "decisions": {
       "title": "Journal des décisions",
@@ -1136,7 +1150,9 @@
       "applyWoAction": "Créer l'OT",
       "rejectTitle": "Refuser la décision",
       "rejectReason": "Motif du refus (obligatoire)",
-      "rejectAction": "Refuser la décision"
+      "rejectAction": "Refuser la décision",
+      "approveTitle": "Approuver cette décision ?",
+      "approveBody": "« {{title}} » devient approuvée et peut ensuite être appliquée (révision de PM ou OT)."
     },
     "backToModule": "Parc et études",
     "fmeca": {
@@ -1204,7 +1220,14 @@
       "save": "Enregistrer la ligne",
       "rootCauseTitle": "Causes racines (Ishikawa)",
       "rootCauseHint": "Diagramme de causes par équipement : ajoutez les causes sous chaque branche, enregistrez, et transformez une cause en OT ou en ligne d'AMDEC.",
-      "rootCauseEquipment": "Équipement"
+      "rootCauseEquipment": "Équipement",
+      "toReview": "À revoir",
+      "toReviewHint": "Cotations non choisies par une personne (ancienne saisie automatique). Ouvrez la ligne, cotez-la et enregistrez : d'ici là elle n'est pas comptée.",
+      "rowsToReview_one": "{{count}} ligne à revoir non comptée",
+      "rowsToReview_other": "{{count}} lignes à revoir non comptées",
+      "rowsToReviewBody": "Leurs cotations ont été posées automatiquement, pas choisies. Elles restent listées mais sont exclues de la matrice, du classement par IPR, de l'analyse MBF et des décisions tant qu'elles ne sont pas cotées et enregistrées.",
+      "fromRootCause": "Depuis le diagramme des causes",
+      "fromRootCauseBody": "Cause : {{cause}}. Choisissez le mode de défaillance et cotez la ligne ; rien n'est prérempli."
     },
     "scales": {
       "title": "Grilles de cotation de l'usine",
@@ -1338,7 +1361,10 @@
       "decisionTimeBased": "Remplacer {{element}} toutes les {{interval}} {{unit}}",
       "decisionCondition": "Mettre en place la surveillance de {{element}} toutes les {{interval}} {{unit}}",
       "decisionFailureFinding": "Essai périodique de détection de panne : {{element}}",
-      "decisionRedesign": "Modification : {{element}}"
+      "decisionRedesign": "Modification : {{element}}",
+      "rowsToReviewBody": "Cotez-les à l'étape AMDEC pour les analyser ici.",
+      "previewError": "La recommandation n'a pas pu être recalculée : celle affichée peut être périmée, l'enregistrement attend",
+      "previewRetry": "Recalculer"
     },
     "system": {
       "tool": "Outil de modélisation",
@@ -1456,7 +1482,8 @@
         "wrong_source": "{{node}} : l'événement de tête doit être une porte.",
         "needs_life_distribution": "{{node}} : la simulation demande une loi de durée de vie (pas une fiabilité saisie).",
         "needs_mttr": "{{node}} : temps de réparation inconnu, indiquez-le."
-      }
+      },
+      "evalError": "Le modèle n'a pas pu être évalué"
     },
     "advanced": {
       "tools": "Outils avancés",
@@ -1567,7 +1594,10 @@
       },
       "openInspections": "Ouvrir les inspections",
       "refreshKpi": "Actualiser l'indicateur",
-      "dismiss": "Ignorer ce point"
+      "dismiss": "Ignorer ce point",
+      "dismissTitle": "Écarter cet écart de données ?",
+      "dismissBody": "« {{issue}} » sur {{asset}} ne sera plus listé. Écartez-le seulement si les données sont justes telles quelles.",
+      "truncated": "Seuls les premiers sont listés : corrigez-les puis actualisez pour voir les suivants."
     }
   }
 }

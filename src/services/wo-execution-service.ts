@@ -1,4 +1,5 @@
 import { invoke } from "@/lib/ipc-invoke";
+import { notifyWoCostChanged } from "@/lib/wo-cost-events";
 import type {
   AddWoToolInput,
   DowntimeType,
@@ -107,14 +108,16 @@ function maybeWrapBlockingError(error: unknown): never {
 
 export async function completeMechanically(input: WoMechCompleteInput): Promise<WorkOrder> {
   try {
-    return await invoke<WorkOrder>("complete_wo_mechanically", { input });
+    const wo = await invoke<WorkOrder>("complete_wo_mechanically", { input });
+    notifyWoCostChanged(input.wo_id);
+    return wo;
   } catch (error) {
     maybeWrapBlockingError(error);
   }
 }
 
 export async function addLabor(input: AddLaborInput): Promise<WoIntervener> {
-  return invoke<WoIntervener>("add_labor", { input });
+  return announceCost(await invoke<WoIntervener>("add_labor", { input }));
 }
 
 /** Labour for a person of the register, login or not (contractor technicians included). */
@@ -132,7 +135,7 @@ export interface AddPersonnelLaborInput {
 
 /** Refused with the qualification reason when the person lacks what the OT requires. */
 export async function addPersonnelLabor(input: AddPersonnelLaborInput): Promise<WoIntervener> {
-  return invoke<WoIntervener>("add_personnel_labor", { input });
+  return announceCost(await invoke<WoIntervener>("add_personnel_labor", { input }));
 }
 
 /** Everyone who can be booked for labour: active personnel, with or without a login. */
@@ -156,7 +159,9 @@ export async function closeLabor(
   endedAt: string,
   actorId: number,
 ): Promise<WoIntervener> {
-  return invoke<WoIntervener>("close_labor", { intervenerId, endedAt, actorId });
+  return announceCost(
+    await invoke<WoIntervener>("close_labor", { intervenerId, endedAt, actorId }),
+  );
 }
 
 export async function listLabor(woId: number): Promise<WoIntervener[]> {
@@ -178,7 +183,7 @@ export async function listWoLaborCandidates(): Promise<WoLaborCandidate[]> {
 }
 
 export async function addPart(input: AddPartInput): Promise<WoExecPart> {
-  return invoke<WoExecPart>("add_part", { input });
+  return announceCost(await invoke<WoExecPart>("add_part", { input }));
 }
 
 export async function recordPartUsage(
@@ -186,11 +191,13 @@ export async function recordPartUsage(
   quantityUsed: number,
   unitCost?: number | null,
 ): Promise<WoExecPart> {
-  return invoke<WoExecPart>("record_part_usage", {
-    woPartId,
-    quantityUsed,
-    unitCost: unitCost ?? null,
-  });
+  return announceCost(
+    await invoke<WoExecPart>("record_part_usage", {
+      woPartId,
+      quantityUsed,
+      unitCost: unitCost ?? null,
+    }),
+  );
 }
 
 export async function confirmNoParts(woId: number): Promise<void> {
@@ -263,7 +270,7 @@ export interface MarkPartNotUsedInput {
 }
 
 export async function markPartNotUsed(input: MarkPartNotUsedInput): Promise<WoExecPart> {
-  return invoke<WoExecPart>("mark_part_not_used", { input });
+  return announceCost(await invoke<WoExecPart>("mark_part_not_used", { input }));
 }
 
 export async function getPlanAdherence(woId: number): Promise<WoPlanAdherence> {
@@ -290,4 +297,10 @@ export async function markWoToolUsed(toolId: number): Promise<WoTool> {
 
 export async function markWoToolNotUsed(toolId: number): Promise<WoTool> {
   return invoke<WoTool>("mark_wo_tool_not_used", { toolId });
+}
+
+/** Tells the cost panel that the work order's labour or parts changed (see `wo-cost-events`). */
+function announceCost<T extends { work_order_id: number }>(row: T): T {
+  notifyWoCostChanged(row.work_order_id);
+  return row;
 }

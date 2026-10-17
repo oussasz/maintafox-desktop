@@ -198,8 +198,9 @@ pub async fn build_executive_dashboard(
         denied_kpi("total_assets", None)
     };
 
-    // Overdue items: requests waiting more than 7 days + PM occurrences past due, at each instant.
-    let overdue_items = if can_di || can_pm {
+    // Overdue items, at each instant: requests waiting more than 7 days + PM occurrences past their
+    // tolerance window + work orders past their planned end (`as_of::wo_overdue_at`, the OT rule).
+    let overdue_items = if can_di || can_pm || can_ot {
         let mut total = 0_i64;
         let mut prev_total = 0_i64;
         if can_di {
@@ -209,6 +210,10 @@ pub async fn build_executive_dashboard(
         if can_pm {
             total += as_of::pm_overdue_at(db, now, org).await?;
             prev_total += as_of::pm_overdue_at(db, start, org).await?;
+        }
+        if can_ot {
+            total += as_of::wo_overdue_at(db, now, org).await?;
+            prev_total += as_of::wo_overdue_at(db, start, org).await?;
         }
         int_kpi("overdue_items", total, prev_total, None)
     } else {

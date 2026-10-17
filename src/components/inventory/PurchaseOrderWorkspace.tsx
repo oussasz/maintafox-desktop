@@ -294,6 +294,7 @@ export function PurchaseOrderWorkspace({
           defaultValue: key,
         }),
       locale,
+      currencyCode,
     );
   };
 

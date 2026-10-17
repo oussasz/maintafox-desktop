@@ -62,7 +62,9 @@ import { mfLayout } from "@/design-system/tokens";
 import { DI_STATUS_TONE, toneOf } from "@/design-system/tone";
 import { usePermissions } from "@/hooks/use-permissions";
 import { formatPersonLabel } from "@/lib/display";
-import { triageSubmittedDi } from "@/services/di-service";
+import { LIST_PARAM, idParam, scopeParam, textParam, withoutParams } from "@/lib/list-links";
+import { getAssetByIdSilent } from "@/services/asset-service";
+import { DI_OPEN_STATUSES, triageSubmittedDi } from "@/services/di-service";
 import { useDiReviewStore } from "@/stores/di-review-store";
 import { useDiStore } from "@/stores/di-store";
 import { toErrorMessage } from "@/utils/errors";
@@ -140,6 +142,12 @@ export function RequestsPage() {
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [priorityFilter, setPriorityFilter] = useState<string | null>(null);
   const [dispositionFilter, setDispositionFilter] = useState<string | null>(null);
+  /** From a dashboard link: requests still being handled (chip, clearable). */
+  const [scopeFilter, setScopeFilter] = useState<"open" | null>(null);
+  /** From an equipment link: one asset (chip shows its code). */
+  const [equipmentFilter, setEquipmentFilter] = useState<{ id: number; label: string } | null>(
+    null,
+  );
   const [archiveRefreshKey, setArchiveRefreshKey] = useState(0);
   const [slaOpen, setSlaOpen] = useState(false);
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -285,9 +293,86 @@ export function RequestsPage() {
     setStatusFilter(null);
     setPriorityFilter(null);
     setDispositionFilter(null);
-    setFilter({ search: null, status: null, urgency: null, disposition_code: null, offset: 0 });
+    setScopeFilter(null);
+    setEquipmentFilter(null);
+    setFilter({
+      search: null,
+      status: null,
+      urgency: null,
+      disposition_code: null,
+      equipment_id: null,
+      offset: 0,
+    });
     void loadDis();
   }, [loadDis, setFilter]);
+
+  const handleScopeFilter = useCallback(
+    (val: string | null) => {
+      const scope = val === "open" ? "open" : null;
+      setScopeFilter(scope);
+      setStatusFilter(null);
+      setFilter({ status: scope ? [...DI_OPEN_STATUSES] : null, offset: 0 });
+      void loadDis();
+    },
+    [loadDis, setFilter],
+  );
+
+  const handleEquipmentFilter = useCallback(
+    (val: string | null) => {
+      if (val) return; // only clearing is offered: the asset comes from the link
+      setEquipmentFilter(null);
+      setFilter({ equipment_id: null, offset: 0 });
+      void loadDis();
+    },
+    [loadDis, setFilter],
+  );
+
+  // A link may carry list filters (?scope=open, ?status=, ?urgency=, ?equipment=) next to the
+  // queue: they become the page's filters, shown as chips the user can clear, then leave the
+  // address (the queue stays: the queue bar shows it).
+  useEffect(() => {
+    if (permissionsLoading) return;
+    const scope = scopeParam(searchParams.get(LIST_PARAM.scope));
+    const status = textParam(searchParams.get(LIST_PARAM.status));
+    const urgency = textParam(searchParams.get(LIST_PARAM.urgency));
+    const equipmentId = idParam(searchParams.get(LIST_PARAM.equipment));
+    if (!scope && !status && !urgency && equipmentId == null) return;
+    setSearchInput("");
+    setStatusFilter(status);
+    setPriorityFilter(urgency);
+    setDispositionFilter(null);
+    setScopeFilter(status ? null : scope);
+    setEquipmentFilter(equipmentId != null ? { id: equipmentId, label: `#${equipmentId}` } : null);
+    setFilter({
+      search: null,
+      status: status ? [status] : scope ? [...DI_OPEN_STATUSES] : null,
+      urgency,
+      disposition_code: null,
+      equipment_id: equipmentId,
+      offset: 0,
+    });
+    void loadDis();
+    if (equipmentId != null) {
+      void getAssetByIdSilent(equipmentId).then((asset) => {
+        if (asset) {
+          setEquipmentFilter({
+            id: equipmentId,
+            label: `${asset.asset_code} — ${asset.asset_name}`,
+          });
+        }
+      });
+    }
+    setSearchParams(
+      withoutParams(
+        searchParams,
+        LIST_PARAM.scope,
+        LIST_PARAM.status,
+        LIST_PARAM.urgency,
+        LIST_PARAM.equipment,
+      ),
+      { replace: true },
+    );
+  }, [permissionsLoading, searchParams, setSearchParams, setFilter, loadDis]);
 
   const filterDefs = useMemo<SmartFilterDef[]>(
     () => [
@@ -315,6 +400,30 @@ export function RequestsPage() {
         value: dispositionFilter,
         onChange: handleDispositionFilter,
       },
+      ...(scopeFilter
+        ? [
+            {
+              id: "scope",
+              kind: "select" as const,
+              label: t("list.filters.scope"),
+              options: [{ value: "open", label: t("list.filters.scopeOpen") }],
+              value: scopeFilter,
+              onChange: handleScopeFilter,
+            },
+          ]
+        : []),
+      ...(equipmentFilter
+        ? [
+            {
+              id: "equipment",
+              kind: "select" as const,
+              label: t("list.filters.equipment"),
+              options: [{ value: String(equipmentFilter.id), label: equipmentFilter.label }],
+              value: String(equipmentFilter.id),
+              onChange: handleEquipmentFilter,
+            },
+          ]
+        : []),
     ],
     [
       t,
@@ -327,6 +436,10 @@ export function RequestsPage() {
       handleStatusFilter,
       handlePriorityFilter,
       handleDispositionFilter,
+      scopeFilter,
+      equipmentFilter,
+      handleScopeFilter,
+      handleEquipmentFilter,
     ],
   );
 

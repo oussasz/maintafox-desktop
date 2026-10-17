@@ -1,4 +1,131 @@
 {
+  "filters": {
+    "any": "Any",
+    "module": "Module",
+    "severity": "Severity",
+    "eventClass": "Event type",
+    "dateFrom": "From",
+    "dateTo": "To",
+    "advanced": "Advanced filters",
+    "orgUnitNumber": "Organisation unit number",
+    "correlation": "Event chain reference",
+    "apply": "Apply",
+    "reset": "Reset"
+  },
+  "pager": {
+    "range": "Events {{from}} to {{to}}",
+    "previous": "Previous",
+    "next": "Next"
+  },
+  "feed": {
+    "system": "System",
+    "noSummary": "No summary for this event.",
+    "chain": "Related events",
+    "chainLoading": "Loading related events…",
+    "chainFailed": "The related events could not be loaded",
+    "link": {
+      "related": "Related",
+      "caused_by": "Caused by",
+      "triggered": "Triggered"
+    },
+    "autoRefresh": "Refresh every 30 s",
+    "savedViews": "Saved views",
+    "noSavedView": "No view",
+    "defaultView": "{{name}} (default)",
+    "saveViewName": "View name",
+    "saveView": "Save view",
+    "viewSaved": "View saved",
+    "empty": "No event for these filters.",
+    "noPermission": "You are not allowed to view the activity log."
+  },
+  "audit": {
+    "filters": {
+      "action": "Action",
+      "actionHint": "Start of the code, e.g. auth.login",
+      "result": "Result",
+      "userNumber": "User number",
+      "retention": "Retention"
+    },
+    "mySecurityEvents": "My security events",
+    "export": {
+      "help": "The export is itself recorded in the audit log and produces a JSON file.",
+      "reason": "Export reason (required)",
+      "action": "Export audit log",
+      "saved": "{{count}} event(s) exported",
+      "failed": "The export could not be saved"
+    },
+    "loadError": "The audit log could not be loaded",
+    "empty": "No audit event for these filters.",
+    "detail": {
+      "target": "Target",
+      "retention": "Retention",
+      "technical": "Technical details",
+      "before": "Hash before",
+      "after": "Hash after"
+    }
+  },
+  "labels": {
+    "module": {
+      "none": "No module",
+      "wo": "Work orders",
+      "di": "Intervention requests",
+      "pm": "Preventive maintenance",
+      "planning": "Planning",
+      "permit": "Work permits",
+      "personnel": "Personnel",
+      "inventory": "Inventory",
+      "inspection": "Inspections",
+      "notifications": "Notifications",
+      "sync": "Synchronisation",
+      "rbac": "Roles and permissions",
+      "iot": "Sensors (IoT)",
+      "archive": "Archive",
+      "auth": "Sign-in",
+      "equipment": "Equipment",
+      "org": "Organisation",
+      "finance": "Budget",
+      "reliability": "Reliability"
+    },
+    "severity": {
+      "info": "Information",
+      "warning": "Warning",
+      "warn": "Warning",
+      "error": "Error",
+      "critical": "Critical",
+      "pass": "Passed",
+      "fail": "Failed",
+      "blocker": "Blocking",
+      "blocking": "Blocking",
+      "medium": "Medium",
+      "high": "High"
+    },
+    "eventClass": {
+      "operational": "Operational",
+      "system": "System",
+      "security": "Security"
+    },
+    "result": {
+      "success": "Succeeded",
+      "applied": "Applied",
+      "blocked": "Blocked",
+      "pass": "Passed",
+      "missed": "Missed",
+      "completed_with_findings": "Completed with findings",
+      "completed_no_findings": "Completed, no findings"
+    },
+    "authContext": {
+      "password": "Password",
+      "step_up": "Identity confirmed",
+      "session": "Session",
+      "system": "System"
+    },
+    "retention": {
+      "standard": "Standard",
+      "operations": "Operations",
+      "compliance": "Compliance",
+      "security": "Security"
+    }
+  },
   "page": {
     "title": "Activity & audit",
     "subtitle": "Operational feed and immutable audit trail for security and compliance."

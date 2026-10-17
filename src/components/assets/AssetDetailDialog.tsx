@@ -35,6 +35,7 @@ import { AssetHealthBadge } from "@/components/assets/AssetHealthBadge";
 import { AssetQrCode } from "@/components/assets/AssetQrCode";
 import { AssetStatusBadge } from "@/components/assets/AssetStatusBadge";
 import { CriticalityBadge } from "@/components/assets/CriticalityBadge";
+import { isRetiredStatus } from "@/components/assets/asset-tones";
 import { AssetCommercialDialog } from "@/components/assets/detail/AssetCommercialDialog";
 import { AssetCriticalityTab } from "@/components/assets/detail/AssetCriticalityTab";
 import { AssetDocumentsTab } from "@/components/assets/detail/AssetDocumentsTab";
@@ -71,6 +72,7 @@ import { getAssetById } from "@/services/asset-service";
 import { useAssetSearchStore } from "@/stores/asset-search-store";
 import { useAssetStore } from "@/stores/asset-store";
 import { useDiStore } from "@/stores/di-store";
+import { useEquipmentTaxonomy } from "@/stores/equipment-taxonomy-store";
 import { useWoStore } from "@/stores/wo-store";
 import type { Asset } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
@@ -144,8 +146,10 @@ export function AssetDetailDialog() {
     [setData, runSearch],
   );
 
+  const { catalog: taxonomy } = useEquipmentTaxonomy();
   const warranty = warrantyState(asset?.warranty_expiry_date, new Date());
-  const retired = asset?.status_code === "DECOMMISSIONED" || asset?.status_code === "SCRAPPED";
+  // Retired = the status carries the `retired` tag in EQUIPMENT.STATUS.
+  const retired = isRetiredStatus(taxonomy, asset?.status_code);
 
   return (
     <Dialog

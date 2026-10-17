@@ -1623,3 +1623,50 @@ fn weighted_moving_average_blends_by_quantity() {
     assert!((weighted_moving_average(5.0, None, 5.0, 8.0) - 8.0).abs() < 1e-9);
     assert!((weighted_moving_average(0.0, Some(3.0), 2.0, 7.0) - 7.0).abs() < 1e-9);
 }
+
+/// One low-stock definition (`evaluate_reorder`): the dashboard tiles, the alerts and the
+/// article list agree, and an article with no stock row at all (never received) counts.
+#[tokio::test]
+async fn low_stock_is_one_definition_across_dashboard_alerts_and_list() {
+    let db = setup_db().await;
+    let article_id = create_test_article(&db, "LOW-ZERO-001").await; // reorder point 5, no stock
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE articles SET is_critical_spare = 1 WHERE id = ?",
+        [article_id.into()],
+    ))
+    .await
+    .expect("critical spare");
+
+    let triggers = queries::reorder_triggers_by_article(&db).await.expect("triggers");
+    assert_eq!(
+        triggers.get(&article_id).map(String::as_str),
+        Some("reorder_point"),
+        "a never-stocked article is at or below its reorder point"
+    );
+
+    let summary = queries::get_procurement_dashboard_summary(&db).await.expect("summary");
+    assert_eq!(summary.low_stock_articles, i64::try_from(triggers.len()).unwrap());
+    assert!(summary.critical_low_stock_articles >= 1);
+    assert!(summary.open_requisition_statuses.contains(&"SUBMITTED".to_string()));
+    assert!(summary.late_po_statuses.contains(&"APPROVED".to_string()));
+
+    let listed = queries::list_articles(
+        &db,
+        InventoryArticleFilter {
+            search: Some("LOW-ZERO-001".into()),
+        },
+    )
+    .await
+    .expect("list");
+    assert_eq!(listed[0].reorder_trigger.as_deref(), Some("reorder_point"));
+
+    let alerts = queries::get_procurement_alerts(&db).await.expect("alerts");
+    let critical = alerts
+        .iter()
+        .find(|a| a.kind == "CRITICAL_STOCK" && a.entity_id == Some(article_id))
+        .expect("critical stock alert for the never-stocked spare");
+    assert_eq!(critical.entity_code.as_deref(), Some("LOW-ZERO-001"));
+    assert_eq!(critical.params.get("threshold_qty").map(String::as_str), Some("5"));
+    assert_eq!(critical.params.get("available_qty").map(String::as_str), Some("0"));
+}

@@ -755,3 +755,57 @@ async fn registry_strip_reads_reference_tags_and_module_open_rules() {
         6
     );
 }
+
+#[tokio::test]
+async fn life_summary_availability_is_the_latest_reliability_snapshot_not_the_health_score() {
+    let db = setup().await;
+    let site = site_with_cost_center(&db).await;
+    let asset = identity::create_asset(&db, payload("PMP-AV1", site, None), 1)
+        .await
+        .expect("create");
+    let none = crate::assets::history::get_asset_history_summary(&db, asset.id)
+        .await
+        .expect("summary");
+    assert_eq!(
+        (none.availability_percent, none.availability_period_end),
+        (None, None),
+        "no reliability analysis: no availability (never the health score)"
+    );
+    for (sid, end, availability) in [
+        ("av-1", "2026-08-31T00:00:00Z", 0.91),
+        ("av-2", "2026-09-30T00:00:00Z", 0.97),
+    ] {
+        exec(
+            &db,
+            &format!(
+                "INSERT INTO reliability_kpi_snapshots (entity_sync_id, equipment_id, period_start, period_end, \
+                 availability, event_count, data_quality_score) \
+                 VALUES ('{sid}', {id}, '2026-01-01T00:00:00Z', '{end}', {availability}, 1, 1.0)",
+                id = asset.id
+            ),
+        )
+        .await;
+    }
+    let s = crate::assets::history::get_asset_history_summary(&db, asset.id)
+        .await
+        .expect("summary");
+    assert!((s.availability_percent.expect("availability") - 97.0).abs() < 1e-9);
+    assert_eq!(s.availability_period_end.as_deref(), Some("2026-09-30T00:00:00Z"));
+
+    // The status list carries its availability tags for the screens.
+    crate::assets::taxonomy_reference::ensure_equipment_taxonomy_reference_integrity(&db)
+        .await
+        .expect("taxonomy integrity");
+    let catalog = crate::assets::taxonomy_reference::list_equipment_taxonomy_catalog(&db)
+        .await
+        .expect("catalog");
+    let tag = |code: &str| {
+        catalog
+            .statuses
+            .iter()
+            .find(|o| o.code == code)
+            .and_then(|o| o.semantic_tag.clone())
+    };
+    assert_eq!(tag("UNDER_MAINTENANCE").as_deref(), Some("down"));
+    assert_eq!(tag("SCRAPPED").as_deref(), Some("retired"));
+}

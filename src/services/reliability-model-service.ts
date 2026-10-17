@@ -100,6 +100,8 @@ const FmecaRowSchema = z.object({
   rcm_tactic: optStr,
   decision_id: optNum,
   decision_status: optStr,
+  /** Ratings nobody chose (former root-cause placeholder): listed, not counted until saved. */
+  review_required: z.boolean(),
 });
 
 const FmecaWorksheetSchema = z.object({
@@ -118,6 +120,7 @@ const FmecaWorksheetSchema = z.object({
   mechanisms: z.array(RefOptionSchema),
   causes: z.array(RefOptionSchema),
   editable: z.boolean(),
+  rows_to_review: num,
 });
 
 export type RefOption = z.infer<typeof RefOptionSchema>;
@@ -149,6 +152,9 @@ export interface SaveFmecaItemInput {
   recommended_action?: string | null;
   occurrence_source: "weibull" | "history" | "analyst";
   occurrence_events_per_year?: number | null;
+  /** Root-cause diagram cause a new row comes from (traceability; ignored on update). */
+  source_ram_ishikawa_diagram_id?: number | null;
+  source_ishikawa_flow_node_id?: string | null;
 }
 
 export async function saveReliabilityStudyFmecaItem(
@@ -232,6 +238,8 @@ const RcmWorksheetSchema = z.object({
   rows: z.array(RcmRowSchema),
   editable: z.boolean(),
   time_basis: z.string(),
+  /** FMECA rows still to review: not offered for an RCM decision. */
+  rows_to_review: num,
 });
 
 export type RcmRow = z.infer<typeof RcmRowSchema>;
@@ -581,6 +589,10 @@ const DataQualitySchema = z.object({
   ),
   records: num,
   records_complete: num,
+  /** A list stopped at its maximum: more exist than are listed. */
+  coding_gaps_truncated: z.boolean(),
+  no_operating_hours_truncated: z.boolean(),
+  review_issues_truncated: z.boolean(),
 });
 
 export type DataQualityView = z.infer<typeof DataQualitySchema>;

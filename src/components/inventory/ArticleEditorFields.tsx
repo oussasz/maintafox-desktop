@@ -142,7 +142,7 @@ export function ArticleEditorFields({
       </Field>
       <Field id="article-unit" label={t("article.form.unit")}>
         <Select
-          value={String(articleForm.unit_value_id)}
+          value={articleForm.unit_value_id > 0 ? String(articleForm.unit_value_id) : ""}
           onValueChange={(v) => setArticleForm((s) => ({ ...s, unit_value_id: Number(v) }))}
         >
           <SelectTrigger id="article-unit">
@@ -182,7 +182,9 @@ export function ArticleEditorFields({
       </Field>
       <Field id="article-stocking-type" label={t("detail.fields.stockingType")}>
         <Select
-          value={String(articleForm.stocking_type_value_id)}
+          value={
+            articleForm.stocking_type_value_id > 0 ? String(articleForm.stocking_type_value_id) : ""
+          }
           onValueChange={(v) =>
             setArticleForm((s) => ({ ...s, stocking_type_value_id: Number(v) }))
           }
@@ -201,7 +203,9 @@ export function ArticleEditorFields({
       </Field>
       <Field id="article-tax-category" label={t("detail.fields.taxCategory")}>
         <Select
-          value={String(articleForm.tax_category_value_id)}
+          value={
+            articleForm.tax_category_value_id > 0 ? String(articleForm.tax_category_value_id) : ""
+          }
           onValueChange={(v) => setArticleForm((s) => ({ ...s, tax_category_value_id: Number(v) }))}
         >
           <SelectTrigger id="article-tax-category">

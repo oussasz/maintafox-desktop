@@ -43,8 +43,13 @@ export function RatingScalesDialog({
   const [draft, setDraft] = useState<RatingScales>(scales);
   const [kind, setKind] = useState<Kind>("severity");
   const [saving, setSaving] = useState(false);
+  /** Threshold text as typed ("0.", "0,1"…), so decimals can be entered; parsed on change. */
+  const [thresholdText, setThresholdText] = useState<Record<number, string>>({});
   useEffect(() => {
-    if (open) setDraft(scales);
+    if (open) {
+      setDraft(scales);
+      setThresholdText({});
+    }
   }, [open, scales]);
   const fr = (i18n.resolvedLanguage ?? i18n.language ?? "fr").toLowerCase().startsWith("fr");
   const labelKey = fr ? "label_fr" : "label_en";
@@ -134,10 +139,18 @@ export function RatingScalesDialog({
                           className="h-9 w-28"
                           inputMode="decimal"
                           aria-label={t("rams.scales.thresholdOf", { score: l.score })}
-                          value={String(l.min_per_year ?? 0)}
+                          value={thresholdText[l.score] ?? String(l.min_per_year ?? 0)}
+                          aria-invalid={
+                            thresholdText[l.score] != null &&
+                            !Number.isFinite(Number(thresholdText[l.score]?.replace(",", ".")))
+                          }
                           onChange={(e) => {
-                            const v = Number(e.target.value.replace(",", "."));
-                            if (Number.isFinite(v)) update(l.score, { min_per_year: v });
+                            const text = e.target.value;
+                            setThresholdText((m) => ({ ...m, [l.score]: text }));
+                            const v = Number(text.replace(",", "."));
+                            if (text.trim() !== "" && Number.isFinite(v)) {
+                              update(l.score, { min_per_year: v });
+                            }
                           }}
                         />
                       ) : (

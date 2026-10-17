@@ -10,7 +10,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import enCommon from "@/i18n/en/common.json";
 import enBudget from "@/i18n/locale-data/en/budget.json";
-import { BudgetPage, defaultVersion } from "@/pages/BudgetPage";
+import { BudgetPage, currentFiscalYear, defaultVersion } from "@/pages/BudgetPage";
 import type { BudgetVersion } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -238,6 +238,11 @@ describe("BudgetPage", () => {
     );
     renderPage("/budget?tab=planning");
     fireEvent.click(await screen.findByRole("button", { name: "Submit" }));
+    // Every lifecycle step asks first.
+    expect(await screen.findByText("Submit this version?")).toBeInTheDocument();
+    expect(budget.transitionBudgetVersionLifecycle).not.toHaveBeenCalled();
+    const confirm = screen.getAllByRole("button", { name: "Submit" });
+    fireEvent.click(confirm[confirm.length - 1] as HTMLElement);
     await waitFor(() =>
       expect(budget.transitionBudgetVersionLifecycle).toHaveBeenCalledWith({
         version_id: 1,
@@ -256,5 +261,30 @@ describe("BudgetPage", () => {
     expect(await screen.findByText(/lines can no longer be edited/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "New line" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Reforecast" })).toBeInTheDocument();
+  });
+  it("says so when the fiscal-year start cannot be read, with a retry", async () => {
+    finance.listFinanceCatalogs.mockRejectedValue({ code: "DATABASE_ERROR", message: "down" });
+    budget.listBudgetVersions.mockResolvedValue([]);
+    renderPage();
+    expect(await screen.findByText(/The fiscal-year start/)).toBeInTheDocument();
+  });
+
+  it("says so when the budget versions cannot be loaded, with a retry", async () => {
+    budget.listBudgetVersions.mockRejectedValue({ code: "DATABASE_ERROR", message: "down" });
+    renderPage();
+    expect(await screen.findByText(/The budget versions could not be loaded/)).toBeInTheDocument();
+  });
+});
+
+describe("currentFiscalYear", () => {
+  it("names the fiscal year by the calendar year it starts in", () => {
+    // July start: March 2026 is still fiscal 2025, July 2026 opens fiscal 2026.
+    expect(currentFiscalYear(new Date(2026, 2, 15), 7)).toBe(2025);
+    expect(currentFiscalYear(new Date(2026, 6, 1), 7)).toBe(2026);
+    expect(currentFiscalYear(new Date(2026, 2, 15), 1)).toBe(2026);
+  });
+
+  it("uses the calendar year until the start month is known", () => {
+    expect(currentFiscalYear(new Date(2026, 2, 15), null)).toBe(2026);
   });
 });

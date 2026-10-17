@@ -210,6 +210,8 @@ export function ReceiveGoodsDialog({
   const [postingDate, setPostingDate] = useState(todayIso());
   const [rateInput, setRateInput] = useState("");
   const [storedRate, setStoredRate] = useState<ResolvedExchangeRate | null>(null);
+  /** The stored rate could not be read (not the same as "no rate recorded"). */
+  const [rateReadFailed, setRateReadFailed] = useState(false);
   const [loadedArticles, setLoadedArticles] = useState<InventoryArticleRow[]>([]);
   const articles = articlesProp ?? loadedArticles;
   // Receipt units: the governed list MEASURE.UNITS; factor of each line to its stock unit.
@@ -253,7 +255,11 @@ export function ReceiveGoodsDialog({
     if (!open || articlesProp) return;
     listInventoryArticles({ search: null })
       .then(setLoadedArticles)
-      .catch(() => setLoadedArticles([]));
+      .catch((err: unknown) => {
+        // Never an empty article list without saying why.
+        setLoadedArticles([]);
+        setError(err);
+      });
   }, [open, articlesProp]);
 
   useEffect(() => {
@@ -292,12 +298,16 @@ export function ReceiveGoodsDialog({
       return;
     }
     let cancelled = false;
+    setRateReadFailed(false);
     resolveCurrencyExchangeRate(poCurrency, postingDate)
       .then((r) => {
         if (!cancelled) setStoredRate(r);
       })
       .catch(() => {
-        if (!cancelled) setStoredRate(null);
+        if (!cancelled) {
+          setStoredRate(null);
+          setRateReadFailed(true);
+        }
       });
     return () => {
       cancelled = true;
@@ -516,7 +526,9 @@ export function ReceiveGoodsDialog({
                       rate: formatNumber(storedRate.rate, { maximumFractionDigits: 6 }),
                       date: storedRate.valid_from ? formatDate(storedRate.valid_from) : "",
                     })
-                  : t("procurement.receive.rate.none")}
+                  : rateReadFailed
+                    ? t("procurement.receive.rate.readFailed")
+                    : t("procurement.receive.rate.none")}
               </p>
             </div>
           ) : null}

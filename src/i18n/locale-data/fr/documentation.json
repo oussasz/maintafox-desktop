@@ -27,18 +27,23 @@
     }
   },
   "upload": {
-    "title": "Téléverser un document",
+    "title": "Ajouter un document",
     "uploading": "Téléversement…",
     "maxSize": "Taille maximale : {{mb}} Mo.",
     "fields": {
       "title": "Titre",
-      "titlePlaceholder": "Libellé (par défaut : nom du fichier)",
+      "titlePlaceholder": "Nom affiché (proposé à partir du nom du fichier)",
       "equipment": "Équipement lié",
       "equipmentPlaceholder": "Sélectionner un équipement",
       "noEquipment": "Non lié",
       "notes": "Notes",
-      "notesPlaceholder": "Description facultative"
-    }
+      "notesPlaceholder": "Description facultative",
+      "file": "Fichier",
+      "equipmentHint": "Facultatif — le document apparaîtra aussi sur la fiche de l'équipement."
+    },
+    "open": "Ajouter un document",
+    "submit": "Téléverser",
+    "done": "Document « {{title}} » ajouté"
   },
   "list": {
     "empty": "Aucun document dans cette catégorie.",
@@ -51,17 +56,38 @@
     },
     "download": "Télécharger",
     "edit": "Modifier le lien",
-    "delete": "Supprimer"
+    "delete": "Supprimer",
+    "loading": "Chargement des documents…",
+    "loadError": "Impossible de charger les documents de cette catégorie",
+    "emptyHint": "Ajoutez le premier document de cette catégorie.",
+    "searchPlaceholder": "Rechercher par titre, fichier ou équipement…",
+    "downloadNamed": "Télécharger {{title}}",
+    "downloadUnavailable": "Fichier pas encore disponible sur cet appareil",
+    "downloadTitle": "Enregistrer « {{title}} »",
+    "downloaded": "Document enregistré",
+    "downloadFailed": "Le document n'a pas pu être enregistré",
+    "editNamed": "Modifier {{title}}",
+    "deleteNamed": "Supprimer {{title}}",
+    "openEquipment": "Ouvrir l'équipement {{code}}"
   },
   "edit": {
     "title": "Modifier le document",
     "save": "Enregistrer",
-    "cancel": "Annuler"
+    "cancel": "Annuler",
+    "saving": "Enregistrement…",
+    "linkUnreadable": "L'équipement lié ({{code}}) n'a pas pu être lu ; le lien est conservé tant que vous n'en choisissez pas un autre."
   },
   "confirm": {
-    "delete": "Supprimer cet enregistrement documentaire ? Le fichier reste sur le disque à des fins d’audit."
+    "delete": "« {{title}} » sera retiré de la bibliothèque. Le fichier reste conservé sur le disque pour l'audit.",
+    "deleteTitle": "Supprimer ce document ?",
+    "deleteAction": "Supprimer le document"
   },
   "errors": {
     "fileTooLarge": "Le fichier dépasse {{mb}} Mo."
+  },
+  "size": {
+    "bytes": "{{value}} o",
+    "kb": "{{value}} Ko",
+    "mb": "{{value}} Mo"
   }
 }

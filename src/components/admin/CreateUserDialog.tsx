@@ -29,9 +29,10 @@ import {
 } from "@/components/ui/select";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useStepUp } from "@/hooks/use-step-up";
-import { useToast } from "@/hooks/use-toast";
+import { describeAppError } from "@/lib/app-error";
 import { listPersonnel } from "@/services/personnel-service";
 import { createUser, listAssignableRoles } from "@/services/rbac-service";
+import { pushAppToast } from "@/store/app-toast-store";
 import type { AssignableRoleSummary, CreateUserInput, Personnel } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -92,7 +93,8 @@ export function CreateUserDialog({
   lockPersonnel = false,
 }: CreateUserDialogProps) {
   const { t } = useTranslation("admin");
-  const { toast } = useToast();
+  // The global toast host shows them (a local useToast list was never rendered here).
+  const toast = pushAppToast;
   const { can } = usePermissions();
   const { withStepUp, StepUpDialogElement } = useStepUp();
   const canViewPersonnel = can(P.PER_VIEW);
@@ -242,7 +244,7 @@ export function CreateUserDialog({
       if (!lockPersonnel) setPersonnelId(null);
       setRoleIdStr("");
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = describeAppError(err).title;
       if (!msg.includes("Step-up cancelled")) {
         toast({
           title: msg || t("users.create.error"),

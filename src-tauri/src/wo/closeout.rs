@@ -601,6 +601,7 @@ async fn has_critical_fmeca_part_suggestions(
              INNER JOIN fmeca_item_parts fip ON fip.fmeca_item_id = fi.id
              WHERE fa.equipment_id = ?
                AND fi.failure_mode_id = ?
+               AND fi.review_required = 0
                AND COALESCE(fi.rpn, COALESCE(fi.severity, 0) * COALESCE(fi.occurrence, 0) * COALESCE(fi.detectability, 0)) >= ?",
             [equipment_id.into(), failure_mode_id.into(), rpn_critical.into()],
         ))
@@ -633,6 +634,7 @@ async fn has_consumed_critical_suggested_part(
                  INNER JOIN fmeca_item_parts fip ON fip.fmeca_item_id = fi.id
                  WHERE fa.equipment_id = ?
                    AND fi.failure_mode_id = ?
+                   AND fi.review_required = 0
                    AND COALESCE(fi.rpn, COALESCE(fi.severity, 0) * COALESCE(fi.occurrence, 0) * COALESCE(fi.detectability, 0)) >= ?
                )",
             [

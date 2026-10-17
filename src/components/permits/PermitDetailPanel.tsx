@@ -1,5 +1,5 @@
 import { Printer } from "lucide-react";
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
@@ -14,14 +14,23 @@ import {
   DialogTitle,
   FormField,
   Input,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
   Textarea,
 } from "@/components/ui";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { ErrorState } from "@/components/ui/data-state";
 import { StatusChip } from "@/components/ui/status-chip";
 import { PERMIT_STATUS_TONE, toneOf } from "@/design-system/tone";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useSession } from "@/hooks/use-session";
-import { describeAppError } from "@/lib/app-error";
+import { appErrorReason } from "@/lib/app-error";
 import {
+  type IsolationOption,
+  type IsolationOptions,
   type LotoCardViewRecord,
   type PermitHandoverLogRecord,
   type PermitIsolationRecord,
@@ -31,6 +40,7 @@ import {
   applyPermitIsolation,
   getLotoCardView,
   listPermitHandoverLogs,
+  listPermitIsolationOptions,
   listPermitIsolations,
   listPermitSuspensions,
   recordLotoCardPrint,
@@ -57,6 +67,7 @@ import {
   isolationState,
   localInputToIso,
   nextTransitions,
+  optionLabel,
   toLocalInputValue,
 } from "./permit-rules";
 
@@ -66,6 +77,7 @@ interface PermitDetailPanelProps {
   onChanged: (permit: WorkPermitRecord) => void;
 }
 
+/** Energy type and method are ids of the governed lists (`permit::energy_reference`). */
 const EMPTY_ISOLATION = { point: "", energy: "", method: "", lock: "" };
 
 export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps) {
@@ -82,6 +94,12 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
   const [cardView, setCardView] = useState<LotoCardViewRecord | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Isolations / suspensions / hand-overs could not be read: never shown as "none". */
+  const [childrenError, setChildrenError] = useState<unknown>(null);
+  const [childrenLoading, setChildrenLoading] = useState(true);
+  const [options, setOptions] = useState<IsolationOptions | null>(null);
+  const [optionsError, setOptionsError] = useState<unknown>(null);
+  const [optionsReload, setOptionsReload] = useState(0);
 
   const [isoDraft, setIsoDraft] = useState(EMPTY_ISOLATION);
   const [isoSubmitted, setIsoSubmitted] = useState(false);
@@ -95,6 +113,7 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
   const fmt = (v: string | null) => (v ? formatDateTime(v, i18n.language) : t("detail.none"));
 
   const loadChildren = useCallback(async () => {
+    setChildrenLoading(true);
     try {
       const [iso, susp, hand] = await Promise.all([
         listPermitIsolations(permit.id),
@@ -104,13 +123,53 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
       setIsolations(iso);
       setSuspensions(susp);
       setHandovers(hand);
+      setChildrenError(null);
     } catch (e) {
-      setError(describeAppError(e).title);
+      setChildrenError(e);
+    } finally {
+      setChildrenLoading(false);
     }
   }, [permit.id]);
 
+  // Choices of the isolation form (energy types, the plant's methods), read with the permit right.
+  useEffect(() => {
+    let cancelled = false;
+    setOptionsError(null);
+    listPermitIsolationOptions()
+      .then((o) => {
+        if (!cancelled) setOptions(o);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setOptionsError(e);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [optionsReload]);
+
+  const optionById = useMemo(() => {
+    const map = new Map<number, IsolationOption>();
+    for (const o of [...(options?.energy_types ?? []), ...(options?.isolation_methods ?? [])]) {
+      map.set(o.id, o);
+    }
+    return map;
+  }, [options]);
+
+  const lang = i18n.resolvedLanguage || i18n.language;
+  const energyLabel = (iso: PermitIsolationRecord) =>
+    iso.energy_type_id != null
+      ? optionLabel(optionById.get(iso.energy_type_id), lang) ||
+        (iso.energy_type_label ?? t("isolation.notSet"))
+      : t("isolation.notSet");
+  const methodLabel = (iso: PermitIsolationRecord) =>
+    iso.isolation_method_id != null
+      ? optionLabel(optionById.get(iso.isolation_method_id), lang) ||
+        (iso.isolation_method_label ?? t("isolation.notSet"))
+      : t("isolation.notSet");
+
   useEffect(() => {
     setError(null);
+    setChildrenError(null);
     setCardView(null);
     setEditingExpiry(null);
     void loadChildren();
@@ -126,7 +185,7 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
       await loadChildren();
       return true;
     } catch (e) {
-      setError(describeAppError(e).title);
+      setError(appErrorReason(e));
       return false;
     } finally {
       setBusy(false);
@@ -139,6 +198,8 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
     );
 
   const blockerFor = (to: WorkPermitStatus): string | null => {
+    // Without the isolations the safety gates cannot be explained: no lifecycle step offered.
+    if (childrenError != null || childrenLoading) return "gate.isolationsUnavailable";
     if (to === "active") return activationBlocker(permit, isolations);
     if (to === "closed") return closeBlocker(isolations);
     if (to === "handed_back" && handovers.length === 0) return "gate.handoverRequired";
@@ -153,14 +214,14 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
   const handleAddIsolation = async (e: FormEvent) => {
     e.preventDefault();
     setIsoSubmitted(true);
-    if (!isoDraft.point.trim() || !isoDraft.energy.trim() || !isoDraft.method.trim()) return;
+    if (!isoDraft.point.trim() || !isoDraft.energy || !isoDraft.method) return;
     const ok = await run(async () => {
       await upsertPermitIsolation({
         id: null,
         permit_id: permit.id,
         isolation_point: isoDraft.point,
-        energy_type: isoDraft.energy,
-        isolation_method: isoDraft.method,
+        energy_type_id: Number(isoDraft.energy),
+        isolation_method_id: Number(isoDraft.method),
         lock_number: isoDraft.lock || null,
       });
     });
@@ -225,14 +286,16 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
     try {
       setCardView(await getLotoCardView(permit.id, iso.id));
     } catch (e) {
-      setError(describeAppError(e).title);
+      setError(appErrorReason(e));
     }
   };
 
   const setupOpen = ISOLATION_SETUP_STATUSES.has(permit.status);
   const removalOpen = ISOLATION_REMOVAL_STATUSES.has(permit.status);
   const transitions = nextTransitions(permit.status);
-  const blockers = transitions.map((tr) => blockerFor(tr.to)).filter((b): b is string => b != null);
+  const blockers = [
+    ...new Set(transitions.map((tr) => blockerFor(tr.to)).filter((b): b is string => b != null)),
+  ];
 
   return (
     <section
@@ -367,7 +430,7 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
           ) : null}
         </div>
         {blockers.map((b) => (
-          <p key={b} className="text-xs text-status-warning">
+          <p key={b} className="text-xs text-tone-warning-fg">
             {t(b)}
           </p>
         ))}
@@ -376,7 +439,7 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
       {error ? (
         <p
           role="alert"
-          className="rounded-md border border-status-danger/40 px-3 py-2 text-sm text-status-danger"
+          className="rounded-md border border-tone-danger-border bg-tone-danger-bg px-3 py-2 text-sm text-tone-danger-fg"
         >
           {error}
         </p>
@@ -385,7 +448,18 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
       <section className="space-y-2">
         <h3 className="text-sm font-medium text-text-primary">{t("isolation.title")}</h3>
         <p className="text-xs text-text-muted">{t("isolation.twoPersonHint")}</p>
-        {isolations.length === 0 ? (
+        {childrenError != null ? (
+          <ErrorState
+            error={childrenError}
+            title={t("isolation.loadError")}
+            onRetry={() => void loadChildren()}
+            retrying={childrenLoading}
+          />
+        ) : childrenLoading && isolations.length === 0 ? (
+          <p className="text-sm text-text-muted" aria-busy="true">
+            {t("isolation.loading")}
+          </p>
+        ) : isolations.length === 0 ? (
           <p className="text-sm text-text-muted">{t("isolation.empty")}</p>
         ) : (
           <ul className="space-y-2">
@@ -401,8 +475,15 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-medium text-text-primary">{iso.isolation_point}</span>
                     <span className="text-text-muted">
-                      {iso.energy_type} · {iso.isolation_method}
+                      {energyLabel(iso)} · {methodLabel(iso)}
                     </span>
+                    {iso.mapping_review_required ? (
+                      <StatusChip
+                        label={t("isolation.toReview")}
+                        tone="attention"
+                        title={t("isolation.toReviewHint")}
+                      />
+                    ) : null}
                     {iso.lock_number ? (
                       <span className="font-mono text-xs text-text-muted">
                         {t("card.lock")} {iso.lock_number}
@@ -412,6 +493,15 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
                       {t(`isolation.state.${state}`)}
                     </Badge>
                   </div>
+                  {iso.energy_type.trim() || iso.isolation_method.trim() ? (
+                    <p className="text-xs text-text-muted" data-testid="isolation-original-entry">
+                      {t("isolation.originalEntry", {
+                        text: [iso.energy_type.trim(), iso.isolation_method.trim()]
+                          .filter(Boolean)
+                          .join(" · "),
+                      })}
+                    </p>
+                  ) : null}
                   <div className="flex flex-wrap gap-x-4 text-xs text-text-muted">
                     {iso.applied_by_name ? (
                       <span>{t("isolation.appliedBy", { name: iso.applied_by_name })}</span>
@@ -548,25 +638,47 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
               name="iso-energy"
               label={t("isolation.energy")}
               required
-              error={isoSubmitted && !isoDraft.energy.trim() ? t("errors.required") : undefined}
+              error={isoSubmitted && !isoDraft.energy ? t("errors.required") : undefined}
             >
-              <Input
-                id="iso-energy"
+              <Select
                 value={isoDraft.energy}
-                onChange={(e) => setIsoDraft((d) => ({ ...d, energy: e.target.value }))}
-              />
+                onValueChange={(v) => setIsoDraft((d) => ({ ...d, energy: v }))}
+                disabled={options == null}
+              >
+                <SelectTrigger id="iso-energy" aria-label={t("isolation.energy")}>
+                  <SelectValue placeholder={t("isolation.energyPlaceholder")} />
+                </SelectTrigger>
+                <SelectContent>
+                  {(options?.energy_types ?? []).map((o) => (
+                    <SelectItem key={o.id} value={String(o.id)}>
+                      {optionLabel(o, lang)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </FormField>
             <FormField
               name="iso-method"
               label={t("isolation.method")}
               required
-              error={isoSubmitted && !isoDraft.method.trim() ? t("errors.required") : undefined}
+              error={isoSubmitted && !isoDraft.method ? t("errors.required") : undefined}
             >
-              <Input
-                id="iso-method"
+              <Select
                 value={isoDraft.method}
-                onChange={(e) => setIsoDraft((d) => ({ ...d, method: e.target.value }))}
-              />
+                onValueChange={(v) => setIsoDraft((d) => ({ ...d, method: v }))}
+                disabled={options == null}
+              >
+                <SelectTrigger id="iso-method" aria-label={t("isolation.method")}>
+                  <SelectValue placeholder={t("isolation.methodPlaceholder")} />
+                </SelectTrigger>
+                <SelectContent>
+                  {(options?.isolation_methods ?? []).map((o) => (
+                    <SelectItem key={o.id} value={String(o.id)}>
+                      {optionLabel(o, lang)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </FormField>
             <FormField name="iso-lock" label={t("isolation.lock")}>
               <Input
@@ -575,8 +687,27 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
                 onChange={(e) => setIsoDraft((d) => ({ ...d, lock: e.target.value }))}
               />
             </FormField>
-            <div className="sm:col-span-4">
-              <Button type="submit" size="sm" disabled={busy}>
+            <div className="space-y-2 sm:col-span-4">
+              {optionsError != null ? (
+                <div
+                  role="alert"
+                  className="flex flex-wrap items-center gap-2 text-xs text-tone-danger-fg"
+                >
+                  <span>
+                    {t("isolation.optionsError")} {appErrorReason(optionsError)}
+                  </span>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setOptionsReload((n) => n + 1)}
+                  >
+                    {t("actions.retry")}
+                  </Button>
+                </div>
+              ) : null}
+              <p className="text-xs text-text-muted">{t("isolation.listsHint")}</p>
+              <Button type="submit" size="sm" disabled={busy || options == null}>
                 {t("isolation.add")}
               </Button>
             </div>
@@ -718,30 +849,19 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
         </DialogContent>
       </Dialog>
 
-      <Dialog open={cancelOpen} onOpenChange={setCancelOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t("transition.cancel")}</DialogTitle>
-            <DialogDescription>{t("transition.confirmCancel")}</DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setCancelOpen(false)}>
-              {t("actions.close")}
-            </Button>
-            <Button
-              variant="destructive"
-              disabled={busy}
-              onClick={() =>
-                void transition("cancelled").then((ok) => {
-                  if (ok) setCancelOpen(false);
-                })
-              }
-            >
-              {t("transition.cancel")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ConfirmDialog
+        open={cancelOpen}
+        onOpenChange={setCancelOpen}
+        title={t("transition.cancel")}
+        description={t("transition.confirmCancel")}
+        confirmLabel={t("transition.cancel")}
+        destructive
+        onConfirm={async () => {
+          const ok = await transition("cancelled");
+          // Keep the dialog open on failure (the message is shown on the permit).
+          if (!ok) throw new Error("cancel refused");
+        }}
+      />
     </section>
   );
 }

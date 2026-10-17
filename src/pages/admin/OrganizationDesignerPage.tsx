@@ -164,6 +164,18 @@ export function OrganizationDesignerPage() {
       actions={headerActions}
       bodyClassName={null}
     >
+      {error != null && !loading ? (
+        // A failed refresh keeps the last tree on screen but says so, with a retry.
+        <div className="mx-6 mt-3 shrink-0">
+          <ErrorState
+            error={error}
+            title={t("designer.refreshFailed")}
+            onRetry={() => void loadSnapshot()}
+            className="py-4"
+          />
+        </div>
+      ) : null}
+
       <OrgDesignerLifecycleBar />
 
       <DraftStatusBanner

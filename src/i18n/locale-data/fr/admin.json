@@ -22,6 +22,10 @@
     "audit": "Audit"
   },
   "metrics": {
+    "loadError": "Impossible de charger les indicateurs d'administration",
+    "rolesSplit": "{{system}} système · {{custom}} personnalisés",
+    "unassignedHint": "Utilisateurs actifs sans rôle",
+    "stale": "Dernière actualisation impossible : chiffres de la lecture précédente.",
     "activeUsers": "Utilisateurs actifs",
     "roles": "Rôles",
     "activeSessions": "Sessions actives",
@@ -130,6 +134,7 @@
       "resetPassword": "Réinitialiser le mot de passe"
     },
     "resetPassword": {
+      "copyFailed": "La copie automatique a échoué : sélectionnez le mot de passe et copiez-le avec Ctrl+C.",
       "confirm": "Réinitialiser le mot de passe de cet utilisateur ? Un mot de passe temporaire sera généré et affiché une seule fois. L’utilisateur devra le changer à la prochaine connexion.",
       "success": "Mot de passe temporaire créé",
       "failed": "Échec de la réinitialisation du mot de passe",
@@ -244,7 +249,6 @@
     "pinMismatch": "Les PIN ne correspondent pas.",
     "pinFormat": "Le PIN doit contenir 4 à 6 chiffres.",
     "pinError": "Échec de la configuration du PIN.",
-    "enterPasswordToClearPin": "Entrez votre mot de passe pour supprimer le PIN",
     "trustedDevices": "Appareils de confiance",
     "viewDevices": "Voir / Révoquer",
     "trustedDevicesTitle": "Appareils de confiance",
@@ -281,7 +285,13 @@
     "recentWorkHistory": "Historique de travail recent",
     "noHistory": "Aucun historique.",
     "skillDeclared": "Competence declaree.",
-    "skillDeclareError": "Echec de declaration de competence."
+    "skillDeclareError": "Echec de declaration de competence.",
+    "removePinTitle": "Supprimer le code PIN de déverrouillage",
+    "removePinDescription": "Saisissez le mot de passe de votre compte pour supprimer le PIN. Vous déverrouillerez ensuite l'application avec votre mot de passe.",
+    "removePinConfirm": "Supprimer le PIN",
+    "removingPin": "Suppression…",
+    "passwordRequired": "Saisissez votre mot de passe.",
+    "pinRemoved": "PIN supprimé."
   },
   "passwordPolicy": {
     "title": "Politique de mot de passe",
@@ -350,6 +360,8 @@
       "systemPrefix": "Préfixe système réservé"
     },
     "dependencies": {
+      "close": "Fermer les dépendances",
+      "open": "Voir les dépendances de {{name}}",
       "title": "Dépendances",
       "none": "Aucune dépendance",
       "hard": "Obligatoire (hard)",
@@ -413,7 +425,8 @@
     "errors": {
       "loadFailed": "Erreur de chargement des sessions",
       "revokeFailed": "Erreur lors de la révocation"
-    }
+    },
+    "refresh": "Actualiser"
   },
   "delegation": {
     "title": "Politiques de délégation",
@@ -726,6 +739,9 @@
       "facetsLoadError": "Les choix de filtre du journal n'ont pas pu être chargés : les filtres sont désactivés."
     },
     "roleEditor": {
+      "unsavedTitle": "Abandonner les modifications ?",
+      "unsavedBody": "Le rôle « {{name}} » a des modifications non enregistrées (droits ou description). Elles seront perdues si vous ouvrez un autre rôle.",
+      "discardChanges": "Abandonner les modifications",
       "new": "Nouveau",
       "holders": "Comptes actifs ayant ce rôle",
       "holdersCount_one": "{{count}} compte actif",

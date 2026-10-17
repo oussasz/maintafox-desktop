@@ -22,6 +22,17 @@ use crate::wo::workflow::actions::submit::{submit_wo, WoSubmitInput};
 const APPLIER: i64 = 1;
 const VERIFIER: i64 = 2;
 
+/// A permit-type editor without the administrator right / step-up.
+const EDITOR: queries::PermitTypeWriter = queries::PermitTypeWriter {
+    actor_id: APPLIER,
+    may_relax_isolation: false,
+};
+/// An administrator with a valid step-up (checked by the command).
+const ADMIN_STEP_UP: queries::PermitTypeWriter = queries::PermitTypeWriter {
+    actor_id: APPLIER,
+    may_relax_isolation: true,
+};
+
 async fn setup() -> DatabaseConnection {
     let db = crate::db::test_db::seeded().await;
     // APPLIER is the seeded admin; VERIFIER is a second real account (the isolation
@@ -48,6 +59,25 @@ async fn scalar_i64(db: &DatabaseConnection, sql: &str) -> i64 {
 
 async fn admin_id(db: &DatabaseConnection) -> i64 {
     scalar_i64(db, "SELECT id FROM user_accounts WHERE username = 'admin' LIMIT 1").await
+}
+
+/// Id of a value of a LOTO list (`permit::energy_reference`).
+async fn list_value_id(db: &DatabaseConnection, domain: &str, code: &str) -> i64 {
+    scalar_i64(
+        db,
+        &format!(
+            "SELECT rv.id FROM reference_values rv JOIN reference_sets rs ON rs.id = rv.set_id              JOIN reference_domains d ON d.id = rs.domain_id              WHERE d.code = '{domain}' AND rv.code = '{code}'"
+        ),
+    )
+    .await
+}
+
+async fn energy(db: &DatabaseConnection, code: &str) -> Option<i64> {
+    Some(list_value_id(db, crate::permit::energy_reference::ENERGY_TYPES_DOMAIN, code).await)
+}
+
+async fn method(db: &DatabaseConnection, code: &str) -> Option<i64> {
+    Some(list_value_id(db, crate::permit::energy_reference::ISOLATION_METHODS_DOMAIN, code).await)
 }
 
 async fn type_id(db: &DatabaseConnection, code: &str) -> i64 {
@@ -127,8 +157,8 @@ async fn add_isolation(db: &DatabaseConnection, permit_id: i64, point: &str) -> 
             id: None,
             permit_id,
             isolation_point: point.into(),
-            energy_type: "electrical".into(),
-            isolation_method: "breaker lock-out".into(),
+            energy_type_id: energy(db, "ELECTRICAL").await,
+            isolation_method_id: method(db, "BREAKER_LOCKOUT").await,
             lock_number: None,
         },
     )
@@ -356,8 +386,8 @@ async fn isolations_cannot_be_added_to_an_active_permit() {
             id: None,
             permit_id: wp.id,
             isolation_point: "Late addition".into(),
-            energy_type: "hydraulic".into(),
-            isolation_method: "valve lock".into(),
+            energy_type_id: energy(&db, "HYDRAULIC").await,
+            isolation_method_id: method(&db, "VALVE_LOCKOUT").await,
             lock_number: None,
         },
     )
@@ -415,8 +445,8 @@ async fn applied_isolation_cannot_be_edited() {
             id: Some(iso.id),
             permit_id: wp.id,
             isolation_point: "Renamed".into(),
-            energy_type: "electrical".into(),
-            isolation_method: "breaker lock-out".into(),
+            energy_type_id: energy(&db, "ELECTRICAL").await,
+            isolation_method_id: method(&db, "BREAKER_LOCKOUT").await,
             lock_number: None,
         },
     )
@@ -709,4 +739,471 @@ async fn locks_cannot_be_removed_while_linked_work_is_running() {
     queries::verify_permit_isolation_removal(&db, action(&iso), VERIFIER)
         .await
         .expect("removal after work completed");
+}
+
+// ── Governed LOTO lists and the energy-isolation rule (migration 225) ──
+
+#[tokio::test]
+async fn the_isolation_rule_is_the_type_flag_and_the_loto_type_keeps_it() {
+    let db = setup().await;
+    let types = queries::list_permit_types(&db).await.expect("types");
+    let loto = types.iter().find(|t| t.code == "loto").expect("loto type").clone();
+    let hot = types
+        .iter()
+        .find(|t| t.code == "hot_work")
+        .expect("hot work type")
+        .clone();
+    assert!(loto.requires_energy_isolation, "migration 225 sets the flag on loto");
+    assert!(!hot.requires_energy_isolation);
+
+    // A hot-work permit starts without an isolation...
+    let asset = insert_equipment(&db, "EQ-PTW-60").await;
+    let wp = advance_to_issued(&db, create_permit(&db, "hot_work", asset).await).await;
+    assert!(!wp.permit_type_requires_energy_isolation);
+    set_status(&db, &wp, "active")
+        .await
+        .expect("hot work without isolation");
+
+    // ...until the plant says the type needs one: then the same gate as LOTO refuses it.
+    let updated = queries::upsert_permit_type(
+        &db,
+        crate::permit::domain::PermitTypeUpsertInput {
+            id: Some(hot.id),
+            code: hot.code.clone(),
+            name: hot.name.clone(),
+            description: Some(hot.description.clone()),
+            requires_hse_approval: hot.requires_hse_approval,
+            requires_operations_approval: hot.requires_operations_approval,
+            requires_atmospheric_test: hot.requires_atmospheric_test,
+            max_duration_hours: hot.max_duration_hours,
+            mandatory_ppe_ids_json: Some(hot.mandatory_ppe_ids_json.clone()),
+            mandatory_control_rules_json: Some(hot.mandatory_control_rules_json.clone()),
+            requires_energy_isolation: Some(true),
+            disable_isolation_reason: None,
+        },
+        EDITOR,
+    )
+    .await
+    .expect("flag hot work");
+    assert!(updated.requires_energy_isolation);
+    let asset = insert_equipment(&db, "EQ-PTW-61").await;
+    let wp = advance_to_issued(&db, create_permit(&db, "hot_work", asset).await).await;
+    assert_validation(set_status(&db, &wp, "active").await, "LOTO_NO_ISOLATION");
+
+    // An update that does not send the flag keeps it (no silent reset of the LOTO rule).
+    let kept = queries::upsert_permit_type(
+        &db,
+        crate::permit::domain::PermitTypeUpsertInput {
+            id: Some(loto.id),
+            code: loto.code.clone(),
+            name: loto.name.clone(),
+            description: Some(loto.description.clone()),
+            requires_hse_approval: loto.requires_hse_approval,
+            requires_operations_approval: loto.requires_operations_approval,
+            requires_atmospheric_test: loto.requires_atmospheric_test,
+            max_duration_hours: loto.max_duration_hours,
+            mandatory_ppe_ids_json: None,
+            mandatory_control_rules_json: None,
+            requires_energy_isolation: None,
+            disable_isolation_reason: None,
+        },
+        EDITOR,
+    )
+    .await
+    .expect("rename loto");
+    assert!(kept.requires_energy_isolation);
+}
+
+#[tokio::test]
+async fn isolations_record_list_links_only() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-PTW-62").await;
+    let wp = create_permit(&db, "loto", asset).await;
+    let iso = add_isolation(&db, wp.id, "Q4 feeder").await;
+    assert_eq!(iso.energy_type, "", "no original entry on a new isolation");
+    assert_eq!(iso.isolation_method, "");
+    assert_eq!(iso.energy_type_code.as_deref(), Some("ELECTRICAL"));
+    assert_eq!(iso.energy_type_label.as_deref(), Some("Électrique"));
+    assert!(iso.isolation_method_label.is_some());
+    assert!(!iso.mapping_review_required);
+
+    let input = |energy_id: Option<i64>, method_id: Option<i64>| PermitIsolationUpsertInput {
+        id: None,
+        permit_id: wp.id,
+        isolation_point: "Valve V-2".into(),
+        energy_type_id: energy_id,
+        isolation_method_id: method_id,
+        lock_number: None,
+    };
+    let valve = method(&db, "VALVE_LOCKOUT").await;
+    assert_validation(
+        queries::upsert_permit_isolation(&db, input(None, valve)).await,
+        "energy_type_id is required",
+    );
+    // A method id is not an energy type.
+    assert_validation(
+        queries::upsert_permit_isolation(&db, input(valve, valve)).await,
+        "not a value of PERMIT.ENERGY_TYPES",
+    );
+    let blind = method(&db, "BLIND").await;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE reference_values SET is_active = 0 WHERE id = ?",
+        [blind.into()],
+    ))
+    .await
+    .expect("retire method");
+    assert_validation(
+        queries::upsert_permit_isolation(&db, input(energy(&db, "HYDRAULIC").await, blind)).await,
+        "no longer active",
+    );
+
+    let options = crate::permit::energy_reference::list_isolation_options(&db)
+        .await
+        .expect("options");
+    assert_eq!(
+        options.energy_types.len(),
+        crate::permit::energy_reference::ENERGY_TYPES.len()
+    );
+    assert!(
+        options.isolation_methods.iter().all(|m| m.code != "BLIND"),
+        "inactive method not offered"
+    );
+    assert_eq!(
+        options
+            .energy_types
+            .iter()
+            .find(|e| e.code == "PNEUMATIC")
+            .and_then(|e| e.label_en.clone()),
+        Some("Pneumatic".to_string())
+    );
+}
+
+#[tokio::test]
+async fn typed_texts_are_linked_kept_and_unmatched_ones_flagged() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-PTW-63").await;
+    let wp = create_permit(&db, "loto", asset).await;
+    let rows: [(&str, &str, &str); 5] = [
+        ("P1", "Électrique 400V", "Cadenas disjoncteur"),
+        ("P2", "VAPEUR", "vanne fermée"),
+        ("P3", "plasma", "clé captive"),
+        ("P4", "", ""),
+        ("P5", "pneumatic", "Clé captive"),
+    ];
+    for (i, (point, e, m)) in rows.iter().enumerate() {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO permit_isolations (entity_sync_id, permit_id, isolation_point, energy_type, \
+             isolation_method, row_version) VALUES (?, ?, ?, ?, ?, 1)",
+            [
+                format!("iso-legacy-{i}").into(),
+                wp.id.into(),
+                (*point).into(),
+                (*e).into(),
+                (*m).into(),
+            ],
+        ))
+        .await
+        .expect("legacy isolation");
+    }
+    let report = crate::permit::energy_reference::map_isolation_texts(&db)
+        .await
+        .expect("map");
+    assert_eq!(report.rows, 5);
+    assert_eq!(
+        report.methods_created, 1,
+        "one plant method for both spellings of 'clé captive'"
+    );
+    assert_eq!(
+        report.to_review, 3,
+        "P3 (unknown energy + created method), P4 (empty texts), P5 (created method)"
+    );
+
+    let isos = queries::list_permit_isolations(&db, wp.id).await.expect("list");
+    let by_point = |p: &str| isos.iter().find(|i| i.isolation_point == p).expect("row").clone();
+    let p1 = by_point("P1");
+    assert_eq!(p1.energy_type_code.as_deref(), Some("ELECTRICAL"));
+    assert_eq!(p1.energy_type, "Électrique 400V", "original entry kept as history");
+    assert!(!p1.mapping_review_required);
+    assert_eq!(by_point("P2").energy_type_code.as_deref(), Some("THERMAL"));
+    let p3 = by_point("P3");
+    assert_eq!(p3.energy_type_code.as_deref(), Some("OTHER"));
+    assert!(p3.mapping_review_required);
+    assert_eq!(p3.energy_type, "plasma");
+    let p4 = by_point("P4");
+    assert!(p4.energy_type_id.is_none() && p4.mapping_review_required);
+    assert_eq!(by_point("P5").isolation_method_id, p3.isolation_method_id);
+
+    // The created method is a plant value flagged for review; the original spelling of a matched
+    // text is a legacy alias.
+    let flagged = scalar_i64(
+        &db,
+        "SELECT COUNT(*) FROM reference_values WHERE label = 'clé captive' \
+           AND json_extract(metadata_json, '$.review_required') = 1",
+    )
+    .await;
+    assert_eq!(flagged, 1);
+    let aliases = scalar_i64(
+        &db,
+        "SELECT COUNT(*) FROM reference_aliases WHERE alias_type = 'legacy' AND alias_label = 'Électrique 400V'",
+    )
+    .await;
+    assert_eq!(aliases, 1);
+
+    // A second run (the startup pass) changes nothing.
+    let again = crate::permit::energy_reference::map_isolation_texts(&db)
+        .await
+        .expect("rerun");
+    assert_eq!(again.rows, 0);
+
+    // A person choosing the values clears the review flag; the original text stays.
+    let edited = queries::upsert_permit_isolation(
+        &db,
+        PermitIsolationUpsertInput {
+            id: Some(p3.id),
+            permit_id: wp.id,
+            isolation_point: "P3".into(),
+            energy_type_id: energy(&db, "RADIATION").await,
+            isolation_method_id: method(&db, "OTHER").await,
+            lock_number: None,
+        },
+    )
+    .await
+    .expect("review P3");
+    assert!(!edited.mapping_review_required);
+    assert_eq!(edited.energy_type, "plasma");
+    assert_eq!(edited.energy_type_code.as_deref(), Some("RADIATION"));
+}
+
+#[test]
+fn energy_and_method_texts_match_in_french_and_english() {
+    use crate::permit::energy_reference::{match_entry, ENERGY_TYPES, ISOLATION_METHODS};
+    assert_eq!(match_entry(ENERGY_TYPES, "électricité"), Some("ELECTRICAL"));
+    assert_eq!(match_entry(ENERGY_TYPES, "Air comprimé 6 bar"), Some("PNEUMATIC"));
+    assert_eq!(match_entry(ENERGY_TYPES, "Gravity"), Some("GRAVITATIONAL"));
+    assert_eq!(match_entry(ENERGY_TYPES, "ressort comprimé"), Some("STORED"));
+    // Two energies named in one text: not guessed.
+    assert_eq!(match_entry(ENERGY_TYPES, "électrique et hydraulique"), None);
+    assert_eq!(match_entry(ENERGY_TYPES, "  "), None);
+    assert_eq!(
+        match_entry(ISOLATION_METHODS, "Double block & bleed"),
+        Some("DOUBLE_BLOCK_BLEED")
+    );
+    assert_eq!(match_entry(ISOLATION_METHODS, "joint plein DN50"), Some("BLIND"));
+}
+
+#[tokio::test]
+async fn permit_search_runs_on_the_server_over_every_permit() {
+    let db = setup().await;
+    let a = insert_equipment(&db, "EQ-PTW-SEARCH-A").await;
+    let b = insert_equipment(&db, "EQ-PTW-OTHER-B").await;
+    let pa = create_permit(&db, "loto", a).await;
+    create_permit(&db, "hot_work", b).await;
+    let filter = |search: &str| crate::permit::domain::WorkPermitListFilter {
+        search: Some(search.into()),
+        limit: Some(5),
+        ..Default::default()
+    };
+    let hits = queries::list_work_permits(&db, filter("search-a"))
+        .await
+        .expect("search");
+    assert_eq!(hits.iter().map(|p| p.id).collect::<Vec<_>>(), vec![pa.id]);
+    // LIKE wildcards in the text are literal.
+    assert!(queries::list_work_permits(&db, filter("%"))
+        .await
+        .expect("literal")
+        .is_empty());
+    assert_eq!(
+        queries::list_work_permits(&db, filter("Hot work"))
+            .await
+            .expect("type")
+            .len(),
+        1
+    );
+}
+
+fn type_input(
+    t: &crate::permit::domain::PermitType,
+    requires: Option<bool>,
+    reason: Option<&str>,
+) -> crate::permit::domain::PermitTypeUpsertInput {
+    crate::permit::domain::PermitTypeUpsertInput {
+        id: Some(t.id),
+        code: t.code.clone(),
+        name: t.name.clone(),
+        description: Some(t.description.clone()),
+        requires_hse_approval: t.requires_hse_approval,
+        requires_operations_approval: t.requires_operations_approval,
+        requires_atmospheric_test: t.requires_atmospheric_test,
+        max_duration_hours: t.max_duration_hours,
+        mandatory_ppe_ids_json: None,
+        mandatory_control_rules_json: None,
+        requires_energy_isolation: requires,
+        disable_isolation_reason: reason.map(str::to_string),
+    }
+}
+
+#[tokio::test]
+async fn switching_the_isolation_rule_off_is_guarded_and_loto_is_locked() {
+    let db = setup().await;
+    let types = queries::list_permit_types(&db).await.expect("types");
+    let loto = types.iter().find(|t| t.code == "loto").expect("loto").clone();
+    let hot = types.iter().find(|t| t.code == "hot_work").expect("hot").clone();
+
+    // Turning it on: a plain edit.
+    let hot = queries::upsert_permit_type(&db, type_input(&hot, Some(true), None), EDITOR)
+        .await
+        .expect("turn on");
+    assert!(hot.requires_energy_isolation);
+
+    // Off: refused without the administrator right + step-up, then without a reason.
+    assert_validation(
+        queries::upsert_permit_type(&db, type_input(&hot, Some(false), Some("x")), EDITOR).await,
+        "PERMIT_TYPE_ISOLATION_RELAX_FORBIDDEN",
+    );
+    assert_validation(
+        queries::upsert_permit_type(&db, type_input(&hot, Some(false), Some("  ")), ADMIN_STEP_UP).await,
+        "PERMIT_TYPE_ISOLATION_RELAX_REASON",
+    );
+    let before = scalar_i64(
+        &db,
+        "SELECT COUNT(*) FROM audit_events WHERE action_code = 'permit_type.energy_isolation.disabled'",
+    )
+    .await;
+    let off = queries::upsert_permit_type(
+        &db,
+        type_input(&hot, Some(false), Some("Hot work on isolated lines only")),
+        ADMIN_STEP_UP,
+    )
+    .await
+    .expect("administrator switches it off");
+    assert!(!off.requires_energy_isolation);
+    let after = scalar_i64(
+        &db,
+        "SELECT COUNT(*) FROM audit_events WHERE action_code = 'permit_type.energy_isolation.disabled'",
+    )
+    .await;
+    assert_eq!(after, before + 1, "audited");
+
+    // The shipped LOTO type can never stop requiring an isolation.
+    assert_validation(
+        queries::upsert_permit_type(&db, type_input(&loto, Some(false), Some("reason")), ADMIN_STEP_UP).await,
+        "PERMIT_TYPE_LOTO_ISOLATION_LOCKED",
+    );
+    let loto_now = queries::get_permit_type(&db, loto.id)
+        .await
+        .expect("read")
+        .expect("loto");
+    assert!(loto_now.requires_energy_isolation);
+}
+
+#[tokio::test]
+async fn a_permit_always_has_a_bounded_future_expiry() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-PTW-70").await;
+    let create = |expires: Option<String>, ty: i64| WorkPermitCreateInput {
+        permit_type_id: ty,
+        asset_id: Some(asset),
+        entity_id: Some(1),
+        linked_work_order_id: None,
+        expires_at: expires,
+    };
+    let hot = type_id(&db, "hot_work").await; // max 8 h
+    assert_validation(
+        queries::create_work_permit(&db, create(None, hot)).await,
+        "PERMIT_EXPIRY_REQUIRED",
+    );
+    assert_validation(
+        queries::create_work_permit(&db, create(Some("  ".into()), hot)).await,
+        "PERMIT_EXPIRY_REQUIRED",
+    );
+    let too_long = (chrono::Utc::now() + chrono::Duration::hours(10)).to_rfc3339();
+    assert_validation(
+        queries::create_work_permit(&db, create(Some(too_long.clone()), hot)).await,
+        "PERMIT_EXPIRY_TOO_LONG",
+    );
+    let wp = queries::create_work_permit(
+        &db,
+        create(
+            Some((chrono::Utc::now() + chrono::Duration::hours(2)).to_rfc3339()),
+            hot,
+        ),
+    )
+    .await
+    .expect("within the type's duration");
+    // An update can't push it past the type's maximum either.
+    assert_validation(
+        queries::update_work_permit(
+            &db,
+            WorkPermitUpdateInput {
+                id: wp.id,
+                linked_work_order_id: None,
+                asset_id: None,
+                entity_id: None,
+                expires_at: Some(too_long),
+                expected_row_version: wp.row_version,
+            },
+        )
+        .await,
+        "PERMIT_EXPIRY_TOO_LONG",
+    );
+
+    // A permit stored without expiry (created before the rule) cannot be activated.
+    let wp = advance_to_issued(&db, wp).await;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE work_permits SET expires_at = NULL WHERE id = ?",
+        [wp.id.into()],
+    ))
+    .await
+    .expect("legacy permit without expiry");
+    let wp = queries::get_work_permit(&db, wp.id)
+        .await
+        .expect("read")
+        .expect("permit");
+    assert_validation(set_status(&db, &wp, "active").await, "PERMIT_EXPIRY_MISSING");
+}
+
+/// Editing a permit cannot link it to a work order that already has an open permit (same rule
+/// as creation); refusals of the permit rules are coded.
+#[tokio::test]
+async fn editing_a_permit_cannot_link_a_second_open_permit_to_a_work_order() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-PTW-80").await;
+    let (wo_id, _) = assigned_wo_requiring_permit(&db, asset).await;
+    let first = create_from_wo(&db, "loto", wo_id).await.expect("first permit");
+    let other = create_permit(&db, "hot_work", asset).await;
+    let res = queries::update_work_permit(
+        &db,
+        WorkPermitUpdateInput {
+            id: other.id,
+            linked_work_order_id: Some(wo_id),
+            asset_id: None,
+            entity_id: None,
+            expires_at: None,
+            expected_row_version: other.row_version,
+        },
+    )
+    .await;
+    assert_validation(res, "PERMIT_WO_ALREADY_HAS_OPEN");
+
+    // The permit already on the work order can still be edited (it is not "another" permit).
+    queries::update_work_permit(
+        &db,
+        WorkPermitUpdateInput {
+            id: first.id,
+            linked_work_order_id: Some(wo_id),
+            asset_id: None,
+            entity_id: None,
+            expires_at: None,
+            expected_row_version: first.row_version,
+        },
+    )
+    .await
+    .expect("same permit, same work order");
+
+    // Lifecycle refusals carry their code.
+    assert_validation(set_status(&db, &other, "draft").await, "PERMIT_STATUS_UNCHANGED");
+    assert_validation(set_status(&db, &other, "active").await, "PERMIT_TRANSITION_NOT_ALLOWED");
 }

@@ -122,8 +122,13 @@ export function TeamDetailWorkspace({
     }
   }, [teamId, dateFrom, dateTo, t]);
 
+  // A new team opens on its initial tab (the planning deep link asks for "capacity"); a reload of
+  // the same team (dates changed) keeps the tab the user is on.
   useEffect(() => {
-    setTab("overview");
+    setTab(initialTab ?? "overview");
+  }, [teamId, initialTab]);
+
+  useEffect(() => {
     void load();
   }, [load]);
 
@@ -456,7 +461,10 @@ export function TeamDetailWorkspace({
                     {t("crews.detail.capacitySummary", {
                       available: capacity.total_available_minutes,
                       blocked: capacity.total_blocked_minutes,
-                      ratio: Math.round((capacity.avg_availability_ratio ?? 0) * 100),
+                      ratio:
+                        capacity.avg_availability_ratio == null
+                          ? "—"
+                          : Math.round(capacity.avg_availability_ratio * 100),
                     })}
                   </p>
                 ) : (

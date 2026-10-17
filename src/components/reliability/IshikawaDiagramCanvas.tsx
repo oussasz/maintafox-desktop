@@ -1,22 +1,23 @@
 import {
   Background,
   BackgroundVariant,
+  type Connection,
   Controls,
+  type Edge,
   MiniMap,
+  type Node,
   ReactFlow,
   ReactFlowProvider,
+  type Viewport,
   addEdge,
   useEdgesState,
   useNodesState,
-  type Connection,
-  type Edge,
-  type Node,
-  type Viewport,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
+import { type MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { ErrorState } from "@/components/ui/data-state";
 import {
   Dialog,
   DialogContent,
@@ -24,19 +25,32 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { woTypeLabel } from "@/components/wo/use-wo-type-labels";
 import { mfCard } from "@/design-system/tokens";
 import { useSession } from "@/hooks/use-session";
 import { cn } from "@/lib/utils";
-import {
-  listFmecaAnalyses,
-  listRamIshikawaDiagrams,
-  upsertFmecaItem,
-  upsertRamIshikawaDiagram,
-} from "@/services/reliability-service";
+import { listRamIshikawaDiagrams, upsertRamIshikawaDiagram } from "@/services/reliability-service";
 import { createWo } from "@/services/wo-service";
 import { pushAppToast } from "@/store/app-toast-store";
-import { toErrorMessage } from "@/utils/errors";
+import { useWorkOrderTypesCatalog } from "@/stores/work-order-types-catalog-store";
 import type { RamIshikawaDiagram } from "@shared/ipc-types";
+
+/** A diagram cause handed to the study's FMECA form (the analyst rates it there). */
+export interface IshikawaFmecaPromotion {
+  cause: string;
+  diagramId: number;
+  nodeId: string;
+}
+
+/** Corrective natures (EN 13306) a root-cause work order may take. */
+const CORRECTIVE_NATURES = new Set(["corrective_immediate", "corrective_deferred"]);
 
 type FlowPersist = {
   nodes: Node[];
@@ -323,8 +337,14 @@ function buildDefaultFlow(t: (k: string) => string): FlowPersist {
   return { nodes: fishNodes, edges: buildFishboneEdges(fishNodes, edges) };
 }
 
-function IshikawaDiagramInner({ equipmentId }: { equipmentId: number }) {
-  const { t } = useTranslation("reliability");
+function IshikawaDiagramInner({
+  equipmentId,
+  onPromoteToFmeca,
+}: {
+  equipmentId: number;
+  onPromoteToFmeca?: (promotion: IshikawaFmecaPromotion) => void;
+}) {
+  const { t, i18n } = useTranslation("reliability");
   const { info } = useSession();
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -346,9 +366,29 @@ function IshikawaDiagramInner({ equipmentId }: { equipmentId: number }) {
   const [promoteNodeId, setPromoteNodeId] = useState<string | null>(null);
   const [promoteCause, setPromoteCause] = useState("");
   const [promoteBusy, setPromoteBusy] = useState(false);
+  const [promoteWoType, setPromoteWoType] = useState("");
+  /** Set when the stored diagram could not be read: nothing may be saved over it. */
+  const [loadError, setLoadError] = useState<unknown>(null);
+  const [reloading, setReloading] = useState(false);
+
+  const woTypes = useWorkOrderTypesCatalog((st) => st.types);
+  const loadWoTypes = useWorkOrderTypesCatalog((st) => st.load);
+  useEffect(() => {
+    const { types: loaded, loading } = useWorkOrderTypesCatalog.getState();
+    if (loaded.length === 0 && !loading) void loadWoTypes();
+  }, [loadWoTypes]);
+  const correctiveTypes = useMemo(
+    () =>
+      woTypes.filter(
+        (wt) => wt.is_active && wt.nature != null && CORRECTIVE_NATURES.has(wt.nature),
+      ),
+    [woTypes],
+  );
 
   const load = useCallback(async () => {
     setErr(null);
+    setLoadError(null);
+    setReloading(true);
     try {
       const rows = await listRamIshikawaDiagrams({ equipment_id: equipmentId, limit: 1 });
       const row = rows[0];
@@ -369,7 +409,10 @@ function IshikawaDiagramInner({ equipmentId }: { equipmentId: number }) {
             return;
           }
         } catch {
-          /* fall through to default */
+          // The stored diagram cannot be read: never replace it with an empty one on save.
+          setMeta(row);
+          setLoadError(t("governance.unreadable"));
+          return;
         }
         const d = buildDefaultFlow(t);
         setNodes(d.nodes);
@@ -387,13 +430,11 @@ function IshikawaDiagramInner({ equipmentId }: { equipmentId: number }) {
       viewportRef.current = { x: 0, y: 0, zoom: 1 };
       setFlowMountKey((k) => k + 1);
       setMeta(null);
-    } catch {
-      setErr(t("governance.loadError"));
-      const d = buildDefaultFlow(t);
-      setNodes(d.nodes);
-      setEdges(d.edges);
-      setLoadedViewport(null);
-      setMeta(null);
+    } catch (e) {
+      // Without the stored diagram a save would create a second one: show the failure instead.
+      setLoadError(e);
+    } finally {
+      setReloading(false);
     }
   }, [equipmentId, setEdges, setNodes, t]);
 
@@ -455,10 +496,8 @@ function IshikawaDiagramInner({ equipmentId }: { equipmentId: number }) {
       setMeta(saved);
       await load();
       pushAppToast({ title: t("governance.saved"), variant: "success" });
-    } catch (e) {
-      const msg = toErrorMessage(e);
-      setErr(msg);
-      pushAppToast({ title: msg, variant: "destructive" });
+    } catch {
+      // The global IPC toast reports the failure.
     } finally {
       setSaving(false);
     }
@@ -490,11 +529,11 @@ function IshikawaDiagramInner({ equipmentId }: { equipmentId: number }) {
         id: meta?.id ?? null,
         equipment_id: equipmentId,
         expected_row_version: meta?.row_version ?? null,
-        title: "Ishikawa",
+        title: t("governance.diagramTitle"),
         flow_json,
       });
     },
-    [nodes, edges, meta, equipmentId],
+    [nodes, edges, meta, equipmentId, t],
   );
 
   const onSave = async () => {
@@ -504,10 +543,8 @@ function IshikawaDiagramInner({ equipmentId }: { equipmentId: number }) {
       const saved = await persistFlow();
       setMeta(saved);
       pushAppToast({ title: t("governance.saved"), variant: "success" });
-    } catch (e) {
-      const msg = toErrorMessage(e);
-      setErr(msg);
-      pushAppToast({ title: msg, variant: "destructive" });
+    } catch {
+      // The global IPC toast reports the failure.
     } finally {
       setSaving(false);
     }
@@ -521,6 +558,7 @@ function IshikawaDiagramInner({ equipmentId }: { equipmentId: number }) {
     setPromoteNodeId(nodeId);
     setPromoteCause(labelFromNode(n));
     setPromoteTarget("wo");
+    setPromoteWoType("");
     setPromoteOpen(true);
     setCtxMenu(null);
   };
@@ -530,8 +568,7 @@ function IshikawaDiagramInner({ equipmentId }: { equipmentId: number }) {
     if (cause === "" || promoteNodeId == null) {
       return;
     }
-    if (promoteTarget === "wo" && info?.user_id == null) {
-      setErr(t("governance.promoteNeedUser"));
+    if (promoteTarget === "wo" && (info?.user_id == null || promoteWoType === "")) {
       return;
     }
     setPromoteBusy(true);
@@ -541,9 +578,9 @@ function IshikawaDiagramInner({ equipmentId }: { equipmentId: number }) {
       setMeta(saved);
       if (promoteTarget === "wo" && info?.user_id != null) {
         await createWo({
-          type_code: "corrective",
+          type_code: promoteWoType,
           equipment_id: equipmentId,
-          title: `RCA: ${cause}`,
+          title: t("governance.promoteWoTitle", { cause }),
           description: cause,
           creator_id: info.user_id,
           source_ram_ishikawa_diagram_id: saved.id,
@@ -551,34 +588,29 @@ function IshikawaDiagramInner({ equipmentId }: { equipmentId: number }) {
           source_rca_cause_text: cause,
         });
         pushAppToast({ title: t("governance.promoteSuccessWo"), variant: "success" });
-      } else {
-        const analyses = await listFmecaAnalyses({ equipment_id: equipmentId, limit: 5 });
-        const a = analyses[0];
-        if (a == null) {
-          setErr(t("governance.promoteNeedFmecaAnalysis"));
-          return;
-        }
-        await upsertFmecaItem({
-          analysis_id: a.id,
-          severity: 5,
-          occurrence: 5,
-          detectability: 5,
-          functional_failure: cause,
-          failure_effect: cause,
-          recommended_action: `Address RCA cause: ${cause}`,
-          source_ram_ishikawa_diagram_id: saved.id,
-          source_ishikawa_flow_node_id: promoteNodeId,
-        });
-        pushAppToast({ title: t("governance.promoteSuccessFmeca"), variant: "success" });
+      } else if (onPromoteToFmeca) {
+        // The study's FMECA form opens: the analyst chooses the mode and every rating.
+        onPromoteToFmeca({ cause, diagramId: saved.id, nodeId: promoteNodeId });
       }
       setPromoteOpen(false);
       setPromoteNodeId(null);
-    } catch (e) {
-      setErr(toErrorMessage(e));
+    } catch {
+      // The global IPC toast reports the failure; the dialog stays open.
     } finally {
       setPromoteBusy(false);
     }
   };
+
+  if (loadError != null) {
+    return (
+      <ErrorState
+        error={loadError}
+        title={t("governance.loadError")}
+        onRetry={() => void load()}
+        retrying={reloading}
+      />
+    );
+  }
 
   return (
     <div className="flex flex-col gap-2">
@@ -720,11 +752,17 @@ function IshikawaDiagramInner({ equipmentId }: { equipmentId: number }) {
               onChange={(e) => setPromoteCause(e.target.value)}
             />
           </label>
-          <div className="flex flex-wrap gap-2">
+          <div
+            className="flex flex-wrap gap-2"
+            role="radiogroup"
+            aria-label={t("governance.promoteTarget")}
+          >
             <button
               type="button"
+              role="radio"
+              aria-checked={promoteTarget === "wo"}
               className={cn(
-                "rounded-md border px-3 py-1.5 text-xs",
+                "min-h-[44px] rounded-md border px-3 py-1.5 text-xs",
                 promoteTarget === "wo"
                   ? "border-primary/40 bg-primary/10 text-text-primary"
                   : "border-surface-border bg-surface-2 text-text-secondary",
@@ -733,19 +771,42 @@ function IshikawaDiagramInner({ equipmentId }: { equipmentId: number }) {
             >
               {t("governance.promoteTargetWo")}
             </button>
-            <button
-              type="button"
-              className={cn(
-                "rounded-md border px-3 py-1.5 text-xs",
-                promoteTarget === "fmeca"
-                  ? "border-primary/40 bg-primary/10 text-text-primary"
-                  : "border-surface-border bg-surface-2 text-text-secondary",
-              )}
-              onClick={() => setPromoteTarget("fmeca")}
-            >
-              {t("governance.promoteTargetFmeca")}
-            </button>
+            {onPromoteToFmeca ? (
+              <button
+                type="button"
+                role="radio"
+                aria-checked={promoteTarget === "fmeca"}
+                className={cn(
+                  "min-h-[44px] rounded-md border px-3 py-1.5 text-xs",
+                  promoteTarget === "fmeca"
+                    ? "border-primary/40 bg-primary/10 text-text-primary"
+                    : "border-surface-border bg-surface-2 text-text-secondary",
+                )}
+                onClick={() => setPromoteTarget("fmeca")}
+              >
+                {t("governance.promoteTargetFmeca")}
+              </button>
+            ) : null}
           </div>
+          {promoteTarget === "wo" ? (
+            <label className="grid gap-1.5 text-sm">
+              <span className="text-text-muted">{t("governance.promoteWoType")}</span>
+              <Select value={promoteWoType} onValueChange={setPromoteWoType}>
+                <SelectTrigger className="h-10" aria-label={t("governance.promoteWoType")}>
+                  <SelectValue placeholder={t("governance.promoteWoTypePlaceholder")} />
+                </SelectTrigger>
+                <SelectContent>
+                  {correctiveTypes.map((wt) => (
+                    <SelectItem key={wt.code} value={wt.code}>
+                      {woTypeLabel(wt, i18n.language)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </label>
+          ) : (
+            <p className="text-xs text-text-muted">{t("governance.promoteFmecaHint")}</p>
+          )}
           <DialogFooter className="gap-2 sm:gap-0">
             <button
               type="button"
@@ -756,11 +817,19 @@ function IshikawaDiagramInner({ equipmentId }: { equipmentId: number }) {
             </button>
             <button
               type="button"
-              disabled={promoteBusy}
-              className="rounded-md border border-primary/35 bg-primary/10 px-3 py-1.5 text-xs font-medium text-text-primary disabled:opacity-50"
+              disabled={
+                promoteBusy ||
+                promoteCause.trim() === "" ||
+                (promoteTarget === "wo" && (promoteWoType === "" || info?.user_id == null))
+              }
+              className="min-h-[44px] rounded-md border border-primary/35 bg-primary/10 px-3 py-1.5 text-xs font-medium text-text-primary disabled:opacity-50"
               onClick={() => void onPromoteSubmit()}
             >
-              {promoteBusy ? "…" : t("governance.promoteSubmit")}
+              {promoteBusy
+                ? t("governance.promoteBusy")
+                : promoteTarget === "fmeca"
+                  ? t("governance.promoteOpenFmeca")
+                  : t("governance.promoteSubmit")}
             </button>
           </DialogFooter>
         </DialogContent>
@@ -769,10 +838,20 @@ function IshikawaDiagramInner({ equipmentId }: { equipmentId: number }) {
   );
 }
 
-export function IshikawaDiagramCanvas({ equipmentId }: { equipmentId: number }) {
+export function IshikawaDiagramCanvas({
+  equipmentId,
+  onPromoteToFmeca,
+}: {
+  equipmentId: number;
+  /** Hands a cause to the study's FMECA form; without it a cause can only become a work order. */
+  onPromoteToFmeca?: (promotion: IshikawaFmecaPromotion) => void;
+}) {
   return (
     <ReactFlowProvider>
-      <IshikawaDiagramInner equipmentId={equipmentId} />
+      <IshikawaDiagramInner
+        equipmentId={equipmentId}
+        {...(onPromoteToFmeca ? { onPromoteToFmeca } : {})}
+      />
     </ReactFlowProvider>
   );
 }

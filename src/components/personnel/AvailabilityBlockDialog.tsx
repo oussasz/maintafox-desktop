@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
@@ -69,34 +69,47 @@ export function AvailabilityBlockDialog({
 
   const forcedCritical = FORCED_CRITICAL_TYPES.has(blockType);
 
-  useEffect(() => {
-    if (!open) return;
-    setError(null);
-    setOverlapConfirmPending(false);
-    if (mode === "edit" && editingBlock) {
-      setPersonnelId(editingBlock.personnel_id);
-      setBlockType(editingBlock.block_type);
-      setStartAt(toDatetimeLocalValue(editingBlock.start_at));
-      setEndAt(toDatetimeLocalValue(editingBlock.end_at));
-      setReason(editingBlock.reason_note ?? "");
-      setIsCritical(editingBlock.is_critical);
-      return;
-    }
-    setPersonnelId(initialPersonnelId ?? personOptions[0]?.id ?? null);
-    setBlockType("leave");
-    setStartAt(initialStartLocal ?? "");
-    setEndAt(initialEndLocal ?? "");
-    setReason("");
-    setIsCritical(false);
-  }, [
-    open,
-    mode,
+  // Latest props for the reset below, read without making them reset triggers: the parent
+  // rebuilds `personOptions` on every render, which used to wipe the form while typing.
+  const initialRef = useRef({
     editingBlock,
     initialPersonnelId,
     initialStartLocal,
     initialEndLocal,
     personOptions,
-  ]);
+  });
+  initialRef.current = {
+    editingBlock,
+    initialPersonnelId,
+    initialStartLocal,
+    initialEndLocal,
+    personOptions,
+  };
+  /** Changes only when the dialog opens, or opens on another block. */
+  const resetKey = open ? `${mode}:${editingBlock?.id ?? "new"}` : null;
+
+  useEffect(() => {
+    if (resetKey == null) return;
+    const init = initialRef.current;
+    setError(null);
+    setOverlapConfirmPending(false);
+    if (mode === "edit" && init.editingBlock) {
+      const b = init.editingBlock;
+      setPersonnelId(b.personnel_id);
+      setBlockType(b.block_type);
+      setStartAt(toDatetimeLocalValue(b.start_at));
+      setEndAt(toDatetimeLocalValue(b.end_at));
+      setReason(b.reason_note ?? "");
+      setIsCritical(b.is_critical);
+      return;
+    }
+    setPersonnelId(init.initialPersonnelId ?? init.personOptions[0]?.id ?? null);
+    setBlockType("leave");
+    setStartAt(init.initialStartLocal ?? "");
+    setEndAt(init.initialEndLocal ?? "");
+    setReason("");
+    setIsCritical(false);
+  }, [resetKey, mode]);
 
   useEffect(() => {
     if (forcedCritical) setIsCritical(true);

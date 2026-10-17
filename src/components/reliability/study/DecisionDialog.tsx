@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
+import { ErrorState } from "@/components/ui/data-state";
 import {
   Dialog,
   DialogContent,
@@ -73,9 +74,13 @@ export function DecisionDialog({
   const [approver, setApprover] = useState<number | null>(null);
   const [justification, setJustification] = useState("");
   const [saving, setSaving] = useState(false);
+  /** The plans, types or approvers could not be loaded: shown with a retry, never an empty form. */
+  const [loadError, setLoadError] = useState<unknown>(null);
+  const [loadRun, setLoadRun] = useState(0);
 
   useEffect(() => {
     if (!open) return;
+    setLoadError(null);
     setTitle(prefill?.title ?? "");
     setKind(prefill?.kind ?? "pm_interval");
     setInterval(prefill?.intervalHours != null ? String(prefill.intervalHours) : "");
@@ -98,27 +103,27 @@ export function DecisionDialog({
         if (cancelled) return;
         const usable = a.pm_plans.filter((p) => p.interval_hours != null);
         setPlans(usable);
-        setPlanId(prefill?.pmPlanId ?? a.selected_pm_plan_id ?? usable[0]?.pm_plan_id ?? null);
+        // The plan of the study's life analysis; otherwise the analyst chooses (no first-plan default).
+        setPlanId(prefill?.pmPlanId ?? a.selected_pm_plan_id ?? null);
         const active = types.filter((x) => x.is_active);
         setWoTypes(active);
-        // A reliability decision acts on a failure: deferred corrective work by default (EN 13306).
-        setWoType(
-          active.find((x) => x.nature === "corrective_deferred")?.code ?? active[0]?.code ?? "",
-        );
+        // The work-order type is chosen by the analyst: none is preset.
+        setWoType("");
         setApprovers(people);
         if (usable.length === 0 && (prefill?.kind ?? "pm_interval") === "pm_interval")
           setKind("one_off_wo");
-      } catch {
-        // global IPC toast
+      } catch (err) {
+        if (!cancelled) setLoadError(err);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [open, prefill, study]);
+  }, [open, prefill, study, loadRun]);
 
   const intervalN = Number(interval.replace(",", "."));
   const valid =
+    loadError == null &&
     title.trim().length > 0 &&
     (kind === "pm_interval"
       ? planId != null && Number.isFinite(intervalN) && intervalN > 0
@@ -160,6 +165,14 @@ export function DecisionDialog({
           <DialogTitle>{t("rams.decision.dialogTitle")}</DialogTitle>
           <DialogDescription>{t("rams.decision.dialogHint")}</DialogDescription>
         </DialogHeader>
+        {loadError != null ? (
+          <ErrorState
+            error={loadError}
+            title={t("rams.decision.loadError")}
+            onRetry={() => setLoadRun((n) => n + 1)}
+            className="py-4"
+          />
+        ) : null}
         <div className="grid gap-3">
           <label className={field}>
             {t("rams.decision.title")}

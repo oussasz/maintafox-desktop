@@ -255,6 +255,8 @@ export interface LicenseStatusView {
   license_edition: string | null;
   entitlement_tier: string | null;
   envelope_id: string | null;
+  /** Issuer of the active envelope's signing key (target of compromise responses). */
+  envelope_issuer: string | null;
   /** Signing key of the active envelope (target of compromise responses). */
   envelope_key_id: string | null;
   verification_result: string | null;
@@ -2109,6 +2111,8 @@ export interface EquipmentTaxonomyOption {
   label: string;
   parent_id: number | null;
   color_hex: string | null;
+  /** Product meaning (EQUIPMENT.STATUS: availability tag up / down / not_installed / retired). */
+  semantic_tag: string | null;
   is_system: boolean;
 }
 
@@ -2474,7 +2478,10 @@ export interface AssetHistorySummary {
   wo_count: number;
   pm_count: number;
   failure_count: number;
+  /** Operational availability (%) of the latest reliability snapshot; null until computed. */
   availability_percent: number | null;
+  /** End of the period that availability covers. */
+  availability_period_end: string | null;
 }
 
 export type AssetHistoryPeriod = "today" | "last_7_days" | "last_30_days" | "this_year" | "all";
@@ -3533,18 +3540,17 @@ export interface InventoryReplenishmentRecommendation {
   suggested_supplier_name: string | null;
   estimated_cost: number | null;
   expected_arrival: string | null;
-  reason: string | null;
   transfer_options: ReplenishmentTransferOption[];
 }
 
+/** Coded alert: the screen words it from `kind` and `params` in the UI language. */
 export interface ProcurementAlert {
   kind: string;
   severity: string;
-  title: string;
-  detail: string | null;
   entity_type: string | null;
   entity_id: number | null;
   entity_code: string | null;
+  params: Record<string, string>;
 }
 
 export interface ArticleConsumptionMonth {
@@ -3577,6 +3583,11 @@ export interface ProcurementDashboardSummary {
   repairables_in_repair: number;
   active_suppliers_count: number;
   receiving_today_count: number;
+  /** Statuses each count covers, so a tile opens exactly the list it counts. */
+  open_requisition_statuses: string[];
+  open_po_statuses: string[];
+  /** Late = one of these statuses and an expected delivery before now. */
+  late_po_statuses: string[];
 }
 
 export interface ArticleRepairableHistory {
@@ -4568,7 +4579,8 @@ export interface UploadAssetPhotoPayload {
 
 export interface DecommissionAssetPayload {
   asset_id: number;
-  target_status: "DECOMMISSIONED" | "SCRAPPED";
+  /** A status tagged `retired` in EQUIPMENT.STATUS (checked by the backend). */
+  target_status: string;
   reason: string;
   notes: string | null;
 }
@@ -7499,6 +7511,8 @@ export interface FmecaItem {
   revised_rpn: number | null;
   source_ram_ishikawa_diagram_id: number | null;
   source_ishikawa_flow_node_id: string | null;
+  /** Ratings nobody chose (former root-cause placeholder): shown "to review", never ranked. */
+  review_required: boolean;
   row_version: number;
   updated_at: string;
 }
@@ -7802,6 +7816,8 @@ export interface FmecaCriticality {
   operating_hours: number;
   criticality_number: number;
   analysis_criticality: number;
+  /** Rows of the analysis still to review, not counted in Cr. */
+  analysis_rows_to_review: number;
 }
 
 export interface RcmDecision {
@@ -10506,6 +10522,10 @@ export interface PermitTypeUpsertInput {
   max_duration_hours: number | null;
   mandatory_ppe_ids_json: string | null;
   mandatory_control_rules_json: string | null;
+  /** Permits of this type need a verified energy isolation before they start (LOTO). */
+  requires_energy_isolation: boolean;
+  /** Required when switching the rule off (administrator + step-up, audited). */
+  disable_isolation_reason?: string | null;
 }
 
 export interface WorkPermitCreateInput {
@@ -10565,8 +10585,10 @@ export interface PermitIsolationUpsertInput {
   id: number | null;
   permit_id: number;
   isolation_point: string;
-  energy_type: string;
-  isolation_method: string;
+  /** Active `PERMIT.ENERGY_TYPES` value. */
+  energy_type_id: number;
+  /** Active `PERMIT.ISOLATION_METHODS` value (the plant's list). */
+  isolation_method_id: number;
   lock_number: string | null;
 }
 
@@ -10582,6 +10604,8 @@ export interface WorkPermitListFilter {
   permit_type_id?: number;
   asset_id?: number;
   linked_work_order_id?: number;
+  /** Code, type, equipment or work order text (searched on the server). */
+  search?: string;
   limit?: number;
 }
 

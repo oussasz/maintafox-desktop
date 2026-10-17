@@ -6,6 +6,7 @@ pub mod generation;
 pub mod generation_control;
 pub mod plan_tools;
 pub mod queries;
+pub mod reason_catalog;
 pub mod schedule;
 pub mod scheduler;
 pub mod wo_content;

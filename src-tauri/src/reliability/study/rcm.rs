@@ -25,7 +25,7 @@ use crate::reliability::rcm_loop::{
 };
 use crate::reliability::study::analysis::life_analysis;
 use crate::reliability::study::domain::{LifeAnalysisRequest, ReliabilityStudy};
-use crate::reliability::study::fmeca::study_fmeca_analysis_id;
+use crate::reliability::study::fmeca::{rows_to_review, study_fmeca_analysis_id};
 use crate::reliability::study::life::PATTERN_WEAR_OUT;
 use crate::reliability::study::scales::{load_scales, RatingScales};
 use crate::reliability::study::store::{get, get_study, opt_f64, STUDY_ACTIVE};
@@ -91,6 +91,8 @@ pub struct RcmWorksheet {
     pub rows: Vec<RcmRow>,
     pub editable: bool,
     pub time_basis: String,
+    /// FMECA rows still to review (ratings nobody chose): not offered for an RCM decision.
+    pub rows_to_review: i64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -228,7 +230,7 @@ pub async fn get_worksheet(db: &DatabaseConnection, study_id: i64) -> AppResult<
                         (SELECT x.status FROM reliability_study_decisions x WHERE x.fmeca_item_id = i.id
                           ORDER BY x.created_at DESC, x.id DESC LIMIT 1) AS decision_status
                  FROM fmeca_items i LEFT JOIN reference_values m ON m.id = i.failure_mode_id
-                 WHERE i.analysis_id = ? ORDER BY i.rpn DESC, i.id ASC",
+                 WHERE i.analysis_id = ? AND i.review_required = 0 ORDER BY i.rpn DESC, i.id ASC",
                 [analysis_id.into()],
             ))
             .await?;
@@ -307,12 +309,14 @@ pub async fn get_worksheet(db: &DatabaseConnection, study_id: i64) -> AppResult<
             });
         }
     }
+    let rows_to_review = rows_to_review(db, study_id).await?;
     Ok(RcmWorksheet {
         study_id,
         rcm_study_id: study_rcm_study_id(db, study_id).await?,
         rows,
         editable: study.status == STUDY_ACTIVE,
         time_basis,
+        rows_to_review,
     })
 }
 
@@ -351,11 +355,15 @@ pub async fn save_decision(db: &DatabaseConnection, input: SaveRcmInput, actor_i
     let item = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT component_label, functional_failure, failure_mode_id FROM fmeca_items WHERE id = ? AND analysis_id = ?",
+            "SELECT component_label, functional_failure, failure_mode_id, review_required FROM fmeca_items              WHERE id = ? AND analysis_id = ?",
             [input.fmeca_item_id.into(), analysis.into()],
         ))
         .await?
         .ok_or_else(|| invalid("RCM_FMECA_ITEM_NOT_IN_STUDY"))?;
+    if get::<i64>(&item, "review_required")? != 0 {
+        // Its ratings were never chosen by a person: rate it in the FMECA step first.
+        return Err(invalid("FMECA_ITEM_REVIEW_REQUIRED"));
+    }
     if let Some(pf) = input.pf_interval_hours {
         if !(pf.is_finite() && pf > 0.0) {
             return Err(invalid("RCM_PF_INTERVAL_INVALID"));

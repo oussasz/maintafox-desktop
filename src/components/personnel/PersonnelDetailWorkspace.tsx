@@ -22,6 +22,7 @@ import { PersonQualificationSheet } from "@/components/personnel/qualification/P
 import { Timeline, type TimelineEntry } from "@/components/timeline";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ErrorState } from "@/components/ui/data-state";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -33,6 +34,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
+import { describeAppError } from "@/lib/app-error";
 import {
   createRateCard,
   getPersonnelWorkloadSummary,
@@ -115,6 +117,9 @@ function pickActiveRateCard(cards: PersonnelRateCard[]): PersonnelRateCard | nul
   return eligible[0] ?? null;
 }
 
+/** Data read for the detail tabs (each may fail on its own). */
+type TabDataKey = "teams" | "availability" | "history" | "assignment" | "workload";
+
 export function PersonnelDetailWorkspace({ detail }: PersonnelDetailWorkspaceProps) {
   const { t } = useTranslation("personnel");
   const { formatCurrency } = useFormatters();
@@ -137,6 +142,9 @@ export function PersonnelDetailWorkspace({ detail }: PersonnelDetailWorkspacePro
   const [assignmentHistory, setAssignmentHistory] = useState<PersonnelAssignmentHistoryEntry[]>([]);
   const [workload, setWorkload] = useState<PersonnelWorkloadSummary | null>(null);
   const [tabsLoading, setTabsLoading] = useState(false);
+  /** Per tab: why its data could not be read (never shown as "no data" / "available"). */
+  const [tabErrors, setTabErrors] = useState<Partial<Record<TabDataKey, unknown>>>({});
+  const [tabsReload, setTabsReload] = useState(0);
   const [laborRateInput, setLaborRateInput] = useState("");
   const [overtimeRateInput, setOvertimeRateInput] = useState("");
   const [rateSaving, setRateSaving] = useState(false);
@@ -173,7 +181,7 @@ export function PersonnelDetailWorkspace({ detail }: PersonnelDetailWorkspacePro
       setOvertimeRateInput("");
       await openPersonnel(p.id);
     } catch (err) {
-      setRateError(err instanceof Error ? err.message : String(err));
+      setRateError(describeAppError(err).title);
     } finally {
       setRateSaving(false);
     }
@@ -181,26 +189,51 @@ export function PersonnelDetailWorkspace({ detail }: PersonnelDetailWorkspacePro
 
   useEffect(() => {
     setActiveView("identity");
+  }, [p.id]);
+
+  useEffect(() => {
+    let cancelled = false;
     setTabsLoading(true);
-    void Promise.all([
+    setTabErrors({});
+    void Promise.allSettled([
       listPersonnelTeamAssignments(p.id),
       listPersonnelAvailabilityBlocks(p.id, 20),
       listPersonnelWorkHistory(p.id, 40),
       listPersonnelAssignmentHistory(p.id, 60),
       getPersonnelWorkloadSummary(p.id),
-    ])
-      .then(([teams, bl, wh, ah, wl]) => {
-        setTeamAssignments(teams);
-        setBlocks(bl);
-        setWorkHistory(wh);
-        setAssignmentHistory(ah);
-        setWorkload(wl);
-      })
-      .catch(() => {
-        /* individual views handle empty state */
-      })
-      .finally(() => setTabsLoading(false));
-  }, [p.id]);
+    ]).then(([teams, bl, wh, ah, wl]) => {
+      if (cancelled) return;
+      const errors: Partial<Record<TabDataKey, unknown>> = {};
+      if (teams.status === "fulfilled") setTeamAssignments(teams.value);
+      else errors.teams = teams.reason;
+      if (bl.status === "fulfilled") setBlocks(bl.value);
+      else {
+        setBlocks([]);
+        errors.availability = bl.reason;
+      }
+      if (wh.status === "fulfilled") setWorkHistory(wh.value);
+      else errors.history = wh.reason;
+      if (ah.status === "fulfilled") setAssignmentHistory(ah.value);
+      else errors.assignment = ah.reason;
+      if (wl.status === "fulfilled") setWorkload(wl.value);
+      else errors.workload = wl.reason;
+      setTabErrors(errors);
+      setTabsLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [p.id, tabsReload]);
+
+  const tabError = (key: TabDataKey) =>
+    tabErrors[key] != null ? (
+      <ErrorState
+        error={tabErrors[key]}
+        onRetry={() => setTabsReload((n) => n + 1)}
+        retrying={tabsLoading}
+        className="py-4"
+      />
+    ) : null;
 
   const viewTabs = useMemo(
     () => [
@@ -381,6 +414,7 @@ export function PersonnelDetailWorkspace({ detail }: PersonnelDetailWorkspacePro
           <p className="text-sm text-text-muted">{t("capacityDays.personIntro")}</p>
           <PersonCapacityDays personnelId={p.id} />
           <PersonScheduleExceptions personnelId={p.id} />
+          {tabError("availability")}
           {blocks.length > 0 ? (
             <h4 className="pt-2 text-sm font-semibold text-text-primary">
               {t("availability.detail.blocks")}
@@ -401,7 +435,8 @@ export function PersonnelDetailWorkspace({ detail }: PersonnelDetailWorkspacePro
 
       {activeView === "teams" ? (
         <DetailSectionCard title={t("detail.tabs.teams")}>
-          {!tabsLoading && teamAssignments.length === 0 ? (
+          {tabError("teams")}
+          {!tabsLoading && tabErrors.teams == null && teamAssignments.length === 0 ? (
             <EmptyMsg msg={t("common.noData")} />
           ) : null}
           {teamAssignments.map((ta) => (
@@ -511,10 +546,11 @@ export function PersonnelDetailWorkspace({ detail }: PersonnelDetailWorkspacePro
           <Timeline
             items={assignmentEntries}
             loading={tabsLoading}
+            error={tabErrors.assignment ?? undefined}
+            onRetry={() => setTabsReload((n) => n + 1)}
             aria-label={t("detail.tabs.assignment")}
             empty={t("common.noData")}
             groupBy="day"
-            todayLabel={t("common.today", "Today")}
           />
         </DetailSectionCard>
       ) : null}
@@ -524,10 +560,11 @@ export function PersonnelDetailWorkspace({ detail }: PersonnelDetailWorkspacePro
           <Timeline
             items={workEntries}
             loading={tabsLoading}
+            error={tabErrors.history ?? undefined}
+            onRetry={() => setTabsReload((n) => n + 1)}
             aria-label={t("detail.tabs.history")}
             empty={t("common.noData")}
             groupBy="day"
-            todayLabel={t("common.today", "Today")}
           />
         </DetailSectionCard>
       ) : null}
@@ -535,6 +572,7 @@ export function PersonnelDetailWorkspace({ detail }: PersonnelDetailWorkspacePro
       {activeView === "workload" ? (
         <DetailSectionCard title={t("detail.tabs.workload")}>
           {tabsLoading ? <EmptyMsg msg={t("common.loading")} /> : null}
+          {tabError("workload")}
           {workload ? (
             <>
               <DetailFieldRow
@@ -555,7 +593,9 @@ export function PersonnelDetailWorkspace({ detail }: PersonnelDetailWorkspacePro
               />
             </>
           ) : null}
-          {!tabsLoading && !workload ? <EmptyMsg msg={t("common.noData")} /> : null}
+          {!tabsLoading && !workload && tabErrors.workload == null ? (
+            <EmptyMsg msg={t("common.noData")} />
+          ) : null}
         </DetailSectionCard>
       ) : null}
     </div>

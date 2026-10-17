@@ -3,13 +3,13 @@ import { useTranslation } from "react-i18next";
 
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import { useStepUp } from "@/hooks/use-step-up";
+import { describeAppError } from "@/lib/app-error";
 import {
   getLockoutPolicy,
   getPasswordPolicy,
   setLockoutPolicy,
   setPasswordPolicy,
 } from "@/services/rbac-service";
-import { toErrorMessage } from "@/utils/errors";
 import type { LockoutPolicySettings, PasswordPolicySettings } from "@shared/ipc-types";
 
 /**
@@ -53,7 +53,7 @@ export function PasswordPolicyPanel() {
       // Reload: the server says whether the stored policy is readable again.
       await load();
     } catch (err) {
-      setError(toErrorMessage(err) || t("passwordPolicy.saveError"));
+      setError(describeAppError(err).title);
     } finally {
       setSaving(false);
     }
@@ -222,7 +222,7 @@ export function LockoutPolicyPanel() {
       setSuccess(true);
       setTimeout(() => setSuccess(false), 3000);
     } catch (err) {
-      setError(toErrorMessage(err) || t("lockoutPolicy.saveError"));
+      setError(describeAppError(err).title);
     } finally {
       setSaving(false);
     }

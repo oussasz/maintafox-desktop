@@ -1,7 +1,6 @@
 import { useCallback, useState } from "react";
 
 import { runIntegrityCheck, repairSeedData } from "@/services/diagnostics-service";
-import { toErrorMessage } from "@/utils/errors";
 import type { IntegrityReport } from "@shared/ipc-types";
 
 export type IntegrityStatus = "idle" | "checking" | "repairing" | "done" | "error";
@@ -9,7 +8,8 @@ export type IntegrityStatus = "idle" | "checking" | "repairing" | "done" | "erro
 export interface UseIntegrityCheckReturn {
   report: IntegrityReport | null;
   status: IntegrityStatus;
-  error: string | null;
+  /** The failure itself (shown through ErrorState / describeAppError, never as raw text). */
+  error: unknown;
   check: () => Promise<void>;
   repair: () => Promise<void>;
 }
@@ -17,7 +17,7 @@ export interface UseIntegrityCheckReturn {
 export function useIntegrityCheck(): UseIntegrityCheckReturn {
   const [report, setReport] = useState<IntegrityReport | null>(null);
   const [status, setStatus] = useState<IntegrityStatus>("idle");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
 
   const check = useCallback(async () => {
     setStatus("checking");
@@ -27,7 +27,7 @@ export function useIntegrityCheck(): UseIntegrityCheckReturn {
       setReport(result);
       setStatus("done");
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(err);
       setStatus("error");
     }
   }, []);
@@ -40,7 +40,7 @@ export function useIntegrityCheck(): UseIntegrityCheckReturn {
       setReport(result);
       setStatus("done");
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(err);
       setStatus("error");
     }
   }, []);

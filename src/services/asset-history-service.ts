@@ -32,6 +32,7 @@ export const AssetHistorySummarySchema = z.object({
   pm_count: z.number(),
   failure_count: z.number(),
   availability_percent: z.number().nullable(),
+  availability_period_end: z.string().nullable(),
 });
 
 export async function listAssetHistoryEvents(

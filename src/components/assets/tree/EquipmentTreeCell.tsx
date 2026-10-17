@@ -52,11 +52,11 @@ export function EquipmentTreeCell({ row, isExpanded, onToggle }: EquipmentTreeCe
         style={{ width: CHEVRON_SLOT_PX }}
       >
         {isLeaf ? (
-          <span className="w-3.5 h-3.5" aria-hidden />
+          <span className="w-9 shrink-0" aria-hidden />
         ) : (
           <button
             type="button"
-            className="p-0.5 rounded hover:bg-accent text-text-muted"
+            className="-my-1 flex h-9 w-9 items-center justify-center rounded text-text-muted hover:bg-surface-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             aria-expanded={isExpanded}
             aria-label={isExpanded ? t("tree.collapse") : t("tree.expand")}
             onClick={(e) => {
@@ -65,9 +65,9 @@ export function EquipmentTreeCell({ row, isExpanded, onToggle }: EquipmentTreeCe
             }}
           >
             {isExpanded ? (
-              <ChevronDown className="h-3.5 w-3.5" />
+              <ChevronDown className="h-4 w-4" aria-hidden />
             ) : (
-              <ChevronRight className="h-3.5 w-3.5" />
+              <ChevronRight className="h-4 w-4" aria-hidden />
             )}
           </button>
         )}

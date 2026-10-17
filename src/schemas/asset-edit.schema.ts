@@ -18,7 +18,6 @@ export const assetEditSchema = z.object({
   org_node_id: z.number({ required_error: ASSET_FIELD_REQUIRED_KEY }),
   commissioned_at: z.string().nullable().default(null),
   decommissioned_at: z.string().nullable().default(null),
-  description: z.string().max(2000).nullable().default(null),
 });
 
 export type AssetEditFormValues = z.infer<typeof assetEditSchema>;

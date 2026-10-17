@@ -220,14 +220,22 @@
     "promoteMenu": "Promote to corrective action",
     "promoteTitle": "Create corrective action from cause",
     "promoteBody": "Creates a traceable link to this Ishikawa diagram. Save the diagram first if you have not already.",
-    "promoteTargetWo": "Work order (corrective)",
+    "promoteTargetWo": "Corrective work order",
     "promoteTargetFmeca": "FMECA row",
     "promoteNeedSave": "Save the diagram before promoting a cause.",
     "promoteNeedUser": "You must be signed in to create a work order.",
-    "promoteNeedFmecaAnalysis": "Create an FMECA analysis for this equipment first.",
     "promoteSubmit": "Create",
     "promoteSuccessWo": "Work order created from RCA cause.",
-    "promoteSuccessFmeca": "FMECA row created from RCA cause."
+    "promoteSuccessFmeca": "FMECA row created from the root cause.",
+    "unreadable": "The saved diagram cannot be read. It is kept as stored; nothing is saved over it.",
+    "diagramTitle": "Root-cause diagram",
+    "promoteTarget": "Turn the cause into",
+    "promoteWoType": "Work order type",
+    "promoteWoTypePlaceholder": "Choose a corrective type",
+    "promoteWoTitle": "Root cause: {{cause}}",
+    "promoteFmecaHint": "The study's FMECA form opens with this cause: choose the failure mode and rate severity, occurrence and detection.",
+    "promoteOpenFmeca": "Open the FMECA form",
+    "promoteBusy": "Saving…"
   },
   "foundation": {
     "title": "Asset foundation",
@@ -288,10 +296,10 @@
     "criticality": "Criticality number (MIL-STD-1629A)",
     "beta": "Effect probability β",
     "betaOptions": {
+      "0": "0 — no effect",
       "1": "1.0 — actual loss",
       "0.5": "0.5 — probable loss",
-      "0.1": "0.1 — possible loss",
-      "0": "0 — no effect"
+      "0.1": "0.1 — possible loss"
     },
     "alpha": "Failure mode ratio α",
     "lambda": "Failure rate λp (per hour)",
@@ -760,7 +768,9 @@
       "colData": "Data",
       "noStudy": "None",
       "selectAsset": "Select {{code}}",
-      "shareLabel": "{{share}} of fleet downtime"
+      "shareLabel": "{{share}} of fleet downtime",
+      "handedError": "The equipment handed over could not be loaded",
+      "handedSelected": "{{code}} is selected for a study."
     },
     "dataQuality": {
       "complete": "Complete",
@@ -809,7 +819,8 @@
       "competingModes": "Other failure modes",
       "competingIgnore": "Other modes: ignored",
       "competingSuspend": "Other modes: suspensions",
-      "competingNeedsMode": "Choose a failure mode first"
+      "competingNeedsMode": "Choose a failure mode first",
+      "periodOrder": "The period must start before it ends."
     },
     "data": {
       "title": "Failures and suspensions",
@@ -992,7 +1003,9 @@
       "hazardLegend": "h(t), right scale",
       "hazardUnit": "/1,000 h",
       "proposedLegend": "Proposed interval",
-      "currentLegend": "Current practice"
+      "currentLegend": "Current practice",
+      "recomputeError": "The analysis could not be recomputed: the figures shown are from the last successful calculation",
+      "recomputeRetry": "Recompute"
     },
     "cost": {
       "title": "Optimal replacement interval",
@@ -1091,7 +1104,8 @@
       "approver": "Approver",
       "anyApprover": "Anyone authorised",
       "justification": "Justification",
-      "submit": "Send for approval"
+      "submit": "Send for approval",
+      "loadError": "The plans, work-order types or approvers could not be loaded"
     },
     "decisions": {
       "title": "Decision log",
@@ -1136,7 +1150,9 @@
       "applyWoAction": "Create the work order",
       "rejectTitle": "Reject the decision",
       "rejectReason": "Reason for rejection (required)",
-      "rejectAction": "Reject the decision"
+      "rejectAction": "Reject the decision",
+      "approveTitle": "Approve this decision?",
+      "approveBody": "\"{{title}}\" becomes approved and can then be applied (PM revision or work order)."
     },
     "backToModule": "Fleet and studies",
     "fmeca": {
@@ -1204,7 +1220,14 @@
       "save": "Save the row",
       "rootCauseTitle": "Root causes (Ishikawa)",
       "rootCauseHint": "Cause diagram per equipment: add causes under each branch, save, and turn a cause into a work order or an FMECA row.",
-      "rootCauseEquipment": "Equipment"
+      "rootCauseEquipment": "Equipment",
+      "toReview": "To review",
+      "toReviewHint": "Ratings were not chosen by a person (former automatic entry). Open the row, rate it and save: until then it is not counted.",
+      "rowsToReview_one": "{{count}} row to review not counted",
+      "rowsToReview_other": "{{count}} rows to review not counted",
+      "rowsToReviewBody": "Their ratings were set automatically, not chosen. They stay listed but are left out of the matrix, the RPN ranking, RCM and decisions until they are rated and saved.",
+      "fromRootCause": "From the root-cause diagram",
+      "fromRootCauseBody": "Cause: {{cause}}. Choose the failure mode and rate the row; nothing is preset."
     },
     "scales": {
       "title": "Plant rating grids",
@@ -1338,7 +1361,10 @@
       "decisionTimeBased": "Replace {{element}} every {{interval}} {{unit}}",
       "decisionCondition": "Set up monitoring of {{element}} every {{interval}} {{unit}}",
       "decisionFailureFinding": "Periodic failure-finding test: {{element}}",
-      "decisionRedesign": "Modification: {{element}}"
+      "decisionRedesign": "Modification: {{element}}",
+      "rowsToReviewBody": "Rate them in the FMECA step to analyse them here.",
+      "previewError": "The recommendation could not be recomputed: the one shown may be out of date, saving waits",
+      "previewRetry": "Recompute"
     },
     "system": {
       "tool": "Modelling tool",
@@ -1456,7 +1482,8 @@
         "wrong_source": "{{node}}: the top event must be a gate.",
         "needs_life_distribution": "{{node}}: the simulation needs a life distribution (not a typed reliability).",
         "needs_mttr": "{{node}}: repair time unknown, give it."
-      }
+      },
+      "evalError": "The model could not be evaluated"
     },
     "advanced": {
       "tools": "Advanced tools",
@@ -1567,7 +1594,10 @@
       },
       "openInspections": "Open inspections",
       "refreshKpi": "Refresh the indicator",
-      "dismiss": "Dismiss this point"
+      "dismiss": "Dismiss this point",
+      "dismissTitle": "Dismiss this data issue?",
+      "dismissBody": "\"{{issue}}\" on {{asset}} will no longer be listed. Dismiss it only when the data is right as it is.",
+      "truncated": "Only the first ones are listed: fix these, then refresh to see the next."
     }
   }
 }

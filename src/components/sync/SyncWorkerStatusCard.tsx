@@ -3,7 +3,17 @@ import { useContext, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { StatusChip } from "@/components/ui/status-chip";
 import { PermissionContext } from "@/contexts/PermissionContext";
+import type { Tone } from "@/design-system/tone";
+import { useFormatters } from "@/hooks/use-formatters";
 import { syncBlockerText, useSyncOrchestratorStore } from "@/stores/sync-orchestrator-store";
 import type { SyncWorkerState } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
@@ -16,23 +26,29 @@ const PAUSE_OPTIONS = [
   { minutes: 1440, key: "h24" },
 ] as const;
 
-function toneFor(state: SyncWorkerState | undefined): string {
+function toneFor(state: SyncWorkerState | undefined): Tone {
   switch (state) {
     case "idle":
-      return "text-status-success";
+      return "success";
     case "running":
+      return "progress";
     case "starting":
-      return "text-primary";
+    case undefined:
+      return "info";
     case "error":
-      return "text-status-danger";
+    case "blocked":
+      return "danger";
+    case "paused":
+      return "attention";
     default:
-      return "text-status-warning";
+      return "warning";
   }
 }
 
 /** Status of the Rust sync worker with sync now / pause / resume (Sync Center, Settings). */
 export function SyncWorkerStatusCard() {
-  const { t, i18n } = useTranslation("shell");
+  const { t } = useTranslation("shell");
+  const { formatDateTime, formatNumber } = useFormatters();
   const worker = useSyncOrchestratorStore((s) => s.worker);
   const actionError = useSyncOrchestratorStore((s) => s.actionError);
   const runSyncNow = useSyncOrchestratorStore((s) => s.runSyncNow);
@@ -46,8 +62,10 @@ export function SyncWorkerStatusCard() {
   const [pauseMinutes, setPauseMinutes] = useState<number>(PAUSE_OPTIONS[0].minutes);
   const [busy, setBusy] = useState(false);
 
-  const formatTime = (iso: string | null) =>
-    iso ? new Date(iso).toLocaleString(i18n.language) : t("sync.worker.never");
+  const formatTime = (iso: string | null) => (iso ? formatDateTime(iso) : t("sync.worker.never"));
+  /** A count the worker has not reported yet is "unknown", never 0. */
+  const count = (n: number | undefined) =>
+    n === undefined ? t("sync.worker.notReported") : formatNumber(n);
 
   const run = async (action: () => Promise<void>) => {
     setBusy(true);
@@ -66,61 +84,67 @@ export function SyncWorkerStatusCard() {
     <section className="rounded-md border border-surface-border bg-surface-0 p-3 space-y-2 text-xs">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <p className="text-2xs text-text-muted">{t("sync.worker.title")}</p>
-          <p className={`text-sm font-semibold ${toneFor(state)}`}>
-            {t(`sync.worker.state.${state ?? "starting"}`)}
-          </p>
+          <p className="mb-1 text-2xs text-text-muted">{t("sync.worker.title")}</p>
+          <StatusChip
+            size="md"
+            dot
+            tone={toneFor(state)}
+            label={t(`sync.worker.state.${state ?? "starting"}`)}
+          />
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {canView ? (
             <Button
               type="button"
-              size="sm"
               variant="outline"
+              className="h-10"
               disabled={busy || paused}
               onClick={() => void run(runSyncNow)}
             >
-              <RefreshCw className="mr-1 h-3.5 w-3.5" />
+              <RefreshCw className="me-1 h-3.5 w-3.5" aria-hidden />
               {t("sync.worker.syncNow")}
             </Button>
           ) : null}
           {canManage && paused ? (
             <Button
               type="button"
-              size="sm"
               variant="outline"
+              className="h-10"
               disabled={busy}
               onClick={() => void run(resumeNow)}
             >
-              <Play className="mr-1 h-3.5 w-3.5" />
+              <Play className="me-1 h-3.5 w-3.5" aria-hidden />
               {t("sync.worker.resume")}
             </Button>
           ) : null}
           {canManage && !paused ? (
             <>
-              <label className="sr-only" htmlFor="sync-pause-duration">
-                {t("sync.worker.pauseDuration")}
-              </label>
-              <select
-                id="sync-pause-duration"
-                className="rounded border border-surface-border bg-surface-2 px-2 py-1 text-xs"
-                value={pauseMinutes}
-                onChange={(e) => setPauseMinutes(Number(e.currentTarget.value))}
+              <Select
+                value={String(pauseMinutes)}
+                onValueChange={(v) => setPauseMinutes(Number(v))}
               >
-                {PAUSE_OPTIONS.map((option) => (
-                  <option key={option.key} value={option.minutes}>
-                    {t(`sync.worker.pauseOption.${option.key}`)}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger
+                  className="h-10 w-32 text-xs"
+                  aria-label={t("sync.worker.pauseDuration")}
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PAUSE_OPTIONS.map((option) => (
+                    <SelectItem key={option.key} value={String(option.minutes)}>
+                      {t(`sync.worker.pauseOption.${option.key}`)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               <Button
                 type="button"
-                size="sm"
                 variant="outline"
+                className="h-10"
                 disabled={busy}
                 onClick={() => void run(() => pauseForMinutes(pauseMinutes))}
               >
-                <Pause className="mr-1 h-3.5 w-3.5" />
+                <Pause className="me-1 h-3.5 w-3.5" aria-hidden />
                 {t("sync.worker.pause")}
               </Button>
             </>
@@ -128,9 +152,9 @@ export function SyncWorkerStatusCard() {
         </div>
       </div>
 
-      {blocker ? <p className="text-status-warning">{blocker}</p> : null}
+      {blocker ? <p className="text-tone-warning-fg">{blocker}</p> : null}
       {paused && worker?.paused_until ? (
-        <p className="text-status-warning">
+        <p className="text-tone-attention-fg">
           {t("sync.worker.pausedUntil", { time: formatTime(worker.paused_until) })}
         </p>
       ) : null}
@@ -139,9 +163,9 @@ export function SyncWorkerStatusCard() {
         <dt className="text-text-muted">{t("sync.worker.lastSuccess")}</dt>
         <dd className="text-text-primary">{formatTime(worker?.last_success_at ?? null)}</dd>
         <dt className="text-text-muted">{t("sync.worker.pending")}</dt>
-        <dd className="text-text-primary">{worker?.pending_outbox_count ?? 0}</dd>
+        <dd className="text-text-primary">{count(worker?.pending_outbox_count)}</dd>
         <dt className="text-text-muted">{t("sync.worker.conflicts")}</dt>
-        <dd className="text-text-primary">{worker?.unresolved_conflict_count ?? 0}</dd>
+        <dd className="text-text-primary">{count(worker?.unresolved_conflict_count)}</dd>
       </dl>
 
       {worker?.next_attempt_at && state !== "idle" && !paused ? (
@@ -167,17 +191,17 @@ export function SyncWorkerStatusCard() {
         </p>
       ) : null}
       {worker && worker.dead_letter_outbox_count > 0 ? (
-        <p className="text-status-danger">
+        <p className="text-tone-danger-fg">
           {t("sync.worker.deadLetter", { count: worker.dead_letter_outbox_count })}
         </p>
       ) : null}
       {worker?.last_error && state !== "idle" ? (
-        <p className="text-status-danger break-words">
+        <p className="break-words text-tone-danger-fg">
           {t("sync.worker.lastError", { message: worker.last_error.message })}
         </p>
       ) : null}
       {actionError ? (
-        <p className="text-status-danger break-words">
+        <p className="break-words text-tone-danger-fg">
           {t("sync.worker.actionFailed", { message: actionError })}
         </p>
       ) : null}

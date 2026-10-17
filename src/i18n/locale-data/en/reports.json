@@ -1,18 +1,17 @@
 {
   "hub": {
-    "title": "RAMS & Analytics",
-    "subtitle": "Dense industrial KPIs, Deep RAMS, report builder, schedules, and export history.",
+    "title": "Analytics & reports",
+    "subtitle": "Management dashboards, report builder, schedules and export history.",
     "navAria": "Analytics module sections",
     "tabs": {
       "dashboards": "Executive Dashboards",
-      "rams": "Deep RAMS",
       "templates": "Report Builder",
       "schedules": "Schedules",
       "history": "History & Audit"
     },
     "dashboards": {
       "title": "Executive Dashboards",
-      "subtitle": "Role-aware dense KPI grid with horizon and organization scope. Formulas come from the Analytics projection (same SSOT as Deep RAMS snapshots).",
+      "subtitle": "Indicators for your role, over the chosen period and site.",
       "comingSoon": "Role-aware KPI widgets and filters arrive in the next milestone. Deep RAMS and report exports remain available on the other tabs.",
       "customize": "Customize",
       "customizeTitle": "Dashboard layout",
@@ -74,7 +73,7 @@
         "next7": "Next 7 days",
         "horizon": "Last {{days}} days",
         "inService": "Registered, not deleted",
-        "overdue": "Requests open > 7 days + overdue PM",
+        "overdue": "Requests open > 7 days + overdue PM + overdue work orders",
         "costSettled": "Booked to the budget by Finance, last {{days}} days",
         "costPending_one": "Last {{days}} days · {{count}} closed work order not yet costed",
         "costPending_other": "Last {{days}} days · {{count}} closed work orders not yet costed"
@@ -99,6 +98,10 @@
         "closed": "Closed",
         "archived": "Archived"
       }
+    },
+    "customize": {
+      "moveUp": "Move {{widget}} up",
+      "moveDown": "Move {{widget}} down"
     }
   },
   "page": {

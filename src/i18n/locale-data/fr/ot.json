@@ -59,6 +59,15 @@
       "closedAt": "Date clôture"
     },
     "filters": {
+      "mix": "Nature des travaux",
+      "mixValue": {
+        "planned": "Planifiés (préventif et amélioration)",
+        "reactive": "Réactifs (correctif)",
+        "emergency": "Urgents (correctif immédiat)"
+      },
+      "scope": "Périmètre",
+      "scopeOpen": "Ouverts (ni clôturés ni annulés)",
+      "equipment": "Équipement",
       "lifecycle": "Cycle de vie",
       "status": "Statut",
       "type": "Type",
@@ -175,7 +184,7 @@
     "afternoon": "Après-midi",
     "night": "Nuit",
     "fullDay": "Journée",
-    "full_day": "Journée"
+    "full_day": "Journée complète"
   },
   "planning": {
     "timing": "Planification horaire",
@@ -696,6 +705,35 @@
     "linkedPermits": "Permis de travail : {{list}}"
   },
   "audit": {
+    "title": "Historique de l’ordre de travail",
+    "permitRequired": "Permis / consignation désormais exigé",
+    "permitNotRequired": "Permis / consignation plus exigé",
+    "actions": {
+      "created": "Ordre de travail créé",
+      "submitted": "Soumis à la planification",
+      "planned": "Planifié",
+      "planning_approved": "Planification approuvée",
+      "marked_ready": "Déclaré prêt",
+      "returned_to_planning": "Renvoyé en planification",
+      "assigned": "Affecté",
+      "emergency_reassigned": "Réaffectation d’urgence",
+      "started": "Travaux démarrés",
+      "paused": "Mis en pause",
+      "held": "Mis en attente",
+      "resumed": "Repris",
+      "mechanically_completed": "Travaux terminés",
+      "failure_detail_saved": "Détails de défaillance enregistrés",
+      "verification_saved": "Vérification technique enregistrée",
+      "verified": "Vérifié",
+      "closed": "Clôturé",
+      "reopened": "Réouvert",
+      "cancelled": "Annulé",
+      "rca_updated": "Analyse des causes mise à jour",
+      "attachment_uploaded": "Pièce jointe ajoutée",
+      "service_cost_updated": "Coût de prestation mis à jour",
+      "permit_requirement_changed": "Exigence de permis modifiée",
+      "other": "Modification enregistrée"
+    },
     "created": "Créé le",
     "updated": "Dernière mise à jour",
     "closed": "Clôturé le",
@@ -758,10 +796,6 @@
     "resume": "Reprendre",
     "submitForPlanning": "Soumettre pour planification",
     "markReady": "Marquer comme Prêt"
-  },
-  "print": {
-    "button": "Imprimer",
-    "title": "Fiche d'impression OT"
   },
   "cost": {
     "title": "Résumé des coûts",
@@ -898,12 +932,6 @@
     "statusFromDetailHint": "Cliquez sur une carte pour ouvrir l'OT : les changements de statut se font depuis sa fiche, où chaque étape vérifie ses conditions (permis, pièces, motifs).",
     "transitionNotAllowed": "Impossible de déplacer \"{{code}}\" de \"{{from}}\" vers {{to}}. Transition non permise."
   },
-  "shift": {
-    "morning": "Matin",
-    "afternoon": "Après-midi",
-    "night": "Nuit",
-    "full_day": "Journée complète"
-  },
   "print": {
     "pageTitle": "Fiche OT",
     "heading": "Fiche d'Ordre de Travail",
@@ -961,7 +989,9 @@
     "laborCost": "Main-d'œuvre",
     "partsCost": "Pièces",
     "serviceCost": "Services",
-    "totalCost": "Total"
+    "totalCost": "Total",
+    "button": "Imprimer",
+    "title": "Fiche d'impression OT"
   },
   "lifecycle": {
     "title": "État du cycle de vie PRD (déduit des faits de l'OT)",

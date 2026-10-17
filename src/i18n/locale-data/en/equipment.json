@@ -112,6 +112,10 @@
     "more": "More actions"
   },
   "history": {
+    "loadError": "This equipment's history could not be loaded",
+    "partial": "The {{count}} most recent events are shown; older events may exist.",
+    "loadOlder": "Load older events",
+    "loadOlderError": "The older events could not be loaded",
     "tabs": {
       "details": "Details",
       "history": "History"
@@ -123,10 +127,12 @@
       "wo": "WO",
       "pm": "PM",
       "failures": "Failures",
-      "availability": "Availability",
+      "availability": "Operational availability",
       "ageYm": "{{years}}y {{months}}m",
       "ageM": "{{months}}m",
-      "ageD": "{{days}}d"
+      "ageD": "{{days}}d",
+      "availabilityAsOf": "Latest reliability analysis, to {{date}}",
+      "availabilityNone": "No reliability analysis computed for this asset yet"
     },
     "today": "Today",
     "empty": "No history events for this period.",
@@ -270,7 +276,8 @@
       "primary": "Primary",
       "documentCount": "{{count}} document(s) linked"
     },
-    "import": "Import"
+    "import": "Import",
+    "filterOptionsError": "The filter lists could not be loaded"
   },
   "createForm": {
     "button": "Create asset",
@@ -349,6 +356,7 @@
     "fieldRequired": "This field is required."
   },
   "tree": {
+    "loading": "Loading equipment…",
     "search": "Search in tree",
     "empty": "No matching assets in tree.",
     "ariaLabel": "Asset tree",
@@ -389,6 +397,7 @@
     }
   },
   "binding": {
+    "loadError": "The linked records could not be loaded",
     "title": "Cross-Module Bindings",
     "notImplemented": "Not yet available",
     "domains": {
@@ -478,7 +487,10 @@
     "statuses": {
       "decommissioned": "Decommissioned",
       "scrapped": "Scrapped"
-    }
+    },
+    "dependenciesError": "The open work of this asset could not be checked: decommissioning stays unavailable",
+    "statusesError": "The equipment statuses could not be loaded",
+    "targetStatusPlaceholder": "Choose the final status"
   },
   "health": {
     "title": "Health",
@@ -486,9 +498,15 @@
     "fair": "Fair",
     "poor": "Poor",
     "noData": "No health score",
-    "unavailable": "Health data unavailable"
+    "unavailable": "Health data unavailable",
+    "loading": "Health…",
+    "hint": "Indicative follow-up score (0–100) from recent activity, open requests and work orders and meter readings. Not an availability or condition measurement."
   },
   "photos": {
+    "loadError": "The photos could not be loaded",
+    "open": "Enlarge photo {{name}}",
+    "previous": "Previous photo",
+    "next": "Next photo",
     "title": "Photos",
     "upload": "Upload",
     "uploadFirst": "Upload a photo",
@@ -675,6 +693,8 @@
     "primary": "Main meter of the asset"
   },
   "spares": {
+    "searchFailed": "The article search failed (this is not an empty result).",
+    "moreMatches": "More than {{count}} articles match: refine the search.",
     "criticalShort_one": "{{count}} critical spare is short in stock.",
     "criticalShort_other": "{{count}} critical spares are short in stock.",
     "summary_one": "{{count}} spare part listed.",

@@ -81,6 +81,15 @@ export interface KanbanCard {
   ariaLabel?: string | undefined;
 }
 
+/**
+ * Outcome of a move, returned (or resolved) by `onDrop`:
+ * - `undefined` / `true` / `{ ok: true }` — the server accepted the transition;
+ * - `false` / `{ ok: false, reason }` — refused (reason already localized; a generic refusal is
+ *   announced without one);
+ * - a thrown error / rejected promise — failed; announced with the shared error text.
+ */
+export type KanbanMoveOutcome = void | boolean | { ok: boolean; reason?: string | undefined };
+
 export interface KanbanBoardProps<T = KanbanCard> {
   columns: KanbanColumn[];
   /** Pre-mapped cards, or use items + getCard. */
@@ -96,10 +105,17 @@ export interface KanbanBoardProps<T = KanbanCard> {
   canDrag?: ((card: KanbanCard) => boolean) | undefined;
   canDrop?: ((card: KanbanCard, fromColumnId: string, toColumnId: string) => boolean) | undefined;
   /**
-   * Called after a drop / keyboard move when canDrop allows (or when canDrop is omitted).
-   * Adapters own validation feedback and open-detail side effects.
+   * Called after a drop / keyboard move when canDrop allows (or when canDrop is omitted). It must
+   * run the module's own server-side transition command; its outcome is announced to screen
+   * readers ("moved" only once accepted). Adapters own toasts and open-detail side effects.
    */
-  onDrop?: ((card: KanbanCard, fromColumnId: string, toColumnId: string) => void) | undefined;
+  onDrop?:
+    | ((
+        card: KanbanCard,
+        fromColumnId: string,
+        toColumnId: string,
+      ) => KanbanMoveOutcome | Promise<KanbanMoveOutcome>)
+    | undefined;
   pageSize?: number | undefined;
   /** Already-localized load-more text builder (defaults to common.kanban.showMore). */
   loadMoreLabel?: ((remaining: number) => string) | undefined;

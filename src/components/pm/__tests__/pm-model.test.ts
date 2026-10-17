@@ -5,6 +5,7 @@ import {
   PM_TRIGGER_FORM_START,
   allowedExecutionResults,
   buildTriggerJson,
+  calendarOccurrenceTone,
   canLogExecution,
   matchesDueWindow,
   parseRequiredParts,
@@ -101,5 +102,23 @@ describe("pm-model", () => {
     } as PmOccurrenceRow;
     expect(matchesDueWindow(occ, "overdue", NOW)).toBe(false);
     expect(matchesDueWindow(occ, "overdue", new Date("2026-10-17T08:00:00Z"))).toBe(true);
+  });
+
+  it("colours a calendar chip overdue only past the tolerance window, like the KPI", () => {
+    const inTolerance = {
+      due_at: "2026-10-13T00:00:00Z",
+      window_end_at: "2026-10-16T23:59:59Z",
+      status: "scheduled",
+    } as PmOccurrenceRow;
+    // Past its due day but inside its window: due (warning), not overdue.
+    expect(calendarOccurrenceTone(inTolerance, NOW)).toBe("today");
+    expect(calendarOccurrenceTone(inTolerance, new Date("2026-10-17T08:00:00Z"))).toBe("overdue");
+    // No window: overdue once the due instant has passed (same as the overdue tile).
+    expect(calendarOccurrenceTone(due("2026-10-14T08:00:00Z"), NOW)).toBe("overdue");
+    expect(calendarOccurrenceTone(due("2026-10-14T18:00:00Z"), NOW)).toBe("today");
+    expect(calendarOccurrenceTone(due("2026-10-20T08:00:00Z"), NOW)).toBe("pipeline");
+    expect(
+      calendarOccurrenceTone({ ...due("2026-10-01T08:00:00Z"), status: "completed" }, NOW),
+    ).toBe("completed");
   });
 });

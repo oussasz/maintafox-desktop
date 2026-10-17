@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { InventoryArticle, ReferenceValue } from "@shared/ipc-types";
@@ -120,6 +120,10 @@ describe("UnitConversionsPanel", () => {
     );
 
     fireEvent.click(screen.getByText("unitConversions.deactivate"));
+    // Asks first, then deactivates.
+    expect(svc.deactivateUnitConversion).not.toHaveBeenCalled();
+    const confirm = await screen.findByRole("dialog");
+    fireEvent.click(within(confirm).getByRole("button", { name: "unitConversions.deactivate" }));
     await waitFor(() => expect(svc.deactivateUnitConversion).toHaveBeenCalledWith(9, 3));
   });
 
@@ -134,7 +138,7 @@ describe("UnitConversionsPanel", () => {
     fireEvent.change(s.from, { target: { value: "1" } });
     fireEvent.change(s.to, { target: { value: "6" } });
     fireEvent.click(screen.getByText("unitConversions.convert"));
-    expect((await screen.findByTestId("conversion-result")).textContent).toContain('"quantity":2');
+    expect((await screen.findByTestId("conversion-result")).textContent).toContain('"quantity":"2');
     expect(svc.convertUnitQuantity).toHaveBeenCalledWith(1, 1, 6, null);
     fireEvent.click(screen.getByText("unitConversions.convert"));
     expect((await screen.findByRole("alert")).textContent).toContain("No conversion");

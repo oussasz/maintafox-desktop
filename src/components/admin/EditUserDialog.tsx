@@ -16,9 +16,10 @@ import {
 import { Input } from "@/components/ui/input";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
-import { useToast } from "@/hooks/use-toast";
+import { describeAppError } from "@/lib/app-error";
 import { listPersonnel } from "@/services/personnel-service";
 import { updateUser } from "@/services/rbac-service";
+import { pushAppToast } from "@/store/app-toast-store";
 import type { Personnel, UpdateUserInput, UserWithRoles } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -38,7 +39,8 @@ export function EditUserDialog({
   onSaved: () => void;
 }) {
   const { t } = useTranslation("admin");
-  const { toast } = useToast();
+  // The global toast host shows them (a local useToast list was never rendered here).
+  const toast = pushAppToast;
   const { can } = usePermissions();
   const { formatDateTime } = useFormatters();
   const canViewPersonnel = can(P.PER_VIEW);
@@ -135,7 +137,7 @@ export function EditUserDialog({
       onSaved();
       onClose();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = describeAppError(err).title;
       toast({
         title: msg || t("users.edit.error"),
         variant: "destructive",

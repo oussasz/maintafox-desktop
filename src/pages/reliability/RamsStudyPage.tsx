@@ -64,6 +64,7 @@ export function RamsStudyPage() {
   const [prefill, setPrefill] = useState<DecisionPrefill | null>(null);
   const [decisionsVersion, setDecisionsVersion] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [dateError, setDateError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!Number.isFinite(studyId) || studyId <= 0) return;
@@ -188,10 +189,19 @@ export function RamsStudyPage() {
                 key={`s-${study.row_version}`}
                 disabled={!editable || saving}
                 aria-label={t("rams.study.periodStart")}
+                aria-invalid={dateError != null}
+                aria-describedby={dateError ? "rams-period-error" : undefined}
                 onBlur={(e) => {
                   const v = e.target.value;
-                  if (v && v !== isoDay(study.period_start))
-                    void updateScope({ period_start: dayToIso(v, false) });
+                  if (!v || v === isoDay(study.period_start)) return;
+                  // The period must start before it ends: refused here, not saved.
+                  if (v > isoDay(study.period_end)) {
+                    setDateError(t("rams.study.periodOrder"));
+                    e.target.value = isoDay(study.period_start);
+                    return;
+                  }
+                  setDateError(null);
+                  void updateScope({ period_start: dayToIso(v, false) });
                 }}
               />
               <span aria-hidden>–</span>
@@ -202,13 +212,26 @@ export function RamsStudyPage() {
                 key={`e-${study.row_version}`}
                 disabled={!editable || saving}
                 aria-label={t("rams.study.periodEnd")}
+                aria-invalid={dateError != null}
+                aria-describedby={dateError ? "rams-period-error" : undefined}
                 onBlur={(e) => {
                   const v = e.target.value;
-                  if (v && v !== isoDay(study.period_end))
-                    void updateScope({ period_end: dayToIso(v, true) });
+                  if (!v || v === isoDay(study.period_end)) return;
+                  if (v < isoDay(study.period_start)) {
+                    setDateError(t("rams.study.periodOrder"));
+                    e.target.value = isoDay(study.period_end);
+                    return;
+                  }
+                  setDateError(null);
+                  void updateScope({ period_end: dayToIso(v, true) });
                 }}
               />
             </label>
+            {dateError ? (
+              <p id="rams-period-error" role="alert" className="text-xs text-tone-danger-fg">
+                {dateError}
+              </p>
+            ) : null}
             <label className="flex items-center gap-1.5">
               <span className="sr-only">{t("rams.study.failureMode")}</span>
               <select
@@ -301,7 +324,29 @@ export function RamsStudyPage() {
                 id={`rams-tab-${s}`}
                 aria-selected={step === s}
                 aria-controls={`rams-panel-${s}`}
+                tabIndex={step === s ? 0 : -1}
                 onClick={() => goStep(s)}
+                onKeyDown={(e) => {
+                  // Tabs pattern: arrows move between steps, Home / End to the first / last.
+                  const last = STUDY_STEPS.length - 1;
+                  const to =
+                    e.key === "ArrowRight"
+                      ? Math.min(i + 1, last)
+                      : e.key === "ArrowLeft"
+                        ? Math.max(i - 1, 0)
+                        : e.key === "Home"
+                          ? 0
+                          : e.key === "End"
+                            ? last
+                            : null;
+                  if (to == null) return;
+                  e.preventDefault();
+                  const next = STUDY_STEPS[to];
+                  if (next) {
+                    goStep(next);
+                    document.getElementById(`rams-tab-${next}`)?.focus();
+                  }
+                }}
                 className={cn(
                   "inline-flex min-h-[44px] items-center gap-1.5 whitespace-nowrap border-b-2 px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                   step === s

@@ -1,5 +1,7 @@
 {
   "page": {
+    "loadError": "Impossible de charger le personnel",
+    "filterLookupError": "Impossible de charger les listes de filtres (postes, organisation)",
     "title": "Personnel",
     "titleNew": "Nouveau personnel",
     "titleEdit": "Modifier personnel"
@@ -111,6 +113,7 @@
     "viewDetails": "Voir le détail"
   },
   "detail": {
+    "loadError": "Impossible d'ouvrir la fiche de cette personne",
     "title": "Détail personnel",
     "noSelection": "Sélectionnez une personne pour afficher le détail",
     "placeholder": "Le panneau détaillé sera disponible dans une version ultérieure.",
@@ -168,6 +171,9 @@
     "restricted": "Restreint"
   },
   "create": {
+    "positionSeedFailed": "Les exigences du poste n'ont pas pu être chargées ({{msg}}) : ajoutez les compétences à la main.",
+    "photoUploadWarning": "Fiche enregistrée, mais la photo n'a pas pu être envoyée : {{msg}}",
+    "qualificationsInRecord": "Les compétences et certifications d'une personne existante se gèrent dans l'onglet Qualifications de sa fiche.",
     "title": "Nouveau personnel",
     "editTitle": "Modifier le personnel",
     "submit": "Créer",
@@ -191,6 +197,7 @@
     "ratesHint": "Optionnel. Crée une grille de taux à compter d'aujourd'hui pour le Planning et le coût main-d'œuvre OT.",
     "rateCardFailed": "Personnel enregistré, mais la grille de taux n'a pas pu être créée : {{msg}}. Ajoutez le taux depuis l'onglet Tarifs.",
     "photo": {
+      "editKeepsCurrent": "La photo actuelle est conservée. Choisissez une image pour la remplacer.",
       "label": "Photo de profil",
       "hint": "Choisissez une photo (JPEG/PNG, max 5 Mo)",
       "error": "Échec du téléversement de la photo"
@@ -294,6 +301,8 @@
     "overtimeRateInvalid": "Le taux heures sup. doit être un nombre ≥ 0"
   },
   "crews": {
+    "loadError": "Impossible de charger les équipes et leur capacité",
+    "capacityUnknown": "Aucune capacité calculée pour cette équipe sur la période",
     "catalogTitle": "Catalogue des équipes",
     "empty": "Aucune équipe. Créez une équipe pour affecter le personnel depuis l'annuaire.",
     "noCapacityInHorizon": "Aucune capacité sur cet horizon.",
@@ -381,12 +390,39 @@
     }
   },
   "position": {
+    "certs": {
+      "empty": "Aucune certification requise.",
+      "placeholder": "Choisir une certification…"
+    },
+    "combobox": {
+      "searchPlaceholder": "Filtrer les postes…"
+    },
+    "field": {
+      "active": "Actif",
+      "category": "Catégorie",
+      "code": "Code",
+      "name": "Nom"
+    },
+    "section": {
+      "certs": "Certifications requises",
+      "skills": "Compétences requises"
+    },
+    "skills": {
+      "empty": "Aucune compétence requise.",
+      "placeholder": "Choisir une compétence…"
+    },
+    "validation": {
+      "codeRequired": "Le code du poste est obligatoire",
+      "nameRequired": "Le nom du poste est obligatoire"
+    },
     "panel": {
       "title": "Postes",
       "searchPlaceholder": "Recherche code ou nom…",
       "noData": "Aucun poste trouvé."
     },
     "action": {
+      "addCert": "Ajouter une certification",
+      "addSkill": "Ajouter une compétence",
       "create": "Nouveau poste",
       "archive": "Archiver",
       "archived": "Archivé"
@@ -406,6 +442,9 @@
       "error": "Échec de la création du poste"
     },
     "category": {
+      "contractor": "Sous-traitant",
+      "storekeeper": "Magasinier",
+      "hse": "HSE",
       "technician": "Technicien",
       "engineer": "Ingénieur",
       "supervisor": "Superviseur",
@@ -495,7 +534,12 @@
     "list": {
       "minutesFree": "{{count}} min libres"
     },
+    "unknownBar": "Disponibilité inconnue — absences non lues",
+    "unknownTitle_one": "Les absences de {{count}} personne n’ont pas pu être lues : affichée comme inconnue, pas disponible",
+    "unknownTitle_other": "Les absences de {{count}} personnes n’ont pas pu être lues : affichées comme inconnues, pas disponibles",
+    "partialBlocks": "Toutes les absences de cet horizon n’ont pas pu être lues.",
     "badges": {
+      "unknown": "Disponibilité inconnue",
       "certExpired": "Qualification expirée",
       "certExpiring": "Certification bientôt expirée"
     },
@@ -590,6 +634,20 @@
     }
   },
   "import": {
+    "rowStatus": {
+      "valid": "Valide",
+      "warning": "Avertissement",
+      "error": "Erreur"
+    },
+    "rowAction": {
+      "create": "Créer",
+      "update": "Mettre à jour",
+      "skip": "Ignorer"
+    },
+    "confirmApply": {
+      "title": "Appliquer l'import ?",
+      "body": "{{valid}} ligne(s) valide(s) et {{warning}} avec avertissement seront créées ou mises à jour dans le personnel ; {{error}} ligne(s) en erreur seront ignorées. Les fiches modifiées ne reviennent pas automatiquement à leur état précédent."
+    },
     "title": "Assistant d'import du personnel",
     "description": "Chargez un CSV/XLSX, verifiez les validations de lignes, puis appliquez le lot de facon controlee.",
     "action": {
@@ -625,6 +683,8 @@
       "export": "Exporter les rapports"
     },
     "export": {
+      "saved": "Export enregistré",
+      "failed": "L'export n'a pas pu être enregistré",
       "summary": "Exporter le CSV synthese",
       "skillsGap": "Exporter le CSV ecarts de competences",
       "kpi": "Exporter le CSV KPI"

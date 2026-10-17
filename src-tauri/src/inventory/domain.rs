@@ -132,6 +132,10 @@ pub struct InventoryArticle {
     pub stock_value: Option<f64>,
     /// On-hand quantity held at locations that have no cost yet (not included in `stock_value`).
     pub unvalued_qty: f64,
+    /// Why the article needs replenishing in at least one store (`reorder_point` / `min_stock`),
+    /// from `evaluate_reorder` — the one low-stock definition of the dashboard and the list.
+    #[serde(default)]
+    pub reorder_trigger: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -256,19 +260,22 @@ pub struct InventoryReplenishmentRecommendation {
     pub suggested_supplier_name: Option<String>,
     pub estimated_cost: Option<f64>,
     pub expected_arrival: Option<String>,
-    pub reason: Option<String>,
     pub transfer_options: Vec<ReplenishmentTransferOption>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcurementAlert {
+    /// `CRITICAL_STOCK`, `LATE_PO`, `REPAIRABLE_OVERDUE`, `SUPPLIER_DELAY`: the screen words the
+    /// alert in the UI language from the kind and `params` (no backend sentence).
     pub kind: String,
     pub severity: String,
-    pub title: String,
-    pub detail: Option<String>,
     pub entity_type: Option<String>,
     pub entity_id: Option<i64>,
     pub entity_code: Option<String>,
+    /// Values of the message (`name`, `available_qty`, `threshold_qty`, `expected_date`,
+    /// `lead_days`, `warehouse_code`…), as text.
+    #[serde(default)]
+    pub params: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -678,6 +685,14 @@ pub struct ProcurementDashboardSummary {
     pub repairables_in_repair: i64,
     pub active_suppliers_count: i64,
     pub receiving_today_count: i64,
+    /// Statuses each count covers, so a tile opens exactly the list it counts.
+    #[serde(default)]
+    pub open_requisition_statuses: Vec<String>,
+    #[serde(default)]
+    pub open_po_statuses: Vec<String>,
+    /// Late = one of these statuses and an expected delivery before now.
+    #[serde(default)]
+    pub late_po_statuses: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

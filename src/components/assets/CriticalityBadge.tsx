@@ -1,33 +1,38 @@
 /**
  * CriticalityBadge.tsx
  *
- * Criticality class A–D as a design-system chip (list, detail, tree, pickers).
+ * Criticality level as a design-system chip (list, detail, tree, pickers). Tone from the level's
+ * rank in EQUIPMENT.CRITICALITY (first = most critical); label translated for the Maintafox
+ * levels, else the reference label.
  */
 
 import { useTranslation } from "react-i18next";
 
-import { CRITICALITY_LABEL_KEY, toCriticalityGrade } from "@/components/assets/asset-tones";
+import { criticalityLabelKey, criticalityTone } from "@/components/assets/asset-tones";
 import { StatusChip } from "@/components/ui/status-chip";
-import { CRITICALITY_TONE } from "@/design-system/tone";
+import { useEquipmentTaxonomy } from "@/stores/equipment-taxonomy-store";
 
 interface CriticalityBadgeProps {
   criticality: string | null;
-  /** Class letter only (dense tables); the full label stays in the tooltip. */
+  /** Level code only (dense tables); the full label stays in the tooltip. */
   compact?: boolean;
 }
 
 export function CriticalityBadge({ criticality, compact }: CriticalityBadgeProps) {
   const { t } = useTranslation("equipment");
-  const grade = toCriticalityGrade(criticality);
-  if (!grade) {
+  const { catalog } = useEquipmentTaxonomy();
+  const code = criticality?.trim();
+  if (!code) {
     return <span className="text-xs text-text-muted">{t("criticality.notRated")}</span>;
   }
-  const label = t(CRITICALITY_LABEL_KEY[grade] as never);
+  const key = criticalityLabelKey(code);
+  const option = catalog?.criticalities.find((c) => c.code.toUpperCase() === code.toUpperCase());
+  const label = key ? t(key as never) : (option?.label ?? code);
   return (
     <StatusChip
-      label={compact ? grade : `${grade} — ${label}`}
-      title={`${t("detail.fields.criticality")} ${grade} — ${label}`}
-      tone={CRITICALITY_TONE[grade]}
+      label={compact ? code : `${code} — ${label}`}
+      title={`${t("detail.fields.criticality")} ${code} — ${label}`}
+      tone={criticalityTone(catalog, code)}
     />
   );
 }

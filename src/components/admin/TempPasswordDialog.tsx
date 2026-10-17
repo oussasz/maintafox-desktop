@@ -27,15 +27,19 @@ export type TempPasswordDialogProps = {
 export function TempPasswordDialog({ open, temporaryPassword, onClose }: TempPasswordDialogProps) {
   const { t } = useTranslation("admin");
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
 
   const handleCopy = async () => {
     if (!temporaryPassword) return;
     try {
       await navigator.clipboard.writeText(temporaryPassword);
+      setCopyFailed(false);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 2000);
     } catch {
+      // Said, not swallowed: the user can still select the text and copy it by hand.
       setCopied(false);
+      setCopyFailed(true);
     }
   };
 
@@ -49,7 +53,14 @@ export function TempPasswordDialog({ open, temporaryPassword, onClose }: TempPas
         }
       }}
     >
-      <DialogContent className="max-w-md" data-testid="temp-password-dialog">
+      <DialogContent
+        className="max-w-md"
+        data-testid="temp-password-dialog"
+        // Shown once: Escape or a click outside must not throw the password away unseen.
+        onEscapeKeyDown={(e) => e.preventDefault()}
+        onPointerDownOutside={(e) => e.preventDefault()}
+        onInteractOutside={(e) => e.preventDefault()}
+      >
         <DialogHeader>
           <DialogTitle>{t("users.resetPassword.showOnceTitle")}</DialogTitle>
           <DialogDescription>{t("users.resetPassword.showOnceDescription")}</DialogDescription>
@@ -62,7 +73,7 @@ export function TempPasswordDialog({ open, temporaryPassword, onClose }: TempPas
             </p>
             <div className="flex items-center gap-2 rounded-lg border border-surface-border bg-surface-1 px-3 py-2">
               <code
-                className="flex-1 break-all font-mono text-sm text-text-primary"
+                className="flex-1 select-all break-all font-mono text-sm text-text-primary"
                 data-testid="temp-password-value"
               >
                 {temporaryPassword}
@@ -70,15 +81,25 @@ export function TempPasswordDialog({ open, temporaryPassword, onClose }: TempPas
               <Button
                 type="button"
                 variant="outline"
-                size="sm"
+                className="h-10 w-10 p-0"
                 onClick={() => void handleCopy()}
                 aria-label={t("users.resetPassword.copy")}
+                title={t("users.resetPassword.copy")}
               >
-                {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                {copied ? (
+                  <Check className="h-4 w-4" aria-hidden />
+                ) : (
+                  <Copy className="h-4 w-4" aria-hidden />
+                )}
               </Button>
             </div>
-            {copied ? (
-              <p className="text-xs text-text-muted">{t("users.resetPassword.copied")}</p>
+            <p role="status" className="min-h-4 text-xs text-text-muted">
+              {copied ? t("users.resetPassword.copied") : null}
+            </p>
+            {copyFailed ? (
+              <p role="alert" className="text-xs text-tone-warning-fg">
+                {t("users.resetPassword.copyFailed")}
+              </p>
             ) : null}
           </div>
         ) : null}
@@ -86,8 +107,10 @@ export function TempPasswordDialog({ open, temporaryPassword, onClose }: TempPas
         <DialogFooter>
           <Button
             type="button"
+            className="h-11"
             onClick={() => {
               setCopied(false);
+              setCopyFailed(false);
               onClose();
             }}
           >

@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { Timeline } from "@/components/timeline/Timeline";
+import { dayKey, dayLabel, groupItemsByDay } from "@/components/timeline/groupByDay";
 import type { TimelineEntry } from "@/components/timeline/types";
 
 describe("Timeline", () => {
@@ -115,5 +116,65 @@ describe("Timeline", () => {
       />,
     );
     expect(screen.getByText("X-1")).toBeInTheDocument();
+  });
+
+  it("groups by the local calendar day (not the UTC day)", () => {
+    // 23:30 local on 14 June and 00:30 local on 15 June: two local days whatever the zone.
+    const lateEvening = new Date(2024, 5, 14, 23, 30).toISOString();
+    const earlyMorning = new Date(2024, 5, 15, 0, 30).toISOString();
+    const sameEvening = new Date(2024, 5, 14, 20, 0).toISOString();
+    const groups = groupItemsByDay(
+      [earlyMorning, lateEvening, sameEvening],
+      (iso) => iso,
+      "en-GB",
+      "Today",
+      new Date(2030, 0, 1),
+    );
+    expect(groups.map((g) => g.key)).toEqual(["2024-06-15", "2024-06-14"]);
+    expect(groups[1]?.items).toEqual([lateEvening, sameEvening]);
+    expect(dayKey("not a date")).toBe("not a date");
+    expect(dayLabel("not a date", "en-GB", "Today")).toBe("not a date");
+  });
+
+  it("labels the current local day with the today label", () => {
+    const now = new Date(2024, 5, 15, 0, 10);
+    expect(dayLabel(new Date(2024, 5, 15, 0, 5).toISOString(), "en-GB", "Today", now)).toBe(
+      "Today",
+    );
+    expect(dayLabel(new Date(2024, 5, 14, 23, 55).toISOString(), "en-GB", "Today", now)).not.toBe(
+      "Today",
+    );
+  });
+
+  it("shows a load failure with the shared error state and retry", () => {
+    const onRetry = vi.fn();
+    render(<Timeline items={[]} error={{ code: "DATABASE_ERROR" }} onRetry={onRetry} />);
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button"));
+    expect(onRetry).toHaveBeenCalled();
+  });
+
+  it("still renders a ready-made error element as-is", () => {
+    render(<Timeline items={[]} error={<span>Custom failure</span>} />);
+    expect(screen.getByRole("alert")).toHaveTextContent("Custom failure");
+  });
+
+  it("says when older events are not shown and offers to load them", () => {
+    const onLoadOlder = vi.fn();
+    render(
+      <Timeline
+        items={[{ id: "1", title: "Latest", timestamp: "2024-06-15T10:30:00Z" }]}
+        hasOlder
+        onLoadOlder={onLoadOlder}
+      />,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("timeline.olderHidden");
+    fireEvent.click(screen.getByRole("button", { name: "timeline.loadOlder" }));
+    expect(onLoadOlder).toHaveBeenCalled();
+  });
+
+  it("uses translated defaults instead of English text", () => {
+    render(<Timeline items={[]} />);
+    expect(screen.getByText("timeline.empty")).toBeInTheDocument();
   });
 });

@@ -3,6 +3,7 @@
 
 import * as d3 from "d3";
 import { useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/utils";
 
@@ -37,6 +38,8 @@ export interface LineChartProps {
   showDots?: boolean;
   /** Additional className on the outer wrapper. */
   className?: string;
+  /** What the chart shows, read by screen readers (defaults to a generic chart name). */
+  ariaLabel?: string;
 }
 
 // ─── Component ────────────────────────────────────────────────────
@@ -49,7 +52,9 @@ export function LineChart({
   margin = DEFAULT_MARGIN,
   showDots = false,
   className,
+  ariaLabel,
 }: LineChartProps) {
+  const { t } = useTranslation("common");
   const [containerRef, containerSize] = useContainerSize<HTMLDivElement>();
   const xAxisRef = useRef<SVGGElement | null>(null);
   const yAxisRef = useRef<SVGGElement | null>(null);
@@ -92,7 +97,7 @@ export function LineChart({
 
   return (
     <div ref={containerRef} className={cn("h-full w-full", className)}>
-      <svg width={width} height={height} role="img" aria-label="Line chart">
+      <svg width={width} height={height} role="img" aria-label={ariaLabel ?? t("ds.chart.line")}>
         <g transform={`translate(${margin.left},${margin.top})`}>
           {/* Line path */}
           <path d={linePath} fill="none" stroke={color} strokeWidth={2} />

@@ -253,6 +253,11 @@
     }
   },
   "procurement": {
+    "filters": {
+      "open": "Open (as counted on the tile)",
+      "late": "Late (expected delivery passed)"
+    },
+    "boardMoveHint": "Drag a card to the next column (or use Move, or Alt+arrow keys) to submit or approve it. Rejecting, cancelling and closing are done from the record, which asks for the reason or a confirmation.",
     "dashboard": {
       "title": "Procurement overview",
       "openRequisitions": "Open requisitions",
@@ -276,7 +281,14 @@
         "CRITICAL_STOCK": "Critical stock",
         "LATE_PO": "Late PO",
         "SUPPLIER_DELAY": "Supplier risk",
-        "REPAIRABLE_OVERDUE": "Repair overdue"
+        "REPAIRABLE_OVERDUE": "Repair overdue",
+        "other": "Alert"
+      },
+      "messages": {
+        "CRITICAL_STOCK": "{{code}} {{name}} — store {{warehouse}}: {{available}} available, threshold {{threshold}}",
+        "LATE_PO": "{{code}} — expected {{date}}",
+        "REPAIRABLE_OVERDUE": "{{code}} ({{article}}) — past its {{days}}-day repair lead time",
+        "SUPPLIER_DELAY": "{{code}} {{name}} — delivery record at risk"
       }
     },
     "recommendations": {
@@ -293,7 +305,15 @@
       "surplusFrom": "Surplus from",
       "transferHint": "Prefer internal transfer",
       "createRequisition": "Create requisition",
-      "creating": "Creating…"
+      "creating": "Creating…",
+      "loadError": "The replenishment recommendations could not be loaded",
+      "showAll": "Show all {{count}}",
+      "showFewer": "Show fewer",
+      "trigger": {
+        "reorder_point": "At or below the reorder point in {{warehouse}}",
+        "min_stock": "Below the minimum stock in {{warehouse}}",
+        "other": "Replenishment needed in {{warehouse}}"
+      }
     },
     "statuses": {
       "DRAFT": "Draft",
@@ -640,6 +660,8 @@
         }
       },
       "contacts": {
+        "deleteTitle": "Delete this contact?",
+        "deleteDescription": "{{name}} will be removed from the supplier's contacts. This cannot be undone.",
         "title": "Contacts",
         "add": "Add contact",
         "edit": "Edit contact",
@@ -673,6 +695,9 @@
         }
       },
       "comparison": {
+        "hint": "Relative to the other suppliers of this article: price, lead time and risk weigh equally (5 stars = best of the candidates, not an absolute score).",
+        "basis": "Rank price {{price}} · lead time {{lead}} · risk {{risk}}",
+        "unknown": "unknown",
         "title": "Supplier comparison",
         "hint": "Composite rating combines price, lead time and supplier risk.",
         "ratingValue": "{{stars}} out of {{max}}",
@@ -783,6 +808,7 @@
       "postingDate": "Receipt date",
       "postingDateHint": "Back-dated receipts are refused inside a closed valuation period.",
       "rate": {
+        "readFailed": "The stored exchange rate could not be read: enter the rate of the receipt date.",
         "label": "Exchange rate: 1 {{from}} = ? {{to}}",
         "stored": "Leave empty to use the stored rate {{rate}} (valid from {{date}}).",
         "none": "No stored rate on this date: enter the rate of the day."
@@ -1283,6 +1309,9 @@
     }
   },
   "unitConversions": {
+    "loadError": "The unit conversions could not be loaded",
+    "deactivateTitle": "Deactivate this conversion?",
+    "deactivateDescription": "{{rule}} will no longer be used to convert quantities. Records already converted keep their values.",
     "tab": "Units & conversions",
     "help": "1 unit on the left = factor × unit on the right; the inverse is derived. Order applied: the article's own conversion, then the general factor of a plant unit (set on the unit in Reference data, e.g. 1 bag = 25 kg), then a general conversion between standard units.",
     "from": "From unit",
@@ -1308,6 +1337,13 @@
     "plantUnitGeneral": "The general factor of a plant unit is set on the unit, in Reference data. Here, choose an article for a conversion of its own."
   },
   "page": {
+    "tabGroups": {
+      "daily": "Daily",
+      "setup": "Periodic and setup"
+    },
+    "stockValueTotal": "Stock value: {{value}}",
+    "stockValueUnavailable": "Stock value unavailable",
+    "stockValueSomeUnvalued": "part of the stock has no cost",
     "title": "Inventory & procurement",
     "tabs": {
       "master": "Articles",
@@ -1554,6 +1590,9 @@
     }
   },
   "valuation": {
+    "unvaluedPresent": "Stock without cost",
+    "unvaluedNone": "None",
+    "unvaluedByArticle": "Quantities without cost are detailed per article (\"By article\" view): they cannot be added across different units.",
     "title": "Stock valuation",
     "description": "Stock value in {{currency}} at weighted-average cost, by article, warehouse or family, at a date.",
     "groupBy": {

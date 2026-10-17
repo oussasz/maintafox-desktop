@@ -187,7 +187,10 @@ pub async fn get_license_status_view(db: &DatabaseConnection, user_id: i32) -> A
     let policy_sync_pending = is_policy_sync_pending(db).await?;
     let pending_writes = pending_local_writes(db).await?;
     let active_meta = entitlements::queries::peek_active_envelope_meta(db).await?;
-    let envelope_key_id = entitlements::queries::active_envelope_key_id(db).await?;
+    let (envelope_issuer, envelope_key_id) = match entitlements::queries::active_envelope_signer(db).await? {
+        Some((issuer, key_id)) => (Some(issuer), Some(key_id)),
+        None => (None, None),
+    };
     let (envelope_id, verification_result) = match active_meta {
         Some((id, _tier, verification)) => (Some(id), Some(verification)),
         None => (entitlement.envelope_id.clone(), None),
@@ -246,7 +249,7 @@ pub async fn get_license_status_view(db: &DatabaseConnection, user_id: i32) -> A
         format!("Product activation is '{product_activation_state}'. Complete activation to finish licensing.")
     };
 
-    let recent_traces = list_license_trace_events(db, Some(6), None).await.unwrap_or_default();
+    let recent_traces = list_license_trace_events(db, Some(6), None).await?;
 
     Ok(LicenseStatusView {
         entitlement_state: entitlement.effective_state,
@@ -256,6 +259,7 @@ pub async fn get_license_status_view(db: &DatabaseConnection, user_id: i32) -> A
         license_edition,
         entitlement_tier: entitlement.tier,
         envelope_id,
+        envelope_issuer,
         envelope_key_id,
         verification_result,
         policy_sync_pending,
