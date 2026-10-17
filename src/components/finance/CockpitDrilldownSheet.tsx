@@ -17,6 +17,15 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { StatusChip } from "@/components/ui/status-chip";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { mfTable } from "@/design-system/tokens";
 import { useFormatters } from "@/hooks/use-formatters";
 import { cn } from "@/lib/utils";
 import {
@@ -46,6 +55,7 @@ export function CockpitDrilldownSheet({
   const [data, setData] = useState<BudgetCockpitDrilldown | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(false);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     if (!row) return;
@@ -71,7 +81,7 @@ export function CockpitDrilldownSheet({
     return () => {
       cancelled = true;
     };
-  }, [row, fiscalYear, budgetVersionId]);
+  }, [row, fiscalYear, budgetVersionId, attempt]);
 
   const money = (v: number) => formatCurrency(v, currency ?? undefined);
 
@@ -97,7 +107,13 @@ export function CockpitDrilldownSheet({
             </SheetHeader>
             <div className="mt-4 space-y-6 text-sm">
               {loading ? <LoadingState /> : null}
-              {error ? <ErrorState error={error} title={t("drill.loadError")} /> : null}
+              {error ? (
+                <ErrorState
+                  error={error}
+                  title={t("drill.loadError")}
+                  onRetry={() => setAttempt((n) => n + 1)}
+                />
+              ) : null}
               {data ? (
                 <>
                   <section aria-labelledby="drill-actuals">
@@ -107,31 +123,31 @@ export function CockpitDrilldownSheet({
                     {data.actuals.length === 0 ? (
                       <p className="text-text-muted">{t("drill.noActuals")}</p>
                     ) : (
-                      <table className="w-full text-xs">
-                        <thead>
-                          <tr className="border-b border-surface-border text-text-muted">
-                            <th scope="col" className="py-1 text-start font-medium">
+                      <Table className="text-xs">
+                        <TableHeader>
+                          <TableRow className={mfTable.header}>
+                            <TableHead scope="col" className="h-9 text-start font-medium">
                               {t("drill.col.period")}
-                            </th>
-                            <th scope="col" className="py-1 text-start font-medium">
+                            </TableHead>
+                            <TableHead scope="col" className="h-9 text-start font-medium">
                               {t("drill.col.source")}
-                            </th>
-                            <th scope="col" className="py-1 text-start font-medium">
+                            </TableHead>
+                            <TableHead scope="col" className="h-9 text-start font-medium">
                               {t("drill.col.asset")}
-                            </th>
-                            <th scope="col" className="py-1 text-end font-medium">
+                            </TableHead>
+                            <TableHead scope="col" className="h-9 text-end font-medium">
                               {t("drill.col.amount")}
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody>
+                            </TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
                           {data.actuals.map((a) => (
-                            <tr key={a.actual_id} className="border-b border-surface-border/60">
-                              <td className="py-1 align-top">
+                            <TableRow key={a.actual_id}>
+                              <TableCell className="py-1.5 align-top">
                                 {a.period_month ? periodLabel(a.period_month) : "—"}
                                 <div className="text-text-muted">{formatDate(a.event_at)}</div>
-                              </td>
-                              <td className="py-1 align-top">
+                              </TableCell>
+                              <TableCell className="py-1.5 align-top">
                                 {a.work_order_id ? (
                                   <LinkedEntityBadge
                                     entity="work_order"
@@ -163,20 +179,22 @@ export function CockpitDrilldownSheet({
                                     />
                                   ) : null}
                                 </div>
-                              </td>
-                              <td className="py-1 align-top">{a.equipment_code ?? "—"}</td>
-                              <td
+                              </TableCell>
+                              <TableCell className="py-1.5 align-top">
+                                {a.equipment_code ?? "—"}
+                              </TableCell>
+                              <TableCell
                                 className={cn(
-                                  "py-1 text-end align-top font-mono tabular-nums",
+                                  "py-1.5 text-end align-top font-mono tabular-nums",
                                   a.amount < 0 && "text-text-muted",
                                 )}
                               >
                                 {money(a.amount)}
-                              </td>
-                            </tr>
+                              </TableCell>
+                            </TableRow>
                           ))}
-                        </tbody>
-                      </table>
+                        </TableBody>
+                      </Table>
                     )}
                   </section>
                   <section aria-labelledby="drill-commitments">
@@ -186,38 +204,37 @@ export function CockpitDrilldownSheet({
                     {data.commitments.length === 0 ? (
                       <p className="text-text-muted">{t("drill.noCommitments")}</p>
                     ) : (
-                      <table className="w-full text-xs">
-                        <thead>
-                          <tr className="border-b border-surface-border text-text-muted">
-                            <th scope="col" className="py-1 text-start font-medium">
+                      <Table className="text-xs">
+                        <TableHeader>
+                          <TableRow className={mfTable.header}>
+                            <TableHead scope="col" className="h-9 text-start font-medium">
                               {t("drill.col.document")}
-                            </th>
-                            <th scope="col" className="py-1 text-start font-medium">
+                            </TableHead>
+                            <TableHead scope="col" className="h-9 text-start font-medium">
                               {t("drill.col.workOrder")}
-                            </th>
-                            <th scope="col" className="py-1 text-start font-medium">
+                            </TableHead>
+                            <TableHead scope="col" className="h-9 text-start font-medium">
                               {t("drill.col.due")}
-                            </th>
-                            <th scope="col" className="py-1 text-end font-medium">
+                            </TableHead>
+                            <TableHead scope="col" className="h-9 text-end font-medium">
                               {t("drill.col.open")}
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody>
+                            </TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
                           {data.commitments.map((c, i) => (
-                            <tr
+                            <TableRow
                               // biome-ignore lint/suspicious/noArrayIndexKey: a document can appear on several lines
                               key={`${c.kind}-${c.reference}-${i}`}
-                              className="border-b border-surface-border/60"
                             >
-                              <td className="py-1">
+                              <TableCell className="py-1">
                                 <span className="font-medium">{c.reference}</span>
                                 <div className="text-text-muted">
                                   {t(`drill.kind.${c.kind}`)}
                                   {c.supplier_name ? ` · ${c.supplier_name}` : ""}
                                 </div>
-                              </td>
-                              <td className="py-1">
+                              </TableCell>
+                              <TableCell className="py-1">
                                 {c.work_order_id ? (
                                   <LinkedEntityBadge
                                     entity="work_order"
@@ -227,15 +244,17 @@ export function CockpitDrilldownSheet({
                                 ) : (
                                   "—"
                                 )}
-                              </td>
-                              <td className="py-1">{c.due_at ? formatDate(c.due_at) : "—"}</td>
-                              <td className="py-1 text-end font-mono tabular-nums">
+                              </TableCell>
+                              <TableCell className="py-1">
+                                {c.due_at ? formatDate(c.due_at) : "—"}
+                              </TableCell>
+                              <TableCell className="py-1 text-end font-mono tabular-nums">
                                 {money(c.amount)}
-                              </td>
-                            </tr>
+                              </TableCell>
+                            </TableRow>
                           ))}
-                        </tbody>
-                      </table>
+                        </TableBody>
+                      </Table>
                     )}
                   </section>
                 </>

@@ -198,8 +198,8 @@ describe("AssetBindingSummary — S3 Supervisor Verification", () => {
       const { rerender } = render(<AssetBindingSummary assetId={1} />, { wrapper: MemoryRouter });
 
       // Rapidly switch to asset 2, then 3
-      rerender(<AssetBindingSummary assetId={2} />, { wrapper: MemoryRouter });
-      rerender(<AssetBindingSummary assetId={3} />, { wrapper: MemoryRouter });
+      rerender(<AssetBindingSummary assetId={2} />);
+      rerender(<AssetBindingSummary assetId={3} />);
 
       // Wait for final render to settle
       await waitFor(() => {
@@ -258,7 +258,7 @@ describe("AssetBindingSummary — S3 Supervisor Verification", () => {
       // Backend recovers
       shouldFail = false;
       await act(async () => {
-        rerender(<AssetBindingSummary assetId={2} />, { wrapper: MemoryRouter });
+        rerender(<AssetBindingSummary assetId={2} />);
       });
 
       // Should recover and show data
