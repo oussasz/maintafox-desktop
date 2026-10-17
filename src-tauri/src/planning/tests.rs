@@ -5314,3 +5314,74 @@ async fn only_moves_recorded_while_the_baseline_held_count_as_displaced() {
         "only the move recorded while the baseline held counts: {week:?}"
     );
 }
+
+#[tokio::test]
+async fn planning_requires_an_isolation_for_every_permit_type_flagged_for_energy_isolation() {
+    let db = setup_db().await;
+    let loto_reasons = |wo_id: i64| {
+        let db = db.clone();
+        async move {
+            super::readiness::permit_findings(&db, "work_order", wo_id, None)
+                .await
+                .expect("findings")
+                .into_iter()
+                .filter(|f| f.reason_code == "LOTO_NOT_VERIFIED")
+                .count()
+        }
+    };
+    let permit_on = |wo_id: i64, type_code: &'static str| {
+        let db = db.clone();
+        async move {
+            let type_id = scalar(&db, &format!("SELECT id FROM permit_types WHERE code = '{type_code}'")).await;
+            crate::permit::queries::create_work_permit(
+                &db,
+                crate::permit::domain::WorkPermitCreateInput {
+                    permit_type_id: type_id,
+                    asset_id: None,
+                    entity_id: None,
+                    linked_work_order_id: Some(wo_id),
+                    expires_at: Some((chrono::Utc::now() + chrono::Duration::hours(8)).to_rfc3339()),
+                },
+            )
+            .await
+            .expect("permit")
+        }
+    };
+    let job = |title: &'static str| {
+        let db = db.clone();
+        async move {
+            let (wo, _) = create_planning_wo(&db, title).await;
+            exec_sql(
+                &db,
+                &format!("UPDATE work_orders SET requires_permit = 1 WHERE id = {wo}"),
+            )
+            .await;
+            wo
+        }
+    };
+
+    // LOTO (flagged by migration 225) without any isolation point: not ready.
+    let loto_wo = job("Readiness LOTO").await;
+    let loto = permit_on(loto_wo, "loto").await;
+    assert!(loto.permit_type_requires_energy_isolation);
+    assert_eq!(loto_reasons(loto_wo).await, 1, "LOTO still needs an isolation");
+
+    // Hot work, not flagged: no isolation needed.
+    let hot_wo = job("Readiness hot work").await;
+    let hot = permit_on(hot_wo, "hot_work").await;
+    assert!(!hot.permit_type_requires_energy_isolation);
+    assert_eq!(loto_reasons(hot_wo).await, 0);
+
+    // The same non-LOTO type once flagged for energy isolation: an isolation is needed at planning,
+    // whatever the type is called.
+    exec_sql(
+        &db,
+        "UPDATE permit_types SET requires_energy_isolation = 1 WHERE code = 'hot_work'",
+    )
+    .await;
+    assert_eq!(
+        loto_reasons(hot_wo).await,
+        1,
+        "a flagged non-LOTO type without isolation is not ready"
+    );
+}
