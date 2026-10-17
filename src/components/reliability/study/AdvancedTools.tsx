@@ -4,7 +4,7 @@
  * Every result is computed on request ("Calculer"); nothing is written.
  */
 import { Play, Plus, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { KpiTile } from "@/components/metrics/KpiTile";
@@ -94,6 +94,8 @@ function MarkovTool({ equipment }: { equipment: EquipmentLife[] }) {
   const [transitions, setTransitions] = useState<TransitionRow[]>([]);
   const [result, setResult] = useState<MarkovResult | null>(null);
   const [busy, setBusy] = useState(false);
+  // Results belong to the inputs they were computed from: any change clears them.
+  useEffect(() => setResult(null), [states, transitions]);
 
   const fromEquipment = (eq: EquipmentLife) => {
     if (eq.mtbf_hours == null || eq.mttr_hours == null || eq.mttr_hours <= 0) return;
@@ -424,6 +426,7 @@ function SimulationTool({
   const [costR, setCostR] = useState("");
   const [result, setResult] = useState<SimulationResult | null>(null);
   const [busy, setBusy] = useState(false);
+  useEffect(() => setResult(null), [trials, seed, costH, costR, rbd, missionHours]);
   if (!rbd || missionHours == null || !(missionHours > 0)) {
     return (
       <RamsCard
@@ -624,6 +627,7 @@ function EventTreeTool() {
   const [consequences, setConsequences] = useState<Record<number, string>>({});
   const [result, setResult] = useState<EventTreeResult | null>(null);
   const [busy, setBusy] = useState(false);
+  useEffect(() => setResult(null), [initiator, frequency, barriers, consequences]);
   const freqN = num(frequency);
   const valid =
     initiator.trim() !== "" &&

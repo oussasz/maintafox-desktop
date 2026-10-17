@@ -54,6 +54,7 @@ export function StudyDecisionsStep({
   const [loading, setLoading] = useState(true);
   const [applyTarget, setApplyTarget] = useState<StudyDecision | null>(null);
   const [rejectTarget, setRejectTarget] = useState<StudyDecision | null>(null);
+  const [approveTarget, setApproveTarget] = useState<StudyDecision | null>(null);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -73,22 +74,17 @@ export function StudyDecisionsStep({
     void load();
   }, [load, version]);
 
-  const canManage = can(P.RAM_MANAGE);
+  // An archived study is a record: its decisions are no longer approved, rejected or applied.
+  const canManage = can(P.RAM_MANAGE) && study.status === "active";
   const hours = (v: number | null | undefined) => (v == null ? "—" : formatNumber(Math.round(v)));
 
+  /** Runs inside the confirmation: a refusal (not the designated approver…) keeps it open. */
   const approve = async (d: StudyDecision) => {
-    setBusy(true);
-    try {
-      await approveReliabilityStudyDecision({
-        decision_id: d.id,
-        expected_row_version: d.row_version,
-      });
-      await load();
-    } catch {
-      // global IPC toast
-    } finally {
-      setBusy(false);
-    }
+    await approveReliabilityStudyDecision({
+      decision_id: d.id,
+      expected_row_version: d.row_version,
+    });
+    await load();
   };
 
   if (error != null && rows == null)
@@ -244,7 +240,7 @@ export function StudyDecisionsStep({
                                 variant="outline"
                                 className="h-10"
                                 disabled={busy}
-                                onClick={() => void approve(d)}
+                                onClick={() => setApproveTarget(d)}
                               >
                                 <Check className="h-4 w-4" aria-hidden />
                                 {t("rams.decisions.approve")}
@@ -283,6 +279,16 @@ export function StudyDecisionsStep({
           </div>
         </div>
       )}
+      <ConfirmDialog
+        open={approveTarget != null}
+        onOpenChange={(o) => !o && setApproveTarget(null)}
+        title={t("rams.decisions.approveTitle")}
+        description={t("rams.decisions.approveBody", { title: approveTarget?.title ?? "" })}
+        confirmLabel={t("rams.decisions.approve")}
+        onConfirm={async () => {
+          if (approveTarget) await approve(approveTarget);
+        }}
+      />
       <ConfirmDialog
         open={applyTarget != null}
         onOpenChange={(o) => !o && setApplyTarget(null)}

@@ -18,7 +18,7 @@ const ISSUE_CODES = new Set([
 ]);
 
 /**
- * Integrity diagnostics body â€” embeddable in Settings (no page shell).
+ * Integrity diagnostics body — embeddable in Settings (no page shell).
  * A failed check is shown with its cause and a retry; the repair rewrites the reference seed
  * data and asks for confirmation first.
  */
@@ -76,7 +76,7 @@ export function DiagnosticsPanel() {
             <div className="rounded-lg border border-surface-border bg-surface-2 p-4">
               <dt className="text-xs text-text-muted">{t("diagnostics.seedVersion")}</dt>
               <dd className="font-mono text-lg text-text-primary">
-                {report.seed_schema_version ?? "â€”"}
+                {report.seed_schema_version ?? "—"}
               </dd>
             </div>
             <div className="rounded-lg border border-surface-border bg-surface-2 p-4">
@@ -120,7 +120,7 @@ export function DiagnosticsPanel() {
                           {t("diagnostics.technicalDetails")}
                         </summary>
                         <p className="mt-1 break-words">
-                          {issue.subject} â€” {issue.description}
+                          {issue.subject} — {issue.description}
                         </p>
                       </details>
                     </div>

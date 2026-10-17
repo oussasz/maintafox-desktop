@@ -1000,7 +1000,9 @@
       "hazardLegend": "h(t), échelle de droite",
       "hazardUnit": "/1 000 h",
       "proposedLegend": "Intervalle proposé",
-      "currentLegend": "Pratique actuelle"
+      "currentLegend": "Pratique actuelle",
+      "recomputeError": "L'analyse n'a pas pu être recalculée : les chiffres affichés sont ceux du dernier calcul réussi",
+      "recomputeRetry": "Recalculer"
     },
     "cost": {
       "title": "Intervalle de remplacement optimal",
@@ -1099,7 +1101,8 @@
       "approver": "Approbateur",
       "anyApprover": "Toute personne habilitée",
       "justification": "Justification",
-      "submit": "Envoyer pour approbation"
+      "submit": "Envoyer pour approbation",
+      "loadError": "Les plans, types d'OT ou approbateurs n'ont pas pu être chargés"
     },
     "decisions": {
       "title": "Journal des décisions",
@@ -1144,7 +1147,9 @@
       "applyWoAction": "Créer l'OT",
       "rejectTitle": "Refuser la décision",
       "rejectReason": "Motif du refus (obligatoire)",
-      "rejectAction": "Refuser la décision"
+      "rejectAction": "Refuser la décision",
+      "approveTitle": "Approuver cette décision ?",
+      "approveBody": "« {{title}} » devient approuvée et peut ensuite être appliquée (révision de PM ou OT)."
     },
     "backToModule": "Parc et études",
     "fmeca": {
@@ -1354,7 +1359,9 @@
       "decisionCondition": "Mettre en place la surveillance de {{element}} toutes les {{interval}} {{unit}}",
       "decisionFailureFinding": "Essai périodique de détection de panne : {{element}}",
       "decisionRedesign": "Modification : {{element}}",
-      "rowsToReviewBody": "Cotez-les à l'étape AMDEC pour les analyser ici."
+      "rowsToReviewBody": "Cotez-les à l'étape AMDEC pour les analyser ici.",
+      "previewError": "La recommandation n'a pas pu être recalculée : celle affichée peut être périmée, l'enregistrement attend",
+      "previewRetry": "Recalculer"
     },
     "system": {
       "tool": "Outil de modélisation",
@@ -1472,7 +1479,8 @@
         "wrong_source": "{{node}} : l'événement de tête doit être une porte.",
         "needs_life_distribution": "{{node}} : la simulation demande une loi de durée de vie (pas une fiabilité saisie).",
         "needs_mttr": "{{node}} : temps de réparation inconnu, indiquez-le."
-      }
+      },
+      "evalError": "Le modèle n'a pas pu être évalué"
     },
     "advanced": {
       "tools": "Outils avancés",
@@ -1583,7 +1591,9 @@
       },
       "openInspections": "Ouvrir les inspections",
       "refreshKpi": "Actualiser l'indicateur",
-      "dismiss": "Ignorer ce point"
+      "dismiss": "Ignorer ce point",
+      "dismissTitle": "Écarter cet écart de données ?",
+      "dismissBody": "« {{issue}} » sur {{asset}} ne sera plus listé. Écartez-le seulement si les données sont justes telles quelles."
     }
   }
 }

@@ -20,7 +20,6 @@ export const assetCreateSchema = z.object({
   org_node_id: z.number({ required_error: ASSET_FIELD_REQUIRED_KEY }),
   parent_asset_id: z.number().nullable().default(null),
   commissioned_at: z.string().nullable().default(null),
-  description: z.string().max(2000).nullable().default(null),
 });
 
 export type AssetCreateFormValues = z.infer<typeof assetCreateSchema>;

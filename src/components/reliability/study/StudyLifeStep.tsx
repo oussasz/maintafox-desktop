@@ -15,6 +15,7 @@ import { mfLayout } from "@/design-system/tokens";
 import { RELIABILITY_PATTERN_TONE, toneOf } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
+import { describeAppError } from "@/lib/app-error";
 import {
   type LifeAnalysis,
   type ReliabilityStudy,
@@ -158,6 +159,20 @@ export function StudyLifeStep({
 
   return (
     <div className="grid gap-4">
+      {error != null ? (
+        // A recompute (costs typed, plan changed) failed: the figures below are the last ones.
+        <RamsCallout
+          tone="danger"
+          title={t("rams.life.recomputeError")}
+          action={
+            <Button variant="outline" className="h-10" onClick={() => void load(null, planId)}>
+              {t("rams.life.recomputeRetry")}
+            </Button>
+          }
+        >
+          {describeAppError(error).title}
+        </RamsCallout>
+      ) : null}
       {fit == null ? (
         <RamsCallout
           tone="danger"

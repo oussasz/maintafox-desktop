@@ -19,6 +19,7 @@ import { mfLayout } from "@/design-system/tokens";
 import { RELIABILITY_TACTIC_TONE, toneOf } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
+import { describeAppError } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import {
   type RcmQuestion,
@@ -183,6 +184,11 @@ function RcmEditor({
   );
   const [justification, setJustification] = useState(row.saved?.justification ?? "");
   const [saving, setSaving] = useState(false);
+  /** The recommendation could not be recomputed: the shown one is stale, saving waits. */
+  const [previewError, setPreviewError] = useState<unknown>(null);
+  const [previewRun, setPreviewRun] = useState(0);
+  /** "On-condition feasible" was answered by typing a P-F interval (undone if it is cleared). */
+  const [pfAnswered, setPfAnswered] = useState(false);
   const pfN = Number(pf.replace(",", "."));
   const pfValid = pf.trim() === "" || (Number.isFinite(pfN) && pfN > 0);
 
@@ -191,12 +197,13 @@ function RcmEditor({
       void previewStudyRcm(answers)
         .then((r) => {
           setRec(r);
+          setPreviewError(null);
           if (!row.saved) setTactic(r.recommended_tactic);
         })
-        .catch(() => undefined);
+        .catch((e: unknown) => setPreviewError(e));
     }, 150);
     return () => clearTimeout(h);
-  }, [answers, row.saved]);
+  }, [answers, row.saved, previewRun]);
 
   const questions = useMemo(
     () => visibleQuestions(answers as unknown as RcmAnswers) as RcmQuestion[],
@@ -209,6 +216,7 @@ function RcmEditor({
     editable &&
     can(P.RAM_ANALYZE) &&
     pfValid &&
+    previewError == null &&
     (!needsJustification || justification.trim().length > 0) &&
     !(rec.redesign_compulsory && tactic !== "redesign");
 
@@ -363,13 +371,40 @@ function RcmEditor({
             onChange={(e) => {
               setPf(e.target.value);
               const v = Number(e.target.value.replace(",", "."));
-              if (Number.isFinite(v) && v > 0)
-                setAnswers((a) => ({ ...a, on_condition_feasible: true }));
+              const known = Number.isFinite(v) && v > 0;
+              // A known P-F interval makes condition monitoring feasible; clearing it gives the
+              // question back to the analyst only when the interval had answered it.
+              if (known && !answers.on_condition_feasible) {
+                setPfAnswered(true);
+                setAnswers((x) => ({ ...x, on_condition_feasible: true }));
+              } else if (!known && pfAnswered) {
+                setPfAnswered(false);
+                setAnswers((x) => ({ ...x, on_condition_feasible: false }));
+              }
             }}
           />
         </label>
       </RamsCard>
       <RamsCard title={t("rams.rcm.recommendedTitle")}>
+        {previewError != null ? (
+          <div className="mb-3">
+            <RamsCallout
+              tone="danger"
+              title={t("rams.rcm.previewError")}
+              action={
+                <Button
+                  variant="outline"
+                  className="h-10"
+                  onClick={() => setPreviewRun((n) => n + 1)}
+                >
+                  {t("rams.rcm.previewRetry")}
+                </Button>
+              }
+            >
+              {describeAppError(previewError).title}
+            </RamsCallout>
+          </div>
+        ) : null}
         <div
           className="flex flex-wrap items-center gap-1.5 text-xs"
           aria-label={t("rams.rcm.pathLabel")}

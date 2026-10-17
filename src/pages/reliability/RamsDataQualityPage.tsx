@@ -19,6 +19,7 @@ import {
   RamsCard,
 } from "@/components/reliability/study/rams-ui";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import {
   Dialog,
@@ -46,6 +47,12 @@ import { P } from "@shared/rbac/permissions.generated";
 
 const PERIODS = [12, 24, 36] as const;
 
+/** `YYYY-MM-DD` of a date in the local calendar. */
+function localDay(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 export function RamsDataQualityPage() {
   const { t } = useTranslation("reliability");
   const { formatDate, formatNumber, formatDecimal } = useFormatters();
@@ -58,6 +65,11 @@ export function RamsDataQualityPage() {
   const [day, setDay] = useState("");
   const [hours, setHours] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
+  const [dismissTarget, setDismissTarget] = useState<{
+    equipment_id: number;
+    issue_code: string;
+    asset_code: string;
+  } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -239,7 +251,8 @@ export function RamsDataQualityPage() {
                               variant="outline"
                               className="h-10"
                               onClick={() => {
-                                setDay(new Date().toISOString().slice(0, 10));
+                                // Today in the site's local calendar (not the UTC day).
+                                setDay(localDay(new Date()));
                                 setHours("");
                                 setHoursTarget({ id: e.equipment_id, code: e.asset_code });
                               }}
@@ -320,12 +333,11 @@ export function RamsDataQualityPage() {
                             className="h-10"
                             disabled={busy != null}
                             onClick={() =>
-                              void act(key, () =>
-                                dismissRamDataQualityIssue({
-                                  equipment_id: i.equipment_id,
-                                  issue_code: i.issue_code,
-                                }),
-                              )
+                              setDismissTarget({
+                                equipment_id: i.equipment_id,
+                                issue_code: i.issue_code,
+                                asset_code: i.asset_code,
+                              })
                             }
                           >
                             {t("rams.quality.dismiss")}
@@ -385,7 +397,8 @@ export function RamsDataQualityPage() {
                     equipment_id: target.id,
                     exposure_type: "hours",
                     value: hoursN,
-                    recorded_at: `${day}T23:59:59Z`,
+                    // End of that day in local time, stored as an instant.
+                    recorded_at: new Date(`${day}T23:59:59`).toISOString(),
                     source_type: "manual",
                   }),
                 ).then((ok) => {
@@ -398,6 +411,24 @@ export function RamsDataQualityPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <ConfirmDialog
+        open={dismissTarget != null}
+        onOpenChange={(o) => !o && setDismissTarget(null)}
+        title={t("rams.quality.dismissTitle")}
+        description={t("rams.quality.dismissBody", {
+          issue: dismissTarget ? t(`rams.quality.issue.${dismissTarget.issue_code}`) : "",
+          asset: dismissTarget?.asset_code ?? "",
+        })}
+        confirmLabel={t("rams.quality.dismiss")}
+        onConfirm={async () => {
+          if (!dismissTarget) return;
+          const { equipment_id, issue_code } = dismissTarget;
+          const ok = await act(`${issue_code}:${equipment_id}`, () =>
+            dismissRamDataQualityIssue({ equipment_id, issue_code }),
+          );
+          if (!ok) throw new Error("dismiss failed");
+        }}
+      />
     </ModulePageShell>
   );
 }

@@ -11,6 +11,7 @@ import { KpiTile } from "@/components/metrics/KpiTile";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useFormatters } from "@/hooks/use-formatters";
+import { describeAppError } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import type { EquipmentLife, FtNode, FtResult, FtSpec } from "@/services/reliability-model-service";
 
@@ -182,6 +183,7 @@ export function SystemFtaEditor({
   selected,
   onSelect,
   result,
+  evalError,
   equipment,
   fit,
   editable,
@@ -191,6 +193,8 @@ export function SystemFtaEditor({
   selected: string | null;
   onSelect: (id: string | null) => void;
   result: FtResult | null;
+  /** Why the model could not be evaluated (shown instead of "computing…"). */
+  evalError: unknown;
   equipment: EquipmentLife[];
   fit: [number, number] | null;
   editable: boolean;
@@ -312,7 +316,9 @@ export function SystemFtaEditor({
           }
         >
           {node ? (
-            <div className="grid gap-3">
+            // Keyed by node: the number fields keep their own text while typing, so another
+            // node must start from its own values (they showed the previous node's).
+            <div key={node.id} className="grid gap-3">
               <label className="grid gap-1 text-xs font-medium text-text-secondary">
                 {t("rams.system.label")}
                 <Input
@@ -425,7 +431,11 @@ export function SystemFtaEditor({
             hours: formatDecimal(result?.mission_hours ?? 0, 0),
           })}
         >
-          {result == null ? (
+          {evalError != null ? (
+            <RamsCallout tone="danger" title={t("rams.system.evalError")}>
+              {describeAppError(evalError).title}
+            </RamsCallout>
+          ) : result == null ? (
             <p className="text-sm text-text-muted">{t("rams.system.computing")}</p>
           ) : result.issues.length > 0 ? (
             <RamsCallout tone="warning" title={t("rams.system.incomplete")}>

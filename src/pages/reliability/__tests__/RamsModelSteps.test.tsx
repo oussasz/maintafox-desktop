@@ -722,7 +722,8 @@ describe("RamsDataQualityPage", () => {
           equipment_id: 11,
           exposure_type: "hours",
           value: 120,
-          recorded_at: "2026-09-30T23:59:59Z",
+          // End of the local day, as an instant.
+          recorded_at: new Date("2026-09-30T23:59:59").toISOString(),
         }),
       }),
     );

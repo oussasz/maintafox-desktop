@@ -1000,7 +1000,9 @@
       "hazardLegend": "h(t), right scale",
       "hazardUnit": "/1,000 h",
       "proposedLegend": "Proposed interval",
-      "currentLegend": "Current practice"
+      "currentLegend": "Current practice",
+      "recomputeError": "The analysis could not be recomputed: the figures shown are from the last successful calculation",
+      "recomputeRetry": "Recompute"
     },
     "cost": {
       "title": "Optimal replacement interval",
@@ -1099,7 +1101,8 @@
       "approver": "Approver",
       "anyApprover": "Anyone authorised",
       "justification": "Justification",
-      "submit": "Send for approval"
+      "submit": "Send for approval",
+      "loadError": "The plans, work-order types or approvers could not be loaded"
     },
     "decisions": {
       "title": "Decision log",
@@ -1144,7 +1147,9 @@
       "applyWoAction": "Create the work order",
       "rejectTitle": "Reject the decision",
       "rejectReason": "Reason for rejection (required)",
-      "rejectAction": "Reject the decision"
+      "rejectAction": "Reject the decision",
+      "approveTitle": "Approve this decision?",
+      "approveBody": "\"{{title}}\" becomes approved and can then be applied (PM revision or work order)."
     },
     "backToModule": "Fleet and studies",
     "fmeca": {
@@ -1354,7 +1359,9 @@
       "decisionCondition": "Set up monitoring of {{element}} every {{interval}} {{unit}}",
       "decisionFailureFinding": "Periodic failure-finding test: {{element}}",
       "decisionRedesign": "Modification: {{element}}",
-      "rowsToReviewBody": "Rate them in the FMECA step to analyse them here."
+      "rowsToReviewBody": "Rate them in the FMECA step to analyse them here.",
+      "previewError": "The recommendation could not be recomputed: the one shown may be out of date, saving waits",
+      "previewRetry": "Recompute"
     },
     "system": {
       "tool": "Modelling tool",
@@ -1472,7 +1479,8 @@
         "wrong_source": "{{node}}: the top event must be a gate.",
         "needs_life_distribution": "{{node}}: the simulation needs a life distribution (not a typed reliability).",
         "needs_mttr": "{{node}}: repair time unknown, give it."
-      }
+      },
+      "evalError": "The model could not be evaluated"
     },
     "advanced": {
       "tools": "Advanced tools",
@@ -1583,7 +1591,9 @@
       },
       "openInspections": "Open inspections",
       "refreshKpi": "Refresh the indicator",
-      "dismiss": "Dismiss this point"
+      "dismiss": "Dismiss this point",
+      "dismissTitle": "Dismiss this data issue?",
+      "dismissBody": "\"{{issue}}\" on {{asset}} will no longer be listed. Dismiss it only when the data is right as it is."
     }
   }
 }
