@@ -22,6 +22,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { ListAccessNote } from "@/components/ui/list-access-note";
 import {
   Select,
   SelectContent,
@@ -30,6 +31,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { useCanReadList } from "@/lib/list-access";
 import type { CommitBreakIn } from "@shared/ipc-types";
 
 type ApproverOption = { id: number; label: string };
@@ -51,6 +53,8 @@ export function FrozenWeekBreakInDialog({
   onConfirm,
 }: FrozenWeekBreakInDialogProps) {
   const { t, i18n } = useTranslation("planning");
+  // Approvers are user accounts: listed only with the user administration right.
+  const canReadUsers = useCanReadList("users");
   const reasons = useBreakInReasons(open);
   const [reason, setReason] = useState("");
   const [approverUserId, setApproverUserId] = useState<number | null>(null);
@@ -98,6 +102,7 @@ export function FrozenWeekBreakInDialog({
           <div>
             <Label>{t("breakIns.approver")}</Label>
             <Select
+              disabled={!canReadUsers}
               value={approverUserId != null ? String(approverUserId) : "__none__"}
               onValueChange={(v) => setApproverUserId(v === "__none__" ? null : Number(v))}
             >
@@ -113,6 +118,7 @@ export function FrozenWeekBreakInDialog({
                 ))}
               </SelectContent>
             </Select>
+            {!canReadUsers ? <ListAccessNote list="users" className="mt-1" /> : null}
           </div>
           <div>
             <Label htmlFor="frozen-week-dangerous-reason">

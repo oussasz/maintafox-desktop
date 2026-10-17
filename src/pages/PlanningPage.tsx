@@ -68,6 +68,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ListAccessNote } from "@/components/ui/list-access-note";
 import {
   Select,
   SelectContent,
@@ -81,6 +82,7 @@ import { usePermissions } from "@/hooks/use-permissions";
 import { useToast } from "@/hooks/use-toast";
 import { appErrorText } from "@/lib/app-error";
 import { formatPersonLabel } from "@/lib/display";
+import { useReadableLists } from "@/lib/list-access";
 import { listActiveTeams, listPersonnel } from "@/services/personnel-service";
 import { cancelScheduleCommitment, releaseScheduleCommitment } from "@/services/planning-service";
 import { listUsers } from "@/services/rbac-service";
@@ -114,6 +116,9 @@ export function PlanningPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const { can } = usePermissions();
+  // Crews and people come from the personnel module and approvers from user administration: each
+  // list is read only when the user may read it, so a missing right never costs the whole page.
+  const readable = useReadableLists(["teams", "people", "users"] as const);
   const { toast } = useToast();
   const { formatDateTime } = useFormatters();
   /** Confirms a planning action that went through (failures already have their toast). */
@@ -266,46 +271,83 @@ export function PlanningPage() {
   }, [backlog, loading, searchParams, setSearchParams, can]);
 
   useEffect(() => {
+    let cancelled = false;
     void (async () => {
       try {
-        const [crewRows, peoplePage, users] = await Promise.all([
-          listActiveTeams({}),
-          listPersonnel({ limit: 250, offset: 0 }),
-          listUsers({}),
-        ]);
+        const crewRows = readable.teams ? await listActiveTeams({}) : [];
+        if (cancelled) return;
         const crewOptions = crewRows.map((row) => ({
           id: row.id,
           label: `${row.name} (${row.code})`,
         }));
         setTeams(crewOptions);
-        setPersonnel(
-          peoplePage.items.map((row) => ({
-            id: row.id,
-            label: row.employee_code ? `${row.full_name} (${row.employee_code})` : row.full_name,
-          })),
-        );
-        setApprovers(
-          users.map((user) => ({
-            id: user.id,
-            label: formatPersonLabel(user.display_name, user.username),
-          })),
-        );
 
         const crewIds = new Set(crewOptions.map((c) => c.id));
         const userId = useSessionStore.getState().info?.user_id ?? null;
         const stored = readStoredBoardScope(userId);
         if (stored.kind === "crew" && crewIds.has(stored.teamId)) {
           setBoardScope(stored);
-          return;
+        } else {
+          // Invalid stored crew (or All) → plant-wide All Crews.
+          setBoardScope({ kind: "all" });
+          writeStoredBoardScope(userId, { kind: "all" });
         }
-        // Invalid stored crew (or All) → plant-wide All Crews.
-        setBoardScope({ kind: "all" });
-        writeStoredBoardScope(userId, { kind: "all" });
       } catch (err) {
-        setPageError(appErrorText(err));
+        if (!cancelled) setPageError(appErrorText(err));
       }
     })();
-  }, []);
+    return () => {
+      cancelled = true;
+    };
+  }, [readable.teams]);
+
+  useEffect(() => {
+    if (!readable.people) {
+      setPersonnel([]);
+      return;
+    }
+    let cancelled = false;
+    listPersonnel({ limit: 250, offset: 0 })
+      .then((peoplePage) => {
+        if (cancelled) return;
+        setPersonnel(
+          peoplePage.items.map((row) => ({
+            id: row.id,
+            label: row.employee_code ? `${row.full_name} (${row.employee_code})` : row.full_name,
+          })),
+        );
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setPageError(appErrorText(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [readable.people]);
+
+  useEffect(() => {
+    if (!readable.users) {
+      setApprovers([]);
+      return;
+    }
+    let cancelled = false;
+    listUsers({})
+      .then((users) => {
+        if (cancelled) return;
+        setApprovers(
+          users.map((user) => ({
+            id: user.id,
+            label: formatPersonLabel(user.display_name, user.username),
+          })),
+        );
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setPageError(appErrorText(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [readable.users]);
 
   function selectBoardScope(next: PlanningBoardScope) {
     setBoardScope(next);
@@ -752,6 +794,7 @@ export function PlanningPage() {
               {t("filters.boardCrew")}
             </Label>
             <Select
+              disabled={!readable.teams}
               value={boardScope.kind === "all" ? "__all__" : String(boardScope.teamId)}
               onValueChange={(v) => {
                 if (v === "__all__") {
@@ -774,6 +817,7 @@ export function PlanningPage() {
                 ))}
               </SelectContent>
             </Select>
+            {!readable.teams ? <ListAccessNote list="teams" className="max-w-[220px]" /> : null}
           </div>
           <div className="space-y-1">
             <Label htmlFor="planning-date-from" className="text-[10px] uppercase tracking-wide">

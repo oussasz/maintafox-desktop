@@ -29,6 +29,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { ListAccessNote } from "@/components/ui/list-access-note";
 import {
   Select,
   SelectContent,
@@ -41,6 +42,7 @@ import { mfAlert } from "@/design-system/tokens";
 import { mfTone } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
 import { useToast } from "@/hooks/use-toast";
+import { useCanReadList } from "@/lib/list-access";
 import { cn } from "@/lib/utils";
 import { listOrgTree } from "@/services/org-node-service";
 import {
@@ -58,6 +60,9 @@ import { P } from "@shared/rbac/permissions.generated";
 export function WeeklySchedulePanel() {
   const { t, i18n } = useTranslation("planning");
   const { formatDate, formatDateTime } = useFormatters();
+  // The weekly schedule is per planning site, read from the organisation: without its view right
+  // no site can be chosen, and the panel says which right is missing.
+  const canReadOrg = useCanReadList("orgNodes");
   const [sites, setSites] = useState<OrgTreeRow[]>([]);
   const [siteId, setSiteId] = useState<number | null>(null);
   const [day, setDay] = useState<string>(() => isoDay(new Date()));
@@ -71,6 +76,7 @@ export function WeeklySchedulePanel() {
 
   useEffect(() => {
     let cancelled = false;
+    if (!canReadOrg) return;
     listOrgTree()
       .then((rows) => {
         if (cancelled) return;
@@ -84,7 +90,7 @@ export function WeeklySchedulePanel() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [canReadOrg]);
 
   const load = useCallback(async () => {
     if (siteId == null) return;
@@ -266,7 +272,9 @@ export function WeeklySchedulePanel() {
         </p>
       ) : null}
 
-      {sites.length === 0 && !error ? (
+      {!canReadOrg ? (
+        <ListAccessNote list="orgNodes" />
+      ) : sites.length === 0 && !error ? (
         <p className="text-sm text-text-muted">{t("weekly.noPlanningSite")}</p>
       ) : null}
 
