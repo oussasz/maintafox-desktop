@@ -2,8 +2,10 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AssetPicker } from "@/components/assets/AssetPicker";
+import { PermissionContext, type PermissionContextValue } from "@/contexts/PermissionContext";
 import { assetQrPayload } from "@/lib/asset-qr";
 import type { AssetSearchResult } from "@shared/ipc-types";
+import { P, type PermissionName } from "@shared/rbac/permissions.generated";
 
 const i18nMock = vi.hoisted(() => ({
   t: (key: string, opts?: Record<string, unknown>) =>
@@ -39,7 +41,31 @@ function type(text: string) {
   return box;
 }
 
+function permissionsWithout(...denied: PermissionName[]): PermissionContextValue {
+  const can = (p: PermissionName) => !denied.includes(p);
+  return {
+    permissions: [],
+    isLoading: false,
+    can,
+    canAny: (...ps) => ps.some(can),
+    canAll: (...ps) => ps.every(can),
+    refresh: vi.fn(),
+  };
+}
+
 describe("AssetPicker", () => {
+  it("names the missing right instead of searching when the user may not read assets", () => {
+    render(
+      <PermissionContext.Provider value={permissionsWithout(P.EQ_VIEW)}>
+        <AssetPicker value={null} onChange={vi.fn()} />
+      </PermissionContext.Provider>,
+    );
+    expect(screen.getByTestId("list-access-assets")).toHaveTextContent("listAccess.assets");
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    expect(svc.suggestPickerAssets).not.toHaveBeenCalled();
+    expect(svc.searchAssetsPage).not.toHaveBeenCalled();
+  });
+
   it("shows a failed search with a retry instead of 'no asset found'", async () => {
     svc.searchAssetsPage.mockRejectedValueOnce({ code: "DATABASE_ERROR", message: "busy" });
     render(<AssetPicker value={null} onChange={vi.fn()} />);

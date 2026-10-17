@@ -40,10 +40,12 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ListAccessNote } from "@/components/ui/list-access-note";
 import { useFormatters } from "@/hooks/use-formatters";
 import { useToast } from "@/hooks/use-toast";
 import { appErrorReason } from "@/lib/app-error";
 import { useZodForm } from "@/lib/form-helpers";
+import { useCanReadList } from "@/lib/list-access";
 import { assetEditSchema } from "@/schemas/asset-edit.schema";
 import {
   deleteAssetPhoto,
@@ -72,6 +74,7 @@ function photoDataUrl(preview: { mime_type: string; data_base64: string }): stri
 
 export function AssetEditForm() {
   const { t } = useTranslation("equipment");
+  const canReadOrg = useCanReadList("orgNodes");
   const { toast } = useToast();
   const open = useAssetStore((s) => s.showEditForm);
   const asset = useAssetStore((s) => s.editingAsset);
@@ -168,12 +171,14 @@ export function AssetEditForm() {
     setOrgTreeError(null);
     setReferenceCatalogError(null);
     setCatalogReady(false);
-    void listOrgTree()
-      .then(setOrgNodes)
-      .catch((err) => {
-        console.error("[AssetEditForm] listOrgTree failed", err);
-        setOrgTreeError(`${t("createForm.orgTreeLoadFailed")} ${appErrorReason(err)}`);
-      });
+    // Without the organisation view right the list is not requested; the field says why.
+    if (canReadOrg)
+      void listOrgTree()
+        .then(setOrgNodes)
+        .catch((err) => {
+          console.error("[AssetEditForm] listOrgTree failed", err);
+          setOrgTreeError(`${t("createForm.orgTreeLoadFailed")} ${appErrorReason(err)}`);
+        });
     void getEquipmentTaxonomyCatalog()
       .then(() => setCatalogReady(true))
       .catch((err) => {
@@ -202,7 +207,7 @@ export function AssetEditForm() {
       rams_schedule_reference_value_id: asset.rams_schedule_reference_value_id ?? null,
       rams_utilization_factor: asset.rams_utilization_factor ?? 1.0,
     });
-  }, [open, asset, reset, t, loadPhotos]);
+  }, [open, asset, reset, t, loadPhotos, canReadOrg]);
 
   const orgOptions: EquipmentSearchOption[] = useMemo(
     () =>
@@ -511,17 +516,21 @@ export function AssetEditForm() {
               error={fieldError(errors.org_node_id?.message)}
               required
             >
-              <EquipmentSearchSelect
-                id="org_node_id"
-                options={orgOptions}
-                value={watchedOrgNode ? String(watchedOrgNode) : ""}
-                onChange={(v) =>
-                  setValue("org_node_id", Number(v), { shouldValidate: true, shouldDirty: true })
-                }
-                placeholder={t("createForm.selectOrg")}
-                disabled={orgOptions.length === 0}
-                aria-invalid={!!errors.org_node_id}
-              />
+              {canReadOrg ? (
+                <EquipmentSearchSelect
+                  id="org_node_id"
+                  options={orgOptions}
+                  value={watchedOrgNode ? String(watchedOrgNode) : ""}
+                  onChange={(v) =>
+                    setValue("org_node_id", Number(v), { shouldValidate: true, shouldDirty: true })
+                  }
+                  placeholder={t("createForm.selectOrg")}
+                  disabled={orgOptions.length === 0}
+                  aria-invalid={!!errors.org_node_id}
+                />
+              ) : (
+                <ListAccessNote list="orgNodes" />
+              )}
             </FormField>
           </EntityFormSection>
 

@@ -46,6 +46,8 @@ const COMMON_TOP_KEYS = [
   "ds",
   // Shared DI / OT urgency scale (select, badge tooltips).
   "urgency",
+  // Pickers whose list the user may not read (src/lib/list-access.ts).
+  "listAccess",
 ];
 const AUTH_TOP_KEYS = [
   "activation",

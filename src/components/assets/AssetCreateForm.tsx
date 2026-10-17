@@ -32,9 +32,11 @@ import { FormField } from "@/components/ui/FormField";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ListAccessNote } from "@/components/ui/list-access-note";
 import { useToast } from "@/hooks/use-toast";
 import { appErrorReason } from "@/lib/app-error";
 import { useZodForm } from "@/lib/form-helpers";
+import { useCanReadList } from "@/lib/list-access";
 import { assetCreateSchema } from "@/schemas/asset-create.schema";
 import { uploadAssetPhoto } from "@/services/asset-lifecycle-service";
 import { getEquipmentTaxonomyCatalog } from "@/services/asset-service";
@@ -54,6 +56,7 @@ function translateFieldError(
 
 export function AssetCreateForm() {
   const { t } = useTranslation("equipment");
+  const canReadOrg = useCanReadList("orgNodes");
   const { toast } = useToast();
   const open = useAssetStore((s) => s.showCreateForm);
   const closeForm = useAssetStore((s) => s.closeCreateForm);
@@ -115,12 +118,14 @@ export function AssetCreateForm() {
     setReferenceCatalogError(null);
     setCatalogReady(false);
     setPendingPhotos([]);
-    void listOrgTree()
-      .then(setOrgNodes)
-      .catch((err) => {
-        console.error("[AssetCreateForm] listOrgTree failed", err);
-        setOrgTreeError(`${t("createForm.orgTreeLoadFailed")} ${appErrorReason(err)}`);
-      });
+    // Without the organisation view right the list is not requested; the field says why.
+    if (canReadOrg)
+      void listOrgTree()
+        .then(setOrgNodes)
+        .catch((err) => {
+          console.error("[AssetCreateForm] listOrgTree failed", err);
+          setOrgTreeError(`${t("createForm.orgTreeLoadFailed")} ${appErrorReason(err)}`);
+        });
     void getEquipmentTaxonomyCatalog()
       .then(() => setCatalogReady(true))
       .catch((err) => {
@@ -130,7 +135,7 @@ export function AssetCreateForm() {
         );
         setCatalogReady(false);
       });
-  }, [open, t]);
+  }, [open, t, canReadOrg]);
 
   useEffect(() => {
     if (open && parentPreFill) {
@@ -409,15 +414,19 @@ export function AssetCreateForm() {
             error={fieldError(errors.org_node_id?.message)}
             required
           >
-            <EquipmentSearchSelect
-              id="org_node_id"
-              options={orgOptions}
-              value={watchedOrgNode ? String(watchedOrgNode) : ""}
-              onChange={(v) => setValue("org_node_id", Number(v), { shouldValidate: true })}
-              placeholder={t("createForm.selectOrg")}
-              disabled={orgOptions.length === 0}
-              aria-invalid={!!errors.org_node_id}
-            />
+            {canReadOrg ? (
+              <EquipmentSearchSelect
+                id="org_node_id"
+                options={orgOptions}
+                value={watchedOrgNode ? String(watchedOrgNode) : ""}
+                onChange={(v) => setValue("org_node_id", Number(v), { shouldValidate: true })}
+                placeholder={t("createForm.selectOrg")}
+                disabled={orgOptions.length === 0}
+                aria-invalid={!!errors.org_node_id}
+              />
+            ) : (
+              <ListAccessNote list="orgNodes" />
+            )}
           </FormField>
           <FormField name="parent_asset_id" label={t("createForm.parentAsset")}>
             <EquipmentParentPicker

@@ -25,8 +25,10 @@ import { AssetStatusBadge } from "@/components/assets/AssetStatusBadge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ListAccessNote } from "@/components/ui/list-access-note";
 import { describeAppError } from "@/lib/app-error";
 import { parseAssetScan } from "@/lib/asset-qr";
+import { useCanReadList } from "@/lib/list-access";
 import { cn } from "@/lib/utils";
 import { searchAssetsPage, suggestPickerAssets } from "@/services/asset-search-service";
 import type { AssetSearchResult } from "@shared/ipc-types";
@@ -153,6 +155,7 @@ export function AssetPicker({
   className,
 }: AssetPickerProps) {
   const { t } = useTranslation("common");
+  const canReadAssets = useCanReadList("assets");
   const listId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -422,6 +425,16 @@ export function AssetPicker({
           )}
         </div>
         {error && <p className="text-xs text-status-danger">{error}</p>}
+      </div>
+    );
+  }
+
+  // Without the equipment view right the search is not offered (the server would refuse it).
+  if (!canReadAssets) {
+    return (
+      <div className={cn("space-y-1", className)}>
+        <Input id={id} disabled placeholder={t("assetPicker.searchPlaceholder")} />
+        <ListAccessNote list="assets" />
       </div>
     );
   }

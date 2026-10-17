@@ -3,9 +3,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AssetEditForm } from "@/components/assets/AssetEditForm";
 import type * as EntityForm from "@/components/entity-form";
+import { PermissionContext, type PermissionContextValue } from "@/contexts/PermissionContext";
 import { useAssetStore } from "@/stores/asset-store";
 import { useEquipmentTaxonomyStore } from "@/stores/equipment-taxonomy-store";
 import type { Asset, EquipmentTaxonomyCatalog } from "@shared/ipc-types";
+import { P, type PermissionName } from "@shared/rbac/permissions.generated";
 
 const i18nMock = vi.hoisted(() => ({
   t: (key: string) => key,
@@ -23,7 +25,8 @@ vi.mock("@/services/asset-lifecycle-service", () => lifecycle);
 vi.mock("@/services/asset-service", () => ({
   getEquipmentTaxonomyCatalog: vi.fn(() => Promise.resolve(null)),
 }));
-vi.mock("@/services/org-node-service", () => ({ listOrgTree: vi.fn(() => Promise.resolve([])) }));
+const orgSvc = vi.hoisted(() => ({ listOrgTree: vi.fn(() => Promise.resolve([])) }));
+vi.mock("@/services/org-node-service", () => orgSvc);
 
 // Reference lists have their own tests: here only what the form passes them matters.
 vi.mock("@/components/reference/ReferenceCombobox", () => ({
@@ -103,6 +106,26 @@ beforeEach(() => {
 });
 
 describe("AssetEditForm", () => {
+  it("names the missing right for the location instead of an empty list", async () => {
+    const can = (p: PermissionName) => p !== P.ORG_VIEW;
+    const perms: PermissionContextValue = {
+      permissions: [],
+      isLoading: false,
+      can,
+      canAny: (...ps) => ps.some(can),
+      canAll: (...ps) => ps.every(can),
+      refresh: vi.fn(),
+    };
+    useAssetStore.setState({ showEditForm: true, editingAsset: ASSET });
+    render(
+      <PermissionContext.Provider value={perms}>
+        <AssetEditForm />
+      </PermissionContext.Provider>,
+    );
+    expect(await screen.findByTestId("list-access-orgNodes")).toBeInTheDocument();
+    expect(orgSvc.listOrgTree).not.toHaveBeenCalled();
+  });
+
   it("never offers a retired status: retirement goes through Decommission", async () => {
     open(ASSET);
     const status = await screen.findByTestId("status_code");

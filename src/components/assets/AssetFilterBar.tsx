@@ -11,6 +11,7 @@ import { criticalityLabelKey } from "@/components/assets/asset-tones";
 import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
 import type { SmartFilterDef, SmartFilterOption } from "@/components/filters/smart-filter-types";
 import { ErrorState } from "@/components/ui/data-state";
+import { useCanReadList } from "@/lib/list-access";
 import { listOrgTree } from "@/services/org-node-service";
 import { listPublishedReferenceValuesByDomainCode } from "@/services/reference-service";
 import { useAssetSearchStore } from "@/stores/asset-search-store";
@@ -19,6 +20,9 @@ import type { AssetSearchFilters } from "@shared/ipc-types";
 
 export function AssetFilterBar() {
   const { t } = useTranslation("equipment");
+  // Without the organisation view right the location filter is not offered (and not requested:
+  // a refused request used to break every other filter's options).
+  const canReadOrg = useCanReadList("orgNodes");
   const filters = useAssetSearchStore((s) => s.filters);
   const total = useAssetSearchStore((s) => s.total);
   const updateFilters = useAssetSearchStore((s) => s.updateFilters);
@@ -50,7 +54,7 @@ export function AssetFilterBar() {
           listPublishedReferenceValuesByDomainCode("EQUIPMENT.CLASS"),
           listPublishedReferenceValuesByDomainCode("EQUIPMENT.FAMILY"),
           listPublishedReferenceValuesByDomainCode("EQUIPMENT.STATUS"),
-          listOrgTree(),
+          canReadOrg ? listOrgTree() : Promise.resolve([]),
         ]);
         if (cancelled) return;
         // Tree order (ancestor path); the indentation shows the level. Includes the whole subtree.
@@ -72,7 +76,7 @@ export function AssetFilterBar() {
     return () => {
       cancelled = true;
     };
-  }, [optionsReload]);
+  }, [optionsReload, canReadOrg]);
 
   const onSearchChange = useCallback(
     (value: string) => {
@@ -123,15 +127,19 @@ export function AssetFilterBar() {
         value: filters.criticality_codes?.[0] ?? null,
         onChange: (v) => void updateFilters({ criticality_codes: v ? [v] : null }),
       },
-      {
-        id: "location",
-        kind: "select",
-        label: t("list.filters.site"),
-        options: locationOptions,
-        value: filters.org_node_ids?.[0] != null ? String(filters.org_node_ids[0]) : null,
-        onChange: (v) =>
-          void updateFilters({ org_node_ids: v ? [Number(v)] : null, org_subtree: true }),
-      },
+      ...(canReadOrg
+        ? [
+            {
+              id: "location",
+              kind: "select" as const,
+              label: t("list.filters.site"),
+              options: locationOptions,
+              value: filters.org_node_ids?.[0] != null ? String(filters.org_node_ids[0]) : null,
+              onChange: (v: string | null) =>
+                void updateFilters({ org_node_ids: v ? [Number(v)] : null, org_subtree: true }),
+            },
+          ]
+        : []),
       {
         id: "status",
         kind: "select",
@@ -167,6 +175,7 @@ export function AssetFilterBar() {
     statusOptions,
     criticalityOptions,
     locationOptions,
+    canReadOrg,
     focusOptions,
     filters,
     updateFilters,

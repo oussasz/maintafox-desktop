@@ -1,4 +1,16 @@
 {
+  "listAccess": {
+    "people": "Reading people requires the personnel view right.",
+    "teams": "Reading teams requires the personnel view right.",
+    "companies": "Reading contractor companies requires the personnel view right.",
+    "assets": "Reading assets requires the equipment view right.",
+    "articles": "Reading stock articles requires the inventory view right.",
+    "warehouses": "Reading stores requires the inventory view right.",
+    "costCentres": "Reading cost centres requires the finance view right.",
+    "orgNodes": "Reading the organisation (sites, areas) requires the organisation view right.",
+    "users": "Reading user accounts requires the user administration right.",
+    "woTypes": "Reading work-order types requires the reference data view right."
+  },
   "app": {
     "name": "Maintafox",
     "tagline": "Industrial Maintenance Management",

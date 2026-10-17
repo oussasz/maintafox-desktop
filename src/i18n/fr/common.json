@@ -1,4 +1,16 @@
 {
+  "listAccess": {
+    "people": "Lire la liste du personnel demande le droit de consultation du personnel.",
+    "teams": "Lire les équipes demande le droit de consultation du personnel.",
+    "companies": "Lire les entreprises extérieures demande le droit de consultation du personnel.",
+    "assets": "Lire les équipements demande le droit de consultation des équipements.",
+    "articles": "Lire les articles de stock demande le droit de consultation du stock.",
+    "warehouses": "Lire les magasins demande le droit de consultation du stock.",
+    "costCentres": "Lire les centres de coût demande le droit de consultation des finances.",
+    "orgNodes": "Lire l'organisation (sites, zones) demande le droit de consultation de l'organisation.",
+    "users": "Lire les comptes utilisateurs demande le droit d'administration des utilisateurs.",
+    "woTypes": "Lire les types d'ordre de travail demande le droit de consultation des données de référence."
+  },
   "app": {
     "name": "Maintafox",
     "tagline": "Gestion de maintenance industrielle",
