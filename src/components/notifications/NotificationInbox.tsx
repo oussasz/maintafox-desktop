@@ -510,7 +510,7 @@ export function NotificationInbox({
         {announcement}
       </div>
       {!compact ? (
-        <div className="space-y-3 border-b border-surface-border bg-white p-3">
+        <div className="space-y-3 border-b border-surface-border bg-surface-1 p-3">
           <Tabs value={filters.view} onValueChange={(v) => setFilter({ view: v as InboxView })}>
             <TabsList
               className="flex w-full flex-wrap justify-start"
@@ -616,7 +616,7 @@ export function NotificationInbox({
 
       <div
         className={cn(
-          "min-h-0 overflow-auto bg-white",
+          "min-h-0 overflow-auto bg-surface-1",
           compact ? "max-h-[26rem] rounded-md border border-surface-border" : "flex-1",
         )}
         onScroll={onScroll}

@@ -61,6 +61,7 @@ import { StatusChip } from "@/components/ui/status-chip";
 import { mfLayout } from "@/design-system/tokens";
 import { DI_STATUS_TONE, toneOf } from "@/design-system/tone";
 import { usePermissions } from "@/hooks/use-permissions";
+import { describeAppError } from "@/lib/app-error";
 import { formatPersonLabel } from "@/lib/display";
 import {
   LIST_PARAM,
@@ -74,7 +75,6 @@ import { getAssetByIdSilent } from "@/services/asset-service";
 import { triageSubmittedDi } from "@/services/di-service";
 import { useDiReviewStore } from "@/stores/di-review-store";
 import { useDiStore } from "@/stores/di-store";
-import { toErrorMessage } from "@/utils/errors";
 import { formatDate as formatDiDate, intlLocaleForLanguage } from "@/utils/format-date";
 import type { DiQueue, InterventionRequest } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
@@ -542,7 +542,7 @@ export function RequestsPage() {
         await triageSubmittedDi({ di_id: di.id, expected_row_version: di.row_version });
         void loadDis();
       } catch (err) {
-        setActionError(toErrorMessage(err));
+        setActionError(describeAppError(err).title);
       }
     },
     [loadDis],
@@ -550,7 +550,7 @@ export function RequestsPage() {
 
   const printOne = useCallback((di: InterventionRequest) => {
     setActionError(null);
-    printDiFiche(di).catch((err: unknown) => setActionError(toErrorMessage(err)));
+    printDiFiche(di).catch((err: unknown) => setActionError(describeAppError(err).title));
   }, []);
 
   // ── Columns ─────────────────────────────────────────────────────────────

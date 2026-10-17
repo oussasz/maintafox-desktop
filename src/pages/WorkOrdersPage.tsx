@@ -51,6 +51,7 @@ import { useWoTypeLabels } from "@/components/wo/use-wo-type-labels";
 import { mfLayout } from "@/design-system/tokens";
 import { WO_STATUS_TONE, toneOf } from "@/design-system/tone";
 import { usePermissions } from "@/hooks/use-permissions";
+import { describeAppError } from "@/lib/app-error";
 import {
   LIST_PARAM,
   type ListScope,
@@ -65,7 +66,6 @@ import {
 import { getAssetByIdSilent } from "@/services/asset-service";
 import { useWoStore } from "@/stores/wo-store";
 import { useWorkOrderTypesCatalog } from "@/stores/work-order-types-catalog-store";
-import { toErrorMessage } from "@/utils/errors";
 import { formatDate } from "@/utils/format-date";
 import { WO_LIFECYCLE_STATES, isWoLifecycleState } from "@/utils/wo-lifecycle";
 import { statusToI18nKey } from "@/utils/wo-status";
@@ -568,7 +568,7 @@ export function WorkOrdersPage() {
                 onPrint={(item) => {
                   setPrintError(null);
                   printWoFiche(item, t, i18n.resolvedLanguage || i18n.language || "fr").catch(
-                    (err: unknown) => setPrintError(toErrorMessage(err)),
+                    (err: unknown) => setPrintError(describeAppError(err).title),
                   );
                 }}
                 onCancel={(item) => setCancelTarget(item)}

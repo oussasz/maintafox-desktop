@@ -106,7 +106,7 @@ export function NotificationRulesHost() {
   if (!config) return <LoadingState className="m-4" label={t("rules.loading")} />;
 
   return (
-    <div className="flex h-full flex-col overflow-auto bg-white">
+    <div className="flex h-full flex-col overflow-auto bg-surface-1">
       <div className="border-b border-surface-border px-4 py-3">
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="text-sm font-semibold text-text-primary">{t("rules.title")}</h2>

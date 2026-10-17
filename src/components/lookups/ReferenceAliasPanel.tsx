@@ -306,7 +306,7 @@ export function ReferenceAliasPanel({ value, canMutate, onClose }: ReferenceAlia
                     onClick={() => setNewRow({ ...newRow, is_preferred: !newRow.is_preferred })}
                   >
                     <Star
-                      className={`h-3 w-3 ${newRow.is_preferred ? "fill-yellow-400 text-yellow-500" : "text-text-muted"}`}
+                      className={`h-3 w-3 ${newRow.is_preferred ? "fill-tone-warning-fg text-tone-warning-fg" : "text-text-muted"}`}
                     />
                   </Button>
                 </td>
@@ -419,11 +419,11 @@ export function ReferenceAliasPanel({ value, canMutate, onClose }: ReferenceAlia
                         }
                       >
                         <Star
-                          className={`h-3 w-3 ${editRow.is_preferred ? "fill-yellow-400 text-yellow-500" : "text-text-muted"}`}
+                          className={`h-3 w-3 ${editRow.is_preferred ? "fill-tone-warning-fg text-tone-warning-fg" : "text-text-muted"}`}
                         />
                       </Button>
                     ) : a.is_preferred ? (
-                      <Star className="h-3 w-3 fill-yellow-400 text-yellow-500" />
+                      <Star className="h-3 w-3 fill-tone-warning-fg text-tone-warning-fg" />
                     ) : null}
                   </td>
                   <td className="px-2 py-1 text-right align-middle">
