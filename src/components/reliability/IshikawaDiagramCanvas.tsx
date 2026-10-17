@@ -4,8 +4,10 @@ import {
   type Connection,
   Controls,
   type Edge,
+  type EdgeChange,
   MiniMap,
   type Node,
+  type NodeChange,
   ReactFlow,
   ReactFlowProvider,
   type Viewport,
@@ -32,6 +34,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { StatusChip } from "@/components/ui/status-chip";
+import { UnsavedChangesGuard } from "@/components/ui/unsaved-changes-guard";
 import { woTypeLabel } from "@/components/wo/use-wo-type-labels";
 import { mfCard } from "@/design-system/tokens";
 import { useSession } from "@/hooks/use-session";
@@ -337,17 +341,45 @@ function buildDefaultFlow(t: (k: string) => string): FlowPersist {
   return { nodes: fishNodes, edges: buildFishboneEdges(fishNodes, edges) };
 }
 
+/** A change the analyst made on the canvas that only "Save diagram" stores (moves, links, deletions). */
+function isUnsavedNodeChange(c: NodeChange): boolean {
+  return (c.type === "position" && c.dragging === false) || c.type === "remove";
+}
+
 function IshikawaDiagramInner({
   equipmentId,
   onPromoteToFmeca,
+  onDirtyChange,
 }: {
   equipmentId: number;
   onPromoteToFmeca?: (promotion: IshikawaFmecaPromotion) => void;
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
   const { t, i18n } = useTranslation("reliability");
   const { info } = useSession();
-  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+  const [nodes, setNodes, applyNodeChanges] = useNodesState<Node>([]);
+  const [edges, setEdges, applyEdgeChanges] = useEdgesState<Edge>([]);
+  /** Moves, links or deletions not stored yet ("Save diagram" stores them). */
+  const [dirty, setDirty] = useState(false);
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
+  // Unmounting (equipment switch, leaving the study) clears the host's flag.
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
+  const onNodesChange = useCallback(
+    (changes: NodeChange[]) => {
+      applyNodeChanges(changes);
+      if (changes.some(isUnsavedNodeChange)) setDirty(true);
+    },
+    [applyNodeChanges],
+  );
+  const onEdgesChange = useCallback(
+    (changes: EdgeChange[]) => {
+      applyEdgeChanges(changes);
+      if (changes.some((c) => c.type === "remove")) setDirty(true);
+    },
+    [applyEdgeChanges],
+  );
   const [meta, setMeta] = useState<RamIshikawaDiagram | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -389,6 +421,7 @@ function IshikawaDiagramInner({
     setErr(null);
     setLoadError(null);
     setReloading(true);
+    setDirty(false);
     try {
       const rows = await listRamIshikawaDiagrams({ equipment_id: equipmentId, limit: 1 });
       const row = rows[0];
@@ -443,8 +476,10 @@ function IshikawaDiagramInner({
   }, [load]);
 
   const onConnect = useCallback(
-    (c: Connection) =>
-      setEdges((eds) => addEdge({ ...c, type: "straight", style: { strokeWidth: 1.6 } }, eds)),
+    (c: Connection) => {
+      setEdges((eds) => addEdge({ ...c, type: "straight", style: { strokeWidth: 1.6 } }, eds));
+      setDirty(true);
+    },
     [setEdges],
   );
 
@@ -497,7 +532,8 @@ function IshikawaDiagramInner({
       await load();
       pushAppToast({ title: t("governance.saved"), variant: "success" });
     } catch {
-      // The global IPC toast reports the failure.
+      // The global IPC toast reports the failure; the cause stays on the canvas, not stored yet.
+      setDirty(true);
     } finally {
       setSaving(false);
     }
@@ -542,6 +578,7 @@ function IshikawaDiagramInner({
     try {
       const saved = await persistFlow();
       setMeta(saved);
+      setDirty(false);
       pushAppToast({ title: t("governance.saved"), variant: "success" });
     } catch {
       // The global IPC toast reports the failure.
@@ -576,6 +613,7 @@ function IshikawaDiagramInner({
     try {
       const saved = await persistFlow();
       setMeta(saved);
+      setDirty(false);
       if (promoteTarget === "wo" && info?.user_id != null) {
         await createWo({
           type_code: promoteWoType,
@@ -656,9 +694,16 @@ function IshikawaDiagramInner({
           className="rounded-md border border-primary/35 bg-primary/10 px-3 py-1 text-xs font-medium text-text-primary disabled:opacity-50"
           onClick={() => void onSave()}
         >
-          {saving ? "…" : t("governance.save")}
+          {saving ? t("governance.promoteBusy") : t("governance.save")}
         </button>
+        {dirty ? <StatusChip tone="warning" dot label={t("governance.unsaved")} /> : null}
       </div>
+      <UnsavedChangesGuard
+        when={dirty}
+        title={t("governance.unsavedTitle")}
+        description={t("governance.unsavedBody")}
+        confirmLabel={t("governance.unsavedDiscard")}
+      />
       <div className={cn(mfCard.insetCanvas, "h-[860px] min-h-[860px]")}>
         <ReactFlow
           key={flowMountKey}
@@ -841,16 +886,20 @@ function IshikawaDiagramInner({
 export function IshikawaDiagramCanvas({
   equipmentId,
   onPromoteToFmeca,
+  onDirtyChange,
 }: {
   equipmentId: number;
   /** Hands a cause to the study's FMECA form; without it a cause can only become a work order. */
   onPromoteToFmeca?: (promotion: IshikawaFmecaPromotion) => void;
+  /** Told when the canvas holds changes "Save diagram" has not stored yet. */
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
   return (
     <ReactFlowProvider>
       <IshikawaDiagramInner
         equipmentId={equipmentId}
         {...(onPromoteToFmeca ? { onPromoteToFmeca } : {})}
+        {...(onDirtyChange ? { onDirtyChange } : {})}
       />
     </ReactFlowProvider>
   );

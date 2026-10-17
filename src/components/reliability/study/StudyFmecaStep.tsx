@@ -524,6 +524,15 @@ function RootCausePanel({
     study.assets[0]?.equipment_id ?? null,
   );
   const options = useMemo(() => study.assets, [study.assets]);
+  /** The open diagram holds moves, links or deletions not saved yet. */
+  const [diagramDirty, setDiagramDirty] = useState(false);
+  /** Equipment picked while the open diagram has unsaved changes (asks before dropping them). */
+  const [pendingEquipmentId, setPendingEquipmentId] = useState<number | null>(null);
+  const pickEquipment = (id: number) => {
+    if (id === equipmentId) return;
+    if (diagramDirty) setPendingEquipmentId(id);
+    else setEquipmentId(id);
+  };
   return (
     <RamsCard
       title={t("rams.fmeca.rootCauseTitle")}
@@ -535,7 +544,7 @@ function RootCausePanel({
             <select
               className={RAMS_SELECT_CLASS}
               value={equipmentId ?? ""}
-              onChange={(e) => setEquipmentId(Number(e.target.value))}
+              onChange={(e) => pickEquipment(Number(e.target.value))}
             >
               {options.map((a) => (
                 <option key={a.equipment_id} value={a.equipment_id}>
@@ -553,9 +562,23 @@ function RootCausePanel({
             key={equipmentId}
             equipmentId={equipmentId}
             {...(onPromoteToFmeca ? { onPromoteToFmeca } : {})}
+            onDirtyChange={setDiagramDirty}
           />
         </div>
       ) : null}
+      <ConfirmDialog
+        open={pendingEquipmentId != null}
+        onOpenChange={(open) => {
+          if (!open) setPendingEquipmentId(null);
+        }}
+        title={t("governance.unsavedTitle")}
+        description={t("governance.unsavedBody")}
+        confirmLabel={t("governance.unsavedDiscard")}
+        destructive
+        onConfirm={() => {
+          if (pendingEquipmentId != null) setEquipmentId(pendingEquipmentId);
+        }}
+      />
     </RamsCard>
   );
 }

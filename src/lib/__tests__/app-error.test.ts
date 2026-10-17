@@ -40,6 +40,27 @@ describe("appErrorReason", () => {
     expect(reason.length).toBeGreaterThan(0);
   });
 
+  it("translates a refusal sent as a bare rule code instead of showing the code", async () => {
+    await i18n.loadNamespaces("reliability");
+    const err = {
+      code: "VALIDATION_FAILED",
+      message: "Validation failed: DECISION_SELF_APPROVAL",
+      details: [{ message: "DECISION_SELF_APPROVAL" }],
+    };
+    const reason = appErrorReason(err);
+    expect(reason).toBe(String(i18n.t("reliability:errors.DECISION_SELF_APPROVAL")));
+    expect(reason).not.toContain("DECISION_SELF_APPROVAL");
+  });
+
+  it("keeps a plain sentence as it is (not mistaken for a code)", () => {
+    const err = {
+      code: "VALIDATION_FAILED",
+      message: "Validation failed: Title is required",
+      details: [{ message: "Title is required" }],
+    };
+    expect(appErrorReason(err)).toBe("Title is required");
+  });
+
   it("falls back to the title for other failures", () => {
     const err = { code: "DATABASE_ERROR", message: "disk I/O error" };
     expect(appErrorReason(err)).toBe(describeAppError(err).title);
