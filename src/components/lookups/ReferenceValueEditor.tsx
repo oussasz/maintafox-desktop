@@ -81,12 +81,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { StatusChip } from "@/components/ui/status-chip";
 import { Switch } from "@/components/ui/switch";
+import { mfInput } from "@/design-system/tokens";
 import { toneOf } from "@/design-system/tone";
 import { isExportCancelled, saveBlobWithDialog } from "@/export";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useReferenceCapabilities } from "@/hooks/use-reference-capabilities";
 import { governanceCategoryLabelKey } from "@/lib/reference-governance-ui";
+import { cn } from "@/lib/utils";
 import {
   createDraftReferenceSet,
   discardDraftReferenceSet,
@@ -933,7 +935,7 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                         })
                       }
                       aria-label={t("editor.colParent")}
-                      className="h-9 w-full rounded-md border border-surface-border bg-surface-0 px-2 text-sm"
+                      className={cn(mfInput.nativeSelect, "h-9")}
                     >
                       <option value="">{t("editor.none")}</option>
                       {parentCandidates.map((p) => (
@@ -1123,7 +1125,7 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                             })
                           }
                           aria-label={t("editor.colParent")}
-                          className="h-9 w-full rounded-md border border-surface-border bg-surface-0 px-2 text-sm"
+                          className={cn(mfInput.nativeSelect, "h-9")}
                         >
                           <option value="">{t("editor.none")}</option>
                           {parentCandidates

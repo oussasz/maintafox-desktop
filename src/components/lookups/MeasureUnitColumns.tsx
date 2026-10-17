@@ -24,6 +24,8 @@ import {
 } from "@/components/lookups/ReferenceValueTable";
 import { Input } from "@/components/ui/input";
 import { StatusChip } from "@/components/ui/status-chip";
+import { mfInput } from "@/design-system/tokens";
+import { cn } from "@/lib/utils";
 import type { ReferenceValue } from "@shared/ipc-types";
 
 /** Unit fields being edited (strings as typed). */
@@ -197,7 +199,7 @@ export function UnitEditCells({
               onChange({ ...state, baseId: e.target.value ? Number(e.target.value) : null })
             }
             aria-label={t("units.baseUnit")}
-            className="h-9 rounded-md border border-surface-border bg-surface-0 px-2 text-sm"
+            className={cn(mfInput.nativeSelect, "h-9 w-auto")}
           >
             <option value="">{t("units.chooseBase")}</option>
             {candidates.map((c) => (
