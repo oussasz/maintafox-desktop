@@ -1,5 +1,6 @@
 {
   "page": {
+    "versionsLoadError": "Impossible de charger les versions de budget — le choix de version ci-dessus est incomplet",
     "title": "Budget et coûts de maintenance",
     "description": "Budget, engagements, réalisé et prévision par centre de coût, alimentés par les OT clôturés.",
     "fiscalYear": "Exercice",
@@ -347,6 +348,14 @@
     "lateNone": "Aucun coût tardif à imputer."
   },
   "planning": {
+    "sameScenarioExists": "{{count}} version « {{scenario}} » est déjà ouverte pour {{year}}. Une seconde est rarement voulue : vérifiez avant de créer.",
+    "confirmMoveTitle": "{{action}} cette version ?",
+    "confirmMove": {
+      "submitted": "« {{title}} » sera soumise pour approbation et ne pourra plus être modifiée par ses auteurs tant qu'elle n'est pas approuvée ou renvoyée.",
+      "approved": "« {{title}} » devient la version approuvée sur laquelle les dépenses réelles sont comparées. Une confirmation d'identité est demandée.",
+      "frozen": "« {{title}} » sera figée : ses lignes ne pourront plus être modifiées. Une révision reste possible.",
+      "closed": "« {{title}} » sera clôturée définitivement. Cette étape ne peut pas être annulée."
+    },
     "loadError": "Le budget n'a pas pu être chargé.",
     "saveError": "L'enregistrement a échoué.",
     "costCenters": "Centres de coût",

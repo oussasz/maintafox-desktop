@@ -1,5 +1,6 @@
 {
   "page": {
+    "versionsLoadError": "The budget versions could not be loaded — the version choice above is incomplete",
     "title": "Budget and maintenance costs",
     "description": "Budget, commitments, actuals and forecast by cost centre, fed by closed work orders.",
     "fiscalYear": "Fiscal year",
@@ -347,6 +348,14 @@
     "lateNone": "No late cost to settle."
   },
   "planning": {
+    "sameScenarioExists": "{{count}} \"{{scenario}}\" version is already open for {{year}}. A second one is rarely intended: check before creating.",
+    "confirmMoveTitle": "{{action}} this version?",
+    "confirmMove": {
+      "submitted": "\"{{title}}\" is submitted for approval and can no longer be edited by its authors until it is approved or sent back.",
+      "approved": "\"{{title}}\" becomes the approved version actual spending is compared with. Identity confirmation is required.",
+      "frozen": "\"{{title}}\" is frozen: its lines can no longer be changed. A reforecast remains possible.",
+      "closed": "\"{{title}}\" is closed for good. This step cannot be undone."
+    },
     "loadError": "The budget could not be loaded.",
     "saveError": "The change was not saved.",
     "costCenters": "Cost centres",
