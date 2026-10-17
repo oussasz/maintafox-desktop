@@ -75,6 +75,8 @@
     "locale.fiscal_year_start_month": "Début de l'exercice comptable"
   },
   "documentHeader": {
+    "removeLogoConfirmTitle": "Retirer le logo ?",
+    "removeLogoConfirmBody": "Le logo ne figurera plus dans l'en-tête des documents imprimés (OT, bons de commande…). Vous pourrez en téléverser un autre.",
     "title": "Documents et identité visuelle",
     "description": "Configurez l'en-tête par défaut injecté en haut des ordres de travail, demandes d'intervention et bons de commande imprimés.",
     "logoLabel": "Logo de l'entreprise",

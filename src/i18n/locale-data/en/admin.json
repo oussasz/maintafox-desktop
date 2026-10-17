@@ -22,6 +22,10 @@
     "audit": "Audit"
   },
   "metrics": {
+    "loadError": "The administration figures could not be loaded",
+    "rolesSplit": "{{system}} system · {{custom}} custom",
+    "unassignedHint": "Active users without a role",
+    "stale": "Last refresh failed: figures are from the previous reading.",
     "activeUsers": "Active Users",
     "roles": "Roles",
     "activeSessions": "Active Sessions",
@@ -130,6 +134,7 @@
       "resetPassword": "Reset password"
     },
     "resetPassword": {
+      "copyFailed": "Automatic copy failed: select the password and copy it with Ctrl+C.",
       "confirm": "Reset this user's password? A temporary password will be generated and shown once. They must change it on next sign-in.",
       "success": "Temporary password created",
       "failed": "Failed to reset password",
@@ -355,6 +360,8 @@
       "systemPrefix": "Reserved system prefix"
     },
     "dependencies": {
+      "close": "Close dependencies",
+      "open": "Show the dependencies of {{name}}",
       "title": "Dependencies",
       "none": "No dependencies",
       "hard": "Required (hard)",
@@ -732,6 +739,9 @@
       "facetsLoadError": "The log filter choices could not be loaded: the filters are disabled."
     },
     "roleEditor": {
+      "unsavedTitle": "Discard the changes?",
+      "unsavedBody": "The role \"{{name}}\" has unsaved changes (permissions or description). They are lost if you open another role.",
+      "discardChanges": "Discard changes",
       "new": "New",
       "holders": "Active accounts holding this role",
       "holdersCount_one": "{{count}} active account",

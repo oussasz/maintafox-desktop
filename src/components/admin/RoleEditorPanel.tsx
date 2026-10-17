@@ -616,6 +616,24 @@ export function RoleEditorPanel() {
     selected != null && description.trim() !== (selected.description ?? "");
   const dirty = permsChanged || descriptionChanged;
 
+  /** Role the user clicked while the open one has unsaved changes (asks before dropping them). */
+  const [pendingSwitchId, setPendingSwitchId] = useState<number | null>(null);
+  const requestSelect = (id: number) => {
+    if (id === selectedId) return;
+    if (dirty) setPendingSwitchId(id);
+    else setSelectedId(id);
+  };
+
+  // Leaving the app or reloading with unsaved role changes asks the browser's own question.
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
+
   useEffect(() => {
     if (!selected || selected.is_system || !permsChanged) {
       setValidation(null);
@@ -709,7 +727,7 @@ export function RoleEditorPanel() {
             <li key={role.id}>
               <button
                 type="button"
-                onClick={() => setSelectedId(role.id)}
+                onClick={() => requestSelect(role.id)}
                 aria-current={selectedId === role.id ? "true" : undefined}
                 className={cn(
                   "flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors",
@@ -911,6 +929,18 @@ export function RoleEditorPanel() {
           await withStepUp(() => deleteRole(retireTarget.id));
           setSelectedId(null);
           await load();
+        }}
+      />
+      <ConfirmDialog
+        open={pendingSwitchId !== null}
+        onOpenChange={(v) => !v && setPendingSwitchId(null)}
+        title={t("console.roleEditor.unsavedTitle")}
+        description={t("console.roleEditor.unsavedBody", { name: selected?.name ?? "" })}
+        confirmLabel={t("console.roleEditor.discardChanges")}
+        destructive
+        onConfirm={() => {
+          if (pendingSwitchId !== null) setSelectedId(pendingSwitchId);
+          setPendingSwitchId(null);
         }}
       />
       {StepUpDialogElement}

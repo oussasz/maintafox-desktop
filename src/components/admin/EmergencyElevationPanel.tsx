@@ -167,6 +167,9 @@ export function EmergencyElevationPanel() {
 
   // ── Grant ───────────────────────────────────────────────────────────────
 
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+
   const resetGrantForm = useCallback(() => {
     setGrantUserId("");
     setGrantRoleId("");
@@ -179,6 +182,10 @@ export function EmergencyElevationPanel() {
     const minutes = Number(grantMinutes);
     if (minutes < 1 || minutes > 480) return;
     if (grantReason.length < 20) return;
+    // One grant at a time: a double click must not create two elevations.
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
 
     const now = new Date();
     now.setMinutes(now.getMinutes() + minutes);
@@ -203,6 +210,9 @@ export function EmergencyElevationPanel() {
         title: describeAppError(err).title,
         variant: "destructive",
       });
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
     }
   }, [
     grantUserId,
@@ -218,6 +228,7 @@ export function EmergencyElevationPanel() {
   ]);
 
   const canGrant =
+    !busy &&
     grantUserId &&
     grantRoleId &&
     grantReason.length >= 20 &&
@@ -227,7 +238,9 @@ export function EmergencyElevationPanel() {
   // ── Revoke ──────────────────────────────────────────────────────────────
 
   const handleRevoke = useCallback(async () => {
-    if (!revokeTarget) return;
+    if (!revokeTarget || busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
     try {
       await withStepUp(() =>
         revokeEmergencyElevation({
@@ -241,11 +254,15 @@ export function EmergencyElevationPanel() {
       });
       setRevokeTarget(null);
       void fetchData();
-    } catch {
+    } catch (err) {
       toast({
         title: t("emergency.errors.revokeFailed", "Failed to revoke access"),
+        description: describeAppError(err).title,
         variant: "destructive",
       });
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
     }
   }, [revokeTarget, revokeReason, fetchData, t, toast, withStepUp]);
 
@@ -526,7 +543,7 @@ export function EmergencyElevationPanel() {
             <Button variant="outline" onClick={() => setRevokeTarget(null)}>
               {t("common.cancel", "Cancel")}
             </Button>
-            <Button variant="destructive" onClick={() => void handleRevoke()}>
+            <Button variant="destructive" disabled={busy} onClick={() => void handleRevoke()}>
               {t("emergency.revoke", "Revoke")}
             </Button>
           </DialogFooter>

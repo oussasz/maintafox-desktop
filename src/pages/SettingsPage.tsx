@@ -6,6 +6,7 @@ import { useSearchParams } from "react-router-dom";
 import { PermissionGate } from "@/components/PermissionGate";
 import { LockoutPolicyPanel, PasswordPolicyPanel } from "@/components/admin/PasswordPolicyPanel";
 import { DiagnosticsPanel } from "@/components/diagnostics/DiagnosticsPanel";
+import { ModulePageShell } from "@/components/layout/ModulePageShell";
 import { LicenseEnforcementPanel } from "@/components/license/LicenseEnforcementPanel";
 import { ActivityLogSettingsSection } from "@/components/settings/ActivityLogSettingsSection";
 import { BackupOperationsPanel } from "@/components/settings/BackupOperationsPanel";
@@ -29,7 +30,7 @@ import { SyncFeedbackPanel } from "@/components/sync/SyncFeedbackPanel";
 import { Timeline } from "@/components/timeline";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ErrorState } from "@/components/ui/data-state";
+import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import {
   Toast,
   ToastClose,
@@ -87,7 +88,7 @@ export function SettingsPage() {
   const [initialLoading, setInitialLoading] = useState(true);
   const [contentRefreshing, setContentRefreshing] = useState(false);
   const [restoringDefaults, setRestoringDefaults] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const didAutoEnsureRef = useRef(false);
 
   const visibleTabs = useMemo(
@@ -210,8 +211,7 @@ export function SettingsPage() {
         // Each reports its own failure with a retry (never an empty list in its place).
         await Promise.all([loadCurrencies(), loadAuditLog()]);
       } catch (err) {
-        console.error("[SettingsPage] Failed to load settings:", err);
-        setError("loadError");
+        setError(err);
       } finally {
         setInitialLoading(false);
         setContentRefreshing(false);
@@ -306,17 +306,12 @@ export function SettingsPage() {
 
   return (
     <ToastProvider>
-      <div className={mfLayout.moduleRoot}>
-        <div className={mfLayout.moduleHeader}>
-          <div className={mfLayout.moduleTitleRow}>
-            <Settings className={mfLayout.moduleHeaderIcon} />
-            <div>
-              <h1 className={mfLayout.moduleTitle}>{t("page.title")}</h1>
-              <p className="text-sm text-text-muted">{t("page.description")}</p>
-            </div>
-          </div>
-        </div>
-
+      <ModulePageShell
+        icon={Settings}
+        title={t("page.title")}
+        description={t("page.description")}
+        bodyClassName={null}
+      >
         <div className={mfLayout.moduleWorkspaceSplit}>
           <div className="shrink-0 border-r border-surface-border py-6 pl-6 pr-2">
             <SettingsCategorySidebar
@@ -327,18 +322,13 @@ export function SettingsPage() {
           </div>
 
           <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-6 overflow-auto p-6">
-            {canManageSettings && error ? (
-              <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
-                <span>{t("page.loadError")}</span>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void loadAll({ allowEnsure: true })}
-                >
-                  {t("page.retry")}
-                </Button>
-              </div>
+            {canManageSettings && error != null ? (
+              <ErrorState
+                className="shrink-0 py-4"
+                error={error}
+                title={t("page.loadError")}
+                onRetry={() => void loadAll({ allowEnsure: true })}
+              />
             ) : null}
 
             <Card className="shrink-0">
@@ -355,10 +345,7 @@ export function SettingsPage() {
               </CardHeader>
               <CardContent className="flex flex-col gap-6">
                 {permissionsLoading || (isAdmSettingsTab(activeTab) && initialLoading) ? (
-                  <div className="flex flex-col items-center justify-center gap-2 py-12 text-text-muted">
-                    <Loader2 className="h-5 w-5 animate-spin" aria-hidden />
-                    <p>{t("page.loading")}</p>
-                  </div>
+                  <LoadingState label={t("page.loading")} className="py-12" />
                 ) : (
                   <>
                     {activeTab === "profile" ? (
@@ -500,7 +487,7 @@ export function SettingsPage() {
             ) : null}
           </div>
         </div>
-      </div>
+      </ModulePageShell>
 
       {toasts.map((tm) => (
         <Toast key={tm.id} variant={tm.variant ?? "default"} onOpenChange={() => dismiss(tm.id)}>

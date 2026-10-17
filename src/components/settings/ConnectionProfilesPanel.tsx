@@ -1,9 +1,9 @@
-import { Link2, Loader2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Link2 } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import { useFormatters } from "@/hooks/use-formatters";
-import { describeAppError } from "@/lib/app-error";
 import {
   listConnectionProfiles,
   type ConnectionProfile,
@@ -17,11 +17,18 @@ interface ConnectionProfilesPanelProps {
   }) => void;
 }
 
-export function ConnectionProfilesPanel({ onToast }: ConnectionProfilesPanelProps) {
+/**
+ * Connection profiles of this site. A failed load is an error with retry in place of the list —
+ * it used to read "no profiles" under a toast. `onToast` is kept for the page's API.
+ */
+export function ConnectionProfilesPanel(_props: ConnectionProfilesPanelProps) {
   const { t } = useTranslation("settings");
   const { formatDateTime } = useFormatters();
   const [profiles, setProfiles] = useState<ConnectionProfile[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<unknown>(null);
+  const [attempt, setAttempt] = useState(0);
+  const retry = useCallback(() => setAttempt((n) => n + 1), []);
 
   const formatProfileStatus = (status: string) => {
     const key = `integrations.status.${status}` as "integrations.status.active";
@@ -32,18 +39,13 @@ export function ConnectionProfilesPanel({ onToast }: ConnectionProfilesPanelProp
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setLoadError(null);
     listConnectionProfiles()
       .then((rows) => {
         if (!cancelled) setProfiles(rows);
       })
-      .catch((err) => {
-        if (!cancelled) {
-          onToast({
-            title: t("integrations.profilesLoadError"),
-            description: describeAppError(err).title,
-            variant: "destructive",
-          });
-        }
+      .catch((err: unknown) => {
+        if (!cancelled) setLoadError(err);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -51,12 +53,12 @@ export function ConnectionProfilesPanel({ onToast }: ConnectionProfilesPanelProp
     return () => {
       cancelled = true;
     };
-  }, [onToast, t]);
+  }, [attempt]);
 
   return (
     <div className="space-y-3 rounded-lg border border-border p-4">
       <div className="flex items-start gap-2">
-        <Link2 className="mt-0.5 h-4 w-4 text-text-muted" />
+        <Link2 className="mt-0.5 h-4 w-4 text-text-muted" aria-hidden />
         <div>
           <h3 className="text-base font-semibold">{t("integrations.profilesTitle")}</h3>
           <p className="text-sm text-text-muted">{t("integrations.profilesDescription")}</p>
@@ -64,10 +66,9 @@ export function ConnectionProfilesPanel({ onToast }: ConnectionProfilesPanelProp
       </div>
 
       {loading ? (
-        <div className="flex items-center gap-2 text-sm text-text-muted">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          {t("page.loading")}
-        </div>
+        <LoadingState label={t("page.loading")} className="py-4" />
+      ) : loadError != null ? (
+        <ErrorState error={loadError} title={t("integrations.profilesLoadError")} onRetry={retry} />
       ) : profiles.length === 0 ? (
         <p className="text-sm text-text-muted">{t("integrations.profilesEmpty")}</p>
       ) : (

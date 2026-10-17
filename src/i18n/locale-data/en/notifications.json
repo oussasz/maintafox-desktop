@@ -18,6 +18,7 @@
     "summaryBody_other": "{{first}} and {{rest}} more"
   },
   "preferences": {
+    "loadError": "Your notification preferences could not be loaded",
     "title": "Notification preferences",
     "intro": "Choose what you receive and how. Your notifications are in the",
     "openInbox": "notification inbox",
