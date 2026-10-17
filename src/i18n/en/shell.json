@@ -115,7 +115,8 @@
         "h24": "24 hours"
       },
       "resume": "Resume",
-      "actionFailed": "The action failed: {{message}}"
+      "actionFailed": "The action failed: {{message}}",
+      "notReported": "not reported"
     },
     "indicator": {
       "idle": "Up to date",
@@ -148,7 +149,73 @@
         "escalate": "Escalate",
         "dismiss": "Dismiss",
         "review": "Review"
-      }
+      },
+      "exported": "Diagnostics saved",
+      "exportFailed": "The diagnostics could not be saved"
+    },
+    "syncCenterDescription": "Sync status and items to review on this device.",
+    "rejectedCount": "Items refused by the server: {{formatted}}",
+    "inboxLoadError": "The conflicts to review could not be loaded",
+    "inboxLoading": "Loading conflicts…",
+    "versionNumber": "version {{version}}",
+    "detectedAt": "detected {{date}}",
+    "recordUnidentified": "(number not available)",
+    "technicalDetails": "Technical details",
+    "noRemoteVersion": "The server sent no version of this record",
+    "recommendedShort": "recommended",
+    "status": {
+      "escalated": "Escalated"
+    },
+    "confirm": {
+      "title": "Confirm the choice",
+      "accept_local": "This device's version of \"{{record}}\" is kept and sent to the server again; the received version is discarded.",
+      "accept_remote": "The server's version of \"{{record}}\" replaces the one on this device. Changes made here to this record are lost.",
+      "renumber_local": "The record on this device gets a new number; the received record keeps its own (\"{{record}}\").",
+      "dismiss": "The conflict on \"{{record}}\" is dismissed without applying either version."
+    },
+    "entity": {
+      "other": "Other record",
+      "equipment": "Equipment",
+      "intervention_requests": "Intervention request",
+      "work_orders": "Work order",
+      "work_order_tasks": "Work order task",
+      "work_order_parts": "Work order part",
+      "work_order_attachments": "Work order attachment",
+      "di_attachments": "Request attachment",
+      "pm_plans": "PM plan",
+      "pm_plan_versions": "PM plan version",
+      "pm_occurrences": "PM occurrence",
+      "pm_executions": "PM execution",
+      "inspection_rounds": "Inspection round",
+      "inspection_templates": "Inspection template",
+      "inspection_results": "Inspection result",
+      "articles": "Article",
+      "inventory_transactions": "Stock movement",
+      "stock_reservations": "Stock reservation",
+      "purchase_orders": "Purchase order",
+      "procurement_requisitions": "Purchase requisition",
+      "goods_receipts": "Goods receipt",
+      "inventory_suppliers": "Supplier",
+      "personnel": "Person",
+      "personnel_availability_blocks": "Absence",
+      "teams": "Team",
+      "positions": "Position",
+      "user_accounts": "User account",
+      "roles": "Role",
+      "org_nodes": "Organisation unit",
+      "org_node_types": "Unit type",
+      "org_structure_models": "Organisation model",
+      "permit_types": "Permit type",
+      "permit_isolations": "Permit isolation",
+      "library_documents": "Library document",
+      "reference_values": "Reference value",
+      "lookup_values": "List value",
+      "cost_centers": "Cost centre",
+      "budget_versions": "Budget version",
+      "budget_lines": "Budget line",
+      "training_sessions": "Training session",
+      "failure_events": "Failure event",
+      "app_settings": "Setting"
     }
   },
   "status": {

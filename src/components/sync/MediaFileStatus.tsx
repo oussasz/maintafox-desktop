@@ -11,9 +11,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui";
+import { describeAppError } from "@/lib/app-error";
 import { getMediaFileStates, retryMediaDownload } from "@/services/sync-service";
 import { useSyncOrchestratorStore } from "@/stores/sync-orchestrator-store";
-import { toErrorMessage } from "@/utils/errors";
 import type { MediaFileState } from "@shared/ipc-types";
 
 /**
@@ -77,7 +77,7 @@ export function MediaFileStateBadge({ state, onRetried }: MediaFileStateBadgePro
       setMessage(t(queued > 0 ? "sync.mediaFile.retryQueued" : "sync.mediaFile.retryNothing"));
       onRetried?.();
     } catch (err) {
-      setMessage(toErrorMessage(err));
+      setMessage(describeAppError(err).title);
     } finally {
       setBusy(false);
     }
@@ -92,7 +92,7 @@ export function MediaFileStateBadge({ state, onRetried }: MediaFileStateBadgePro
         title={t("sync.mediaFile.pendingHint")}
         data-testid="media-file-pending"
       >
-        <CloudDownload className="h-3.5 w-3.5" />
+        <CloudDownload className="h-3.5 w-3.5" aria-hidden />
         {t("sync.mediaFile.pending")}
       </span>
     );
@@ -105,7 +105,7 @@ export function MediaFileStateBadge({ state, onRetried }: MediaFileStateBadgePro
         title={t("sync.mediaFile.missingHint")}
         data-testid="media-file-missing"
       >
-        <FileQuestion className="h-3.5 w-3.5" />
+        <FileQuestion className="h-3.5 w-3.5" aria-hidden />
         {t("sync.mediaFile.missing")}
       </span>
     );
@@ -113,21 +113,21 @@ export function MediaFileStateBadge({ state, onRetried }: MediaFileStateBadgePro
 
   return (
     <span
-      className="inline-flex flex-wrap items-center gap-1 text-xs text-status-danger"
+      className="inline-flex flex-wrap items-center gap-1 text-xs text-tone-danger-fg"
       data-testid="media-file-failed"
     >
-      <AlertCircle className="h-3.5 w-3.5" />
+      <AlertCircle className="h-3.5 w-3.5" aria-hidden />
       <span title={t("sync.mediaFile.failedHint", { message: state.lastError ?? "" })}>
         {t("sync.mediaFile.failed")}
       </span>
       <Button
         variant="ghost"
         size="sm"
-        className="h-6 px-1.5 text-xs"
+        className="h-9 px-2 text-xs"
         disabled={busy}
         onClick={() => void retry()}
       >
-        <RotateCw className="mr-1 h-3 w-3" />
+        <RotateCw className="me-1 h-3 w-3" aria-hidden />
         {t("sync.mediaFile.retry")}
       </Button>
       {message ? <span className="text-text-muted">{message}</span> : null}

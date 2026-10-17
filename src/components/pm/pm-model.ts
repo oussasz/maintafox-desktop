@@ -124,10 +124,11 @@ export function calendarOccurrenceTone(occ: PmOccurrence, now = new Date()): PmC
   if (!occ.due_at || !ACTIVE_SET.has(occ.status)) return "pipeline";
   const due = new Date(occ.due_at);
   if (Number.isNaN(due.getTime())) return "pipeline";
-  const today = startOfUtcDay(now);
-  const dueDay = startOfUtcDay(due);
-  if (dueDay.getTime() < today.getTime()) return "overdue";
-  if (dueDay.getTime() === today.getTime()) return "today";
+  // Overdue = past the end of the tolerance window (the due date when there is none): the same
+  // rule as the PM page KPI and the backend (`pm::queries::PM_OVERDUE_SQL`).
+  if (matchesDueWindow(occ, "overdue", now)) return "overdue";
+  // Due today, or past its due day but still inside its tolerance window: due, not yet late.
+  if (startOfUtcDay(due).getTime() <= startOfUtcDay(now).getTime()) return "today";
   return "pipeline";
 }
 
