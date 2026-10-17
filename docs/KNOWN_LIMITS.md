@@ -160,7 +160,7 @@ Last updated: 2026-10-17 (step 5 in progress; planning steps A–E merged, LOTO 
 
 | Limit | Impact | Handled in |
 |---|---|---|
-| The equipment tree is built from the equipment page already loaded, not the whole register; with more equipment than one page, branches can be missing from the tree (the list and search are complete). | Data | Step 7 (needs a tree read from the database) |
+| The equipment tree reads each branch from the database when opened. It follows active hierarchy links only; equipment with several active parents appears under each; "Expand all" opens only branches already loaded. | UX | Accepted |
 | IoT and ERP "linked records" are yes/no flags, not counts. | UX | After pilot |
 | The asset edit form no longer offers a retired status or an end-of-life date (retirement goes through Déclasser), but the server still accepts them on an identity update from another path. Server check being added. | Data | Step 5 |
 
@@ -176,6 +176,7 @@ Last updated: 2026-10-17 (step 5 in progress; planning steps A–E merged, LOTO 
 | Budget drill-down lists at most 2,000 lines and gives no total. | Data | Step 7 |
 | The sync centre names about 40 record types; others show as "Other record" with their number. | UX | Accepted |
 | The lock screen recognises a disabled PIN from the server's message text, not a code. | UX | Step 7 |
+| In Reference data, when the publish-readiness check cannot load, the error box shows the most recent reference-data error, which may come from another action on the same screen. | UX | Step 7 |
 
 ## Activity feed and audit log
 
