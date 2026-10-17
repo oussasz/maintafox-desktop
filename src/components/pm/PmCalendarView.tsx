@@ -4,7 +4,7 @@
  */
 
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { calendarOccurrenceTone, PM_CALENDAR_TONE_BORDER } from "@/components/pm/pm-model";
@@ -20,6 +20,19 @@ interface PmCalendarViewProps {
   occurrences: PmOccurrence[];
   loading?: boolean;
   onChipClick: (occ: PmOccurrence) => void;
+  /**
+   * Called with the dates on screen (month grid, week or day) whenever they change, so only those
+   * occurrences are read from the server.
+   */
+  onVisibleRangeChange?: (range: { from: string; to: string }) => void;
+}
+
+/** Server due-date filter text (UTC, inclusive) for local days `first`..`last`, one day of margin. */
+export function calendarRange(first: Date, last: Date): { from: string; to: string } {
+  const from = new Date(first.getFullYear(), first.getMonth(), first.getDate() - 1);
+  const to = new Date(last.getFullYear(), last.getMonth(), last.getDate() + 1, 23, 59, 59);
+  const text = (d: Date) => `${d.toISOString().slice(0, 19)}Z`;
+  return { from: text(from), to: text(to) };
 }
 
 function startOfWeek(d: Date): Date {
@@ -77,7 +90,12 @@ function chipTitle(occ: PmOccurrence): string {
     .join(" · ");
 }
 
-export function PmCalendarView({ occurrences, loading, onChipClick }: PmCalendarViewProps) {
+export function PmCalendarView({
+  occurrences,
+  loading,
+  onChipClick,
+  onVisibleRangeChange,
+}: PmCalendarViewProps) {
   const { t, i18n } = useTranslation("pm");
   const dateLocale = intlLocaleForLanguage(i18n.language);
   const [mode, setMode] = useState<CalendarMode>("month");
@@ -146,6 +164,18 @@ export function PmCalendarView({ occurrences, loading, onChipClick }: PmCalendar
       (_, i) => new Date(start.getFullYear(), start.getMonth(), start.getDate() + i),
     );
   }, [cursor]);
+
+  // Dates on screen → the server reads only those occurrences.
+  const visibleRange = useMemo(() => {
+    if (mode === "month") return calendarRange(monthDays[0] as Date, monthDays[41] as Date);
+    if (mode === "week") return calendarRange(weekDays[0] as Date, weekDays[6] as Date);
+    return calendarRange(cursor, cursor);
+  }, [mode, monthDays, weekDays, cursor]);
+  useEffect(() => {
+    onVisibleRangeChange?.(visibleRange);
+    // Only a change of dates reads again (the callback identity does not).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleRange.from, visibleRange.to]);
 
   const today = new Date();
 
