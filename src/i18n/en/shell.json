@@ -223,7 +223,8 @@
     "offline": "Offline",
     "db": "DB",
     "dbHealthy": "Database operational",
-    "pendingSync": "{{count}} pending"
+    "pendingSync": "{{count}} pending",
+    "version": "Version {{version}}"
   },
   "statusBar": {
     "online": "Online",
@@ -239,7 +240,10 @@
     "quit": "Quit"
   },
   "commandPalette": {
-    "title": "Command Palette"
+    "title": "Command Palette",
+    "open": "Go to a module…",
+    "placeholder": "Module name (e.g. Work orders)…",
+    "noResults": "No module matches \"{{query}}\""
   },
   "session": {
     "timeRemaining": "Session expires in {{minutes}} min",

@@ -223,7 +223,8 @@
     "offline": "Hors ligne",
     "db": "BDD",
     "dbHealthy": "Base de données opérationnelle",
-    "pendingSync": "{{count}} en attente"
+    "pendingSync": "{{count}} en attente",
+    "version": "Version {{version}}"
   },
   "statusBar": {
     "online": "En ligne",
@@ -239,7 +240,10 @@
     "quit": "Quitter"
   },
   "commandPalette": {
-    "title": "Palette de commandes"
+    "title": "Palette de commandes",
+    "open": "Aller à un module…",
+    "placeholder": "Nom du module (ex. Ordres de travail)…",
+    "noResults": "Aucun module ne correspond à « {{query}} »"
   },
   "session": {
     "timeRemaining": "Session expire dans {{minutes}} min",
