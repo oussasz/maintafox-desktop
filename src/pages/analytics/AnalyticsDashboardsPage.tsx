@@ -26,6 +26,7 @@ import { usePermissions } from "@/hooks/use-permissions";
 import { useCanReadList } from "@/lib/list-access";
 import { listLinks } from "@/lib/list-links";
 import { isSessionActiveForBackgroundWork } from "@/lib/session-ready";
+import { useWoOpenRuleText } from "@/lib/wo-open-rule";
 import {
   getAnalyticsDashboardLayout,
   getAnalyticsExecutiveDashboard,
@@ -76,6 +77,7 @@ export function AnalyticsDashboardsPage() {
   const { can, canAny } = usePermissions();
   const { formatCurrency, formatNumber, formatDecimal, formatPercent } = useFormatters();
   const navigate = useNavigate();
+  const woOpenRuleText = useWoOpenRuleText();
   const sessionAuthenticated = useSessionStore((s) => s.info?.is_authenticated === true);
   const sessionLocked = useSessionStore((s) => s.info?.is_locked === true);
   const isAdmin = useSessionStore((s) => s.info?.is_admin === true);
@@ -228,6 +230,8 @@ export function AnalyticsDashboardsPage() {
   /** Projection ratios are 0..1; shown as a percentage like the Overview. */
   const ratio = (v: number | undefined) => (v != null ? formatPercent(v * 100) : "—");
   const now = t("hub.dashboards.context.now");
+  // "Open OT" here counts one named rule: the tile says which, and its link applies the same.
+  const openWosRule = woOpenRuleText(data?.open_wos_rule);
   const horizonText = t("hub.dashboards.context.horizon", { days: horizon });
   const openRamsDashboard = () => navigate(`${ANALYTICS_RAMS_BASE_PATH}/dashboard`);
   const openRamsEvidence = () =>
@@ -249,11 +253,13 @@ export function AnalyticsDashboardsPage() {
             })}
             {renderKpi({
               title: td("kpi.openWos"),
-              context: now,
+              context: openWosRule ? `${now} · ${openWosRule.label}` : now,
               value: count(data?.open_wos.value),
               available: data?.open_wos.available ?? false,
               trend: periodTrend(data?.open_wos, "up-bad"),
-              onOpen: () => navigate(listLinks.workOrders({ scope: "open" })),
+              ...(openWosRule
+                ? { onOpen: () => navigate(listLinks.workOrders({ scope: openWosRule.scope })) }
+                : {}),
             })}
             {renderKpi({
               title: td("kpi.totalAssets"),

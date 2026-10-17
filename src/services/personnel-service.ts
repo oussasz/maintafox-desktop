@@ -288,7 +288,9 @@ export const PersonnelWorkHistoryEntrySchema = z.object({
 
 export const PersonnelWorkloadSummarySchema = z.object({
   open_work_orders: z.number(),
+  open_work_orders_rule: z.string(),
   in_progress_work_orders: z.number(),
+  in_progress_work_orders_rule: z.string(),
   pending_interventions: z.number(),
   interventions_last_30d: z.number(),
 });

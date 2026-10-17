@@ -10,6 +10,7 @@ import { useTranslation } from "react-i18next";
 import { urgencyTone, useUrgencyScale } from "@/components/common/urgency/use-urgency-scale";
 import { useVisibleDiQueues } from "@/components/di/DiQueueBar";
 import { useFormatters } from "@/hooks/use-formatters";
+import { useWoOpenRuleText } from "@/lib/wo-open-rule";
 import { getHomeMyWork } from "@/services/home-service";
 import { statusToI18nKey } from "@/utils/wo-status";
 import type { HomeMyWork } from "@shared/ipc-types";
@@ -45,6 +46,7 @@ function MyWorkBody({ data }: { data: HomeMyWork }) {
   const { t } = useTranslation("dashboard");
   const { t: tOt } = useTranslation("ot");
   const { t: tIns } = useTranslation("inspections");
+  const ruleText = useWoOpenRuleText();
   const { formatNumber, formatDateTime, formatDate } = useFormatters();
   const { labelOf: urgencyLabel } = useUrgencyScale();
   const queues = useVisibleDiQueues();
@@ -68,7 +70,11 @@ function MyWorkBody({ data }: { data: HomeMyWork }) {
           openTo={homeLinks.workOrders}
         >
           <div className="grid grid-cols-3 gap-2">
-            <HomeFigure label={t("home.myWork.wo.open")} value={n(wo.open)} />
+            <HomeFigure
+              label={t("home.myWork.wo.open")}
+              value={n(wo.open)}
+              {...(ruleText(wo.open_rule) ? { hint: ruleText(wo.open_rule)?.label ?? "" } : {})}
+            />
             <HomeFigure
               label={t("home.myWork.wo.overdue")}
               value={n(wo.overdue)}

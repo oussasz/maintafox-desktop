@@ -48,6 +48,8 @@ const COMMON_TOP_KEYS = [
   "urgency",
   // Pickers whose list the user may not read (src/lib/list-access.ts).
   "listAccess",
+  // Names of the two "open OT" rules (src/lib/wo-open-rule.ts).
+  "woOpenRule",
 ];
 const AUTH_TOP_KEYS = [
   "activation",

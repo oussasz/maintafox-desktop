@@ -2339,6 +2339,8 @@ export interface AssetBindingSummary {
   open_di_count: DomainBindingEntry;
   /** Open (non-closed / non-cancelled) work orders — used for decommission blockers. */
   open_wo_count: DomainBindingEntry;
+  /** Which "open OT" rule `open_wo_count` counts (`WoOpenRule`). */
+  open_wo_rule: string;
 }
 
 // â”€â”€â”€ Asset â€” Search â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -4658,6 +4660,8 @@ export interface HomeMyWorkOrderItem {
 
 export interface HomeMyWorkOrders {
   open: number;
+  /** Which "open OT" rule `open` counts (`WoOpenRule`). */
+  open_rule: string;
   overdue: number;
   today: number;
   by_urgency: HomeUrgencyCount[];
@@ -4800,6 +4804,8 @@ export interface HomeWoBacklogCell {
 
 export interface HomeSupervisionWorkOrders {
   open: number;
+  /** Which "open OT" rule `open` counts (`WoOpenRule`). */
+  open_rule: string;
   overdue: number;
   planned: number;
   reactive: number;
@@ -6915,7 +6921,11 @@ export interface PersonnelWorkHistoryEntry {
 
 export interface PersonnelWorkloadSummary {
   open_work_orders: number;
+  /** Which "open OT" rule `open_work_orders` counts (`WoOpenRule`). */
+  open_work_orders_rule: string;
   in_progress_work_orders: number;
+  /** Which "open OT" rule `in_progress_work_orders` counts (`WoOpenRule`). */
+  in_progress_work_orders_rule: string;
   pending_interventions: number;
   interventions_last_30d: number;
 }
@@ -9267,6 +9277,8 @@ export interface AnalyticsExecutiveDashboard {
   org_node_id: number | null;
   open_dis: AnalyticsKpiValue;
   open_wos: AnalyticsKpiValue;
+  /** Which "open OT" rule `open_wos` counts (`WoOpenRule`; backend `wo::backlog::RULE_*`). */
+  open_wos_rule: string;
   total_assets: AnalyticsKpiValue;
   overdue_items: AnalyticsKpiValue;
   pm_overdue: AnalyticsKpiValue;
@@ -10675,6 +10687,8 @@ export interface AssetMaintenanceProfile {
   asset_count: number;
   work_order_count: number;
   open_work_order_count: number;
+  /** Which "open OT" rule `open_work_order_count` counts (`WoOpenRule`). */
+  open_work_order_rule: string;
   failure_work_order_count: number;
   planned_work_order_count: number;
   downtime_hours: number;

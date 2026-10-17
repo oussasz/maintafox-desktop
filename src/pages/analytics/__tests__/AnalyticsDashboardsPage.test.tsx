@@ -1,5 +1,5 @@
-import { render, screen } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PermissionContext, type PermissionContextValue } from "@/contexts/PermissionContext";
@@ -45,6 +45,7 @@ const DATA: AnalyticsExecutiveDashboardWithSmrp = {
   org_node_id: null,
   open_dis: kpi("open_dis", 12, 4),
   open_wos: kpi("open_wos", 7, 7),
+  open_wos_rule: "not_yet_closed",
   total_assets: kpi("total_assets", 140, 140),
   overdue_items: kpi("overdue_items", 3, 1),
   pm_overdue: kpi("pm_overdue", 2, 2),
@@ -83,7 +84,28 @@ function renderPage() {
   );
 }
 
+function ListLocation() {
+  const location = useLocation();
+  return <p data-testid="list-location">{`${location.pathname}${location.search}`}</p>;
+}
+
 describe("AnalyticsDashboardsPage", () => {
+  it("names the open-OT rule on the tile and opens the list on the same rule (not yet closed)", async () => {
+    render(
+      <MemoryRouter initialEntries={["/analytics"]}>
+        <Routes>
+          <Route path="/analytics" element={<AnalyticsDashboardsPage />} />
+          <Route path="/work-orders" element={<ListLocation />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    const context = await screen.findByText(/woOpenRule\.not_yet_closed/);
+    fireEvent.click(context.closest("button") as HTMLElement);
+    expect(await screen.findByTestId("list-location")).toHaveTextContent(
+      "/work-orders?scope=not_closed",
+    );
+  });
+
   it("hides the organisation filter and does not read the tree without the organisation view right", async () => {
     const can = (p: PermissionName) => p !== P.ORG_VIEW;
     const perms: PermissionContextValue = {

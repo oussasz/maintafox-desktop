@@ -29,6 +29,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { describeAppError } from "@/lib/app-error";
 import { formatOrDash, formatPersonLabel } from "@/lib/display";
 import { cn } from "@/lib/utils";
+import { useWoOpenRuleText } from "@/lib/wo-open-rule";
 import {
   endAvailabilityBlock,
   getPersonnelAvailabilityState,
@@ -100,6 +101,7 @@ export function AvailabilityInspectorWorkspace({
   onBlocksChanged,
 }: AvailabilityInspectorWorkspaceProps) {
   const { t } = useTranslation("personnel");
+  const woOpenRuleText = useWoOpenRuleText();
   const [tab, setTab] = useState("overview");
   const [availabilityState, setAvailabilityState] = useState<PersonnelAvailabilityState | null>(
     null,
@@ -543,11 +545,17 @@ export function AvailabilityInspectorWorkspace({
             {!workloadLoading && !workloadError && workload ? (
               <>
                 <DetailFieldRow
-                  label={t("detail.workload.openWo")}
+                  label={
+                    woOpenRuleText(workload.open_work_orders_rule)?.figure ??
+                    t("detail.workload.openWo")
+                  }
                   value={String(workload.open_work_orders)}
                 />
                 <DetailFieldRow
-                  label={t("detail.workload.inProgressWo")}
+                  label={
+                    woOpenRuleText(workload.in_progress_work_orders_rule)?.figure ??
+                    t("detail.workload.inProgressWo")
+                  }
                   value={String(workload.in_progress_work_orders)}
                 />
                 <DetailFieldRow

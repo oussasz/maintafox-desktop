@@ -35,6 +35,7 @@ import { Label } from "@/components/ui/label";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
 import { describeAppError } from "@/lib/app-error";
+import { useWoOpenRuleText } from "@/lib/wo-open-rule";
 import {
   createRateCard,
   getPersonnelWorkloadSummary,
@@ -122,6 +123,7 @@ type TabDataKey = "teams" | "availability" | "history" | "assignment" | "workloa
 
 export function PersonnelDetailWorkspace({ detail }: PersonnelDetailWorkspaceProps) {
   const { t } = useTranslation("personnel");
+  const woOpenRuleText = useWoOpenRuleText();
   const { formatCurrency } = useFormatters();
   const { can } = usePermissions();
   const canManage = can(P.PER_MANAGE);
@@ -576,11 +578,17 @@ export function PersonnelDetailWorkspace({ detail }: PersonnelDetailWorkspacePro
           {workload ? (
             <>
               <DetailFieldRow
-                label={t("detail.workload.openWo")}
+                label={
+                  woOpenRuleText(workload.open_work_orders_rule)?.figure ??
+                  t("detail.workload.openWo")
+                }
                 value={String(workload.open_work_orders)}
               />
               <DetailFieldRow
-                label={t("detail.workload.inProgressWo")}
+                label={
+                  woOpenRuleText(workload.in_progress_work_orders_rule)?.figure ??
+                  t("detail.workload.inProgressWo")
+                }
                 value={String(workload.in_progress_work_orders)}
               />
               <DetailFieldRow

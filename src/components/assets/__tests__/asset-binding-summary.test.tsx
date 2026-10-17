@@ -55,6 +55,7 @@ function makeSummary(overrides: Partial<AssetBindingSummaryType> = {}): AssetBin
     linked_erp_mapping_count: { status: "not_implemented", count: null },
     open_di_count: { status: "available", count: 0 },
     open_wo_count: { status: "available", count: 0 },
+    open_wo_rule: "not_yet_closed",
     ...overrides,
   };
 }

@@ -27,13 +27,20 @@ function renderAt(path: string, page: JSX.Element) {
 
 describe("work-order list links", () => {
   beforeEach(() => {
-    useWoStore.getState().setFilter({ open_only: null, overdue_only: null });
+    useWoStore.getState().setFilter({ open_only: null, not_closed_only: null, overdue_only: null });
   });
 
   it("scope=overdue asks the list for overdue work only", async () => {
     renderAt("/work-orders?scope=overdue", <WorkOrdersPage />);
     await waitFor(() => expect(useWoStore.getState().filter.overdue_only).toBe(true));
     expect(useWoStore.getState().filter.open_only ?? null).toBeNull();
+  });
+
+  it("scope=not_closed asks the list for work orders not yet closed", async () => {
+    renderAt("/work-orders?scope=not_closed", <WorkOrdersPage />);
+    await waitFor(() => expect(useWoStore.getState().filter.not_closed_only).toBe(true));
+    expect(useWoStore.getState().filter.open_only ?? null).toBeNull();
+    expect(useWoStore.getState().filter.overdue_only ?? null).toBeNull();
   });
 
   it("scope=open asks the list for open work by the count's rule", async () => {

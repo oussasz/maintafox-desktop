@@ -249,6 +249,7 @@ export function WorkOrdersPage() {
       urgency_code: null,
       equipment_id: null,
       open_only: null,
+      not_closed_only: null,
       overdue_only: null,
     });
     void loadWos();
@@ -258,7 +259,11 @@ export function WorkOrdersPage() {
     (val: string | null) => {
       const scope = scopeParam(val);
       setScopeFilter(scope);
-      setFilter({ open_only: scope === "open" || null, overdue_only: scope === "overdue" || null });
+      setFilter({
+        open_only: scope === "open" || null,
+        not_closed_only: scope === "not_closed" || null,
+        overdue_only: scope === "overdue" || null,
+      });
       void loadWos();
     },
     [setFilter, loadWos],
@@ -314,6 +319,7 @@ export function WorkOrdersPage() {
       lifecycle_states: null,
       // The list applies the same rule as the count the link came from.
       open_only: scope === "open" || null,
+      not_closed_only: scope === "not_closed" || null,
       overdue_only: scope === "overdue" || null,
       // A mix with no matching type matches no work order (never "all types").
       type_codes: mixCodes ? (mixCodes.length > 0 ? mixCodes : ["__none__"]) : type ? [type] : null,
@@ -391,7 +397,9 @@ export function WorkOrdersPage() {
                   label:
                     scopeFilter === "overdue"
                       ? t("list.filters.scopeOverdue")
-                      : t("list.filters.scopeOpen"),
+                      : scopeFilter === "not_closed"
+                        ? t("list.filters.scopeNotClosed")
+                        : t("list.filters.scopeOpen"),
                 },
               ],
               value: scopeFilter,

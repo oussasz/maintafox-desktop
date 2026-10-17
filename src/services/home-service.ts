@@ -25,6 +25,8 @@ const MyWorkSchema = z.object({
   work_orders: z
     .object({
       open: z.number(),
+      /** Which "open OT" rule `open` counts (`WoOpenRule`). */
+      open_rule: z.string(),
       overdue: z.number(),
       today: z.number(),
       by_urgency: z.array(z.object({ urgency_code: nullableString, count: z.number() })),
@@ -150,6 +152,8 @@ const SupervisionSchema = z.object({
   work_orders: z
     .object({
       open: z.number(),
+      /** Which "open OT" rule `open` counts (`WoOpenRule`). */
+      open_rule: z.string(),
       overdue: z.number(),
       planned: z.number(),
       reactive: z.number(),

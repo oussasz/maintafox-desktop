@@ -37,7 +37,7 @@ interface AssetBindingSummaryProps {
 
 /** Domain descriptor for rendering. */
 interface DomainDescriptor {
-  key: keyof Omit<AssetBindingSummaryType, "asset_id">;
+  key: keyof Omit<AssetBindingSummaryType, "asset_id" | "open_wo_rule">;
   labelKey:
     | "binding.domains.di"
     | "binding.domains.wo"

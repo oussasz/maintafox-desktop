@@ -8,11 +8,13 @@
 import type { DiQueue } from "@shared/ipc-types";
 
 /**
- * `scope=open`: records still being handled (the dashboards' "open" counts).
+ * `scope=open`: records still being handled (the dashboards' "open" counts; for work orders the
+ * "Open (work to do)" rule).
+ * `scope=not_closed` (work orders): the "Not yet closed" rule (every status but closed / cancelled).
  * `scope=overdue` (work orders): still open with the planned end passed (the "overdue" count).
  * Each is applied by the list's own backend filter, the same rule as the count.
  */
-export type ListScope = "open" | "overdue";
+export type ListScope = "open" | "not_closed" | "overdue";
 
 /** SMRP work mix, from the EN 13306 nature of the work-order type (backend `MaintenanceNature`). */
 export type WorkMix = "planned" | "reactive" | "emergency";
@@ -104,7 +106,7 @@ export function textParam(raw: string | null): string | null {
 }
 
 export function scopeParam(raw: string | null): ListScope | null {
-  return raw === "open" || raw === "overdue" ? raw : null;
+  return raw === "open" || raw === "not_closed" || raw === "overdue" ? raw : null;
 }
 
 /** Waiting time in whole days (1 to 3650) from a query value, else null. */

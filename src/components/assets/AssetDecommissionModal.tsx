@@ -43,6 +43,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { useWoOpenRuleText } from "@/lib/wo-open-rule";
 import { decommissionAsset, getAssetBindingSummary } from "@/services/asset-lifecycle-service";
 import { useEquipmentTaxonomy } from "@/stores/equipment-taxonomy-store";
 import type { Asset, AssetBindingSummary } from "@shared/ipc-types";
@@ -68,6 +69,8 @@ const ICON_CLS = "h-4 w-4 shrink-0";
 function buildDependencies(
   summary: AssetBindingSummary,
   t: (key: string, opts?: Record<string, unknown>) => string,
+  /** Name of the "open OT" rule the blocking count uses ("Not yet closed"), when known. */
+  openWoRuleLabel: string | null,
 ): DependencyRow[] {
   const entry = (
     domain: string,
@@ -98,7 +101,7 @@ function buildDependencies(
       t("decommission.blockerDetail"),
     ),
     entry(
-      t("binding.domains.wo"),
+      openWoRuleLabel ? `${t("binding.domains.wo")} — ${openWoRuleLabel}` : t("binding.domains.wo"),
       "open_wo_count",
       <Wrench className={ICON_CLS} />,
       "blocker",
@@ -135,6 +138,7 @@ export function AssetDecommissionModal({
   onDecommissioned,
 }: AssetDecommissionModalProps) {
   const { t } = useTranslation("equipment");
+  const woOpenRuleText = useWoOpenRuleText();
 
   const [summary, setSummary] = useState<AssetBindingSummary | null>(null);
   const [loadingSummary, setLoadingSummary] = useState(true);
@@ -173,7 +177,11 @@ export function AssetDecommissionModal({
   };
 
   const dependencies = summary
-    ? buildDependencies(summary, t as (key: string, opts?: Record<string, unknown>) => string)
+    ? buildDependencies(
+        summary,
+        t as (key: string, opts?: Record<string, unknown>) => string,
+        woOpenRuleText(summary.open_wo_rule)?.label ?? null,
+      )
     : [];
   const blockerCount = dependencies
     .filter((d) => d.level === "blocker" && d.available && d.count !== null && d.count > 0)
