@@ -141,9 +141,8 @@ Last updated: 2026-10-17 (step 5 in progress; planning steps A–E merged, LOTO 
 
 | Limit | Impact | Handled in |
 |---|---|---|
-| Figures now open their list pre-filtered (shown as a clearable chip), except: overdue work orders and requests waiting more than 7 days (the lists have no such filter yet). | UX | Step 5 |
+| Figures open their list pre-filtered, shown as a clearable chip, and the list counts exactly what the figure counted (open and overdue work orders, open requests and requests waiting 7+ days, articles to reorder); tests hold list total = figure. Overdue and waiting use the clock at the moment the list is loaded. Planning figures are not linked yet. | Data | Accepted |
 | The work mix link (planned / reactive / emergency) finds the matching work-order types on the screen with the same nature rule the figures use; a work-order type with no nature set appears in no mix, in the figure or the list. | Data | Step 7 (check every type has a nature) |
-| A few figures count differently from the list they open: "open" work orders/requests (figure by dates, list by status) and "to reorder" (figure per stock location, list per article). Being aligned on one shared rule. | Data | Step 5 |
 | "My rounds" counts rounds assigned to me personally, not to my team; "My PM" means PM whose work order is mine. | Data | Accepted |
 | The planning backlog panel reads at most 2,000 jobs, with a notice. | UX | Accepted |
 | Very old equipment linked only through the legacy criticality list is not counted as critical. | Data | Step 7 |
@@ -154,7 +153,6 @@ Last updated: 2026-10-17 (step 5 in progress; planning steps A–E merged, LOTO 
 |---|---|---|
 | The cost tile: a work order settled before the period and reopened inside it shows as a negative cost in the current period (consistent with the Finance cockpit). | Data | Accepted |
 | RAMS studies do not pull the mean corrective cost automatically (shown in Asset costs). | UX | After pilot |
-| KPI and SMRP figures open the module's full list, not the exact records behind the figure: request, work-order, equipment and planning lists cannot yet be opened pre-filtered. "Overdue items" spans requests, PM and work orders, so it has no single list. | UX | Step 5 (pre-filtered list links) |
 
 ## Assets
 
