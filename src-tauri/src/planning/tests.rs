@@ -5205,3 +5205,112 @@ async fn capacity_rule_edits_are_checked_and_a_stale_edit_is_refused_with_a_code
         "{stale:?}"
     );
 }
+
+#[tokio::test]
+async fn only_moves_recorded_while_the_baseline_held_count_as_displaced() {
+    let db = setup_db().await;
+    let (site, team) = weekly_site(&db, "DW").await;
+    let planner = ensure_personnel_with_rate(&db, "PLN-WK-DW").await;
+    ensure_approver_user(&db, 58, planner).await;
+    let mut jobs = Vec::new();
+    for (title, day) in [
+        ("KPI DW before", "2026-05-04"),
+        ("KPI DW during", "2026-05-05"),
+        ("KPI DW after", "2026-05-06"),
+    ] {
+        let (wo, actor) = create_planning_wo(&db, title).await;
+        let job = scheduling::create_schedule_commitment(
+            &db,
+            actor,
+            commit_input(
+                insert_candidate(&db, "work_order", wo, "ready", 100.0).await,
+                team,
+                &format!("{day}T08:00"),
+                &format!("{day}T10:00"),
+            ),
+        )
+        .await
+        .expect("job");
+        jobs.push((job.id, day));
+    }
+    crate::planning::weekly_schedule::freeze_weekly_schedule(&db, 1, week_ref(site, "2026-05-04", None))
+        .await
+        .expect("frozen");
+    let requested = crate::planning::weekly_schedule::request_unfreeze(
+        &db,
+        1,
+        crate::planning::weekly_schedule::UnfreezeRequestInput {
+            site_id: site,
+            day: "2026-05-04".to_string(),
+            expected_row_version: None,
+            reason: "Shutdown moved".to_string(),
+        },
+    )
+    .await
+    .expect("requested");
+    crate::planning::weekly_schedule::decide_unfreeze(
+        &db,
+        58,
+        crate::planning::weekly_schedule::UnfreezeDecisionInput {
+            site_id: site,
+            day: "2026-05-04".to_string(),
+            expected_row_version: requested.schedule.map(|s| s.row_version),
+            approve: true,
+            comment: None,
+        },
+    )
+    .await
+    .expect("unfrozen");
+    // The baseline held from 2026-05-01 00:00 to 2026-05-05 12:00 (UTC).
+    let schedule = scalar(
+        &db,
+        &format!("SELECT id FROM weekly_schedules WHERE entity_id = {site} AND week_start = '2026-05-03'"),
+    )
+    .await;
+    exec_sql(
+        &db,
+        &format!(
+            "UPDATE weekly_schedule_events SET created_at = CASE action \
+               WHEN 'unfrozen' THEN '2026-05-05T12:00:00Z' ELSE '2026-05-01T00:00:00Z' END \
+             WHERE weekly_schedule_id = {schedule} AND action IN ('frozen', 'auto_frozen', 'unfrozen')"
+        ),
+    )
+    .await;
+    // Each job is moved once inside the week: before the freeze, while frozen, after the unfreeze.
+    let moved_at = ["2026-04-30T10:00:00Z", "2026-05-03T10:00:00Z", "2026-05-06T10:00:00Z"];
+    for (n, ((job, day), at)) in jobs.iter().zip(moved_at).enumerate() {
+        exec_sql(
+            &db,
+            &format!(
+                "INSERT INTO schedule_break_ins
+                    (schedule_commitment_id, break_in_reason, kind, old_slot_start, old_slot_end,
+                     new_slot_start, new_slot_end, notification_dedupe_key, created_by_id, created_at)
+                 VALUES ({job}, 'other', 'move', '{old_start}', '{old_end}', '{new_start}', '{new_end}',
+                         'dw-move-{n}', 1, '{at}')",
+                old_start = local(&format!("{day}T08:00")),
+                old_end = local(&format!("{day}T10:00")),
+                new_start = local(&format!("{day}T13:00")),
+                new_end = local(&format!("{day}T15:00")),
+            ),
+        )
+        .await;
+    }
+    let kpis = crate::planning::kpis::planning_kpis(
+        &db,
+        &crate::planning::kpis::PlanningKpiFilter {
+            site_id: Some(site),
+            from_day: "2026-05-03".to_string(),
+            to_day: "2026-05-03".to_string(),
+            exclude_unapproved: false,
+        },
+        utc_at("2026-05-20T09:00"),
+    )
+    .await
+    .expect("kpis");
+    let week = &kpis.weeks[0];
+    assert!(week.reopened);
+    assert_eq!(
+        week.displaced_jobs, 1,
+        "only the move recorded while the baseline held counts: {week:?}"
+    );
+}
