@@ -398,6 +398,7 @@
     "PERSONNEL_ABSENCE_TAG_REQUIRED": "Chaque type d’absence doit indiquer son comportement : leave (absence simple), critical (toujours bloquante) ou training (affiché en formation).",
     "DOCUMENT_CATEGORY_NOT_IN_LIST": "« {{code}} » n’est pas une catégorie de document active dans Données de référence.",
     "WO_SHUTDOWN_FLAG_NOT_EDITABLE": "« Arrêt nécessaire » ne se modifie que pendant la préparation de l’OT (brouillon, planification ou prêt) ; il est {{status}}.",
+    "PM_PART_REQUIRED_FLAG_MISSING": "La ligne de pièce « {{code}} » doit indiquer si elle est obligatoire ou optionnelle.",
     "PERMIT_WO_NO_EQUIPMENT": "L’ordre de travail n’a pas d’équipement : le permis ne peut pas lui être aligné.",
     "PERMIT_REMOVAL_PENDING": "{{pending}} isolation(s) attendent encore la vérification du retrait du cadenas avant la clôture du permis.",
     "PERMIT_STATUS_UNCHANGED": "Le permis a déjà ce statut.",

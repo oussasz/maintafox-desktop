@@ -36,6 +36,10 @@ pub struct PmRequiredPart {
     /// Article code, or the free text written on the PM version.
     pub code: String,
     pub quantity: Option<f64>,
+    /// Required for the job (short: blocks the plan) or optional (short: warns). Migration 231
+    /// set `"required": true` on every stored entry; an entry received from a device that has not
+    /// run it is read as required, which is what it meant there.
+    pub required: bool,
 }
 
 /// A required part resolved against the article master.
@@ -45,6 +49,7 @@ pub struct PmWoPartLine {
     pub quantity: Option<f64>,
     pub article_id: Option<i64>,
     pub article_name: Option<String>,
+    pub required: bool,
 }
 
 impl PmWoPartLine {
@@ -200,6 +205,7 @@ pub fn parse_required_parts(raw: Option<&str>) -> Vec<PmRequiredPart> {
                 (!s.is_empty()).then(|| PmRequiredPart {
                     code: s.to_string(),
                     quantity: None,
+                    required: true,
                 })
             }
             Value::Object(obj) => {
@@ -212,7 +218,12 @@ pub fn parse_required_parts(raw: Option<&str>) -> Vec<PmRequiredPart> {
                     .iter()
                     .find_map(|k| obj.get(*k).and_then(Value::as_f64))
                     .filter(|q| *q > 0.0);
-                Some(PmRequiredPart { code, quantity })
+                let required = obj.get("required").and_then(Value::as_bool).unwrap_or(true);
+                Some(PmRequiredPart {
+                    code,
+                    quantity,
+                    required,
+                })
             }
             _ => None,
         })
@@ -374,6 +385,7 @@ async fn resolve_part_lines(db: &impl ConnectionTrait, parts: Vec<PmRequiredPart
             quantity: part.quantity,
             article_id,
             article_name,
+            required: part.required,
         });
     }
     Ok(out)
@@ -523,9 +535,47 @@ pub async fn apply_pm_content_to_work_order(
                     auto_reserve: Some(stock_location_id.is_some()),
                     notes: None,
                     origin: None,
+                    is_required: part.required,
                 },
             )
             .await?;
+        }
+    }
+    Ok(())
+}
+
+/// Stable code of a PM part line without its required / optional flag.
+pub const CODE_PART_REQUIRED_FLAG_MISSING: &str = "PM_PART_REQUIRED_FLAG_MISSING";
+
+/// A version's `required_parts_json` as written by the PM screens: a list of objects with a code
+/// and a boolean `required` (no default: every new line says whether it is required).
+pub fn validate_required_parts_json(raw: Option<&str>) -> crate::errors::AppResult<()> {
+    let Some(raw) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(());
+    };
+    let refused = |code: String| {
+        crate::errors::org_validation_failed(
+            CODE_PART_REQUIRED_FLAG_MISSING,
+            format!("Part line '{code}' must say whether it is required or optional."),
+            std::collections::HashMap::from([("code".to_string(), code)]),
+        )
+    };
+    let Ok(Value::Array(items)) = serde_json::from_str::<Value>(raw) else {
+        return Err(refused(raw.chars().take(40).collect()));
+    };
+    for item in items {
+        let ok = matches!(&item, Value::Object(obj) if obj.get("required").is_some_and(Value::is_boolean));
+        if !ok {
+            let code = match &item {
+                Value::Object(obj) => ["article_code", "code"]
+                    .iter()
+                    .find_map(|k| obj.get(*k).and_then(Value::as_str))
+                    .unwrap_or_default()
+                    .to_string(),
+                Value::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            return Err(refused(code));
         }
     }
     Ok(())
@@ -584,6 +634,7 @@ mod tests {
             quantity: Some(2.0),
             article_id: Some(1),
             article_name: Some("Roulement".into()),
+            required: true,
         }];
         let fr = compose_description(
             "fr",

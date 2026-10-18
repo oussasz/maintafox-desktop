@@ -317,6 +317,7 @@
     "PREREQUISITE_BLOCKED": "Waiting for a prerequisite (deferred, or waiting on another job).",
     "NO_FEASIBLE_WINDOW": "Needs the equipment stopped: no open maintenance or shutdown window of its site or equipment over its due dates.",
     "ASSIGNEE_UNAVAILABLE": "The assignee is absent or booked on other work over the due dates ({{availability_conflict_count}}).",
+    "PARTS_SHORT_OPTIONAL": "Optional parts short in stock: {{articles}}. The job can be committed without them.",
     "PARTS_SHORT": "Parts short in stock: {{articles}}. Order or transfer them before committing.",
     "PART_NOT_IN_CATALOGUE": "Parts not in the article catalogue (stock cannot be checked): {{articles}}.",
     "PART_QUANTITY_MISSING": "Parts without a quantity (stock cannot be checked): {{articles}}.",

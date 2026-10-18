@@ -727,7 +727,7 @@ async fn planned_parts_are_reserved_where_stock_covers_them() {
             strategy: "fixed",
             trigger: r#"{"interval_unit":"day","interval_value":7}"#.to_string(),
             effective_from: "2026-01-01T00:00:00Z",
-            parts: Some(r#"[{"article_code":"FLT-10","quantity":2}]"#),
+            parts: Some(r#"[{"article_code":"FLT-10","quantity":2,"required":true}]"#),
         },
     )
     .await;

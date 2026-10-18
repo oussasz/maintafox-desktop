@@ -5576,3 +5576,74 @@ async fn a_corrective_work_order_needing_a_shutdown_is_checked_against_windows()
     refresh().await;
     assert_eq!(no_window(&db).await, 0, "unflagged: no shutdown check");
 }
+
+/// Only a short REQUIRED part blocks the plan; a short OPTIONAL part warns (owner-approved Step 7).
+#[tokio::test]
+async fn a_short_optional_part_warns_and_only_a_short_required_part_blocks() {
+    let db = setup_db().await;
+    let (wo_id, _actor) = create_planning_wo(&db, "Optional parts WO").await;
+    let candidate = insert_candidate(&db, "work_order", wo_id, "ready", 100.0).await;
+    for code in ["PLN-OPT", "PLN-REQ"] {
+        exec_sql(
+            &db,
+            &format!(
+                "INSERT INTO articles (article_code, article_name, unit_value_id, is_active)
+                 SELECT '{code}', 'Article {code}', (SELECT v.id FROM reference_values v JOIN reference_sets s ON s.id = v.set_id
+                        JOIN reference_domains d ON d.id = s.domain_id
+                       WHERE d.code = 'MEASURE.UNITS' AND s.status = 'published' AND v.code = 'U'), 1"
+            ),
+        )
+        .await;
+    }
+    let optional = scalar(&db, "SELECT id FROM articles WHERE article_code = 'PLN-OPT'").await;
+    let required = scalar(&db, "SELECT id FROM articles WHERE article_code = 'PLN-REQ'").await;
+    // Neither article has stock: an optional line first.
+    exec_sql(
+        &db,
+        &format!(
+            "INSERT INTO work_order_parts (work_order_id, article_id, quantity_planned, is_required)
+             VALUES ({wo_id}, {optional}, 2, 0)"
+        ),
+    )
+    .await;
+    re_evaluate(&db).await;
+    assert_eq!(
+        open_conflicts(&db, candidate).await,
+        vec![("PARTS_SHORT_OPTIONAL".to_string(), "warning".to_string())]
+    );
+    assert_eq!(
+        readiness_of(&db, candidate).await,
+        "ready",
+        "an optional part never blocks"
+    );
+
+    exec_sql(
+        &db,
+        &format!(
+            "INSERT INTO work_order_parts (work_order_id, article_id, quantity_planned, is_required)
+             VALUES ({wo_id}, {required}, 1, 1)"
+        ),
+    )
+    .await;
+    re_evaluate(&db).await;
+    let conflicts = open_conflicts(&db, candidate).await;
+    assert!(
+        conflicts.contains(&("PARTS_SHORT".to_string(), "blocking".to_string())),
+        "{conflicts:?}"
+    );
+    assert!(conflicts.contains(&("PARTS_SHORT_OPTIONAL".to_string(), "warning".to_string())));
+    assert_eq!(readiness_of(&db, candidate).await, "blocked");
+}
+
+/// No hidden default: a new part line must say whether it is required.
+#[test]
+fn a_new_part_line_must_say_whether_it_is_required() {
+    let without: Result<crate::wo::parts::AddPartInput, _> = serde_json::from_value(serde_json::json!({
+        "wo_id": 1, "article_id": 2, "article_ref": null, "quantity_planned": 1.0, "unit_cost": null,
+        "stock_location_id": null, "auto_reserve": false, "notes": null, "origin": null
+    }));
+    assert!(without.is_err(), "is_required is mandatory");
+    assert!(crate::pm::wo_content::validate_required_parts_json(Some(r#"[{"code":"X"}]"#)).is_err());
+    assert!(crate::pm::wo_content::validate_required_parts_json(Some(r#"["X"]"#)).is_err());
+    assert!(crate::pm::wo_content::validate_required_parts_json(Some(r#"[{"code":"X","required":false}]"#)).is_ok());
+}
